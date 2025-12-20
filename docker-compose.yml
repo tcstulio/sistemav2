@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: waha
+    restart: always
+    ports:
+      - "3001:3000" # Map host 3001 to container 3000
+    environment:
+      - WHATSAPP_DEFAULT_ENGINE=WEBJS
+      - WAHA_PRINT_QR=false
+      - WAHA_NO_FILES=true # Optional: to save space
+    volumes:
+      - ./waha-data:/app/.waha

@@ -1,0 +1,158 @@
+{
+    "swagger": "2.0",
+    "host": "sistema.coolgroove.com.br",
+    "basePath": "/api/index.php",
+    "produces": [
+        "application/json",
+        "application/xml"
+    ],
+    "consumes": [
+        "application/json",
+        "application/xml",
+        "multipart/form-data"
+    ],
+    "paths": {
+        "/login": {
+            "get": {
+                "operationId": "loginLoginUnsecured",
+                "tags": [
+                    "login"
+                ],
+                "parameters": [
+                    {
+                        "name": "login",
+                        "type": "string",
+                        "description": "User login",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "name": "password",
+                        "type": "string",
+                        "description": "User password",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "name": "entity",
+                        "type": "string",
+                        "description": "Entity (when multicompany module is used). '' means 1=first company.",
+                        "in": "query",
+                        "required": false
+                    },
+                    {
+                        "name": "reset",
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Reset token (0=get current token, 1=ask a new token and canceled old token. This means access using current existing API token of user will fails: new token will be required for new access)",
+                        "in": "query",
+                        "required": false
+                    }
+                ],
+                "summary": "Login 🔓",
+                "description": "Request the API token for a couple username / password. WARNING: You should NEVER use this API, like you should never use the similar API that uses the POST method. This will expose your password. To use the APIs, you should instead set an API token to the user you want to allow to use API (This API token called DOLAPIKEY can be found/set on the user page) and use this token as credential for any API call. From the API explorer, you can enter directly the \"DOLAPIKEY\" into the field at the top right of the page to get access to any allowed APIs.",
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Access denied"
+                    },
+                    "500": {
+                        "description": "System error"
+                    }
+                }
+            },
+            "post": {
+                "operationId": "listLogin",
+                "tags": [
+                    "login"
+                ],
+                "parameters": [
+                    {
+                        "name": "listLoginModel",
+                        "description": "**login** (required)  \n**password** (required)  \nentity  \nreset  \n",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/listLoginModel"
+                        }
+                    }
+                ],
+                "summary": "Login 🔓",
+                "description": "Request the API token for a couple username / password. WARNING: You should NEVER use this API, like you should never use the similar API that uses the POST method. This will expose your password. To use the APIs, you should instead set an API token to the user you want to allow to use API (This API token called DOLAPIKEY can be found/set on the user page) and use this token as credential for any API call. From the API explorer, you can enter directly the \"DOLAPIKEY\" into the field at the top right of the page to get access to any allowed APIs.",
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Access denied"
+                    },
+                    "500": {
+                        "description": "System error"
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "listLoginModel": {
+            "properties": {
+                "login": {
+                    "type": "string",
+                    "description": "User login"
+                },
+                "password": {
+                    "type": "string",
+                    "description": "User password"
+                },
+                "entity": {
+                    "type": "string",
+                    "description": "Entity (when multicompany module is used). '' means 1=first company."
+                },
+                "reset": {
+                    "type": "integer",
+                    "format": "int64",
+                    "description": "Reset token (0=get current token, 1=ask a new token and canceled old token. This means access using current existing API token of user will fails: new token will be required for new access)"
+                }
+            },
+            "required": [
+                "login",
+                "password"
+            ]
+        }
+    },
+    "securityDefinitions": {
+        "api_key": {
+            "type": "apiKey",
+            "name": "api_key",
+            "in": "query"
+        }
+    },
+    "info": {
+        "version": "1",
+        "title": "Restler API Explorer",
+        "description": "Live API Documentation",
+        "contact": {
+            "name": "Restler Support",
+            "url": "luracast.com/products/restler",
+            "email": "arul@luracast.com"
+        },
+        "license": {
+            "name": "LGPL-2.1",
+            "url": "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"
+        }
+    }
+}

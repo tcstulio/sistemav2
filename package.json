@@ -1,0 +1,49 @@
+{
+  "name": "coolgroove",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:frontend": "vite",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:all": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "generate:types": "npx swagger2openapi -p -o openapi_3.json swagger_full.json && npx openapi-typescript ./openapi_3.json -o ./src/types/dolibarr.actions.d.ts"
+  },
+  "dependencies": {
+    "@google/genai": "^1.30.0",
+    "@tanstack/react-query": "^5.90.12",
+    "axios": "^1.13.2",
+    "lucide-react": "^0.555.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-is": "^19.2.1",
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.10.1",
+    "react-virtualized-auto-sizer": "1.0.24",
+    "react-window": "1.8.9",
+    "recharts": "^3.5.1",
+    "socket.io-client": "^4.8.1",
+    "sonner": "^2.0.7",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@typescript-eslint/eslint-plugin": "^8.49.0",
+    "@typescript-eslint/parser": "^8.49.0",
+    "@vitejs/plugin-basic-ssl": "^2.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.2.1",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "openapi-typescript": "^7.10.1",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
