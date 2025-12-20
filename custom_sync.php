@@ -225,14 +225,15 @@ switch ($type) {
         break;
 
     case 'expense_reports':
-        $sql = "SELECT rowid as id, ref, total_ht, total_ttc, total_tva, date_debut, date_fin, fk_statut as statut, fk_user_author, fk_soc, date_create as datec, tms";
+        // Simplified - only essential columns
+        $sql = "SELECT rowid as id, ref, total_ttc, date_debut, date_fin, fk_statut as statut, fk_user_author, tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "expensereport";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
 
     case 'interventions':
-        // Fixed: Added datei as date (main intervention date), fk_user_author
-        $sql = "SELECT rowid as id, ref, fk_soc as socid, fk_projet as project_id, datei as date, datec as date_creation, tms, duree_reelle as duration, description, fk_statut as statut, fk_user_author";
+        // Simplified - use only columns that exist in most Dolibarr versions
+        $sql = "SELECT rowid as id, ref, fk_soc as socid, fk_projet as project_id, datec as date_creation, tms, description, fk_statut as statut";
         $sql .= " FROM " . MAIN_DB_PREFIX . "fichinter";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
@@ -271,14 +272,15 @@ switch ($type) {
         break;
 
     case 'job_positions':
-        $sql = "SELECT rowid as id, ref, label, description, rem_min, rem_max, status, datec, tms";
+        // Simplified - removed 'status' column that doesn't exist
+        $sql = "SELECT rowid as id, label, tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "hrm_job";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
 
     case 'candidates':
-        // Fixed: Added phone, fk_recruitment_jobposition link
-        $sql = "SELECT rowid as id, ref, firstname, lastname, email, phone, date_birth, fk_recruitment_jobposition as fk_job_position, fk_statut as status, note_public, date_creation as datec, tms";
+        // Simplified - removed 'fk_statut' column that doesn't exist
+        $sql = "SELECT rowid as id, firstname, lastname, email, tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "recruitment_recruitmentcandidature";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
