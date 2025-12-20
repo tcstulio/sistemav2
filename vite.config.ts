@@ -1,0 +1,87 @@
+import path from 'path';
+import { defineConfig, loadEnv } from 'vite';
+import react from '@vitejs/plugin-react';
+import basicSsl from '@vitejs/plugin-basic-ssl';
+
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, '.', '');
+  return {
+    server: {
+      port: 3003,
+      host: '0.0.0.0',
+      watch: {
+        ignored: ['**/.wwebjs_auth/**', '**/.wwebjs_cache/**', '**/backend/**']
+      },
+      proxy: {
+        '/api/dolibarr': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/api/whatsapp': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/api/auth': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/api/admin': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/api/ai': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/socket.io': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+          ws: true
+        },
+        /* 
+        '/api': {
+          target: 'https://sistema.coolgroove.com.br',
+          changeOrigin: true,
+          secure: false,
+          configure: (proxy, _options) => {
+            proxy.on('proxyReq', (proxyReq, req, _res) => {
+              proxyReq.setHeader('Origin', 'https://sistema.coolgroove.com.br');
+              proxyReq.setHeader('Referer', 'https://sistema.coolgroove.com.br/');
+              proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+              proxyReq.setHeader('Accept-Language', 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7');
+
+              // Bypass WAF challenge
+              let cookies = req.headers.cookie || '';
+              if (!cookies.includes('humans_21909=1')) {
+                cookies = cookies ? `${cookies}; humans_21909=1` : 'humans_21909=1';
+              }
+              proxyReq.setHeader('Cookie', cookies);
+
+              // Remove headers that reveal it's a proxy
+              proxyReq.removeHeader('x-forwarded-for');
+              proxyReq.removeHeader('x-forwarded-host');
+              proxyReq.removeHeader('x-forwarded-proto');
+            });
+          },
+        },
+        */
+      },
+    },
+    plugins: [react(), basicSsl()],
+    define: {
+      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+    },
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, './src'),
+      }
+    }
+  };
+});
