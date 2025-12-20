@@ -1,13 +1,16 @@
 
 import React, { useState, useEffect } from 'react';
-import { Database, HardDrive, RefreshCw, Play, Pause, AlertCircle } from 'lucide-react';
+import { Database, HardDrive, RefreshCw, Play, Pause, AlertCircle, Download } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { dbService } from '../../services/dbService';
+import { runBackgroundSync } from '../../services/backgroundSyncService';
 
 export const MonitorTab: React.FC = () => {
-    const { refreshData, isLoading: isSyncLoading, isSyncPaused, toggleSyncPause } = useDolibarr();
+    const { config, refreshData, isLoading: isSyncLoading, isSyncPaused, toggleSyncPause } = useDolibarr();
     const [stats, setStats] = useState<Record<string, number>>({});
     const [storageUsage, setStorageUsage] = useState<number>(0);
+    const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
+    const [syncResult, setSyncResult] = useState<{ synced: number; errors: string[] } | null>(null);
 
     const loadMetrics = async () => {
         const s = await dbService.getStorageStats();
@@ -16,6 +19,21 @@ export const MonitorTab: React.FC = () => {
         if (navigator.storage && navigator.storage.estimate) {
             const estimate = await navigator.storage.estimate();
             if (estimate.usage) setStorageUsage(estimate.usage);
+        }
+    };
+
+    const handleBackgroundSync = async () => {
+        if (!config || isBackgroundSyncing) return;
+        setIsBackgroundSyncing(true);
+        setSyncResult(null);
+        try {
+            const result = await runBackgroundSync(config);
+            setSyncResult(result);
+            await loadMetrics(); // Refresh stats immediately
+        } catch (e) {
+            console.error('[MonitorTab] Background sync failed:', e);
+        } finally {
+            setIsBackgroundSyncing(false);
         }
     };
 
@@ -74,12 +92,30 @@ export const MonitorTab: React.FC = () => {
                         </button>
 
                         <button
+                            onClick={handleBackgroundSync}
+                            disabled={isBackgroundSyncing || !config}
+                            className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition disabled:bg-green-400"
+                        >
+                            <Download size={18} className={isBackgroundSyncing ? "animate-pulse" : ""} />
+                            {isBackgroundSyncing ? "Baixando Todos os Dados..." : "Background Sync Completo"}
+                        </button>
+
+                        <button
                             onClick={toggleSyncPause}
                             className={`w-full flex items-center justify-center gap-2 py-2 px-4 rounded-lg transition ${isSyncPaused ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'}`}
                         >
                             {isSyncPaused ? <Play size={18} /> : <Pause size={18} />}
                             {isSyncPaused ? "Resumir Sincronização" : "Pausar Sincronização"}
                         </button>
+
+                        {syncResult && (
+                            <div className={`w-full text-xs p-2 rounded ${syncResult.errors.length > 0 ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20' : 'bg-green-50 text-green-700 dark:bg-green-900/20'}`}>
+                                ✓ {syncResult.synced} registros sincronizados
+                                {syncResult.errors.length > 0 && (
+                                    <span className="block mt-1">⚠ {syncResult.errors.length} erros (ver console)</span>
+                                )}
+                            </div>
+                        )}
 
                         {isSyncPaused && (
                             <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded w-full justify-center">

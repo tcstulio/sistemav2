@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo, useRef } from 'react';
 import { DolibarrConfig, ThirdParty, Invoice, Product, Proposal, Order, Project, Task, BankAccount, BankLine, AgendaEvent, DolibarrUser, SupplierInvoice, SupplierOrder, Ticket, Warehouse, StockMovement, Intervention, ExpenseReport, RecruitmentJobPosition, Candidate, LeaveRequest, Contract, ManufacturingOrder, BOM, Shipment, Contact, AppNotification, DolibarrModule } from '../types';
 import { DolibarrService } from '../services/dolibarrService';
 import { dbService } from '../services/dbService';
 import { useDolibarrData } from '../hooks/useDolibarrData';
+import { runBackgroundSync } from '../services/backgroundSyncService';
 
 interface DolibarrContextType {
   config: DolibarrConfig | null;
@@ -128,6 +129,9 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [error]);
 
+  // Background sync flag
+  const hasRunBackgroundSync = useRef(false);
+
   // 4. Config & User Loading Logic (Existing)
   useEffect(() => {
     const loadConfig = async () => {
@@ -167,6 +171,20 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
                 localStorage.setItem('doligen_config', JSON.stringify(updated));
               }
             }).catch(err => console.warn("Background user refresh failed", err));
+
+            // Run Background Sync (once per session)
+            if (!hasRunBackgroundSync.current) {
+              hasRunBackgroundSync.current = true;
+              console.log('[DolibarrContext] Starting background sync for all modules...');
+              runBackgroundSync(parsed).then(result => {
+                console.log(`[DolibarrContext] Background sync complete: ${result.synced} records synced`);
+                if (result.errors.length > 0) {
+                  console.warn('[DolibarrContext] Background sync errors:', result.errors);
+                }
+              }).catch(err => {
+                console.error('[DolibarrContext] Background sync failed:', err);
+              });
+            }
           }
         } catch (e) {
           console.error("Failed to parse saved config", e);
@@ -176,6 +194,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     };
     loadConfig();
   }, []);
+
 
   // 5. Config Persistence & Dark Mode
   useEffect(() => {
@@ -205,10 +224,24 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
       if (newConfig.currentUser) {
         setCurrentUser(newConfig.currentUser);
       }
+      // Trigger background sync on new config (login)
+      if (!hasRunBackgroundSync.current) {
+        hasRunBackgroundSync.current = true;
+        console.log('[DolibarrContext] Starting background sync for all modules (on login)...');
+        runBackgroundSync(newConfig).then(result => {
+          console.log(`[DolibarrContext] Background sync complete: ${result.synced} records synced`);
+          if (result.errors.length > 0) {
+            console.warn('[DolibarrContext] Background sync errors:', result.errors);
+          }
+        }).catch(err => {
+          console.error('[DolibarrContext] Background sync failed:', err);
+        });
+      }
     } else {
       localStorage.removeItem('doligen_config');
       dbService.clearAll().catch(console.error);
       setCurrentUser(null);
+      hasRunBackgroundSync.current = false; // Reset on logout
     }
   }, []);
 
