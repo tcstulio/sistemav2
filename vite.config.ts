@@ -38,6 +38,46 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
+        '/api/scheduler': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/api/webhook': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/api/inter': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/api/itau': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/api/banking': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/api/email': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/api/documents': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/api/approvals': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
         '/socket.io': {
           target: 'http://localhost:3004',
           changeOrigin: true,

@@ -41,6 +41,12 @@ const DevelopmentView: React.FC = () => {
                         </h2>
                         <p className="text-sm text-slate-500 dark:text-slate-400">Diagnósticos do sistema e ferramentas de API</p>
                     </div>
+                    <button
+                        onClick={() => window.location.href = '/admin'}
+                        className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors shadow-sm text-sm"
+                    >
+                        <Shield size={16} /> Console Admin
+                    </button>
                 </div>
 
                 <div className="flex gap-1 overflow-x-auto border-b border-slate-100 dark:border-slate-800 pb-1">

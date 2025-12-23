@@ -4,9 +4,8 @@ import { Shipment, ThirdParty, DolibarrConfig, AppView, Order } from '../types';
 import { Truck, Search, ExternalLink, Calendar, Package, ArrowLeft, ArrowRight, Loader2, Info, X, FilePlus } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useShipments } from '../hooks/dolibarr/useShipments';
-import { useCustomers } from '../hooks/dolibarr/useCustomers';
-import { useOrders } from '../hooks/dolibarr/useOrders';
+import { useShipments, useCustomers, useOrders } from '../hooks/dolibarr';
+import { LinkedObjects } from './common/LinkedObjects';
 
 interface ShipmentListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -137,7 +136,7 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                                         {getCustomerName(ship.socid)}
                                     </div>
                                     <div className="flex justify-between items-center mt-2 text-xs text-slate-500">
-                                        <span>{new Date(ship.date_creation * 1000).toLocaleDateString()}</span>
+                                        <span>{new Date(ship.date_creation < 100000000000 ? ship.date_creation * 1000 : ship.date_creation).toLocaleDateString()}</span>
                                         {ship.fk_commande && <span className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-400">{getOrderRef(ship.fk_commande)}</span>}
                                     </div>
                                 </div>
@@ -195,7 +194,7 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                                                 <label className="text-xs text-slate-500 uppercase font-bold">Data Criação</label>
                                                 <div className="flex items-center gap-2 mt-1 text-slate-800 dark:text-white font-medium">
                                                     <Calendar size={16} className="text-indigo-500" />
-                                                    {new Date(selectedShipment.date_creation * 1000).toLocaleDateString()}
+                                                    {new Date(selectedShipment.date_creation < 100000000000 ? selectedShipment.date_creation * 1000 : selectedShipment.date_creation).toLocaleDateString()}
                                                 </div>
                                             </div>
                                             {selectedShipment.date_delivery && (
@@ -203,7 +202,7 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                                                     <label className="text-xs text-slate-500 uppercase font-bold">Data Entrega</label>
                                                     <div className="flex items-center gap-2 mt-1 text-slate-800 dark:text-white font-medium">
                                                         <Calendar size={16} className="text-emerald-500" />
-                                                        {new Date(selectedShipment.date_delivery * 1000).toLocaleDateString()}
+                                                        {new Date(selectedShipment.date_delivery < 100000000000 ? selectedShipment.date_delivery * 1000 : selectedShipment.date_delivery).toLocaleDateString()}
                                                     </div>
                                                 </div>
                                             )}
@@ -228,6 +227,13 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                                             )}
                                         </div>
                                     </div>
+
+                                    {/* Linked Objects */}
+                                    <LinkedObjects
+                                        id={selectedShipment.id}
+                                        type="shipping"
+                                        onNavigate={onNavigate}
+                                    />
                                 </div>
                             </div>
                         </>

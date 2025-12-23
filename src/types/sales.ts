@@ -17,6 +17,20 @@ export interface Invoice {
     array_options?: Record<string, any>;
 }
 
+export interface SupplierInvoiceLine {
+    id: string;
+    parent_id: string;
+    label: string;
+    description: string;
+    qty: number;
+    vat_rate: number;
+    subprice: number;
+    total_ht: number;
+    total_ttc: number;
+    product_id?: string;
+    date_modification?: number;
+}
+
 export interface SupplierInvoice {
     id: string;
     ref: string;
@@ -27,6 +41,7 @@ export interface SupplierInvoice {
     total_ttc: number;
     paye: '0' | '1';
     statut: '0' | '1' | '2';
+    lines?: SupplierInvoiceLine[];
     date_modification?: number;
     array_options?: Record<string, any>;
 }
@@ -80,6 +95,21 @@ export interface Contract {
     array_options?: Record<string, any>;
 }
 
+export interface SupplierOrderLine {
+    id: string;
+    parent_id: string;
+    label: string;
+    description: string;
+    qty: number;
+    vat_rate: number;
+    subprice: number;
+    total_ht: number;
+    total_ttc: number;
+    product_id?: string;
+    date_modification?: number;
+}
+
+
 export interface SupplierOrder {
     id: string;
     ref: string;
@@ -89,7 +119,7 @@ export interface SupplierOrder {
     date_livraison?: number;
     total_ttc: number;
     statut: string;
-    lines?: any[];
+    lines?: SupplierOrderLine[];
     date_modification?: number;
     array_options?: Record<string, any>;
 }

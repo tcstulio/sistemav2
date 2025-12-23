@@ -157,6 +157,54 @@ foreach ($modules as $type => $config) {
     $results[] = $result;
 }
 
+// 6. Special Analysis for Events (System Logs)
+$event_analysis = [
+    'total_events' => 0,
+    'distinct_codes' => [],
+    'system_logs_detected' => [],
+    'current_filter_effectiveness' => []
+];
+
+if ($db) {
+    // A. Count total events
+    $sql_total = "SELECT COUNT(*) as total FROM " . MAIN_DB_PREFIX . "actioncomm";
+    $res_total = $db->query($sql_total);
+    if ($res_total) {
+        $event_analysis['total_events'] = (int) $db->fetch_object($res_total)->total;
+    }
+
+    // B. Get all distinct codes and their counts
+    $sql_codes = "SELECT code, COUNT(*) as c FROM " . MAIN_DB_PREFIX . "actioncomm GROUP BY code ORDER BY c DESC";
+    $res_codes = $db->query($sql_codes);
+    if ($res_codes) {
+        while ($obj = $db->fetch_object($res_codes)) {
+            $code = $obj->code;
+            $count = $obj->c;
+            $event_analysis['distinct_codes'][] = ['code' => $code, 'count' => $count];
+
+            // C. Check if this code is currently filtered
+            // Current filter: code IS NULL OR (code NOT LIKE '%_AUTO' AND code NOT LIKE '%_MODIFY' AND code NOT LIKE '%_CREATE' AND code NOT LIKE '%_DELETE' AND code NOT LIKE '%_VALIDATE')
+            $is_filtered = false;
+            if ($code) {
+                if (
+                    strpos($code, '_AUTO') !== false ||
+                    strpos($code, '_MODIFY') !== false ||
+                    strpos($code, '_CREATE') !== false ||
+                    strpos($code, '_DELETE') !== false ||
+                    strpos($code, '_VALIDATE') !== false
+                ) {
+                    $is_filtered = true;
+                }
+            }
+
+            if (!$is_filtered && $code && strpos($code, 'AC_') === 0) {
+                // Flag potential system logs that are NOT filtered
+                $event_analysis['system_logs_detected'][] = $code;
+            }
+        }
+    }
+}
+
 // 5. Summary
 $summary = [
     'total_modules' => count($modules),
@@ -168,6 +216,7 @@ $summary = [
 
 echo json_encode([
     'summary' => $summary,
+    'event_analysis' => $event_analysis,
     'details' => $results
 ], JSON_PRETTY_PRINT);
 ?>

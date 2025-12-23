@@ -145,7 +145,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ isOpen, onClose, con
                                         >
                                             <div>
                                                 <div className="text-xs font-bold text-slate-700 dark:text-slate-300">{inv.ref}</div>
-                                                <div className="text-[10px] text-slate-500">{new Date(inv.date * 1000).toLocaleDateString()}</div>
+                                                <div className="text-[10px] text-slate-500">{new Date(inv.date < 100000000000 ? inv.date * 1000 : inv.date).toLocaleDateString()}</div>
                                             </div>
                                             <div className="text-right">
                                                 <div className="text-xs font-bold text-slate-800 dark:text-white">${inv.total_ttc}</div>
@@ -174,7 +174,7 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ isOpen, onClose, con
                                         >
                                             <div>
                                                 <div className="text-xs font-bold text-slate-700 dark:text-slate-300">{ord.ref}</div>
-                                                <div className="text-[10px] text-slate-500">{new Date(ord.date * 1000).toLocaleDateString()}</div>
+                                                <div className="text-[10px] text-slate-500">{new Date(ord.date < 100000000000 ? ord.date * 1000 : ord.date).toLocaleDateString()}</div>
                                             </div>
                                             <div className="text-xs font-bold text-slate-800 dark:text-white">${ord.total_ttc}</div>
                                         </div>

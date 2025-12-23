@@ -2,8 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import { config } from './config/env';
 import whatsappRoutes from './routes/whatsappRoutes';
-// import { wahaService } from './services/wahaService'; // DEPRECATED
-import { sessionService } from './services/sessionService'; // ADDED
+import schedulerRoutes from './routes/schedulerRoutes';
+import { sessionService } from './services/sessionService';
+import { schedulerService } from './services/schedulerService';
 
 const app = express();
 
@@ -27,6 +28,37 @@ app.use('/api/auth', authRoutes);
 import dolibarrRoutes from './routes/dolibarrRoutes';
 app.use('/api/dolibarr', dolibarrRoutes);
 
+// Scheduler Routes (Messages, Broadcasts, Reminders)
+app.use('/api/scheduler', schedulerRoutes);
+
+// Webhook Routes (External Triggers, Dolibarr Integration)
+import webhookRoutes from './routes/webhookRoutes';
+app.use('/api/webhook', webhookRoutes);
+
+// Banking Routes (Import, Analysis, Reconciliation)
+import bankingRoutes from './routes/bankingRoutes';
+app.use('/api/banking', bankingRoutes);
+
+// Banco Inter API Routes (Banking, Pix, Boletos, Webhooks)
+import interBankingRoutes from './routes/interBankingRoutes';
+app.use('/api/inter', interBankingRoutes);
+
+// Banco Itaú API Routes (Banking, Pix, Boletos, Webhooks)
+import itauBankingRoutes from './routes/itauBankingRoutes';
+app.use('/api/itau', itauBankingRoutes);
+
+// Approval Routes (Fila de aprovação para automações bancárias)
+import approvalRoutes from './routes/approvalRoutes';
+app.use('/api/approvals', approvalRoutes);
+
+// Document Routes (Envio de documentos via WhatsApp)
+import documentRoutes from './routes/documentRoutes';
+app.use('/api/documents', documentRoutes);
+
+// Email Routes
+import emailRoutes from './routes/emailRoutes';
+app.use('/api/email', emailRoutes);
+
 // Health Check
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', server: 'Doligen Backend' });
@@ -43,9 +75,31 @@ const server = app.listen(config.port, () => {
 socketService.init(server);
 
 // Initialize WhatsApp Service
-// sessionService auto-initializes on import (loads persisted sessions)
-// But we can log it
 console.log('[Server] SessionService loaded.');
+
+// Start Scheduler Worker (checks for pending messages every 30s)
+schedulerService.startWorker();
+console.log('[Server] SchedulerService worker started.');
+
+// Initialize Banking Services
+import { interApiService } from './services/interApiService';
+import { itauApiService } from './services/itauApiService';
+
+(async () => {
+    try {
+        await interApiService.initialize();
+        console.log('[Server] Banco Inter API initialized.');
+    } catch (e: any) {
+        console.error('[Server] Failed to initialize Banco Inter:', e.message);
+    }
+
+    try {
+        await itauApiService.initialize();
+        // console.log('[Server] Banco Itaú API initialized.');
+    } catch (e: any) {
+        // Itaú pode ser opcional
+    }
+})();
 
 // Graceful Shutdown Logic
 const gracefulShutdown = async (signal: string) => {
@@ -66,7 +120,10 @@ const gracefulShutdown = async (signal: string) => {
         }
     });
 
-    // 2. Destroy WhatsApp Clients (Releases Chrome processes & Ports)
+    // 2. Stop Scheduler Worker
+    schedulerService.stopWorker();
+
+    // 3. Destroy WhatsApp Clients (Releases Chrome processes & Ports)
     try {
         await sessionService.destroy();
     } catch (e) {

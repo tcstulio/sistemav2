@@ -4,10 +4,8 @@ import { Contract, ThirdParty, DolibarrConfig, AppView, Project, Invoice } from 
 import { FileSignature, Search, Plus, X, Loader2, CheckCircle2, Ban, Calendar, User, FileText, Filter, List, Archive, FolderKanban, Receipt, ExternalLink } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useContracts } from '../hooks/dolibarr/useContracts';
-import { useCustomers } from '../hooks/dolibarr/useCustomers';
-import { useProjects } from '../hooks/dolibarr/useProjects';
-import { useInvoices } from '../hooks/dolibarr/useInvoices';
+import { useContracts, useCustomers, useProjects, useInvoices } from '../hooks/dolibarr';
+import { LinkedObjects } from './common/LinkedObjects';
 
 interface ContractListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -257,8 +255,8 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                                         </span>
                                     </div>
                                     <div className="text-xs text-slate-500 flex items-center gap-1">
-                                        <Calendar size={12} /> {new Date(contract.date_contrat * 1000).toLocaleDateString()}
-                                        {contract.date_fin_validite && ` - ${new Date(contract.date_fin_validite * 1000).toLocaleDateString()}`}
+                                        <Calendar size={12} /> {new Date(contract.date_contrat < 100000000000 ? contract.date_contrat * 1000 : contract.date_contrat).toLocaleDateString()}
+                                        {contract.date_fin_validite && ` - ${new Date(contract.date_fin_validite < 100000000000 ? contract.date_fin_validite * 1000 : contract.date_fin_validite).toLocaleDateString()}`}
                                     </div>
                                 </div>
                             ))}
@@ -298,47 +296,56 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                             <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-950/50">
                                 <div className="max-w-3xl mx-auto space-y-6">
                                     {activeTab === 'overview' && (
-                                        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                                            <h3 className="font-bold text-slate-800 dark:text-white mb-4 border-b border-slate-100 dark:border-slate-800 pb-2">Informações</h3>
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                                <div>
-                                                    <label className="text-xs text-slate-500 uppercase font-bold">Cliente</label>
-                                                    <div
-                                                        className="flex items-center gap-2 mt-1 text-slate-800 dark:text-white font-medium cursor-pointer hover:underline hover:text-indigo-600 dark:hover:text-indigo-400"
-                                                        onClick={() => onNavigate && onNavigate('customers', selectedContract.socid)}
-                                                    >
-                                                        <User size={16} className="text-indigo-500" /> {getCustomerName(selectedContract.socid)}
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <label className="text-xs text-slate-500 uppercase font-bold">Duração</label>
-                                                    <div className="flex items-center gap-2 mt-1 text-slate-800 dark:text-white font-medium">
-                                                        <Calendar size={16} className="text-indigo-500" />
-                                                        {new Date(selectedContract.date_contrat * 1000).toLocaleDateString()}
-                                                        {selectedContract.date_fin_validite ? ` → ${new Date(selectedContract.date_fin_validite * 1000).toLocaleDateString()}` : ' (Sem Data Final)'}
-                                                    </div>
-                                                </div>
-                                                {selectedContract.project_id && (
-                                                    <div className="col-span-2">
-                                                        <label className="text-xs text-slate-500 uppercase font-bold">Projeto Vinculado</label>
+                                        <>
+                                            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                                                <h3 className="font-bold text-slate-800 dark:text-white mb-4 border-b border-slate-100 dark:border-slate-800 pb-2">Informações</h3>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                    <div>
+                                                        <label className="text-xs text-slate-500 uppercase font-bold">Cliente</label>
                                                         <div
-                                                            className="flex items-center gap-2 mt-1 text-indigo-600 dark:text-indigo-400 font-medium cursor-pointer hover:underline"
-                                                            onClick={() => onNavigate && onNavigate('projects', selectedContract.project_id!)}
+                                                            className="flex items-center gap-2 mt-1 text-slate-800 dark:text-white font-medium cursor-pointer hover:underline hover:text-indigo-600 dark:hover:text-indigo-400"
+                                                            onClick={() => onNavigate && onNavigate('customers', selectedContract.socid)}
                                                         >
-                                                            <FolderKanban size={16} /> {getProjectName(selectedContract.project_id)}
+                                                            <User size={16} className="text-indigo-500" /> {getCustomerName(selectedContract.socid)}
+                                                        </div>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-xs text-slate-500 uppercase font-bold">Duração</label>
+                                                        <div className="flex items-center gap-2 mt-1 text-slate-800 dark:text-white font-medium">
+                                                            <Calendar size={16} className="text-indigo-500" />
+                                                            {new Date(selectedContract.date_contrat < 100000000000 ? selectedContract.date_contrat * 1000 : selectedContract.date_contrat).toLocaleDateString()}
+                                                            {selectedContract.date_fin_validite ? ` → ${new Date(selectedContract.date_fin_validite < 100000000000 ? selectedContract.date_fin_validite * 1000 : selectedContract.date_fin_validite).toLocaleDateString()}` : ' (Sem Data Final)'}
+                                                        </div>
+                                                    </div>
+                                                    {selectedContract.project_id && (
+                                                        <div className="col-span-2">
+                                                            <label className="text-xs text-slate-500 uppercase font-bold">Projeto Vinculado</label>
+                                                            <div
+                                                                className="flex items-center gap-2 mt-1 text-indigo-600 dark:text-indigo-400 font-medium cursor-pointer hover:underline"
+                                                                onClick={() => onNavigate && onNavigate('projects', selectedContract.project_id!)}
+                                                            >
+                                                                <FolderKanban size={16} /> {getProjectName(selectedContract.project_id)}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                {selectedContract.note_public && (
+                                                    <div className="mt-6">
+                                                        <label className="text-xs text-slate-500 uppercase font-bold">Notas</label>
+                                                        <div className="mt-2 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800 text-sm text-slate-700 dark:text-slate-300">
+                                                            {selectedContract.note_public}
                                                         </div>
                                                     </div>
                                                 )}
                                             </div>
-                                            {selectedContract.note_public && (
-                                                <div className="mt-6">
-                                                    <label className="text-xs text-slate-500 uppercase font-bold">Notas</label>
-                                                    <div className="mt-2 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800 text-sm text-slate-700 dark:text-slate-300">
-                                                        {selectedContract.note_public}
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
+                                            <div className="mt-6">
+                                                <LinkedObjects
+                                                    id={selectedContract.id}
+                                                    type="contrat"
+                                                    onNavigate={onNavigate}
+                                                />
+                                            </div>
+                                        </>
                                     )}
 
                                     {activeTab === 'invoices' && (
@@ -360,7 +367,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                                                                 {inv.ref}
                                                                 {inv.statut === '2' ? <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Pago</span> : <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded">Não Pago</span>}
                                                             </div>
-                                                            <div className="text-xs text-slate-500 mt-1">{new Date(inv.date * 1000).toLocaleDateString()}</div>
+                                                            <div className="text-xs text-slate-500 mt-1">{new Date(inv.date < 100000000000 ? inv.date * 1000 : inv.date).toLocaleDateString()}</div>
                                                         </div>
                                                         <div className="flex items-center gap-4">
                                                             <span className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString()}</span>

@@ -244,6 +244,27 @@ export class SessionService {
         return sessions;
     }
 
+    /**
+     * Send typing indicator to a chat
+     */
+    async sendTyping(sessionId: string, chatId: string) {
+        const client = this.clients.get(sessionId);
+        if (!client) {
+            console.warn(`[SessionService] Cannot send typing: Session ${sessionId} not found`);
+            return;
+        }
+
+        try {
+            const chat = await client.getChatById(chatId);
+            if (chat) {
+                await chat.sendStateTyping();
+                console.log(`[SessionService] Typing indicator sent to ${chatId}`);
+            }
+        } catch (e: any) {
+            console.warn(`[SessionService] Failed to send typing to ${chatId}:`, e.message);
+        }
+    }
+
     private resolveSenderName = async (msg: any): Promise<string> => {
         if (msg._data?.notifyName) return msg._data.notifyName;
         try {

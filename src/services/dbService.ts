@@ -1,7 +1,7 @@
 
 
 export const DB_NAME = 'DoliGenDB';
-export const DB_VERSION = 12; // Bumped version for payments stores
+export const DB_VERSION = 13; // Bumped version for systemLogs store
 
 const STORES = [
     'customers', 'suppliers', 'categories', 'contacts', 'invoices',
@@ -9,8 +9,8 @@ const STORES = [
     'projects', 'tasks', 'bankAccounts', 'bankLines', 'events',
     'users', 'supplierOrders', 'interventions', 'expenseReports',
     'jobPositions', 'tickets', 'warehouses', 'stockMovements', 'candidates',
-    'leaveRequests', 'contracts', 'payments', 'supplierPayments', // Added payments stores
-    'boms', 'manufacturingOrders',
+    'leaveRequests', 'contracts', 'payments', 'supplierPayments',
+    'boms', 'manufacturingOrders', 'systemLogs', // Added systemLogs store
     'api_logs',
     'pending_sync'
 ];

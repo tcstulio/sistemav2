@@ -16,6 +16,7 @@ interface WhatsAppStore {
             autoReplyContext?: string;
             signatureName?: string; // Bot Signature for this account
             name?: string; // Friendly Name for the Session (e.g. "Vendas", "Suporte")
+            historyLimit?: number; // Number of messages to send to LLM (default: 10)
         };
     };
     // Per-Chat (Specific Overrides)
@@ -110,7 +111,7 @@ class StoreService {
         return this.data.session_settings[sessionId] || { autoReply: false };
     }
 
-    updateSessionSettings(sessionId: string, settings: { autoReply?: boolean; autoReplyContext?: string; signatureName?: string; name?: string }) {
+    updateSessionSettings(sessionId: string, settings: { autoReply?: boolean; autoReplyContext?: string; signatureName?: string; name?: string; historyLimit?: number }) {
         const current = this.getSessionSettings(sessionId);
 
         // Remove undefined keys to prevent overwriting existing data with undefined

@@ -4,12 +4,10 @@ import { Proposal, ThirdParty, DolibarrConfig, AppView, Product, Project } from 
 import { FileText, Search, ExternalLink, PenTool, CheckCircle, XCircle, Send, Archive, Kanban, List, ShoppingCart, Download, Loader2, FileSignature, Scale, AlertTriangle, ShieldCheck, X, Plus, Trash2, FolderKanban, Ban, Check } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { AiService } from '../services/aiService';
+import { LinkedObjects } from './common/LinkedObjects';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
-import { useProposals } from '../hooks/dolibarr/useProposals';
-import { useCustomers } from '../hooks/dolibarr/useCustomers';
-import { useProducts } from '../hooks/dolibarr/useProducts';
-import { useProjects } from '../hooks/dolibarr/useProjects';
+import { useProposals, useCustomers, useProducts, useProjects } from '../hooks/dolibarr';
 
 interface ProposalListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -279,6 +277,14 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh }) =>
                                     </table>
                                 </div>
                             </div>
+                        </div>
+                        <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2 bg-slate-50 dark:bg-slate-800/50 rounded-b-xl">
+                            {/* Linked Objects */}
+                            <LinkedObjects
+                                id={selectedProposal.id}
+                                type="propal"
+                                onNavigate={onNavigate}
+                            />
                         </div>
                         <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2 bg-slate-50 dark:bg-slate-800/50 rounded-b-xl">
                             <button onClick={() => handleDownloadPdf({} as any, selectedProposal.ref)} className="px-4 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-600">Baixar PDF</button>

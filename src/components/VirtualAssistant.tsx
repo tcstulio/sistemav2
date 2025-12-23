@@ -1,12 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User } from 'lucide-react';
-import { AiService } from '../services/aiService';
-import { ChatMessage, ThirdParty, Invoice, Project, Ticket } from '../types';
+import { AiService, ChatMessage } from '../services/aiService';
+import { ThirdParty, Invoice, Project, Ticket } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useCustomers } from '../hooks/dolibarr/useCustomers';
-import { useInvoices } from '../hooks/dolibarr/useInvoices';
-import { useProjects } from '../hooks/dolibarr/useProjects';
-import { useTickets } from '../hooks/dolibarr/useTickets';
+// Hooks removidos: Backend processa dados via ferramentas IA
 
 interface VirtualAssistantProps {
   // No props needed
@@ -15,10 +12,8 @@ interface VirtualAssistantProps {
 const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const { config } = useDolibarr();
 
-  const { data: customers = [] } = useCustomers(config);
-  const { data: invoices = [] } = useInvoices(config);
-  const { data: projects = [] } = useProjects(config);
-  const { data: tickets = [] } = useTickets(config);
+  // Data fetching removed - Backend now handles this via ReAct tools
+
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'model', text: 'Olá! Sou seu Assistente Virtual. Posso analisar documentos e responder perguntas sobre seus dados.' }
@@ -74,9 +69,19 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     setIsLoading(true);
 
     try {
-      // Passar dados resumidos ou completos? Pela assinatura, passamos tudo.
-      // O service cuidará de como enviar isso.
-      const responseText = await AiService.chatWithData(userMsg, customers, invoices, projects, tickets, userImage || undefined);
+      // Passar apenas a mensagem e imagem. O backend buscará os dados (Ferramentas).
+      // Mantendo historico? O backend pede historico, mas o frontend service original nao passava o state 'messages'.
+      // Vamos verificar o frontend aiService.
+      // Filter out the initial welcome message if it exists (usually the first message)
+      // We only want to send relevant conversation history
+      const relevantHistory = messages.filter((m, index) => {
+        if (index === 0 && m.role === 'model' && m.text.includes('Olá! Sou seu Assistente Virtual')) {
+          return false;
+        }
+        return true;
+      });
+
+      const responseText = await AiService.chatWithData(userMsg, relevantHistory, userImage?.data);
       if (responseText) {
         setMessages(prev => [...prev, { role: 'model', text: responseText }]);
       } else {

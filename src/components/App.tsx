@@ -31,6 +31,9 @@ import ShipmentList from './ShipmentList';
 import PaymentList from './PaymentList';
 import CategoryList from './CategoryList';
 import WhatsAppView from './WhatsAppView';
+import EmailView from './Email/EmailView';
+import SchedulerAdmin from './SchedulerAdmin';
+import ActivityView from './ActivityView';
 
 // Wrapper to adapt Router Params/Navigate to Legacy Component Props
 const ViewWrapper = ({ Component, viewId, passProps = {} }: any) => {
@@ -77,6 +80,8 @@ const App: React.FC = () => {
                         <Route path="/" element={<ViewWrapper Component={Dashboard} viewId="dashboard" />} />
 
                         <Route path="/whatsapp" element={<ViewWrapper Component={WhatsAppView} viewId="whatsapp" />} />
+                        <Route path="/email" element={<ViewWrapper Component={EmailView} viewId="email" />} />
+                        <Route path="/automation" element={<ViewWrapper Component={SchedulerAdmin} viewId="whatsapp" />} />
 
                         <Route path="/customers" element={<ViewWrapper Component={CustomerList} viewId="customers" />} />
                         <Route path="/customers/:id" element={<ViewWrapper Component={CustomerList} viewId="customers" />} />
@@ -125,6 +130,8 @@ const App: React.FC = () => {
                         <Route path="/payments" element={<ViewWrapper Component={PaymentList} viewId="payments" />} />
 
                         <Route path="/reports" element={<ViewWrapper Component={ReportsView} viewId="reports" />} />
+
+                        <Route path="/activity" element={<ViewWrapper Component={ActivityView} viewId="activity" />} />
 
                         <Route path="/development" element={<ViewWrapper Component={DevelopmentView} viewId="development" />} />
 

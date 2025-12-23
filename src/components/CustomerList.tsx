@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { ThirdParty, AppView } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
+import { useCustomers, useInvoices, useProposals, useOrders, useProjects, useEvents, useTickets, useShipments, useContacts } from '../hooks/dolibarr';
 import { Mail, MapPin, Building2, Phone, Sparkles, Loader2, X, ArrowLeft, Search, UserPlus, CheckCircle2, UserCircle, Pencil, ChevronLeft, ChevronRight } from 'lucide-react';
 import { AiService } from '../services/aiService';
 import { DolibarrService } from '../services/dolibarrService';
@@ -11,20 +12,12 @@ import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 
 // Hooks
-import { useCustomers } from '../hooks/dolibarr/useCustomers';
-import { useInvoices } from '../hooks/dolibarr/useInvoices';
-import { useProposals } from '../hooks/dolibarr/useProposals';
-import { useOrders } from '../hooks/dolibarr/useOrders';
-import { useProjects } from '../hooks/dolibarr/useProjects';
-import { useEvents } from '../hooks/dolibarr/useEvents';
-import { useTickets } from '../hooks/dolibarr/useTickets';
-import { useShipments } from '../hooks/dolibarr/useShipments';
-import { useContacts } from '../hooks/dolibarr/useContacts';
 
 // Common Components
 import { GenericListLayout } from './common/GenericListLayout';
 import { PaginationControls } from './common/PaginationControls';
 import { StatusFilterBar } from './common/StatusFilterBar';
+import { LinkedObjects } from './common/LinkedObjects';
 
 interface CustomerListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -420,6 +413,13 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                                     </div>
                                 )}
                             </div>
+                            <div className="md:col-span-2 mt-6">
+                                <LinkedObjects
+                                    id={selectedCustomer.id}
+                                    type="societe"
+                                    onNavigate={onNavigate}
+                                />
+                            </div>
                         </div>
                     )}
 
@@ -458,7 +458,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                                                 {inv.ref}
                                                 {inv.statut === '2' ? <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Pago</span> : <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded">Aberto</span>}
                                             </div>
-                                            <div className="text-xs text-slate-500 mt-1">{new Date(inv.date * 1000).toLocaleDateString()}</div>
+                                            <div className="text-xs text-slate-500 mt-1">{new Date(inv.date < 100000000000 ? inv.date * 1000 : inv.date).toLocaleDateString()}</div>
                                         </div>
                                         <div className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString()}</div>
                                     </div>
@@ -478,7 +478,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                                                     {ord.statut === '3' ? 'Entregue' : ord.statut === '0' ? 'Rascunho' : 'Em Processo'}
                                                 </span>
                                             </div>
-                                            <div className="text-xs text-slate-500 mt-1">{new Date(ord.date * 1000).toLocaleDateString()}</div>
+                                            <div className="text-xs text-slate-500 mt-1">{new Date(ord.date < 100000000000 ? ord.date * 1000 : ord.date).toLocaleDateString()}</div>
                                         </div>
                                         <div className="font-bold text-slate-800 dark:text-white">${ord.total_ttc.toLocaleString()}</div>
                                     </div>
@@ -498,7 +498,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                                                     {prop.statut === '2' ? 'Assinada' : prop.statut === '3' ? 'Recusada' : 'Aberta'}
                                                 </span>
                                             </div>
-                                            <div className="text-xs text-slate-500 mt-1">{new Date(prop.date * 1000).toLocaleDateString()}</div>
+                                            <div className="text-xs text-slate-500 mt-1">{new Date(prop.date < 100000000000 ? prop.date * 1000 : prop.date).toLocaleDateString()}</div>
                                         </div>
                                         <div className="font-bold text-slate-800 dark:text-white">${prop.total_ttc.toLocaleString()}</div>
                                     </div>

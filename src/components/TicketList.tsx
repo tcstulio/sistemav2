@@ -4,12 +4,8 @@ import { Ticket as TicketIcon, Search, AlertCircle, Clock, Calendar, CheckCircle
 import { AiService } from '../services/aiService';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useTickets } from '../hooks/dolibarr/useTickets';
-import { useCustomers } from '../hooks/dolibarr/useCustomers';
-import { useUsers } from '../hooks/dolibarr/useUsers';
-import { useEvents } from '../hooks/dolibarr/useEvents';
-import { useProjects } from '../hooks/dolibarr/useProjects';
-import { useInterventions } from '../hooks/dolibarr/useInterventions';
+import { useTickets, useCustomers, useUsers, useEvents, useProjects, useInterventions } from '../hooks/dolibarr';
+import { LinkedObjects } from './common/LinkedObjects';
 
 interface TicketListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -427,7 +423,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
                                         >
                                             {getCustomerName(t)}
                                         </span>
-                                        <span>{new Date(t.date_c * 1000).toLocaleDateString()}</span>
+                                        <span>{new Date(t.date_c < 100000000000 ? t.date_c * 1000 : t.date_c).toLocaleDateString()}</span>
                                     </div>
                                 </div>
                             ))}
@@ -577,7 +573,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
                                             }`}>
                                             {renderMessageContent(msg.text)}
                                             <div className={`text-[10px] mt-1 opacity-70 ${msg.sender === 'agent' ? 'text-right' : ''}`}>
-                                                {msg.user} • {new Date((msg.date || 0) * 1000).toLocaleString()}
+                                                {msg.user} • {new Date((msg.date || 0) < 100000000000 ? (msg.date || 0) * 1000 : (msg.date || 0)).toLocaleString()}
                                             </div>
                                         </div>
                                     </div>
@@ -605,7 +601,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
                                                         <div key={e.id} className="flex justify-between items-center p-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700 cursor-pointer hover:border-blue-300" onClick={() => onNavigate && onNavigate('agenda', '')}>
                                                             <div>
                                                                 <div className="font-medium text-slate-800 dark:text-white text-xs">{e.label}</div>
-                                                                <div className="text-[10px] text-slate-500">{new Date(e.date_start * 1000).toLocaleString()}</div>
+                                                                <div className="text-[10px] text-slate-500">{new Date(e.date_start < 100000000000 ? e.date_start * 1000 : e.date_start).toLocaleString()}</div>
                                                             </div>
                                                         </div>
                                                     ))}
@@ -632,7 +628,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
                                                                 <div className="font-medium text-slate-800 dark:text-white text-xs">{i.ref}</div>
                                                                 <div className="text-[10px] text-slate-500">{i.description || 'Sem descrição'}</div>
                                                             </div>
-                                                            <div className="text-[10px] text-slate-500">{new Date(i.date * 1000).toLocaleDateString()}</div>
+                                                            <div className="text-[10px] text-slate-500">{new Date(i.date < 100000000000 ? i.date * 1000 : i.date).toLocaleDateString()}</div>
                                                         </div>
                                                     ))}
                                                 </div>
@@ -640,6 +636,15 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
                                         )}
                                 </div>
                             )}
+
+                            {/* Linked Objects */}
+                            <div className="px-4 pb-4">
+                                <LinkedObjects
+                                    id={selectedTicket.id}
+                                    type="ticket"
+                                    onNavigate={onNavigate}
+                                />
+                            </div>
 
                             {/* Reply Area */}
                             <div className="p-4 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex-none">

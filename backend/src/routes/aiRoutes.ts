@@ -15,7 +15,8 @@ const GenerateReplySchema = z.object({
         role: z.enum(['user', 'model', 'system']),
         parts: z.string()
     })).optional(),
-    context: z.string().optional()
+    context: z.string().optional(),
+    image: z.string().optional() // Base64 image for multimodal chat
 });
 
 const AnalyzeSystemSchema = z.object({
@@ -24,14 +25,8 @@ const AnalyzeSystemSchema = z.object({
 
 router.post('/generate-reply', async (req, res) => {
     try {
-        const { history, context } = GenerateReplySchema.parse(req.body);
-        // Map History structure if needed, or pass directly
-        // Assuming aiService accepts the structure or we map it:
-        // Service expects: { role: string; parts: string }[] ?
-        // Or simplified string[]? Checking service usage... 
-        // Based on previous file, it passes history || [].
-
-        const reply = await aiService.generateReply(history as any || [], context || '');
+        const { history, context, image } = GenerateReplySchema.parse(req.body);
+        const reply = await aiService.generateReply(history as any || [], context || '', image);
         res.json({ reply });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -152,6 +147,139 @@ router.post('/generate/code', async (req, res) => {
     try {
         const { endpoint, method, description } = GenerateCodeSchema.parse(req.body);
         const result = await aiService.generateCode(endpoint, method, description);
+        res.json({ result });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// --- NEW ROUTES ---
+
+// Audio Transcription
+const TranscribeAudioSchema = z.object({
+    audio: z.string(),
+    mimeType: z.string().optional()
+});
+
+router.post('/transcribe-audio', async (req, res) => {
+    try {
+        const { audio, mimeType } = TranscribeAudioSchema.parse(req.body);
+        const transcription = await aiService.transcribeAudio(audio, mimeType || 'audio/ogg');
+        res.json({ transcription });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Draft Collection Email
+const DraftEmailSchema = z.object({
+    customer: z.any(),
+    amount: z.number()
+});
+
+router.post('/draft/collection-email', async (req, res) => {
+    try {
+        const { customer, amount } = DraftEmailSchema.parse(req.body);
+        const result = await aiService.draftCollectionEmail(customer, amount);
+        res.json({ result });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Sales Forecast
+const SalesForecastSchema = z.object({
+    invoices: z.array(z.any())
+});
+
+router.post('/analyze/sales-forecast', async (req, res) => {
+    try {
+        const { invoices } = SalesForecastSchema.parse(req.body);
+        const result = await aiService.generateSalesForecast(invoices);
+        res.json({ result });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Customer Sentiment Analysis
+const CustomerSentimentSchema = z.object({
+    customer: z.any(),
+    invoices: z.array(z.any())
+});
+
+router.post('/analyze/customer-sentiment', async (req, res) => {
+    try {
+        const { customer, invoices } = CustomerSentimentSchema.parse(req.body);
+        const result = await aiService.analyzeCustomerSentiment(customer, invoices);
+        res.json({ result });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Audit Proposal
+const AuditProposalSchema = z.object({
+    proposal: z.any()
+});
+
+router.post('/audit/proposal', async (req, res) => {
+    try {
+        const { proposal } = AuditProposalSchema.parse(req.body);
+        const result = await aiService.auditProposal(proposal);
+        res.json({ result });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Audit Project
+const AuditProjectSchema = z.object({
+    project: z.any(),
+    tasks: z.array(z.any()).optional(),
+    invoices: z.array(z.any()).optional()
+});
+
+router.post('/audit/project', async (req, res) => {
+    try {
+        const { project, tasks, invoices } = AuditProjectSchema.parse(req.body);
+        const result = await aiService.auditProject(project, tasks, invoices);
+        res.json({ result });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Analyze System Logs
+const AnalyzeLogsSchema = z.object({
+    logs: z.array(z.any())
+});
+
+router.post('/analyze/logs', async (req, res) => {
+    try {
+        const { logs } = AnalyzeLogsSchema.parse(req.body);
+        const result = await aiService.analyzeSystemLogs(logs);
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {

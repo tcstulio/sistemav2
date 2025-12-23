@@ -2,17 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Search, X, Users, FolderKanban, FileText, Package, Ticket as TicketIcon, ArrowRight, Command, ShoppingCart, FileSignature, Truck, UserCircle, TrendingUp } from 'lucide-react';
 import { ThirdParty, Project, Invoice, Product, Ticket, AppView, Order, Contract, DolibarrUser, BankLine } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useCustomers } from '../hooks/dolibarr/useCustomers';
-import { useInvoices } from '../hooks/dolibarr/useInvoices';
-import { useProjects } from '../hooks/dolibarr/useProjects';
-import { useTickets } from '../hooks/dolibarr/useTickets';
-import { useProducts } from '../hooks/dolibarr/useProducts';
-import { useOrders } from '../hooks/dolibarr/useOrders';
-import { useContracts } from '../hooks/dolibarr/useContracts';
-import { useSuppliers } from '../hooks/dolibarr/useSuppliers';
-import { useUsers } from '../hooks/dolibarr/useUsers';
-import { useBankLines } from '../hooks/dolibarr/useBankLines';
-import { useBankAccounts } from '../hooks/dolibarr/useBankAccounts';
+import { useCustomers, useSuppliers, useProjects, useInvoices, useOrders, useContracts, useTickets, useProducts, useUsers, useBankAccounts, useBankLines } from '../hooks/dolibarr';
 
 interface GlobalSearchProps {
   isOpen: boolean;

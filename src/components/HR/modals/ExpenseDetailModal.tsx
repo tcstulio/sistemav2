@@ -62,7 +62,7 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({ expense,
                                 <label className="text-xs text-slate-500 uppercase font-bold">Data</label>
                                 <p className="text-slate-800 dark:text-white flex items-center gap-2 mt-1">
                                     <Calendar size={14} className="text-slate-400" />
-                                    {new Date(expense.date_debut * 1000).toLocaleDateString()}
+                                    {new Date(expense.date_debut < 100000000000 ? expense.date_debut * 1000 : expense.date_debut).toLocaleDateString()}
                                 </p>
                             </div>
                             <div>

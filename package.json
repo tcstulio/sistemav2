@@ -17,6 +17,7 @@
     "@google/genai": "^1.30.0",
     "@tanstack/react-query": "^5.90.12",
     "axios": "^1.13.2",
+    "date-fns": "^4.1.0",
     "lucide-react": "^0.555.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -43,6 +44,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "openapi-typescript": "^7.10.1",
+    "sqlite3": "^5.1.7",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
