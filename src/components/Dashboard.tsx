@@ -2,13 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { AppView } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useInvoices } from '../hooks/dolibarr/useInvoices';
-import { useSupplierInvoices } from '../hooks/dolibarr/useSupplierInvoices';
-import { useTasks } from '../hooks/dolibarr/useTasks';
-import { useProducts } from '../hooks/dolibarr/useProducts';
-import { useBankAccounts } from '../hooks/dolibarr/useBankAccounts';
-import { useInterventions } from '../hooks/dolibarr/useInterventions';
-import { useTickets } from '../hooks/dolibarr/useTickets';
+import { useInvoices, useSupplierInvoices, useTasks, useProducts, useBankAccounts, useInterventions, useTickets } from '../hooks/dolibarr';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { DollarSign, Users, FileText, TrendingUp, Sparkles, Loader2, Minus, FolderKanban, Map, Pencil, Save, X, AlertOctagon, Clock, Package, Landmark, MessageSquare, ClipboardList, Wrench, Ticket as TicketIcon, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { AiService } from '../services/aiService';
@@ -51,23 +45,48 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         const totalRevenue = invoices.filter(i => i.statut === '2').reduce((acc, curr) => acc + curr.total_ttc, 0);
         const totalExpense = supplierInvoices.filter(i => i.statut === '2').reduce((acc, curr) => acc + curr.total_ttc, 0);
         const totalCash = bankAccounts.reduce((acc, curr) => acc + (curr.solde || 0), 0);
-        const unpaidInvoices = invoices.filter(i => i.statut === '1' && (i.date_lim_reglement ? new Date(i.date_lim_reglement * 1000) : new Date(i.date * 1000 + 30 * 24 * 60 * 60 * 1000)) < new Date()).length;
+        const now = new Date();
+        const unpaidInvoices = invoices.filter(i => {
+            if (i.statut !== '1') return false;
+            // Use explicit due date if available, otherwise default to 30 days
+            const dueDate = i.date_lim_reglement || (i.date + 30 * 24 * 60 * 60 * 1000);
+            return dueDate < now.getTime();
+        }).length;
 
         return { totalRevenue, totalExpense, totalCash, unpaidInvoices };
     }, [invoices, supplierInvoices, bankAccounts]);
 
     const cashFlowData = useMemo(() => {
-        // Simplified mock logic for chart data structure - ideally aggregate by month
-        // Detailed implementation omitted for brevity, focusing on repair
-        return [
-            { month: 'Jan', income: 4000, expense: 2400 },
-            { month: 'Fev', income: 3000, expense: 1398 },
-            { month: 'Mar', income: 2000, expense: 9800 },
-            { month: 'Abr', income: 2780, expense: 3908 },
-            { month: 'Mai', income: 1890, expense: 4800 },
-            { month: 'Jun', income: 2390, expense: 3800 },
-        ];
-    }, []);
+        const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+        const currentYear = new Date().getFullYear();
+
+        // Initialize 12 months
+        const monthlyData = months.map(m => ({ month: m, income: 0, expense: 0 }));
+
+        // Process Invoices (Income) - Only Paid (statut = 2)
+        invoices.forEach(inv => {
+            if (inv.statut === '2') {
+                const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
+                const d = new Date(dateVal);
+                if (d.getFullYear() === currentYear) {
+                    monthlyData[d.getMonth()].income += inv.total_ttc;
+                }
+            }
+        });
+
+        // Process Supplier Invoices (Expense) - Only Paid (statut = 2)
+        supplierInvoices.forEach(inv => {
+            if (inv.statut === '2') {
+                const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
+                const d = new Date(dateVal);
+                if (d.getFullYear() === currentYear) {
+                    monthlyData[d.getMonth()].expense += inv.total_ttc;
+                }
+            }
+        });
+
+        return monthlyData;
+    }, [invoices, supplierInvoices]);
 
     const recentActivityData = useMemo(() => {
         return invoices.slice(0, 5).map(inv => ({
@@ -83,7 +102,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     }, [products]);
 
     const lateTasks = useMemo(() => {
-        return tasks.filter(t => t.date_end && new Date(t.date_end * 1000) < new Date() && t.progress < 100).slice(0, 5);
+        return tasks.filter(t => t.date_end && new Date(t.date_end < 100000000000 ? t.date_end * 1000 : t.date_end) < new Date() && t.progress < 100).slice(0, 5);
     }, [tasks]);
 
     // My Assignments
@@ -267,7 +286,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                         <div key={i.id} className="p-3 bg-orange-50 dark:bg-orange-900/10 rounded-lg border border-orange-100 dark:border-orange-800 cursor-pointer hover:bg-orange-100 dark:hover:bg-orange-900/20" onClick={() => onNavigate && onNavigate('interventions', i.id)}>
                                             <div className="flex justify-between items-start">
                                                 <span className="text-xs font-bold text-orange-700 dark:text-orange-400 flex items-center gap-1"><Wrench size={10} /> {i.ref}</span>
-                                                <span className="text-[10px] text-slate-500">{new Date(i.date * 1000).toLocaleDateString()}</span>
+                                                <span className="text-[10px] text-slate-500">{new Date(i.date < 100000000000 ? i.date * 1000 : i.date).toLocaleDateString()}</span>
                                             </div>
                                             <div className="text-sm font-medium text-slate-800 dark:text-white mt-1 line-clamp-1">{i.description || 'Intervenção'}</div>
                                         </div>
@@ -276,7 +295,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                         <div key={t.id} className="p-3 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-100 dark:border-blue-800 cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/20" onClick={() => onNavigate && onNavigate('tickets', t.id)}>
                                             <div className="flex justify-between items-start">
                                                 <span className="text-xs font-bold text-blue-700 dark:text-blue-400 flex items-center gap-1"><TicketIcon size={10} /> {t.ref}</span>
-                                                <span className="text-[10px] text-slate-500">{new Date(t.date_c * 1000).toLocaleDateString()}</span>
+                                                <span className="text-[10px] text-slate-500">{new Date(t.date_c < 100000000000 ? t.date_c * 1000 : t.date_c).toLocaleDateString()}</span>
                                             </div>
                                             <div className="text-sm font-medium text-slate-800 dark:text-white mt-1 line-clamp-1">{t.subject}</div>
                                         </div>
@@ -370,7 +389,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                                     <span className="text-[10px] font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Atrasado</span>
                                                 </div>
                                                 <div className="flex items-center gap-2 mt-1 text-xs text-red-500">
-                                                    <Clock size={12} /> Prazo: {new Date((task.date_end || 0) * 1000).toLocaleDateString()}
+                                                    <Clock size={12} /> Prazo: {new Date((task.date_end || 0) < 100000000000 ? (task.date_end || 0) * 1000 : (task.date_end || 0)).toLocaleDateString()}
                                                 </div>
                                             </div>
                                         ))}

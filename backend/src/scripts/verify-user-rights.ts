@@ -36,7 +36,7 @@ const headers = {
 
 async function verifyRights() {
     console.log(`Testing API: ${baseUrl}`);
-    console.log(`Using Key: ${API_KEY.substring(0, 5)}...`);
+    console.log(`Using Key: ${API_KEY!.substring(0, 5)}...`);
     console.log(`Using Cookie: ${BYPASS_COOKIE}`);
 
     try {

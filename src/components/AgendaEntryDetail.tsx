@@ -1,7 +1,8 @@
 
 import React, { useEffect, useState } from 'react';
 import { DolibarrConfig, AgendaEvent, AppView } from '../types';
-import { DolibarrService } from '../services/dolibarrService';
+import { dbService } from '../services/dbService';
+import { mapAgendaEvent, mapTask, mapProject, mapIntervention } from '../hooks/dolibarr/mappers';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
 import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronLeft, Calendar as CalendarIcon, Link, User, Building, FileText, Ticket, ExternalLink, AlertCircle, Eye, EyeOff } from 'lucide-react';
 
@@ -45,26 +46,36 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
 
                 setType(detectedType);
 
-                // Fetch Data based on Type
+                // Read from local IndexedDB (already synced via custom_sync.php)
+                let rawData;
                 let result;
                 switch (detectedType) {
                     case 'event':
-                        result = await DolibarrService.getEvent(config, id);
+                        rawData = await dbService.get<any>('events', id);
+                        result = rawData ? mapAgendaEvent(rawData) : null;
                         break;
                     case 'task':
-                        result = await DolibarrService.getTask(config, id);
+                        rawData = await dbService.get<any>('tasks', id);
+                        result = rawData ? mapTask(rawData) : null;
                         break;
                     case 'project':
-                        result = await DolibarrService.getProject(config, id);
+                        rawData = await dbService.get<any>('projects', id);
+                        result = rawData ? mapProject(rawData) : null;
                         break;
                     case 'intervention':
-                        result = await DolibarrService.getIntervention(config, id);
+                        rawData = await dbService.get<any>('interventions', id);
+                        result = rawData ? mapIntervention(rawData) : null;
                         break;
                 }
-                setData(result);
+
+                if (!result) {
+                    setError("Item não encontrado no cache local. Aguarde a sincronização.");
+                } else {
+                    setData(result);
+                }
 
             } catch (err) {
-                console.error("Error fetching agenda details:", err);
+                console.error("Error fetching agenda details from IndexedDB:", err);
                 setError("Não foi possível carregar os detalhes do item.");
             } finally {
                 setLoading(false);
@@ -101,7 +112,8 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
 
     const formatDate = (timestamp?: number) => {
         if (!timestamp) return '-';
-        return new Date(timestamp * 1000).toLocaleString('pt-BR', { dateStyle: 'long', timeStyle: 'short' });
+        const ts = timestamp < 100000000000 ? timestamp * 1000 : timestamp;
+        return new Date(ts).toLocaleString('pt-BR', { dateStyle: 'long', timeStyle: 'short' });
     };
 
     // --- RENDERERS FOR DIFFERENT TYPES ---

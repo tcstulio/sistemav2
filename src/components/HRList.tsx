@@ -15,14 +15,7 @@ import { ExpenseScannerModal } from './HR/modals/ExpenseScannerModal';
 import { ExpenseDetailModal } from './HR/modals/ExpenseDetailModal';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useUsers } from '../hooks/dolibarr/useUsers';
-import { useExpenseReports } from '../hooks/dolibarr/useExpenseReports';
-import { useLeaveRequests } from '../hooks/dolibarr/useLeaveRequests';
-import { useJobPositions } from '../hooks/dolibarr/useJobPositions';
-import { useCandidates } from '../hooks/dolibarr/useCandidates';
-import { useTasks } from '../hooks/dolibarr/useTasks';
-import { useTickets } from '../hooks/dolibarr/useTickets';
-import { useProjects } from '../hooks/dolibarr/useProjects';
+import { useUsers, useExpenseReports, useLeaveRequests, useJobPositions, useCandidates, useTasks, useTickets, useProjects } from '../hooks/dolibarr';
 
 interface HRListProps {
     onNavigate?: (view: AppView, id: string) => void;

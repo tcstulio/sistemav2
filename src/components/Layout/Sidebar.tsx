@@ -1,8 +1,8 @@
 import React, { useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useDolibarr } from '../../context/DolibarrContext';
-import { useModules } from '../../hooks/dolibarr/useModules';
-import { Layout, Users, FileText, Package, ShoppingCart, Truck, Settings, LifeBuoy, BarChart3, Menu, X, LogOut, FileSignature, TrendingUp, PenTool, Factory, FolderKanban, ClipboardList, Landmark, CalendarDays, Tag, MessageSquare, Activity, Bug, UserCircle } from 'lucide-react';
+import { useModules } from '../../hooks/dolibarr';
+import { Layout, Users, FileText, Package, ShoppingCart, Truck, Settings, LifeBuoy, BarChart3, Menu, X, LogOut, FileSignature, TrendingUp, PenTool, Factory, FolderKanban, ClipboardList, Landmark, CalendarDays, Tag, MessageSquare, Activity, Bug, UserCircle, Bot, Mail } from 'lucide-react';
 
 interface SidebarProps {
     isOpen: boolean;
@@ -19,6 +19,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
     const menuItems = [
         { id: 'dashboard', path: '/', label: 'Painel Principal', icon: Layout },
         { id: 'whatsapp', path: '/whatsapp', label: 'WhatsApp Omni', icon: MessageSquare },
+        { id: 'email', path: '/email', label: 'Emails', icon: Mail },
+        { id: 'automation', path: '/automation', label: 'Automação', icon: Bot },
         { id: 'agenda', path: '/agenda', label: 'Agenda', icon: CalendarDays },
         { id: 'projects', path: '/projects', label: 'Projetos', icon: FolderKanban },
         { id: 'customers', path: '/customers', label: 'Clientes', icon: Users },
@@ -38,7 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
         { id: 'bank_accounts', path: '/bank_accounts', label: 'Bancos', icon: Landmark },
         { id: 'hr', path: '/hr', label: 'RH & Equipe', icon: UserCircle },
         { id: 'reports', path: '/reports', label: 'Relatórios', icon: BarChart3 },
-
+        { id: 'activity', path: '/activity', label: 'Atividades', icon: Activity },
 
         { id: 'development', path: '/development', label: 'Console Dev', icon: Bug }
     ];

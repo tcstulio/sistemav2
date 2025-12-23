@@ -15,7 +15,7 @@ if (!DOLIBARR_URL || !API_KEY) {
 }
 
 async function debugRights() {
-    console.log(`Checking rights using API Key: ${API_KEY.substring(0, 5)}...`);
+    console.log(`Checking rights using API Key: ${API_KEY!.substring(0, 5)}...`);
 
     try {
         // 1. Get My User (or List Users to find one)

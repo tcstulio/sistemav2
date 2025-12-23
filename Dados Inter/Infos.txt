@@ -1,0 +1,2 @@
+client-id: 991d270b-014f-4038-a2e5-0059489484bf
+clientSecret: 6ca68f49-b63b-405d-a3e3-25ea32415732

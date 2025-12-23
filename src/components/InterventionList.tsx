@@ -4,9 +4,8 @@ import { Intervention, ThirdParty, DolibarrConfig, AppView, Project } from '../t
 import { ClipboardList, Search, Plus, X, Loader2, CheckCircle2, Clock, Calendar, CheckSquare, Wrench, FolderKanban, User, Timer } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useInterventions } from '../hooks/dolibarr/useInterventions';
-import { useCustomers } from '../hooks/dolibarr/useCustomers';
-import { useProjects } from '../hooks/dolibarr/useProjects';
+import { useInterventions, useCustomers, useProjects } from '../hooks/dolibarr';
+import { LinkedObjects } from './common/LinkedObjects';
 
 interface InterventionListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -247,7 +246,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                         >
                                             <User size={10} /> {getCustomerName(int.socid)}
                                         </span>
-                                        <span className="flex items-center gap-1"><Calendar size={10} /> {new Date(int.date * 1000).toLocaleDateString()}</span>
+                                        <span className="flex items-center gap-1"><Calendar size={10} /> {new Date(int.date < 100000000000 ? int.date * 1000 : int.date).toLocaleDateString()}</span>
                                     </div>
                                 </div>
                             ))}
@@ -293,7 +292,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                                 <label className="text-xs text-slate-500 uppercase font-bold">Data</label>
                                                 <div className="flex items-center gap-2 mt-1 text-slate-800 dark:text-white font-medium">
                                                     <Calendar size={16} className="text-indigo-500" />
-                                                    {new Date(selectedIntervention.date * 1000).toLocaleDateString()}
+                                                    {new Date(selectedIntervention.date < 100000000000 ? selectedIntervention.date * 1000 : selectedIntervention.date).toLocaleDateString()}
                                                 </div>
                                             </div>
                                             {selectedIntervention.project_id && (
@@ -314,6 +313,13 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                         </div>
                                     </div>
 
+                                    {/* Linked Objects */}
+                                    <LinkedObjects
+                                        id={selectedIntervention.id}
+                                        type="fichinter"
+                                        onNavigate={onNavigate}
+                                    />
+
                                     {/* Lines */}
                                     <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
                                         <h3 className="font-bold text-slate-800 dark:text-white mb-4">Itens / Serviços Realizados</h3>
@@ -323,7 +329,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                                     <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
                                                         <div>
                                                             <div className="font-medium text-slate-800 dark:text-white text-sm">{line.desc}</div>
-                                                            <div className="text-xs text-slate-500">{new Date(line.date * 1000).toLocaleDateString()}</div>
+                                                            <div className="text-xs text-slate-500">{new Date(line.date < 100000000000 ? line.date * 1000 : line.date).toLocaleDateString()}</div>
                                                         </div>
                                                         <div className="text-right">
                                                             <div className="font-bold text-slate-800 dark:text-white">{formatDuration(line.duration)}</div>

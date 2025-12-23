@@ -102,7 +102,7 @@ export const ManufacturingOrderDetail: React.FC<ManufacturingOrderDetailProps> =
                                         <div key={mov.id} className="p-4 flex justify-between items-center hover:bg-slate-50 dark:hover:bg-slate-800/50">
                                             <div>
                                                 <div className="font-medium text-slate-800 dark:text-white text-sm">{getProductName(mov.product_id, products)}</div>
-                                                <div className="text-xs text-slate-500">{new Date(mov.date_creation * 1000).toLocaleString()} • {mov.label}</div>
+                                                <div className="text-xs text-slate-500">{new Date(mov.date_creation < 100000000000 ? mov.date_creation * 1000 : mov.date_creation).toLocaleString()} • {mov.label}</div>
                                             </div>
                                             <div className={`font-bold text-sm ${mov.qty > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                                                 {mov.qty > 0 ? '+' : ''}{mov.qty}

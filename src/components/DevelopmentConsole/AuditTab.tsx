@@ -2,11 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle2, AlertOctagon, AlertTriangle, Info, RefreshCw } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
-import { useCustomers } from '../../hooks/dolibarr/useCustomers';
-import { useInvoices } from '../../hooks/dolibarr/useInvoices';
-import { useProjects } from '../../hooks/dolibarr/useProjects';
-import { useTasks } from '../../hooks/dolibarr/useTasks';
-import { useProducts } from '../../hooks/dolibarr/useProducts';
+import { useCustomers, useInvoices, useProjects, useTasks, useProducts } from '../../hooks/dolibarr';
 
 interface AuditIssue {
     type: 'error' | 'warning' | 'info';

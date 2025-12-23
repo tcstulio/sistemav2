@@ -19,6 +19,7 @@ export interface BOMLine {
     qty: number;
     efficiency?: number; // 1 = 100%
     cost_price?: number; // Estimated cost per unit
+    date_modification?: number;
 }
 
 export interface BOM {

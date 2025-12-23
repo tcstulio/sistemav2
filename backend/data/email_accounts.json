@@ -1,0 +1,18 @@
+[
+  {
+    "name": "Financeiro",
+    "email": "financeiro@coolgroove.com.br",
+    "imapHost": "mail.coolgroove.com.br",
+    "imapPort": 993,
+    "imapUser": "financeiro@coolgroove.com.br",
+    "imapPassword": "GNAy1mfj4<)2!",
+    "imapTls": true,
+    "smtpHost": "mail.coolgroove.com.br",
+    "smtpPort": 465,
+    "smtpUser": "financeiro@coolgroove.com.br",
+    "smtpPassword": "GNAy1mfj4<)2!",
+    "smtpSecure": true,
+    "signature": "",
+    "id": "financeiro"
+  }
+]

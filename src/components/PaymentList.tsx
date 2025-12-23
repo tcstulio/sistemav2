@@ -2,8 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Payment, DolibarrConfig, AppView } from '../types';
 import { Search, ArrowDownLeft, Calendar, FileText, TrendingUp, Wallet } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
-import { usePayments } from '../hooks/dolibarr/usePayments';
-import { useInvoices } from '../hooks/dolibarr/useInvoices';
+import { usePayments, useInvoices } from '../hooks/dolibarr';
 
 interface PaymentListProps {
     onNavigate?: (view: AppView, id: string) => void;

@@ -12,30 +12,22 @@ const getAuthHeaders = () => {
     };
 };
 
+// ChatMessage interface for AI conversations
+export interface ChatMessage {
+    role: 'user' | 'model' | 'system';
+    text: string;
+    isError?: boolean;
+}
+
 const API_URL = '/api/ai';
 
 export const AiService = {
 
     generateTicketReply: async (ticketSubject: string, ticketMessage: string, history: string[]) => {
         try {
-            // Conversão de histórico simples para formato do backend se necessário
-            // O backend espera { role, parts }[], mas generate-reply no backend parece pegar history as any ???
-            // Verificando backend: aiService.generateReply(history as any || [], context)
-            // Se aiService do backend espera string[], então precisamos ver o Backend Service.
-            // Backend Service (GoogleProvider) espera string[].
-            // Mas a rota valida { role, parts }... isso é inconsistente no backend.
-            // Vou mandar no formato que a rota valida, e esperar que o backend service saiba lidar ou simplificar.
-            // Melhor: vou mandar o history formatado como o Zod pede, e no backend a rota passa pro service.
-            // Se o service espera string[], a rota deveria converter.
-            // Vou assumir que o backend service foi atualizado ou aceita objetos se for Google/Local.
-            // Como vi o backend service: generateReply(conversationHistory: string[], context: string)
-            // A rota backend faz: aiService.generateReply(history as any || [], context || '')
-            // Isso vai dar erro se mandar objetos e o service esperar string.
-            // VOU CONSERTAR O BACKEND TAMBÉM. Mas primeiro o frontend.
-
             const response = await axios.post(`${API_URL}/generate-reply`, {
                 context: `Assunto: ${ticketSubject}. Msg Inicial: ${ticketMessage}`,
-                history: history.map(h => ({ role: 'user', parts: h })) // Adapter simples
+                history: history.map(h => ({ role: 'user', parts: h }))
             }, getAuthHeaders());
             return response.data.reply;
         } catch (error: any) {
@@ -44,8 +36,15 @@ export const AiService = {
         }
     },
 
-    // Stubs for other methods to prevent compilation errors
-    extractProjectInfo: async (text: string) => null,
+    extractProjectInfo: async (text: string) => {
+        try {
+            const response = await axios.post(`${API_URL}/extract/customer`, { text }, getAuthHeaders());
+            return response.data.result;
+        } catch (error: any) {
+            console.error("extractProjectInfo Error", error);
+            return null;
+        }
+    },
 
     analyzeFinancialHealth: async (data: any) => {
         try {
@@ -61,9 +60,54 @@ export const AiService = {
         console.log("Correction logged", logId, correction);
     },
 
-    draftCollectionEmail: async (customer: ThirdParty, totalDue: number) => "",
-    generateSalesForecast: async (invoices: Invoice[]) => null,
-    analyzeCustomerSentiment: async (customer: ThirdParty, invoices: Invoice[]) => null,
+    draftCollectionEmail: async (customer: ThirdParty, totalDue: number) => {
+        try {
+            const response = await axios.post(`${API_URL}/draft/collection-email`, {
+                customer: { name: customer.name, email: customer.email, id: customer.id },
+                amount: totalDue
+            }, getAuthHeaders());
+            return response.data.result;
+        } catch (error: any) {
+            console.error("draftCollectionEmail Error", error);
+            return JSON.stringify({ subject: "Lembrete de Pagamento", body: "Erro ao gerar email." });
+        }
+    },
+
+    generateSalesForecast: async (invoices: Invoice[]) => {
+        try {
+            const response = await axios.post(`${API_URL}/analyze/sales-forecast`, {
+                invoices: invoices.slice(0, 100).map(i => ({
+                    ref: i.ref,
+                    total_ttc: i.total_ttc,
+                    status: i.statut,
+                    date: i.date
+                }))
+            }, getAuthHeaders());
+            return response.data.result;
+        } catch (error: any) {
+            console.error("generateSalesForecast Error", error);
+            return null;
+        }
+    },
+
+    analyzeCustomerSentiment: async (customer: ThirdParty, invoices: Invoice[]) => {
+        try {
+            const response = await axios.post(`${API_URL}/analyze/customer-sentiment`, {
+                customer: { name: customer.name, status: customer.status, date_creation: customer.date_creation, id: customer.id },
+                invoices: invoices.slice(0, 20).map(i => ({
+                    ref: i.ref,
+                    total_ttc: i.total_ttc,
+                    status: i.statut,
+                    date: i.date
+                }))
+            }, getAuthHeaders());
+            // Return in the format expected by the component
+            return { text: response.data.result, logId: Date.now().toString() };
+        } catch (error: any) {
+            console.error("analyzeCustomerSentiment Error", error);
+            return null;
+        }
+    },
 
     extractReceiptData: async (base64: string) => {
         try {
@@ -75,36 +119,52 @@ export const AiService = {
         }
     },
 
-    auditProposal: async (text: string) => null,
-    auditProject: async (project: Project, tasks: any[], invoices: any[]) => null,
-
-    chatWithData: async (msg: string, customers: any[], invoices: any[], projects: any[], tickets: any[], userImage?: any) => {
+    auditProposal: async (proposal: any) => {
         try {
-            // 1. Preparar Contexto de Dados (Resumo para não estourar tokens)
-            // Selecionar top 20 de cada ou apenas resumo estatístico + nomes
+            const response = await axios.post(`${API_URL}/audit/proposal`, { proposal }, getAuthHeaders());
+            return response.data.result;
+        } catch (error: any) {
+            console.error("auditProposal Error", error);
+            return null;
+        }
+    },
 
-            let dataContext = "RESUMO DOS DADOS DO SISTEMA:\n";
+    auditProject: async (project: Project, tasks: any[], invoices: any[]) => {
+        try {
+            const response = await axios.post(`${API_URL}/audit/project`, {
+                project: { title: project.title, ref: project.ref, status: project.statut },
+                tasks: tasks.slice(0, 20),
+                invoices: invoices.slice(0, 10)
+            }, getAuthHeaders());
+            return response.data.result;
+        } catch (error: any) {
+            console.error("auditProject Error", error);
+            return null;
+        }
+    },
 
-            dataContext += `\nCLIENTES (${customers.length}):\n`;
-            dataContext += customers.slice(0, 50).map((c: any) => `- ${c.name} (ID: ${c.id}, Status: ${c.status})`).join('\n');
+    chatWithData: async (msg: string, history: ChatMessage[], userImage?: string) => {
+        try {
+            // Context is now handled by the backend (ReAct / Tools), but we inject basic temporal awareness
+            const now = new Date();
+            const dateStr = now.toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-            dataContext += `\n\nFATURAS RECENTES (${invoices.length}):\n`;
-            dataContext += invoices.slice(0, 50).map((i: any) => `- Ref: ${i.ref}, Total: ${i.total_ttc}, Status: ${i.status}`).join('\n');
+            const dataContext = `[SISTEMA] Data atual: ${dateStr}. Hora: ${timeStr}. Usuário logado: Admin. Use ferramentas para buscar dados específicos.`;
 
-            dataContext += `\n\nPROJETOS (${projects.length}):\n`;
-            dataContext += projects.slice(0, 30).map((p: any) => `- ${p.title} (Ref: ${p.ref})`).join('\n');
+            // Map frontend history to backend format (text -> parts)
+            const backendHistory = history.map(m => ({
+                role: m.role as 'user' | 'model' | 'system',
+                parts: m.text
+            }));
 
-            if (userImage) {
-                dataContext += "\n[USUÁRIO ENVIOU UMA IMAGEM ANEXADA - O BACKEND AINDA NÃO PROCESSA IMAGEM NO CHAT GENERIO]\n";
-            }
+            // Append current message
+            backendHistory.push({ role: 'user', parts: msg });
 
-            // 2. Chamar Backend
-            // Usamos /generate-reply pois é a rota de conversação genérica disponível.
             const response = await axios.post(`${API_URL}/generate-reply`, {
-                history: [
-                    { role: 'user', parts: msg }
-                ],
-                context: dataContext
+                history: backendHistory,
+                context: dataContext,
+                image: userImage
             }, getAuthHeaders());
 
             return response.data.reply;
@@ -115,9 +175,27 @@ export const AiService = {
         }
     },
 
-    analyzeSystemLogs: async (logs: any[]) => "[]",
+    analyzeSystemLogs: async (logs: any[]) => {
+        try {
+            const response = await axios.post(`${API_URL}/analyze/logs`, {
+                logs: logs.slice(0, 50)
+            }, getAuthHeaders());
+            return response.data.result;
+        } catch (error: any) {
+            console.error("analyzeSystemLogs Error", error);
+            return "[]";
+        }
+    },
 
-    analyzeApiStructure: async (json: string) => null,
+    analyzeApiStructure: async (json: string) => {
+        try {
+            const response = await axios.post(`${API_URL}/analyze-system`, { query: `Analyze this API structure: ${json}` }, getAuthHeaders());
+            return response.data.result;
+        } catch (error: any) {
+            console.error("analyzeApiStructure Error", error);
+            return null;
+        }
+    },
 
     analyzeSystem: async (query: string) => {
         try {
@@ -166,5 +244,16 @@ export const AiService = {
         } catch (error: any) {
             return "Erro ao gerar código: " + (error.response?.data?.error || error.message);
         }
+    },
+
+    transcribeAudio: async (audioBase64: string, mimeType: string = 'audio/ogg') => {
+        try {
+            const response = await axios.post(`${API_URL}/transcribe-audio`, { audio: audioBase64, mimeType }, getAuthHeaders());
+            return response.data.transcription;
+        } catch (error: any) {
+            console.error("Transcription Error", error);
+            return "[Erro na transcrição]";
+        }
     }
 };
+

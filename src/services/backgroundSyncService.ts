@@ -42,6 +42,7 @@ const SYNC_MODULES = [
     { type: 'supplier_payments', store: 'supplierPayments', mapFn: mapSupplierPayment },
     { type: 'boms', store: 'boms', mapFn: mapBOM },
     { type: 'manufacturing_orders', store: 'manufacturingOrders', mapFn: mapManufacturingOrder },
+    { type: 'system_logs', store: 'systemLogs', mapFn: mapSystemLog },
 ];
 
 // Mapping functions - Convert raw API data to typed objects
@@ -481,6 +482,24 @@ function mapManufacturingOrder(raw: any) {
         date_start: raw.date_start ? new Date(raw.date_start).getTime() : undefined,
         date_end: raw.date_end ? new Date(raw.date_end).getTime() : undefined,
         project_id: raw.project_id ? String(raw.project_id) : undefined,
+        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+    };
+}
+
+function mapSystemLog(raw: any) {
+    return {
+        id: String(raw.id),
+        ref: raw.ref || undefined,
+        label: raw.label || '',
+        description: raw.description || undefined,
+        type_code: raw.type_code || 'UNKNOWN',
+        date_action: raw.date_action ? new Date(raw.date_action).getTime() : 0,
+        fk_user_author: raw.fk_user_author ? String(raw.fk_user_author) : undefined,
+        socid: raw.socid ? String(raw.socid) : undefined,
+        project_id: raw.project_id ? String(raw.project_id) : undefined,
+        elementtype: raw.elementtype || undefined,
+        fk_element: raw.fk_element ? String(raw.fk_element) : undefined,
+        date_creation: raw.datec ? new Date(raw.datec).getTime() : 0,
         date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
     };
 }

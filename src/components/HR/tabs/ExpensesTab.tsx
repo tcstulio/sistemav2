@@ -88,7 +88,7 @@ export const ExpensesTab: React.FC<ExpensesTabProps> = ({
                                     <p className="text-sm text-slate-600 dark:text-slate-400 mt-1 line-clamp-1">{expense.note_public || "Sem descrição"}</p>
                                     <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
                                         <span className="flex items-center gap-1"><User size={12} /> {getUserName(expense.fk_user_author, users)}</span>
-                                        <span className="flex items-center gap-1"><Calendar size={12} /> {new Date(expense.date_debut * 1000).toLocaleDateString()}</span>
+                                        <span className="flex items-center gap-1"><Calendar size={12} /> {new Date(expense.date_debut < 100000000000 ? expense.date_debut * 1000 : expense.date_debut).toLocaleDateString()}</span>
                                     </div>
                                 </div>
                             </div>

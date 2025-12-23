@@ -56,7 +56,7 @@ export interface DolibarrDictionary {
     active?: string;
 }
 
-export type AppView = 'dashboard' | 'reports' | 'agenda' | 'tickets' | 'customers' | 'suppliers' | 'projects' | 'proposals' | 'orders' | 'invoices' | 'payments' | 'contracts' | 'interventions' | 'products' | 'categories' | 'inventory' | 'bank_accounts' | 'hr' | 'settings' | 'development' | 'manufacturing' | 'shipments' | 'whatsapp' | 'tasks' | 'monitor';
+export type AppView = 'dashboard' | 'reports' | 'agenda' | 'tickets' | 'customers' | 'suppliers' | 'projects' | 'proposals' | 'orders' | 'invoices' | 'payments' | 'contracts' | 'interventions' | 'products' | 'categories' | 'inventory' | 'bank_accounts' | 'hr' | 'settings' | 'development' | 'manufacturing' | 'shipments' | 'whatsapp' | 'tasks' | 'monitor' | 'activity';
 
 export interface AppNotification {
     id: string;
@@ -69,8 +69,18 @@ export interface AppNotification {
     linkTo?: { view: AppView; id: string };
 }
 
+
 export interface ChatMessage {
     role: 'user' | 'model';
     text: string;
     isError?: boolean;
+}
+
+export interface Link {
+    id: string;
+    sourcetype: string;
+    sourceid: string;
+    targettype: string;
+    targetid: string;
+    date_modification?: number;
 }

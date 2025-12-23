@@ -1,12 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { AgendaEvent, AppView } from '../types';
-import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronRight, CheckCircle2, Circle, Settings2, Bot, List, Calendar as CalendarIcon, ChevronLeft, Plus, Loader2, X, Phone, Mail, Users, ShoppingCart, FileSignature, Ticket as TicketIcon } from 'lucide-react';
+import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronRight, CheckCircle2, Circle, Bot, List, Calendar as CalendarIcon, ChevronLeft, Plus, Loader2, X, Phone, Mail, Users, ShoppingCart, FileSignature, Ticket as TicketIcon } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useEvents } from '../hooks/dolibarr/useEvents';
-import { useTasks } from '../hooks/dolibarr/useTasks';
-import { useInterventions } from '../hooks/dolibarr/useInterventions';
-import { useProjects } from '../hooks/dolibarr/useProjects';
+import { useEvents, useTasks, useInterventions, useProjects } from '../hooks/dolibarr';
 
 interface AgendaViewProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -366,16 +363,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                             </button>
                         </div>
 
-                        <label className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-400 cursor-pointer bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
-                            <input
-                                type="checkbox"
-                                checked={showSystemEvents}
-                                onChange={(e) => setShowSystemEvents(e.target.checked)}
-                                className="rounded text-indigo-600 focus:ring-indigo-500"
-                            />
-                            <Settings2 size={14} />
-                            Logs
-                        </label>
+
 
                         <div className="h-6 w-px bg-slate-200 dark:bg-slate-700 mx-1 hidden sm:block"></div>
 

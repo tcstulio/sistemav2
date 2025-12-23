@@ -4,17 +4,14 @@ import { FileText, Search, CheckCircle2, Clock, FileEdit, ExternalLink, Download
 import { DolibarrService } from '../services/dolibarrService';
 import { useInvoiceMutations } from '../hooks/useMutations';
 import { GenericListLayout } from './common/GenericListLayout';
+import { LinkedObjects } from './common/LinkedObjects';
 import { PaginationControls } from './common/PaginationControls';
 import { StatusFilterBar } from './common/StatusFilterBar';
 import { useDolibarr } from '../context/DolibarrContext';
+import { useInvoices, useCustomers, useProjects, useProducts, useShipments } from '../hooks/dolibarr';
 
 // Direct Hook Imports
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
-import { useInvoices } from '../hooks/dolibarr/useInvoices';
-import { useCustomers } from '../hooks/dolibarr/useCustomers';
-import { useProjects } from '../hooks/dolibarr/useProjects';
-import { useProducts } from '../hooks/dolibarr/useProducts';
-import { useShipments } from '../hooks/dolibarr/useShipments';
 
 interface InvoiceListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -367,7 +364,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     </div>
                                 )}
                                 <div className="flex justify-between items-end">
-                                    <span className="text-xs text-slate-500">{new Date(inv.date * 1000).toLocaleDateString()}</span>
+                                    <span className="text-xs text-slate-500">{new Date(inv.date < 100000000000 ? inv.date * 1000 : inv.date).toLocaleDateString()}</span>
                                     <span className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                 </div>
                             </div>
@@ -447,7 +444,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                             </div>
                             <div className="text-right">
                                 <p className="text-sm text-slate-500 uppercase font-bold mb-1">Data</p>
-                                <p className="text-lg font-medium text-slate-800 dark:text-white">{new Date(selectedInvoice.date * 1000).toLocaleDateString()}</p>
+                                <p className="text-lg font-medium text-slate-800 dark:text-white">{new Date(selectedInvoice.date < 100000000000 ? selectedInvoice.date * 1000 : selectedInvoice.date).toLocaleDateString()}</p>
                             </div>
                         </div>
 
@@ -500,7 +497,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     >
                                         <div>
                                             <div className="text-sm font-medium text-slate-800 dark:text-white">{ship.ref}</div>
-                                            <div className="text-xs text-slate-500">Enviado: {new Date(ship.date_creation * 1000).toLocaleDateString()}</div>
+                                            <div className="text-xs text-slate-500">Enviado: {new Date(ship.date_creation < 100000000000 ? ship.date_creation * 1000 : ship.date_creation).toLocaleDateString()}</div>
                                         </div>
                                         <div className="flex items-center gap-2">
                                             {ship.tracking_number && (
@@ -529,6 +526,13 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                             </button>
                         </div>
                     </div>
+
+                    {/* Linked Objects */}
+                    <LinkedObjects
+                        id={selectedInvoice.id}
+                        type="facture"
+                        onNavigate={onNavigate}
+                    />
                 </div>
             </div>
         </>

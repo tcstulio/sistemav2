@@ -6,22 +6,13 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 // Direct Hook Imports
 import { useDolibarr } from '../context/DolibarrContext';
-import { useProjects } from '../hooks/dolibarr/useProjects';
-import { useCustomers } from '../hooks/dolibarr/useCustomers';
-import { useTickets } from '../hooks/dolibarr/useTickets';
-import { useEvents } from '../hooks/dolibarr/useEvents';
-import { useTasks } from '../hooks/dolibarr/useTasks';
-import { useInvoices } from '../hooks/dolibarr/useInvoices';
-import { useSupplierInvoices } from '../hooks/dolibarr/useSupplierInvoices';
-import { useInterventions } from '../hooks/dolibarr/useInterventions';
-import { useExpenseReports } from '../hooks/dolibarr/useExpenseReports';
-import { useManufacturingOrders } from '../hooks/dolibarr/useManufacturingOrders';
-import { useContracts } from '../hooks/dolibarr/useContracts';
+import { useProjects, useCustomers, useTasks, useInvoices, useSupplierInvoices, useInterventions, useExpenseReports, useManufacturingOrders, useContracts, useTickets, useEvents } from '../hooks/dolibarr';
 
 // Common Components
 import { GenericListLayout } from './common/GenericListLayout';
 import { PaginationControls } from './common/PaginationControls';
 import { StatusFilterBar } from './common/StatusFilterBar';
+import { LinkedObjects } from './common/LinkedObjects';
 
 interface ProjectListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -359,11 +350,11 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                                     </div>
                                     <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                                         <span className="text-sm text-slate-500">Início</span>
-                                        <span className="text-sm text-slate-800 dark:text-white">{selectedProject.date_start ? new Date(selectedProject.date_start * 1000).toLocaleDateString() : '-'}</span>
+                                        <span className="text-sm text-slate-800 dark:text-white">{selectedProject.date_start ? new Date(selectedProject.date_start < 100000000000 ? selectedProject.date_start * 1000 : selectedProject.date_start).toLocaleDateString() : '-'}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-sm text-slate-500">Fim</span>
-                                        <span className="text-sm text-slate-800 dark:text-white">{selectedProject.date_end ? new Date(selectedProject.date_end * 1000).toLocaleDateString() : '-'}</span>
+                                        <span className="text-sm text-slate-800 dark:text-white">{selectedProject.date_end ? new Date(selectedProject.date_end < 100000000000 ? selectedProject.date_end * 1000 : selectedProject.date_end).toLocaleDateString() : '-'}</span>
                                     </div>
                                 </div>
                             </div>
@@ -390,6 +381,13 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                                         </span>
                                     </div>
                                 </div>
+                            </div>
+                            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm md:col-span-2">
+                                <LinkedObjects
+                                    id={selectedProject.id}
+                                    type="project"
+                                    onNavigate={onNavigate}
+                                />
                             </div>
                         </div>
                     )}
@@ -470,7 +468,7 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                                         <div key={inv.id} className="flex justify-between items-center p-3 border border-slate-100 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer" onClick={() => onNavigate && onNavigate('invoices', inv.id)}>
                                             <div>
                                                 <div className="font-medium text-slate-800 dark:text-white text-sm">{inv.ref}</div>
-                                                <div className="text-xs text-slate-500">{new Date(inv.date * 1000).toLocaleDateString()}</div>
+                                                <div className="text-xs text-slate-500">{new Date(inv.date < 100000000000 ? inv.date * 1000 : inv.date).toLocaleDateString()}</div>
                                             </div>
                                             <div className="text-right font-bold text-emerald-600 dark:text-emerald-400">${inv.total_ttc.toLocaleString()}</div>
                                         </div>
@@ -520,7 +518,7 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                                         <FileSignature size={20} className="text-indigo-500" />
                                         <div>
                                             <div className="font-bold text-slate-800 dark:text-white text-sm">{c.ref}</div>
-                                            <div className="text-xs text-slate-500">{new Date(c.date_contrat * 1000).toLocaleDateString()}</div>
+                                            <div className="text-xs text-slate-500">{new Date(c.date_contrat < 100000000000 ? c.date_contrat * 1000 : c.date_contrat).toLocaleDateString()}</div>
                                         </div>
                                     </div>
                                 </div>
@@ -536,7 +534,7 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                                         <div className="font-bold text-slate-800 dark:text-white text-sm">{int.ref}</div>
                                         <div className="text-xs text-slate-500">{int.description}</div>
                                     </div>
-                                    <div className="text-xs text-slate-500">{new Date(int.date * 1000).toLocaleDateString()}</div>
+                                    <div className="text-xs text-slate-500">{new Date(int.date < 100000000000 ? int.date * 1000 : int.date).toLocaleDateString()}</div>
                                 </div>
                             ))}
                         </div>

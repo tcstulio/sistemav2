@@ -1,9 +1,6 @@
 import React, { useMemo } from 'react';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useInvoices } from '../hooks/dolibarr/useInvoices';
-import { useSupplierInvoices } from '../hooks/dolibarr/useSupplierInvoices';
-import { useCustomers } from '../hooks/dolibarr/useCustomers';
-import { useProducts } from '../hooks/dolibarr/useProducts';
+import { useInvoices, useSupplierInvoices, useCustomers, useProducts } from '../hooks/dolibarr';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { FileBarChart, Download, TrendingUp, Users, Package, DollarSign, Loader2 } from 'lucide-react';
 
@@ -27,14 +24,16 @@ const ReportsView: React.FC = () => {
         }));
 
         invoices.forEach(inv => {
-            const date = new Date(inv.date * 1000);
+            const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
+            const date = new Date(dateVal);
             if (date.getFullYear() === currentYear) {
                 months[date.getMonth()].sales += inv.total_ttc;
             }
         });
 
         supplierInvoices.forEach(inv => {
-            const date = new Date(inv.date * 1000);
+            const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
+            const date = new Date(dateVal);
             if (date.getFullYear() === currentYear) {
                 months[date.getMonth()].expenses += inv.total_ttc;
             }

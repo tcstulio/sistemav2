@@ -3,10 +3,7 @@ import { Warehouse, AppView } from '../types';
 import { Warehouse as WarehouseIcon, ArrowRightLeft, Search, MapPin, Package, User, Truck, X, Sliders, Plus, Edit2, Trash2, Loader2, Save } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useWarehouses } from '../hooks/dolibarr/useWarehouses';
-import { useStockMovements } from '../hooks/dolibarr/useStockMovements';
-import { useProducts } from '../hooks/dolibarr/useProducts';
-import { useUsers } from '../hooks/dolibarr/useUsers';
+import { useWarehouses, useStockMovements, useProducts, useUsers } from '../hooks/dolibarr';
 
 interface InventoryViewProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -507,7 +504,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
                                                 {getProductName(mov.product_id)}
                                             </div>
                                             <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
-                                                <span>{new Date(mov.date_creation * 1000).toLocaleString()}</span>
+                                                <span>{new Date(mov.date_creation < 100000000000 ? mov.date_creation * 1000 : mov.date_creation).toLocaleString()}</span>
                                                 <span>•</span>
                                                 <span>{mov.label}</span>
                                             </div>

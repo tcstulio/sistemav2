@@ -4,7 +4,7 @@ import { Category, DolibarrConfig, AppView } from '../types';
 import { Tag, Search, Plus, Trash2, X, Loader2, CheckCircle2, Folder, Box, User } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useCategories } from '../hooks/dolibarr/useCategories';
+import { useCategories } from '../hooks/dolibarr';
 
 interface CategoryListProps {
     onRefresh?: () => void;

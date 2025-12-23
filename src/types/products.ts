@@ -21,6 +21,7 @@ export interface Category {
     description?: string;
     date_modification?: number;
     // Note: Parent ID or other fields might be needed
+    parent_id?: string;
 }
 
 export interface Warehouse {
@@ -47,6 +48,16 @@ export interface StockMovement {
     price?: number;
 }
 
+export interface ShipmentLine {
+    id: string;
+    parent_id: string;
+    product_id: string;
+    label: string;
+    description: string;
+    qty: number;
+    date_modification?: number;
+}
+
 export interface Shipment {
     id: string;
     ref: string;
@@ -57,6 +68,7 @@ export interface Shipment {
     date_delivery?: number;
     status: string; // '0','1','2'
     tracking_number?: string;
+    lines?: ShipmentLine[];
     date_modification?: number;
     array_options?: Record<string, any>;
 }

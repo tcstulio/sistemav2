@@ -3,11 +3,8 @@ import { ThirdParty, DolibarrConfig, SupplierInvoice, Product, SupplierOrder, Ap
 import { Truck, Search, Plus, MapPin, Mail, Phone, ExternalLink, Package, ShoppingCart, Receipt, X, ArrowDownCircle, CheckCircle2, Loader2, ArrowLeft, Lock, CheckSquare, Clock } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useSuppliers } from '../hooks/dolibarr/useSuppliers';
-import { useProducts } from '../hooks/dolibarr/useProducts';
-import { useSupplierInvoices } from '../hooks/dolibarr/useSupplierInvoices';
-import { useSupplierOrders } from '../hooks/dolibarr/useSupplierOrders';
-import { useWarehouses } from '../hooks/dolibarr/useWarehouses';
+import { useSuppliers, useProducts, useSupplierInvoices, useSupplierOrders, useWarehouses } from '../hooks/dolibarr';
+import { LinkedObjects } from './common/LinkedObjects';
 import { ReceiptScanner } from './Finance/ReceiptScanner';
 import { toast } from 'sonner';
 
@@ -466,23 +463,32 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                             <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-950/50">
                                 <div className="max-w-3xl mx-auto space-y-6">
                                     {activeTab === 'overview' && (
-                                        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                                            <h3 className="font-bold text-slate-800 dark:text-white mb-4 border-b border-slate-100 dark:border-slate-800 pb-2">Contatos</h3>
-                                            <div className="space-y-3">
-                                                <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
-                                                    <MapPin size={16} className="text-slate-400" />
-                                                    {selectedSupplier.address || 'Sem endereço'}, {selectedSupplier.zip} {selectedSupplier.town}
-                                                </div>
-                                                <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
-                                                    <Mail size={16} className="text-slate-400" />
-                                                    {selectedSupplier.email || 'Sem email'}
-                                                </div>
-                                                <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
-                                                    <Phone size={16} className="text-slate-400" />
-                                                    {selectedSupplier.phone || 'Sem telefone'}
+                                        <>
+                                            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                                                <h3 className="font-bold text-slate-800 dark:text-white mb-4 border-b border-slate-100 dark:border-slate-800 pb-2">Contatos</h3>
+                                                <div className="space-y-3">
+                                                    <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
+                                                        <MapPin size={16} className="text-slate-400" />
+                                                        {selectedSupplier.address || 'Sem endereço'}, {selectedSupplier.zip} {selectedSupplier.town}
+                                                    </div>
+                                                    <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
+                                                        <Mail size={16} className="text-slate-400" />
+                                                        {selectedSupplier.email || 'Sem email'}
+                                                    </div>
+                                                    <div className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-300">
+                                                        <Phone size={16} className="text-slate-400" />
+                                                        {selectedSupplier.phone || 'Sem telefone'}
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
+                                            <div className="mt-6">
+                                                <LinkedObjects
+                                                    id={selectedSupplier.id}
+                                                    type="societe"
+                                                    onNavigate={onNavigate}
+                                                />
+                                            </div>
+                                        </>
                                     )}
 
                                     {activeTab === 'orders' && (
@@ -500,7 +506,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                             {getOrderStatusBadge(order.statut)}
                                                         </div>
                                                         <div className="flex justify-between items-end">
-                                                            <div className="text-xs text-slate-500">{new Date(order.date_creation * 1000).toLocaleDateString()}</div>
+                                                            <div className="text-xs text-slate-500">{new Date(order.date_creation < 100000000000 ? order.date_creation * 1000 : order.date_creation).toLocaleDateString()}</div>
                                                             <div className="font-bold text-slate-800 dark:text-white">${order.total_ttc.toLocaleString()}</div>
                                                         </div>
 

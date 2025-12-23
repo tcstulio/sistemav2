@@ -1,5 +1,5 @@
 import { DolibarrConfig, BankAccount, Contact, Invoice, SupplierInvoice, BankLine, Candidate, DolibarrUser, ExpenseReport, RecruitmentJobPosition, LeaveRequest } from '../../types';
-import { fetchList, request, getHeaders, sanitizeUrl } from './core';
+import { fetchList, fetchPage, request, getHeaders, sanitizeUrl } from './core';
 
 export const fetchUsers = async (config: DolibarrConfig): Promise<DolibarrUser[]> => {
     const data = await fetchList(config, 'users');
@@ -38,7 +38,9 @@ export const fetchExpenseReports = async (config: DolibarrConfig): Promise<Expen
 };
 
 export const fetchJobPositions = async (config: DolibarrConfig): Promise<RecruitmentJobPosition[]> => {
-    const data = await fetchList(config, 'recruitmentjobpositions');
+    // Uses V2 API endpoint without 'date_modification' support, so we use fetchPage instead of fetchList (sync)
+    // to avoid the incremental sync loop that fails when sort/filter by date is missing.
+    const data = await fetchPage(config, 'recruitments/jobposition', 0, 100);
     return data.map((d: any) => ({
         id: String(d.id),
         ref: d.ref,
@@ -52,7 +54,8 @@ export const fetchJobPositions = async (config: DolibarrConfig): Promise<Recruit
 };
 
 export const fetchCandidates = async (config: DolibarrConfig): Promise<Candidate[]> => {
-    const data = await fetchList(config, 'recruitmentcandidates');
+    // Similarly for candidates, use fetchPage to ensure we get data without relying on 'date_modification' sync logic
+    const data = await fetchPage(config, 'recruitments/candidature', 0, 100);
     return data.map((d: any) => mapCandidate(d));
 };
 

@@ -6,11 +6,7 @@ import { DolibarrService } from '../services/dolibarrService';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useProducts } from '../hooks/dolibarr/useProducts';
-import { useCategories } from '../hooks/dolibarr/useCategories';
-import { useBOMs } from '../hooks/dolibarr/useBOMs';
-import { useSupplierOrders } from '../hooks/dolibarr/useSupplierOrders';
-import { useSuppliers } from '../hooks/dolibarr/useSuppliers';
+import { useProducts, useCategories, useBOMs, useSupplierOrders, useSuppliers } from '../hooks/dolibarr';
 
 interface ProductListProps {
     onRefresh?: () => void;

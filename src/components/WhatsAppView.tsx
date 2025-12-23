@@ -13,11 +13,7 @@ import { ContextPanel } from './whatsapp/ContextPanel';
 import { ConnectModal } from './whatsapp/ConnectModal';
 import { AppView } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useUsers } from '../hooks/dolibarr/useUsers';
-import { useCustomers } from '../hooks/dolibarr/useCustomers';
-import { useInvoices } from '../hooks/dolibarr/useInvoices';
-import { useOrders } from '../hooks/dolibarr/useOrders';
-import { useTickets } from '../hooks/dolibarr/useTickets';
+import { useUsers, useCustomers, useInvoices, useOrders, useTickets } from '../hooks/dolibarr';
 import { AiService } from '../services/aiService';
 import { toast } from 'sonner';
 
