@@ -12,6 +12,7 @@ import { useInvoices, useCustomers, useProjects, useProducts, useShipments } fro
 
 // Direct Hook Imports
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
+import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 
 interface InvoiceListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -364,7 +365,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     </div>
                                 )}
                                 <div className="flex justify-between items-end">
-                                    <span className="text-xs text-slate-500">{new Date(inv.date < 100000000000 ? inv.date * 1000 : inv.date).toLocaleDateString()}</span>
+                                    <span className="text-xs text-slate-500">{formatDateOnly(inv.date)}</span>
                                     <span className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                 </div>
                             </div>
@@ -444,7 +445,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                             </div>
                             <div className="text-right">
                                 <p className="text-sm text-slate-500 uppercase font-bold mb-1">Data</p>
-                                <p className="text-lg font-medium text-slate-800 dark:text-white">{new Date(selectedInvoice.date < 100000000000 ? selectedInvoice.date * 1000 : selectedInvoice.date).toLocaleDateString()}</p>
+                                <p className="text-lg font-medium text-slate-800 dark:text-white">{formatDateOnly(selectedInvoice.date)}</p>
                             </div>
                         </div>
 
@@ -497,7 +498,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     >
                                         <div>
                                             <div className="text-sm font-medium text-slate-800 dark:text-white">{ship.ref}</div>
-                                            <div className="text-xs text-slate-500">Enviado: {new Date(ship.date_creation < 100000000000 ? ship.date_creation * 1000 : ship.date_creation).toLocaleDateString()}</div>
+                                            <div className="text-xs text-slate-500">Enviado: {formatDateTime(ship.date_creation)}</div>
                                         </div>
                                         <div className="flex items-center gap-2">
                                             {ship.tracking_number && (

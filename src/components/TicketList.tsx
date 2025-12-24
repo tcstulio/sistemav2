@@ -6,6 +6,7 @@ import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useTickets, useCustomers, useUsers, useEvents, useProjects, useInterventions } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
+import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 
 interface TicketListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -423,7 +424,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
                                         >
                                             {getCustomerName(t)}
                                         </span>
-                                        <span>{new Date(t.date_c < 100000000000 ? t.date_c * 1000 : t.date_c).toLocaleDateString()}</span>
+                                        <span className="text-xs text-slate-500">{formatDateTime(t.date_c)}</span>
                                     </div>
                                 </div>
                             ))}
@@ -573,7 +574,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
                                             }`}>
                                             {renderMessageContent(msg.text)}
                                             <div className={`text-[10px] mt-1 opacity-70 ${msg.sender === 'agent' ? 'text-right' : ''}`}>
-                                                {msg.user} • {new Date((msg.date || 0) < 100000000000 ? (msg.date || 0) * 1000 : (msg.date || 0)).toLocaleString()}
+                                                {msg.user} • {formatDateTime(msg.date)}
                                             </div>
                                         </div>
                                     </div>
@@ -601,7 +602,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
                                                         <div key={e.id} className="flex justify-between items-center p-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700 cursor-pointer hover:border-blue-300" onClick={() => onNavigate && onNavigate('agenda', '')}>
                                                             <div>
                                                                 <div className="font-medium text-slate-800 dark:text-white text-xs">{e.label}</div>
-                                                                <div className="text-[10px] text-slate-500">{new Date(e.date_start < 100000000000 ? e.date_start * 1000 : e.date_start).toLocaleString()}</div>
+                                                                <div className="text-[10px] text-slate-500">{formatDateTime(e.date_start)}</div>
                                                             </div>
                                                         </div>
                                                     ))}
@@ -628,7 +629,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
                                                                 <div className="font-medium text-slate-800 dark:text-white text-xs">{i.ref}</div>
                                                                 <div className="text-[10px] text-slate-500">{i.description || 'Sem descrição'}</div>
                                                             </div>
-                                                            <div className="text-[10px] text-slate-500">{new Date(i.date < 100000000000 ? i.date * 1000 : i.date).toLocaleDateString()}</div>
+                                                            <div className="text-[10px] text-slate-500">{formatDateOnly(i.date)}</div>
                                                         </div>
                                                     ))}
                                                 </div>

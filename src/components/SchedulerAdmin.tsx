@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
 import { WhatsAppService } from '../services/whatsappService';
+import { formatDateTime } from '../utils/dateUtils';
 
 interface ScheduledMessage {
     id: string;
@@ -446,7 +447,7 @@ export const SchedulerAdmin: React.FC = () => {
         }
     };
 
-    const formatDate = (ts: number) => new Date(ts).toLocaleString('pt-BR');
+    const formatDate = (ts: number) => formatDateTime(ts);
     const formatPhone = (chatId: string) => chatId.replace('@c.us', '').replace('@g.us', ' (Grupo)');
 
     const inputStyle: React.CSSProperties = {
@@ -1079,7 +1080,7 @@ João,5511777776666"
                                                 <div>
                                                     <div style={{ fontWeight: 'bold', fontSize: '13px' }}>{b.broadcastId}</div>
                                                     <div style={{ fontSize: '11px', color: '#64748b' }}>
-                                                        {b.count} contatos • {new Date(b.createdAt).toLocaleDateString('pt-BR')}
+                                                        {b.count} contatos • {formatDateTime(b.createdAt)}
                                                     </div>
                                                 </div>
                                                 <span style={{
@@ -1267,7 +1268,7 @@ João,5511777776666"
                                                     {msg.status}
                                                 </span>
                                             </td>
-                                            <td style={{ padding: '8px' }}>{new Date(msg.scheduledAt).toLocaleString('pt-BR')}</td>
+                                            <td style={{ padding: '8px' }}>{formatDateTime(msg.scheduledAt)}</td>
                                         </tr>
                                     ))}
                                 </tbody>

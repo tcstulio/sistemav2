@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Database, HardDrive, RefreshCw, Play, Pause, AlertCircle, Download } from 'lucide-react';
+import { Database, HardDrive, RefreshCw, Play, Pause, AlertCircle, Download, Trash2 } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { dbService } from '../../services/dbService';
 import { runBackgroundSync } from '../../services/backgroundSyncService';
@@ -10,6 +10,7 @@ export const MonitorTab: React.FC = () => {
     const [stats, setStats] = useState<Record<string, number>>({});
     const [storageUsage, setStorageUsage] = useState<number>(0);
     const [isBackgroundSyncing, setIsBackgroundSyncing] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
     const [syncResult, setSyncResult] = useState<{ synced: number; errors: string[] } | null>(null);
 
     const loadMetrics = async () => {
@@ -35,6 +36,35 @@ export const MonitorTab: React.FC = () => {
         } finally {
             setIsBackgroundSyncing(false);
         }
+    };
+
+    const handleDeleteData = async () => {
+        if (isDeleting) return;
+
+        const confirmed = window.confirm(
+            '⚠️ ATENÇÃO: Esta ação irá DELETAR COMPLETAMENTE o banco de dados local.\n\n' +
+            'Isso inclui todos os registros sincronizados (clientes, faturas, propostas, etc.).\n\n' +
+            'A página será recarregada para recriar o banco com todas as tabelas.\n\n' +
+            'Você precisará sincronizar novamente após deletar.\n\n' +
+            'Deseja continuar?'
+        );
+
+        if (!confirmed) return;
+
+        setIsDeleting(true);
+        try {
+            // Use deleteDatabase instead of clearAll to force recreation of all stores
+            // This ensures new stores (like proposalLines, orderLines) are created
+            await dbService.deleteDatabase();
+
+            // Reload page to force IndexedDB recreation with all stores
+            window.location.reload();
+        } catch (e) {
+            console.error('[MonitorTab] Failed to delete local database:', e);
+            alert('Erro ao deletar banco de dados local. Verifique o console para mais detalhes.');
+            setIsDeleting(false);
+        }
+        // Note: no finally/setIsDeleting(false) needed as page will reload
     };
 
     useEffect(() => {
@@ -108,6 +138,14 @@ export const MonitorTab: React.FC = () => {
                             {isSyncPaused ? "Resumir Sincronização" : "Pausar Sincronização"}
                         </button>
 
+                        <button
+                            onClick={handleDeleteData}
+                            disabled={isDeleting}
+                            className="w-full flex items-center justify-center gap-2 bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition disabled:bg-red-400"
+                        >
+                            <Trash2 size={18} className={isDeleting ? "animate-pulse" : ""} />
+                            {isDeleting ? "Deletando Dados..." : "Limpar Dados Locais"}
+                        </button>
                         {syncResult && (
                             <div className={`w-full text-xs p-2 rounded ${syncResult.errors.length > 0 ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/20' : 'bg-green-50 text-green-700 dark:bg-green-900/20'}`}>
                                 ✓ {syncResult.synced} registros sincronizados

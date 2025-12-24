@@ -6,6 +6,7 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useSuppliers, useProducts, useSupplierInvoices, useSupplierOrders, useWarehouses } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
 import { ReceiptScanner } from './Finance/ReceiptScanner';
+import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { toast } from 'sonner';
 
 interface SupplierListProps {
@@ -506,7 +507,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                             {getOrderStatusBadge(order.statut)}
                                                         </div>
                                                         <div className="flex justify-between items-end">
-                                                            <div className="text-xs text-slate-500">{new Date(order.date_creation < 100000000000 ? order.date_creation * 1000 : order.date_creation).toLocaleDateString()}</div>
+                                                            <div className="text-xs text-slate-500">{formatDateTime(order.date_creation)}</div>
                                                             <div className="font-bold text-slate-800 dark:text-white">${order.total_ttc.toLocaleString()}</div>
                                                         </div>
 

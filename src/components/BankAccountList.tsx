@@ -5,6 +5,7 @@ import { BankStatementImport, CashFlowChart, BankingInsightsPanel, InterBankDash
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useBankAccounts, useBankLines, useInvoices, useSupplierInvoices } from '../hooks/dolibarr';
+import { formatDateOnly } from '../utils/dateUtils';
 
 interface BankAccountListProps {
     onRefresh?: () => void;
@@ -200,7 +201,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
         const grouped = new Map<string, { income: number; expenses: number }>();
 
         for (const line of accountLines) {
-            const d = new Date(line.date_operation);
+            const d = new Date(line.date_operation < 100000000000 ? line.date_operation * 1000 : line.date_operation);
             const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 
             if (!grouped.has(key)) {
@@ -229,7 +230,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
     }, [selectedAccount, accountLines]);
 
     const handleImport = (transactions: any[], accountNumber?: string) => {
-        console.log(`Imported ${transactions.length} transactions for account ${accountNumber || selectedAccount?.id}`);
+
         // TODO: Add transactions to local state or sync with Dolibarr
         alert(`${transactions.length} transações importadas com sucesso!`);
         setIsImportModalOpen(false);
@@ -509,7 +510,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                             >
                                                                 <div>
                                                                     <div className="font-bold text-slate-700 dark:text-slate-300 text-sm">{item.ref}</div>
-                                                                    <div className="text-xs text-slate-500">{new Date(item.date < 100000000000 ? item.date * 1000 : item.date).toLocaleDateString()}</div>
+                                                                    <div className="text-xs text-slate-500">{formatDateOnly(item.date)}</div>
                                                                 </div>
                                                                 <div className="text-right">
                                                                     <div className="font-bold text-slate-800 dark:text-white text-sm">${item.total_ttc}</div>
@@ -694,7 +695,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                                                     </div>
                                                                                     <div>
                                                                                         <div className="font-medium text-sm text-slate-800 dark:text-white">{line.label}</div>
-                                                                                        <div className="text-xs text-slate-500">{new Date(line.date_operation < 100000000000 ? line.date_operation * 1000 : line.date_operation).toLocaleDateString()}</div>
+                                                                                        <div className="text-xs text-slate-500">{formatDateOnly(line.date_operation)}</div>
                                                                                     </div>
                                                                                 </div>
                                                                                 <div className="text-right">

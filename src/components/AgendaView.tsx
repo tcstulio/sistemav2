@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { AgendaEvent, AppView } from '../types';
 import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronRight, CheckCircle2, Circle, Bot, List, Calendar as CalendarIcon, ChevronLeft, Plus, Loader2, X, Phone, Mail, Users, ShoppingCart, FileSignature, Ticket as TicketIcon } from 'lucide-react';
+import { formatDateOnly, formatDateTime, formatDateLong } from '../utils/dateUtils';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useEvents, useTasks, useInterventions, useProjects } from '../hooks/dolibarr';
@@ -180,7 +181,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
 
         filteredItems.forEach(item => {
             const dateObj = new Date(item.date);
-            const dateKey = dateObj.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            const dateKey = formatDateLong(item.date);
 
             if (!groups[dateKey]) groups[dateKey] = [];
             groups[dateKey].push(item);
@@ -427,7 +428,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                                                             <h4 className={`font-bold ${item.type === 'system_log' ? 'text-slate-600 dark:text-slate-400 font-normal italic' : 'text-slate-800 dark:text-white'} ${item.status === 'done' ? 'line-through opacity-60' : ''}`}>
                                                                 {item.title}
                                                             </h4>
-                                                            <span className="text-xs font-mono text-slate-400 ml-2 whitespace-nowrap">{new Date(item.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                                            <span className="text-xs font-mono text-slate-400 ml-2 whitespace-nowrap">{formatDateTime(item.date).split(' ')[1]}</span>
                                                         </div>
 
                                                         {item.description && typeof item.description === 'string' && (
@@ -462,7 +463,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                         <div className="p-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
                             <div className="flex items-center gap-4">
                                 <h3 className="text-xl font-bold text-slate-800 dark:text-white">
-                                    {currentDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+                                    {currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
                                 </h3>
                                 <div className="flex items-center gap-1">
                                     <button onClick={prevMonth} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full"><ChevronLeft size={20} /></button>

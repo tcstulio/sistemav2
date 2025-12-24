@@ -6,6 +6,7 @@ import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInterventions, useCustomers, useProjects } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
+import { formatDateOnly } from '../utils/dateUtils';
 
 interface InterventionListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -246,7 +247,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                         >
                                             <User size={10} /> {getCustomerName(int.socid)}
                                         </span>
-                                        <span className="flex items-center gap-1"><Calendar size={10} /> {new Date(int.date < 100000000000 ? int.date * 1000 : int.date).toLocaleDateString()}</span>
+                                        <span className="flex items-center gap-1"><Calendar size={10} /> {formatDateOnly(int.date)}</span>
                                     </div>
                                 </div>
                             ))}
@@ -292,7 +293,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                                 <label className="text-xs text-slate-500 uppercase font-bold">Data</label>
                                                 <div className="flex items-center gap-2 mt-1 text-slate-800 dark:text-white font-medium">
                                                     <Calendar size={16} className="text-indigo-500" />
-                                                    {new Date(selectedIntervention.date < 100000000000 ? selectedIntervention.date * 1000 : selectedIntervention.date).toLocaleDateString()}
+                                                    {formatDateOnly(selectedIntervention.date)}
                                                 </div>
                                             </div>
                                             {selectedIntervention.project_id && (
@@ -329,7 +330,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                                     <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
                                                         <div>
                                                             <div className="font-medium text-slate-800 dark:text-white text-sm">{line.desc}</div>
-                                                            <div className="text-xs text-slate-500">{new Date(line.date < 100000000000 ? line.date * 1000 : line.date).toLocaleDateString()}</div>
+                                                            <div className="text-xs text-slate-500">{formatDateOnly(line.date)}</div>
                                                         </div>
                                                         <div className="text-right">
                                                             <div className="font-bold text-slate-800 dark:text-white">{formatDuration(line.duration)}</div>

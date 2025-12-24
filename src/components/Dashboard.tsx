@@ -7,6 +7,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { DollarSign, Users, FileText, TrendingUp, Sparkles, Loader2, Minus, FolderKanban, Map, Pencil, Save, X, AlertOctagon, Clock, Package, Landmark, MessageSquare, ClipboardList, Wrench, Ticket as TicketIcon, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { AiService } from '../services/aiService';
 import { FinancialHealthWidget } from './Finance/FinancialHealthWidget';
+import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 
 interface DashboardProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -123,7 +124,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     // Prepare Financial Context for AI
     const financialContext = useMemo(() => {
         return {
-            period: new Date().toLocaleDateString(),
+            period: formatDateOnly(Date.now()),
             metrics,
             cashFlowTrend: cashFlowData,
             recentInvoices: recentActivityData,
@@ -286,7 +287,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                         <div key={i.id} className="p-3 bg-orange-50 dark:bg-orange-900/10 rounded-lg border border-orange-100 dark:border-orange-800 cursor-pointer hover:bg-orange-100 dark:hover:bg-orange-900/20" onClick={() => onNavigate && onNavigate('interventions', i.id)}>
                                             <div className="flex justify-between items-start">
                                                 <span className="text-xs font-bold text-orange-700 dark:text-orange-400 flex items-center gap-1"><Wrench size={10} /> {i.ref}</span>
-                                                <span className="text-[10px] text-slate-500">{new Date(i.date < 100000000000 ? i.date * 1000 : i.date).toLocaleDateString()}</span>
+                                                <span className="text-[10px] text-slate-500">{formatDateOnly(i.date)}</span>
                                             </div>
                                             <div className="text-sm font-medium text-slate-800 dark:text-white mt-1 line-clamp-1">{i.description || 'Intervenção'}</div>
                                         </div>
@@ -295,7 +296,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                         <div key={t.id} className="p-3 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-100 dark:border-blue-800 cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/20" onClick={() => onNavigate && onNavigate('tickets', t.id)}>
                                             <div className="flex justify-between items-start">
                                                 <span className="text-xs font-bold text-blue-700 dark:text-blue-400 flex items-center gap-1"><TicketIcon size={10} /> {t.ref}</span>
-                                                <span className="text-[10px] text-slate-500">{new Date(t.date_c < 100000000000 ? t.date_c * 1000 : t.date_c).toLocaleDateString()}</span>
+                                                <span className="text-[10px] text-slate-500">{formatDateTime(t.date_c)}</span>
                                             </div>
                                             <div className="text-sm font-medium text-slate-800 dark:text-white mt-1 line-clamp-1">{t.subject}</div>
                                         </div>
@@ -389,7 +390,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                                     <span className="text-[10px] font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Atrasado</span>
                                                 </div>
                                                 <div className="flex items-center gap-2 mt-1 text-xs text-red-500">
-                                                    <Clock size={12} /> Prazo: {new Date((task.date_end || 0) < 100000000000 ? (task.date_end || 0) * 1000 : (task.date_end || 0)).toLocaleDateString()}
+                                                    <Clock size={12} /> Prazo: {formatDateOnly(task.date_end)}
                                                 </div>
                                             </div>
                                         ))}

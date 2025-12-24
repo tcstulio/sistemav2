@@ -6,6 +6,7 @@ import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useOrders, useCustomers, useShipments, useInvoices } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
+import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 
 interface OrderListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -342,7 +343,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                                     </div>
                                     <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-1 line-clamp-1">{getCustomerName(ord.socid)}</h3>
                                     <div className="flex justify-between items-end">
-                                        <span className="text-xs text-slate-500">{new Date(ord.date < 100000000000 ? ord.date * 1000 : ord.date).toLocaleDateString()}</span>
+                                        <span className="text-xs text-slate-500">{formatDateOnly(ord.date)}</span>
                                         <span className="font-bold text-slate-800 dark:text-white">${ord.total_ttc.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                     </div>
                                 </div>
@@ -430,7 +431,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                                                     </div>
                                                     <div className="text-right">
                                                         <p className="text-sm text-slate-500 uppercase font-bold mb-1">Data</p>
-                                                        <p className="text-lg font-medium text-slate-800 dark:text-white">{new Date(selectedOrder.date < 100000000000 ? selectedOrder.date * 1000 : selectedOrder.date).toLocaleDateString()}</p>
+                                                        <p className="text-lg font-medium text-slate-800 dark:text-white">{formatDateOnly(selectedOrder.date)}</p>
                                                     </div>
                                                 </div>
 
@@ -485,7 +486,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                                                                 {ship.ref}
                                                                 <span className="text-xs font-normal text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">{getShipmentStatus(ship.status)}</span>
                                                             </div>
-                                                            <div className="text-xs text-slate-500 mt-1">{new Date(ship.date_creation < 100000000000 ? ship.date_creation * 1000 : ship.date_creation).toLocaleDateString()}</div>
+                                                            <div className="text-xs text-slate-500 mt-1">{formatDateTime(ship.date_creation)}</div>
                                                         </div>
                                                         <div className="flex items-center gap-2">
                                                             {ship.tracking_number && <span className="text-xs font-mono bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-slate-600 dark:text-slate-400">{ship.tracking_number}</span>}
@@ -517,7 +518,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                                                                 {inv.ref}
                                                                 {inv.statut === '2' ? <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Pago</span> : <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded">Não Pago</span>}
                                                             </div>
-                                                            <div className="text-xs text-slate-500 mt-1">{new Date(inv.date < 100000000000 ? inv.date * 1000 : inv.date).toLocaleDateString()}</div>
+                                                            <div className="text-xs text-slate-500 mt-1">{formatDateOnly(inv.date)}</div>
                                                         </div>
                                                         <div className="text-right font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString()}</div>
                                                     </div>

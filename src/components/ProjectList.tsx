@@ -13,6 +13,7 @@ import { GenericListLayout } from './common/GenericListLayout';
 import { PaginationControls } from './common/PaginationControls';
 import { StatusFilterBar } from './common/StatusFilterBar';
 import { LinkedObjects } from './common/LinkedObjects';
+import { formatDateOnly } from '../utils/dateUtils';
 
 interface ProjectListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -350,11 +351,11 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                                     </div>
                                     <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                                         <span className="text-sm text-slate-500">Início</span>
-                                        <span className="text-sm text-slate-800 dark:text-white">{selectedProject.date_start ? new Date(selectedProject.date_start < 100000000000 ? selectedProject.date_start * 1000 : selectedProject.date_start).toLocaleDateString() : '-'}</span>
+                                        <span className="text-sm text-slate-800 dark:text-white">{formatDateOnly(selectedProject.date_start) || '-'}</span>
                                     </div>
                                     <div className="flex justify-between">
                                         <span className="text-sm text-slate-500">Fim</span>
-                                        <span className="text-sm text-slate-800 dark:text-white">{selectedProject.date_end ? new Date(selectedProject.date_end < 100000000000 ? selectedProject.date_end * 1000 : selectedProject.date_end).toLocaleDateString() : '-'}</span>
+                                        <span className="text-sm text-slate-800 dark:text-white">{formatDateOnly(selectedProject.date_end) || '-'}</span>
                                     </div>
                                 </div>
                             </div>
@@ -468,7 +469,7 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                                         <div key={inv.id} className="flex justify-between items-center p-3 border border-slate-100 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer" onClick={() => onNavigate && onNavigate('invoices', inv.id)}>
                                             <div>
                                                 <div className="font-medium text-slate-800 dark:text-white text-sm">{inv.ref}</div>
-                                                <div className="text-xs text-slate-500">{new Date(inv.date < 100000000000 ? inv.date * 1000 : inv.date).toLocaleDateString()}</div>
+                                                <div className="text-xs text-slate-500">{formatDateOnly(inv.date)}</div>
                                             </div>
                                             <div className="text-right font-bold text-emerald-600 dark:text-emerald-400">${inv.total_ttc.toLocaleString()}</div>
                                         </div>
@@ -518,7 +519,7 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                                         <FileSignature size={20} className="text-indigo-500" />
                                         <div>
                                             <div className="font-bold text-slate-800 dark:text-white text-sm">{c.ref}</div>
-                                            <div className="text-xs text-slate-500">{new Date(c.date_contrat < 100000000000 ? c.date_contrat * 1000 : c.date_contrat).toLocaleDateString()}</div>
+                                            <div className="text-xs text-slate-500">{formatDateOnly(c.date_contrat)}</div>
                                         </div>
                                     </div>
                                 </div>
@@ -534,7 +535,7 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                                         <div className="font-bold text-slate-800 dark:text-white text-sm">{int.ref}</div>
                                         <div className="text-xs text-slate-500">{int.description}</div>
                                     </div>
-                                    <div className="text-xs text-slate-500">{new Date(int.date < 100000000000 ? int.date * 1000 : int.date).toLocaleDateString()}</div>
+                                    <div className="text-xs text-slate-500">{formatDateOnly(int.date)}</div>
                                 </div>
                             ))}
                         </div>

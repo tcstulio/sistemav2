@@ -562,7 +562,7 @@ export const mapBOMLine = (raw: any): BOMLine => ({
     fk_product: toString(raw.product_id), // Sync returns product_id, type expects fk_product
     qty: toNumber(raw.qty),
     efficiency: toNumber(raw.efficiency),
-    date_modification: 0, // No tms for BOMLine in sync query
+    date_modification: toTimestamp(raw.tms),
 });
 
 /**

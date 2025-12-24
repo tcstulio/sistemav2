@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { LeaveRequest, DolibarrUser } from '../../../types';
 import { Plane, Thermometer, Sun, Calendar, User, Plus } from 'lucide-react';
+import { formatDateOnly } from '../../../utils/dateUtils';
 
 interface LeavesTabProps {
     leaveRequests: LeaveRequest[];
@@ -100,7 +101,7 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
                                     <p className="text-sm text-slate-600 dark:text-slate-400 mt-1 line-clamp-1">{leave.description || "Sem descrição"}</p>
                                     <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
                                         <span className="flex items-center gap-1"><User size={12} /> {getUserName(leave.fk_user)}</span>
-                                        <span className="flex items-center gap-1"><Calendar size={12} /> {new Date(leave.date_debut < 100000000000 ? leave.date_debut * 1000 : leave.date_debut).toLocaleDateString()} - {new Date(leave.date_fin < 100000000000 ? leave.date_fin * 1000 : leave.date_fin).toLocaleDateString()}</span>
+                                        <span className="flex items-center gap-1"><Calendar size={12} /> {formatDateOnly(leave.date_debut)} - {formatDateOnly(leave.date_fin)}</span>
                                     </div>
                                 </div>
                             </div>

@@ -20,6 +20,7 @@ import {
     Plus
 } from 'lucide-react';
 import { useItauBank, TransacaoItau, PixRecebidoItau, BoletoItau } from '../../hooks/useItauBank';
+import { formatDateOnly, formatDateTime } from '../../utils/dateUtils';
 
 interface ItauBankDashboardProps {
     onOpenSettings?: () => void;
@@ -316,7 +317,7 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                                         {(extratoQuery.data?.transacoes || []).map((t: TransacaoItau, i: number) => (
                                             <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
                                                 <td className="px-4 py-3 text-sm text-slate-800 dark:text-white">
-                                                    {new Date(t.dataMovimento).toLocaleDateString('pt-BR')}
+                                                    {formatDateOnly(t.dataMovimento)}
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${t.tipoOperacao === 'C'
@@ -360,7 +361,7 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                                         {(pixQuery.data?.pix || []).map((p: PixRecebidoItau) => (
                                             <tr key={p.endToEndId} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
                                                 <td className="px-4 py-3 text-sm text-slate-800 dark:text-white">
-                                                    {new Date(p.horario).toLocaleString('pt-BR')}
+                                                    {formatDateTime(p.horario)}
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <code className="text-xs bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded">
@@ -402,7 +403,7 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                                             <tr key={b.numero_nosso_numero} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
                                                 <td className="px-4 py-3 text-sm text-slate-800 dark:text-white">{b.numero_nosso_numero}</td>
                                                 <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
-                                                    {new Date(b.data_vencimento).toLocaleDateString('pt-BR')}
+                                                    {formatDateOnly(b.data_vencimento)}
                                                 </td>
                                                 <td className="px-4 py-3 text-sm text-slate-800 dark:text-white">
                                                     R$ {b.valor_titulo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}

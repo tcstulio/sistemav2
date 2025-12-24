@@ -117,7 +117,7 @@ switch ($type) {
         break;
 
     case 'proposal_lines':
-        $sql = "SELECT d.rowid as id, d.fk_propal as parent_id, d.label, d.description, d.product_type as type, d.qty, d.tva_tx as vat_rate, d.subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, UNIX_TIMESTAMP(d.tms) as tms";
+        $sql = "SELECT d.rowid as id, d.fk_propal as parent_id, d.label, d.description, d.product_type as type, d.qty, d.tva_tx as vat_rate, d.subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "propaldet d";
         $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "propal p ON d.fk_propal = p.rowid";
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
@@ -131,7 +131,7 @@ switch ($type) {
         break;
 
     case 'order_lines':
-        $sql = "SELECT d.rowid as id, d.fk_commande as parent_id, d.label, d.description, d.product_type as type, d.qty, d.tva_tx as vat_rate, d.subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, UNIX_TIMESTAMP(d.tms) as tms";
+        $sql = "SELECT d.rowid as id, d.fk_commande as parent_id, d.label, d.description, d.product_type as type, d.qty, d.tva_tx as vat_rate, d.subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "commandedet d";
         $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "commande p ON d.fk_commande = p.rowid";
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
@@ -145,7 +145,7 @@ switch ($type) {
         break;
 
     case 'invoice_lines':
-        $sql = "SELECT d.rowid as id, d.fk_facture as parent_id, d.label, d.description, d.product_type as type, d.qty, d.tva_tx as vat_rate, d.subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, UNIX_TIMESTAMP(d.tms) as tms";
+        $sql = "SELECT d.rowid as id, d.fk_facture as parent_id, d.label, d.description, d.product_type as type, d.qty, d.tva_tx as vat_rate, d.subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "facturedet d";
         $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "facture p ON d.fk_facture = p.rowid";
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
@@ -238,7 +238,7 @@ switch ($type) {
         break;
 
     case 'supplier_order_lines':
-        $sql = "SELECT d.rowid as id, d.fk_commande as parent_id, d.label, d.description, d.qty, d.tva_tx as vat_rate, d.subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, UNIX_TIMESTAMP(d.tms) as tms";
+        $sql = "SELECT d.rowid as id, d.fk_commande as parent_id, d.label, d.description, d.qty, d.tva_tx as vat_rate, d.subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "commande_fournisseurdet d";
         $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "commande_fournisseur p ON d.fk_commande = p.rowid";
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
@@ -251,7 +251,7 @@ switch ($type) {
         break;
 
     case 'supplier_invoice_lines':
-        $sql = "SELECT d.rowid as id, d.fk_facture_fourn as parent_id, d.label, d.description, d.qty, d.tva_tx as vat_rate, d.pu_ht as subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, UNIX_TIMESTAMP(d.tms) as tms";
+        $sql = "SELECT d.rowid as id, d.fk_facture_fourn as parent_id, d.label, d.description, d.qty, d.tva_tx as vat_rate, d.pu_ht as subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "facture_fourn_det d";
         $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "facture_fourn p ON d.fk_facture_fourn = p.rowid";
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
@@ -264,7 +264,7 @@ switch ($type) {
         break;
 
     case 'shipment_lines':
-        $sql = "SELECT d.rowid as id, d.fk_expedition as parent_id, d.label, d.description, d.qty, d.fk_product as product_id, UNIX_TIMESTAMP(d.tms) as tms";
+        $sql = "SELECT d.rowid as id, d.fk_expedition as parent_id, d.label, d.description, d.qty, d.fk_product as product_id, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "expeditiondet d";
         $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "expedition p ON d.fk_expedition = p.rowid";
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
@@ -293,7 +293,7 @@ switch ($type) {
         break;
 
     case 'intervention_lines':
-        $sql = "SELECT d.rowid as id, d.fk_fichinter as parent_id, d.description, d.qty, UNIX_TIMESTAMP(d.tms) as tms";
+        $sql = "SELECT d.rowid as id, d.fk_fichinter as parent_id, d.description, d.qty, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "fichinterdet d";
         $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "fichinter p ON d.fk_fichinter = p.rowid";
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
@@ -314,7 +314,7 @@ switch ($type) {
         break;
 
     case 'bom_lines':
-        $sql = "SELECT d.rowid as id, d.fk_bom as parent_id, d.fk_product as product_id, d.qty, d.efficiency";
+        $sql = "SELECT d.rowid as id, d.fk_bom as parent_id, d.fk_product as product_id, d.qty, d.efficiency, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "bom_bomline d";
         $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "bom_bom p ON d.fk_bom = p.rowid";
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
@@ -375,13 +375,23 @@ switch ($type) {
 
     case 'links':
         // Fetches document links (e.g., proposal -> order -> invoice)
-        // No TMS available, always fetch all (paginated)
+        // No TMS available, use rowid for incremental sync
         $sql = "SELECT rowid as id, sourcetype, sourceid, targettype, targetid";
         $sql .= " FROM " . MAIN_DB_PREFIX . "element_element";
-        // Order by ID is safer for pagination than TMS if TMS doesn't exist
-        $sql .= " ORDER BY rowid ASC";
+        // CRITICAL FIX: The client sends a Timestamp (e.g. 1700000000) for last_modified,
+        // but 'element_element' has no 'tms'. We must sync by ROWID.
+        // If last_modified is huge (timestamp), it means we cannot use it as a rowid offset.
+        // In that case, we reset it to 0 to force a full re-sync of links, or we'd need a separate mechanism.
+        // For now, if > 100000000, treat as 0.
+        if ($last_modified > 100000000) {
+            $last_modified = 0;
+        }
 
-        // LIMIT applied below
+        // Use rowid for incremental sync if last_modified is provided and > 0
+        if ($last_modified > 0) {
+            $sql .= " WHERE rowid > " . $db->escape($last_modified);
+        }
+        $sql .= " ORDER BY rowid ASC";
         break;
 
     default:
