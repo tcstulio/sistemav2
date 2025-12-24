@@ -1,5 +1,6 @@
 import { MessageSquare, Search, Plus, Trash2, RefreshCw, Loader2, Settings, Users, User } from 'lucide-react';
 import { WhatsAppConversation, WhatsAppAccount } from '../../types';
+import { formatDateLocal } from '../../utils/dateUtils';
 
 interface ConversationListProps {
     conversations: WhatsAppConversation[];
@@ -168,7 +169,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                                                 </span>
                                             )}
                                         </div>
-                                        <span className="text-xs text-slate-400 shrink-0">{new Date(conv.lastMessageTimestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                                        <span className="text-xs text-slate-400 shrink-0">{formatDateLocal(conv.lastMessageTimestamp)}</span>
                                     </div>
                                     <div className="flex justify-between items-center">
                                         <p className="text-sm text-slate-500 dark:text-slate-400 truncate max-w-[80%]">{conv.lastMessage}</p>

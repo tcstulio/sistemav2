@@ -6,6 +6,7 @@ import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useShipments, useCustomers, useOrders } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
+import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 
 interface ShipmentListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -136,7 +137,7 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                                         {getCustomerName(ship.socid)}
                                     </div>
                                     <div className="flex justify-between items-center mt-2 text-xs text-slate-500">
-                                        <span>{new Date(ship.date_creation < 100000000000 ? ship.date_creation * 1000 : ship.date_creation).toLocaleDateString()}</span>
+                                        <span>{formatDateTime(ship.date_creation)}</span>
                                         {ship.fk_commande && <span className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-600 dark:text-slate-400">{getOrderRef(ship.fk_commande)}</span>}
                                     </div>
                                 </div>
@@ -194,7 +195,7 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                                                 <label className="text-xs text-slate-500 uppercase font-bold">Data Criação</label>
                                                 <div className="flex items-center gap-2 mt-1 text-slate-800 dark:text-white font-medium">
                                                     <Calendar size={16} className="text-indigo-500" />
-                                                    {new Date(selectedShipment.date_creation < 100000000000 ? selectedShipment.date_creation * 1000 : selectedShipment.date_creation).toLocaleDateString()}
+                                                    {formatDateTime(selectedShipment.date_creation)}
                                                 </div>
                                             </div>
                                             {selectedShipment.date_delivery && (
@@ -202,7 +203,7 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                                                     <label className="text-xs text-slate-500 uppercase font-bold">Data Entrega</label>
                                                     <div className="flex items-center gap-2 mt-1 text-slate-800 dark:text-white font-medium">
                                                         <Calendar size={16} className="text-emerald-500" />
-                                                        {new Date(selectedShipment.date_delivery < 100000000000 ? selectedShipment.date_delivery * 1000 : selectedShipment.date_delivery).toLocaleDateString()}
+                                                        {formatDateOnly(selectedShipment.date_delivery)}
                                                     </div>
                                                 </div>
                                             )}

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useInterBank, TransacaoInter, PixRecebido, BoletoResponse } from '../../hooks/useInterBank';
 import { io } from 'socket.io-client';
+import { formatDateOnly, formatDateTime } from '../../utils/dateUtils';
 
 
 interface InterBankDashboardProps {
@@ -108,7 +109,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
         });
 
         socket.on('inter:transaction', (data) => {
-            console.log('Inter Webhook Event:', data);
+
             refetchSaldo();
             if (data.type === 'pix') pixQuery.refetch();
             if (data.type === 'boleto') boletosQuery.refetch();
@@ -411,7 +412,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                                         {(extratoQuery.data?.transacoes || []).map((t: TransacaoInter, i: number) => (
                                             <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
                                                 <td className="px-4 py-3 text-sm text-slate-800 dark:text-white">
-                                                    {new Date(t.dataMovimento || t.dataEntrada).toLocaleDateString('pt-BR')}
+                                                    {formatDateOnly(t.dataMovimento || t.dataEntrada)}
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${t.tipoOperacao === 'C'
@@ -455,7 +456,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                                         {(pixQuery.data?.pix || []).map((p: PixRecebido) => (
                                             <tr key={p.endToEndId} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
                                                 <td className="px-4 py-3 text-sm text-slate-800 dark:text-white">
-                                                    {new Date(p.horario).toLocaleString('pt-BR')}
+                                                    {formatDateTime(p.horario)}
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <code className="text-xs bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded">
@@ -497,7 +498,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                                             <tr key={b.nossoNumero} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
                                                 <td className="px-4 py-3 text-sm text-slate-800 dark:text-white">{b.nossoNumero}</td>
                                                 <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
-                                                    {new Date(b.dataVencimento).toLocaleDateString('pt-BR')}
+                                                    {formatDateOnly(b.dataVencimento)}
                                                 </td>
                                                 <td className="px-4 py-3 text-sm text-slate-800 dark:text-white">
                                                     R$ {Number(b.valorNominal).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}

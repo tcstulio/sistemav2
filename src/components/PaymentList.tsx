@@ -3,6 +3,7 @@ import { Payment, DolibarrConfig, AppView } from '../types';
 import { Search, ArrowDownLeft, Calendar, FileText, TrendingUp, Wallet } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
 import { usePayments, useInvoices } from '../hooks/dolibarr';
+import { formatDateOnly } from '../utils/dateUtils';
 
 interface PaymentListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -101,7 +102,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate }) => {
                                         <div>
                                             <h4 className="font-bold text-slate-800 dark:text-white text-sm">{p.ref}</h4>
                                             <div className="flex items-center gap-2 text-xs text-slate-500 mt-1">
-                                                <Calendar size={12} /> {new Date(p.date_payment).toLocaleDateString()}
+                                                <Calendar size={12} /> {formatDateOnly(p.date_payment)}
                                                 {inv && (
                                                     <span
                                                         className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-400 cursor-pointer hover:underline"

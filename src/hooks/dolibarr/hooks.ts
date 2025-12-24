@@ -492,7 +492,7 @@ export const useBOMLines = createDolibarrHook<any, BOMLine>({
     queryKey: 'bom_lines',
     storeName: 'bomLines',
     endpoint: 'bom_lines',
-    dateField: 'id',
+    dateField: 'date_modification',
     mapper: mappers.mapBOMLine,
 });
 

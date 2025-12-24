@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Terminal, RefreshCw, Trash2, AlertTriangle, Sparkles, X } from 'lucide-react';
 import { ApiLog } from '../../types';
 import { dbService } from '../../services/dbService';
+import { formatTime } from '../../utils/dateUtils';
 
 interface ConsoleLogsTabProps {
     onAnalyzeError: (log: ApiLog) => void;
@@ -65,7 +66,7 @@ export const ConsoleLogsTab: React.FC<ConsoleLogsTabProps> = ({ onAnalyzeError }
                                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${log.request_method === 'GET' ? 'bg-blue-100 text-blue-700' : log.request_method === 'POST' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>{log.request_method || 'GET'}</span>
                                     <span className="font-semibold text-slate-700 dark:text-slate-300">{log.endpoint_or_task}</span>
                                 </div>
-                                <span className="text-xs text-slate-400">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                                <span className="text-xs text-slate-400">{formatTime(log.timestamp)}</span>
                             </div>
                             <div className="text-xs text-slate-500 truncate mb-1">{log.input_context}</div>
                             {log.status === 'error' && (

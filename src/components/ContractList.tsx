@@ -6,6 +6,7 @@ import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useContracts, useCustomers, useProjects, useInvoices } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
+import { formatDateOnly } from '../utils/dateUtils';
 
 interface ContractListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -255,8 +256,8 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                                         </span>
                                     </div>
                                     <div className="text-xs text-slate-500 flex items-center gap-1">
-                                        <Calendar size={12} /> {new Date(contract.date_contrat < 100000000000 ? contract.date_contrat * 1000 : contract.date_contrat).toLocaleDateString()}
-                                        {contract.date_fin_validite && ` - ${new Date(contract.date_fin_validite < 100000000000 ? contract.date_fin_validite * 1000 : contract.date_fin_validite).toLocaleDateString()}`}
+                                        <Calendar size={12} /> {formatDateOnly(contract.date_contrat)}
+                                        {contract.date_fin_validite && ` - ${formatDateOnly(contract.date_fin_validite)}`}
                                     </div>
                                 </div>
                             ))}
@@ -313,8 +314,8 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                                                         <label className="text-xs text-slate-500 uppercase font-bold">Duração</label>
                                                         <div className="flex items-center gap-2 mt-1 text-slate-800 dark:text-white font-medium">
                                                             <Calendar size={16} className="text-indigo-500" />
-                                                            {new Date(selectedContract.date_contrat < 100000000000 ? selectedContract.date_contrat * 1000 : selectedContract.date_contrat).toLocaleDateString()}
-                                                            {selectedContract.date_fin_validite ? ` → ${new Date(selectedContract.date_fin_validite < 100000000000 ? selectedContract.date_fin_validite * 1000 : selectedContract.date_fin_validite).toLocaleDateString()}` : ' (Sem Data Final)'}
+                                                            {formatDateOnly(selectedContract.date_contrat)}
+                                                            {selectedContract.date_fin_validite ? ` → ${formatDateOnly(selectedContract.date_fin_validite)}` : ' (Sem Data Final)'}
                                                         </div>
                                                     </div>
                                                     {selectedContract.project_id && (
@@ -367,7 +368,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                                                                 {inv.ref}
                                                                 {inv.statut === '2' ? <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Pago</span> : <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded">Não Pago</span>}
                                                             </div>
-                                                            <div className="text-xs text-slate-500 mt-1">{new Date(inv.date < 100000000000 ? inv.date * 1000 : inv.date).toLocaleDateString()}</div>
+                                                            <div className="text-xs text-slate-500 mt-1">{formatDateOnly(inv.date)}</div>
                                                         </div>
                                                         <div className="flex items-center gap-4">
                                                             <span className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString()}</span>

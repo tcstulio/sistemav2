@@ -18,6 +18,7 @@ import { GenericListLayout } from './common/GenericListLayout';
 import { PaginationControls } from './common/PaginationControls';
 import { StatusFilterBar } from './common/StatusFilterBar';
 import { LinkedObjects } from './common/LinkedObjects';
+import { formatDateOnly } from '../utils/dateUtils';
 
 interface CustomerListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -458,7 +459,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                                                 {inv.ref}
                                                 {inv.statut === '2' ? <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Pago</span> : <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded">Aberto</span>}
                                             </div>
-                                            <div className="text-xs text-slate-500 mt-1">{new Date(inv.date < 100000000000 ? inv.date * 1000 : inv.date).toLocaleDateString()}</div>
+                                            <div className="text-xs text-slate-500 mt-1">{formatDateOnly(inv.date)}</div>
                                         </div>
                                         <div className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString()}</div>
                                     </div>
@@ -478,7 +479,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                                                     {ord.statut === '3' ? 'Entregue' : ord.statut === '0' ? 'Rascunho' : 'Em Processo'}
                                                 </span>
                                             </div>
-                                            <div className="text-xs text-slate-500 mt-1">{new Date(ord.date < 100000000000 ? ord.date * 1000 : ord.date).toLocaleDateString()}</div>
+                                            <div className="text-xs text-slate-500 mt-1">{formatDateOnly(ord.date)}</div>
                                         </div>
                                         <div className="font-bold text-slate-800 dark:text-white">${ord.total_ttc.toLocaleString()}</div>
                                     </div>
@@ -498,7 +499,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                                                     {prop.statut === '2' ? 'Assinada' : prop.statut === '3' ? 'Recusada' : 'Aberta'}
                                                 </span>
                                             </div>
-                                            <div className="text-xs text-slate-500 mt-1">{new Date(prop.date < 100000000000 ? prop.date * 1000 : prop.date).toLocaleDateString()}</div>
+                                            <div className="text-xs text-slate-500 mt-1">{formatDateOnly(prop.date)}</div>
                                         </div>
                                         <div className="font-bold text-slate-800 dark:text-white">${prop.total_ttc.toLocaleString()}</div>
                                     </div>

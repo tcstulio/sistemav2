@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { ArrowLeft, User, Layout, MessageSquare, AlertTriangle, Loader2, CheckCheck, Check, Bot, Mic, UserPlus, Sparkles, X } from 'lucide-react';
 import { WhatsAppMessage, WhatsAppConversation, DolibarrUser, ThirdParty } from '../../types';
 import { AiService } from '../../services/aiService';
+import { formatTime } from '../../utils/dateUtils';
 import { useCustomerMutations } from '../../hooks/useMutations';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { toast } from 'sonner';
@@ -46,9 +47,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         scrollToBottom();
     }, [messages]);
 
-    const formatTime = (ts: number) => {
-        return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    };
+
 
     const getAvatarColor = (name: string) => {
         if (!name) return 'bg-slate-500';

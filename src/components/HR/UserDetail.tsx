@@ -3,6 +3,7 @@ import { DolibarrUser, Task, ExpenseReport, LeaveRequest, Project, DolibarrConfi
 import { UserAvatar } from './UserAvatar';
 import { formatDuration, getProjectName, getLeaveIcon, getLeaveStatusBadge, getExpenseStatusBadge } from './utils';
 import { UserCheck, Clock, Receipt, Plane, Shield, Edit2, Trash2, X, ArrowLeft, CreditCard, Fingerprint, Mail, Phone } from 'lucide-react';
+import { formatDateOnly } from '../../utils/dateUtils';
 
 interface UserDetailProps {
     user: DolibarrUser;
@@ -163,7 +164,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                     <div className="space-y-3">
                         {userExpenses.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhuma despesa registrada.</p> : userExpenses.map(exp => (
                             <div key={exp.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:shadow-md transition-all flex justify-between items-center">
-                                <div><div className="font-bold text-slate-800 dark:text-white text-sm">{exp.ref}</div><div className="text-xs text-slate-500">{new Date(exp.date_debut < 100000000000 ? exp.date_debut * 1000 : exp.date_debut).toLocaleDateString()}</div></div>
+                                <div><div className="font-bold text-slate-800 dark:text-white text-sm">{exp.ref}</div><div className="text-xs text-slate-500">{formatDateOnly(exp.date_debut)}</div></div>
                                 <div className="text-right"><div className="font-bold text-slate-800 dark:text-white">${exp.total_ttc.toLocaleString()}</div>{getExpenseStatusBadge(exp.statut)}</div>
                             </div>
                         ))}
@@ -176,7 +177,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                             <div key={l.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center">
                                 <div className="flex items-center gap-3">
                                     <div className="bg-slate-100 dark:bg-slate-800 p-2 rounded text-slate-500">{getLeaveIcon(l.type || '')}</div>
-                                    <div><div className="font-bold text-slate-800 dark:text-white text-sm">{l.type}</div><div className="text-xs text-slate-500">{new Date(l.date_debut < 100000000000 ? l.date_debut * 1000 : l.date_debut).toLocaleDateString()} - {new Date(l.date_fin < 100000000000 ? l.date_fin * 1000 : l.date_fin).toLocaleDateString()}</div></div>
+                                    <div><div className="font-bold text-slate-800 dark:text-white text-sm">{l.type}</div><div className="text-xs text-slate-500">{formatDateOnly(l.date_debut)} - {formatDateOnly(l.date_fin)}</div></div>
                                 </div>
                                 {getLeaveStatusBadge(l.statut)}
                             </div>

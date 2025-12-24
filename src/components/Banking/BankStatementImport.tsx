@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { Upload, FileText, X, CheckCircle2, AlertCircle, Loader2, Table, ArrowDownRight, ArrowUpRight } from 'lucide-react';
+import { formatDateOnly } from '../../utils/dateUtils';
 
 interface ParsedTransaction {
     id: string;
@@ -92,7 +93,7 @@ const BankStatementImport: React.FC<BankStatementImportProps> = ({ onImport, onC
                 transactionCount: data.data.transactionCount,
                 transactions: data.data.transactions.map((t: any) => ({
                     ...t,
-                    date: new Date(t.date).toLocaleDateString('pt-BR'),
+                    date: formatDateOnly(t.date),
                 })),
             });
         } catch (err: any) {
@@ -137,8 +138,8 @@ const BankStatementImport: React.FC<BankStatementImportProps> = ({ onImport, onC
                                 onDrop={handleDrop}
                                 onClick={() => fileInputRef.current?.click()}
                                 className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all ${isDragging
-                                        ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
-                                        : 'border-slate-300 dark:border-slate-700 hover:border-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                                    ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+                                    : 'border-slate-300 dark:border-slate-700 hover:border-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
                                     }`}
                             >
                                 <input
@@ -223,8 +224,8 @@ const BankStatementImport: React.FC<BankStatementImportProps> = ({ onImport, onC
                                         >
                                             <div className="flex items-center gap-3">
                                                 <div className={`p-1.5 rounded-full ${t.type === 'credit'
-                                                        ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'
-                                                        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                                                    ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'
+                                                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
                                                     }`}>
                                                     {t.type === 'credit' ? <ArrowDownRight size={14} /> : <ArrowUpRight size={14} />}
                                                 </div>

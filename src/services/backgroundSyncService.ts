@@ -43,7 +43,39 @@ const SYNC_MODULES = [
     { type: 'boms', store: 'boms', mapFn: mapBOM },
     { type: 'manufacturing_orders', store: 'manufacturingOrders', mapFn: mapManufacturingOrder },
     { type: 'system_logs', store: 'systemLogs', mapFn: mapSystemLog },
+    // Line items 
+    { type: 'links', store: 'links', mapFn: mapLink },
+    { type: 'proposal_lines', store: 'proposalLines', mapFn: mapProposalLine },
+    { type: 'order_lines', store: 'orderLines', mapFn: mapOrderLine },
+    { type: 'invoice_lines', store: 'invoiceLines', mapFn: mapInvoiceLine },
+    { type: 'shipment_lines', store: 'shipmentLines', mapFn: mapShipmentLine },
+    { type: 'supplier_order_lines', store: 'supplierOrderLines', mapFn: mapSupplierOrderLine },
+    { type: 'supplier_invoice_lines', store: 'supplierInvoiceLines', mapFn: mapSupplierInvoiceLine },
+    { type: 'intervention_lines', store: 'interventionLines', mapFn: mapInterventionLine },
+    { type: 'bom_lines', store: 'bomLines', mapFn: mapBOMLine },
 ];
+
+// Helper function to properly convert timestamps
+// custom_sync.php returns UNIX_TIMESTAMP (seconds), we need milliseconds
+function toTimestamp(value: any): number {
+    if (!value) return 0;
+
+    // Handle numeric strings from PHP/MySQL
+    if (typeof value === 'string' && !isNaN(Number(value)) && /^\d+$/.test(value)) {
+        value = Number(value);
+    }
+
+    if (typeof value === 'number') {
+        // If value is small (< 100 billion), assume seconds and convert to ms
+        if (value < 100000000000) {
+            return value * 1000;
+        }
+        return value;
+    }
+
+    const date = new Date(value);
+    return isNaN(date.getTime()) ? 0 : date.getTime();
+}
 
 // Mapping functions - Convert raw API data to typed objects
 function mapCustomer(raw: any) {
@@ -61,8 +93,8 @@ function mapCustomer(raw: any) {
         fournisseur: raw.fournisseur,
         code_fournisseur: raw.code_fournisseur,
         status: raw.status,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
-        datec: raw.datec ? new Date(raw.datec).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
+        datec: toTimestamp(raw.datec),
     };
 }
 
@@ -78,8 +110,8 @@ function mapSupplier(raw: any) {
         client: raw.client,
         fournisseur: raw.fournisseur,
         status: raw.status,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
-        datec: raw.datec ? new Date(raw.datec).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
+        datec: toTimestamp(raw.datec),
     };
 }
 
@@ -89,7 +121,7 @@ function mapCategory(raw: any) {
         label: raw.label,
         type: raw.type,
         description: raw.description,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -105,7 +137,7 @@ function mapContact(raw: any) {
         position: raw.position,
         fk_soc: raw.fk_soc ? String(raw.fk_soc) : '',
         statut: raw.statut,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -118,9 +150,9 @@ function mapInvoice(raw: any) {
         total_tva: parseFloat(raw.total_tva || '0'),
         statut: String(raw.statut),
         socid: raw.fk_soc ? String(raw.fk_soc) : '',
-        date_invoice: raw.date_invoice ? new Date(raw.date_invoice).getTime() : 0,
+        date_invoice: toTimestamp(raw.date_invoice),
         paye: raw.paye,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -129,11 +161,11 @@ function mapSupplierInvoice(raw: any) {
         id: String(raw.id),
         ref: raw.ref,
         socid: raw.fk_soc ? String(raw.fk_soc) : '',
-        date_invoice: raw.date_invoice ? new Date(raw.date_invoice).getTime() : 0,
+        date_invoice: toTimestamp(raw.date_invoice),
         total_ttc: parseFloat(raw.total_ttc || '0'),
         statut: String(raw.statut),
         paye: raw.paye,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -146,7 +178,7 @@ function mapProduct(raw: any) {
         type: raw.type,
         price: parseFloat(raw.price || '0'),
         stock: parseFloat(raw.stock || '0'),
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -159,7 +191,7 @@ function mapProposal(raw: any) {
         total_tva: parseFloat(raw.total_tva || '0'),
         statut: String(raw.statut),
         socid: raw.fk_soc ? String(raw.fk_soc) : '',
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -172,8 +204,8 @@ function mapOrder(raw: any) {
         total_tva: parseFloat(raw.total_tva || '0'),
         statut: String(raw.statut),
         socid: raw.fk_soc ? String(raw.fk_soc) : '',
-        date_commande: raw.date_commande ? new Date(raw.date_commande).getTime() : 0,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_commande: toTimestamp(raw.date_commande),
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -184,11 +216,11 @@ function mapShipment(raw: any) {
         socid: raw.fk_soc ? String(raw.fk_soc) : '',
         fk_projet: raw.fk_projet ? String(raw.fk_projet) : undefined,
         fk_commande: raw.fk_commande ? String(raw.fk_commande) : undefined,
-        date_creation: raw.date_creation ? new Date(raw.date_creation).getTime() : 0,
-        date_delivery: raw.date_delivery ? new Date(raw.date_delivery).getTime() : undefined,
+        date_creation: toTimestamp(raw.date_creation),
+        date_delivery: raw.date_delivery ? toTimestamp(raw.date_delivery) : undefined,
         status: raw.status,
         tracking_number: raw.tracking_number,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -199,11 +231,11 @@ function mapProject(raw: any) {
         title: raw.title,
         statut: String(raw.statut),
         socid: raw.socid ? String(raw.socid) : '',
-        date_start: raw.date_start ? new Date(raw.date_start).getTime() : undefined,
-        date_end: raw.date_end ? new Date(raw.date_end).getTime() : undefined,
+        date_start: raw.date_start ? toTimestamp(raw.date_start) : undefined,
+        date_end: raw.date_end ? toTimestamp(raw.date_end) : undefined,
         budget_amount: parseFloat(raw.budget_amount || '0'),
         progress: parseFloat(raw.progress || '0'),
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -213,15 +245,15 @@ function mapTask(raw: any) {
         ref: raw.ref,
         label: raw.label,
         description: raw.description,
-        date_start: raw.date_start ? new Date(raw.date_start).getTime() : undefined,
-        date_end: raw.date_end ? new Date(raw.date_end).getTime() : undefined,
+        date_start: raw.date_start ? toTimestamp(raw.date_start) : undefined,
+        date_end: raw.date_end ? toTimestamp(raw.date_end) : undefined,
         progress: parseFloat(raw.progress || '0'),
         planned_workload: raw.planned_workload,
         duration_effective: raw.duration_effective,
         fk_user_assign: raw.fk_user_assign ? String(raw.fk_user_assign) : undefined,
         fk_user_creat: raw.fk_user_creat ? String(raw.fk_user_creat) : undefined,
         project_id: raw.project_id ? String(raw.project_id) : '',
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -235,21 +267,21 @@ function mapBankAccount(raw: any) {
         currency_code: raw.currency_code,
         status: raw.status,
         solde: parseFloat(raw.solde || '0'),
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
 function mapBankLine(raw: any) {
     return {
         id: String(raw.id),
-        date_operation: raw.date_operation ? new Date(raw.date_operation).getTime() : 0,
-        date_value: raw.date_value ? new Date(raw.date_value).getTime() : 0,
+        date_operation: toTimestamp(raw.date_operation),
+        date_value: toTimestamp(raw.date_value),
         amount: parseFloat(raw.amount || '0'),
         label: raw.label,
         fk_account: raw.fk_account ? String(raw.fk_account) : '',
         num_releve: raw.num_releve,
         fk_type: raw.fk_type,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -260,8 +292,8 @@ function mapEvent(raw: any) {
         label: raw.label,
         description: raw.description,
         type_code: raw.type_code,
-        date_start: raw.date_start ? new Date(raw.date_start).getTime() : 0,
-        date_end: raw.date_end ? new Date(raw.date_end).getTime() : undefined,
+        date_start: toTimestamp(raw.date_start),
+        date_end: raw.date_end ? toTimestamp(raw.date_end) : undefined,
         percentage: parseFloat(raw.percentage || '0'),
         fk_user_author: raw.fk_user_author ? String(raw.fk_user_author) : undefined,
         socid: raw.socid ? String(raw.socid) : undefined,
@@ -272,7 +304,7 @@ function mapEvent(raw: any) {
         fulldayevent: raw.fulldayevent,
         priority: raw.priority,
         transparency: raw.transparency,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -288,7 +320,7 @@ function mapUser(raw: any) {
         photo: raw.photo,
         admin: raw.admin,
         statut: raw.statut,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -297,11 +329,11 @@ function mapSupplierOrder(raw: any) {
         id: String(raw.id),
         ref: raw.ref,
         socid: raw.fk_soc ? String(raw.fk_soc) : '',
-        date_creation: raw.date_creation ? new Date(raw.date_creation).getTime() : 0,
-        date_livraison: raw.date_livraison ? new Date(raw.date_livraison).getTime() : undefined,
+        date_creation: toTimestamp(raw.date_creation),
+        date_livraison: raw.date_livraison ? toTimestamp(raw.date_livraison) : undefined,
         total_ttc: parseFloat(raw.total_ttc || '0'),
         statut: String(raw.statut),
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -311,13 +343,13 @@ function mapIntervention(raw: any) {
         ref: raw.ref,
         socid: raw.socid ? String(raw.socid) : '',
         project_id: raw.project_id ? String(raw.project_id) : undefined,
-        date: raw.date ? new Date(raw.date).getTime() : 0,
-        date_creation: raw.date_creation ? new Date(raw.date_creation).getTime() : 0,
+        date: toTimestamp(raw.date),
+        date_creation: toTimestamp(raw.date_creation),
         duration: raw.duration,
         description: raw.description,
         statut: String(raw.statut),
         fk_user_author: raw.fk_user_author ? String(raw.fk_user_author) : undefined,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -327,10 +359,10 @@ function mapExpenseReport(raw: any) {
         ref: raw.ref,
         fk_user_author: raw.fk_user_author ? String(raw.fk_user_author) : '',
         total_ttc: parseFloat(raw.total_ttc || '0'),
-        date_debut: raw.date_debut ? new Date(raw.date_debut).getTime() : 0,
-        date_fin: raw.date_fin ? new Date(raw.date_fin).getTime() : 0,
+        date_debut: toTimestamp(raw.date_debut),
+        date_fin: toTimestamp(raw.date_fin),
         statut: String(raw.statut),
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -343,7 +375,7 @@ function mapJobPosition(raw: any) {
         rem_min: raw.rem_min,
         rem_max: raw.rem_max,
         status: String(raw.status),
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -363,7 +395,7 @@ function mapTicket(raw: any) {
         project_id: raw.project_id ? String(raw.project_id) : undefined,
         fk_user_assign: raw.fk_user_assign ? String(raw.fk_user_assign) : undefined,
         origin_email: raw.origin_email,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -375,20 +407,20 @@ function mapWarehouse(raw: any) {
         description: raw.description,
         statut: raw.statut,
         lieu: raw.lieu,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
 function mapStockMovement(raw: any) {
     return {
         id: String(raw.id),
-        datem: raw.datem ? new Date(raw.datem).getTime() : 0,
+        datem: toTimestamp(raw.datem),
         fk_product: raw.fk_product ? String(raw.fk_product) : '',
         fk_entrepot: raw.fk_entrepot ? String(raw.fk_entrepot) : '',
         value: parseFloat(raw.value || '0'),
         type_mouvement: raw.type_mouvement,
         label: raw.label,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -400,12 +432,12 @@ function mapCandidate(raw: any) {
         lastname: raw.lastname,
         email: raw.email,
         phone: raw.phone,
-        date_birth: raw.date_birth ? new Date(raw.date_birth).getTime() : undefined,
+        date_birth: raw.date_birth ? toTimestamp(raw.date_birth) : undefined,
         status: String(raw.status),
         fk_job_position: raw.fk_job_position ? String(raw.fk_job_position) : '',
         note_public: raw.note_public,
-        date_creation: raw.datec ? new Date(raw.datec).getTime() : 0,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_creation: toTimestamp(raw.datec),
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -414,12 +446,12 @@ function mapLeaveRequest(raw: any) {
         id: String(raw.id),
         type: raw.type,
         halfday: raw.halfday,
-        date_debut: raw.date_debut ? new Date(raw.date_debut).getTime() : 0,
-        date_fin: raw.date_fin ? new Date(raw.date_fin).getTime() : 0,
+        date_debut: toTimestamp(raw.date_debut),
+        date_fin: toTimestamp(raw.date_fin),
         description: raw.description,
         fk_user: raw.fk_user ? String(raw.fk_user) : '',
         statut: String(raw.statut),
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -427,13 +459,13 @@ function mapContract(raw: any) {
     return {
         id: String(raw.id),
         ref: raw.ref,
-        date_contrat: raw.date_contrat ? new Date(raw.date_contrat).getTime() : 0,
-        date_fin_validite: raw.date_fin_validite ? new Date(raw.date_fin_validite).getTime() : undefined,
+        date_contrat: toTimestamp(raw.date_contrat),
+        date_fin_validite: raw.date_fin_validite ? toTimestamp(raw.date_fin_validite) : undefined,
         statut: String(raw.statut),
         socid: raw.socid ? String(raw.socid) : '',
         project_id: raw.project_id ? String(raw.project_id) : undefined,
         note_public: raw.note_public,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -441,10 +473,10 @@ function mapPayment(raw: any) {
     return {
         id: String(raw.id),
         ref: raw.ref,
-        date_payment: raw.date_payment ? new Date(raw.date_payment).getTime() : 0,
+        date_payment: toTimestamp(raw.date_payment),
         amount: parseFloat(raw.amount || '0'),
         fk_bank: raw.fk_bank ? String(raw.fk_bank) : '',
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -452,10 +484,10 @@ function mapSupplierPayment(raw: any) {
     return {
         id: String(raw.id),
         ref: raw.ref,
-        date_payment: raw.date_payment ? new Date(raw.date_payment).getTime() : 0,
+        date_payment: toTimestamp(raw.date_payment),
         amount: parseFloat(raw.amount || '0'),
         fk_bank: raw.fk_bank ? String(raw.fk_bank) : '',
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -467,7 +499,7 @@ function mapBOM(raw: any) {
         description: raw.description,
         duration: raw.duration,
         efficiency: raw.efficiency,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -479,10 +511,10 @@ function mapManufacturingOrder(raw: any) {
         status: raw.status,
         product_to_produce_id: raw.product_to_produce_id ? String(raw.product_to_produce_id) : undefined,
         qty: parseFloat(raw.qty || '0'),
-        date_start: raw.date_start ? new Date(raw.date_start).getTime() : undefined,
-        date_end: raw.date_end ? new Date(raw.date_end).getTime() : undefined,
+        date_start: raw.date_start ? toTimestamp(raw.date_start) : undefined,
+        date_end: raw.date_end ? toTimestamp(raw.date_end) : undefined,
         project_id: raw.project_id ? String(raw.project_id) : undefined,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_modification: toTimestamp(raw.tms),
     };
 }
 
@@ -493,14 +525,156 @@ function mapSystemLog(raw: any) {
         label: raw.label || '',
         description: raw.description || undefined,
         type_code: raw.type_code || 'UNKNOWN',
-        date_action: raw.date_action ? new Date(raw.date_action).getTime() : 0,
+        date_action: toTimestamp(raw.date_action),
         fk_user_author: raw.fk_user_author ? String(raw.fk_user_author) : undefined,
         socid: raw.socid ? String(raw.socid) : undefined,
         project_id: raw.project_id ? String(raw.project_id) : undefined,
         elementtype: raw.elementtype || undefined,
         fk_element: raw.fk_element ? String(raw.fk_element) : undefined,
-        date_creation: raw.datec ? new Date(raw.datec).getTime() : 0,
-        date_modification: raw.tms ? new Date(raw.tms).getTime() : 0,
+        date_creation: toTimestamp(raw.datec),
+        date_modification: toTimestamp(raw.tms),
+    };
+}
+
+// Line Item Mappers
+
+function mapLink(raw: any) {
+    return {
+        id: String(raw.id),
+        sourcetype: raw.sourcetype || '',
+        sourceid: String(raw.sourceid),
+        targettype: raw.targettype || '',
+        targetid: String(raw.targetid),
+        date_modification: Number(raw.id), // Links table has no tms, use ID for incremental sync
+    };
+}
+
+function mapProposalLine(raw: any) {
+    return {
+        id: String(raw.id),
+        parent_id: String(raw.parent_id),
+        label: raw.label || '',
+        description: raw.description || '',
+        type: raw.type,
+        qty: parseFloat(raw.qty || '0'),
+        vat_rate: parseFloat(raw.vat_rate || '0'),
+        subprice: parseFloat(raw.subprice || '0'),
+        total_ht: parseFloat(raw.total_ht || '0'),
+        total_ttc: parseFloat(raw.total_ttc || '0'),
+        total_tva: parseFloat(raw.total_tva || '0'),
+        product_id: raw.product_id ? String(raw.product_id) : undefined,
+        rang: raw.rang ? parseFloat(raw.rang) : 0,
+        date_modification: toTimestamp(raw.parent_tms || raw.tms),
+    };
+}
+
+function mapOrderLine(raw: any) {
+    return {
+        id: String(raw.id),
+        parent_id: String(raw.parent_id),
+        label: raw.label || '',
+        description: raw.description || '',
+        type: raw.type,
+        qty: parseFloat(raw.qty || '0'),
+        vat_rate: parseFloat(raw.vat_rate || '0'),
+        subprice: parseFloat(raw.subprice || '0'),
+        total_ht: parseFloat(raw.total_ht || '0'),
+        total_ttc: parseFloat(raw.total_ttc || '0'),
+        total_tva: parseFloat(raw.total_tva || '0'),
+        product_id: raw.product_id ? String(raw.product_id) : undefined,
+        rang: raw.rang ? parseFloat(raw.rang) : 0,
+        date_modification: toTimestamp(raw.parent_tms || raw.tms),
+    };
+}
+
+function mapInvoiceLine(raw: any) {
+    return {
+        id: String(raw.id),
+        parent_id: String(raw.parent_id),
+        label: raw.label || '',
+        description: raw.description || '',
+        type: raw.type,
+        qty: parseFloat(raw.qty || '0'),
+        vat_rate: parseFloat(raw.vat_rate || '0'),
+        subprice: parseFloat(raw.subprice || '0'),
+        total_ht: parseFloat(raw.total_ht || '0'),
+        total_ttc: parseFloat(raw.total_ttc || '0'),
+        total_tva: parseFloat(raw.total_tva || '0'),
+        product_id: raw.product_id ? String(raw.product_id) : undefined,
+        rang: raw.rang ? parseFloat(raw.rang) : 0,
+        date_modification: toTimestamp(raw.parent_tms || raw.tms),
+    };
+}
+
+function mapShipmentLine(raw: any) {
+    return {
+        id: String(raw.id),
+        parent_id: String(raw.parent_id),
+        label: raw.label || '',
+        description: raw.description || '',
+        qty: parseFloat(raw.qty || '0'),
+        product_id: raw.product_id ? String(raw.product_id) : undefined,
+        rang: raw.rang ? parseFloat(raw.rang) : 0,
+        date_modification: toTimestamp(raw.parent_tms || raw.tms),
+    };
+}
+
+function mapSupplierOrderLine(raw: any) {
+    return {
+        id: String(raw.id),
+        parent_id: String(raw.parent_id),
+        label: raw.label || '',
+        description: raw.description || '',
+        qty: parseFloat(raw.qty || '0'),
+        vat_rate: parseFloat(raw.vat_rate || '0'),
+        subprice: parseFloat(raw.subprice || '0'),
+        total_ht: parseFloat(raw.total_ht || '0'),
+        total_ttc: parseFloat(raw.total_ttc || '0'),
+        total_tva: parseFloat(raw.total_tva || '0'),
+        product_id: raw.product_id ? String(raw.product_id) : undefined,
+        rang: raw.rang ? parseFloat(raw.rang) : 0,
+        date_modification: toTimestamp(raw.parent_tms || raw.tms),
+    };
+}
+
+function mapSupplierInvoiceLine(raw: any) {
+    return {
+        id: String(raw.id),
+        parent_id: String(raw.parent_id),
+        label: raw.label || '',
+        description: raw.description || '',
+        qty: parseFloat(raw.qty || '0'),
+        vat_rate: parseFloat(raw.vat_rate || '0'),
+        subprice: parseFloat(raw.subprice || '0'),
+        total_ht: parseFloat(raw.total_ht || '0'),
+        total_ttc: parseFloat(raw.total_ttc || '0'),
+        total_tva: parseFloat(raw.total_tva || '0'),
+        product_id: raw.product_id ? String(raw.product_id) : undefined,
+        rang: raw.rang ? parseFloat(raw.rang) : 0,
+        date_modification: toTimestamp(raw.parent_tms || raw.tms),
+    };
+}
+
+function mapInterventionLine(raw: any) {
+    return {
+        id: String(raw.id),
+        parent_id: String(raw.parent_id),
+        desc: raw.description || '',
+        qty: parseFloat(raw.qty || '0'),
+        duration: 0,
+        rang: raw.rang ? parseFloat(raw.rang) : 0,
+        date: toTimestamp(raw.tms),
+        date_modification: toTimestamp(raw.parent_tms || raw.tms),
+    };
+}
+
+function mapBOMLine(raw: any) {
+    return {
+        id: String(raw.id),
+        fk_product: raw.product_id ? String(raw.product_id) : '',
+        qty: parseFloat(raw.qty || '0'),
+        efficiency: parseFloat(raw.efficiency || '0'),
+        date_modification: toTimestamp(raw.parent_tms || raw.tms),
     };
 }
 
