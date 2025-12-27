@@ -8,7 +8,7 @@ import { LinkedObjects } from './common/LinkedObjects';
 import { PaginationControls } from './common/PaginationControls';
 import { StatusFilterBar } from './common/StatusFilterBar';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useInvoices, useCustomers, useProjects, useProducts, useShipments } from '../hooks/dolibarr';
+import { useInvoices, useCustomers, useProjects, useProducts, useShipments, useInvoiceLines, useUsers } from '../hooks/dolibarr';
 
 // Direct Hook Imports
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
@@ -34,6 +34,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const { data: projects = [] } = useProjects(config);
     const { data: products = [] } = useProducts(config, !!config);
     const { data: shipments = [] } = useShipments(config, !!config);
+    const { data: allInvoiceLines = [] } = useInvoiceLines(config);
+    const { data: users = [] } = useUsers(config);
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState<'all' | 'unpaid' | 'paid' | 'draft'>('all');
@@ -47,14 +49,6 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     // Pagination State
     const [page, setPage] = useState(0);
     const [limit, setLimit] = useState(20);
-
-    // Pagination & Search Effect
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            if (refreshData) refreshData({ page, limit, query: searchTerm });
-        }, 600);
-        return () => clearTimeout(timer);
-    }, [page, limit, searchTerm, refreshData]);
 
     // Reset page on search
     useEffect(() => {
@@ -86,6 +80,12 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
         return customer ? customer.name : 'Cliente Desconhecido';
     };
 
+    const getUserName = (id?: string) => {
+        if (!id) return '-';
+        const u = users.find(user => String(user.id) === String(id));
+        return u ? (u.firstname ? `${u.firstname} ${u.lastname}` : u.login) : `User ${id}`;
+    };
+
     const getProjectName = (projId?: string) => {
         if (!projId) return null;
         const p = projects.find(proj => String(proj.id) === String(projId));
@@ -111,6 +111,11 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             return sortOrder === 'desc' ? b.date - a.date : a.date - b.date;
         });
     }, [invoices, customers, searchTerm, filterStatus, sortOrder]);
+
+    const invoiceLines = useMemo(() => {
+        if (!selectedInvoice) return [];
+        return allInvoiceLines.filter(line => String(line.parent_id) === String(selectedInvoice.id));
+    }, [selectedInvoice, allInvoiceLines]);
 
     const linkedShipments = useMemo(() => {
         if (!selectedInvoice || !selectedInvoice.order_id) return [];
@@ -516,16 +521,57 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
 
                     <div className="bg-white dark:bg-slate-900 rounded-xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
                         <h4 className="font-bold text-slate-800 dark:text-white mb-4">Itens da Fatura</h4>
-                        <div className="text-center py-8 text-slate-400 italic bg-slate-50 dark:bg-slate-800/30 rounded-lg border border-dashed border-slate-200 dark:border-slate-700">
-                            Itens detalhados não carregados nesta visualização.
-                            <br />
-                            <button
-                                onClick={() => openInDolibarr(selectedInvoice.id)}
-                                className="text-indigo-600 dark:text-indigo-400 hover:underline mt-2 text-sm"
-                            >
-                                Ver detalhes completos no Dolibarr
-                            </button>
-                        </div>
+                        {invoiceLines.length === 0 ? (
+                            <div className="text-center py-8 text-slate-400 italic bg-slate-50 dark:bg-slate-800/30 rounded-lg border border-dashed border-slate-200 dark:border-slate-700">
+                                Nenhum item encontrado.
+                            </div>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 font-medium">
+                                        <tr>
+                                            <th className="px-4 py-3 rounded-l-lg">Descrição</th>
+                                            <th className="px-4 py-3 text-right">Qtd</th>
+                                            <th className="px-4 py-3 text-right">Preço Un.</th>
+                                            <th className="px-4 py-3 text-right rounded-r-lg">Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                        {invoiceLines.map((line) => (
+                                            <tr key={line.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                                                <td className="px-4 py-3 max-w-xs">
+                                                    <div className="font-medium text-slate-800 dark:text-slate-200">
+                                                        {line.label || (line.product_ref ? `${line.product_ref} - ${line.product_label || ''}` : null) || <span className="italic text-slate-400">Item {line.id}</span>}
+                                                    </div>
+                                                    {line.description && (
+                                                        <div className="text-xs text-slate-500 mt-1 whitespace-pre-wrap font-normal">
+                                                            {line.description}
+                                                        </div>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">
+                                                    {line.qty}
+                                                </td>
+                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">
+                                                    ${line.subprice?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </td>
+                                                <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white font-mono">
+                                                    ${line.total_ttc?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                    <tfoot className="border-t border-slate-200 dark:border-slate-700">
+                                        <tr>
+                                            <td colSpan={3} className="px-4 py-3 text-right font-bold text-slate-700 dark:text-slate-300 uppercase text-xs tracking-wider">Total Geral</td>
+                                            <td className="px-4 py-3 text-right font-bold text-emerald-600 dark:text-emerald-400 font-mono text-base">
+                                                ${selectedInvoice.total_ttc?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        )}
                     </div>
 
                     {/* Linked Objects */}

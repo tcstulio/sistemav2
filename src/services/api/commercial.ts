@@ -162,6 +162,8 @@ export const fetchProposals = async (config: DolibarrConfig): Promise<Proposal[]
         socid: String(d.socid),
         project_id: d.fk_projet ? String(d.fk_projet) : undefined,
         date: parseInt(d.date),
+        total_ht: parseFloat(d.total_ht),
+        total_tva: parseFloat(d.total_tva),
         total_ttc: parseFloat(d.total_ttc),
         statut: String(d.statut) as any,
         array_options: d.array_options,
@@ -249,6 +251,14 @@ export const updateThirdParty = async (config: DolibarrConfig, id: string, data:
         method: 'PUT',
         headers: getHeaders(config.apiKey),
         body: JSON.stringify(data)
+    });
+};
+
+export const deleteThirdParty = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/thirdparties/${id}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
     });
 };
 
@@ -470,6 +480,39 @@ export const classifyOrderDelivered = async (config: DolibarrConfig, id: string)
     return request(url, {
         method: 'POST',
         headers: getHeaders(config.apiKey)
+    });
+};
+
+// -- Supplier Invoices Actions --
+
+export const validateSupplierInvoice = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices/${id}/validate`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
+    });
+};
+
+export const paySupplierInvoice = async (config: DolibarrConfig, id: string, paymentData: any) => {
+    // Note: Dolibarr often manages supplier payments via a separate 'payment' object linked to the invoice
+    // or a classify as paid endpoint. 
+    // POST /supplierinvoices/{id}/payments creates a payment.
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices/${id}/payments`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(paymentData)
+    });
+};
+
+export const markSupplierInvoiceAsPaid = async (config: DolibarrConfig, id: string) => {
+    // Some versions use classifyaspaid
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices/${id}/classifyaspaid`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
     });
 };
 

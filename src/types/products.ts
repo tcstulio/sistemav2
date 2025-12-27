@@ -6,9 +6,20 @@ export interface Product {
     description?: string;
     type: '0' | '1'; // 0=product, 1=service
     price: number;
+    price_ttc?: number;
+    vat_rate?: number;
     stock_reel?: number;
     stock_details?: { warehouse: string; qty: number }[];
     seuil_stock_alerte?: number;
+
+    // Status
+    tosell?: '0' | '1';
+    tobuy?: '0' | '1';
+    finished?: '0' | '1'; // Manufacturing status
+
+    // Service specific
+    duration?: string;
+
     date_creation?: number;
     date_modification?: number;
     array_options?: Record<string, any>;
@@ -69,6 +80,8 @@ export interface Shipment {
     status: string; // '0','1','2'
     tracking_number?: string;
     lines?: ShipmentLine[];
+    fk_user_author?: string; // ADDED
+    fk_user_valid?: string; // ADDED
     date_modification?: number;
     array_options?: Record<string, any>;
 }

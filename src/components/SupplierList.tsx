@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { ThirdParty, DolibarrConfig, SupplierInvoice, Product, SupplierOrder, AppView, Warehouse } from '../types';
-import { Truck, Search, Plus, MapPin, Mail, Phone, ExternalLink, Package, ShoppingCart, Receipt, X, ArrowDownCircle, CheckCircle2, Loader2, ArrowLeft, Lock, CheckSquare, Clock } from 'lucide-react';
+import { Truck, Search, Plus, MapPin, Mail, Phone, ExternalLink, Package, ShoppingCart, Receipt, X, ArrowDownCircle, CheckCircle2, Loader2, ArrowLeft, Lock, CheckSquare, Clock, Pencil, Trash2, PlusCircle } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useSuppliers, useProducts, useSupplierInvoices, useSupplierOrders, useWarehouses } from '../hooks/dolibarr';
+import { useSuppliers, useProducts, useSupplierInvoices, useSupplierOrders, useWarehouses, useUsers } from '../hooks/dolibarr';
+import { useSupplierMutations } from '../hooks/useMutations';
 import { LinkedObjects } from './common/LinkedObjects';
-import { ReceiptScanner } from './Finance/ReceiptScanner';
+
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { toast } from 'sonner';
 
@@ -26,12 +27,28 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
     const supplierOrders = supplierOrdersData || [];
     const { data: warehousesData } = useWarehouses(config);
     const warehouses = warehousesData || [];
+    const { data: users = [] } = useUsers(config);
+
+    // Mutations
+    const { createSupplier, updateSupplier, deleteSupplier } = useSupplierMutations(config);
 
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedSupplier, setSelectedSupplier] = useState<ThirdParty | null>(null);
     const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'invoices' | 'products'>('overview');
+
+    // CRUD State
+    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [createForm, setCreateForm] = useState<Partial<ThirdParty>>({ name: '', email: '', phone: '', address: '', town: '', zip: '' });
+    const [isCreating, setIsCreating] = useState(false);
+
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editForm, setEditForm] = useState<Partial<ThirdParty>>({});
+    const [isSaving, setIsSaving] = useState(false);
+
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     // Order Detail State
     const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -47,18 +64,12 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
     });
     const [isSubmittingReception, setIsSubmittingReception] = useState(false);
 
-    // Scanner State
-    const [isScannerOpen, setIsScannerOpen] = useState(false);
-    const [scannedData, setScannedData] = useState<any>(null);
-    const [isCreateInvoiceOpen, setIsCreateInvoiceOpen] = useState(false);
-    const [newInvoice, setNewInvoice] = useState({
-        socid: '',
-        ref: '',
-        date: new Date().toISOString().split('T')[0],
-        total: 0,
-        label: ''
-    });
-    const [isSubmittingInvoice, setIsSubmittingInvoice] = useState(false);
+
+    const getUserName = (id?: string) => {
+        if (!id) return '-';
+        const u = users.find(user => String(user.id) === String(id));
+        return u ? (u.firstname ? `${u.firstname} ${u.lastname}` : u.login) : `User ${id}`;
+    };
 
     const filteredSuppliers = useMemo(() => {
         return suppliers.filter(s =>
@@ -159,56 +170,75 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
         }
     };
 
-    const handleScanComplete = (data: any) => {
-        setIsScannerOpen(false);
-        setScannedData(data);
 
-        // Auto-match vendor
-        let matchedSupplierId = '';
-        if (data.vendor) {
-            const match = suppliers.find(s => s.name.toLowerCase().includes(data.vendor.toLowerCase()));
-            if (match) matchedSupplierId = match.id;
-        }
 
-        setNewInvoice({
-            socid: matchedSupplierId,
-            ref: '',
-            date: data.date || new Date().toISOString().split('T')[0],
-            total: data.total || 0,
-            label: data.category ? `${data.category} (Digitalizado)` : 'Despesa Digitalizada'
-        });
-        setIsCreateInvoiceOpen(true);
-    };
-
-    const handleCreateInvoice = async (e: React.FormEvent) => {
+    // CRUD Handlers
+    const handleCreateSupplier = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newInvoice.socid) {
-            alert("Selecione um fornecedor");
+        if (!createForm.name) {
+            toast.error("Nome é obrigatório");
             return;
         }
-        setIsSubmittingInvoice(true);
+        setIsCreating(true);
         try {
-            await DolibarrService.createSupplierInvoice(config, {
-                socid: newInvoice.socid,
-                date: new Date(newInvoice.date).getTime() / 1000,
-                type: '0',
-                libelle: newInvoice.label,
-                ref_supplier: newInvoice.ref || `AUTO-${Date.now()}`,
-                lines: [{
-                    desc: newInvoice.label,
-                    subprice: newInvoice.total,
-                    qty: 1,
-                    tva_tx: 0
-                }]
-            });
-            toast.success("Fatura de Fornecedor Criada!");
-            setIsCreateInvoiceOpen(false);
-            if (onRefresh) onRefresh();
+            await createSupplier.mutateAsync(createForm);
+            toast.success("Fornecedor criado com sucesso!");
+            setIsCreateModalOpen(false);
+            setCreateForm({ name: '', email: '', phone: '', address: '', town: '', zip: '' });
         } catch (e: any) {
-            console.error(e);
-            toast.error("Erro ao criar fatura: " + e.message);
+            toast.error("Erro ao criar fornecedor: " + e.message);
         } finally {
-            setIsSubmittingInvoice(false);
+            setIsCreating(false);
+        }
+    };
+
+    const handleEditClick = () => {
+        if (!selectedSupplier) return;
+        setEditForm({
+            name: selectedSupplier.name,
+            address: selectedSupplier.address,
+            zip: selectedSupplier.zip,
+            town: selectedSupplier.town,
+            phone: selectedSupplier.phone,
+            email: selectedSupplier.email,
+            code_fournisseur: selectedSupplier.code_fournisseur
+        });
+        setIsEditModalOpen(true);
+    };
+
+    const handleUpdateSupplier = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedSupplier || !editForm.name) return;
+        setIsSaving(true);
+        try {
+            await updateSupplier.mutateAsync({ id: selectedSupplier.id, data: editForm });
+            // Update local state is handled by hook invalidation, but we can optimistically update selectedSupplier
+            setSelectedSupplier({ ...selectedSupplier, ...editForm } as ThirdParty);
+            toast.success("Fornecedor atualizado com sucesso!");
+            setIsEditModalOpen(false);
+        } catch (e: any) {
+            toast.error("Erro ao atualizar: " + e.message);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const handleDeleteClick = () => {
+        setIsDeleteModalOpen(true);
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (!selectedSupplier) return;
+        setIsDeleting(true);
+        try {
+            await deleteSupplier.mutateAsync(selectedSupplier.id);
+            toast.success("Fornecedor removido com sucesso!");
+            setIsDeleteModalOpen(false);
+            setSelectedSupplier(null);
+        } catch (e: any) {
+            toast.error("Erro ao remover: " + e.message);
+        } finally {
+            setIsDeleting(false);
         }
     };
 
@@ -226,107 +256,134 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
     return (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors relative">
 
-            {/* Receipt Scanner */}
-            {isScannerOpen && (
-                <ReceiptScanner
-                    onScanComplete={handleScanComplete}
-                    onClose={() => setIsScannerOpen(false)}
-                />
-            )}
-
-            {/* Create Invoice Modal */}
-            {isCreateInvoiceOpen && (
+            {/* Create Modal */}
+            {isCreateModalOpen && (
                 <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
                     <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
                         <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
                             <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                <Receipt size={18} className="text-indigo-600" /> Nova Fatura (Via Scanner)
+                                <PlusCircle size={18} className="text-indigo-600" /> Novo Fornecedor
                             </h3>
-                            <button onClick={() => setIsCreateInvoiceOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
+                            <button onClick={() => setIsCreateModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
                         </div>
-                        <form onSubmit={handleCreateInvoice} className="flex flex-col max-h-[85vh]">
-                            <div className="p-6 space-y-4 overflow-y-auto">
-                                {scannedData && (
-                                    <div className="bg-indigo-50 dark:bg-indigo-900/20 p-3 rounded-lg text-sm text-indigo-800 dark:text-indigo-200 mb-4 border border-indigo-100 dark:border-indigo-800/50">
-                                        <p className="font-bold mb-1">Dados Extraídos:</p>
-                                        <ul className="list-disc list-inside opacity-80">
-                                            <li>Fornecedor: {scannedData.vendor || '?'}</li>
-                                            <li>Total: {scannedData.total}</li>
-                                            <li>Data: {scannedData.date}</li>
-                                        </ul>
-                                    </div>
-                                )}
-
+                        <form onSubmit={handleCreateSupplier} className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome *</label>
+                                <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" required value={createForm.name} onChange={e => setCreateForm({ ...createForm, name: e.target.value })} />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Fornecedor</label>
-                                    <select
-                                        className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                        value={newInvoice.socid}
-                                        onChange={e => setNewInvoice({ ...newInvoice, socid: e.target.value })}
-                                        required
-                                    >
-                                        <option value="">Selecione...</option>
-                                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                    </select>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Email</label>
+                                    <input type="email" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={createForm.email} onChange={e => setCreateForm({ ...createForm, email: e.target.value })} />
                                 </div>
-
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Ref. Fornecedor</label>
-                                        <input
-                                            type="text"
-                                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                            value={newInvoice.ref}
-                                            onChange={e => setNewInvoice({ ...newInvoice, ref: e.target.value })}
-                                            placeholder="Ex: NF-1234"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
-                                        <input
-                                            type="date"
-                                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                            value={newInvoice.date}
-                                            onChange={e => setNewInvoice({ ...newInvoice, date: e.target.value })}
-                                            required
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Total</label>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white font-bold"
-                                            value={newInvoice.total}
-                                            onChange={e => setNewInvoice({ ...newInvoice, total: parseFloat(e.target.value) })}
-                                            required
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
-                                        <input
-                                            type="text"
-                                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                            value={newInvoice.label}
-                                            onChange={e => setNewInvoice({ ...newInvoice, label: e.target.value })}
-                                        />
-                                    </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Telefone</label>
+                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={createForm.phone} onChange={e => setCreateForm({ ...createForm, phone: e.target.value })} />
                                 </div>
                             </div>
-
-                            <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-b-xl">
-                                <button type="button" onClick={() => setIsCreateInvoiceOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
-                                <button type="submit" disabled={isSubmittingInvoice} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
-                                    {isSubmittingInvoice ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} Criar Fatura
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Endereço</label>
+                                <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={createForm.address} onChange={e => setCreateForm({ ...createForm, address: e.target.value })} />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cidade</label>
+                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={createForm.town} onChange={e => setCreateForm({ ...createForm, town: e.target.value })} />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">CEP</label>
+                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={createForm.zip} onChange={e => setCreateForm({ ...createForm, zip: e.target.value })} />
+                                </div>
+                            </div>
+                            <div className="flex justify-end gap-3 pt-2">
+                                <button type="button" onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
+                                <button type="submit" disabled={isCreating} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
+                                    {isCreating ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} Criar
                                 </button>
                             </div>
                         </form>
                     </div>
                 </div>
             )}
+
+            {/* Edit Modal */}
+            {isEditModalOpen && (
+                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
+                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
+                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
+                                <Pencil size={18} className="text-indigo-600" /> Editar Fornecedor
+                            </h3>
+                            <button onClick={() => setIsEditModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
+                        </div>
+                        <form onSubmit={handleUpdateSupplier} className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome *</label>
+                                <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" required value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Email</label>
+                                    <input type="email" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })} />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Telefone</label>
+                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Endereço</label>
+                                <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.address} onChange={e => setEditForm({ ...editForm, address: e.target.value })} />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cidade</label>
+                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.town} onChange={e => setEditForm({ ...editForm, town: e.target.value })} />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">CEP</label>
+                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.zip} onChange={e => setEditForm({ ...editForm, zip: e.target.value })} />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cód. Fornecedor</label>
+                                <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.code_fournisseur || ''} onChange={e => setEditForm({ ...editForm, code_fournisseur: e.target.value })} />
+                            </div>
+                            <div className="flex justify-end gap-3 pt-2">
+                                <button type="button" onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
+                                <button type="submit" disabled={isSaving} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
+                                    {isSaving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} Salvar
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Modal */}
+            {isDeleteModalOpen && (
+                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-sm border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
+                        <div className="p-6 text-center">
+                            <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <Trash2 size={24} />
+                            </div>
+                            <h3 className="font-bold text-lg dark:text-white mb-2">Remover Fornecedor?</h3>
+                            <p className="text-slate-500 text-sm mb-6">
+                                Tem certeza que deseja remover <b>{selectedSupplier?.name}</b>? Esta ação não pode ser desfeita.
+                            </p>
+                            <div className="flex justify-center gap-3">
+                                <button onClick={() => setIsDeleteModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium bg-slate-100 dark:bg-slate-800 rounded-lg">Cancelar</button>
+                                <button onClick={handleDeleteConfirm} disabled={isDeleting} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
+                                    {isDeleting ? <Loader2 size={16} className="animate-spin" /> : 'Confirmar Remoção'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+
 
             {/* Reception Modal */}
             {isReceptionModalOpen && (
@@ -399,11 +456,12 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                     </div>
                     <div className="flex items-center gap-2">
                         <button
-                            onClick={() => setIsScannerOpen(true)}
-                            className={`flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors`}
+                            onClick={() => setIsCreateModalOpen(true)}
+                            className={`flex items-center gap-1.5 px-3 py-2 bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors`}
                         >
-                            <Receipt size={18} /> Digitalizar Recibo
+                            <PlusCircle size={18} /> Novo Fornecedor
                         </button>
+
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                             <input
@@ -451,7 +509,11 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                         <span className="text-xs text-slate-500">Detalhes do Fornecedor</span>
                                     </div>
                                 </div>
-                                <button onClick={() => setSelectedSupplier(null)} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
+                                <div className="flex items-center gap-2">
+                                    <button onClick={handleEditClick} className="p-2 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400" title="Editar"><Pencil size={20} /></button>
+                                    <button onClick={handleDeleteClick} className="p-2 text-slate-400 hover:text-red-600 dark:hover:text-red-400" title="Remover"><Trash2 size={20} /></button>
+                                    <button onClick={() => setSelectedSupplier(null)} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
+                                </div>
                             </div>
 
                             <div className="flex border-b border-slate-100 dark:border-slate-800 px-4 overflow-x-auto flex-none bg-slate-50 dark:bg-slate-800/30">
@@ -509,6 +571,19 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                         <div className="flex justify-between items-end">
                                                             <div className="text-xs text-slate-500">{formatDateTime(order.date_creation)}</div>
                                                             <div className="font-bold text-slate-800 dark:text-white">${order.total_ttc.toLocaleString()}</div>
+                                                        </div>
+
+                                                        <div className="text-xs text-slate-500 mt-2 space-y-0.5 border-t border-slate-100 dark:border-slate-800 pt-2">
+                                                            <div className="flex justify-between">
+                                                                <span>Criado por:</span>
+                                                                <span className="font-medium">{getUserName(order.fk_user_author)}</span>
+                                                            </div>
+                                                            {order.fk_user_approve && (
+                                                                <div className="flex justify-between">
+                                                                    <span>Aprovado por:</span>
+                                                                    <span className="font-medium">{getUserName(order.fk_user_approve)}</span>
+                                                                </div>
+                                                            )}
                                                         </div>
 
                                                         <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-end gap-2">

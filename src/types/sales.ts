@@ -13,6 +13,8 @@ export interface Invoice {
     paye: '0' | '1';
     statut: '0' | '1' | '2'; // 0=draft, 1=unpaid, 2=paid
     date_lim_reglement?: number;
+    fk_user_author?: string; // ADDED
+    fk_user_valid?: string; // ADDED
     date_modification?: number; // Added for Delta Sync
     array_options?: Record<string, any>;
 }
@@ -28,6 +30,8 @@ export interface SupplierInvoiceLine {
     total_ht: number;
     total_ttc: number;
     product_id?: string;
+    product_ref?: string;
+    product_label?: string;
     date_modification?: number;
 }
 
@@ -36,12 +40,15 @@ export interface SupplierInvoice {
     ref: string;
     socid: string;
     project_id?: string;
+    type?: '0' | '1' | '2';
     label?: string;
     date: number;
     total_ttc: number;
     paye: '0' | '1';
-    statut: '0' | '1' | '2';
+    statut: '0' | '1' | '2'; // Status: 0=draft, 1=unpaid, 2=paid
     lines?: SupplierInvoiceLine[];
+    fk_user_author?: string;
+    fk_user_valid?: string;
     date_modification?: number;
     array_options?: Record<string, any>;
 }
@@ -52,11 +59,32 @@ export interface Proposal {
     socid: string;
     project_id?: string;
     date: number;
+    total_ht: number;
     total_ttc: number;
+    total_tva: number;
     statut: '0' | '1' | '2' | '3' | '4'; // 0=draft, 1=open, 2=signed, 3=declined, 4=billed
-    lines?: any[];
+    lines?: ProposalLine[];
+    fk_user_author?: string; // ADDED
+    fk_user_valid?: string; // ADDED
     date_modification?: number;
     array_options?: Record<string, any>;
+}
+
+export interface ProposalLine {
+    id: string;
+    parent_id: string;
+    label: string;
+    description: string;
+    type?: number;
+    qty: number;
+    vat_rate: number;
+    subprice: number;
+    total_ht: number;
+    total_ttc: number;
+    total_tva: number;
+    product_id?: string;
+    rang?: number;
+    date_modification?: number;
 }
 
 export interface Order {
@@ -67,9 +95,50 @@ export interface Order {
     date: number;
     total_ttc: number;
     statut: '0' | '1' | '2' | '3'; // 0=draft, 1=validated, 2=in process, 3=delivered
-    lines?: any[];
+    lines?: OrderLine[];
+    fk_user_author?: string; // ADDED
+    fk_user_valid?: string; // ADDED
     date_modification?: number;
     array_options?: Record<string, any>;
+}
+
+export interface OrderLine {
+    id: string;
+    parent_id: string;
+    label: string;
+    description: string;
+    desc?: string; // Alias for compatibility
+    type?: number;
+    qty: number;
+    vat_rate: number;
+    subprice: number;
+    price?: number; // Alias for compatibility
+    total_ht: number;
+    total_ttc: number;
+    total_tva: number;
+    product_id?: string;
+    fk_product?: string; // Alias for compatibility
+    rang?: number;
+    date_modification?: number;
+}
+
+export interface InvoiceLine {
+    id: string;
+    parent_id: string;
+    label: string;
+    description: string;
+    type?: number;
+    qty: number;
+    vat_rate: number;
+    subprice: number;
+    total_ht: number;
+    total_ttc: number;
+    total_tva: number;
+    product_id?: string;
+    product_ref?: string;
+    product_label?: string;
+    rang?: number;
+    date_modification?: number;
 }
 
 export interface ContractLine {
@@ -106,6 +175,7 @@ export interface SupplierOrderLine {
     total_ht: number;
     total_ttc: number;
     product_id?: string;
+    fk_product?: string; // Alias for compatibility
     date_modification?: number;
 }
 
@@ -120,6 +190,8 @@ export interface SupplierOrder {
     total_ttc: number;
     statut: string;
     lines?: SupplierOrderLine[];
+    fk_user_author?: string; // ADDED
+    fk_user_approve?: string; // ADDED
     date_modification?: number;
     array_options?: Record<string, any>;
 }

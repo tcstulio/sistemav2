@@ -271,6 +271,26 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                             </div>
                         </section>
 
+                        {/* Debug / Maintenance */}
+                        <section>
+                            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider mb-4 flex items-center gap-2">
+                                <ShieldCheck size={16} /> Manutenção
+                            </h3>
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    if (confirm('Isso irá apagar todas as tarefas locais e baixar novamente. Continuar?')) {
+                                        await dbService.table('tasks').clear();
+                                        alert('Tarefas limpas. O sistema irá sincronizar novamente em instantes.');
+                                        window.location.reload();
+                                    }
+                                }}
+                                className="px-4 py-2 bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-200 transition-colors text-sm font-medium"
+                            >
+                                Forçar Ressincronização de Tarefas
+                            </button>
+                        </section>
+
                         <div className="sticky bottom-0 bg-white dark:bg-slate-900 p-4 -mx-6 -mb-6 border-t border-slate-100 dark:border-slate-800 flex justify-end">
                             <button
                                 type="submit"

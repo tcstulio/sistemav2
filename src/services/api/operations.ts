@@ -19,6 +19,15 @@ export const createTicket = async (config: DolibarrConfig, data: Partial<Ticket>
     });
 };
 
+export const updateTicket = async (config: DolibarrConfig, id: string, data: Partial<Ticket>) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/tickets/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
 export const addTicketMessage = async (config: DolibarrConfig, ticketId: string, message: string) => {
     // There isn't a direct "add message" endpoint usually, passing it as an update or specific endpoint
     // Standard Dolibarr API: POST /tickets/{id}/newMessage might exist or PUT /tickets/{id}
@@ -47,10 +56,9 @@ export const createIntervention = async (config: DolibarrConfig, data: any) => {
 
 export const fetchTicketEvents = async (config: DolibarrConfig, ticketId: string) => {
     // Fetches linked events/logs for the ticket
-    const url = `${sanitizeUrl(config.apiUrl)}/tickets/${ticketId}/events`; // Or agendaevents linked?
-    // Often tickets have their own 'messages' array in result or sub-resource.
-    // Let's try sub-resource 'messages' or 'events'.
-    return fetchList(config, `tickets/${ticketId}/messages`);
+    // Uses agendaevents generic endpoint with filter for elementtype 'ticket'
+    const filter = `(t.elementtype:=:'ticket') AND (t.fk_element:=:${ticketId})`;
+    return fetchList(config, 'agendaevents', `&sortfield=t.datec&sortorder=ASC&sqlfilters=${encodeURIComponent(filter)}`);
 };
 
 
@@ -115,6 +123,23 @@ export const createEvent = async (config: DolibarrConfig, data: any) => {
         method: 'POST',
         headers: getHeaders(config.apiKey),
         body: JSON.stringify(data)
+    });
+};
+
+export const updateEvent = async (config: DolibarrConfig, id: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/agendaevents/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const deleteEvent = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/agendaevents/${id}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
     });
 };
 

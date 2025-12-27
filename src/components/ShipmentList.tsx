@@ -4,7 +4,7 @@ import { Shipment, ThirdParty, DolibarrConfig, AppView, Order } from '../types';
 import { Truck, Search, ExternalLink, Calendar, Package, ArrowLeft, ArrowRight, Loader2, Info, X, FilePlus } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useShipments, useCustomers, useOrders } from '../hooks/dolibarr';
+import { useShipments, useCustomers, useOrders, useUsers } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 
@@ -21,6 +21,8 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
     const customers = customersData || [];
     const { data: ordersData } = useOrders(config);
     const orders = ordersData || [];
+    const { data: usersData } = useUsers(config);
+    const users = usersData || [];
 
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
@@ -38,6 +40,14 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
         if (!orderId) return null;
         const order = orders.find(o => String(o.id) === String(orderId));
         return order ? order.ref : `Pedido #${orderId}`;
+    };
+
+    const resolveUserName = (authorId?: string) => {
+        if (!authorId || authorId === 'System') return 'Sistema';
+        const user = users.find(u => String(u.id) === String(authorId));
+        if (user) return `${user.firstname || ''} ${user.lastname || ''}`.trim() || user.login;
+        if (!isNaN(Number(authorId))) return `Usuário ${authorId}`;
+        return authorId;
     };
 
     const filteredShipments = useMemo(() => {
@@ -224,6 +234,22 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                                                     <div className="mt-1 p-2 bg-slate-100 dark:bg-slate-800 rounded font-mono text-slate-800 dark:text-white select-all">
                                                         {selectedShipment.tracking_number}
                                                     </div>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* User Roles */}
+                                        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 grid grid-cols-2 gap-4">
+                                            {selectedShipment.fk_user_author && (
+                                                <div>
+                                                    <label className="text-xs text-slate-500 uppercase font-bold">Autor</label>
+                                                    <div className="text-sm font-medium text-slate-800 dark:text-white">{resolveUserName(selectedShipment.fk_user_author)}</div>
+                                                </div>
+                                            )}
+                                            {selectedShipment.fk_user_valid && (
+                                                <div>
+                                                    <label className="text-xs text-slate-500 uppercase font-bold">Validado por</label>
+                                                    <div className="text-sm font-medium text-slate-800 dark:text-white">{resolveUserName(selectedShipment.fk_user_valid)}</div>
                                                 </div>
                                             )}
                                         </div>

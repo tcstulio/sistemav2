@@ -51,6 +51,9 @@ import {
     SupplierInvoiceLine,
     InterventionLine,
     BOMLine,
+    ProposalLine,
+    OrderLine,
+    InvoiceLine,
 } from '../../types';
 
 // ============ System & Utilities ============
@@ -136,6 +139,40 @@ export const useProposals = createDolibarrHook<any, Proposal>({
     dateField: 'date_modification',
     mapper: mappers.mapProposal,
 });
+
+/**
+ * Hook for fetching and syncing proposal lines
+ */
+export const useProposalLines = createDolibarrHook<any, ProposalLine>({
+    queryKey: 'proposal_lines',
+    storeName: 'proposalLines',
+    endpoint: 'proposal_lines',
+    dateField: 'date_modification',
+    mapper: mappers.mapProposalLine,
+});
+
+/**
+ * Hook for fetching and syncing order lines
+ */
+export const useOrderLines = createDolibarrHook<any, OrderLine>({
+    queryKey: 'order_lines',
+    storeName: 'orderLines',
+    endpoint: 'order_lines',
+    dateField: 'date_modification',
+    mapper: mappers.mapOrderLine,
+});
+
+/**
+ * Hook for fetching and syncing invoice lines
+ */
+export const useInvoiceLines = createDolibarrHook<any, InvoiceLine>({
+    queryKey: 'invoice_lines',
+    storeName: 'invoiceLines',
+    endpoint: 'invoice_lines',
+    dateField: 'date_modification',
+    mapper: mappers.mapInvoiceLine,
+});
+
 
 /**
  * Hook for fetching and syncing payments

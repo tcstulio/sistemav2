@@ -16,6 +16,7 @@ import ProjectList from './ProjectList';
 import TicketList from './TicketList';
 import BankAccountList from './BankAccountList';
 import { SupplierList } from './SupplierList';
+import SupplierInvoiceList from './SupplierInvoiceList';
 import SettingsView from './Settings';
 import SetupWizard from './SetupWizard';
 import HRList from './HRList';
@@ -34,6 +35,9 @@ import WhatsAppView from './WhatsAppView';
 import EmailView from './Email/EmailView';
 import SchedulerAdmin from './SchedulerAdmin';
 import ActivityView from './ActivityView';
+import TaskDetail from './TaskDetail';
+import { PendingPayments } from './PendingPayments';
+
 
 // Wrapper to adapt Router Params/Navigate to Legacy Component Props
 const ViewWrapper = ({ Component, viewId, passProps = {} }: any) => {
@@ -61,8 +65,6 @@ const ViewWrapper = ({ Component, viewId, passProps = {} }: any) => {
         />
     );
 };
-
-
 
 const App: React.FC = () => {
     const { config, setConfig } = useDolibarr();
@@ -92,6 +94,11 @@ const App: React.FC = () => {
                         <Route path="/invoices" element={<ViewWrapper Component={InvoiceList} viewId="invoices" />} />
                         <Route path="/invoices/:id" element={<ViewWrapper Component={InvoiceList} viewId="invoices" />} />
 
+                        <Route path="/supplier_invoices" element={<ViewWrapper Component={SupplierInvoiceList} viewId="supplier_invoices" />} />
+                        <Route path="/supplier_invoices/:id" element={<ViewWrapper Component={SupplierInvoiceList} viewId="supplier_invoices" />} />
+
+                        <Route path="/pending_payments" element={<ViewWrapper Component={PendingPayments} viewId="invoices" />} />
+
                         <Route path="/proposals" element={<ViewWrapper Component={ProposalList} viewId="proposals" />} />
                         <Route path="/proposals/:id" element={<ViewWrapper Component={ProposalList} viewId="proposals" />} />
 
@@ -103,13 +110,19 @@ const App: React.FC = () => {
                         <Route path="/projects" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
                         <Route path="/projects/:id" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
 
+                        <Route path="/tasks" element={<ViewWrapper Component={TaskDetail} viewId="projects" />} />
+                        <Route path="/tasks/:id" element={<ViewWrapper Component={TaskDetail} viewId="projects" />} />
+
                         <Route path="/tickets" element={<ViewWrapper Component={TicketList} viewId="tickets" />} />
                         <Route path="/tickets/:id" element={<ViewWrapper Component={TicketList} viewId="tickets" />} />
 
                         <Route path="/bank_accounts" element={<ViewWrapper Component={BankAccountList} viewId="bank_accounts" />} />
 
-                        <Route path="/products" element={<ViewWrapper Component={ProductList} viewId="products" />} />
-                        <Route path="/products/:id" element={<ViewWrapper Component={ProductList} viewId="products" />} />
+                        <Route path="/products" element={<ViewWrapper Component={ProductList} viewId="products" passProps={{ initialFilter: 'product' }} />} />
+                        <Route path="/products/:id" element={<ViewWrapper Component={ProductList} viewId="products" passProps={{ initialFilter: 'product' }} />} />
+
+                        <Route path="/services" element={<ViewWrapper Component={ProductList} viewId="products" passProps={{ initialFilter: 'service' }} />} />
+                        <Route path="/services/:id" element={<ViewWrapper Component={ProductList} viewId="products" passProps={{ initialFilter: 'service' }} />} />
 
                         <Route path="/categories" element={<ViewWrapper Component={CategoryList} viewId="categories" />} />
 
@@ -144,5 +157,6 @@ const App: React.FC = () => {
         </>
     );
 };
+
 
 export default App;

@@ -60,13 +60,43 @@ export const EmailService = {
         return response.data;
     },
 
-    sendEmail: async (accountId: string, to: string, subject: string, htmlBody: string): Promise<any> => {
+    sendEmail: async (accountId: string, to: string, subject: string, htmlBody: string, attachments: any[] = []): Promise<any> => {
         const response = await axios.post(`${API_URL}/send`, {
             accountId,
             to,
             subject,
-            htmlBody
+            htmlBody,
+            attachments
         }, { headers: getHeaders() });
+        return response.data;
+    },
+
+    // --- Metadata & Automations ---
+
+    assignThread: async (threadId: string, userId: string | null): Promise<void> => {
+        await axios.post(`${API_URL}/assign`, { threadId, userId }, { headers: getHeaders() });
+    },
+
+    getAssignment: async (threadId: string): Promise<string | null> => {
+        const response = await axios.get(`${API_URL}/assign/${threadId}`, { headers: getHeaders() });
+        return response.data.userId;
+    },
+
+    updateThreadSettings: async (threadId: string, settings: any): Promise<void> => {
+        await axios.post(`${API_URL}/settings/thread`, { threadId, settings }, { headers: getHeaders() });
+    },
+
+    getThreadSettings: async (threadId: string): Promise<any> => {
+        const response = await axios.get(`${API_URL}/settings/thread/${threadId}`, { headers: getHeaders() });
+        return response.data;
+    },
+
+    updateUserSettings: async (settings: { signature?: string }): Promise<void> => {
+        await axios.post(`${API_URL}/settings/user`, settings, { headers: getHeaders() });
+    },
+
+    getUserStore: async (): Promise<{ userSettings: any }> => {
+        const response = await axios.get(`${API_URL}/store`, { headers: getHeaders() });
         return response.data;
     }
 };

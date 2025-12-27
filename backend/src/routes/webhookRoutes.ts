@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { schedulerService } from '../services/schedulerService';
 import { dolibarrService } from '../services/dolibarrService';
+import { emailService } from '../services/emailService';
+import { messageService } from '../services/messageService';
 
 const router = Router();
 
@@ -71,12 +73,8 @@ router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
 
         const customer = await dolibarrService.getThirdParty(invoice.socid);
         const phone = customer?.phone || customer?.phone_mobile;
+        const email = customer?.email;
 
-        if (!phone) {
-            return res.json({ success: false, reason: 'Customer has no phone number', customerId: invoice.socid });
-        }
-
-        const chatId = phone.replace(/\D/g, '') + '@c.us';
         const customerName = customer?.name || 'Cliente';
         const invoiceRef = invoice.ref || invoiceId;
         const total = invoice.total_ttc ? `R$ ${parseFloat(invoice.total_ttc).toFixed(2)}` : '';
@@ -99,6 +97,21 @@ router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
         const messages: string[] = [];
 
         for (const rule of activeRules) {
+            // Determine destination based on channel
+            let destinationId = '';
+            if (rule.channel === 'email') {
+                if (!email) {
+                    console.log(`[Webhook] Skipping email rule ${rule.name}: No email for customer ${invoice.socid}`);
+                    continue;
+                }
+                destinationId = email;
+            } else {
+                if (!phone) {
+                    console.log(`[Webhook] Skipping whatsapp rule ${rule.name}: No phone for customer ${invoice.socid}`);
+                    continue;
+                }
+                destinationId = phone.replace(/\D/g, '') + '@c.us';
+            }
             let finalText = rule.message || '';
 
             // Re-use scheduler template logic if we had a public method, but for now simple replace
@@ -116,8 +129,10 @@ router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
 
             const msgSessionId = rule.sessionId || sessionId || 'default';
             const msg = schedulerService.scheduleMessage({
-                chatId,
+                chatId: destinationId,
                 sessionId: msgSessionId,
+                channel: rule.channel, // Pass channel
+                subject: rule.subject, // Pass subject
                 message: finalText,
                 scheduledAt: Date.now() + (rule.delay ? rule.delay * 60 * 1000 : 0)
             });
@@ -126,7 +141,7 @@ router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
             // Log the webhook trigger
             schedulerService.addLog({
                 messageId: msg.id,
-                chatId,
+                chatId: destinationId,
                 sessionId: msgSessionId,
                 type: 'webhook',
                 status: 'pending',
@@ -135,7 +150,7 @@ router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
             });
         }
 
-        res.json({ success: true, action, invoiceRef, chatId, messageIds: messages });
+        res.json({ success: true, action, invoiceRef, messageIds: messages });
 
     } catch (error: any) {
         console.error('[Webhook] Dolibarr invoice error:', error);
@@ -157,16 +172,13 @@ router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
         }
 
         let phone = null;
+        let email = null;
         if (ticket.fk_soc) {
             const customer = await dolibarrService.getThirdParty(ticket.fk_soc);
             phone = customer?.phone || customer?.phone_mobile;
+            email = customer?.email;
         }
 
-        if (!phone) {
-            return res.json({ success: false, reason: 'No phone associated with ticket', ticketId });
-        }
-
-        const chatId = phone.replace(/\D/g, '') + '@c.us';
         const ticketRef = ticket.ref || ticketId;
 
         // Fetch active rules for this event
@@ -186,6 +198,21 @@ router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
         const messages: string[] = [];
 
         for (const rule of activeRules) {
+            // Determine destination based on channel
+            let destinationId = '';
+            if (rule.channel === 'email') {
+                if (!email) {
+                    console.log(`[Webhook] Skipping email rule ${rule.name}: No email for ticket customer`);
+                    continue;
+                }
+                destinationId = email;
+            } else {
+                if (!phone) {
+                    console.log(`[Webhook] Skipping whatsapp rule ${rule.name}: No phone for ticket customer`);
+                    continue;
+                }
+                destinationId = phone.replace(/\D/g, '') + '@c.us';
+            }
             let finalText = rule.message || '';
 
             if (rule.templateId) {
@@ -201,8 +228,10 @@ router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
 
             const msgSessionId = rule.sessionId || sessionId || 'default';
             const msg = schedulerService.scheduleMessage({
-                chatId,
+                chatId: destinationId,
                 sessionId: msgSessionId,
+                channel: rule.channel,
+                subject: rule.subject,
                 message: finalText,
                 scheduledAt: Date.now() + (rule.delay ? rule.delay * 60 * 1000 : 0)
             });
@@ -211,7 +240,7 @@ router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
             // Log the webhook trigger
             schedulerService.addLog({
                 messageId: msg.id,
-                chatId,
+                chatId: destinationId,
                 sessionId: msgSessionId,
                 type: 'webhook',
                 status: 'pending',
@@ -220,7 +249,7 @@ router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
             });
         }
 
-        res.json({ success: true, action, ticketRef, chatId, messageIds: messages });
+        res.json({ success: true, action, ticketRef, messageIds: messages });
 
     } catch (error: any) {
         console.error('[Webhook] Dolibarr ticket error:', error);
@@ -243,12 +272,8 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
 
         const customer = await dolibarrService.getThirdParty(order.socid);
         const phone = customer?.phone || customer?.phone_mobile;
+        const email = customer?.email;
 
-        if (!phone) {
-            return res.json({ success: false, reason: 'Customer has no phone number', customerId: order.socid });
-        }
-
-        const chatId = phone.replace(/\D/g, '') + '@c.us';
         const customerName = customer?.name || 'Cliente';
         const orderRef = order.ref || orderId;
         const total = order.total_ttc ? `R$ ${parseFloat(order.total_ttc).toFixed(2)}` : '';
@@ -271,6 +296,21 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
         const messages: string[] = [];
 
         for (const rule of activeRules) {
+            // Determine destination based on channel
+            let destinationId = '';
+            if (rule.channel === 'email') {
+                if (!email) {
+                    console.log(`[Webhook] Skipping email rule ${rule.name}: No email for customer ${order.socid}`);
+                    continue;
+                }
+                destinationId = email;
+            } else {
+                if (!phone) {
+                    console.log(`[Webhook] Skipping whatsapp rule ${rule.name}: No phone for customer ${order.socid}`);
+                    continue;
+                }
+                destinationId = phone.replace(/\D/g, '') + '@c.us';
+            }
             let finalText = rule.message || '';
 
             if (rule.templateId) {
@@ -286,8 +326,10 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
 
             const msgSessionId = rule.sessionId || sessionId || 'default';
             const msg = schedulerService.scheduleMessage({
-                chatId,
+                chatId: destinationId, // Use resolved destination
                 sessionId: msgSessionId,
+                channel: rule.channel,
+                subject: rule.subject,
                 message: finalText,
                 scheduledAt: Date.now() + (rule.delay ? rule.delay * 60 * 1000 : 0)
             });
@@ -296,7 +338,7 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
             // Log the webhook trigger
             schedulerService.addLog({
                 messageId: msg.id,
-                chatId,
+                chatId: destinationId,
                 sessionId: msgSessionId,
                 type: 'webhook',
                 status: 'pending',
@@ -305,7 +347,7 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
             });
         }
 
-        res.json({ success: true, action, orderRef, chatId, messageIds: messages });
+        res.json({ success: true, action, orderRef, messageIds: messages });
 
     } catch (error: any) {
         console.error('[Webhook] Dolibarr order error:', error);
@@ -322,11 +364,11 @@ router.get('/rules', (req: Request, res: Response) => {
 
 router.post('/rules', (req: Request, res: Response) => {
     try {
-        const { name, event, sessionId, templateId, message, delay, conditions } = req.body;
+        const { name, event, sessionId, templateId, message, delay, conditions, channel, subject } = req.body;
         if (!name || !event || !sessionId) {
             return res.status(400).json({ error: 'Missing required fields: name, event, sessionId' });
         }
-        const rule = schedulerService.createRule({ name, event, sessionId, templateId, message, delay, conditions });
+        const rule = schedulerService.createRule({ name, event, sessionId, templateId, message, delay, conditions, channel, subject });
         res.json({ success: true, data: rule });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -341,8 +383,8 @@ router.delete('/rules/:id', (req: Request, res: Response) => {
 
 router.put('/rules/:id', (req: Request, res: Response) => {
     try {
-        const { name, message, delay, templateId, sessionId, conditions } = req.body;
-        const rule = schedulerService.updateRule(req.params.id, { name, message, delay, templateId, sessionId, conditions });
+        const { name, message, delay, templateId, sessionId, conditions, channel, subject } = req.body;
+        const rule = schedulerService.updateRule(req.params.id, { name, message, delay, templateId, sessionId, conditions, channel, subject });
         if (rule) res.json({ success: true, data: rule });
         else res.status(404).json({ error: 'Rule not found' });
     } catch (error: any) {
@@ -408,9 +450,10 @@ router.patch('/flows/:id/toggle', (req: Request, res: Response) => {
 
 // --- Test/Dry-Run Endpoints ---
 
-// Test a rule without sending a real message
-router.post('/rules/:id/test', (req: Request, res: Response) => {
+// Test a rule with optional real execution
+router.post('/rules/:id/test', async (req: Request, res: Response) => {
     try {
+        const { target } = req.body; // Optional target for real sending
         const rule = schedulerService.getRules().find(r => r.id === req.params.id);
         if (!rule) {
             return res.status(404).json({ error: 'Rule not found' });
@@ -442,9 +485,22 @@ router.post('/rules/:id/test', (req: Request, res: Response) => {
             }
         }
 
+        let sentResult = null;
+        if (target) {
+            console.log(`[Test] Sending real message for rule ${rule.name} to ${target}`);
+            if (rule.channel === 'email') {
+                await emailService.sendEmail(rule.sessionId, target, rule.subject || 'Teste de Automação', renderedMessage);
+                sentResult = 'Email sent';
+            } else {
+                const chatId = target.includes('@') ? target : `${target.replace(/\D/g, '')}@c.us`;
+                await messageService.sendText(rule.sessionId, chatId, renderedMessage);
+                sentResult = 'WhatsApp sent';
+            }
+        }
+
         res.json({
             success: true,
-            dryRun: true,
+            dryRun: !target,
             rule: {
                 id: rule.id,
                 name: rule.name,
@@ -455,9 +511,11 @@ router.post('/rules/:id/test', (req: Request, res: Response) => {
             mockVariables: variables,
             renderedMessage,
             delay: rule.delay || 0,
-            wouldSendTo: '5511999999999@c.us (mock)'
+            wouldSendTo: '5511999999999@c.us (mock)',
+            realSend: sentResult
         });
     } catch (error: any) {
+        console.error('Test error:', error);
         res.status(500).json({ error: error.message });
     }
 });

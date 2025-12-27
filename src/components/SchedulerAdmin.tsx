@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
 import { WhatsAppService } from '../services/whatsappService';
+import { EmailService } from '../services/emailService'; // New
 import { formatDateTime } from '../utils/dateUtils';
+import { Mail, MessageCircle, Send } from 'lucide-react'; // Icons
 
 interface ScheduledMessage {
     id: string;
@@ -11,6 +13,8 @@ interface ScheduledMessage {
     scheduledAt: number;
     type: string;
     status: string;
+    channel?: 'whatsapp' | 'email'; // New
+    subject?: string; // New
     createdAt: number;
     sentAt?: number;
     error?: string;
@@ -21,6 +25,8 @@ interface Template {
     name: string;
     content: string;
     category: string;
+    channel?: 'whatsapp' | 'email'; // New
+    subject?: string; // New
 }
 
 interface ChatFlow {
@@ -40,6 +46,8 @@ interface AutomationRule {
     message?: string;
     templateId?: string;
     sessionId: string;
+    channel?: 'whatsapp' | 'email'; // New
+    subject?: string; // New
     delay?: number;
 }
 
@@ -104,19 +112,39 @@ export const SchedulerAdmin: React.FC = () => {
     const [sessions, setSessions] = useState<WhatsAppSession[]>([]);
     const [selectedSessionId, setSelectedSessionId] = useState<string>('default');
 
+    // Email Accounts
+    const [emailAccounts, setEmailAccounts] = useState<any[]>([]);
+    const [selectedEmailAccountId, setSelectedEmailAccountId] = useState<string>('');
+
     // Modal states
     const [editingRule, setEditingRule] = useState<AutomationRule | null>(null);
     const [showNewRuleForm, setShowNewRuleForm] = useState(false);
     const [showNewFlowForm, setShowNewFlowForm] = useState(false);
 
     // New message form
-    const [newMessage, setNewMessage] = useState({ chatId: '', message: '', scheduledAt: '' });
+    const [newMessage, setNewMessage] = useState({ chatId: '', message: '', scheduledAt: '', channel: 'whatsapp', subject: '' });
 
     // New template form
-    const [newTemplate, setNewTemplate] = useState({ name: '', content: '', category: 'general' });
+    const [newTemplate, setNewTemplate] = useState({ name: '', content: '', category: 'general', channel: 'whatsapp', subject: '' });
 
     // New rule form - sessionId will use selectedSessionId
-    const [newRule, setNewRule] = useState({ name: '', event: 'invoice_created', message: '', delay: 0 });
+    const [newRule, setNewRule] = useState<{
+        name: string;
+        event: string;
+        message: string;
+        delay: number;
+        channel: 'whatsapp' | 'email';
+        subject: string;
+        sessionId: string;
+    }>({
+        name: '',
+        event: 'invoice_created',
+        message: '',
+        delay: 0,
+        channel: 'whatsapp',
+        subject: '',
+        sessionId: 'default'
+    });
 
     // New flow form - sessionId will use selectedSessionId
     const [newFlow, setNewFlow] = useState({ name: '', triggerKeywords: '' });
@@ -150,6 +178,17 @@ export const SchedulerAdmin: React.FC = () => {
                 }
             } catch (e) {
                 console.warn('Failed to fetch WhatsApp sessions');
+            }
+
+            // Fetch Email accounts
+            try {
+                const emailData = await EmailService.getAccounts();
+                setEmailAccounts(emailData || []);
+                if (emailData.length > 0 && !selectedEmailAccountId) {
+                    setSelectedEmailAccountId(emailData[0].id);
+                }
+            } catch (e) {
+                console.warn('Failed to fetch Email accounts');
             }
 
             const [statsRes, pendingRes, templatesRes, flowsRes, rulesRes, logsRes] = await Promise.all([
@@ -217,16 +256,18 @@ export const SchedulerAdmin: React.FC = () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    sessionId: selectedSessionId,
-                    chatId: newMessage.chatId.includes('@') ? newMessage.chatId : `${newMessage.chatId.replace(/\D/g, '')}@c.us`,
+                    sessionId: newMessage.channel === 'email' ? selectedEmailAccountId : selectedSessionId,
+                    chatId: newMessage.channel === 'email' ? newMessage.chatId : (newMessage.chatId.includes('@') ? newMessage.chatId : `${newMessage.chatId.replace(/\D/g, '')}@c.us`),
                     message: newMessage.message,
+                    channel: newMessage.channel,
+                    subject: newMessage.subject,
                     scheduledAt: newMessage.scheduledAt || undefined
                 })
             });
 
             if (res.ok) {
                 toast.success('Mensagem agendada!');
-                setNewMessage({ chatId: '', message: '', scheduledAt: '' });
+                setNewMessage({ chatId: '', message: '', scheduledAt: '', channel: 'whatsapp', subject: '' });
                 fetchData();
             }
         } catch (e) {
@@ -246,7 +287,7 @@ export const SchedulerAdmin: React.FC = () => {
 
             if (res.ok) {
                 toast.success('Template criado!');
-                setNewTemplate({ name: '', content: '', category: 'general' });
+                setNewTemplate({ name: '', content: '', category: 'general', channel: 'whatsapp', subject: '' });
                 fetchData();
             }
         } catch (e) {
@@ -306,12 +347,34 @@ export const SchedulerAdmin: React.FC = () => {
     };
 
     const testRule = async (id: string) => {
+        const rule = rules.find(r => r.id === id);
+        if (!rule) return;
+
+        const promptText = rule.channel === 'email'
+            ? "Para ENVIO REAL, digite o email de destino (Deixe vazio para simulação apenas):"
+            : "Para ENVIO REAL, digite o telefone (ex: 5511999998888) (Deixe vazio para simulação apenas):";
+
+        const target = window.prompt(promptText);
+        // If user hits Cancel (null), we assume they cancelled the whole action? Or just dry run? 
+        // Usually Cancel = abort. Verify user intent. User said "would like... to be really sent".
+        // Let's assume Cancel = Abort, OK+Empty = Dry Run, OK+Value = Real Send.
+        if (target === null) return;
+
         try {
-            const res = await fetch(`${API_BASE}/api/webhook/rules/${id}/test`, { method: 'POST' });
+            const res = await fetch(`${API_BASE}/api/webhook/rules/${id}/test`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ target })
+            });
+
             if (res.ok) {
                 const result = await res.json();
                 setTestResult(result);
-                toast.success('Teste executado!');
+                if (result.realSend) {
+                    toast.success(`Enviado com sucesso via ${result.realSend}!`);
+                } else {
+                    toast.success('Simulação concluída!');
+                }
             } else {
                 toast.error('Erro ao testar regra');
             }
@@ -364,14 +427,27 @@ export const SchedulerAdmin: React.FC = () => {
             return;
         }
         try {
+            const payload = {
+                ...newRule,
+                sessionId: newRule.channel === 'email' ? selectedEmailAccountId : selectedSessionId
+            };
             const res = await fetch(`${API_BASE}/api/webhook/rules`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...newRule, sessionId: selectedSessionId })
+                body: JSON.stringify(payload)
             });
             if (res.ok) {
                 toast.success('Regra criada!');
-                setNewRule({ name: '', event: 'invoice_created', message: '', delay: 0 });
+                toast.success('Regra criada!');
+                setNewRule({
+                    name: '',
+                    event: 'invoice_created',
+                    message: '',
+                    delay: 0,
+                    channel: 'whatsapp',
+                    subject: '',
+                    sessionId: 'default'
+                });
                 setShowNewRuleForm(false);
                 fetchData();
             }
@@ -477,35 +553,13 @@ export const SchedulerAdmin: React.FC = () => {
     };
 
     return (
-        <div style={{ padding: '20px', maxWidth: '1400px', margin: '0 auto', background: '#f8fafc', minHeight: '100vh', overflowY: 'auto' }}>
+        <div style={{ padding: '20px', maxWidth: '1400px', margin: '0 auto', background: '#f8fafc', height: '100%', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>
                 <h1 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', color: '#1e293b' }}>
                     📅 Automação de Mensagens
                     <button onClick={fetchData} style={{ ...buttonStyle, background: '#f1f5f9', color: '#475569', fontSize: '12px', padding: '6px 12px' }}>🔄 Atualizar</button>
                 </h1>
-                {/* Session Selector */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '13px', color: '#64748b' }}>📱 Conta:</span>
-                    <select
-                        value={selectedSessionId}
-                        onChange={e => setSelectedSessionId(e.target.value)}
-                        style={{
-                            padding: '8px 12px',
-                            borderRadius: '8px',
-                            border: '1px solid #e2e8f0',
-                            fontSize: '13px',
-                            background: 'white',
-                            minWidth: '150px'
-                        }}
-                    >
-                        <option value="default">default</option>
-                        {sessions.map(s => (
-                            <option key={s.id} value={s.id}>
-                                {s.name || s.id} {s.status === 'CONNECTED' ? '✓' : ''}
-                            </option>
-                        ))}
-                    </select>
-                </div>
+
             </div>
 
             {/* Stats Cards */}
@@ -601,20 +655,87 @@ export const SchedulerAdmin: React.FC = () => {
                                             />
                                         </div>
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Conta WhatsApp</label>
-                                            <div style={{
-                                                padding: '10px 12px',
-                                                borderRadius: '8px',
-                                                border: '1px solid #e2e8f0',
-                                                fontSize: '14px',
-                                                background: '#f1f5f9',
-                                                color: '#334155'
-                                            }}>
-                                                📱 {sessions.find(s => s.id === selectedSessionId)?.name || selectedSessionId}
+                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Canal</label>
+                                            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                                                <button
+                                                    onClick={() => setNewRule({ ...newRule, channel: 'whatsapp' })}
+                                                    style={{
+                                                        flex: 1,
+                                                        padding: '8px',
+                                                        borderRadius: '6px',
+                                                        border: `1px solid ${newRule.channel === 'whatsapp' ? '#10b981' : '#e2e8f0'}`,
+                                                        background: newRule.channel === 'whatsapp' ? '#dcfce7' : 'white',
+                                                        color: newRule.channel === 'whatsapp' ? '#166534' : '#64748b',
+                                                        cursor: 'pointer',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                                        fontSize: '13px'
+                                                    }}
+                                                >
+                                                    <MessageCircle size={14} /> WhatsApp
+                                                </button>
+                                                <button
+                                                    onClick={() => setNewRule({ ...newRule, channel: 'email' })}
+                                                    style={{
+                                                        flex: 1,
+                                                        padding: '8px',
+                                                        borderRadius: '6px',
+                                                        border: `1px solid ${newRule.channel === 'email' ? '#3b82f6' : '#e2e8f0'}`,
+                                                        background: newRule.channel === 'email' ? '#dbeafe' : 'white',
+                                                        color: newRule.channel === 'email' ? '#1e40af' : '#64748b',
+                                                        cursor: 'pointer',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                                        fontSize: '13px'
+                                                    }}
+                                                >
+                                                    <Mail size={14} /> Email
+                                                </button>
                                             </div>
-                                            <small style={{ color: '#64748b' }}>Altere no seletor acima</small>
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>
+                                                {newRule.channel === 'email' ? 'Conta de Email' : 'Conta WhatsApp'}
+                                            </label>
+
+                                            {newRule.channel === 'email' ? (
+                                                <select
+                                                    value={selectedEmailAccountId}
+                                                    onChange={e => setSelectedEmailAccountId(e.target.value)}
+                                                    style={inputStyle}
+                                                >
+                                                    {emailAccounts.map(acc => (
+                                                        <option key={acc.id} value={acc.id}>{acc.name} ({acc.email})</option>
+                                                    ))}
+                                                    {emailAccounts.length === 0 && <option value="">Nenhuma conta encontrada</option>}
+                                                </select>
+                                            ) : (
+                                                <>
+                                                    <div style={{
+                                                        padding: '10px 12px',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #e2e8f0',
+                                                        fontSize: '14px',
+                                                        background: '#f1f5f9',
+                                                        color: '#334155'
+                                                    }}>
+                                                        📱 {sessions.find(s => s.id === selectedSessionId)?.name || selectedSessionId}
+                                                    </div>
+                                                    <small style={{ color: '#64748b' }}>Altere no seletor acima</small>
+                                                </>
+                                            )}
                                         </div>
                                     </div>
+
+                                    {newRule.channel === 'email' && (
+                                        <div style={{ marginTop: '12px' }}>
+                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Assunto</label>
+                                            <input
+                                                value={newRule.subject}
+                                                onChange={e => setNewRule({ ...newRule, subject: e.target.value })}
+                                                placeholder="Ex: Confirmação de Pedido #{{ref}}"
+                                                style={inputStyle}
+                                            />
+                                        </div>
+                                    )}
                                     <div style={{ marginTop: '12px' }}>
                                         <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Mensagem (use {'{{variável}}'} para dados dinâmicos)</label>
                                         <textarea
@@ -637,6 +758,11 @@ export const SchedulerAdmin: React.FC = () => {
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
                                             <div>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                    {rule.channel === 'email' ? (
+                                                        <span title="Email" style={{ background: '#dbeafe', color: '#1e40af', padding: '4px', borderRadius: '4px' }}><Mail size={16} /></span>
+                                                    ) : (
+                                                        <span title="WhatsApp" style={{ background: '#dcfce7', color: '#166534', padding: '4px', borderRadius: '4px' }}><MessageCircle size={16} /></span>
+                                                    )}
                                                     <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#1e293b' }}>{rule.name}</h4>
                                                     <span style={{
                                                         fontSize: '11px',
@@ -650,7 +776,8 @@ export const SchedulerAdmin: React.FC = () => {
                                                     </span>
                                                 </div>
                                                 <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
-                                                    📱 Conta: {rule.sessionId} • ⏱️ Delay: {rule.delay || 0} min
+                                                    {rule.channel === 'email' && rule.subject && <div style={{ marginBottom: '2px', fontWeight: '500' }}>📄 Assunto: {rule.subject}</div>}
+                                                    {rule.channel === 'email' ? '📧 Conta Email' : '📱 Conta WhatsApp'}: {rule.sessionId} • ⏱️ Delay: {rule.delay || 0} min
                                                 </div>
                                             </div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -744,21 +871,88 @@ export const SchedulerAdmin: React.FC = () => {
                                             />
                                         </div>
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Conta WhatsApp</label>
-                                            <select
-                                                value={editingRule.sessionId}
-                                                onChange={e => setEditingRule({ ...editingRule, sessionId: e.target.value })}
-                                                style={inputStyle}
-                                            >
-                                                <option value="default">default</option>
-                                                {sessions.map(s => (
-                                                    <option key={s.id} value={s.id}>
-                                                        {s.name || s.id} {s.status === 'CONNECTED' ? '✓' : ''}
-                                                    </option>
-                                                ))}
-                                            </select>
+                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Canal</label>
+                                            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                                                <button
+                                                    onClick={() => setEditingRule({ ...editingRule, channel: 'whatsapp' })}
+                                                    style={{
+                                                        flex: 1,
+                                                        padding: '8px',
+                                                        borderRadius: '6px',
+                                                        border: `1px solid ${editingRule.channel === 'whatsapp' ? '#10b981' : '#e2e8f0'}`,
+                                                        background: editingRule.channel === 'whatsapp' ? '#dcfce7' : 'white',
+                                                        color: editingRule.channel === 'whatsapp' ? '#166534' : '#64748b',
+                                                        cursor: 'pointer',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                                        fontSize: '13px'
+                                                    }}
+                                                >
+                                                    <MessageCircle size={14} /> WhatsApp
+                                                </button>
+                                                <button
+                                                    onClick={() => setEditingRule({ ...editingRule, channel: 'email' })}
+                                                    style={{
+                                                        flex: 1,
+                                                        padding: '8px',
+                                                        borderRadius: '6px',
+                                                        border: `1px solid ${editingRule.channel === 'email' ? '#3b82f6' : '#e2e8f0'}`,
+                                                        background: editingRule.channel === 'email' ? '#dbeafe' : 'white',
+                                                        color: editingRule.channel === 'email' ? '#1e40af' : '#64748b',
+                                                        cursor: 'pointer',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                                        fontSize: '13px'
+                                                    }}
+                                                >
+                                                    <Mail size={14} /> Email
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>
+                                                {editingRule.channel === 'email' ? 'Conta de Email' : 'Conta WhatsApp'}
+                                            </label>
+
+                                            {editingRule.channel === 'email' ? (
+                                                <select
+                                                    value={selectedEmailAccountId}
+                                                    onChange={e => {
+                                                        setSelectedEmailAccountId(e.target.value);
+                                                        setEditingRule({ ...editingRule, sessionId: e.target.value });
+                                                    }}
+                                                    style={inputStyle}
+                                                >
+                                                    {emailAccounts.map(acc => (
+                                                        <option key={acc.id} value={acc.id}>{acc.name} ({acc.email})</option>
+                                                    ))}
+                                                    {emailAccounts.length === 0 && <option value="">Nenhuma conta encontrada</option>}
+                                                </select>
+                                            ) : (
+                                                <select
+                                                    value={editingRule.sessionId}
+                                                    onChange={e => setEditingRule({ ...editingRule, sessionId: e.target.value })}
+                                                    style={inputStyle}
+                                                >
+                                                    <option value="default">default</option>
+                                                    {sessions.map(s => (
+                                                        <option key={s.id} value={s.id}>
+                                                            {s.name || s.id} {s.status === 'CONNECTED' ? '✓' : ''}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            )}
                                         </div>
                                     </div>
+                                    {editingRule.channel === 'email' && (
+                                        <div>
+                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Assunto</label>
+                                            <input
+                                                value={editingRule.subject || ''}
+                                                onChange={e => setEditingRule({ ...editingRule, subject: e.target.value })}
+                                                placeholder="Ex: Confirmação de Pedido #{{ref}}"
+                                                style={inputStyle}
+                                            />
+                                        </div>
+                                    )}
                                     <div>
                                         <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Mensagem</label>
                                         <textarea
@@ -868,6 +1062,43 @@ export const SchedulerAdmin: React.FC = () => {
                         <div>
                             <h3 style={{ marginBottom: '20px', color: '#1e293b' }}>Templates de Mensagem</h3>
                             <div style={{ ...cardStyle, marginBottom: '20px' }}>
+                                <div style={{ marginBottom: '12px' }}>
+                                    <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '6px' }}>Canal</label>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                        <button
+                                            onClick={() => setNewTemplate({ ...newTemplate, channel: 'whatsapp' })}
+                                            style={{
+                                                flex: 1,
+                                                padding: '8px',
+                                                borderRadius: '6px',
+                                                border: `1px solid ${newTemplate.channel === 'whatsapp' ? '#10b981' : '#e2e8f0'}`,
+                                                background: newTemplate.channel === 'whatsapp' ? '#dcfce7' : 'white',
+                                                color: newTemplate.channel === 'whatsapp' ? '#166534' : '#64748b',
+                                                cursor: 'pointer',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                                fontSize: '13px'
+                                            }}
+                                        >
+                                            <MessageCircle size={14} /> WhatsApp
+                                        </button>
+                                        <button
+                                            onClick={() => setNewTemplate({ ...newTemplate, channel: 'email' })}
+                                            style={{
+                                                flex: 1,
+                                                padding: '8px',
+                                                borderRadius: '6px',
+                                                border: `1px solid ${newTemplate.channel === 'email' ? '#3b82f6' : '#e2e8f0'}`,
+                                                background: newTemplate.channel === 'email' ? '#dbeafe' : 'white',
+                                                color: newTemplate.channel === 'email' ? '#1e40af' : '#64748b',
+                                                cursor: 'pointer',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                                fontSize: '13px'
+                                            }}
+                                        >
+                                            <Mail size={14} /> Email
+                                        </button>
+                                    </div>
+                                </div>
                                 <div style={{ display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
                                     <input
                                         placeholder="Nome do template"
@@ -886,6 +1117,16 @@ export const SchedulerAdmin: React.FC = () => {
                                         <option value="news">Novidades</option>
                                     </select>
                                 </div>
+                                {newTemplate.channel === 'email' && (
+                                    <div style={{ marginTop: '12px' }}>
+                                        <input
+                                            placeholder="Assunto do email"
+                                            value={newTemplate.subject}
+                                            onChange={e => setNewTemplate({ ...newTemplate, subject: e.target.value })}
+                                            style={inputStyle}
+                                        />
+                                    </div>
+                                )}
                                 <textarea
                                     placeholder="Conteúdo do template (use {{variável}} para variáveis)"
                                     value={newTemplate.content}
@@ -901,7 +1142,15 @@ export const SchedulerAdmin: React.FC = () => {
                                 {templates.map(tpl => (
                                     <div key={tpl.id} style={{ ...cardStyle, display: 'flex', justifyContent: 'space-between', background: '#f0fdf4' }}>
                                         <div>
-                                            <div style={{ fontWeight: 'bold', color: '#1e293b' }}>{tpl.name}</div>
+                                            <div style={{ fontWeight: 'bold', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                {tpl.channel === 'email' ? <Mail size={14} color="#3b82f6" /> : <MessageCircle size={14} color="#10b981" />}
+                                                {tpl.name}
+                                            </div>
+                                            {tpl.channel === 'email' && tpl.subject && (
+                                                <div style={{ fontSize: '12px', color: '#475569', fontWeight: '500', marginTop: '2px' }}>
+                                                    Assunto: {tpl.subject}
+                                                </div>
+                                            )}
                                             <div style={{ color: '#64748b', fontSize: '14px' }}>{tpl.content}</div>
                                             <span style={{ fontSize: '11px', background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '4px' }}>{tpl.category}</span>
                                         </div>
@@ -1013,6 +1262,22 @@ export const SchedulerAdmin: React.FC = () => {
                             <div style={cardStyle}>
                                 <div style={{ marginBottom: '16px' }}>
                                     <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '6px' }}>
+                                        Conta de Envio (WhatsApp)
+                                    </label>
+                                    <select
+                                        value={selectedSessionId}
+                                        onChange={e => setSelectedSessionId(e.target.value)}
+                                        style={inputStyle}
+                                    >
+                                        {sessions.map(s => (
+                                            <option key={s.id} value={s.id}>
+                                                {s.name || s.id} {s.status === 'CONNECTED' ? '✓' : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div style={{ marginBottom: '16px' }}>
+                                    <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '6px' }}>
                                         Lista de Contatos (CSV ou um telefone por linha)
                                     </label>
                                     <textarea
@@ -1107,14 +1372,83 @@ João,5511777776666"
                             <div style={{ ...cardStyle, maxWidth: '500px' }}>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                                     <div>
-                                        <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', fontSize: '12px', color: '#475569' }}>Telefone/ChatID</label>
+                                        <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Canal</label>
+                                        <div style={{ display: 'flex', gap: '8px', marginTop: '4px', marginBottom: '12px' }}>
+                                            <button
+                                                onClick={() => setNewMessage({ ...newMessage, channel: 'whatsapp' })}
+                                                style={{
+                                                    flex: 1,
+                                                    padding: '8px',
+                                                    borderRadius: '6px',
+                                                    border: `1px solid ${newMessage.channel === 'whatsapp' ? '#10b981' : '#e2e8f0'}`,
+                                                    background: newMessage.channel === 'whatsapp' ? '#dcfce7' : 'white',
+                                                    color: newMessage.channel === 'whatsapp' ? '#166534' : '#64748b',
+                                                    cursor: 'pointer',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                                    fontSize: '13px'
+                                                }}
+                                            >
+                                                <MessageCircle size={14} /> WhatsApp
+                                            </button>
+                                            <button
+                                                onClick={() => setNewMessage({ ...newMessage, channel: 'email' })}
+                                                style={{
+                                                    flex: 1,
+                                                    padding: '8px',
+                                                    borderRadius: '6px',
+                                                    border: `1px solid ${newMessage.channel === 'email' ? '#3b82f6' : '#e2e8f0'}`,
+                                                    background: newMessage.channel === 'email' ? '#dbeafe' : 'white',
+                                                    color: newMessage.channel === 'email' ? '#1e40af' : '#64748b',
+                                                    cursor: 'pointer',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                                    fontSize: '13px'
+                                                }}
+                                            >
+                                                <Mail size={14} /> Email
+                                            </button>
+                                        </div>
+                                        <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', fontSize: '12px', color: '#475569' }}>
+                                            {newMessage.channel === 'email' ? 'Email do Destinatário' : 'Telefone/ChatID'}
+                                        </label>
                                         <input
-                                            placeholder="5511999999999 ou 5511999@c.us"
+                                            placeholder={newMessage.channel === 'email' ? "exemplo@email.com" : "5511999999999"}
                                             value={newMessage.chatId}
                                             onChange={e => setNewMessage({ ...newMessage, chatId: e.target.value })}
                                             style={inputStyle}
                                         />
                                     </div>
+                                    <div style={{ marginBottom: '5px' }}>
+                                        <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', fontSize: '12px', color: '#475569' }}>
+                                            {newMessage.channel === 'email' ? 'Conta de Envio' : 'Sessão WhatsApp'}
+                                        </label>
+                                        <select
+                                            value={newMessage.channel === 'email' ? selectedEmailAccountId : selectedSessionId}
+                                            onChange={e => newMessage.channel === 'email' ? setSelectedEmailAccountId(e.target.value) : setSelectedSessionId(e.target.value)}
+                                            style={inputStyle}
+                                        >
+                                            <option value="">Selecione...</option>
+                                            {newMessage.channel === 'email' ? (
+                                                emailAccounts.map(acc => (
+                                                    <option key={acc.id} value={acc.id}>{acc.name} ({acc.user})</option>
+                                                ))
+                                            ) : (
+                                                sessions.map(s => (
+                                                    <option key={s.id} value={s.id}>{s.name || s.id} {s.status === 'CONNECTED' ? '✓' : ''}</option>
+                                                ))
+                                            )}
+                                        </select>
+                                    </div>
+                                    {newMessage.channel === 'email' && (
+                                        <div>
+                                            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', fontSize: '12px', color: '#475569' }}>Assunto</label>
+                                            <input
+                                                placeholder="Assunto da mensagem"
+                                                value={newMessage.subject}
+                                                onChange={e => setNewMessage({ ...newMessage, subject: e.target.value })}
+                                                style={inputStyle}
+                                            />
+                                        </div>
+                                    )}
                                     <div>
                                         <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', fontSize: '12px', color: '#475569' }}>Mensagem</label>
                                         <textarea
@@ -1146,145 +1480,150 @@ João,5511777776666"
                         </div>
                     )}
                 </>
-            )}
+            )
+            }
 
             {/* Test Result Modal */}
-            {testResult && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    background: 'rgba(0,0,0,0.5)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 1000
-                }}>
-                    <div style={{ ...cardStyle, width: '90%', maxWidth: '600px', maxHeight: '90vh', overflow: 'auto' }}>
-                        <h3 style={{ marginTop: 0, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            🧪 Resultado do Teste
-                            <span style={{ fontSize: '12px', background: '#dbeafe', color: '#1d4ed8', padding: '4px 8px', borderRadius: '12px' }}>
-                                DRY-RUN
-                            </span>
-                        </h3>
+            {
+                testResult && (
+                    <div style={{
+                        position: 'fixed',
+                        top: 0, left: 0, right: 0, bottom: 0,
+                        background: 'rgba(0,0,0,0.5)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 1000
+                    }}>
+                        <div style={{ ...cardStyle, width: '90%', maxWidth: '600px', maxHeight: '90vh', overflow: 'auto' }}>
+                            <h3 style={{ marginTop: 0, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                🧪 Resultado do Teste
+                                <span style={{ fontSize: '12px', background: '#dbeafe', color: '#1d4ed8', padding: '4px 8px', borderRadius: '12px' }}>
+                                    DRY-RUN
+                                </span>
+                            </h3>
 
-                        <div style={{ marginBottom: '15px' }}>
-                            <strong>Regra:</strong> {testResult.rule?.name} ({testResult.rule?.event})
-                        </div>
-
-                        <div style={{ marginBottom: '15px' }}>
-                            <strong>Conta WhatsApp:</strong> {testResult.rule?.sessionId}
-                        </div>
-
-                        <div style={{ marginBottom: '15px' }}>
-                            <strong>Delay:</strong> {testResult.delay} minutos
-                        </div>
-
-                        <div style={{ marginBottom: '15px' }}>
-                            <strong>Variáveis de Exemplo:</strong>
-                            <pre style={{ background: '#f1f5f9', padding: '10px', borderRadius: '8px', fontSize: '12px', overflow: 'auto' }}>
-                                {JSON.stringify(testResult.mockVariables, null, 2)}
-                            </pre>
-                        </div>
-
-                        <div style={{ marginBottom: '15px' }}>
-                            <strong>Mensagem Renderizada:</strong>
-                            <div style={{
-                                background: '#ecfdf5',
-                                padding: '15px',
-                                borderRadius: '8px',
-                                border: '1px solid #10b981',
-                                whiteSpace: 'pre-wrap'
-                            }}>
-                                {testResult.renderedMessage}
+                            <div style={{ marginBottom: '15px' }}>
+                                <strong>Regra:</strong> {testResult.rule?.name} ({testResult.rule?.event})
                             </div>
-                        </div>
 
-                        <button
-                            onClick={() => setTestResult(null)}
-                            style={{ ...buttonStyle, background: '#3b82f6', color: 'white', width: '100%' }}
-                        >
-                            Fechar
-                        </button>
+                            <div style={{ marginBottom: '15px' }}>
+                                <strong>Conta WhatsApp:</strong> {testResult.rule?.sessionId}
+                            </div>
+
+                            <div style={{ marginBottom: '15px' }}>
+                                <strong>Delay:</strong> {testResult.delay} minutos
+                            </div>
+
+                            <div style={{ marginBottom: '15px' }}>
+                                <strong>Variáveis de Exemplo:</strong>
+                                <pre style={{ background: '#f1f5f9', padding: '10px', borderRadius: '8px', fontSize: '12px', overflow: 'auto' }}>
+                                    {JSON.stringify(testResult.mockVariables, null, 2)}
+                                </pre>
+                            </div>
+
+                            <div style={{ marginBottom: '15px' }}>
+                                <strong>Mensagem Renderizada:</strong>
+                                <div style={{
+                                    background: '#ecfdf5',
+                                    padding: '15px',
+                                    borderRadius: '8px',
+                                    border: '1px solid #10b981',
+                                    whiteSpace: 'pre-wrap'
+                                }}>
+                                    {testResult.renderedMessage}
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={() => setTestResult(null)}
+                                style={{ ...buttonStyle, background: '#3b82f6', color: 'white', width: '100%' }}
+                            >
+                                Fechar
+                            </button>
+                        </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Broadcast Details Modal */}
-            {selectedBroadcast && (
-                <div style={{
-                    position: 'fixed',
-                    top: 0, left: 0, right: 0, bottom: 0,
-                    background: 'rgba(0,0,0,0.5)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 1000
-                }}>
-                    <div style={{ ...cardStyle, width: '90%', maxWidth: '700px', maxHeight: '90vh', overflow: 'auto' }}>
-                        <h3 style={{ marginTop: 0, color: '#1e293b' }}>
-                            📢 Broadcast: {selectedBroadcast.broadcastId}
-                        </h3>
+            {
+                selectedBroadcast && (
+                    <div style={{
+                        position: 'fixed',
+                        top: 0, left: 0, right: 0, bottom: 0,
+                        background: 'rgba(0,0,0,0.5)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 1000
+                    }}>
+                        <div style={{ ...cardStyle, width: '90%', maxWidth: '700px', maxHeight: '90vh', overflow: 'auto' }}>
+                            <h3 style={{ marginTop: 0, color: '#1e293b' }}>
+                                📢 Broadcast: {selectedBroadcast.broadcastId}
+                            </h3>
 
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '20px' }}>
-                            <div style={{ background: '#f1f5f9', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
-                                <div style={{ fontSize: '20px', fontWeight: 'bold' }}>{selectedBroadcast.totalCount}</div>
-                                <div style={{ fontSize: '11px', color: '#64748b' }}>Total</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '20px' }}>
+                                <div style={{ background: '#f1f5f9', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
+                                    <div style={{ fontSize: '20px', fontWeight: 'bold' }}>{selectedBroadcast.totalCount}</div>
+                                    <div style={{ fontSize: '11px', color: '#64748b' }}>Total</div>
+                                </div>
+                                <div style={{ background: '#fef3c7', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
+                                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#d97706' }}>{selectedBroadcast.pending}</div>
+                                    <div style={{ fontSize: '11px', color: '#64748b' }}>Pendentes</div>
+                                </div>
+                                <div style={{ background: '#dcfce7', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
+                                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#16a34a' }}>{selectedBroadcast.sent}</div>
+                                    <div style={{ fontSize: '11px', color: '#64748b' }}>Enviados</div>
+                                </div>
+                                <div style={{ background: '#fee2e2', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
+                                    <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#dc2626' }}>{selectedBroadcast.failed}</div>
+                                    <div style={{ fontSize: '11px', color: '#64748b' }}>Falhas</div>
+                                </div>
                             </div>
-                            <div style={{ background: '#fef3c7', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
-                                <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#d97706' }}>{selectedBroadcast.pending}</div>
-                                <div style={{ fontSize: '11px', color: '#64748b' }}>Pendentes</div>
-                            </div>
-                            <div style={{ background: '#dcfce7', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
-                                <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#16a34a' }}>{selectedBroadcast.sent}</div>
-                                <div style={{ fontSize: '11px', color: '#64748b' }}>Enviados</div>
-                            </div>
-                            <div style={{ background: '#fee2e2', padding: '10px', borderRadius: '8px', textAlign: 'center' }}>
-                                <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#dc2626' }}>{selectedBroadcast.failed}</div>
-                                <div style={{ fontSize: '11px', color: '#64748b' }}>Falhas</div>
-                            </div>
-                        </div>
 
-                        <div style={{ maxHeight: '300px', overflow: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
-                                <thead>
-                                    <tr style={{ background: '#f1f5f9' }}>
-                                        <th style={{ padding: '8px', textAlign: 'left' }}>Contato</th>
-                                        <th style={{ padding: '8px', textAlign: 'left' }}>Status</th>
-                                        <th style={{ padding: '8px', textAlign: 'left' }}>Agendado</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {selectedBroadcast.messages?.map((msg: any) => (
-                                        <tr key={msg.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                                            <td style={{ padding: '8px' }}>{msg.chatId}</td>
-                                            <td style={{ padding: '8px' }}>
-                                                <span style={{
-                                                    padding: '2px 8px',
-                                                    borderRadius: '12px',
-                                                    fontSize: '10px',
-                                                    background: msg.status === 'sent' ? '#dcfce7' : msg.status === 'failed' ? '#fee2e2' : '#fef3c7',
-                                                    color: msg.status === 'sent' ? '#16a34a' : msg.status === 'failed' ? '#dc2626' : '#d97706'
-                                                }}>
-                                                    {msg.status}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '8px' }}>{formatDateTime(msg.scheduledAt)}</td>
+                            <div style={{ maxHeight: '300px', overflow: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                                    <thead>
+                                        <tr style={{ background: '#f1f5f9' }}>
+                                            <th style={{ padding: '8px', textAlign: 'left' }}>Contato</th>
+                                            <th style={{ padding: '8px', textAlign: 'left' }}>Status</th>
+                                            <th style={{ padding: '8px', textAlign: 'left' }}>Agendado</th>
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                    </thead>
+                                    <tbody>
+                                        {selectedBroadcast.messages?.map((msg: any) => (
+                                            <tr key={msg.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                                <td style={{ padding: '8px' }}>{msg.chatId}</td>
+                                                <td style={{ padding: '8px' }}>
+                                                    <span style={{
+                                                        padding: '2px 8px',
+                                                        borderRadius: '12px',
+                                                        fontSize: '10px',
+                                                        background: msg.status === 'sent' ? '#dcfce7' : msg.status === 'failed' ? '#fee2e2' : '#fef3c7',
+                                                        color: msg.status === 'sent' ? '#16a34a' : msg.status === 'failed' ? '#dc2626' : '#d97706'
+                                                    }}>
+                                                        {msg.status}
+                                                    </span>
+                                                </td>
+                                                <td style={{ padding: '8px' }}>{formatDateTime(msg.scheduledAt)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
 
-                        <button
-                            onClick={() => setSelectedBroadcast(null)}
-                            style={{ ...buttonStyle, background: '#3b82f6', color: 'white', width: '100%', marginTop: '15px' }}
-                        >
-                            Fechar
-                        </button>
+                            <button
+                                onClick={() => setSelectedBroadcast(null)}
+                                style={{ ...buttonStyle, background: '#3b82f6', color: 'white', width: '100%', marginTop: '15px' }}
+                            >
+                                Fechar
+                            </button>
+                        </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 };
 

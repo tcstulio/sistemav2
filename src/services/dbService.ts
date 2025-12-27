@@ -1,7 +1,7 @@
 
 
 export const DB_NAME = 'DoliGenDB';
-export const DB_VERSION = 14; // Bumped version for line items and links stores
+export const DB_VERSION = 16; // Bumped version to force re-sync of main objects with project links
 
 const STORES = [
     'customers', 'suppliers', 'categories', 'contacts', 'invoices',
@@ -36,6 +36,30 @@ export const dbService = {
 
             request.onupgradeneeded = (event: any) => {
                 const db = event.target.result;
+                const oldVersion = event.oldVersion;
+
+                // Force re-sync of main objects that now have project_id
+                if (oldVersion < 15) {
+                    console.log("Upgrading to v15: Clearing stores to force re-sync of project links...");
+                    const storesToClear = ['proposals', 'orders', 'invoices', 'contracts', 'tickets', 'events'];
+                    storesToClear.forEach(store => {
+                        if (db.objectStoreNames.contains(store)) {
+                            db.deleteObjectStore(store); // Deleting forces creation below which is effectively a clear
+                        }
+                    });
+                }
+
+                // v16: Force re-sync of other objects that now have project_id (Shipments, Supplier Orders, etc.)
+                if (oldVersion < 16) {
+                    console.log("Upgrading to v16: Clearing stores to force re-sync of extended project links...");
+                    const storesToClear = ['shipments', 'supplierOrders', 'supplierInvoices', 'expenseReports'];
+                    storesToClear.forEach(store => {
+                        if (db.objectStoreNames.contains(store)) {
+                            db.deleteObjectStore(store);
+                        }
+                    });
+                }
+
                 STORES.forEach(storeName => {
                     if (!db.objectStoreNames.contains(storeName)) {
                         // Using 'id' as keyPath is standard for our types

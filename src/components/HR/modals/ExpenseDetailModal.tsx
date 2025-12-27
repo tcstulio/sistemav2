@@ -88,6 +88,42 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({ expense,
                     <button onClick={() => handleDownloadPdf(expense.ref)} className="px-4 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-600 flex items-center gap-2">
                         <Download size={16} /> Comprovante
                     </button>
+                    {expense.statut === '0' && (
+                        <button
+                            onClick={async () => {
+                                if (!window.confirm('Confirma/Submete este relatório de despesas?')) return;
+                                try {
+                                    await DolibarrService.approveExpenseReport(config, expense.id);
+                                    // Close modal to refresh parent list
+                                    onClose();
+                                    // Ideal: Trigger refresh from parent
+                                } catch (e) {
+                                    console.error(e);
+                                    alert('Erro ao validar despesa.');
+                                }
+                            }}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                        >
+                            <Send size={16} /> Submeter/Aprovar
+                        </button>
+                    )}
+                    {(expense.statut === '1' || expense.statut === '2' || expense.statut === '4') && (
+                        <button
+                            onClick={async () => {
+                                if (!window.confirm('Marcar despesa como Paga?')) return;
+                                try {
+                                    await DolibarrService.markExpenseReportAsPaid(config, expense.id);
+                                    onClose();
+                                } catch (e) {
+                                    console.error(e);
+                                    alert('Erro ao marcar despesa como paga.');
+                                }
+                            }}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                        >
+                            <Banknote size={16} /> Pagar
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

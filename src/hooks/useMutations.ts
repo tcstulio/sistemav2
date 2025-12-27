@@ -15,6 +15,7 @@ export const useCustomerMutations = (config: DolibarrConfig | null) => {
         onSuccess: () => {
             // Invalidate to trigger refetch of the list
             queryClient.invalidateQueries({ queryKey: ['customers'] });
+            queryClient.invalidateQueries({ queryKey: ['suppliers'] });
         },
     });
 
@@ -54,10 +55,65 @@ export const useCustomerMutations = (config: DolibarrConfig | null) => {
         onSettled: () => {
             // Always refetch after error or success to ensure data is in sync
             queryClient.invalidateQueries({ queryKey: ['customers'] });
+            queryClient.invalidateQueries({ queryKey: ['suppliers'] });
         },
     });
 
-    return { createCustomer, updateCustomer };
+    const deleteCustomer = useMutation({
+        mutationFn: async (id: string) => {
+            if (!config) throw new Error("No Configuration");
+            await DolibarrService.deleteThirdParty(config, id);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['customers'] });
+            queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+        }
+    });
+
+    return { createCustomer, updateCustomer, deleteCustomer };
+};
+
+export const useSupplierMutations = (config: DolibarrConfig | null) => {
+    const queryClient = useQueryClient();
+
+    const createSupplier = useMutation({
+        mutationFn: async (newSupplier: Partial<ThirdParty>) => {
+            if (!config) throw new Error("No Configuration");
+            // Ensure it's a supplier (fournisseur=1)
+            const data = { ...newSupplier, fournisseur: '1' };
+            const result = await DolibarrService.createThirdParty(config, data);
+            return result as string;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+            queryClient.invalidateQueries({ queryKey: ['customers'] });
+        },
+    });
+
+    const updateSupplier = useMutation({
+        mutationFn: async ({ id, data }: { id: string; data: Partial<ThirdParty> }) => {
+            if (!config) throw new Error("No Configuration");
+            const result = await DolibarrService.updateThirdParty(config, id, data);
+            return result as ThirdParty;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+            queryClient.invalidateQueries({ queryKey: ['customers'] });
+        },
+    });
+
+    const deleteSupplier = useMutation({
+        mutationFn: async (id: string) => {
+            if (!config) throw new Error("No Configuration");
+            await DolibarrService.deleteThirdParty(config, id);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+            queryClient.invalidateQueries({ queryKey: ['customers'] });
+        }
+    });
+
+    return { createSupplier, updateSupplier, deleteSupplier };
 };
 
 export const useInvoiceMutations = (config: DolibarrConfig | null) => {

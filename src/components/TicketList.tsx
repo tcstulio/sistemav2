@@ -164,10 +164,12 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
 
             messages.push({
                 id: evt.id,
-                text: evt.message || evt.label, // Fallback to label if message empty
-                date: evt.date,
+                // Detailed text is usually in note_private (for emails/chats) or description. 
+                // Fallback to label if detailed text is missing.
+                text: evt.note_private || evt.description || evt.note || evt.message || evt.label,
+                date: evt.datep || evt.date, // API returns datep
                 sender: isSystem ? 'system' : 'agent',
-                user: resolveUserName(evt.author),
+                user: resolveUserName(evt.authorid || evt.author), // API returns authorid
                 type: isSystem ? 'log' : 'message'
             });
         });

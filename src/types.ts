@@ -13,3 +13,4 @@ export * from './types/finance';
 export * from './types/manufacturing';
 export * from './types/whatsapp';
 export * from './types/dev';
+export * from './types/email';

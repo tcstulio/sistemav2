@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Product, DolibarrConfig, Category, AppView, BOM, SupplierOrder, ThirdParty } from '../types';
-import { Package, Search, Box, Briefcase, AlertCircle, CheckCircle2, Warehouse, X, Plus, Loader2, CheckCircle, Tag, ArrowLeft, Truck, ShoppingCart } from 'lucide-react';
+import { Package, Search, Box, Briefcase, AlertCircle, CheckCircle2, Warehouse, X, Plus, Loader2, CheckCircle, Tag, ArrowLeft, Truck, ShoppingCart, Pencil, Trash2 } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
@@ -13,7 +13,14 @@ interface ProductListProps {
     onNavigate?: (view: AppView, id: string) => void;
 }
 
-const ProductList: React.FC<ProductListProps> = ({ onRefresh, onNavigate }) => {
+interface ProductListProps {
+    onRefresh?: () => void;
+    onNavigate?: (view: AppView, id: string) => void;
+    initialItemId?: string;
+    initialFilter?: 'product' | 'service';
+}
+
+const ProductList: React.FC<ProductListProps> = ({ onRefresh, onNavigate, initialItemId, initialFilter }) => {
     const { config } = useDolibarr();
     const { data: productsData } = useProducts(config);
     const products = productsData || [];
@@ -29,15 +36,30 @@ const ProductList: React.FC<ProductListProps> = ({ onRefresh, onNavigate }) => {
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
     const [searchTerm, setSearchTerm] = useState('');
-    const [filterType, setFilterType] = useState<'all' | 'product' | 'service'>('all');
+    const [filterType, setFilterType] = useState<'all' | 'product' | 'service'>(initialFilter ? initialFilter : 'all');
     const [selectedCategory, setSelectedCategory] = useState<string>('all');
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
     const [activeTab, setActiveTab] = useState<'overview' | 'stock' | 'manufacturing' | 'suppliers'>('overview');
+
+    useEffect(() => {
+        if (initialItemId && products.length > 0) {
+            const found = products.find(p => String(p.id) === String(initialItemId));
+            if (found) {
+                setSelectedProduct(found);
+            }
+        }
+    }, [initialItemId, products]);
 
     // Creation State
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [newProductForm, setNewProductForm] = useState<Partial<Product>>({ type: '0', price: 0 });
     const [isCreating, setIsCreating] = useState(false);
+
+    // Edit State
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editForm, setEditForm] = useState<Partial<Product>>({});
+    const [isEditing, setIsEditing] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     // Restock State
     const [isRestockModalOpen, setIsRestockModalOpen] = useState(false);
@@ -125,6 +147,47 @@ const ProductList: React.FC<ProductListProps> = ({ onRefresh, onNavigate }) => {
             alert(`Falha ao criar PO: ${e.message}`);
         } finally {
             setIsRestocking(false);
+        }
+    };
+
+    const handleEditClick = (product: Product) => {
+        setEditForm({ ...product });
+        setIsEditModalOpen(true);
+    };
+
+    const handleUpdateProduct = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedProduct || !editForm.id) return;
+        setIsEditing(true);
+        try {
+            await DolibarrService.updateProduct(config, editForm.id, editForm);
+            alert("Produto atualizado com sucesso");
+            setIsEditModalOpen(false);
+            if (onRefresh) onRefresh();
+            // Optimistic update or wait for refresh
+            setSelectedProduct({ ...selectedProduct, ...editForm } as Product);
+        } catch (e: any) {
+            console.error(e);
+            alert(`Falha ao atualizar produto: ${e.message}`);
+        } finally {
+            setIsEditing(false);
+        }
+    };
+
+    const handleDeleteProduct = async () => {
+        if (!selectedProduct) return;
+        if (!confirm("Tem certeza que deseja excluir este item? Esta ação não pode ser desfeita.")) return;
+        setIsDeleting(true);
+        try {
+            await DolibarrService.deleteProduct(config, selectedProduct.id);
+            alert("Item excluído com sucesso");
+            setSelectedProduct(null);
+            if (onRefresh) onRefresh();
+        } catch (e: any) {
+            console.error(e);
+            alert(`Falha ao excluir item: ${e.message}`);
+        } finally {
+            setIsDeleting(false);
         }
     };
 
@@ -288,6 +351,74 @@ const ProductList: React.FC<ProductListProps> = ({ onRefresh, onNavigate }) => {
                 </div>
             )}
 
+            {/* Edit Product Modal */}
+            {isEditModalOpen && (
+                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 my-8">
+                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl sticky top-0 z-10">
+                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
+                                <Pencil size={18} className="text-blue-600" /> Editar {editForm.type === '1' ? 'Serviço' : 'Produto'}
+                            </h3>
+                            <button onClick={() => setIsEditModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
+                        </div>
+                        <form onSubmit={handleUpdateProduct} className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Ref</label>
+                                <input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" required value={editForm.ref || ''} onChange={e => setEditForm({ ...editForm, ref: e.target.value })} />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Rótulo</label>
+                                <input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" required value={editForm.label || ''} onChange={e => setEditForm({ ...editForm, label: e.target.value })} />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
+                                    <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.type} onChange={e => setEditForm({ ...editForm, type: e.target.value as any })}>
+                                        <option value="0">Produto</option>
+                                        <option value="1">Serviço</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Preço (Venda)</label>
+                                    <input type="number" step="0.01" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.price} onChange={e => setEditForm({ ...editForm, price: parseFloat(e.target.value) })} />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Status Venda</label>
+                                    <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.tosell} onChange={e => setEditForm({ ...editForm, tosell: e.target.value as any })}>
+                                        <option value="1">Em Venda</option>
+                                        <option value="0">Fora de Venda</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Status Compra</label>
+                                    <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.tobuy} onChange={e => setEditForm({ ...editForm, tobuy: e.target.value as any })}>
+                                        <option value="1">Em Compra</option>
+                                        <option value="0">Fora de Compra</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
+                                <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white h-20 resize-none" value={editForm.description || ''} onChange={e => setEditForm({ ...editForm, description: e.target.value })} />
+                            </div>
+
+                            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                                <button type="button" onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
+                                <button type="submit" disabled={isEditing} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
+                                    {isEditing ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle size={16} />} Salvar Alterações
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <div className={`p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none ${selectedProduct ? 'hidden lg:block' : 'block'}`}>
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
@@ -393,6 +524,8 @@ const ProductList: React.FC<ProductListProps> = ({ onRefresh, onNavigate }) => {
                                 </div>
                                 <div className="flex items-center gap-2">
                                     {getStockBadge(selectedProduct)}
+                                    <button onClick={() => handleEditClick(selectedProduct)} className="hidden lg:block p-2 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400" title="Editar"><Pencil size={20} /></button>
+                                    <button onClick={handleDeleteProduct} disabled={isDeleting} className="hidden lg:block p-2 text-slate-400 hover:text-red-600 dark:hover:text-red-400" title="Excluir"><Trash2 size={20} /></button>
                                     <button onClick={() => setSelectedProduct(null)} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
                                 </div>
                             </div>
@@ -425,7 +558,31 @@ const ProductList: React.FC<ProductListProps> = ({ onRefresh, onNavigate }) => {
                                                 </div>
                                                 <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg">
                                                     <span className="text-xs text-slate-500 uppercase font-bold">Ref</span>
+
                                                     <div className="font-mono text-sm dark:text-white">{selectedProduct.ref}</div>
+                                                </div>
+                                            </div>
+
+                                            {/* Details Grid */}
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-3">
+                                                    <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Informações</h4>
+                                                    <ul className="space-y-1 text-sm text-slate-600 dark:text-slate-400">
+                                                        <li><strong className="font-medium text-slate-800 dark:text-slate-200">Tipo:</strong> {selectedProduct.type === '0' ? 'Produto' : 'Serviço'}</li>
+                                                        {selectedProduct.type === '1' && <li><strong className="font-medium text-slate-800 dark:text-slate-200">Duração:</strong> {selectedProduct.duration || 'N/A'}</li>}
+                                                    </ul>
+                                                </div>
+
+                                                <div className="bg-slate-50 dark:bg-slate-800 rounded-lg p-3">
+                                                    <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Status</h4>
+                                                    <div className="flex items-center gap-2 mt-2">
+                                                        <span className={`px-2 py-0.5 rounded text-xs ${selectedProduct.tosell === '1' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                                            {selectedProduct.tosell === '1' ? 'Venda: Sim' : 'Venda: Não'}
+                                                        </span>
+                                                        <span className={`px-2 py-0.5 rounded text-xs ${selectedProduct.tobuy === '1' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}`}>
+                                                            {selectedProduct.tobuy === '1' ? 'Compra: Sim' : 'Compra: Não'}
+                                                        </span>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
