@@ -47,12 +47,15 @@ import {
     SupplierInvoiceLine,
     InterventionLine,
     BOMLine,
+    ProposalLine,
+    OrderLine,
+    InvoiceLine,
 } from '../../types';
 
 // ============ Helper Functions ============
 
 /** Safely parse a date value to timestamp */
-const toTimestamp = (value: any): number => {
+export const toTimestamp = (value: any): number => {
     if (!value) return 0;
 
     // Handle numeric strings (e.g. "1700000000" from PHP/MySQL drivers)
@@ -75,18 +78,38 @@ const toTimestamp = (value: any): number => {
 };
 
 /** Safely convert to string */
-const toString = (value: any): string => {
+export const toString = (value: any): string => {
     if (value === null || value === undefined) return '';
     return String(value);
 };
 
 /** Safely convert to number */
-const toNumber = (value: any): number => {
+export const toNumber = (value: any): number => {
     const num = Number(value);
     return isNaN(num) ? 0 : num;
 };
 
 // ============ Entity Mappers ============
+
+/**
+ * Map raw supplier data (alias for mapThirdParty with supplier-specific handling)
+ */
+export const mapSupplier = (raw: any): ThirdParty => ({
+    id: toString(raw.id),
+    name: raw.name || '',
+    name_alias: raw.name_alias,
+    code_client: raw.code_client,
+    email: raw.email,
+    phone: raw.phone,
+    address: raw.address || '',
+    zip: raw.zip || '',
+    town: raw.town || '',
+    client: toString(raw.client),
+    status: raw.status,
+    date_creation: toTimestamp(raw.datec),
+    date_modification: toTimestamp(raw.tms),
+    fournisseur: toString(raw.fournisseur) || '1',
+});
 
 /**
  * Map raw third party data to ThirdParty entity
@@ -120,6 +143,7 @@ export const mapInvoice = (raw: any): Invoice => ({
     socid: raw.fk_soc ? toString(raw.fk_soc) : '',
     paye: toString(raw.paye) as '0' | '1',
     date_lim_reglement: raw.date_lim_reglement ? toTimestamp(raw.date_lim_reglement) : undefined,
+    project_id: raw.project_id ? toString(raw.project_id) : undefined,
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -131,10 +155,12 @@ export const mapSupplierInvoice = (raw: any): SupplierInvoice => ({
     ref: raw.ref || '',
     socid: raw.fk_soc ? toString(raw.fk_soc) : '',
     label: raw.label,
+    type: toString(raw.type) as '0' | '1' | '2',
     date: toTimestamp(raw.datec),
     total_ttc: toNumber(raw.total_ttc),
     paye: toString(raw.paye) as '0' | '1',
     statut: toString(raw.statut) as '0' | '1' | '2',
+    project_id: raw.project_id ? toString(raw.project_id) : undefined,
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -149,6 +175,9 @@ export const mapOrder = (raw: any): Order => ({
     date: toTimestamp(raw.datec),
     date_modification: toTimestamp(raw.tms),
     socid: raw.fk_soc ? toString(raw.fk_soc) : '',
+    project_id: raw.project_id ? toString(raw.project_id) : undefined,
+    fk_user_author: raw.fk_user_author ? toString(raw.fk_user_author) : undefined, // ADDED
+    fk_user_valid: raw.fk_user_valid ? toString(raw.fk_user_valid) : undefined, // ADDED
 });
 
 /**
@@ -163,6 +192,9 @@ export const mapSupplierOrder = (raw: any): SupplierOrder => ({
     date_livraison: raw.date_livraison ? toTimestamp(raw.date_livraison) : undefined,
     total_ttc: toNumber(raw.total_ttc),
     statut: toString(raw.statut),
+    project_id: raw.project_id ? toString(raw.project_id) : undefined,
+    fk_user_author: raw.fk_user_author ? toString(raw.fk_user_author) : undefined, // ADDED
+    fk_user_approve: raw.fk_user_approve ? toString(raw.fk_user_approve) : undefined, // ADDED
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -182,6 +214,8 @@ export const mapProject = (raw: any): Project => ({
     date_end: raw.date_end ? toTimestamp(raw.date_end) : 0,
     budget_amount: toNumber(raw.budget_amount),
     parent_id: raw.parent_id ? toString(raw.parent_id) : undefined,
+    fk_user_creat: raw.fk_user_creat ? toString(raw.fk_user_creat) : undefined,
+    fk_user_modif: raw.fk_user_modif ? toString(raw.fk_user_modif) : undefined,
 });
 
 /**
@@ -212,8 +246,13 @@ export const mapProposal = (raw: any): Proposal => ({
     ref: raw.ref || '',
     socid: raw.fk_soc ? toString(raw.fk_soc) : '',
     date: toTimestamp(raw.datep || raw.datec),
+    total_ht: toNumber(raw.total_ht),
     total_ttc: toNumber(raw.total_ttc),
+    total_tva: toNumber(raw.total_tva),
     statut: toString(raw.statut) as '0' | '1' | '2' | '3' | '4',
+    project_id: raw.project_id ? toString(raw.project_id) : undefined,
+    fk_user_author: raw.fk_user_author ? toString(raw.fk_user_author) : undefined, // ADDED
+    fk_user_valid: raw.fk_user_valid ? toString(raw.fk_user_valid) : undefined, // ADDED
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -232,12 +271,13 @@ export const mapTicket = (raw: any): Ticket => ({
     category_code: raw.category_code,
     severity_code: raw.severity_code || '',
     statut: toString(raw.fk_statut || raw.statut),
-    progress: raw.progress ? toNumber(raw.progress) : undefined,
-    date_c: toTimestamp(raw.datec),
+    progress: raw.progress ? toString(raw.progress) : '0',
+    datec: toTimestamp(raw.datec),
     fk_user_assign: raw.fk_user_assign ? toString(raw.fk_user_assign) : undefined,
+    fk_user_create: raw.fk_user_create ? toString(raw.fk_user_create) : undefined,
+    fk_user_close: raw.fk_user_close ? toString(raw.fk_user_close) : undefined,
     origin_email: raw.origin_email,
-    array_options: raw.array_options,
-    date_modification: toTimestamp(raw.tms),
+    tms: toTimestamp(raw.tms),
 });
 
 /**
@@ -275,7 +315,7 @@ export const mapContract = (raw: any): Contract => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     socid: raw.fk_soc ? toString(raw.fk_soc) : '',
-    project_id: raw.fk_project ? toString(raw.fk_project) : undefined,
+    project_id: raw.project_id ? toString(raw.project_id) : undefined,
     date_contrat: toTimestamp(raw.date_contrat),
     date_fin_validite: raw.date_fin_validite ? toTimestamp(raw.date_fin_validite) : undefined,
     statut: toString(raw.statut) as '0' | '1' | '2',
@@ -342,9 +382,21 @@ export const mapProduct = (raw: any): Product => ({
     label: raw.label || '',
     description: raw.description,
     price: toNumber(raw.price),
-    stock_reel: toNumber(raw.stock_reel),
+
     seuil_stock_alerte: raw.seuil_stock_alerte ? toNumber(raw.seuil_stock_alerte) : undefined,
     type: toString(raw.type) as '0' | '1',
+    price_ttc: toNumber(raw.price_ttc),
+    vat_rate: toNumber(raw.vat_rate || raw.tva_tx),
+    stock_reel: toNumber(raw.stock_reel || raw.stock), // Fallback to 'stock' if stock_reel missing
+
+    // Status
+    tosell: toString(raw.tosell) as '0' | '1',
+    tobuy: toString(raw.tobuy) as '0' | '1',
+    finished: toString(raw.finished) as '0' | '1',
+
+    // Info
+    duration: raw.duration,
+
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -366,30 +418,34 @@ export const mapCategory = (raw: any): Category => ({
 /**
  * Map raw agenda event data to AgendaEvent entity
  */
-export const mapAgendaEvent = (raw: any): AgendaEvent => ({
-    id: toString(raw.id),
-    ref: raw.ref || '',
-    label: raw.label || '',
-    // Backend SQL: UNIX_TIMESTAMP(datep) as date_start
-    date_start: toTimestamp(raw.date_start || raw.datep),
-    // Backend SQL: UNIX_TIMESTAMP(datep2) as date_end
-    date_end: toTimestamp(raw.date_end || raw.datep2 || raw.datef),
-    type_code: raw.type_code || raw.code || '',
-    percentage: toNumber(raw.percentage),
-    socid: raw.socid ? toString(raw.socid) : undefined,
-    project_id: raw.fk_project ? toString(raw.fk_project) : undefined,
-    description: raw.description || raw.note, // Supports both 'description' (sync) and 'note' (legacy)
-    user_assigned: raw.userassigned ? toString(Object.keys(raw.userassigned)[0] || '') : undefined,
-    location: raw.location,
-    elementtype: raw.elementtype,
-    fk_element: raw.fk_element ? toString(raw.fk_element) : undefined,
-    date_c: toTimestamp(raw.datec),
-    fulldayevent: raw.fulldayevent === '1' || raw.fulldayevent === 1,
-    priority: raw.priority ? toNumber(raw.priority) : undefined,
-    fk_user_author: raw.fk_user_author ? toString(raw.fk_user_author) : undefined,
-    transparency: raw.transparency ? toNumber(raw.transparency) : undefined,
-    date_modification: toTimestamp(raw.tms),
-});
+export const mapAgendaEvent = (raw: any): AgendaEvent => {
+    const pct = toNumber(raw.percentage);
+    return {
+        id: toString(raw.id),
+        ref: raw.ref || '',
+        label: raw.label || '',
+        // Backend SQL: UNIX_TIMESTAMP(datep) as date_start
+        date_start: toTimestamp(raw.date_start || raw.datep),
+        // Backend SQL: UNIX_TIMESTAMP(datep2) as date_end
+        date_end: toTimestamp(raw.date_end || raw.datep2 || raw.datef),
+        type_code: raw.type_code || raw.code || '',
+        percentage: pct < 0 ? 0 : pct,
+        socid: raw.socid ? toString(raw.socid) : undefined,
+        project_id: raw.project_id ? toString(raw.project_id) : (raw.fk_project ? toString(raw.fk_project) : undefined),
+        description: raw.description || raw.note, // Supports both 'description' (sync) and 'note' (legacy)
+        user_assigned: raw.userassigned ? toString(Object.keys(raw.userassigned)[0] || '') : undefined,
+        location: raw.location,
+        elementtype: raw.elementtype,
+        fk_element: raw.fk_element ? toString(raw.fk_element) : undefined,
+        date_c: toTimestamp(raw.datec),
+        fulldayevent: raw.fulldayevent === '1' || raw.fulldayevent === 1,
+        priority: raw.priority ? toNumber(raw.priority) : undefined,
+        fk_user_author: raw.fk_user_author ? toString(raw.fk_user_author) : undefined,
+        user_author_name: raw.user_author_firstname ? `${raw.user_author_firstname} ${raw.user_author_lastname || ''}`.trim() : (raw.user_author_login || undefined),
+        transparency: raw.transparency ? toNumber(raw.transparency) : undefined,
+        date_modification: toTimestamp(raw.tms),
+    };
+};
 
 /**
  * Map raw shipment data to Shipment entity
@@ -404,6 +460,9 @@ export const mapShipment = (raw: any): Shipment => ({
     date_delivery: raw.date_delivery ? toTimestamp(raw.date_delivery) : undefined,
     status: toString(raw.status || raw.statut),
     tracking_number: raw.tracking_number,
+    project_id: raw.project_id ? toString(raw.project_id) : undefined,
+    fk_user_author: raw.fk_user_author ? toString(raw.fk_user_author) : undefined,
+    fk_user_valid: raw.fk_user_valid ? toString(raw.fk_user_valid) : undefined,
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -479,6 +538,9 @@ export const mapExpenseReport = (raw: any): ExpenseReport => ({
     date_fin: toTimestamp(raw.date_fin),
     total_ttc: toNumber(raw.total_ttc),
     statut: toString(raw.statut),
+    fk_user_valid: raw.fk_user_valid ? toString(raw.fk_user_valid) : undefined,
+    fk_user_approve: raw.fk_user_approve ? toString(raw.fk_user_approve) : undefined,
+    project_id: raw.project_id ? toString(raw.project_id) : undefined,
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -494,6 +556,7 @@ export const mapLeaveRequest = (raw: any): LeaveRequest => ({
     type: toString(raw.fk_type),
     statut: toString(raw.statut) as '1' | '2' | '3' | '4' | '5',
     description: raw.description,
+    fk_user_valid: raw.fk_user_valid ? toString(raw.fk_user_valid) : undefined, // ADDED
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -506,7 +569,8 @@ export const mapCandidate = (raw: any): Candidate => ({
     email: raw.email || '',
     lastname: raw.lastname || '',
     firstname: raw.firstname || '',
-    status: toString(raw.statut),
+    phone: raw.phone || undefined,
+    status: toString(raw.status || raw.statut),
     fk_job_position: raw.fk_recruitmentjobposition ? toString(raw.fk_recruitmentjobposition) : '',
     date_c: toTimestamp(raw.datec),
     date_creation: toTimestamp(raw.datec),
@@ -534,11 +598,12 @@ export const mapManufacturingOrder = (raw: any): ManufacturingOrder => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     label: raw.label || '',
-    product_to_produce_id: toString(raw.fk_product),
+    product_to_produce_id: toString(raw.product_to_produce_id || raw.fk_product),
     qty: toNumber(raw.qty),
+    project_id: raw.project_id ? toString(raw.project_id) : undefined,
     status: toString(raw.status || raw.statut) as '0' | '1' | '2' | '3',
-    date_start: raw.date_start_planned ? toTimestamp(raw.date_start_planned) : undefined,
-    date_end: raw.date_end_planned ? toTimestamp(raw.date_end_planned) : undefined,
+    date_start: raw.date_start ? toTimestamp(raw.date_start) : undefined,
+    date_end: raw.date_end ? toTimestamp(raw.date_end) : undefined,
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -593,7 +658,7 @@ export const mapLink = (raw: any): Link => ({
     sourceid: toString(raw.sourceid),
     targettype: raw.targettype || '',
     targetid: toString(raw.targetid),
-    date_modification: 0,
+    date_modification: Number(raw.id), // Links não têm tms, usar ID para sync incremental
 });
 
 /**
@@ -618,11 +683,13 @@ export const mapSupplierInvoiceLine = (raw: any): SupplierInvoiceLine => ({
     label: raw.label || '',
     description: raw.description || '',
     qty: toNumber(raw.qty),
-    vat_rate: toNumber(raw.vat_rate),
-    subprice: toNumber(raw.subprice),
+    vat_rate: toNumber(raw.vat_rate || raw.tva_tx),
+    subprice: toNumber(raw.subprice || raw.pu_ht),
     total_ht: toNumber(raw.total_ht),
     total_ttc: toNumber(raw.total_ttc),
-    product_id: raw.product_id ? toString(raw.product_id) : undefined,
+    product_id: raw.fk_product ? toString(raw.fk_product) : (raw.product_id ? toString(raw.product_id) : undefined),
+    product_ref: raw.product_ref || undefined,
+    product_label: raw.product_label || undefined,
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -653,5 +720,67 @@ export const mapInterventionLine = (raw: any): InterventionLine => ({
     qty: toNumber(raw.qty),
     date: toTimestamp(raw.tms),
     duration: 0,
+    date_modification: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw proposal line data
+ */
+export const mapProposalLine = (raw: any): ProposalLine => ({
+    id: toString(raw.id),
+    parent_id: toString(raw.parent_id),
+    label: raw.label || '',
+    description: raw.description || '',
+    type: raw.type,
+    qty: toNumber(raw.qty),
+    vat_rate: toNumber(raw.vat_rate),
+    subprice: toNumber(raw.subprice),
+    total_ht: toNumber(raw.total_ht),
+    total_ttc: toNumber(raw.total_ttc),
+    total_tva: toNumber(raw.total_tva),
+    product_id: raw.product_id ? toString(raw.product_id) : undefined,
+    rang: toNumber(raw.rang),
+    date_modification: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw order line data
+ */
+export const mapOrderLine = (raw: any): OrderLine => ({
+    id: toString(raw.id),
+    parent_id: toString(raw.parent_id),
+    label: raw.label || '',
+    description: raw.description || '',
+    type: raw.type,
+    qty: toNumber(raw.qty),
+    vat_rate: toNumber(raw.vat_rate),
+    subprice: toNumber(raw.subprice),
+    total_ht: toNumber(raw.total_ht),
+    total_ttc: toNumber(raw.total_ttc),
+    total_tva: toNumber(raw.total_tva),
+    product_id: raw.product_id ? toString(raw.product_id) : undefined,
+    rang: toNumber(raw.rang),
+    date_modification: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw invoice line data
+ */
+export const mapInvoiceLine = (raw: any): InvoiceLine => ({
+    id: toString(raw.id),
+    parent_id: toString(raw.parent_id),
+    label: raw.label || '',
+    description: raw.description || '',
+    type: toNumber(raw.type),
+    qty: toNumber(raw.qty),
+    vat_rate: toNumber(raw.vat_rate || raw.tva_tx),
+    subprice: toNumber(raw.subprice),
+    total_ht: toNumber(raw.total_ht),
+    total_ttc: toNumber(raw.total_ttc),
+    total_tva: toNumber(raw.total_tva),
+    product_id: raw.fk_product ? toString(raw.fk_product) : (raw.product_id ? toString(raw.product_id) : undefined),
+    product_ref: raw.product_ref || undefined,
+    product_label: raw.product_label || undefined,
+    rang: toNumber(raw.rang),
     date_modification: toTimestamp(raw.tms),
 });

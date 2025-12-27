@@ -4,7 +4,7 @@ import { Order, ThirdParty, DolibarrConfig, AppView, Shipment, Invoice } from '.
 import { ShoppingCart, Search, ExternalLink, Package, CheckCircle, Truck, X, Clock, FilePlus, Loader2, Download, ArrowLeft, Info, Receipt, ArrowDown, ArrowUp, Lock, Box, CheckSquare, Trash2, FileText, User } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useOrders, useCustomers, useShipments, useInvoices } from '../hooks/dolibarr';
+import { useOrders, useCustomers, useShipments, useInvoices, useUsers } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 
@@ -24,6 +24,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     const shipments = shipmentsData || [];
     const { data: invoicesData } = useInvoices(config);
     const invoices = invoicesData || [];
+    const { data: users = [] } = useUsers(config);
 
     // Fallback if config is null (should rely on context handling login, but specific hooks handle null config gracefully returning empty array)
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
@@ -54,6 +55,12 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     const getCustomerName = (socid: string) => {
         const customer = customers.find(c => c.id === socid);
         return customer ? customer.name : 'Cliente Desconhecido';
+    };
+
+    const getUserName = (id?: string) => {
+        if (!id) return '-';
+        const u = users.find(user => String(user.id) === String(id));
+        return u ? (u.firstname ? `${u.firstname} ${u.lastname}` : u.login) : `User ${id}`;
     };
 
     const filteredOrders = useMemo(() => {
@@ -424,14 +431,27 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                                         <>
                                             {/* Key Info Card */}
                                             <div className="bg-white dark:bg-slate-900 rounded-xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
-                                                <div className="flex justify-between items-start mb-6">
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                                                     <div>
                                                         <p className="text-sm text-slate-500 uppercase font-bold mb-1">Valor Total</p>
                                                         <p className="text-3xl font-bold text-slate-900 dark:text-white">${selectedOrder.total_ttc.toLocaleString()}</p>
                                                     </div>
-                                                    <div className="text-right">
+                                                    <div>
                                                         <p className="text-sm text-slate-500 uppercase font-bold mb-1">Data</p>
                                                         <p className="text-lg font-medium text-slate-800 dark:text-white">{formatDateOnly(selectedOrder.date)}</p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-sm text-slate-500 uppercase font-bold mb-1">Responsáveis</p>
+                                                        <div className="space-y-1">
+                                                            <div className="text-sm flex justify-between">
+                                                                <span className="text-slate-500">Criado:</span> <span className="font-medium text-slate-800 dark:text-white">{getUserName(selectedOrder.fk_user_author)}</span>
+                                                            </div>
+                                                            {selectedOrder.fk_user_valid && (
+                                                                <div className="text-sm flex justify-between">
+                                                                    <span className="text-slate-500">Validado:</span> <span className="font-medium text-slate-800 dark:text-white">{getUserName(selectedOrder.fk_user_valid)}</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
 

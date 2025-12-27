@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { messageService } from './messageService';
+import { emailService } from './emailService'; // New
 import { socketService } from './socketService';
 
 // --- Interfaces ---
@@ -9,6 +10,8 @@ export interface ScheduledMessage {
     id: string;
     chatId: string;
     sessionId: string;
+    channel: 'whatsapp' | 'email'; // New
+    subject?: string; // New (for email)
     message: string;
     scheduledAt: number; // timestamp ms
     type: 'once' | 'reminder' | 'broadcast' | 'confirmation';
@@ -39,6 +42,8 @@ export interface ScheduledMessage {
 export interface MessageTemplate {
     id: string;
     name: string;
+    channel?: 'whatsapp' | 'email'; // New
+    subject?: string; // New
     content: string; // Supports {{variable}} syntax
     category: 'reminder' | 'news' | 'confirmation' | 'general';
     createdAt: number;
@@ -51,8 +56,10 @@ export interface AutomationRule {
     name: string;
     event: 'invoice_created' | 'invoice_paid' | 'invoice_overdue' | 'ticket_created' | 'ticket_closed' | 'ticket_updated' | 'order_created' | 'custom';
     enabled: boolean;
+    channel: 'whatsapp' | 'email'; // New
     sessionId: string;
     templateId?: string;
+    subject?: string; // New
     message?: string;
     delay?: number; // minutes after event
     conditions?: {
@@ -69,6 +76,7 @@ export interface MessageLog {
     id: string;
     messageId: string;
     chatId: string;
+    channel?: 'whatsapp' | 'email'; // New
     sessionId: string;
     type: 'scheduled' | 'broadcast' | 'reminder' | 'confirmation' | 'chatbot' | 'webhook';
     status: 'pending' | 'sent' | 'failed' | 'cancelled';
@@ -173,49 +181,80 @@ class SchedulerService {
             {
                 name: 'Fatura Criada',
                 event: 'invoice_created',
-                message: "Olá {{customerName}}! 📋\\n\\nUma nova fatura foi gerada:\\n📌 Ref: {{ref}}\\n💰 Valor: {{total}}\\n\\nQualquer dúvida, estamos à disposição!"
+                message: "Olá {{customerName}}! 📋\\n\\nUma nova fatura foi gerada:\\n📌 Ref: {{ref}}\\n💰 Valor: {{total}}\\n\\nQualquer dúvida, estamos à disposição!",
+                channel: 'whatsapp',
+                subject: ''
             },
             {
                 name: 'Fatura Paga',
                 event: 'invoice_paid',
-                message: "Olá {{customerName}}! ✅\\n\\nRecebemos o pagamento da fatura {{ref}}.\\n\\nObrigado pela confiança!"
+                message: "Olá {{customerName}}! ✅\\n\\nRecebemos o pagamento da fatura {{ref}}.\\n\\nObrigado pela confiança!",
+                channel: 'whatsapp',
+                subject: ''
             },
             {
                 name: 'Fatura Vencida',
                 event: 'invoice_overdue',
-                message: "Olá {{customerName}}! ⚠️\\n\\nLembramos que a fatura {{ref}} ({{total}}) está vencida.\\n\\nPodemos ajudar com alguma questão?"
+                message: "Olá {{customerName}}! ⚠️\\n\\nLembramos que a fatura {{ref}} ({{total}}) está vencida.\\n\\nPodemos ajudar com alguma questão?",
+                channel: 'whatsapp',
+                subject: ''
             },
             {
                 name: 'Chamado Aberto',
                 event: 'ticket_created',
-                message: "Olá! 🎫\\n\\nSeu chamado foi aberto com sucesso:\\n📌 Ref: {{ref}}\\n📝 {{subject}}\\n\\nEm breve entraremos em contato!"
+                message: "Olá! 🎫\\n\\nSeu chamado foi aberto com sucesso:\\n📌 Ref: {{ref}}\\n📝 {{subject}}\\n\\nEm breve entraremos em contato!",
+                channel: 'whatsapp',
+                subject: ''
             },
             {
                 name: 'Chamado Fechado',
                 event: 'ticket_closed',
-                message: "Olá! ✅\\n\\nSeu chamado {{ref}} foi finalizado.\\n\\nAgradecemos o contato!"
+                message: "Olá! ✅\\n\\nSeu chamado {{ref}} foi finalizado.\\n\\nAgradecemos o contato!",
+                channel: 'whatsapp',
+                subject: ''
             },
             {
                 name: 'Chamado Atualizado',
                 event: 'ticket_updated',
-                message: "Olá! 📝\\n\\nHouve uma atualização no chamado {{ref}}.\\n\\nAcompanhe pelo sistema ou responda aqui."
+                message: "Olá! 📝\\n\\nHouve uma atualização no chamado {{ref}}.\\n\\nAcompanhe pelo sistema ou responda aqui.",
+                channel: 'whatsapp',
+                subject: ''
             },
             {
                 name: 'Pedido Criado',
                 event: 'order_created',
-                message: "Olá {{customerName}}! 🛒\\n\\nSeu pedido foi registrado com sucesso!\\n📌 Ref: {{ref}}\\n💰 Valor: {{total}}\\n\\nEm breve entraremos em contato!"
+                message: "Olá {{customerName}}! 🛒\\n\\nSeu pedido foi registrado com sucesso!\\n📌 Ref: {{ref}}\\n💰 Valor: {{total}}\\n\\nEm breve entraremos em contato!",
+                channel: 'whatsapp',
+                subject: ''
+            },
+            // Email Defaults
+            {
+                name: 'Email: Fatura Criada',
+                event: 'invoice_created',
+                message: "<p>Olá <strong>{{customerName}}</strong>,</p><p>Uma nova fatura foi gerada para você.</p><ul><li>Ref: {{ref}}</li><li>Valor: {{total}}</li></ul><p>Atenciosamente,<br>Equipe</p>",
+                channel: 'email',
+                subject: 'Nova Fatura Disponível - {{ref}}'
+            },
+            {
+                name: 'Email: Pedido Confirmado',
+                event: 'order_created',
+                message: "<p>Olá <strong>{{customerName}}</strong>,</p><p>Recebemos seu pedido com sucesso!</p><h2>Detalhes do Pedido</h2><ul><li>Referência: {{ref}}</li><li>Total: {{total}}</li></ul><p>Obrigado pela preferência.</p>",
+                channel: 'email',
+                subject: 'Confirmação de Pedido #{{ref}}'
             }
         ] as const;
 
         let added = false;
         defaults.forEach(def => {
-            const exists = this.data.automationRules.some(r => r.event === def.event);
+            const exists = this.data.automationRules.some(r => r.event === def.event && r.channel === (def.channel || 'whatsapp'));
             if (!exists) {
                 this.createRule({
                     name: def.name,
-                    event: def.event,
-                    sessionId: 'default',
+                    event: def.event as any,
+                    channel: (def.channel as 'whatsapp' | 'email') || 'whatsapp',
+                    sessionId: 'default', // Will need to be updated by user for email
                     message: def.message,
+                    subject: def.subject,
                     delay: 0
                 });
                 added = true;
@@ -318,7 +357,11 @@ class SchedulerService {
         try {
             console.log(`[Scheduler] Sending to ${msg.chatId}: "${msg.message.substring(0, 50)}..."`);
 
-            await messageService.sendText(msg.sessionId, msg.chatId, msg.message);
+            if (msg.channel === 'email') {
+                await emailService.sendEmail(msg.sessionId, msg.chatId, msg.subject || 'Notificação', msg.message);
+            } else {
+                await messageService.sendText(msg.sessionId, msg.chatId, msg.message);
+            }
 
             // Update status
             msg.status = 'sent';
@@ -387,6 +430,8 @@ class SchedulerService {
     scheduleMessage(params: {
         chatId: string;
         sessionId: string;
+        channel?: 'whatsapp' | 'email';
+        subject?: string;
         message: string;
         scheduledAt: number;
         type?: ScheduledMessage['type'];
@@ -396,6 +441,8 @@ class SchedulerService {
             id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             chatId: params.chatId,
             sessionId: params.sessionId,
+            channel: params.channel || 'whatsapp',
+            subject: params.subject,
             message: params.message,
             scheduledAt: params.scheduledAt,
             type: params.type || 'once',
@@ -420,6 +467,8 @@ class SchedulerService {
     async scheduleBroadcast(params: {
         sessionId: string;
         chatIds: string[];
+        channel?: 'whatsapp' | 'email';
+        subject?: string;
         message: string;
         scheduledAt?: number;
         delayBetween?: number;
@@ -434,6 +483,8 @@ class SchedulerService {
             const msg = this.scheduleMessage({
                 chatId: params.chatIds[i],
                 sessionId: params.sessionId,
+                channel: params.channel,
+                subject: params.subject,
                 message: params.message,
                 scheduledAt: baseTime + (i * delay),
                 type: 'broadcast',
@@ -639,12 +690,16 @@ class SchedulerService {
     createTemplate(params: {
         name: string;
         content: string;
+        channel?: 'whatsapp' | 'email';
+        subject?: string;
         category?: MessageTemplate['category'];
     }): MessageTemplate {
         const template: MessageTemplate = {
             id: `tpl_${Date.now()}`,
             name: params.name,
             content: params.content,
+            channel: params.channel || 'whatsapp',
+            subject: params.subject,
             category: params.category || 'general',
             createdAt: Date.now()
         };
@@ -720,8 +775,10 @@ class SchedulerService {
     createRule(params: {
         name: string;
         event: AutomationRule['event'];
+        channel?: 'whatsapp' | 'email';
         sessionId: string;
         templateId?: string;
+        subject?: string;
         message?: string;
         delay?: number;
         conditions?: AutomationRule['conditions'];
@@ -731,8 +788,10 @@ class SchedulerService {
             name: params.name,
             event: params.event,
             enabled: true,
+            channel: params.channel || 'whatsapp',
             sessionId: params.sessionId,
             templateId: params.templateId,
+            subject: params.subject,
             message: params.message,
             delay: params.delay,
             conditions: params.conditions,
@@ -775,6 +834,8 @@ class SchedulerService {
         message?: string;
         delay?: number;
         templateId?: string;
+        channel?: 'whatsapp' | 'email';
+        subject?: string;
         sessionId?: string;
         conditions?: AutomationRule['conditions'];
     }): AutomationRule | null {
@@ -785,6 +846,8 @@ class SchedulerService {
         if (updates.message !== undefined) rule.message = updates.message;
         if (updates.delay !== undefined) rule.delay = updates.delay;
         if (updates.templateId !== undefined) rule.templateId = updates.templateId;
+        if (updates.channel !== undefined) rule.channel = updates.channel;
+        if (updates.subject !== undefined) rule.subject = updates.subject;
         if (updates.sessionId !== undefined) rule.sessionId = updates.sessionId;
         if (updates.conditions !== undefined) rule.conditions = updates.conditions;
 
@@ -799,6 +862,7 @@ class SchedulerService {
         messageId: string;
         chatId: string;
         sessionId: string;
+        channel?: 'whatsapp' | 'email';
         type: MessageLog['type'];
         status: MessageLog['status'];
         message: string;
@@ -810,6 +874,7 @@ class SchedulerService {
             messageId: params.messageId,
             chatId: params.chatId,
             sessionId: params.sessionId,
+            channel: params.channel,
             type: params.type,
             status: params.status,
             message: params.message,

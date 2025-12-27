@@ -3,6 +3,8 @@ export interface ExpenseReport {
     id: string;
     ref: string;
     fk_user_author: string;
+    fk_user_valid?: string;
+    fk_user_approve?: string;
     project_id?: string; // ADDED
     date_debut: number;
     date_fin: number;
@@ -29,6 +31,7 @@ export interface LeaveRequest {
     date_create?: number;
     type_label?: string;
     user_label?: string;
+    fk_user_valid?: string; // ADDED
 }
 
 export interface RecruitmentJobPosition {

@@ -9,9 +9,11 @@ export interface Project {
     date_end?: number;
     statut: '0' | '1' | '2'; // 0=draft, 1=open, 2=closed
     progress: number;
-    array_options?: Record<string, any>;
     date_creation?: number;
     date_modification?: number;
+    date_modification?: number;
+    fk_user_creat?: string;
+    fk_user_modif?: string;
     budget_amount?: number;
 }
 
@@ -108,6 +110,7 @@ export interface AgendaEvent {
     fulldayevent?: boolean; // 1 or 0
     priority?: number;
     fk_user_author?: string; // Creator/Owner
+    user_author_name?: string; // Resolved Name
     transparency?: number;
     date_modification?: number;
 }

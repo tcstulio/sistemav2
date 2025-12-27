@@ -60,7 +60,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
     const [addLineForm, setAddLineForm] = useState({ date: '', type: 'VIR', label: '', amount: 0 });
 
     const totalBalance = useMemo(() => {
-        return accounts.reduce((sum, acc) => sum + (acc.status === '1' ? acc.solde : 0), 0);
+        return accounts.reduce((sum, acc) => sum + (acc.status === '0' ? acc.solde : 0), 0);
     }, [accounts]);
 
     const accountLines = useMemo(() => {

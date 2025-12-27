@@ -1,15 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import { Terminal, RefreshCw, Trash2, AlertTriangle, Sparkles, X } from 'lucide-react';
+import { Terminal, RefreshCw, Trash2, AlertTriangle, X } from 'lucide-react';
 import { ApiLog } from '../../types';
 import { dbService } from '../../services/dbService';
 import { formatTime } from '../../utils/dateUtils';
 
-interface ConsoleLogsTabProps {
-    onAnalyzeError: (log: ApiLog) => void;
-}
+interface ConsoleLogsTabProps { }
 
-export const ConsoleLogsTab: React.FC<ConsoleLogsTabProps> = ({ onAnalyzeError }) => {
+export const ConsoleLogsTab: React.FC<ConsoleLogsTabProps> = () => {
     const [logs, setLogs] = useState<ApiLog[]>([]);
     const [selectedLog, setSelectedLog] = useState<ApiLog | null>(null);
     const [isLoadingLogs, setIsLoadingLogs] = useState(false);
@@ -72,7 +70,6 @@ export const ConsoleLogsTab: React.FC<ConsoleLogsTabProps> = ({ onAnalyzeError }
                             {log.status === 'error' && (
                                 <div className="flex justify-between items-center mt-2">
                                     <span className="text-red-600 text-xs font-bold flex items-center gap-1"><AlertTriangle size={12} /> Erro Detectado</span>
-                                    <button onClick={(e) => { e.stopPropagation(); onAnalyzeError(log); }} className="text-xs bg-indigo-600 text-white px-2 py-1 rounded flex items-center gap-1 hover:bg-indigo-700"><Sparkles size={12} /> Corrigir com IA</button>
                                 </div>
                             )}
                         </div>

@@ -86,6 +86,59 @@ export const AuditTab: React.FC<AuditTabProps> = () => {
         return 'text-red-500';
     };
 
+    const [aiAnalyzing, setAiAnalyzing] = useState(false);
+    const [aiAnalysisResult, setAiAnalysisResult] = useState<any[]>([]);
+    const [aiAnalysisType, setAiAnalysisType] = useState<string>('');
+    const { analyzeDataQuality } = React.useMemo(() => require('../../services/aiService').AiService, []);
+
+    const runAiAudit = async (type: 'customers' | 'products') => {
+        setAiAnalyzing(true);
+        setAiAnalysisResult([]);
+        setAiAnalysisType(type);
+        try {
+            let dataToAnalyze = [];
+            if (type === 'customers') {
+                dataToAnalyze = customers.map(c => ({
+                    id: c.id,
+                    name: c.name,
+                    email: c.email,
+                    phone: c.phone || c.phone_mobile,
+                    address: c.address,
+                    zip: c.zip,
+                    town: c.town
+                }));
+            } else {
+                dataToAnalyze = products.map(p => ({
+                    id: p.id,
+                    ref: p.ref,
+                    label: p.label,
+                    description: p.description,
+                    price: p.price,
+                    stock: p.stock
+                }));
+            }
+
+            // Chunking analysis if needed, for now sending top 100 for demo speed
+            // In production, we'd batch this.
+            const insights = await analyzeDataQuality(dataToAnalyze.slice(0, 50), type);
+
+            if (insights && Array.isArray(insights)) {
+                setAiAnalysisResult(insights);
+            } else if (typeof insights === 'string') {
+                // Fallback if AI returns string
+                try {
+                    setAiAnalysisResult(JSON.parse(insights));
+                } catch (e) {
+                    console.error("Failed to parse AI result", e);
+                }
+            }
+        } catch (e) {
+            console.error("AI Audit failed", e);
+        } finally {
+            setAiAnalyzing(false);
+        }
+    };
+
     return (
         <div className="p-6 h-full overflow-y-auto bg-slate-50 dark:bg-slate-950/50">
             <div className="max-w-5xl mx-auto space-y-6">
@@ -130,17 +183,67 @@ export const AuditTab: React.FC<AuditTabProps> = () => {
                     </button>
                 </div>
 
+                {/* AI Analysis Section */}
+                <div className="bg-gradient-to-br from-indigo-600 to-violet-700 rounded-xl p-6 text-white shadow-lg overflow-hidden relative">
+                    <div className="absolute top-0 right-0 p-3 opacity-10">
+                        <CheckCircle2 size={120} />
+                    </div>
+                    <h3 className="text-xl font-bold mb-2 flex items-center gap-2 relative z-10">
+                        <CheckCircle2 /> Auditoria Inteligente (IA)
+                    </h3>
+                    <p className="opacity-90 max-w-2xl mb-6 relative z-10 text-indigo-100 text-sm">
+                        Use a Inteligência Artificial para identificar duplicatas e anomalias nos dados que regras simples não conseguem pegar.
+                    </p>
+
+                    <div className="flex flex-wrap gap-3 relative z-10">
+                        <button
+                            onClick={() => runAiAudit('customers')}
+                            disabled={aiAnalyzing}
+                            className="bg-white text-indigo-600 px-4 py-2 rounded-lg font-bold hover:bg-indigo-50 transition-colors disabled:opacity-70 flex items-center gap-2 text-sm shadow-sm"
+                        >
+                            {aiAnalyzing && aiAnalysisType === 'customers' ? <button className="animate-spin"><RefreshCw size={16} /></button> : null}
+                            {aiAnalyzing && aiAnalysisType === 'customers' ? 'Analisando...' : 'Verificar Clientes'}
+                        </button>
+                        <button
+                            onClick={() => runAiAudit('products')}
+                            disabled={aiAnalyzing}
+                            className="bg-white/20 text-white border border-white/30 px-4 py-2 rounded-lg font-bold hover:bg-white/30 transition-colors disabled:opacity-70 flex items-center gap-2 text-sm backdrop-blur-sm shadow-sm"
+                        >
+                            {aiAnalyzing && aiAnalysisType === 'products' ? <button className="animate-spin"><RefreshCw size={16} /></button> : null}
+                            {aiAnalyzing && aiAnalysisType === 'products' ? 'Analisando...' : 'Verificar Produtos'}
+                        </button>
+                    </div>
+
+                    {/* AI Results */}
+                    {aiAnalysisResult.length > 0 && (
+                        <div className="mt-6 bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20 animate-in fade-in slide-in-from-bottom-2">
+                            <h4 className="font-bold mb-3 flex items-center gap-2">
+                                <AlertTriangle size={18} className="text-amber-300" /> Insights Encontrados
+                            </h4>
+                            <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                                {aiAnalysisResult.map((res, idx) => (
+                                    <div key={idx} className="bg-black/20 p-3 rounded-lg text-sm border border-white/10">
+                                        <div className="font-bold text-amber-200 mb-1">{res.title || 'Anomalia Detectada'}</div>
+                                        <div className="opacity-90">{res.description || res.message}</div>
+                                        {res.ids && <div className="mt-1 text-xs opacity-60 font-mono">IDs afetados: {res.ids.join(', ')}</div>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
                 {/* Issues List */}
                 <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
                     <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 flex justify-between items-center">
                         <h4 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                            <AlertOctagon size={18} className="text-orange-500" /> Problemas Detectados ({auditIssues.length})
+                            <AlertOctagon size={18} className="text-orange-500" /> Regras de Negócio ({auditIssues.length})
                         </h4>
                     </div>
                     {auditIssues.length === 0 ? (
                         <div className="p-12 text-center text-slate-400">
                             <CheckCircle2 size={48} className="mx-auto mb-4 text-emerald-500 opacity-50" />
-                            <p>Nenhum problema crítico detectado. Bom trabalho!</p>
+                            <p>Nenhuma regra de negócio violada.</p>
                         </div>
                     ) : (
                         <div className="divide-y divide-slate-100 dark:divide-slate-800">

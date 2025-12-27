@@ -35,3 +35,10 @@ export interface EmailBody {
     date: string;
     attachments: any[];
 }
+
+export interface EmailAttachment {
+    filename: string;
+    content: string; // Base64
+    contentType?: string;
+    encoding?: 'base64';
+}

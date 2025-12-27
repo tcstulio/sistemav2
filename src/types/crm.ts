@@ -33,3 +33,27 @@ export interface Contact {
     date_modification?: number;
     array_options?: Record<string, any>;
 }
+
+export interface Ticket {
+    id: string;
+    ref: string;
+    track_id: string;
+    subject: string;
+    message: string;
+    type_code: string;
+    category_code: string;
+    severity_code: string;
+    statut: string; // 0=Read, 1=Unread? Need to check Dolibarr constants. 
+    progress: string;
+    socid?: string; // Linked Customer
+    project_id?: string; // Linked Project
+    fk_user_assign?: string;
+    fk_user_create?: string;
+    fk_user_close?: string; // ADDED
+    origin_email?: string;
+    datec: number;
+    tms: number;
+    // Inferred/Joined fields
+    linked_objects?: any;
+    messages?: any[];
+}

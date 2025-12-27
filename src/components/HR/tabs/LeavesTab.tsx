@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { LeaveRequest, DolibarrUser } from '../../../types';
-import { Plane, Thermometer, Sun, Calendar, User, Plus } from 'lucide-react';
+import { Plane, Thermometer, Sun, Calendar, User, Plus, CheckCircle2, Send, XCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { useDolibarr } from '../../../context/DolibarrContext';
+import { DolibarrService } from '../../../services/dolibarrService';
 import { formatDateOnly } from '../../../utils/dateUtils';
 
 interface LeavesTabProps {
@@ -18,6 +20,8 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
     sortConfig,
     onOpenLeaveModal
 }) => {
+    const { config } = useDolibarr();
+    const [processingId, setProcessingId] = React.useState<string | null>(null);
 
     const getUserName = (id: string) => {
         const user = users.find(u => String(u.id) === String(id));
@@ -40,6 +44,36 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
         if (t.includes('sick')) return <Thermometer size={16} className="text-red-500" />;
         if (t.includes('vacation') || t.includes('holiday')) return <Sun size={16} className="text-orange-500" />;
         return <Plane size={16} className="text-blue-500" />;
+    };
+
+    const handleValidate = async (id: string) => {
+        if (!config || !window.confirm("Enviar solicitação para aprovação?")) return;
+        setProcessingId(id);
+        try {
+            await DolibarrService.validateLeaveRequest(config, id);
+            alert("Solicitação enviada!");
+        } catch (e) { console.error(e); alert("Erro ao enviar."); }
+        finally { setProcessingId(null); }
+    };
+
+    const handleApprove = async (id: string) => {
+        if (!config || !window.confirm("Aprovar esta solicitação?")) return;
+        setProcessingId(id);
+        try {
+            await DolibarrService.approveLeaveRequest(config, id);
+            alert("Solicitação aprovada!");
+        } catch (e) { console.error(e); alert("Erro ao aprovar."); }
+        finally { setProcessingId(null); }
+    };
+
+    const handleRefuse = async (id: string) => {
+        if (!config || !window.confirm("Recusar esta solicitação?")) return;
+        setProcessingId(id);
+        try {
+            await DolibarrService.refuseLeaveRequest(config, id);
+            alert("Solicitação recusada!");
+        } catch (e) { console.error(e); alert("Erro ao recusar."); }
+        finally { setProcessingId(null); }
     };
 
     const filteredLeaves = useMemo(() => {
@@ -101,9 +135,45 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
                                     <p className="text-sm text-slate-600 dark:text-slate-400 mt-1 line-clamp-1">{leave.description || "Sem descrição"}</p>
                                     <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
                                         <span className="flex items-center gap-1"><User size={12} /> {getUserName(leave.fk_user)}</span>
+                                        {leave.fk_user_valid && (
+                                            <span className="flex items-center gap-1" title="Validado por"><CheckCircle2 size={12} /> {getUserName(leave.fk_user_valid)}</span>
+                                        )}
                                         <span className="flex items-center gap-1"><Calendar size={12} /> {formatDateOnly(leave.date_debut)} - {formatDateOnly(leave.date_fin)}</span>
                                     </div>
                                 </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                {leave.statut === '1' && (
+                                    <button
+                                        onClick={() => handleValidate(leave.id)}
+                                        disabled={!!processingId}
+                                        className="p-2 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/20 dark:hover:bg-blue-900/40 transition-colors"
+                                        title="Enviar para Aprovação"
+                                    >
+                                        {processingId === leave.id ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+                                    </button>
+                                )}
+                                {leave.statut === '2' && (
+                                    <>
+                                        <button
+                                            onClick={() => handleApprove(leave.id)}
+                                            disabled={!!processingId}
+                                            className="p-2 rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:hover:bg-emerald-900/40 transition-colors"
+                                            title="Aprovar"
+                                        >
+                                            {processingId === leave.id ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />}
+                                        </button>
+                                        <button
+                                            onClick={() => handleRefuse(leave.id)}
+                                            disabled={!!processingId}
+                                            className="p-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40 transition-colors"
+                                            title="Recusar"
+                                        >
+                                            {processingId === leave.id ? <Loader2 size={18} className="animate-spin" /> : <XCircle size={18} />}
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         </div>
                     ))}

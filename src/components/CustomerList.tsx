@@ -85,14 +85,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
     // Mutations
     const { createCustomer, updateCustomer } = useCustomerMutations(config);
 
-    // Effects
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            refreshData({ page, limit, query: searchTerm });
-        }, 600);
-        return () => clearTimeout(timer);
-    }, [page, limit, searchTerm, refreshData]);
-
+    // Reset page on search change
     useEffect(() => {
         setPage(0);
     }, [searchTerm]);

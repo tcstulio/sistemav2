@@ -4,7 +4,7 @@ import { AppView } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInvoices, useSupplierInvoices, useTasks, useProducts, useBankAccounts, useInterventions, useTickets } from '../hooks/dolibarr';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
-import { DollarSign, Users, FileText, TrendingUp, Sparkles, Loader2, Minus, FolderKanban, Map, Pencil, Save, X, AlertOctagon, Clock, Package, Landmark, MessageSquare, ClipboardList, Wrench, Ticket as TicketIcon, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { DollarSign, Users, FileText, TrendingUp, Sparkles, Loader2, Minus, FolderKanban, Pencil, Save, X, AlertOctagon, Clock, Package, Landmark, MessageSquare, ClipboardList, Wrench, Ticket as TicketIcon, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { AiService } from '../services/aiService';
 import { FinancialHealthWidget } from './Finance/FinancialHealthWidget';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
@@ -41,7 +41,32 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     const [forecast, setForecast] = useState<ForecastData | null>(null);
     const [loadingForecast, setLoadingForecast] = useState(false);
 
-    // Metrics Calculation
+    const formatCurrency = (value: number) => {
+        return new Intl.NumberFormat('pt-BR', {
+            style: 'currency',
+            currency: 'BRL',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(value);
+    };
+
+    const CustomTooltip = ({ active, payload, label }: any) => {
+        if (active && payload && payload.length) {
+            return (
+                <div className="bg-slate-800 text-white p-3 rounded-lg shadow-lg border border-slate-700 text-sm">
+                    <p className="font-bold mb-2">{label}</p>
+                    {payload.map((entry: any, index: number) => (
+                        <p key={index} className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }}></span>
+                            <span className="opacity-70">{entry.name}:</span>
+                            <span className="font-mono font-medium">{formatCurrency(entry.value)}</span>
+                        </p>
+                    ))}
+                </div>
+            );
+        }
+        return null;
+    };
     const metrics = useMemo(() => {
         const totalRevenue = invoices.filter(i => i.statut === '2').reduce((acc, curr) => acc + curr.total_ttc, 0);
         const totalExpense = supplierInvoices.filter(i => i.statut === '2').reduce((acc, curr) => acc + curr.total_ttc, 0);
@@ -49,9 +74,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         const now = new Date();
         const unpaidInvoices = invoices.filter(i => {
             if (i.statut !== '1') return false;
-            // Use explicit due date if available, otherwise default to 30 days
-            const dueDate = i.date_lim_reglement || (i.date + 30 * 24 * 60 * 60 * 1000);
-            return dueDate < now.getTime();
+            const dueDate = i.date_lim_reglement || (i.date + 30 * 24 * 60 * 60);
+            const d = dueDate < 100000000000 ? dueDate * 1000 : dueDate;
+            return d < now.getTime();
+        }).length + supplierInvoices.filter(i => {
+            if (i.statut !== '1') return false;
+            const dueDate = i.date_lim_reglement || (i.date + 30 * 24 * 60 * 60);
+            const d = dueDate < 100000000000 ? dueDate * 1000 : dueDate;
+            return d < now.getTime();
         }).length;
 
         return { totalRevenue, totalExpense, totalCash, unpaidInvoices };
@@ -105,6 +135,82 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     const lateTasks = useMemo(() => {
         return tasks.filter(t => t.date_end && new Date(t.date_end < 100000000000 ? t.date_end * 1000 : t.date_end) < new Date() && t.progress < 100).slice(0, 5);
     }, [tasks]);
+
+    const cashFlowForecast = useMemo(() => {
+        const forecastDays = 90;
+        const days = [];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Initial Balance
+        let currentBalance = bankAccounts.reduce((acc, curr) => acc + Number(curr.solde || 0), 0);
+
+        // Map of date string -> { inflow, outflow }
+        const transactions = new Map<string, { inflow: number; outflow: number }>();
+
+        // Helper to get date key YYYY-MM-DD
+        const getDateKey = (date: Date) => {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        };
+
+        // Populate Inflows (Customer Invoices)
+        invoices.forEach(inv => {
+            if (inv.statut === '1' && Number(inv.total_ttc) > 0) { // Unpaid
+                const dateVal = inv.date_lim_reglement || (inv.date + 30 * 24 * 60 * 60);
+                const timestamp = dateVal < 100000000000 ? dateVal * 1000 : dateVal;
+                const dueDate = new Date(timestamp);
+                dueDate.setHours(0, 0, 0, 0);
+
+                if (dueDate >= today) {
+                    const key = getDateKey(dueDate);
+                    const curr = transactions.get(key) || { inflow: 0, outflow: 0 };
+                    curr.inflow += Number(inv.total_ttc);
+                    transactions.set(key, curr);
+                }
+            }
+        });
+
+        // Populate Outflows (Supplier Invoices)
+        supplierInvoices.forEach(inv => {
+            if (inv.statut === '1' && Number(inv.total_ttc) > 0) {
+                const dateVal = inv.date_lim_reglement || (inv.date + 30 * 24 * 60 * 60);
+                const timestamp = dateVal < 100000000000 ? dateVal * 1000 : dateVal;
+                const dueDate = new Date(timestamp);
+                dueDate.setHours(0, 0, 0, 0);
+
+                if (dueDate >= today) {
+                    const key = getDateKey(dueDate);
+                    const curr = transactions.get(key) || { inflow: 0, outflow: 0 };
+                    curr.outflow += Number(inv.total_ttc);
+                    transactions.set(key, curr);
+                }
+            }
+        });
+
+        // Generate daily forecast
+        for (let i = 0; i <= forecastDays; i++) {
+            const d = new Date(today);
+            d.setDate(d.getDate() + i);
+            const key = getDateKey(d);
+            const dayTrans = transactions.get(key) || { inflow: 0, outflow: 0 };
+
+            // Update balance
+            currentBalance += dayTrans.inflow - dayTrans.outflow;
+
+            days.push({
+                date: d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
+                fullDate: key,
+                balance: currentBalance,
+                inflow: dayTrans.inflow,
+                outflow: dayTrans.outflow
+            });
+        }
+
+        return days;
+    }, [invoices, supplierInvoices, bankAccounts]);
 
     // My Assignments
     const myAssignments = useMemo(() => {
@@ -166,22 +272,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 <Card
                     title="Receita Total"
-                    value={`$${metrics.totalRevenue.toLocaleString()}`}
+                    value={formatCurrency(metrics.totalRevenue)}
                     icon={DollarSign}
                     color="bg-emerald-500"
                     onClick={() => onNavigate && onNavigate('invoices', '')}
                 />
                 <Card
                     title="Despesas"
-                    value={`$${metrics.totalExpense.toLocaleString()}`}
+                    value={formatCurrency(metrics.totalExpense)}
                     icon={TrendingUp}
                     color="bg-red-500"
-                    subValue={`Líquido: $${(metrics.totalRevenue - metrics.totalExpense).toLocaleString()}`}
-                    onClick={() => onNavigate && onNavigate('suppliers', '')}
+                    subValue={`Líquido: ${formatCurrency(metrics.totalRevenue - metrics.totalExpense)}`}
+                    onClick={() => onNavigate && onNavigate('supplier_invoices', '')}
                 />
                 <Card
                     title="Saldo em Caixa"
-                    value={`$${metrics.totalCash.toLocaleString()}`}
+                    value={formatCurrency(metrics.totalCash)}
                     icon={Landmark}
                     color="bg-indigo-500"
                     onClick={() => onNavigate && onNavigate('bank_accounts', '')}
@@ -191,7 +297,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                     value={metrics.unpaidInvoices}
                     icon={Users}
                     color="bg-orange-500"
-                    onClick={() => onNavigate && onNavigate('invoices', '')}
+                    onClick={() => onNavigate && onNavigate('pending_payments', '')}
                 />
             </div>
 
@@ -219,11 +325,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                     </defs>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" strokeOpacity={0.2} />
                                     <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} dy={10} />
-                                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                                    <Tooltip
-                                        contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: '#1e293b', color: '#f8fafc' }}
-                                        itemStyle={{ color: '#f8fafc' }}
+                                    <YAxis
+                                        width={60}
+                                        axisLine={false}
+                                        tickLine={false}
+                                        tick={{ fill: '#94a3b8', fontSize: 12 }}
+                                        tickFormatter={(value) => new Intl.NumberFormat('pt-BR', { notation: 'compact', compactDisplay: 'short', style: 'currency', currency: 'BRL' }).format(value)}
                                     />
+                                    <Tooltip content={<CustomTooltip />} />
                                     <Area type="monotone" dataKey="income" stroke="#10b981" fillOpacity={1} fill="url(#colorIncome)" name="Receita" />
                                     <Area type="monotone" dataKey="expense" stroke="#ef4444" fillOpacity={1} fill="url(#colorExpense)" name="Despesas" />
                                 </AreaChart>
@@ -231,40 +340,30 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                         </div>
                     </div>
 
-                    {/* Recent Activity Bar Chart */}
+                    {/* Cash Flow Forecast Chart - 90 Days */}
                     <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col transition-colors">
-                        <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-6">Atividade Recente de Faturas</h3>
+                        <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-6">Projeção de Fluxo de Caixa (90 dias)</h3>
                         <div className="w-full h-[250px]" style={{ width: '100%', height: 250 }}>
                             <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                                <BarChart
-                                    data={recentActivityData}
-                                    onClick={(data: any) => {
-                                        if (data && data.activePayload && onNavigate) {
-                                            onNavigate('invoices', data.activePayload[0].payload.id);
-                                        }
-                                    }}
-                                    className="cursor-pointer"
-                                >
+                                <AreaChart data={cashFlowForecast}>
+                                    <defs>
+                                        <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8} />
+                                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                                        </linearGradient>
+                                    </defs>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" strokeOpacity={0.2} />
-                                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} dy={10} />
-                                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                                    <Tooltip
-                                        cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                                        contentStyle={{
-                                            borderRadius: '8px',
-                                            border: 'none',
-                                            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                                            backgroundColor: '#1e293b',
-                                            color: '#f8fafc'
-                                        }}
-                                        itemStyle={{ color: '#f8fafc' }}
+                                    <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 10 }} interval={6} dy={10} />
+                                    <YAxis
+                                        width={60}
+                                        axisLine={false}
+                                        tickLine={false}
+                                        tick={{ fill: '#94a3b8', fontSize: 12 }}
+                                        tickFormatter={(value) => new Intl.NumberFormat('pt-BR', { notation: 'compact', compactDisplay: 'short', style: 'currency', currency: 'BRL' }).format(value)}
                                     />
-                                    <Bar dataKey="amount" radius={[4, 4, 0, 0]} barSize={40}>
-                                        {recentActivityData.map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={entry.status === 'Pago' ? '#10b981' : '#f97316'} />
-                                        ))}
-                                    </Bar>
-                                </BarChart>
+                                    <Tooltip content={<CustomTooltip />} />
+                                    <Area type="monotone" dataKey="balance" stroke="#3b82f6" fillOpacity={1} fill="url(#colorBalance)" name="Saldo Previsto" />
+                                </AreaChart>
                             </ResponsiveContainer>
                         </div>
                     </div>
@@ -383,7 +482,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                             <div
                                                 key={task.id}
                                                 className="bg-white dark:bg-slate-900 p-3 rounded-lg border border-red-100 dark:border-red-900/30 shadow-sm cursor-pointer hover:shadow-md transition-all"
-                                                onClick={() => onNavigate && task.project_id && onNavigate('projects', task.project_id)}
+                                                onClick={() => onNavigate && onNavigate('tasks', task.id)}
                                             >
                                                 <div className="flex justify-between items-start">
                                                     <div className="font-medium text-slate-800 dark:text-white text-sm line-clamp-1">{task.label}</div>

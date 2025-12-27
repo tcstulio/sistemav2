@@ -84,10 +84,10 @@ const CashFlowChart: React.FC<CashFlowChartProps> = ({
         };
 
         const yAxisProps = {
-            tickFormatter: (value: number) => `${(value / 1000).toFixed(0)}k`,
+            tickFormatter: (value: number) => new Intl.NumberFormat('pt-BR', { notation: 'compact', compactDisplay: 'short', style: 'currency', currency: 'BRL' }).format(value),
             tick: { fill: '#64748b', fontSize: 12 },
             axisLine: { stroke: '#e2e8f0' },
-            width: 50,
+            width: 60,
         };
 
         switch (type) {

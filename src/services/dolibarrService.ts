@@ -11,13 +11,49 @@ export const DolibarrService = {
 
     // Commercial
     ...Commercial,
+    validateSupplierInvoice: Commercial.validateSupplierInvoice,
+    paySupplierInvoice: Commercial.paySupplierInvoice,
+    markSupplierInvoiceAsPaid: Commercial.markSupplierInvoiceAsPaid,
 
     // Operations
     ...Operations,
 
     // Inventory
     ...Inventory,
+    createProduct: async (config: DolibarrConfig, data: any) => {
+        return Core.request(`${Core.sanitizeUrl(config.apiUrl)}/products`, {
+            method: 'POST',
+            headers: Core.getHeaders(config.apiKey),
+            body: JSON.stringify(data)
+        });
+    },
+    updateProduct: async (config: DolibarrConfig, id: string, data: any) => {
+        return Core.request(`${Core.sanitizeUrl(config.apiUrl)}/products/${id}`, {
+            method: 'PUT',
+            headers: Core.getHeaders(config.apiKey),
+            body: JSON.stringify(data)
+        });
+    },
+    deleteProduct: async (config: DolibarrConfig, id: string) => {
+        return Core.request(`${Core.sanitizeUrl(config.apiUrl)}/products/${id}`, {
+            method: 'DELETE',
+            headers: Core.getHeaders(config.apiKey)
+        });
+    },
 
     // HR & Admin
-    ...HRAdmin
+    ...HRAdmin,
+    approveExpenseReport: HRAdmin.approveExpenseReport,
+    markExpenseReportAsPaid: HRAdmin.markExpenseReportAsPaid,
+    approveLeaveRequest: HRAdmin.approveLeaveRequest,
+    validateLeaveRequest: HRAdmin.validateLeaveRequest,
+    refuseLeaveRequest: HRAdmin.refuseLeaveRequest,
+
+    // Ticket Actions
+    closeTicket: async (config: DolibarrConfig, id: string) => {
+        return Core.updateObject(config, 'tickets', id, { statut: '8' });
+    },
+    reopenTicket: async (config: DolibarrConfig, id: string) => {
+        return Core.updateObject(config, 'tickets', id, { statut: '1' });
+    }
 };

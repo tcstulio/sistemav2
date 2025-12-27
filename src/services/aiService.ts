@@ -254,6 +254,19 @@ export const AiService = {
             console.error("Transcription Error", error);
             return "[Erro na transcrição]";
         }
+    },
+
+    analyzeDataQuality: async (data: any[], type: string) => {
+        try {
+            const response = await axios.post(`${API_URL}/analyze/data-quality`, {
+                data,
+                type
+            }, getAuthHeaders());
+            return response.data.result;
+        } catch (error: any) {
+            console.error("Data Quality Analysis Error", error);
+            return null;
+        }
     }
 };
 

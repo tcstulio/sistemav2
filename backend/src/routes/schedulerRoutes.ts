@@ -7,7 +7,7 @@ const router = Router();
 
 router.post('/schedule', async (req: Request, res: Response) => {
     try {
-        const { chatId, sessionId, message, scheduledAt, type, metadata } = req.body;
+        const { chatId, sessionId, message, scheduledAt, type, metadata, channel, subject } = req.body;
 
         if (!chatId || !sessionId || !message) {
             return res.status(400).json({ error: 'Missing required fields: chatId, sessionId, message' });
@@ -38,6 +38,8 @@ router.post('/schedule', async (req: Request, res: Response) => {
         const msg = schedulerService.scheduleMessage({
             chatId,
             sessionId,
+            channel,
+            subject,
             message,
             scheduledAt: scheduleTime,
             type: type || 'once',
@@ -60,7 +62,7 @@ router.post('/schedule', async (req: Request, res: Response) => {
 
 router.post('/broadcast', async (req: Request, res: Response) => {
     try {
-        const { sessionId, chatIds, message, scheduledAt, delayBetween } = req.body;
+        const { sessionId, chatIds, message, scheduledAt, delayBetween, channel, subject } = req.body;
 
         if (!sessionId || !chatIds || !Array.isArray(chatIds) || chatIds.length === 0 || !message) {
             return res.status(400).json({ error: 'Missing required fields: sessionId, chatIds (array), message' });
@@ -74,6 +76,8 @@ router.post('/broadcast', async (req: Request, res: Response) => {
         const messages = await schedulerService.scheduleBroadcast({
             sessionId,
             chatIds,
+            channel,
+            subject,
             message,
             scheduledAt: scheduleTime,
             delayBetween: delayBetween || 3000
@@ -237,13 +241,13 @@ router.get('/stats', (req: Request, res: Response) => {
 
 router.post('/templates', (req: Request, res: Response) => {
     try {
-        const { name, content, category } = req.body;
+        const { name, content, category, channel, subject } = req.body;
 
         if (!name || !content) {
             return res.status(400).json({ error: 'Missing required fields: name, content' });
         }
 
-        const template = schedulerService.createTemplate({ name, content, category });
+        const template = schedulerService.createTemplate({ name, content, category, channel, subject });
         res.json({ success: true, data: template });
 
     } catch (error: any) {

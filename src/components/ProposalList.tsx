@@ -7,14 +7,15 @@ import { AiService } from '../services/aiService';
 import { LinkedObjects } from './common/LinkedObjects';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
-import { useProposals, useCustomers, useProducts, useProjects } from '../hooks/dolibarr';
+import { useProposals, useCustomers, useProducts, useProjects, useProposalLines, useUsers } from '../hooks/dolibarr';
 
 interface ProposalListProps {
     onNavigate?: (view: AppView, id: string) => void;
     onRefresh?: () => void;
+    initialItemId?: string;
 }
 
-const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh }) => {
+const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, initialItemId }) => {
     const { config } = useDolibarr();
     const { data: proposalsData } = useProposals(config);
     const proposals = proposalsData || [];
@@ -24,6 +25,9 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh }) =>
     const products = productsData || [];
     const { data: projectsData } = useProjects(config);
     const projects = projectsData || [];
+    const { data: proposalLinesData } = useProposalLines(config);
+    const proposalLines = proposalLinesData || [];
+    const { data: users = [] } = useUsers(config);
 
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
@@ -33,6 +37,17 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh }) =>
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [auditResult, setAuditResult] = useState<{ id: string, result: any } | null>(null);
     const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
+    const [showDebug, setShowDebug] = useState(false);
+
+    // Deep Link Effect
+    React.useEffect(() => {
+        if (initialItemId && proposals.length > 0) {
+            const match = proposals.find(p => String(p.id) === String(initialItemId));
+            if (match) {
+                setSelectedProposal(match);
+            }
+        }
+    }, [initialItemId, proposals]);
 
     // Creation State
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -46,6 +61,12 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh }) =>
     const getCustomerName = (socid: string) => {
         const customer = customers.find(c => String(c.id) === String(socid));
         return customer ? customer.name : (socid ? `Desconhecido (${socid})` : 'Desconhecido');
+    };
+
+    const getUserName = (id?: string) => {
+        if (!id) return '-';
+        const u = users.find(user => String(user.id) === String(id));
+        return u ? (u.firstname ? `${u.firstname} ${u.lastname}` : u.login) : `User ${id}`;
     };
 
     const getProjectName = (projId?: string) => {
@@ -214,7 +235,22 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh }) =>
                             )}
 
                             {/* Header Info */}
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="flex flex-col items-end mb-2">
+                                <button
+                                    onClick={() => setShowDebug(!showDebug)}
+                                    className="text-xs text-red-500 underline"
+                                >
+                                    [DEBUG: {showDebug ? 'Ocultar' : 'Ver'} Dados Raw]
+                                </button>
+                                {showDebug && (
+                                    <textarea
+                                        readOnly
+                                        className="w-full h-48 text-xs font-mono p-2 border border-red-200 bg-red-50 mt-2 rounded"
+                                        value={JSON.stringify(selectedProposal, null, 2)}
+                                    />
+                                )}
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                 <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg">
                                     <span className="text-xs text-slate-500 uppercase font-bold">Cliente</span>
                                     <div className="font-medium text-slate-800 dark:text-white mt-1">{getCustomerName(selectedProposal.socid)}</div>
@@ -237,46 +273,76 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh }) =>
                                         )}
                                     </div>
                                 </div>
-                            </div>
-
-                            {/* Line Items Table */}
-                            <div>
-                                <h4 className="font-bold text-slate-800 dark:text-white mb-3">Itens da Proposta</h4>
-                                <div className="border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
-                                    <table className="w-full text-sm text-left">
-                                        <thead className="bg-slate-50 dark:bg-slate-800/80 text-xs text-slate-500 uppercase font-semibold">
-                                            <tr>
-                                                <th className="px-4 py-3">Descrição</th>
-                                                <th className="px-4 py-3 text-right">Qtd</th>
-                                                <th className="px-4 py-3 text-right">Preço Unit.</th>
-                                                <th className="px-4 py-3 text-right">Total</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                            {selectedProposal.lines && selectedProposal.lines.length > 0 ? (
-                                                selectedProposal.lines.map((line: any, idx: number) => (
-                                                    <tr key={idx}>
-                                                        <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{line.desc || line.label}</td>
-                                                        <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">{line.qty}</td>
-                                                        <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">${line.price.toLocaleString()}</td>
-                                                        <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white">${(line.price * line.qty).toLocaleString()}</td>
-                                                    </tr>
-                                                ))
-                                            ) : (
-                                                <tr>
-                                                    <td colSpan={4} className="px-4 py-8 text-center text-slate-400 italic">Nenhum item disponível nesta visualização.</td>
-                                                </tr>
-                                            )}
-                                        </tbody>
-                                        <tfoot className="bg-slate-50 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800">
-                                            <tr>
-                                                <td colSpan={3} className="px-4 py-3 text-right font-bold text-slate-700 dark:text-slate-300">Total (C/ Imposto)</td>
-                                                <td className="px-4 py-3 text-right font-bold text-indigo-600 dark:text-indigo-400 text-lg">${selectedProposal.total_ttc.toLocaleString()}</td>
-                                            </tr>
-                                        </tfoot>
-                                    </table>
+                                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-lg">
+                                    <span className="text-xs text-slate-500 uppercase font-bold">Responsáveis</span>
+                                    <div className="mt-1 space-y-1">
+                                        <div className="text-sm flex justify-between">
+                                            <span className="text-slate-500">Criado:</span> <span className="font-medium text-slate-800 dark:text-white">{getUserName(selectedProposal.fk_user_author)}</span>
+                                        </div>
+                                        {selectedProposal.fk_user_valid && (
+                                            <div className="text-sm flex justify-between">
+                                                <span className="text-slate-500">Validado:</span> <span className="font-medium text-slate-800 dark:text-white">{getUserName(selectedProposal.fk_user_valid)}</span>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
+
+                            {/* Computed Lines */}
+                            {(() => {
+                                const selectedProposalLines = proposalLines.filter(l => String(l.parent_id) === String(selectedProposal.id))
+                                    .sort((a, b) => (a.rang || 0) - (b.rang || 0));
+
+                                return (
+                                    <div>
+                                        <h4 className="font-bold text-slate-800 dark:text-white mb-3">Itens da Proposta</h4>
+                                        <div className="border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
+                                            <table className="w-full text-sm text-left">
+                                                <thead className="bg-slate-50 dark:bg-slate-800/80 text-xs text-slate-500 uppercase font-semibold">
+                                                    <tr>
+                                                        <th className="px-4 py-3">Descrição</th>
+                                                        <th className="px-4 py-3 text-right">Qtd</th>
+                                                        <th className="px-4 py-3 text-right">Preço Unit.</th>
+                                                        <th className="px-4 py-3 text-right">Total</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                                    {selectedProposalLines.length > 0 ? (
+                                                        selectedProposalLines.map((line: any, idx: number) => (
+                                                            <tr key={idx}>
+                                                                <td className="px-4 py-3 text-slate-700 dark:text-slate-300">
+                                                                    <div className="font-medium">{line.label}</div>
+                                                                    <div
+                                                                        className="text-xs text-slate-500 mt-0.5"
+                                                                        dangerouslySetInnerHTML={{ __html: line.description }}
+                                                                    />
+                                                                </td>
+                                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">{line.qty}</td>
+                                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">${line.subprice?.toLocaleString()}</td>
+                                                                <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white">${line.total_ht?.toLocaleString()}</td>
+                                                            </tr>
+                                                        ))
+                                                    ) : (
+                                                        <tr>
+                                                            <td colSpan={4} className="px-4 py-8 text-center text-slate-400 italic">Nenhum item disponível nesta visualização.</td>
+                                                        </tr>
+                                                    )}
+                                                </tbody>
+                                                <tfoot className="bg-slate-50 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800">
+                                                    <tr>
+                                                        <td colSpan={3} className="px-4 py-3 text-right font-bold text-slate-700 dark:text-slate-300">Total (S/ Imposto)</td>
+                                                        <td className="px-4 py-3 text-right font-bold text-slate-800 dark:text-white text-lg">${selectedProposal.total_ht?.toLocaleString()}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td colSpan={3} className="px-4 py-3 text-right font-bold text-slate-700 dark:text-slate-300">Total (C/ Imposto)</td>
+                                                        <td className="px-4 py-3 text-right font-bold text-indigo-600 dark:text-indigo-400 text-lg">${selectedProposal.total_ttc.toLocaleString()}</td>
+                                                    </tr>
+                                                </tfoot>
+                                            </table>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
                         </div>
                         <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2 bg-slate-50 dark:bg-slate-800/50 rounded-b-xl">
                             {/* Linked Objects */}

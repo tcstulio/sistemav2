@@ -319,3 +319,21 @@ export const addBankLine = async (config: DolibarrConfig, accountId: string, dat
         })
     });
 };
+
+export const approveExpenseReport = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/expensereports/${id}/approve`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
+    });
+};
+
+export const markExpenseReportAsPaid = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/expensereports/${id}/paid`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
+    });
+};

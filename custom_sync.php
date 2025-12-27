@@ -110,8 +110,8 @@ switch ($type) {
         break;
 
     case 'proposals':
-        // Added fk_projet, fk_user_author
-        $sql = "SELECT rowid as id, ref, total_ht, total_ttc, total_tva, fk_statut as statut, fk_soc, fk_projet as project_id, fk_user_author, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
+        // Added fk_projet, fk_user_author, fk_user_valid
+        $sql = "SELECT rowid as id, ref, total_ht, total_ttc, total_tva, fk_statut as statut, fk_soc, fk_projet as project_id, fk_user_author, fk_user_valid, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "propal";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
@@ -124,8 +124,8 @@ switch ($type) {
         break;
 
     case 'orders':
-        // Added fk_projet, fk_user_author
-        $sql = "SELECT rowid as id, ref, total_ht, total_ttc, total_tva, fk_statut as statut, fk_soc, fk_projet as project_id, fk_user_author, UNIX_TIMESTAMP(date_commande) as date_commande, UNIX_TIMESTAMP(date_creation) as datec, UNIX_TIMESTAMP(tms) as tms";
+        // Added fk_projet, fk_user_author, fk_user_valid
+        $sql = "SELECT rowid as id, ref, total_ht, total_ttc, total_tva, fk_statut as statut, fk_soc, fk_projet as project_id, fk_user_author, fk_user_valid, UNIX_TIMESTAMP(date_commande) as date_commande, UNIX_TIMESTAMP(date_creation) as datec, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "commande";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
@@ -138,16 +138,17 @@ switch ($type) {
         break;
 
     case 'invoices':
-        // Added fk_projet, fk_user_author
-        $sql = "SELECT rowid as id, ref, total_ht, total_ttc, total_tva, fk_statut as statut, fk_soc, fk_projet as project_id, fk_user_author, UNIX_TIMESTAMP(datef) as date_invoice, UNIX_TIMESTAMP(date_lim_reglement) as date_lim_reglement, paye, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
+        // Added fk_projet, fk_user_author, fk_user_valid
+        $sql = "SELECT rowid as id, ref, total_ht, total_ttc, total_tva, fk_statut as statut, fk_soc, fk_projet as project_id, fk_user_author, fk_user_valid, UNIX_TIMESTAMP(datef) as date_invoice, UNIX_TIMESTAMP(date_lim_reglement) as date_lim_reglement, paye, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "facture";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
 
     case 'invoice_lines':
-        $sql = "SELECT d.rowid as id, d.fk_facture as parent_id, d.label, d.description, d.product_type as type, d.qty, d.tva_tx as vat_rate, d.subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
+        $sql = "SELECT d.rowid as id, d.fk_facture as parent_id, d.label, d.description, d.product_type as type, d.qty, d.tva_tx as vat_rate, d.subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, prod.ref as product_ref, prod.label as product_label, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "facturedet d";
         $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "facture p ON d.fk_facture = p.rowid";
+        $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "product prod ON d.fk_product = prod.rowid";
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
         break;
 
@@ -159,22 +160,22 @@ switch ($type) {
         break;
 
     case 'products':
-        $sql = "SELECT rowid as id, ref, label, description, fk_product_type as type, price, stock, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
+        $sql = "SELECT rowid as id, ref, label, description, fk_product_type as type, price, price_ttc, tva_tx as vat_rate, stock, tosell, tobuy, duration, finished, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "product";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
 
     case 'tickets':
-        // Added fk_user_create
-        $sql = "SELECT rowid as id, ref, track_id, subject, message, type_code, category_code, severity_code, fk_statut as statut, progress, fk_soc as socid, fk_project as project_id, fk_user_assign, fk_user_create, origin_email, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
+        // Added fk_user_create, fk_user_assign, fk_user_close
+        $sql = "SELECT rowid as id, ref, track_id, subject, message, type_code, category_code, severity_code, fk_statut as statut, progress, fk_soc as socid, fk_project as project_id, fk_user_assign, fk_user_create, fk_user_close, origin_email, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "ticket";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
 
     case 'projects':
         // Diagnostic confirmed 'fk_project' exists (likely serving as parent pointer in this version)
-        // Also added fk_user_creat, fk_statut
-        $sql = "SELECT p.rowid as id, p.ref, p.title, p.fk_statut as statut, p.fk_soc as socid, p.fk_user_creat, p.fk_project as parent_id, UNIX_TIMESTAMP(p.datec) as datec, UNIX_TIMESTAMP(p.dateo) as date_start, UNIX_TIMESTAMP(p.datee) as date_end, p.budget_amount, UNIX_TIMESTAMP(p.tms) as tms,";
+        // Also added fk_user_creat, fk_statut, fk_user_modif
+        $sql = "SELECT p.rowid as id, p.ref, p.title, p.fk_statut as statut, p.fk_soc as socid, p.fk_user_creat, p.fk_user_modif, p.fk_project as parent_id, UNIX_TIMESTAMP(p.datec) as datec, UNIX_TIMESTAMP(p.dateo) as date_start, UNIX_TIMESTAMP(p.datee) as date_end, p.budget_amount, UNIX_TIMESTAMP(p.tms) as tms,";
         $sql .= " COALESCE((SELECT AVG(t.progress) FROM " . MAIN_DB_PREFIX . "projet_task t WHERE t.fk_projet = p.rowid), 0) as progress";
         $sql .= " FROM " . MAIN_DB_PREFIX . "projet p";
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
@@ -184,10 +185,12 @@ switch ($type) {
     case 'events':
         // Fixed: Added ref, type_code, socid, project, location, elementtype, fk_element, fulldayevent, priority
         // Excludes automatic system log events (modifications, creations, deletions, etc.)
-        $sql = "SELECT id as id, ref, label, note as description, code as type_code, datep as date_start, datep2 as date_end, percent as percentage, fk_user_author, fk_soc as socid, fk_project as project_id, location, elementtype, fk_element, fulldayevent, priority, transparency, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
-        $sql .= " FROM " . MAIN_DB_PREFIX . "actioncomm";
-        $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
-        $sql .= " AND (code IS NULL OR (code NOT LIKE '%_AUTO' AND code NOT LIKE '%_MODIFY' AND code NOT LIKE '%_CREATE' AND code NOT LIKE '%_DELETE' AND code NOT LIKE '%_VALIDATE' AND code NOT LIKE '%_PAYED' AND code NOT LIKE '%_PAID' AND code NOT LIKE '%_APPROVE' AND code NOT LIKE '%_UNVALIDATE' AND code NOT LIKE '%_CLOSE%' AND code NOT LIKE '%_SENTBYMAIL' AND code NOT LIKE '%_SUBMIT' AND code NOT LIKE '%_RECEIVE' AND code NOT LIKE '%_CLASSIFY%' AND code NOT LIKE '%_ENABLEDISABLE' AND code NOT LIKE '%_CANCEL' AND code NOT LIKE 'TICKET_MSG%'))";
+        // Added JOIN to user table to get author name
+        $sql = "SELECT a.id as id, a.ref, a.label, a.note as description, a.code as type_code, UNIX_TIMESTAMP(a.datep) as date_start, UNIX_TIMESTAMP(a.datep2) as date_end, a.percent as percentage, a.fk_user_author, u.firstname as user_author_firstname, u.lastname as user_author_lastname, u.login as user_author_login, a.fk_soc as socid, a.fk_project as project_id, a.location, a.elementtype, a.fk_element, a.fulldayevent, a.priority, a.transparency, UNIX_TIMESTAMP(a.datec) as datec, UNIX_TIMESTAMP(a.tms) as tms";
+        $sql .= " FROM " . MAIN_DB_PREFIX . "actioncomm a";
+        $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "user u ON a.fk_user_author = u.rowid";
+        $sql .= " WHERE a.tms >= '" . $db->idate($last_modified) . "'";
+        $sql .= " AND (a.code IS NULL OR (a.code NOT LIKE '%_AUTO' AND a.code NOT LIKE '%_MODIFY' AND a.code NOT LIKE '%_CREATE' AND a.code NOT LIKE '%_DELETE' AND a.code NOT LIKE '%_VALIDATE' AND a.code NOT LIKE '%_PAYED' AND a.code NOT LIKE '%_PAID' AND a.code NOT LIKE '%_APPROVE' AND a.code NOT LIKE '%_UNVALIDATE' AND a.code NOT LIKE '%_CLOSE%' AND a.code NOT LIKE '%_SENTBYMAIL' AND a.code NOT LIKE '%_SUBMIT' AND a.code NOT LIKE '%_RECEIVE' AND a.code NOT LIKE '%_CLASSIFY%' AND a.code NOT LIKE '%_ENABLEDISABLE' AND a.code NOT LIKE '%_CANCEL' AND a.code NOT LIKE 'TICKET_MSG%'))";
         break;
 
     case 'system_logs':
@@ -200,7 +203,7 @@ switch ($type) {
 
     case 'tasks':
         // Simplified to core columns to avoid schema errors (removed fk_parent, etc.)
-        $sql = "SELECT rowid as id, ref, label, description, UNIX_TIMESTAMP(dateo) as date_start, UNIX_TIMESTAMP(datee) as date_end, progress, fk_user_valid as fk_user_assign, fk_user_creat, fk_parent, fk_projet as project_id, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
+        $sql = "SELECT rowid as id, ref, label, description, UNIX_TIMESTAMP(dateo) as date_start, UNIX_TIMESTAMP(datee) as date_end, progress, planned_workload, duration_effective, fk_user_valid as fk_user_assign, fk_user_creat, fk_task_parent as fk_parent, fk_projet as project_id, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "projet_task";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
@@ -232,7 +235,7 @@ switch ($type) {
         break;
 
     case 'supplier_orders':
-        $sql = "SELECT rowid as id, ref, fk_soc, UNIX_TIMESTAMP(date_creation) as date_creation, UNIX_TIMESTAMP(date_livraison) as date_livraison, total_ttc, fk_statut as statut, UNIX_TIMESTAMP(tms) as tms";
+        $sql = "SELECT rowid as id, ref, fk_soc, fk_projet as project_id, fk_user_author, fk_user_approve, UNIX_TIMESTAMP(date_creation) as date_creation, UNIX_TIMESTAMP(date_livraison) as date_livraison, total_ttc, fk_statut as statut, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "commande_fournisseur";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
@@ -244,21 +247,10 @@ switch ($type) {
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
         break;
 
-    case 'supplier_invoices':
-        $sql = "SELECT rowid as id, ref, fk_soc, UNIX_TIMESTAMP(datef) as date_invoice, total_ttc, fk_statut as statut, paye, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
-        $sql .= " FROM " . MAIN_DB_PREFIX . "facture_fourn";
-        $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
-        break;
 
-    case 'supplier_invoice_lines':
-        $sql = "SELECT d.rowid as id, d.fk_facture_fourn as parent_id, d.label, d.description, d.qty, d.tva_tx as vat_rate, d.pu_ht as subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
-        $sql .= " FROM " . MAIN_DB_PREFIX . "facture_fourn_det d";
-        $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "facture_fourn p ON d.fk_facture_fourn = p.rowid";
-        $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
-        break;
 
     case 'shipments':
-        $sql = "SELECT rowid as id, ref, fk_soc, UNIX_TIMESTAMP(date_creation) as date_creation, UNIX_TIMESTAMP(date_expedition) as date_delivery, fk_statut as status, tracking_number, UNIX_TIMESTAMP(tms) as tms";
+        $sql = "SELECT rowid as id, ref, fk_soc, fk_projet as project_id, fk_user_author, fk_user_valid, UNIX_TIMESTAMP(date_creation) as date_creation, UNIX_TIMESTAMP(date_expedition) as date_delivery, fk_statut as status, tracking_number, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "expedition";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
@@ -280,7 +272,8 @@ switch ($type) {
 
     case 'expense_reports':
         // Simplified - only essential columns
-        $sql = "SELECT rowid as id, ref, total_ttc, UNIX_TIMESTAMP(date_debut) as date_debut, UNIX_TIMESTAMP(date_fin) as date_fin, fk_statut as statut, fk_user_author, UNIX_TIMESTAMP(tms) as tms";
+        // Fixed: Removed fk_projet (column does not exist in this version), returning NULL as project_id for compatibility
+        $sql = "SELECT rowid as id, ref, total_ttc, NULL as project_id, UNIX_TIMESTAMP(date_debut) as date_debut, UNIX_TIMESTAMP(date_fin) as date_fin, fk_statut as statut, fk_user_author, fk_user_valid, fk_user_approve, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "expensereport";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
@@ -308,7 +301,8 @@ switch ($type) {
         break;
 
     case 'boms':
-        $sql = "SELECT rowid as id, ref, label, description, duration, efficiency, UNIX_TIMESTAMP(date_creation) as datec, UNIX_TIMESTAMP(tms) as tms";
+        // Fixed: Added fk_product (main product), status, qty
+        $sql = "SELECT rowid as id, ref, label, description, fk_product, qty, status, duration, efficiency, UNIX_TIMESTAMP(date_creation) as datec, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "bom_bom";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
@@ -321,8 +315,8 @@ switch ($type) {
         break;
 
     case 'manufacturing_orders':
-        // Fixed: Added fk_product (product to produce) and qty
-        $sql = "SELECT rowid as id, ref, label, status, fk_product as product_to_produce_id, qty, UNIX_TIMESTAMP(date_start_planned) as date_start, UNIX_TIMESTAMP(date_end_planned) as date_end, UNIX_TIMESTAMP(date_creation) as datec, UNIX_TIMESTAMP(tms) as tms";
+        // Fixed: Added fk_product (product to produce), qty, and fk_project
+        $sql = "SELECT rowid as id, ref, label, status, fk_product as product_to_produce_id, qty, fk_project as project_id, UNIX_TIMESTAMP(date_start_planned) as date_start, UNIX_TIMESTAMP(date_end_planned) as date_end, UNIX_TIMESTAMP(date_creation) as datec, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "mrp_mo";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
@@ -334,8 +328,8 @@ switch ($type) {
         break;
 
     case 'leave_requests':
-        // Fixed: Added fk_type (leave type ID)
-        $sql = "SELECT rowid as id, fk_type as type, halfday, UNIX_TIMESTAMP(date_debut) as date_debut, UNIX_TIMESTAMP(date_fin) as date_fin, description, fk_user, statut, UNIX_TIMESTAMP(date_create) as datec, UNIX_TIMESTAMP(tms) as tms";
+        // Fixed: Added fk_type (leave type ID), ref. Added fk_user_valid (approver)
+        $sql = "SELECT rowid as id, ref, fk_type as type, halfday, UNIX_TIMESTAMP(date_debut) as date_debut, UNIX_TIMESTAMP(date_fin) as date_fin, description, fk_user, fk_user_valid, statut, UNIX_TIMESTAMP(date_create) as datec, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "holiday";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
@@ -347,8 +341,8 @@ switch ($type) {
         break;
 
     case 'candidates':
-        // Simplified - removed 'fk_statut' and 'datec' columns that don't exist
-        $sql = "SELECT rowid as id, firstname, lastname, email, UNIX_TIMESTAMP(tms) as tms, UNIX_TIMESTAMP(date_creation) as datec";
+        // Fixed: Added fk_recruitmentjobposition, phone, ref, status
+        $sql = "SELECT rowid as id, ref, firstname, lastname, email, phone, fk_recruitmentjobposition, status, UNIX_TIMESTAMP(tms) as tms, UNIX_TIMESTAMP(date_creation) as datec";
         $sql .= " FROM " . MAIN_DB_PREFIX . "recruitment_recruitmentcandidature";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
@@ -371,6 +365,20 @@ switch ($type) {
         $sql = "SELECT rowid as id, ref, UNIX_TIMESTAMP(datep) as date_payment, amount, fk_bank, UNIX_TIMESTAMP(tms) as tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "paiementfourn";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
+        break;
+
+    case 'supplier_invoices':
+        $sql = "SELECT rowid as id, ref, libelle as label, type, total_ht, total_ttc, tva as total_tva, fk_statut as statut, fk_soc, fk_projet as project_id, fk_user_author, fk_user_valid, UNIX_TIMESTAMP(datef) as date_invoice, UNIX_TIMESTAMP(date_lim_reglement) as date_lim_reglement, paye, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
+        $sql .= " FROM " . MAIN_DB_PREFIX . "facture_fourn";
+        $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
+        break;
+
+    case 'supplier_invoice_lines':
+        $sql = "SELECT d.rowid as id, d.fk_facture_fourn as parent_id, d.label, d.description, d.qty, d.tva_tx as vat_rate, d.pu_ht as subprice, d.total_ht, d.total_ttc, (d.total_ttc - d.total_ht) as total_tva, d.fk_product as product_id, prod.ref as product_ref, prod.label as product_label, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
+        $sql .= " FROM " . MAIN_DB_PREFIX . "facture_fourn_det d";
+        $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "facture_fourn p ON d.fk_facture_fourn = p.rowid";
+        $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "product prod ON d.fk_product = prod.rowid";
+        $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
         break;
 
     case 'links':
