@@ -309,7 +309,10 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                             )}
                                             <div className="col-span-2">
                                                 <label className="text-xs text-slate-500 uppercase font-bold">Descrição</label>
-                                                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300 whitespace-pre-wrap">{selectedIntervention.description || 'Sem descrição.'}</p>
+                                                <div
+                                                    className="mt-1 text-sm text-slate-600 dark:text-slate-300 prose prose-slate prose-sm max-w-none dark:prose-invert"
+                                                    dangerouslySetInnerHTML={{ __html: selectedIntervention.description || 'Sem descrição.' }}
+                                                />
                                             </div>
                                         </div>
                                     </div>
@@ -329,7 +332,10 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                                 selectedIntervention.lines.map((line, idx) => (
                                                     <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
                                                         <div>
-                                                            <div className="font-medium text-slate-800 dark:text-white text-sm">{line.desc}</div>
+                                                            <div
+                                                                className="font-medium text-slate-800 dark:text-white text-sm prose prose-slate prose-sm max-w-none dark:prose-invert [&>p]:m-0"
+                                                                dangerouslySetInnerHTML={{ __html: line.desc }}
+                                                            />
                                                             <div className="text-xs text-slate-500">{formatDateOnly(line.date)}</div>
                                                         </div>
                                                         <div className="text-right">

@@ -326,6 +326,41 @@ export const validateProposal = async (config: DolibarrConfig, id: string) => {
     });
 };
 
+export const updateProposal = async (config: DolibarrConfig, id: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/proposals/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const addProposalLine = async (config: DolibarrConfig, proposalId: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/proposals/${proposalId}/lines`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const updateProposalLine = async (config: DolibarrConfig, proposalId: string, lineId: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/proposals/${proposalId}/lines/${lineId}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const deleteProposalLine = async (config: DolibarrConfig, proposalId: string, lineId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/proposals/${proposalId}/lines/${lineId}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
 export const closeProposal = async (config: DolibarrConfig, id: string, status: 2 | 3) => {
     const url = `${sanitizeUrl(config.apiUrl)}/proposals/${id}/close`;
     return request(url, {

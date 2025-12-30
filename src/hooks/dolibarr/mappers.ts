@@ -160,6 +160,7 @@ export const mapSupplierInvoice = (raw: any): SupplierInvoice => ({
     total_ttc: toNumber(raw.total_ttc),
     paye: toString(raw.paye) as '0' | '1',
     statut: toString(raw.statut) as '0' | '1' | '2',
+    date_lim_reglement: raw.date_lim_reglement ? toTimestamp(raw.date_lim_reglement) : undefined,
     project_id: raw.project_id ? toString(raw.project_id) : undefined,
     date_modification: toTimestamp(raw.tms),
 });
@@ -415,9 +416,6 @@ export const mapCategory = (raw: any): Category => ({
 /**
  * Map raw agenda event data to AgendaEvent entity
  */
-/**
- * Map raw agenda event data to AgendaEvent entity
- */
 export const mapAgendaEvent = (raw: any): AgendaEvent => {
     const pct = toNumber(raw.percentage);
     return {
@@ -474,7 +472,7 @@ export const mapContact = (raw: any): Contact => ({
     firstname: raw.firstname || '',
     lastname: raw.lastname || '',
     email: raw.email,
-    phone_mobile: raw.phone_pro || raw.phone_mobile,
+    phone_mobile: raw.phone_mobile || raw.phone_pro,
     socid: raw.fk_soc ? toString(raw.fk_soc) : '',
     poste: raw.poste,
     statut: toString(raw.statut) as '0' | '1',
@@ -501,8 +499,8 @@ export const mapStockMovement = (raw: any): StockMovement => ({
     id: toString(raw.id),
     product_id: toString(raw.fk_product),
     warehouse_id: toString(raw.fk_entrepot),
-    qty: toNumber(raw.qty),
-    type: toString(raw.type),
+    qty: toNumber(raw.value), // Backend retorna 'value', não 'qty'
+    type: toString(raw.type_mouvement), // Backend retorna 'type_mouvement'
     label: raw.label || '',
     date_creation: toTimestamp(raw.datem),
     fk_user_author: raw.fk_user_author ? toString(raw.fk_user_author) : undefined,
@@ -624,6 +622,7 @@ export const mapBOM = (raw: any): BOM => ({
  */
 export const mapBOMLine = (raw: any): BOMLine => ({
     id: toString(raw.id),
+    parent_id: toString(raw.parent_id), // fk_bom retornado como parent_id
     fk_product: toString(raw.product_id), // Sync returns product_id, type expects fk_product
     qty: toNumber(raw.qty),
     efficiency: toNumber(raw.efficiency),
@@ -740,6 +739,7 @@ export const mapProposalLine = (raw: any): ProposalLine => ({
     total_tva: toNumber(raw.total_tva),
     product_id: raw.product_id ? toString(raw.product_id) : undefined,
     rang: toNumber(raw.rang),
+    remise_percent: toNumber(raw.remise_percent), // ADDED
     date_modification: toTimestamp(raw.tms),
 });
 

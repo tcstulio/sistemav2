@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate } from 'react-router-dom';
 import { useDolibarr } from '../context/DolibarrContext';
-import { MainLayout } from './Layout/MainLayout';
+import { Server, ShieldCheck, PlayCircle, Loader2 } from 'lucide-react';
 import { RestrictedAccess } from './RestrictedAccess';
 import { Toaster } from 'sonner';
 
@@ -37,6 +37,7 @@ import SchedulerAdmin from './SchedulerAdmin';
 import ActivityView from './ActivityView';
 import TaskDetail from './TaskDetail';
 import { PendingPayments } from './PendingPayments';
+import { MainLayout } from './Layout/MainLayout';
 
 
 // Wrapper to adapt Router Params/Navigate to Legacy Component Props
@@ -67,7 +68,18 @@ const ViewWrapper = ({ Component, viewId, passProps = {} }: any) => {
 };
 
 const App: React.FC = () => {
-    const { config, setConfig } = useDolibarr();
+    const { config, setConfig, isInitialized } = useDolibarr();
+
+    if (!isInitialized) {
+        return (
+            <div className="flex h-screen w-full items-center justify-center bg-slate-50 dark:bg-slate-950">
+                <div className="flex flex-col items-center gap-4">
+                    <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+                    <p className="text-sm font-medium text-slate-500 animate-pulse">Iniciando sistema...</p>
+                </div>
+            </div>
+        );
+    }
 
     if (!config) {
         return <SetupWizard onComplete={setConfig} />;

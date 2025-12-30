@@ -46,6 +46,7 @@ export interface SupplierInvoice {
     total_ttc: number;
     paye: '0' | '1';
     statut: '0' | '1' | '2'; // Status: 0=draft, 1=unpaid, 2=paid
+    date_lim_reglement?: number;
     lines?: SupplierInvoiceLine[];
     fk_user_author?: string;
     fk_user_valid?: string;
@@ -84,6 +85,7 @@ export interface ProposalLine {
     total_tva: number;
     product_id?: string;
     rang?: number;
+    remise_percent?: number; // ADDED
     date_modification?: number;
 }
 

@@ -37,7 +37,8 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
 
     const [filterType, setFilterType] = useState<'all' | 'event' | 'task' | 'deadline'>('all');
     const [showSystemEvents, setShowSystemEvents] = useState(false);
-    const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
+    // Default to 'list' on small screens
+    const [viewMode, setViewMode] = useState<'list' | 'calendar'>(window.innerWidth < 768 ? 'list' : 'calendar');
     const [currentDate, setCurrentDate] = useState(new Date());
 
     // Event Creation State
@@ -188,6 +189,40 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
         });
         return groups;
     }, [filteredItems]);
+
+    // Auto-scroll to today
+    const itemRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
+    const containerRef = React.useRef<HTMLDivElement>(null);
+
+    React.useEffect(() => {
+        if (viewMode === 'list' && Object.keys(groupedItems).length > 0) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            // Find first item >= today
+            const firstFutureItem = filteredItems.find(item => item.date >= today.getTime());
+
+            if (firstFutureItem) {
+                const key = formatDateLong(firstFutureItem.date);
+                // Delay slightly to allow layout to stabilize
+                setTimeout(() => {
+                    const element = itemRefs.current[key];
+                    const container = containerRef.current;
+
+                    if (element && container) {
+                        // Calculate position relative to container
+                        const elementTop = element.offsetTop;
+                        // Add some top padding (e.g. 20px) so it's not glued to the top
+                        // And account for the container's own padding if needed, though offsetTop usually handles that relative to parent
+                        container.scrollTo({
+                            top: Math.max(0, elementTop - 16), // 16px buffer
+                            behavior: 'smooth'
+                        });
+                    }
+                }, 100);
+            }
+        }
+    }, [viewMode, groupedItems, filteredItems]);
 
     // Calendar Logic
     const calendarDays = useMemo(() => {
@@ -397,7 +432,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
             </div>
 
             {/* Main Content Area */}
-            <div className="flex-1 overflow-y-auto p-4 md:p-6">
+            <div ref={containerRef} className="flex-1 overflow-y-auto p-4 md:p-6 relative">
 
                 {/* VIEW: LIST */}
                 {viewMode === 'list' && (
@@ -411,7 +446,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                             Object.entries(groupedItems).map(([date, rawItems]) => {
                                 const items = rawItems as AgendaItem[];
                                 return (
-                                    <div key={date} className="animate-in slide-in-from-bottom-2 fade-in">
+                                    <div key={date} ref={el => { itemRefs.current[date] = el; }} className="animate-in slide-in-from-bottom-2 fade-in">
                                         <h3 className="sticky top-0 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur py-2 px-1 text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 z-10 flex items-center gap-2">
                                             <CalendarDays size={14} /> {date}
                                         </h3>
@@ -473,59 +508,64 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                             <button onClick={today} className="text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:underline">Hoje</button>
                         </div>
 
-                        {/* Grid Header */}
-                        <div className="grid grid-cols-7 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
-                            {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(day => (
-                                <div key={day} className="py-2 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                                    {day}
+                        {/* Responsive Scroll Wrapper */}
+                        <div className="flex-1 overflow-x-auto overflow-y-auto">
+                            <div className="min-w-[800px] h-full flex flex-col">
+                                {/* Grid Header */}
+                                <div className="grid grid-cols-7 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex-none">
+                                    {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(day => (
+                                        <div key={day} className="py-2 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                            {day}
+                                        </div>
+                                    ))}
                                 </div>
-                            ))}
-                        </div>
 
-                        {/* Grid Body */}
-                        <div className="flex-1 grid grid-cols-7 auto-rows-fr">
-                            {calendarDays.map((cell, idx) => (
-                                <div
-                                    key={idx}
-                                    className={`min-h-[100px] border-b border-r border-slate-100 dark:border-slate-800 p-2 relative ${!cell.day ? 'bg-slate-50/50 dark:bg-slate-950/50' : 'bg-white dark:bg-slate-900'}`}
-                                >
-                                    {cell.day && (
-                                        <>
-                                            <span className={`text-sm font-semibold mb-1 block ${new Date().toDateString() === new Date(cell.dateStr).toDateString() ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-700 dark:text-slate-300'}`}>
-                                                {cell.day}
-                                            </span>
-                                            <div className="space-y-1 overflow-y-auto max-h-[120px] custom-scrollbar">
-                                                {cell.items.map(item => (
-                                                    <div
-                                                        key={item.id}
-                                                        onClick={() => handleItemClick(item)}
-                                                        className={`text-[10px] px-1.5 py-0.5 rounded border truncate cursor-pointer transition-all hover:scale-105 flex items-center gap-1 ${item.type === 'event' ? 'bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-900/30 dark:text-blue-200 dark:border-blue-800' :
-                                                            item.type === 'task' ? 'bg-orange-50 text-orange-700 border-orange-100 dark:bg-orange-900/30 dark:text-orange-200 dark:border-orange-800' :
-                                                                item.type === 'project_deadline' ? 'bg-red-50 text-red-700 border-red-100 dark:bg-red-900/20 dark:text-red-300 dark:border-red-900/30' :
-                                                                    'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
-                                                            }`}
-                                                        title={item.title}
-                                                    >
-                                                        {/* Mini Icons for Calendar */}
-                                                        {item.type === 'event' && (
-                                                            item.subType === 'AC_TEL' ? <Phone size={8} /> :
-                                                                item.subType === 'AC_EMAIL' ? <Mail size={8} /> :
-                                                                    item.subType === 'AC_RDV' ? <Users size={8} /> :
-                                                                        <CalendarIcon size={8} />
-                                                        )}
-                                                        {item.type === 'project_deadline' && <FolderKanban size={8} />}
-                                                        {item.type === 'task' && <Clock size={8} />}
-                                                        {item.type === 'intervention' && <ClipboardList size={8} />}
-                                                        {item.type === 'system_log' && <Bot size={8} />}
+                                {/* Grid Body */}
+                                <div className="flex-1 grid grid-cols-7 auto-rows-fr">
+                                    {calendarDays.map((cell, idx) => (
+                                        <div
+                                            key={idx}
+                                            className={`min-h-[100px] border-b border-r border-slate-100 dark:border-slate-800 p-2 relative ${!cell.day ? 'bg-slate-50/50 dark:bg-slate-950/50' : 'bg-white dark:bg-slate-900'}`}
+                                        >
+                                            {cell.day && (
+                                                <>
+                                                    <span className={`text-sm font-semibold mb-1 block ${new Date().toDateString() === new Date(cell.dateStr).toDateString() ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                                                        {cell.day}
+                                                    </span>
+                                                    <div className="space-y-1 overflow-y-auto max-h-[120px] custom-scrollbar">
+                                                        {cell.items.map(item => (
+                                                            <div
+                                                                key={item.id}
+                                                                onClick={() => handleItemClick(item)}
+                                                                className={`text-[10px] px-1.5 py-0.5 rounded border truncate cursor-pointer transition-all hover:scale-105 flex items-center gap-1 ${item.type === 'event' ? 'bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-900/30 dark:text-blue-200 dark:border-blue-800' :
+                                                                    item.type === 'task' ? 'bg-orange-50 text-orange-700 border-orange-100 dark:bg-orange-900/30 dark:text-orange-200 dark:border-orange-800' :
+                                                                        item.type === 'project_deadline' ? 'bg-red-50 text-red-700 border-red-100 dark:bg-red-900/20 dark:text-red-300 dark:border-red-900/30' :
+                                                                            'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
+                                                                    }`}
+                                                                title={item.title}
+                                                            >
+                                                                {/* Mini Icons for Calendar */}
+                                                                {item.type === 'event' && (
+                                                                    item.subType === 'AC_TEL' ? <Phone size={8} /> :
+                                                                        item.subType === 'AC_EMAIL' ? <Mail size={8} /> :
+                                                                            item.subType === 'AC_RDV' ? <Users size={8} /> :
+                                                                                <CalendarIcon size={8} />
+                                                                )}
+                                                                {item.type === 'project_deadline' && <FolderKanban size={8} />}
+                                                                {item.type === 'task' && <Clock size={8} />}
+                                                                {item.type === 'intervention' && <ClipboardList size={8} />}
+                                                                {item.type === 'system_log' && <Bot size={8} />}
 
-                                                        <span className="truncate">{item.title}</span>
+                                                                <span className="truncate">{item.title}</span>
+                                                            </div>
+                                                        ))}
                                                     </div>
-                                                ))}
-                                            </div>
-                                        </>
-                                    )}
+                                                </>
+                                            )}
+                                        </div>
+                                    ))}
                                 </div>
-                            ))}
+                            </div>
                         </div>
                     </div>
                 )}

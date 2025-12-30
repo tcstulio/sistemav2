@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { ThirdParty, AppView } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useCustomers, useInvoices, useProposals, useOrders, useProjects, useEvents, useTickets, useShipments, useContacts } from '../hooks/dolibarr';
-import { Mail, MapPin, Building2, Phone, Sparkles, Loader2, X, ArrowLeft, Search, UserPlus, CheckCircle2, UserCircle, Pencil, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Mail, MapPin, Building2, Phone, Sparkles, Loader2, X, ArrowLeft, Search, UserPlus, CheckCircle2, UserCircle, Pencil, ChevronLeft, ChevronRight, MessageSquare, Send } from 'lucide-react';
 import { AiService } from '../services/aiService';
 import { DolibarrService } from '../services/dolibarrService';
 import { useCustomerMutations } from '../hooks/useMutations';
@@ -62,7 +62,27 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
     };
 
     // UI States (Modals, AI)
-    const [generatedEmail, setGeneratedEmail] = useState<{ subject: string, body: string } | null>(null);
+    const [generatedEmail, setGeneratedEmail] = useState<{ subject: string, body: string } | null>(null); // Kept for backward compat or just reuse logic
+    const [generatedMessage, setGeneratedMessage] = useState<{ email?: { subject: string, body: string }, whatsapp?: { text: string } } | null>(null);
+    const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+
+    // Wizard State
+    const [wizardStep, setWizardStep] = useState<'topic' | 'data' | 'channels'>('topic');
+    const [messageConfig, setMessageConfig] = useState<{
+        topic: string,
+        channels: ('email' | 'whatsapp')[],
+        selectedData: {
+            invoices: string[],
+            projects: string[],
+            proposals: string[]
+        }
+    }>({
+        topic: '',
+        channels: ['email'],
+        selectedData: { invoices: [], projects: [], proposals: [] }
+    });
+    const [activeResultTab, setActiveResultTab] = useState<'email' | 'whatsapp'>('email');
+
     const [sentimentAnalysis, setSentimentAnalysis] = useState<{ score: number, label: string, insight: string, logId?: string } | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
@@ -122,22 +142,59 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
 
 
     // Handlers
-    const handleGenerateEmail = async (customer: ThirdParty, type: 'collection' | 'welcome') => {
+    const handleOpenMessageConfig = (customer: ThirdParty) => {
+        setSelectedCustomer(customer);
+        setWizardStep('topic');
+        setMessageConfig({
+            topic: (customer.outstanding_balance || 0) > 0 ? "Cobrança de fatura em atraso" : "Boas vindas e apresentação de serviços",
+            channels: ['email'],
+            selectedData: { invoices: [], projects: [], proposals: [] }
+        });
+        setIsConfigModalOpen(true);
+    };
+
+    const handleGenerateMessage = async () => {
+        if (!selectedCustomer) return;
         setIsGenerating(true);
-        setGeneratedEmail(null);
+        setGeneratedMessage(null);
         try {
-            const result = await AiService.draftCollectionEmail(
-                customer,
-                type === 'collection' ? (customer.outstanding_balance || 0) : 0
+            const resultStr = await AiService.draftMessage(
+                selectedCustomer,
+                messageConfig.topic,
+                messageConfig.channels,
+                {
+                    selectedInvoices: customerInvoices.filter(i => messageConfig.selectedData.invoices.includes(String(i.id))),
+                    selectedProjects: customerProjects.filter(p => messageConfig.selectedData.projects.includes(String(p.id))),
+                    selectedProposals: customerProposals.filter(p => messageConfig.selectedData.proposals.includes(String(p.id)))
+                }
             );
-            if (result) {
-                setGeneratedEmail(JSON.parse(result));
+
+            if (resultStr) {
+                // Try to parse JSON from the response text
+                // Sometimes models wrap json in backticks
+                let jsonStr = resultStr.replace(/```json/g, '').replace(/```/g, '');
+                try {
+                    const result = JSON.parse(jsonStr);
+                    setGeneratedMessage(result);
+                    setActiveResultTab(messageConfig.channels[0]); // Select first available
+                    setIsConfigModalOpen(false);
+                } catch (e) {
+                    console.error("JSON Parse Error", e);
+                    // Fallback logic could go here
+                    toast.error("Erro ao processar resposta da IA.");
+                }
             }
         } catch (e) {
             console.error(e);
+            toast.error("Erro na geração da mensagem.");
         } finally {
             setIsGenerating(false);
         }
+    };
+
+    // Deprecated single-purpose handler (can remove later)
+    const handleGenerateEmail = async (customer: ThirdParty, type: 'collection' | 'welcome') => {
+        handleOpenMessageConfig(customer);
     };
 
     const handleAnalyzeSentiment = async (customer: ThirdParty) => {
@@ -613,6 +670,260 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Wizard Configuration Modal */}
+            {isConfigModalOpen && (
+                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 flex flex-col h-[500px]">
+
+                        {/* Header */}
+                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
+                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
+                                <Sparkles size={18} className="text-purple-600" />
+                                {wizardStep === 'topic' && "Passo 1: Objetivo"}
+                                {wizardStep === 'data' && "Passo 2: Seleção de Dados"}
+                                {wizardStep === 'channels' && "Passo 3: Canais"}
+                            </h3>
+                            <button onClick={() => setIsConfigModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
+                        </div>
+
+                        {/* Body */}
+                        <div className="p-6 flex-1 overflow-y-auto">
+
+                            {/* Step 1: Topic */}
+                            {wizardStep === 'topic' && (
+                                <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-200">
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Qual o motivo do contato?</label>
+                                        <textarea
+                                            className="w-full p-3 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-sm resize-none focus:ring-2 focus:ring-purple-500 outline-none transition-all h-32"
+                                            placeholder="Ex: Cobrar fatura atrasada com educação..."
+                                            value={messageConfig.topic}
+                                            onChange={e => setMessageConfig({ ...messageConfig, topic: e.target.value })}
+                                            autoFocus
+                                        />
+                                        <p className="text-xs text-slate-500 mt-2">Dica: Seja específico sobre o tom de voz desejado (formal, amigável, urgente).</p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Step 2: Data Selection */}
+                            {wizardStep === 'data' && (
+                                <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-200">
+                                    <p className="text-sm text-slate-500 mb-2">Selecione os dados que a IA deve mencionar na mensagem:</p>
+
+                                    {/* Invoices Selection */}
+                                    <div>
+                                        <h4 className="text-xs font-bold uppercase text-slate-400 mb-2 flex items-center gap-1"><Building2 size={12} /> Faturas em Aberto</h4>
+                                        {customerInvoices.length > 0 ? (
+                                            <div className="space-y-2 max-h-32 overflow-y-auto border rounded-lg p-2 dark:border-slate-700">
+                                                {customerInvoices.filter(i => i.statut !== '2').map(inv => (
+                                                    <label key={inv.id} className="flex items-center gap-2 p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded cursor-pointer text-sm">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={messageConfig.selectedData.invoices.includes(String(inv.id))}
+                                                            onChange={(e) => {
+                                                                const current = messageConfig.selectedData.invoices;
+                                                                const newVal = e.target.checked ? [...current, String(inv.id)] : current.filter(id => id !== String(inv.id));
+                                                                setMessageConfig({ ...messageConfig, selectedData: { ...messageConfig.selectedData, invoices: newVal } });
+                                                            }}
+                                                            className="rounded text-purple-600 focus:ring-purple-500"
+                                                        />
+                                                        <span className="flex-1 font-medium">{inv.ref}</span>
+                                                        <span className="text-slate-500">${inv.total_ttc}</span>
+                                                    </label>
+                                                ))}
+                                                {customerInvoices.filter(i => i.statut !== '2').length === 0 && <p className="text-xs text-slate-400 p-2">Nenhuma fatura em aberto.</p>}
+                                            </div>
+                                        ) : <p className="text-xs text-slate-400 italic">Nenhuma fatura encontrada.</p>}
+                                    </div>
+
+                                    {/* Projects Selection */}
+                                    <div>
+                                        <h4 className="text-xs font-bold uppercase text-slate-400 mb-2 flex items-center gap-1"><Building2 size={12} /> Projetos Ativos</h4>
+                                        {customerProjects.length > 0 ? (
+                                            <div className="space-y-2 max-h-32 overflow-y-auto border rounded-lg p-2 dark:border-slate-700">
+                                                {customerProjects.map(proj => (
+                                                    <label key={proj.id} className="flex items-center gap-2 p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded cursor-pointer text-sm">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={messageConfig.selectedData.projects.includes(String(proj.id))}
+                                                            onChange={(e) => {
+                                                                const current = messageConfig.selectedData.projects;
+                                                                const newVal = e.target.checked ? [...current, String(proj.id)] : current.filter(id => id !== String(proj.id));
+                                                                setMessageConfig({ ...messageConfig, selectedData: { ...messageConfig.selectedData, projects: newVal } });
+                                                            }}
+                                                            className="rounded text-purple-600 focus:ring-purple-500"
+                                                        />
+                                                        <span className="flex-1 font-medium truncate">{proj.title}</span>
+                                                        <span className="text-xs text-slate-500">{proj.progress}%</span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        ) : <p className="text-xs text-slate-400 italic">Nenhum projeto encontrado.</p>}
+                                    </div>
+
+                                </div>
+                            )}
+
+                            {/* Step 3: Channels */}
+                            {wizardStep === 'channels' && (
+                                <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-200">
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Onde você quer enviar?</label>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <label className={`flex flex-col items-center justify-center gap-3 p-6 rounded-xl border-2 cursor-pointer transition-all ${messageConfig.channels.includes('email') ? 'bg-indigo-50 border-indigo-500 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-500' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 dark:bg-slate-900 dark:border-slate-700'}`}>
+                                                <input
+                                                    type="checkbox"
+                                                    className="hidden"
+                                                    checked={messageConfig.channels.includes('email')}
+                                                    onChange={(e) => {
+                                                        if (e.target.checked) setMessageConfig({ ...messageConfig, channels: [...messageConfig.channels, 'email'] });
+                                                        else setMessageConfig({ ...messageConfig, channels: messageConfig.channels.filter(c => c !== 'email') });
+                                                    }}
+                                                />
+                                                <Mail size={32} />
+                                                <span className="font-bold">Email</span>
+                                            </label>
+                                            <label className={`flex flex-col items-center justify-center gap-3 p-6 rounded-xl border-2 cursor-pointer transition-all ${messageConfig.channels.includes('whatsapp') ? 'bg-emerald-50 border-emerald-500 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-500' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 dark:bg-slate-900 dark:border-slate-700'}`}>
+                                                <input
+                                                    type="checkbox"
+                                                    className="hidden"
+                                                    checked={messageConfig.channels.includes('whatsapp')}
+                                                    onChange={(e) => {
+                                                        if (e.target.checked) setMessageConfig({ ...messageConfig, channels: [...messageConfig.channels, 'whatsapp'] });
+                                                        else setMessageConfig({ ...messageConfig, channels: messageConfig.channels.filter(c => c !== 'whatsapp') });
+                                                    }}
+                                                />
+                                                <MessageSquare size={32} />
+                                                <span className="font-bold">WhatsApp</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                        </div>
+
+                        {/* Footer / Navigation */}
+                        <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-between bg-slate-50 dark:bg-slate-800/50 rounded-b-xl">
+                            <button onClick={() => {
+                                if (wizardStep === 'topic') setIsConfigModalOpen(false);
+                                if (wizardStep === 'data') setWizardStep('topic');
+                                if (wizardStep === 'channels') setWizardStep('data');
+                            }} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">
+                                {wizardStep === 'topic' ? 'Cancelar' : 'Voltar'}
+                            </button>
+
+                            <button
+                                onClick={() => {
+                                    if (wizardStep === 'topic') setWizardStep('data');
+                                    else if (wizardStep === 'data') setWizardStep('channels');
+                                    else if (wizardStep === 'channels') handleGenerateMessage();
+                                }}
+                                disabled={wizardStep === 'topic' && !messageConfig.topic.trim()}
+                                className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                            >
+                                {wizardStep === 'channels' ? (
+                                    <>
+                                        {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />} Gerar
+                                    </>
+                                ) : (
+                                    <>Próximo <ChevronRight size={16} /></>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Generated Message Result Modal */}
+            {generatedMessage && (
+                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 flex flex-col max-h-[90vh]">
+                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
+                            <div className="flex items-center gap-4">
+                                <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
+                                    <Sparkles size={18} className="text-purple-600" /> Resultado
+                                </h3>
+                                {/* Tabs */}
+                                <div className="flex bg-slate-200 dark:bg-slate-700 rounded-lg p-1">
+                                    {generatedMessage.email && (
+                                        <button
+                                            onClick={() => setActiveResultTab('email')}
+                                            className={`px-3 py-1 rounded text-xs font-bold transition-all ${activeResultTab === 'email' ? 'bg-white dark:bg-slate-600 shadow text-slate-800 dark:text-white' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}
+                                        >
+                                            Email
+                                        </button>
+                                    )}
+                                    {generatedMessage.whatsapp && (
+                                        <button
+                                            onClick={() => setActiveResultTab('whatsapp')}
+                                            className={`px-3 py-1 rounded text-xs font-bold transition-all ${activeResultTab === 'whatsapp' ? 'bg-white dark:bg-slate-600 shadow text-slate-800 dark:text-white' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}
+                                        >
+                                            WhatsApp
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                            <button onClick={() => setGeneratedMessage(null)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
+                        </div>
+
+                        <div className="p-6 overflow-y-auto">
+                            {activeResultTab === 'email' && generatedMessage.email && (
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">Assunto</label>
+                                        <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-sm font-medium">
+                                            {generatedMessage.email.subject}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">Corpo</label>
+                                        <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-sm whitespace-pre-wrap h-64 overflow-y-auto">
+                                            {generatedMessage.email.body}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeResultTab === 'whatsapp' && generatedMessage.whatsapp && (
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">Mensagem</label>
+                                        <div className="relative p-4 bg-[#e5ddd5] dark:bg-[#0b141a] rounded-lg border border-slate-200 dark:border-slate-700 min-h-[300px]">
+                                            <div className="bg-white dark:bg-[#202c33] p-3 rounded-lg shadow-sm text-sm text-slate-800 dark:text-slate-200 inline-block max-w-[90%] whitespace-pre-wrap relative">
+                                                {generatedMessage.whatsapp.text}
+                                                <div className="absolute top-0 right-0 -mr-2 -mt-0 w-4 h-4 bg-white dark:bg-[#202c33] transform rotate-45"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2 bg-slate-50 dark:bg-slate-800/50 rounded-b-xl">
+                            <button onClick={() => setGeneratedMessage(null)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Fechar</button>
+                            <button onClick={() => {
+                                const content = activeResultTab === 'email'
+                                    ? `${generatedMessage.email?.subject}\n\n${generatedMessage.email?.body}`
+                                    : generatedMessage.whatsapp?.text;
+                                navigator.clipboard.writeText(content || '');
+                                toast.success("Copiado para a área de transferência!");
+                            }} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
+                                <CheckCircle2 size={16} /> Copiar Conteúdo
+                            </button>
+                            {activeResultTab === 'whatsapp' && (
+                                <button onClick={() => {
+                                    window.open(`https://wa.me/${selectedCustomer?.phone?.replace(/\D/g, '')}?text=${encodeURIComponent(generatedMessage.whatsapp?.text || '')}`, '_blank');
+                                }} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
+                                    <Send size={16} /> Enviar
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}

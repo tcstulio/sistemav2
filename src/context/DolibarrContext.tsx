@@ -18,6 +18,7 @@ interface DolibarrContextType {
   currentUser?: DolibarrUser | null;
   canAccess: (module: string) => boolean;
   logout: () => void;
+  isInitialized: boolean;
 }
 
 const DolibarrContext = createContext<DolibarrContextType | undefined>(undefined);
@@ -27,6 +28,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [isSyncPaused, setIsSyncPaused] = useState(false);
   const [currentUser, setCurrentUser] = useState<DolibarrUser | null>(null);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   // 1. Permission Logic (Must be defined before data hook)
   const canAccess = useCallback((module: string): boolean => {
@@ -191,6 +193,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
           localStorage.removeItem('doligen_config');
         }
       }
+      setIsInitialized(true);
     };
     loadConfig();
   }, []);
@@ -254,11 +257,12 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     currentUser, canAccess, logout,
     isLoading, isSyncing, isSyncPaused, toggleSyncPause,
     notifications, setNotifications,
-    refreshData
+    refreshData,
+    isInitialized
   }), [
     config, setConfig, currentUser, canAccess, logout,
     isLoading, isSyncing, isSyncPaused, toggleSyncPause,
-    notifications, refreshData
+    notifications, refreshData, isInitialized
   ]);
 
 

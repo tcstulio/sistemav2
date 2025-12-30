@@ -267,6 +267,62 @@ export const AiService = {
             console.error("Data Quality Analysis Error", error);
             return null;
         }
+    },
+
+    generateActivityReport: async (context: string) => {
+        try {
+            // Using the generate-reply endpoint as a generic text generator
+            const response = await axios.post(`${API_URL}/generate-reply`, {
+                history: [{ role: 'user', parts: `Generate a detailed activity report based on the following logs and context. summarize by project or main activity type. Focus on what was actually accomplished.\n\n${context}` }],
+                context: "You are a project manager assistant generating a work report."
+            }, getAuthHeaders());
+            return response.data.reply;
+        } catch (error: any) {
+            console.error("Activity Report Error", error);
+            return "Erro ao gerar relatório. Verifique sua conexão ou tente novamente.";
+        }
+    },
+    draftMessage: async (customer: ThirdParty, context: string, channels: ('email' | 'whatsapp')[], additionalData?: any) => {
+        try {
+            let dataContext = "";
+            if (additionalData) {
+                dataContext = `
+                RELEVANT DATA TO CITE:
+                ${JSON.stringify(additionalData, null, 2)}
+                
+                INSTRUCTIONS FOR DATA:
+                - You MUST mention specific details from the data above (e.g. invoice numbers, amounts, project names) if relevant to the '${context}'.
+                - If the goal is collection, cite the overdue invoices.
+                - If the goal is project update, cite the project status.
+                `;
+            }
+
+            const prompt = `
+                Generate a message for customer: ${customer.name} (${customer.email || 'no email'}).
+                Context/Goal: ${context}.
+                Required Formats: ${channels.join(', ')}.
+                
+                ${dataContext}
+                
+                Return ONLY a JSON object with this structure (fill only requested channels):
+                {
+                    "email": { "subject": "...", "body": "..." },
+                    "whatsapp": { "text": "..." }
+                }
+            `;
+
+            const response = await axios.post(`${API_URL}/generate-reply`, {
+                history: [{ role: 'user', parts: prompt }],
+                context: "You are a professional business assistant."
+            }, getAuthHeaders());
+
+            // The backend returns a string in 'reply'. We need to parse it if it's JSON.
+            // But generate-reply returns text. We rely on the model obeying the JSON instruction.
+            return response.data.reply;
+        } catch (error: any) {
+            console.error("draftMessage Error", error);
+            return null;
+        }
     }
 };
 
