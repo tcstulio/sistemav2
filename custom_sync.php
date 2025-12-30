@@ -117,7 +117,7 @@ switch ($type) {
         break;
 
     case 'proposal_lines':
-        $sql = "SELECT d.rowid as id, d.fk_propal as parent_id, d.label, d.description, d.product_type as type, d.qty, d.tva_tx as vat_rate, d.subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
+        $sql = "SELECT d.rowid as id, d.fk_propal as parent_id, d.label, d.description, d.product_type as type, d.qty, d.tva_tx as vat_rate, d.remise_percent, d.subprice, d.total_ht, d.total_ttc, d.total_tva, d.fk_product as product_id, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "propaldet d";
         $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "propal p ON d.fk_propal = p.rowid";
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
@@ -160,9 +160,11 @@ switch ($type) {
         break;
 
     case 'products':
-        $sql = "SELECT rowid as id, ref, label, description, fk_product_type as type, price, price_ttc, tva_tx as vat_rate, stock, tosell, tobuy, duration, finished, UNIX_TIMESTAMP(datec) as datec, UNIX_TIMESTAMP(tms) as tms";
-        $sql .= " FROM " . MAIN_DB_PREFIX . "product";
-        $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
+        $sql = "SELECT p.rowid as id, p.ref, p.label, p.description, p.fk_product_type as type, p.price, p.price_ttc, p.tva_tx as vat_rate, ";
+        $sql .= " COALESCE((SELECT SUM(ps.reel) FROM " . MAIN_DB_PREFIX . "product_stock ps WHERE ps.fk_product = p.rowid), 0) as stock, ";
+        $sql .= " p.tosell, p.tobuy, p.duration, p.finished, UNIX_TIMESTAMP(p.datec) as datec, UNIX_TIMESTAMP(p.tms) as tms";
+        $sql .= " FROM " . MAIN_DB_PREFIX . "product p";
+        $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
         break;
 
     case 'tickets':
@@ -279,14 +281,15 @@ switch ($type) {
         break;
 
     case 'interventions':
-        // Simplified - use only columns that exist in most Dolibarr versions
-        $sql = "SELECT rowid as id, ref, fk_soc as socid, fk_projet as project_id, UNIX_TIMESTAMP(datec) as date_creation, UNIX_TIMESTAMP(tms) as tms, description, fk_statut as statut";
+        // Added fk_user_author, duree
+        $sql = "SELECT rowid as id, ref, fk_soc as socid, fk_projet as project_id, fk_user_author, duree as duration, UNIX_TIMESTAMP(datec) as date_creation, UNIX_TIMESTAMP(tms) as tms, description, fk_statut as statut";
         $sql .= " FROM " . MAIN_DB_PREFIX . "fichinter";
         $sql .= " WHERE tms >= '" . $db->idate($last_modified) . "'";
         break;
 
     case 'intervention_lines':
-        $sql = "SELECT d.rowid as id, d.fk_fichinter as parent_id, d.description, d.qty, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
+        // Added duree
+        $sql = "SELECT d.rowid as id, d.fk_fichinter as parent_id, d.description, d.duree as duration, d.qty, d.rang as rang, UNIX_TIMESTAMP(p.tms) as tms, UNIX_TIMESTAMP(p.tms) as parent_tms";
         $sql .= " FROM " . MAIN_DB_PREFIX . "fichinterdet d";
         $sql .= " LEFT JOIN " . MAIN_DB_PREFIX . "fichinter p ON d.fk_fichinter = p.rowid";
         $sql .= " WHERE p.tms >= '" . $db->idate($last_modified) . "'";
@@ -386,12 +389,12 @@ switch ($type) {
         // No TMS available, use rowid for incremental sync
         $sql = "SELECT rowid as id, sourcetype, sourceid, targettype, targetid";
         $sql .= " FROM " . MAIN_DB_PREFIX . "element_element";
-        // CRITICAL FIX: The client sends a Timestamp (e.g. 1700000000) for last_modified,
-        // but 'element_element' has no 'tms'. We must sync by ROWID.
-        // If last_modified is huge (timestamp), it means we cannot use it as a rowid offset.
-        // In that case, we reset it to 0 to force a full re-sync of links, or we'd need a separate mechanism.
-        // For now, if > 100000000, treat as 0.
-        if ($last_modified > 100000000) {
+        // Links table has no TMS column. We use ROWID for incremental sync.
+        // If client sends a timestamp (large number), we interpret it as "full sync needed"
+        // If client sends a small number, we interpret it as "last known rowid"
+        // Threshold: 1 year in seconds (31536000) - anything above this is likely a timestamp
+        if ($last_modified > 31536000) {
+            // This is a timestamp, not a rowid - start fresh from rowid 0
             $last_modified = 0;
         }
 

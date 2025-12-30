@@ -14,6 +14,10 @@ export const DolibarrService = {
     validateSupplierInvoice: Commercial.validateSupplierInvoice,
     paySupplierInvoice: Commercial.paySupplierInvoice,
     markSupplierInvoiceAsPaid: Commercial.markSupplierInvoiceAsPaid,
+    updateProposal: Commercial.updateProposal,
+    addProposalLine: Commercial.addProposalLine,
+    updateProposalLine: Commercial.updateProposalLine,
+    deleteProposalLine: Commercial.deleteProposalLine,
 
     // Operations
     ...Operations,

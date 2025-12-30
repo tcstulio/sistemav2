@@ -15,6 +15,7 @@ export interface ManufacturingOrder {
 
 export interface BOMLine {
     id: string;
+    parent_id: string; // fk_bom - referência ao BOM pai
     fk_product: string; // The component ID
     qty: number;
     efficiency?: number; // 1 = 100%

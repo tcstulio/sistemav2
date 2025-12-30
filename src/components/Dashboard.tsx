@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { AppView } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useInvoices, useSupplierInvoices, useTasks, useProducts, useBankAccounts, useInterventions, useTickets } from '../hooks/dolibarr';
+import { useInvoices, useSupplierInvoices, useTasks, useProducts, useBankAccounts, useInterventions, useTickets, useBankLines } from '../hooks/dolibarr';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { DollarSign, Users, FileText, TrendingUp, Sparkles, Loader2, Minus, FolderKanban, Pencil, Save, X, AlertOctagon, Clock, Package, Landmark, MessageSquare, ClipboardList, Wrench, Ticket as TicketIcon, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { AiService } from '../services/aiService';
@@ -33,6 +33,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     const products = productsData || [];
     const { data: bankAccountsData } = useBankAccounts(config);
     const bankAccounts = bankAccountsData || [];
+    const { data: bankLinesData } = useBankLines(config);
+    const bankLines = bankLinesData || [];
     const { data: interventionsData } = useInterventions(config);
     const interventions = interventionsData || [];
     const { data: ticketsData } = useTickets(config);
@@ -68,9 +70,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         return null;
     };
     const metrics = useMemo(() => {
-        const totalRevenue = invoices.filter(i => i.statut === '2').reduce((acc, curr) => acc + curr.total_ttc, 0);
-        const totalExpense = supplierInvoices.filter(i => i.statut === '2').reduce((acc, curr) => acc + curr.total_ttc, 0);
+        // Calculate based on REAL bank movements
+        const totalRevenue = bankLines.filter(l => l.amount > 0).reduce((acc, curr) => acc + curr.amount, 0);
+        const totalExpense = Math.abs(bankLines.filter(l => l.amount < 0).reduce((acc, curr) => acc + curr.amount, 0));
         const totalCash = bankAccounts.reduce((acc, curr) => acc + (curr.solde || 0), 0);
+
         const now = new Date();
         const unpaidInvoices = invoices.filter(i => {
             if (i.statut !== '1') return false;
@@ -85,7 +89,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         }).length;
 
         return { totalRevenue, totalExpense, totalCash, unpaidInvoices };
-    }, [invoices, supplierInvoices, bankAccounts]);
+    }, [invoices, supplierInvoices, bankAccounts, bankLines]);
 
     const cashFlowData = useMemo(() => {
         const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
@@ -94,30 +98,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         // Initialize 12 months
         const monthlyData = months.map(m => ({ month: m, income: 0, expense: 0 }));
 
-        // Process Invoices (Income) - Only Paid (statut = 2)
-        invoices.forEach(inv => {
-            if (inv.statut === '2') {
-                const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
-                const d = new Date(dateVal);
-                if (d.getFullYear() === currentYear) {
-                    monthlyData[d.getMonth()].income += inv.total_ttc;
-                }
-            }
-        });
+        // Process Bank Lines
+        bankLines.forEach(line => {
+            const dateVal = line.date_operation;
+            if (!dateVal) return;
 
-        // Process Supplier Invoices (Expense) - Only Paid (statut = 2)
-        supplierInvoices.forEach(inv => {
-            if (inv.statut === '2') {
-                const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
-                const d = new Date(dateVal);
-                if (d.getFullYear() === currentYear) {
-                    monthlyData[d.getMonth()].expense += inv.total_ttc;
+            const timestamp = dateVal < 100000000000 ? dateVal * 1000 : dateVal;
+            const d = new Date(timestamp);
+
+            if (d.getFullYear() === currentYear) {
+                if (line.amount > 0) {
+                    monthlyData[d.getMonth()].income += line.amount;
+                } else {
+                    monthlyData[d.getMonth()].expense += Math.abs(line.amount);
                 }
             }
         });
 
         return monthlyData;
-    }, [invoices, supplierInvoices]);
+    }, [bankLines]);
 
     const recentActivityData = useMemo(() => {
         return invoices.slice(0, 5).map(inv => ({
@@ -218,9 +217,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         const uid = String(config.currentUser.id);
 
         return {
-            tasks: tasks.filter(t => false), // Logic pending Task assignation
-            // Simplified: Tasks don't have user assign in list usually unless joined.
-            // Will skip tasks for now or use simplified logic if available
+            tasks: tasks.filter(t =>
+                String(t.fk_user_assign) === uid &&
+                t.progress < 100
+            ).slice(0, 5),
             interventions: interventions.filter(i => String(i.fk_user_author) === uid && i.statut !== '2'),
             tickets: tickets.filter(t => String(t.fk_user_assign) === uid && t.statut !== '8' && t.statut !== 'CLOSED')
         };
@@ -378,10 +378,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                             <ClipboardList size={18} className="text-orange-500" /> Minhas Pendências
                         </h3>
                         <div className="space-y-3">
-                            {myAssignments.tickets.length === 0 && myAssignments.interventions.length === 0 ? (
+                            {myAssignments.tasks.length === 0 && myAssignments.tickets.length === 0 && myAssignments.interventions.length === 0 ? (
                                 <p className="text-sm text-slate-500 dark:text-slate-400 italic">Nada pendente. Bom trabalho!</p>
                             ) : (
                                 <>
+                                    {myAssignments.tasks.map(task => (
+                                        <div key={task.id} className="p-3 bg-violet-50 dark:bg-violet-900/10 rounded-lg border border-violet-100 dark:border-violet-800 cursor-pointer hover:bg-violet-100 dark:hover:bg-violet-900/20" onClick={() => onNavigate && onNavigate('tasks', task.id)}>
+                                            <div className="flex justify-between items-start">
+                                                <span className="text-xs font-bold text-violet-700 dark:text-violet-400 flex items-center gap-1"><FolderKanban size={10} /> {task.ref}</span>
+                                                <span className="text-[10px] text-slate-500">{task.progress}%</span>
+                                            </div>
+                                            <div className="text-sm font-medium text-slate-800 dark:text-white mt-1 line-clamp-1">{task.label}</div>
+                                        </div>
+                                    ))}
                                     {myAssignments.interventions.map(i => (
                                         <div key={i.id} className="p-3 bg-orange-50 dark:bg-orange-900/10 rounded-lg border border-orange-100 dark:border-orange-800 cursor-pointer hover:bg-orange-100 dark:hover:bg-orange-900/20" onClick={() => onNavigate && onNavigate('interventions', i.id)}>
                                             <div className="flex justify-between items-start">
@@ -395,7 +404,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                         <div key={t.id} className="p-3 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-100 dark:border-blue-800 cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/20" onClick={() => onNavigate && onNavigate('tickets', t.id)}>
                                             <div className="flex justify-between items-start">
                                                 <span className="text-xs font-bold text-blue-700 dark:text-blue-400 flex items-center gap-1"><TicketIcon size={10} /> {t.ref}</span>
-                                                <span className="text-[10px] text-slate-500">{formatDateTime(t.date_c)}</span>
+                                                <span className="text-[10px] text-slate-500">{formatDateTime(t.datec)}</span>
                                             </div>
                                             <div className="text-sm font-medium text-slate-800 dark:text-white mt-1 line-clamp-1">{t.subject}</div>
                                         </div>
@@ -440,7 +449,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                 </div>
                                 <div className="flex items-end gap-2">
                                     <span className="text-3xl font-bold text-slate-800 dark:text-white">
-                                        ${forecast.forecastAmount.toLocaleString()}
+                                        {formatCurrency(forecast.forecastAmount)}
                                     </span>
                                     <span className="mb-1 text-slate-400 text-sm">/ próximo mês</span>
                                 </div>

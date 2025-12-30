@@ -56,7 +56,7 @@ export interface DolibarrDictionary {
     active?: string;
 }
 
-export type AppView = 'dashboard' | 'reports' | 'agenda' | 'tickets' | 'customers' | 'suppliers' | 'projects' | 'proposals' | 'orders' | 'invoices' | 'supplier_invoices' | 'payments' | 'contracts' | 'interventions' | 'products' | 'categories' | 'inventory' | 'bank_accounts' | 'hr' | 'settings' | 'development' | 'manufacturing' | 'shipments' | 'whatsapp' | 'tasks' | 'monitor' | 'activity';
+export type AppView = 'dashboard' | 'reports' | 'agenda' | 'tickets' | 'customers' | 'suppliers' | 'projects' | 'proposals' | 'orders' | 'invoices' | 'supplier_invoices' | 'pending_payments' | 'payments' | 'contracts' | 'interventions' | 'products' | 'categories' | 'inventory' | 'bank_accounts' | 'hr' | 'settings' | 'development' | 'manufacturing' | 'shipments' | 'whatsapp' | 'tasks' | 'monitor' | 'activity';
 
 export interface AppNotification {
     id: string;

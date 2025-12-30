@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Product, DolibarrConfig, Category, AppView, BOM, SupplierOrder, ThirdParty } from '../types';
 import { Package, Search, Box, Briefcase, AlertCircle, CheckCircle2, Warehouse, X, Plus, Loader2, CheckCircle, Tag, ArrowLeft, Truck, ShoppingCart, Pencil, Trash2 } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
@@ -8,10 +8,7 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useProducts, useCategories, useBOMs, useSupplierOrders, useSuppliers } from '../hooks/dolibarr';
 
-interface ProductListProps {
-    onRefresh?: () => void;
-    onNavigate?: (view: AppView, id: string) => void;
-}
+
 
 interface ProductListProps {
     onRefresh?: () => void;
@@ -22,7 +19,7 @@ interface ProductListProps {
 
 const ProductList: React.FC<ProductListProps> = ({ onRefresh, onNavigate, initialItemId, initialFilter }) => {
     const { config } = useDolibarr();
-    const { data: productsData } = useProducts(config);
+    const { data: productsData, isLoading } = useProducts(config);
     const products = productsData || [];
     const { data: categoriesData } = useCategories(config);
     const categories = categoriesData || [];
@@ -32,6 +29,14 @@ const ProductList: React.FC<ProductListProps> = ({ onRefresh, onNavigate, initia
     const supplierOrders = supplierOrdersData || [];
     const { data: suppliersData } = useSuppliers(config);
     const suppliers = suppliersData || [];
+
+    if (isLoading) {
+        return (
+            <div className="flex items-center justify-center h-screen">
+                <Loader2 className="h-8 w-8 animate-spin text-primary opacity-50" />
+            </div>
+        );
+    }
 
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
