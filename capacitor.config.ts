@@ -5,9 +5,6 @@ const config: CapacitorConfig = {
   appName: 'CoolGroove',
   webDir: 'dist',
   plugins: {
-    CapacitorUpdater: {
-      autoUpdate: true,
-    }
   }
 };
 
