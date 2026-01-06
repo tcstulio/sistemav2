@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CoolGroove</string>
+    <string name="title_activity_main">CoolGroove</string>
+    <string name="package_name">com.coolgroove.sistema</string>
+    <string name="custom_url_scheme">com.coolgroove.sistema</string>
+</resources>

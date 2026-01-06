@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './components/App';
 import AdminApp from './components/AdminApp';
 import { DolibarrProvider } from './context/DolibarrContext';
+import { WhatsAppProvider } from './contexts/WhatsAppContext';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -20,7 +21,9 @@ root.render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <DolibarrProvider>
-        {isMonitor ? <AdminApp /> : <App />}
+        <WhatsAppProvider>
+          {isMonitor ? <AdminApp /> : <App />}
+        </WhatsAppProvider>
       </DolibarrProvider>
     </QueryClientProvider>
   </React.StrictMode>

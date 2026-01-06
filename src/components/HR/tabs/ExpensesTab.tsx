@@ -12,6 +12,9 @@ interface ExpensesTabProps {
     displayLimit: number;
     onSelectExpense: (e: ExpenseReport) => void;
     onOpenScanner: () => void;
+    expenseReportLines?: any[]; // Loose type to avoid circular dependency issues now, or import ExpenseReportLine
+    expenseReportPayments?: any[];
+    projects?: any[];
 }
 
 export const ExpensesTab: React.FC<ExpensesTabProps> = ({

@@ -23,7 +23,11 @@ const TYPES = [
     'candidates', 'leave_requests', 'contracts',
     'payments', 'supplier_payments', 'boms',
     'manufacturing_orders', 'system_logs',
-    'proposal_lines', 'order_lines', 'invoice_lines', 'links'
+    'proposal_lines', 'order_lines', 'invoice_lines', 'links',
+    'payment_invoice_links', 'supplier_payment_invoice_links',
+    'expense_report_payments', 'expense_report_payment_links',
+    'vat_payments', 'salary_payments', 'social_contribution_payments',
+    'loan_payments', 'various_payments'
 ];
 
 async function fetchData(type) {

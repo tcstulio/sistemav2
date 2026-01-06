@@ -14,9 +14,13 @@ interface DashboardProps {
 }
 
 interface ForecastData {
-    forecastAmount: number;
+    forecast: Array<{
+        month: string;
+        predicted_revenue: number;
+        confidence: string;
+    }>;
+    summary: string;
     trend: 'up' | 'down' | 'stable';
-    reasoning: string;
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
@@ -92,11 +96,28 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     }, [invoices, supplierInvoices, bankAccounts, bankLines]);
 
     const cashFlowData = useMemo(() => {
-        const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-        const currentYear = new Date().getFullYear();
+        // Generate last 12 months keys
+        const monthsMap = new Map<string, { month: string, income: number, expense: number, date: Date }>();
+        const today = new Date();
 
-        // Initialize 12 months
-        const monthlyData = months.map(m => ({ month: m, income: 0, expense: 0 }));
+        // Create 12 buckets (current month - 11 months backwards)
+        for (let i = 11; i >= 0; i--) {
+            const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+            const year = d.getFullYear();
+            const month = d.getMonth();
+            const key = `${year}-${month}`;
+            const monthLabel = d.toLocaleDateString('pt-BR', { month: 'short' });
+            // For Jan/25 style label if years differ, or just Month if same year? 
+            // Better: 'Jan/26' explicitly to avoid confusion in rolling window
+            const label = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
+
+            monthsMap.set(key, {
+                month: label,
+                income: 0,
+                expense: 0,
+                date: d
+            });
+        }
 
         // Process Bank Lines
         bankLines.forEach(line => {
@@ -105,17 +126,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
             const timestamp = dateVal < 100000000000 ? dateVal * 1000 : dateVal;
             const d = new Date(timestamp);
+            const key = `${d.getFullYear()}-${d.getMonth()}`;
 
-            if (d.getFullYear() === currentYear) {
+            if (monthsMap.has(key)) {
+                const bucket = monthsMap.get(key)!;
                 if (line.amount > 0) {
-                    monthlyData[d.getMonth()].income += line.amount;
+                    bucket.income += line.amount;
                 } else {
-                    monthlyData[d.getMonth()].expense += Math.abs(line.amount);
+                    bucket.expense += Math.abs(line.amount);
                 }
             }
         });
 
-        return monthlyData;
+        // Convert Map to Array sorted by date
+        return Array.from(monthsMap.values())
+            .sort((a, b) => a.date.getTime() - b.date.getTime())
+            .map(({ month, income, expense }) => ({ month, income, expense }));
     }, [bankLines]);
 
     const recentActivityData = useMemo(() => {
@@ -439,7 +465,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                         ) : (
                             <div className="space-y-4 relative z-10 animate-in fade-in slide-in-from-bottom-2">
                                 <div className="flex items-center justify-between">
-                                    <span className="text-sm text-slate-500 dark:text-slate-400">Receita Projetada</span>
+                                    <span className="text-sm text-slate-500 dark:text-slate-400">Receita Projetada ({forecast.forecast[0]?.month})</span>
                                     <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${forecast.trend === 'up' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
                                         forecast.trend === 'down' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
                                             'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
@@ -449,7 +475,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                 </div>
                                 <div className="flex items-end gap-2">
                                     <span className="text-3xl font-bold text-slate-800 dark:text-white">
-                                        {formatCurrency(forecast.forecastAmount)}
+                                        {formatCurrency(forecast.forecast[0]?.predicted_revenue || 0)}
                                     </span>
                                     <span className="mb-1 text-slate-400 text-sm">/ próximo mês</span>
                                 </div>
@@ -461,9 +487,27 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                         {forecast.trend === 'up' ? <ArrowUpRight size={16} className="mt-0.5" /> :
                                             forecast.trend === 'down' ? <ArrowDownRight size={16} className="mt-0.5" /> :
                                                 <Minus size={16} className="mt-0.5" />}
-                                        {forecast.reasoning}
+                                        {forecast.summary}
                                     </div>
+
+                                    {/* Mini table for next 3 months */}
+                                    {forecast.forecast.length > 0 && (
+                                        <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700 grid grid-cols-3 gap-2">
+                                            {forecast.forecast.map((f, i) => (
+                                                <div key={i} className={`text-center ${i === 0 ? 'bg-indigo-50 dark:bg-indigo-900/20 rounded py-1 border border-indigo-100 dark:border-indigo-800' : ''}`}>
+                                                    <div className="text-[10px] uppercase text-slate-500">{f.month.split(' ')[0]} {i === 0 ? '(Atual)' : ''}</div>
+                                                    <div className={`text-xs font-bold ${i === 0 ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300'}`}>
+                                                        {formatCurrency(f.predicted_revenue)}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
+                                <div className="mt-2 text-xs text-center text-slate-400">
+                                    * Mês atual ({forecast.forecast[0]?.month}) exibe previsão de fechamento (Realizado + Tendência).
+                                </div>
+
                                 <button
                                     onClick={() => setForecast(null)}
                                     className="text-xs text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 underline"
@@ -473,8 +517,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                             </div>
                         )}
                     </div>
-
-                    {/* Operational Alerts / Late Tasks / Low Stock */}
 
                     {/* Operational Alerts / Late Tasks / Low Stock */}
                     {(lateTasks.length > 0 || lowStockItems.length > 0) && (
@@ -576,7 +618,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                     </div>
                 </div>
             </div>
-        </div>
+        </div >
     );
 };
 

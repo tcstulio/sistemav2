@@ -11,7 +11,7 @@ export interface Project {
     progress: number;
     date_creation?: number;
     date_modification?: number;
-    date_modification?: number;
+
     fk_user_creat?: string;
     fk_user_modif?: string;
     budget_amount?: number;
@@ -26,6 +26,9 @@ export interface Task {
     date_start?: number;
     date_end?: number;
     progress: number;
+    priority?: number;
+    status?: number; // fk_statut as integer
+    statut?: string; // mapped status label if needed
     planned_workload?: number; // seconds
     duration_effective?: number; // seconds
     fk_user_assign?: string;
@@ -34,6 +37,8 @@ export interface Task {
     raw?: any;
     date_creation?: number;
     date_modification?: number;
+    project_ref?: string;
+    project_title?: string;
 }
 
 export interface InterventionLine {
@@ -129,5 +134,34 @@ export interface SystemLog {
     elementtype?: string; // Type of entity (facture, propal, ticket, etc.)
     fk_element?: string; // ID of the related entity
     date_creation?: number;
+    date_modification?: number;
+}
+
+export interface TaskTimeLog {
+    id: string;
+    task_id: string;
+    date: number;
+    date_start?: number; // Added for precise time
+    duration: number; // seconds
+    user_id?: string;
+    note?: string;
+    date_modification: number;
+}
+
+export interface TaskContact {
+    id: string;
+    task_id: string;
+    contact_id?: string;
+    user_id?: string;
+    type_id: string; // e.g., 'SHARED', 'CONTRIBUTOR'
+    date_modification?: number;
+}
+
+export interface ProjectContact {
+    id: string;
+    project_id: string;
+    contact_id?: string;
+    user_id?: string;
+    type_id: string;
     date_modification?: number;
 }

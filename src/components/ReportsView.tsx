@@ -99,7 +99,7 @@ const ReportsView: React.FC = () => {
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");
         link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `DoliGenAI_Relatorio_${currentYear}.csv`);
+        link.setAttribute("download", `CoolGroove_Relatorio_${currentYear}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);

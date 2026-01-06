@@ -198,13 +198,16 @@ router.post('/draft/collection-email', async (req, res) => {
 
 // Sales Forecast
 const SalesForecastSchema = z.object({
-    invoices: z.array(z.any())
+    invoices: z.array(z.any()),
+    context: z.any().optional()
 });
 
 router.post('/analyze/sales-forecast', async (req, res) => {
     try {
-        const { invoices } = SalesForecastSchema.parse(req.body);
-        const result = await aiService.generateSalesForecast(invoices);
+        const { invoices, context } = SalesForecastSchema.parse(req.body);
+        // We pass context if the service supports it, or just invoices.
+        // For now, service logic infers from dates, but we keep the route flexible.
+        const result = await aiService.generateSalesForecast(invoices, context);
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -280,6 +283,24 @@ router.post('/analyze/logs', async (req, res) => {
     try {
         const { logs } = AnalyzeLogsSchema.parse(req.body);
         const result = await aiService.analyzeSystemLogs(logs);
+        res.json({ result });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Analyze Monthly Report
+const AnalyzeReportSchema = z.object({
+    data: z.any()
+});
+
+router.post('/analyze/monthly-report', async (req, res) => {
+    try {
+        const { data } = AnalyzeReportSchema.parse(req.body);
+        const result = await aiService.analyzeMonthlyReport(data);
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {

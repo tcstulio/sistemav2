@@ -1,11 +1,11 @@
 {
-    "name": "doligen-backend",
+    "name": "coolgroove-backend",
     "version": "1.0.0",
     "description": "Backend for Dolibarr + WhatsApp Integration",
     "main": "dist/server.js",
     "scripts": {
         "start": "node dist/server.js",
-        "dev": "nodemon src/server.ts",
+        "dev": "nodemon",
         "build": "tsc"
     },
     "keywords": [],
@@ -19,6 +19,7 @@
         "@types/nodemailer": "^7.0.4",
         "@types/uuid": "^10.0.0",
         "axios": "^1.6.0",
+        "cheerio": "^1.1.2",
         "cors": "^2.8.5",
         "csv-parse": "^6.1.0",
         "dotenv": "^16.3.1",
@@ -43,6 +44,7 @@
         "@types/fluent-ffmpeg": "^2.1.28",
         "@types/node": "^20.10.0",
         "@types/qrcode": "^1.5.6",
+        "@types/sanitize-html": "^2.16.0",
         "nodemon": "^3.0.1",
         "ts-node": "^10.9.1",
         "typescript": "^5.3.2"

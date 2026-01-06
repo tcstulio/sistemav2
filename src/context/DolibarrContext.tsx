@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { DolibarrConfig, ThirdParty, Invoice, Product, Proposal, Order, Project, Task, BankAccount, BankLine, AgendaEvent, DolibarrUser, SupplierInvoice, SupplierOrder, Ticket, Warehouse, StockMovement, Intervention, ExpenseReport, RecruitmentJobPosition, Candidate, LeaveRequest, Contract, ManufacturingOrder, BOM, Shipment, Contact, AppNotification, DolibarrModule } from '../types';
 import { DolibarrService } from '../services/dolibarrService';
 import { dbService } from '../services/dbService';
+import { WhatsAppService } from '../services/whatsappService';
+import { AutomationService } from '../services/automationService';
 import { useDolibarrData } from '../hooks/useDolibarrData';
 import { runBackgroundSync } from '../services/backgroundSyncService';
 
@@ -27,7 +29,15 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [config, setConfigState] = useState<DolibarrConfig | null>(null);
   const [isSyncPaused, setIsSyncPaused] = useState(false);
   const [currentUser, setCurrentUser] = useState<DolibarrUser | null>(null);
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  // 1. Load notifications from local storage
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
+    try {
+      const saved = localStorage.getItem('coolgroove_notifications');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
   const [isInitialized, setIsInitialized] = useState(false);
 
   // 1. Permission Logic (Must be defined before data hook)
@@ -121,7 +131,12 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     isLoading, isSyncing, error, refreshData
   } = useDolibarrData({ config, canAccess, isSyncPaused });
 
-  // 3. Effect to bubble up hook errors to notifications
+  // 3. Persistence for notifications
+  useEffect(() => {
+    localStorage.setItem('coolgroove_notifications', JSON.stringify(notifications));
+  }, [notifications]);
+
+  // 3b. Effect to bubble up hook errors to notifications
   useEffect(() => {
     if (error) {
       setNotifications(prev => [{
@@ -131,21 +146,173 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [error]);
 
+  // Removed direct WA sending in favor of AutomationService
+
+
+  // Helper to process sync changes for notifications
+  const processSyncChanges = useCallback((changes: Record<string, any[]>) => {
+    if (!currentUser) return;
+
+    const newNotes: AppNotification[] = [];
+    const now = Date.now();
+    const automationTriggers: { context: any }[] = [];
+
+    // Check Tasks
+    if (changes.tasks && changes.tasks.length > 0) {
+      changes.tasks.forEach((task: Task) => {
+        // Only interested if assigned to me or created by me (if I care about updates)
+        // Focusing on assignments to me
+        if (task.fk_user_assign === currentUser.id || task.fk_user_assign === currentUser.login) {
+          // Determine type
+          const isNew = Math.abs((task.date_modification || 0) - (task.date_creation || 0)) < 600; // Created within last 10 mins of update
+          const isDone = Number(task.progress) === 100;
+          // Spam prevention: Ignore items older than 48h
+          if ((now - (task.date_modification || 0)) > 48 * 60 * 60 * 1000) return;
+
+          // Duplicate check (simple) - if we already have a unread notification for this ID
+          const exists = notifications.some(n => n.linkTo?.id === task.id && !n.read);
+          if (exists) return;
+
+          if (isDone) {
+            // Maybe don't notify me if I finished it? Only if someone else finished it?
+            // Skip completion for now to avoid self-spam
+          } else if (isNew) {
+            newNotes.push({
+              id: `task-${task.id}-${now}`,
+              type: 'info',
+              priority: 'medium',
+              title: 'Nova Tarefa Atribuída',
+              message: `${task.ref} - ${task.label}`,
+              date: now,
+              read: false,
+              linkTo: { view: 'tasks', id: task.id }
+            });
+            automationTriggers.push({
+              context: {
+                title: 'Nova Tarefa Atribuída',
+                message: `${task.ref} - ${task.label}`,
+                type: 'task',
+                user_phone: currentUser.phone_mobile,
+                user_email: currentUser.email,
+                ref: task.ref,
+                label: task.label
+              }
+            });
+          } else {
+            // Update
+            // Optional: Uncomment to enable update notifications
+            /*
+            newNotes.push({
+                id: `task-upt-${task.id}-${now}`,
+                type: 'info',
+                priority: 'low',
+                title: 'Tarefa Atualizada',
+                message: `${task.ref} - ${task.label}`,
+                date: now,
+                read: false,
+                linkTo: { view: 'tasks', id: task.id }
+            });
+            */
+          }
+        }
+      });
+    }
+
+    // Check Events (Agenda)
+    if (changes.events && changes.events.length > 0) {
+      changes.events.forEach((evt: AgendaEvent) => {
+        // Check assignee (user_assigned holds ID)
+        if (evt.user_assigned === currentUser.id || evt.user_assigned === currentUser.login) {
+          // Spam prevention
+          if ((now - (evt.date_modification || 0)) > 48 * 60 * 60 * 1000) return;
+
+          const isNew = Math.abs((evt.date_modification || 0) - (evt.date_c || 0)) < 600;
+          if (isNew) {
+            newNotes.push({
+              id: `evt-${evt.id}-${now}`,
+              type: 'info',
+              priority: 'medium',
+              title: 'Novo Evento na Agenda',
+              message: `${evt.label} (${new Date((evt.date_start || 0)).toLocaleDateString()})`,
+              date: now,
+              read: false,
+              linkTo: { view: 'agenda', id: evt.id }
+            });
+            automationTriggers.push({
+              context: {
+                title: 'Novo Evento',
+                message: `${evt.label} em ${new Date((evt.date_start || 0)).toLocaleDateString()}`,
+                type: 'event',
+                user_phone: currentUser.phone_mobile,
+                user_email: currentUser.email,
+                label: evt.label
+              }
+            });
+          }
+        }
+      });
+    }
+
+    // Check Tickets
+    if (changes.tickets && changes.tickets.length > 0) {
+      changes.tickets.forEach((tick: Ticket) => {
+        if (tick.fk_user_assign === currentUser.id) {
+          // Spam prevention
+          if ((now - (tick.date_modification || 0)) > 48 * 60 * 60 * 1000) return;
+
+          const isNew = Math.abs((tick.tms || 0) - (tick.datec || 0)) < 600;
+          if (isNew) {
+            newNotes.push({
+              id: `tick-${tick.id}-${now}`,
+              type: 'ticket',
+              priority: 'high',
+              title: 'Novo Ticket Atribuído',
+              message: `${tick.ref} - ${tick.subject}`,
+              date: now,
+              read: false,
+              linkTo: { view: 'tickets', id: tick.id }
+            });
+            automationTriggers.push({
+              context: {
+                title: 'Novo Chamado',
+                message: `${tick.ref} - ${tick.subject}`,
+                type: 'ticket',
+                user_phone: currentUser.phone_mobile,
+                user_email: currentUser.email,
+                ref: tick.ref,
+                subject: tick.subject
+              }
+            });
+          }
+        }
+      });
+    }
+
+    if (newNotes.length > 0) {
+      setNotifications(prev => [...newNotes, ...prev]);
+
+      // Trigger Automations
+      automationTriggers.forEach(trigger => {
+        AutomationService.trigger('notification_created', trigger.context);
+      });
+    }
+  }, [currentUser, notifications]);
+
   // Background sync flag
   const hasRunBackgroundSync = useRef(false);
 
   // 4. Config & User Loading Logic (Existing)
   useEffect(() => {
     const loadConfig = async () => {
-      const savedConfig = localStorage.getItem('doligen_config');
+      const savedConfigObj = JSON.parse(localStorage.getItem('coolgroove_config') || '{}');
 
-      if (savedConfig) {
+      if (Object.keys(savedConfigObj).length > 0) {
         try {
-          const parsed = JSON.parse(savedConfig);
+          const parsed = savedConfigObj;
 
           if (!parsed.apiKey || parsed.apiKey.trim() === '') {
             console.warn("[DolibarrContext] Invalid config. Resetting.");
-            localStorage.removeItem('doligen_config');
+            localStorage.removeItem('coolgroove_config');
           } else {
             // Load User from Cache
             if (parsed.currentUser) {
@@ -155,7 +322,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
                   const freshUser = await DolibarrService.fetchCurrentUser(parsed, parsed.currentUser.login);
                   if (freshUser) {
                     parsed.currentUser = freshUser;
-                    localStorage.setItem('doligen_config', JSON.stringify(parsed));
+                    localStorage.setItem('coolgroove_config', JSON.stringify(parsed));
                   }
                 } catch (e) { console.error("User refresh failed", e); }
               }
@@ -170,7 +337,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
                 setCurrentUser(u);
                 const updated = { ...parsed, currentUser: u };
                 setConfigState(updated);
-                localStorage.setItem('doligen_config', JSON.stringify(updated));
+                localStorage.setItem('coolgroove_config', JSON.stringify(updated));
               }
             }).catch(err => console.warn("Background user refresh failed", err));
 
@@ -183,6 +350,8 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
                 if (result.errors.length > 0) {
                   console.warn('[DolibarrContext] Background sync errors:', result.errors);
                 }
+                // Process notifications
+                processSyncChanges(result.changes);
               }).catch(err => {
                 console.error('[DolibarrContext] Background sync failed:', err);
               });
@@ -203,7 +372,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   useEffect(() => {
     if (config) {
       document.documentElement.classList.toggle('dark', config.darkMode);
-      localStorage.setItem('doligen_config', JSON.stringify(config));
+      localStorage.setItem('coolgroove_config', JSON.stringify(config));
     }
   }, [config]);
 
@@ -211,9 +380,14 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   useEffect(() => {
     if (!config?.autoSyncInterval || config.autoSyncInterval <= 0) return;
     const intervalId = setInterval(() => {
-      if (!isSyncPaused && !isLoading && !isSyncing) {
+      if (!isSyncPaused && !isLoading && !isSyncing && config) {
         console.log("Auto-sync triggering...");
-        refreshData();
+        // Call global background sync to ensure DB is updated
+        runBackgroundSync(config).then((result) => {
+          processSyncChanges(result.changes);
+          // Then invalidate queries to refresh UI
+          refreshData();
+        });
       }
     }, config.autoSyncInterval * 60 * 1000);
     return () => clearInterval(intervalId);
@@ -236,12 +410,13 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
           if (result.errors.length > 0) {
             console.warn('[DolibarrContext] Background sync errors:', result.errors);
           }
+          processSyncChanges(result.changes);
         }).catch(err => {
           console.error('[DolibarrContext] Background sync failed:', err);
         });
       }
     } else {
-      localStorage.removeItem('doligen_config');
+      localStorage.removeItem('coolgroove_config');
       dbService.clearAll().catch(console.error);
       setCurrentUser(null);
       hasRunBackgroundSync.current = false; // Reset on logout

@@ -6,9 +6,12 @@ interface RichTextEditorProps {
     onChange: (value: string) => void;
     placeholder?: string;
     className?: string;
+    minHeight?: string;
+    maxHeight?: string;
+    onKeyDown?: (e: React.KeyboardEvent) => void;
 }
 
-export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange, placeholder, className = '' }) => {
+export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange, placeholder, className = '', minHeight = '80px', maxHeight, onKeyDown }) => {
     const editorRef = useRef<HTMLDivElement>(null);
     const [isFocused, setIsFocused] = useState(false);
 
@@ -55,13 +58,14 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
             </div>
             <div
                 ref={editorRef}
-                className="p-3 text-xs min-h-[80px] outline-none max-h-60 overflow-y-auto dark:text-white"
+                className="p-2 outline-none text-sm text-slate-700 dark:text-slate-200 overflow-y-auto"
+                style={{ whiteSpace: 'pre-wrap', minHeight, maxHeight }}
+                onKeyDown={onKeyDown}
                 contentEditable
                 onInput={handleInput}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 data-placeholder={placeholder}
-                style={{ whiteSpace: 'pre-wrap' }}
             />
             <style>{`
                 [contenteditable]:empty:before {

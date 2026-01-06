@@ -1,12 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Project, ThirdParty, DolibarrConfig, AppView, Task, Invoice, SupplierInvoice, Intervention, ExpenseReport, ManufacturingOrder, Contract, DolibarrDocument } from '../types';
-import { FolderKanban, Search, Plus, X, Loader2, CheckCircle2, Clock, Calendar, ArrowRight, Settings, BarChart3, ArrowDown, ExternalLink, ArrowUp, Receipt, User, Factory, Package, FileSignature, Files, File, Trash2, Upload, Briefcase, ShoppingCart, Truck, Pencil, Save, AlertTriangle, MapPin } from 'lucide-react';
+import { FolderKanban, Search, Plus, X, Loader2, CheckCircle2, Clock, Calendar, ArrowRight, Settings, BarChart3, ArrowDown, ExternalLink, ArrowUp, Receipt, User, Factory, Package, FileSignature, Files, File, Trash2, Upload, Briefcase, ShoppingCart, Truck, Pencil, Save, AlertTriangle, MapPin, Sparkles } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 // Direct Hook Imports
 import { useDolibarr } from '../context/DolibarrContext';
-import { useProjects, useCustomers, useTasks, useInvoices, useSupplierInvoices, useInterventions, useExpenseReports, useManufacturingOrders, useContracts, useTickets, useEvents, useLinks, useProposals, useOrders, useShipments, useSupplierOrders, useUsers } from '../hooks/dolibarr';
+import { useProjects, useCustomers, useTasks, useInvoices, useSupplierInvoices, useInterventions, useExpenseReports, useManufacturingOrders, useContracts, useTickets, useEvents, useLinks, useProposals, useOrders, useShipments, useSupplierOrders, useUsers, useProjectContacts, useContacts } from '../hooks/dolibarr';
 
 // Common Components
 import { GenericListLayout } from './common/GenericListLayout';
@@ -14,6 +14,8 @@ import { PaginationControls } from './common/PaginationControls';
 import { StatusFilterBar } from './common/StatusFilterBar';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
+import { TaskWizard } from './Projects/TaskWizard';
+import { ChatInterface } from './Chat/ChatInterface'; // Import direct or via index
 
 interface ProjectListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -53,6 +55,8 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
     const { data: shipments = [] } = useShipments(config, !!config);
     const { data: supplierOrders = [] } = useSupplierOrders(config, !!config);
     const { data: users = [] } = useUsers(config);
+    const { data: projectContacts = [] } = useProjectContacts(config);
+    const { data: contacts = [] } = useContacts(config);
 
     // Pagination
     const [page, setPage] = useState(0);
@@ -64,7 +68,7 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
 
     // Selection & Tabs
     const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-    const [activeTab, setActiveTab] = useState<'overview' | 'tasks' | 'tickets' | 'events' | 'financials' | 'sales' | 'shipments' | 'purchases' | 'interventions' | 'expenses' | 'manufacturing' | 'contracts' | 'documents' | 'debug'>('overview');
+    const [activeTab, setActiveTab] = useState<'overview' | 'tasks' | 'tickets' | 'events' | 'financials' | 'sales' | 'shipments' | 'purchases' | 'interventions' | 'expenses' | 'manufacturing' | 'contracts' | 'documents' | 'debug' | 'team' | 'chat'>('overview');
 
     // Documents State
     const [documents, setDocuments] = useState<DolibarrDocument[]>([]);
@@ -83,6 +87,7 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
 
     // Task CRUD State
     const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+    const [isWizardOpen, setIsWizardOpen] = useState(false);
     const [taskForm, setTaskForm] = useState({ label: '', description: '', planned_workload: 0, date_start: '', date_end: '' });
     const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
@@ -609,6 +614,7 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                             {processingId ? <Loader2 className="animate-spin" size={14} /> : <CheckCircle2 size={14} />} Validar
                         </button>
                     )}
+
                     <button onClick={openEditModal} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors" title="Editar Projeto"><Pencil size={20} /></button>
                     <button onClick={handleDeleteProject} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" title="Excluir Projeto"><Trash2 size={20} /></button>
                     <button className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><Settings size={20} /></button>
@@ -616,7 +622,7 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                 </div>
             </div>
 
-            <div className="flex border-b border-slate-100 dark:border-slate-800 px-4 overflow-x-auto flex-none bg-slate-50 dark:bg-slate-800/30">
+            <div className="flex border-b border-slate-100 dark:border-slate-800 px-6 gap-6 overflow-x-auto flex-none bg-slate-50 dark:bg-slate-800/30 w-full no-scrollbar items-center">
                 {[
                     { id: 'overview', label: 'Visão Geral' },
                     { id: 'tasks', label: `Tarefas (${projectTasks.length})` },
@@ -624,18 +630,20 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                     { id: 'sales', label: `Comercial (${projectProposals.length + projectOrders.length})` },
                     { id: 'shipments', label: `Envios (${projectShipments.length})` },
                     { id: 'purchases', label: `Compras (${projectSupplierOrders.length})` },
+                    { id: 'chat', label: 'Chat' },
                     { id: 'events', label: `Eventos (${projectEvents.length})` },
                     { id: 'financials', label: 'Financeiro' },
                     { id: 'interventions', label: `Intervenções (${projectInterventions.length})` },
                     { id: 'manufacturing', label: `Produção (${projectMOs.length})` },
                     { id: 'contracts', label: `Contratos (${projectContracts.length})` },
+                    { id: 'team', label: 'Equipe' },
                     { id: 'documents', label: 'Documentos' },
                     { id: 'debug', label: '🔧 Debug' }
                 ].map(tab => (
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id as any)}
-                        className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === tab.id ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                        className={`py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === tab.id ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
                     >
                         {tab.label}
                     </button>
@@ -644,6 +652,44 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
 
             <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-950/50">
                 <div className="max-w-4xl mx-auto space-y-6">
+                    {activeTab === 'team' && (
+                        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
+                            <h3 className="font-bold text-slate-800 dark:text-white mb-4">Equipe do Projeto</h3>
+                            {(() => {
+                                const team = projectContacts.filter(c => String(c.project_id) === String(selectedProject.id));
+
+                                const resolveParticipantName = (p: { user_id?: string, contact_id?: string }) => {
+                                    if (p.user_id) {
+                                        const u = users.find(u => String(u.id) === String(p.user_id));
+                                        return u ? (u.firstname + ' ' + (u.lastname || '')).trim() : 'Usuário ' + p.user_id;
+                                    }
+                                    if (p.contact_id) {
+                                        const c = contacts.find(c => String(c.id) === String(p.contact_id));
+                                        return c ? (c.firstname + ' ' + (c.lastname || '')).trim() : 'Contato ' + p.contact_id;
+                                    }
+                                    return 'Desconhecido';
+                                };
+
+                                if (team.length === 0) return <p className="text-slate-400">Nenhum membro na equipe.</p>;
+
+                                return (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                        {team.map(p => (
+                                            <div key={p.id} className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
+                                                <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/50 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-bold text-xs">
+                                                    {(resolveParticipantName(p)[0] || '?').toUpperCase()}
+                                                </div>
+                                                <div>
+                                                    <p className="text-sm font-medium text-slate-900 dark:text-white">{resolveParticipantName(p)}</p>
+                                                    <p className="text-xs text-slate-500 capitalize">{p.type_id}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
+                        </div>
+                    )}
                     {activeTab === 'debug' && (
                         <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-auto">
                             <h3 className="font-bold text-slate-800 dark:text-white mb-4">Raw Links Debugger</h3>
@@ -687,6 +733,13 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                                     <p className="text-center py-4 text-slate-400">No links found for this project ID in local store.</p>
                                 )}
                         </div>
+                    )}
+                    {activeTab === 'chat' && (
+                        <ChatInterface
+                            elementId={selectedProject.id}
+                            elementType="project"
+                            title={`Chat do Projeto ${selectedProject.ref}`}
+                        />
                     )}
                     {activeTab === 'overview' && (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -764,11 +817,16 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
 
                     {activeTab === 'tasks' && (
                         <div className="space-y-3">
-                            <div className="flex justify-between items-center mb-4">
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                                 <h3 className="font-bold text-slate-800 dark:text-white">Tarefas do Projeto</h3>
-                                <button onClick={() => openTaskModal()} className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition-colors">
-                                    <Plus size={16} /> Nova Tarefa
-                                </button>
+                                <div className="flex gap-2 w-full sm:w-auto">
+                                    <button onClick={() => setIsWizardOpen(true)} className="flex-1 sm:flex-none justify-center flex items-center gap-2 px-3 py-1.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded-lg text-xs font-medium hover:bg-indigo-200 transition-colors">
+                                        <Sparkles size={16} /> Wizard
+                                    </button>
+                                    <button onClick={() => openTaskModal()} className="flex-1 sm:flex-none justify-center flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition-colors">
+                                        <Plus size={16} /> Nova Tarefa
+                                    </button>
+                                </div>
                             </div>
                             {projectTasks.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhuma tarefa encontrada.</p> : projectTasks.map(t => (
                                 <div key={t.id} onClick={() => onNavigate && onNavigate('tasks', t.id)} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center hover:shadow-sm transition-shadow group cursor-pointer hover:border-indigo-300">
@@ -1008,7 +1066,7 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                                 <h3 className="font-bold text-slate-800 dark:text-white">Eventos do Projeto</h3>
                             </div>
                             {projectEvents.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhum evento encontrado.</p> : projectEvents.map(e => (
-                                <div key={e.id} onClick={() => onNavigate && onNavigate('events', e.id)} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:shadow-sm transition-shadow cursor-pointer">
+                                <div key={e.id} onClick={() => onNavigate && onNavigate('agenda', e.id)} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:shadow-sm transition-shadow cursor-pointer">
                                     <div className="flex items-center justify-between mb-2">
                                         <div className="flex items-center gap-2">
                                             <Calendar size={18} className="text-indigo-500" />
@@ -1358,6 +1416,19 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
                         </form>
                     </div>
                 </div>
+            )}
+            {/* Task Wizard */}
+            {selectedProject && (
+                <TaskWizard
+                    isOpen={isWizardOpen}
+                    onClose={() => setIsWizardOpen(false)}
+                    project={selectedProject}
+                    config={config}
+                    users={users}
+                    allProjects={projects}
+                    allTasks={tasks}
+                    onSuccess={() => { refreshData && refreshData(); }}
+                />
             )}
         </>
     );

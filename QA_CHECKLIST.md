@@ -1,5 +1,4 @@
-
-# DoliGenAI - Log de Verificação do Sistema
+# CoolGrooveAI - Log de Verificação do Sistema
 
 Este documento serve como um roteiro de QA (Quality Assurance) para validar a estabilidade e funcionalidade da aplicação.
 

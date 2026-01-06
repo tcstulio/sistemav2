@@ -100,19 +100,20 @@ export const updateTask = async (config: DolibarrConfig, id: string, data: any) 
     });
 };
 
-export const updateTaskTime = async (config: DolibarrConfig, taskId: string, timeAdded: number) => {
-    // Usually adding time spent
+export const addTaskTimeLog = async (config: DolibarrConfig, taskId: string, duration: number, date?: number, note?: string, user_id?: string) => {
+    // Standard endpoint usually is /tasks/{id}/addtimespent
     const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/addtimespent`;
-    // If not standard, fallback to update
-    // Assuming a PUT on task or POST on sub-resource
-    // Let's implement generic update if specific doesn't exist
-    // But since this signature is specific, let's assume it logs time.
-    // NOTE: Default API might not have `addtimespent` easily exposed, check standard.
-    // If unknown, implement as update to `duration_effective`.
+    const payload: any = {
+        duration: duration,
+        date: date || Math.floor(Date.now() / 1000),
+        note: note
+    };
+    if (user_id) payload.fk_user = user_id;
+
     return request(url, {
         method: 'POST',
         headers: getHeaders(config.apiKey),
-        body: JSON.stringify({ duration: timeAdded, date: Date.now() / 1000 })
+        body: JSON.stringify(payload)
     });
 };
 
@@ -183,5 +184,15 @@ export const validateIntervention = async (config: DolibarrConfig, id: string) =
         method: 'POST',
         headers: getHeaders(config.apiKey),
         body: JSON.stringify({})
+    });
+};
+
+export const addTaskParticipant = async (config: DolibarrConfig, taskId: string, userId: string) => {
+    // Falls back to /tasks/{id}/contact or similar custom endpoint
+    const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/participants`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({ id: userId })
     });
 };

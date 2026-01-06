@@ -1,11 +1,13 @@
 
 
-export const DB_NAME = 'DoliGenDB';
-export const DB_VERSION = 16; // Bumped version to force re-sync of main objects with project links
+export const DB_NAME = 'CoolGrooveDB';
+export const DB_VERSION = 29; // Bumped version to include User Rights
+
+// ... (existing code)
 
 const STORES = [
     'customers', 'suppliers', 'categories', 'contacts', 'invoices',
-    'supplierInvoices', 'products', 'proposals', 'orders', 'shipments',
+    'supplierInvoices', 'supplierProposals', 'products', 'proposals', 'orders', 'shipments',
     'projects', 'tasks', 'bankAccounts', 'bankLines', 'events',
     'users', 'supplierOrders', 'interventions', 'expenseReports',
     'jobPositions', 'tickets', 'warehouses', 'stockMovements', 'candidates',
@@ -16,6 +18,7 @@ const STORES = [
     // Line item stores
     'links',
     'proposalLines',
+    'supplierProposalLines',
     'orderLines',
     'invoiceLines',
     'shipmentLines',
@@ -23,6 +26,27 @@ const STORES = [
     'supplierInvoiceLines',
     'interventionLines',
     'bomLines',
+    'taskTimeLogs', // Added missing Task Time Logs
+    'taskContacts', // Added missing Task Contacts
+    'expenseReportLines', // Added Expense Report Lines
+    'expenseTypes', // Added Expense Types Dictionary
+    // Payment Stores
+    'paymentInvoiceLinks',
+    'supplierPaymentInvoiceLinks',
+    'expenseReportPayments', // Added missing store
+    'expenseReportPaymentLinks', // Added missing store
+    'vatPayments', // Added missing store
+    'salaryPayments', // Added missing store
+    'socialContributionPayments', // Added missing store
+    'loanPayments', // Added missing store
+    'variousPayments', // Added missing store
+    'projectContacts', // Added Project Contacts for visibility
+    'groups', // Added User Groups
+    'groupUsers', // Added User-Group Links
+    'permissions', // Added Permissions
+    'groupRights', // Added Group Rights
+    'userRights', // Added User Rights
+    'leads', // Added Leads
 ];
 
 export const dbService = {
@@ -58,6 +82,57 @@ export const dbService = {
                             db.deleteObjectStore(store);
                         }
                     });
+                }
+
+                // v18: Force re-sync of payments to fetch new fields (mode, note, num_paiement)
+                if (oldVersion < 18) {
+                    console.log("Upgrading to v18: Clearing payment stores to force re-sync of new fields...");
+                    const storesToClear = ['payments', 'supplierPayments'];
+                    storesToClear.forEach(store => {
+                        if (db.objectStoreNames.contains(store)) {
+                            db.deleteObjectStore(store);
+                        }
+                    });
+                }
+
+                // v19 - Force re-sync of payments to fix bank account mapping (transaction_id vs bank_account_id)
+                if (oldVersion < 19) {
+                    console.log("Upgrading to v19 - Clearing payments for bank account ID fix");
+                    const storesToClear = ['payments', 'supplierPayments'];
+                    storesToClear.forEach(storeName => {
+                        if (db.objectStoreNames.contains(storeName)) {
+                            db.deleteObjectStore(storeName);
+                        }
+                    });
+                }
+
+                // v20 - Ensure new payment stores exist (automatic via STORES loop below, but we can log or force clear if we wanted)
+                if (oldVersion < 20) {
+                    console.log("Upgrading to v20 - Creating detailed payment stores");
+                    // No need to delete/clear unless we want to force re-fetch.
+                    // New stores will be created by the STORES loop.
+                }
+
+                // v23 - Force re-sync of users to fetch supervisor_id
+                if (oldVersion < 23) {
+                    console.log("Upgrading to v23 - Clearing users to fetch hierarchy...");
+                    if (db.objectStoreNames.contains('users')) {
+                        db.deleteObjectStore('users');
+                    }
+                }
+
+                // v24 - Add projectContacts store
+                if (oldVersion < 24) {
+                    console.log("Upgrading to v24 - Adding projectContacts store...");
+                    // Store creation happens in the loop below
+                }
+
+                // v25 - Force re-sync of taskContacts to fix user_id mapping
+                if (oldVersion < 25) {
+                    console.log("Upgrading to v25 - Clearing taskContacts for re-sync...");
+                    if (db.objectStoreNames.contains('taskContacts')) {
+                        db.deleteObjectStore('taskContacts');
+                    }
                 }
 
                 STORES.forEach(storeName => {

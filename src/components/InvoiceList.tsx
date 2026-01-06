@@ -8,11 +8,13 @@ import { LinkedObjects } from './common/LinkedObjects';
 import { PaginationControls } from './common/PaginationControls';
 import { StatusFilterBar } from './common/StatusFilterBar';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useInvoices, useCustomers, useProjects, useProducts, useShipments, useInvoiceLines, useUsers } from '../hooks/dolibarr';
+import { useInvoices, useCustomers, useProjects, useProducts, useShipments, useInvoiceLines, useUsers, usePayments, usePaymentInvoiceLinks } from '../hooks/dolibarr';
 
 // Direct Hook Imports
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
+import { RichTextEditor } from './common/RichTextEditor';
+import { CustomerPaymentModal } from './Modals/CustomerPaymentModal';
 
 interface InvoiceListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -36,6 +38,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const { data: shipments = [] } = useShipments(config, !!config);
     const { data: allInvoiceLines = [] } = useInvoiceLines(config);
     const { data: users = [] } = useUsers(config);
+    const { data: payments = [] } = usePayments(config);
+    const { data: paymentLinks = [] } = usePaymentInvoiceLinks(config);
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState<'all' | 'unpaid' | 'paid' | 'draft'>('all');
@@ -61,18 +65,23 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const [newInvoice, setNewInvoice] = useState({
         socid: '',
         date: new Date().toISOString().split('T')[0],
-        items: [] as { productId: string, desc: string, qty: number, price: number }[]
+        items: [] as { productId: string, desc: string, qty: number, price: number, remise_percent: number }[]
     });
+
+    // Edit State
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editingInvoiceData, setEditingInvoiceData] = useState<{
+        id: string;
+        ref: string;
+        socid: string;
+        date: string;
+        items: { id?: string, productId: string, desc: string, qty: number, price: number, remise_percent: number }[];
+        deletedLineIds: string[];
+    } | null>(null);
 
     // Payment State
     const [isPayModalOpen, setIsPayModalOpen] = useState(false);
     const [selectedInvoiceForPay, setSelectedInvoiceForPay] = useState<Invoice | null>(null);
-    const [payForm, setPayForm] = useState({
-        amount: 0,
-        date: new Date().toISOString().split('T')[0],
-        mode: 'WIRE'
-    });
-    const [isSubmittingPay, setIsSubmittingPay] = useState(false);
 
     // Helper to find customer name
     const getCustomerName = (socid: string) => {
@@ -242,39 +251,145 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
         }
     };
 
+    // --- Edit Logic ---
+    const handleEditClick = (e: React.MouseEvent, invoice: Invoice) => {
+        e.stopPropagation();
+        const lines = allInvoiceLines.filter(line => String(line.parent_id) === String(invoice.id));
+
+        setEditingInvoiceData({
+            id: invoice.id,
+            ref: invoice.ref,
+            socid: invoice.socid,
+            date: new Date(invoice.date * 1000).toISOString().split('T')[0],
+            items: lines.map(l => ({
+                id: l.id,
+                productId: l.product_id || '',
+                desc: l.description || '',
+                qty: l.qty,
+                price: l.subprice || 0
+            })),
+            deletedLineIds: []
+        });
+        setIsEditModalOpen(true);
+    };
+
+    const handleEditAddItem = () => {
+        if (!editingInvoiceData) return;
+        setEditingInvoiceData({
+            ...editingInvoiceData,
+            items: [...editingInvoiceData.items, { productId: '', desc: '', qty: 1, price: 0, remise_percent: 0 }]
+        });
+    };
+
+    const handleUpdateEditItem = (index: number, field: string, value: any) => {
+        if (!editingInvoiceData) return;
+        const updatedItems = [...editingInvoiceData.items];
+        updatedItems[index] = { ...updatedItems[index], [field]: value };
+
+        if (field === 'productId') {
+            const prod = products.find(p => p.id === value);
+            if (prod) {
+                updatedItems[index].price = prod.price;
+                updatedItems[index].desc = prod.label;
+            }
+        }
+        setEditingInvoiceData({ ...editingInvoiceData, items: updatedItems });
+    };
+
+    const handleRemoveEditItem = (index: number) => {
+        if (!editingInvoiceData) return;
+        const itemToRemove = editingInvoiceData.items[index];
+        const updatedItems = editingInvoiceData.items.filter((_, i) => i !== index);
+
+        // Track deleted lines
+        const newDeletedIds = [...editingInvoiceData.deletedLineIds];
+        if (itemToRemove.id) {
+            newDeletedIds.push(itemToRemove.id);
+        }
+
+        setEditingInvoiceData({
+            ...editingInvoiceData,
+            items: updatedItems,
+            deletedLineIds: newDeletedIds
+        });
+    };
+
+    const handleSaveEdit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingInvoiceData || !config) return;
+
+        setIsSubmitting(true);
+        try {
+            // 1. Update Header
+            await DolibarrService.updateInvoice(config, editingInvoiceData.id, {
+                date: new Date(editingInvoiceData.date).getTime() / 1000,
+                socid: editingInvoiceData.socid
+            });
+
+            // 2. Handle Lines
+            // Delete removed lines
+            for (const lineId of editingInvoiceData.deletedLineIds) {
+                await DolibarrService.deleteInvoiceLine(config, editingInvoiceData.id, lineId);
+            }
+
+            // Update/Create lines
+            for (const item of editingInvoiceData.items) {
+                const lineData = {
+                    fk_product: item.productId || undefined,
+                    desc: item.desc,
+                    qty: item.qty,
+                    subprice: item.price,
+                    tva_tx: 0
+                };
+
+                if (item.id) {
+                    await DolibarrService.updateInvoiceLine(config, editingInvoiceData.id, item.id, lineData);
+                } else {
+                    await DolibarrService.addInvoiceLine(config, editingInvoiceData.id, lineData);
+                }
+            }
+
+            alert("Fatura Atualizada com Sucesso");
+            setIsEditModalOpen(false);
+            if (refreshData) refreshData();
+        } catch (e: any) {
+            console.error(e);
+            alert(`Falha ao atualizar fatura: ${e.message}`);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
     // Payment Logic
     const handlePayClick = (e: React.MouseEvent, invoice: Invoice) => {
         e.stopPropagation();
         setSelectedInvoiceForPay(invoice);
-        setPayForm({
-            amount: invoice.total_ttc,
-            date: new Date().toISOString().split('T')[0],
-            mode: 'WIRE'
-        });
         setIsPayModalOpen(true);
     };
 
-    const handleRegisterPayment = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleRegisterPayment = async (paymentData: any) => {
         if (!selectedInvoiceForPay || !config) return;
 
-        setIsSubmittingPay(true);
         try {
-            await DolibarrService.setPayment(config, selectedInvoiceForPay.id, {
-                amount: payForm.amount,
-                date: payForm.date,
-                payment_mode_id: payForm.mode
-            });
+            await DolibarrService.setPayment(config, selectedInvoiceForPay.id, paymentData); // Maps to commercial.ts setPayment
             alert("Pagamento Registrado com Sucesso");
-            selectedInvoiceForPay.statut = '2';
-            selectedInvoiceForPay.paye = '1';
-            setIsPayModalOpen(false);
+
+            // Optimistic update
+            selectedInvoiceForPay.statut = '2'; // Paid
+            selectedInvoiceForPay.paye = 1;
+
             if (refreshData) refreshData();
+            // Close modal handled by component prop, but we reset state here
+            setIsPayModalOpen(false);
+            setSelectedInvoiceForPay(null);
         } catch (err) {
             console.error(err);
             alert("Falha ao registrar pagamento");
-        } finally {
-            setIsSubmittingPay(false);
+            // Re-throw if needed by modal to not close? Our modal closes on success, so if we throw, maybe it stays open?
+            // Modal catches error? Current CustomerPaymentModal implementation catches error and logs, but continues?
+            // Actually my implementation of CustomerPaymentModal has try/catch inside handleSubmit. 
+            // If onConfirm throws, it catches and stops. So I should throw here to prevent close.
+            throw err;
         }
     };
 
@@ -412,6 +527,17 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                             <span className="hidden xl:inline">Validar</span>
                         </button>
                     )}
+                    {selectedInvoice.statut === '0' && (
+                        <button
+                            onClick={(e) => handleEditClick(e, selectedInvoice)}
+                            disabled={!!processingId}
+                            className="p-2 rounded-lg text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors text-sm font-medium flex items-center gap-1"
+                            title="Editar Fatura"
+                        >
+                            <FileEdit size={18} />
+                            <span className="hidden xl:inline">Editar</span>
+                        </button>
+                    )}
                     {selectedInvoice.statut === '1' && selectedInvoice.type !== '2' && (
                         <>
                             <button
@@ -431,7 +557,60 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 {processingId === selectedInvoice.id ? <Loader2 size={18} className="animate-spin" /> : <RefreshCcw size={18} />}
                                 <span className="hidden xl:inline">Nota Crédito</span>
                             </button>
+                            <button
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (!confirm("Marcar como 'Classificada como Paga' (sem pagamento financeiro)?")) return;
+                                    setProcessingId(selectedInvoice.id);
+                                    try {
+                                        await DolibarrService.markInvoiceAsPaid(config, selectedInvoice.id);
+                                        if (refreshData) refreshData();
+                                        alert("Fatura classificada como paga.");
+                                    } catch (err) { console.error(err); alert("Erro ao classificar como paga."); }
+                                    finally { setProcessingId(null); }
+                                }}
+                                className="p-2 rounded-lg text-slate-600 bg-slate-100 hover:bg-slate-200"
+                                title="Classificar como Paga"
+                            >
+                                <CheckCircle size={18} />
+                            </button>
+                            <button
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const reason = prompt("Motivo do abandono:");
+                                    if (reason === null) return;
+                                    setProcessingId(selectedInvoice.id);
+                                    try {
+                                        await DolibarrService.abandonInvoice(config, selectedInvoice.id, reason);
+                                        if (refreshData) refreshData();
+                                        alert("Fatura abandonada/cancelada.");
+                                    } catch (err) { console.error(err); alert("Erro ao abandonar fatura."); }
+                                    finally { setProcessingId(null); }
+                                }}
+                                className="p-2 rounded-lg text-red-600 bg-red-100 hover:bg-red-200"
+                                title="Abandonar / Cancelar"
+                            >
+                                <Trash2 size={18} />
+                            </button>
                         </>
+                    )}
+                    {(selectedInvoice.statut === '1' || selectedInvoice.statut === '2' || selectedInvoice.statut === '3') && (
+                        <button
+                            onClick={async (e) => {
+                                e.stopPropagation();
+                                if (!confirm("Reabrir fatura (voltar para rascunho)? Atenção: Isso pode remover numeração se não configurado.")) return;
+                                setProcessingId(selectedInvoice.id);
+                                try {
+                                    await DolibarrService.setInvoiceToDraft(config, selectedInvoice.id);
+                                    if (refreshData) refreshData();
+                                    alert("Fatura retornada para rascunho.");
+                                } catch (err) { console.error(err); alert("Erro ao reabrir fatura."); }
+                                finally { setProcessingId(null); }
+                            }}
+                            className="p-2 rounded-lg text-xs text-slate-500 hover:text-slate-800 underline"
+                        >
+                            Reabrir
+                        </button>
                     )}
                     <button onClick={(e) => handleDownloadPdf(e, selectedInvoice.ref)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><Download size={20} /></button>
                     <button onClick={() => openInDolibarr(selectedInvoice.id)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><ExternalLink size={20} /></button>
@@ -533,6 +712,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                             <th className="px-4 py-3 rounded-l-lg">Descrição</th>
                                             <th className="px-4 py-3 text-right">Qtd</th>
                                             <th className="px-4 py-3 text-right">Preço Un.</th>
+                                            <th className="px-4 py-3 text-right">Desc. (%)</th>
                                             <th className="px-4 py-3 text-right rounded-r-lg">Total</th>
                                         </tr>
                                     </thead>
@@ -544,9 +724,10 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                                         {line.label || (line.product_ref ? `${line.product_ref} - ${line.product_label || ''}` : null) || <span className="italic text-slate-400">Item {line.id}</span>}
                                                     </div>
                                                     {line.description && (
-                                                        <div className="text-xs text-slate-500 mt-1 whitespace-pre-wrap font-normal">
-                                                            {line.description}
-                                                        </div>
+                                                        <div
+                                                            className="text-xs text-slate-500 mt-1 font-normal prose prose-sm max-w-none prose-p:my-0 prose-ul:my-0 prose-li:my-0"
+                                                            dangerouslySetInnerHTML={{ __html: line.description }}
+                                                        />
                                                     )}
                                                 </td>
                                                 <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">
@@ -554,6 +735,9 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                                 </td>
                                                 <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">
                                                     ${line.subprice?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                </td>
+                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">
+                                                    {line.remise_percent ? `${line.remise_percent}%` : '-'}
                                                 </td>
                                                 <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white font-mono">
                                                     ${line.total_ttc?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -563,7 +747,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     </tbody>
                                     <tfoot className="border-t border-slate-200 dark:border-slate-700">
                                         <tr>
-                                            <td colSpan={3} className="px-4 py-3 text-right font-bold text-slate-700 dark:text-slate-300 uppercase text-xs tracking-wider">Total Geral</td>
+                                            <td colSpan={4} className="px-4 py-3 text-right font-bold text-slate-700 dark:text-slate-300 uppercase text-xs tracking-wider">Total Geral</td>
                                             <td className="px-4 py-3 text-right font-bold text-emerald-600 dark:text-emerald-400 font-mono text-base">
                                                 ${selectedInvoice.total_ttc?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                                             </td>
@@ -580,6 +764,93 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                         type="facture"
                         onNavigate={onNavigate}
                     />
+
+                    {/* Linked Payments Section */}
+                    <div className="bg-white dark:bg-slate-900 rounded-xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm mt-6">
+                        <h4 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+                            <CreditCard size={18} className="text-emerald-500" /> Pagamentos Vinculados
+                        </h4>
+
+                        {(() => {
+                            const linkedPayments = paymentLinks
+                                .filter(link => String(link.fk_facture) === String(selectedInvoice.id))
+                                .map(link => {
+                                    const payment = payments.find(p => String(p.id) === String(link.fk_paiement));
+                                    return { link, payment };
+                                });
+                            // Remove filter to see partial data (orphaned links)
+                            // .filter(item => item.payment);
+
+                            const totalPaid = linkedPayments.reduce((acc, item) => acc + (item.link.amount || 0), 0);
+                            const remaining = selectedInvoice.total_ttc - totalPaid;
+
+                            if (linkedPayments.length === 0) {
+                                return (
+                                    <div className="text-center py-6 text-slate-400 italic bg-slate-50 dark:bg-slate-800/30 rounded-lg border border-dashed border-slate-200 dark:border-slate-700">
+                                        Nenhum pagamento registrado para esta fatura.
+                                    </div>
+                                );
+                            }
+
+                            return (
+                                <div className="space-y-3">
+                                    <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+                                        <table className="w-full text-sm text-left">
+                                            <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 font-medium border-b border-slate-200 dark:border-slate-700">
+                                                <tr>
+                                                    <th className="px-4 py-2">Ref. Pagamento</th>
+                                                    <th className="px-4 py-2">Data</th>
+                                                    <th className="px-4 py-2 text-right">Valor Pago</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900">
+                                                {linkedPayments.map(({ link, payment }) => (
+                                                    <tr key={link.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                                                        <td className="px-4 py-2 font-medium text-indigo-600 dark:text-indigo-400">
+                                                            {payment ? (
+                                                                <span
+                                                                    className="cursor-pointer hover:underline"
+                                                                    onClick={() => onNavigate && onNavigate('payments', payment.id)}
+                                                                >
+                                                                    {payment.ref}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-slate-400 italic" title="Detalhes do pagamento não encontrados localmente">
+                                                                    Pagamento #{link.fk_paiement}
+                                                                </span>
+                                                            )}
+                                                        </td>
+                                                        <td className="px-4 py-2 text-slate-600 dark:text-slate-400">
+                                                            {payment ? formatDateOnly(payment.date_payment) : '-'}
+                                                        </td>
+                                                        <td className="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-300">
+                                                            ${link.amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <div className="flex justify-end gap-6 pt-2">
+                                        <div className="text-right">
+                                            <p className="text-xs text-slate-500 uppercase font-bold">Total Pago</p>
+                                            <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
+                                                ${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-xs text-slate-500 uppercase font-bold">Saldo Restante</p>
+                                            <p className={`text-lg font-bold ${remaining > 0.01 ? 'text-red-500' : 'text-slate-400'}`}>
+                                                ${Math.max(0, remaining).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
+                    </div>
                 </div>
             </div>
         </>
@@ -614,7 +885,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             {/* Create Modal */}
             {isCreateModalOpen && (
                 <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 flex flex-col max-h-[90vh]">
+                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200 dark:border-slate-800 overflow-y-auto animate-in zoom-in-95 flex flex-col max-h-[90vh]">
                         <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
                             <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
                                 <FileText size={18} className="text-indigo-600" /> Nova Fatura (Rascunho)
@@ -670,12 +941,11 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                                         <option value="">Item Personalizado</option>
                                                         {products.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
                                                     </select>
-                                                    <input
-                                                        type="text"
-                                                        className="w-full p-1 text-xs border rounded dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                                        placeholder="Descrição"
+                                                    <RichTextEditor
                                                         value={item.desc}
-                                                        onChange={e => handleUpdateItem(idx, 'desc', e.target.value)}
+                                                        onChange={val => handleUpdateItem(idx, 'desc', val)}
+                                                        placeholder="Descrição"
+                                                        className="w-full"
                                                     />
                                                 </div>
                                                 <div className="w-20">
@@ -695,6 +965,15 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                                         placeholder="Preço"
                                                         value={item.price}
                                                         onChange={e => handleUpdateItem(idx, 'price', parseFloat(e.target.value))}
+                                                    />
+                                                </div>
+                                                <div className="w-20">
+                                                    <input
+                                                        type="number"
+                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                                        placeholder="Desc%"
+                                                        value={item.remise_percent || ''}
+                                                        onChange={e => handleUpdateItem(idx, 'remise_percent', parseFloat(e.target.value))}
                                                     />
                                                 </div>
                                                 <button type="button" onClick={() => handleRemoveItem(idx)} className="p-1 text-red-400 hover:text-red-600">
@@ -724,50 +1003,129 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                 </div>
             )}
 
-            {/* Pay Modal */}
-            {isPayModalOpen && selectedInvoiceForPay && (
+            {/* Edit Modal */}
+            {isEditModalOpen && editingInvoiceData && (
                 <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-sm border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
-                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-emerald-50 dark:bg-emerald-900/30 rounded-t-xl">
+                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 flex flex-col max-h-[90vh]">
+                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-indigo-50 dark:bg-indigo-900/30 rounded-t-xl">
                             <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                <CreditCard size={18} className="text-emerald-600" /> Registrar Pagamento
+                                <FileEdit size={18} className="text-indigo-600" /> Editar Fatura {editingInvoiceData.ref}
                             </h3>
-                            <button onClick={() => setIsPayModalOpen(false)} className="p-1 hover:bg-white/50 rounded"><X size={20} /></button>
+                            <button onClick={() => setIsEditModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
                         </div>
-                        <form onSubmit={handleRegisterPayment} className="p-6 space-y-4">
-                            <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border border-slate-100 dark:border-slate-700 mb-2">
-                                <p className="text-xs text-slate-500">Ref da Fatura</p>
-                                <p className="font-bold text-slate-800 dark:text-white">{selectedInvoiceForPay.ref}</p>
-                                <p className="text-xs text-slate-500 mt-1">Total Devido</p>
-                                <p className="font-bold text-red-500">${selectedInvoiceForPay.total_ttc.toFixed(2)}</p>
+
+                        <form onSubmit={handleSaveEdit} className="flex-1 flex flex-col overflow-hidden">
+                            <div className="p-6 space-y-4 overflow-y-auto">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cliente</label>
+                                        <select
+                                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white opacity-60 cursor-not-allowed"
+                                            value={editingInvoiceData.socid}
+                                            disabled // Changing customer not typically allowed easily without side effects
+                                        >
+                                            {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
+                                        <input
+                                            type="date"
+                                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                            value={editingInvoiceData.date}
+                                            onChange={e => setEditingInvoiceData({ ...editingInvoiceData, date: e.target.value })}
+                                            required
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <h4 className="font-bold text-sm text-slate-700 dark:text-slate-300">Itens</h4>
+                                        <button type="button" onClick={handleEditAddItem} className="text-xs flex items-center gap-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 px-2 py-1 rounded">
+                                            <Plus size={12} /> Adicionar Item
+                                        </button>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        {editingInvoiceData.items.length === 0 && <p className="text-sm text-slate-400 italic text-center py-4">Nenhum item.</p>}
+                                        {editingInvoiceData.items.map((item, idx) => (
+                                            <div key={idx} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
+                                                <div className="flex-1">
+                                                    <select
+                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                                        value={item.productId}
+                                                        onChange={e => handleUpdateEditItem(idx, 'productId', e.target.value)}
+                                                    >
+                                                        <option value="">Item Personalizado</option>
+                                                        {products.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                                                    </select>
+                                                    <RichTextEditor
+                                                        value={item.desc}
+                                                        onChange={val => handleUpdateEditItem(idx, 'desc', val)}
+                                                        placeholder="Descrição"
+                                                        className="w-full"
+                                                    />
+                                                </div>
+                                                <div className="w-20">
+                                                    <input
+                                                        type="number"
+                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                                        placeholder="Qtd"
+                                                        value={item.qty}
+                                                        onChange={e => handleUpdateEditItem(idx, 'qty', parseInt(e.target.value))}
+                                                        min="1"
+                                                    />
+                                                </div>
+                                                <div className="w-24">
+                                                    <input
+                                                        type="number"
+                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                                        placeholder="Preço"
+                                                        value={item.price}
+                                                        onChange={e => handleUpdateEditItem(idx, 'price', parseFloat(e.target.value))}
+                                                    />
+                                                </div>
+                                                <div className="w-20">
+                                                    <input
+                                                        type="number"
+                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                                        placeholder="Desc%"
+                                                        value={item.remise_percent || ''}
+                                                        onChange={e => handleUpdateEditItem(idx, 'remise_percent', parseFloat(e.target.value))}
+                                                    />
+                                                </div>
+                                                <button type="button" onClick={() => handleRemoveEditItem(idx)} className="p-1 text-red-400 hover:text-red-600">
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
                             </div>
 
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data do Pagamento</label>
-                                <input type="date" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={payForm.date} onChange={e => setPayForm({ ...payForm, date: e.target.value })} required />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo de Pagamento</label>
-                                <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={payForm.mode} onChange={e => setPayForm({ ...payForm, mode: e.target.value })}>
-                                    <option value="WIRE">Transferência</option>
-                                    <option value="CB">Cartão de Crédito</option>
-                                    <option value="CASH">Dinheiro</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Valor</label>
-                                <input type="number" step="0.01" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white font-bold" value={payForm.amount} onChange={e => setPayForm({ ...payForm, amount: parseFloat(e.target.value) })} required />
-                            </div>
-
-                            <div className="flex justify-end gap-3 pt-2">
-                                <button type="button" onClick={() => setIsPayModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
-                                <button type="submit" disabled={isSubmittingPay} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
-                                    {isSubmittingPay ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle size={16} />} Pagar Agora
+                            <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-b-xl">
+                                <button type="button" onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
+                                <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
+                                    {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle size={16} />} Salvar Alterações
                                 </button>
                             </div>
                         </form>
                     </div>
                 </div>
+            )}
+
+            {/* Pay Modal */}
+            {selectedInvoiceForPay && (
+                <CustomerPaymentModal
+                    invoice={selectedInvoiceForPay}
+                    isOpen={isPayModalOpen}
+                    onClose={() => {
+                        setIsPayModalOpen(false);
+                        setSelectedInvoiceForPay(null);
+                    }}
+                    onConfirm={handleRegisterPayment}
+                />
             )}
         </>
     );

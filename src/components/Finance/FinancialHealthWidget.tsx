@@ -31,7 +31,7 @@ export const FinancialHealthWidget: React.FC<FinancialHealthWidgetProps> = ({ da
                 <Sparkles size={60} className="text-indigo-600" />
             </div>
 
-            <div className="flex justify-between items-center mb-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 relative z-10">
                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
                     <Sparkles size={18} className="text-indigo-600" />
                     {title}
@@ -40,7 +40,7 @@ export const FinancialHealthWidget: React.FC<FinancialHealthWidgetProps> = ({ da
                     <button
                         onClick={handleAnalyze}
                         disabled={isLoading}
-                        className="text-xs flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 rounded-lg transition-colors font-medium border border-indigo-200 dark:border-indigo-800"
+                        className="text-xs flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 rounded-lg transition-colors font-medium border border-indigo-200 dark:border-indigo-800 self-end sm:self-auto"
                     >
                         {isLoading ? <Loader2 size={14} className="animate-spin" /> : <TrendingUp size={14} />}
                         Gerar Insights

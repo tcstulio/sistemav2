@@ -42,7 +42,7 @@ export const GenericListLayout: React.FC<GenericListLayoutProps> = ({
                 </div>
 
                 {/* Detail Panel */}
-                <div className={`flex-1 bg-white dark:bg-slate-900 flex flex-col ${isDetailOpen ? 'absolute inset-0 z-20 lg:static lg:inset-auto' : 'hidden lg:flex lg:items-center lg:justify-center'} `}>
+                <div className={`flex-1 bg-white dark:bg-slate-900 flex flex-col min-w-0 ${isDetailOpen ? 'absolute inset-0 z-20 lg:static lg:inset-auto' : 'hidden lg:flex lg:items-center lg:justify-center'} `}>
                     {detail}
                 </div>
             </div>

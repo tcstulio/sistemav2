@@ -11,6 +11,8 @@ import { CustomerList } from './CustomerList';
 import InvoiceList from './InvoiceList';
 import ProductList from './ProductList';
 import ProposalList from './ProposalList';
+import SupplierProposalList from './SupplierProposalList';
+import { SmartQuotationWizard } from './SmartQuotationWizard'; // Import
 import OrderList from './OrderList';
 import ProjectList from './ProjectList';
 import TicketList from './TicketList';
@@ -31,16 +33,26 @@ import AgendaEntryDetail from './AgendaEntryDetail';
 import ShipmentList from './ShipmentList';
 import PaymentList from './PaymentList';
 import CategoryList from './CategoryList';
+// PaymentDetail refactored into PaymentList
+
 import WhatsAppView from './WhatsAppView';
 import EmailView from './Email/EmailView';
 import SchedulerAdmin from './SchedulerAdmin';
 import ActivityView from './ActivityView';
 import TaskDetail from './TaskDetail';
 import { PendingPayments } from './PendingPayments';
+import SupplierPaymentList from './SupplierPaymentList';
 import { MainLayout } from './Layout/MainLayout';
+import { useNotifications } from '../hooks/useNotifications';
+import SalaryPaymentList from './HR/SalaryPaymentList';
+import TaxPaymentList from './Finance/TaxPaymentList';
+import ExpenseReportPaymentList from './Finance/ExpenseReportPaymentList';
+import TaxPaymentDetail from './Finance/TaxPaymentDetail';
+import UserTaskDashboard from './Tasks/UserTaskDashboard';
+import { MonthlyReport } from '../pages/Reports/MonthlyReport';
+import { ChatPage, ChatConversation } from '../pages/ChatPage';
 
 
-// Wrapper to adapt Router Params/Navigate to Legacy Component Props
 const ViewWrapper = ({ Component, viewId, passProps = {} }: any) => {
     const { id } = useParams();
     const navigate = useNavigate();
@@ -67,6 +79,21 @@ const ViewWrapper = ({ Component, viewId, passProps = {} }: any) => {
     );
 };
 
+// Notification Handler Component
+const NotificationHandler = () => {
+    const { setNotifications } = useDolibarr();
+    const navigate = useNavigate();
+
+    const handleNavigate = (view: string, id: string) => {
+        if (id) navigate(`/${view}/${id}`);
+        else navigate(`/${view}`);
+    };
+
+    useNotifications(setNotifications, handleNavigate);
+
+    return null;
+};
+
 const App: React.FC = () => {
     const { config, setConfig, isInitialized } = useDolibarr();
 
@@ -89,9 +116,14 @@ const App: React.FC = () => {
         <>
             <Toaster richColors position="top-right" />
             <BrowserRouter>
+                <NotificationHandler />
                 <Routes>
                     <Route element={<MainLayout />}>
+                        {/* import UserTaskDashboard from './Tasks/UserTaskDashboard'; // Import at top */}
+
+                        {/* ... inside Routes ... */}
                         <Route path="/" element={<ViewWrapper Component={Dashboard} viewId="dashboard" />} />
+                        <Route path="/my-tasks" element={<ViewWrapper Component={UserTaskDashboard} viewId="projects" />} />
 
                         <Route path="/whatsapp" element={<ViewWrapper Component={WhatsAppView} viewId="whatsapp" />} />
                         <Route path="/email" element={<ViewWrapper Component={EmailView} viewId="email" />} />
@@ -113,6 +145,10 @@ const App: React.FC = () => {
 
                         <Route path="/proposals" element={<ViewWrapper Component={ProposalList} viewId="proposals" />} />
                         <Route path="/proposals/:id" element={<ViewWrapper Component={ProposalList} viewId="proposals" />} />
+
+                        <Route path="/supplier_proposals" element={<ViewWrapper Component={SupplierProposalList} viewId="supplier_proposals" />} />
+                        <Route path="/supplier_proposals/:id" element={<ViewWrapper Component={SupplierProposalList} viewId="supplier_proposals" />} />
+                        <Route path="/smart_quotation" element={<ViewWrapper Component={SmartQuotationWizard} viewId="supplier_proposals" />} />
 
                         <Route path="/orders" element={<ViewWrapper Component={OrderList} viewId="orders" />} />
                         <Route path="/orders/:id" element={<ViewWrapper Component={OrderList} viewId="orders" />} />
@@ -153,14 +189,27 @@ const App: React.FC = () => {
                         <Route path="/agenda/:id" element={<ViewWrapper Component={AgendaEntryDetail} viewId="agenda" />} />
 
                         <Route path="/payments" element={<ViewWrapper Component={PaymentList} viewId="payments" />} />
+                        <Route path="/payments/:id" element={<ViewWrapper Component={PaymentList} viewId="payments" />} />
+                        <Route path="/supplier_payments" element={<ViewWrapper Component={SupplierPaymentList} viewId="supplier_invoices" />} />
+                        <Route path="/supplier_payments/:id" element={<ViewWrapper Component={SupplierPaymentList} viewId="supplier_invoices" />} />
+                        <Route path="/tax_payments" element={<ViewWrapper Component={TaxPaymentList} viewId="tax_payments" />} />
+                        <Route path="/tax_payments/:id" element={<ViewWrapper Component={TaxPaymentDetail} viewId="tax_payments" />} />
+                        <Route path="/salary_payments" element={<ViewWrapper Component={SalaryPaymentList} viewId="salary_payments" />} />
+                        <Route path="/salary_payments/:id" element={<ViewWrapper Component={SalaryPaymentList} viewId="salary_payments" />} />
+                        <Route path="/expense_report_payments" element={<ViewWrapper Component={ExpenseReportPaymentList} viewId="expense_report_payments" />} />
+                        <Route path="/expense_report_payments/:id" element={<ViewWrapper Component={ExpenseReportPaymentList} viewId="expense_report_payments" />} />
 
                         <Route path="/reports" element={<ViewWrapper Component={ReportsView} viewId="reports" />} />
+                        <Route path="/monthly-report" element={<ViewWrapper Component={MonthlyReport} viewId="reports" />} />
 
                         <Route path="/activity" element={<ViewWrapper Component={ActivityView} viewId="activity" />} />
 
                         <Route path="/development" element={<ViewWrapper Component={DevelopmentView} viewId="development" />} />
 
-
+                        <Route path="/chat" element={<ViewWrapper Component={ChatPage} viewId="chat" />}>
+                            <Route index element={<ChatConversation />} />
+                            <Route path=":type/:id" element={<ChatConversation />} />
+                        </Route>
 
                         <Route path="/perfil" element={<SettingsView config={config} onSave={setConfig} />} />
                     </Route>
@@ -169,6 +218,5 @@ const App: React.FC = () => {
         </>
     );
 };
-
 
 export default App;

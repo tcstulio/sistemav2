@@ -3,7 +3,7 @@ import { ThirdParty, Invoice, Project, Ticket } from '../types';
 
 // Utility to get headers with Auth
 const getAuthHeaders = () => {
-    const savedConfigObj = JSON.parse(localStorage.getItem('doligen_config') || '{}');
+    const savedConfigObj = JSON.parse(localStorage.getItem('coolgroove_config') || '{}');
     const token = savedConfigObj.apiKey || '';
     return {
         headers: {
@@ -33,6 +33,32 @@ export const AiService = {
         } catch (error: any) {
             console.error("Erro AI Backend", error);
             return null;
+        }
+    },
+
+    generateProjectTasks: async (projectContext: string) => {
+        try {
+            const prompt = `
+                Generate a list of project tasks based on this context: "${projectContext}".
+                Return ONLY a JSON array of objects with these properties:
+                - label (string, max 50 chars)
+                - description (string, concise)
+                - planned_workload (number, in hours)
+                Example: [{"label": "Design DB", "description": "Schema design", "planned_workload": 4}]
+            `;
+            const response = await axios.post(`${API_URL}/generate-reply`, {
+                history: [{ role: 'user', parts: prompt }],
+                context: "You are a project manager. Output JSON only."
+            }, getAuthHeaders());
+
+            // The backend returns a string. We attempt to parse it if the model wrapped it in code blocks or just text.
+            let reply = response.data.reply;
+            // Basic cleanup if md blocks are present
+            reply = reply.replace(/```json/g, '').replace(/```/g, '').trim();
+            return JSON.parse(reply);
+        } catch (error: any) {
+            console.error("generateProjectTasks Error", error);
+            return [];
         }
     },
 
@@ -75,13 +101,58 @@ export const AiService = {
 
     generateSalesForecast: async (invoices: Invoice[]) => {
         try {
+            // Intelligent Data Selection for Seasonality
+            const now = new Date();
+            console.log("DEBUG: Reference Date (Front) =", now.toString());
+            console.log("DEBUG: Context sent to AI =", { referenceDate: now.toISOString() });
+
+            const currentYear = now.getFullYear();
+            const currentMonth = now.getMonth(); // 0-11
+
+            // 1. Identify Target Forecast Window (Next 3 Months)
+            // 1. Identify Target Forecast Window (Current Month + Next 2 Months)
+            const targetMonths = [
+                currentMonth,
+                (currentMonth + 1) % 12,
+                (currentMonth + 2) % 12
+            ];
+
+            // 2. Filter Invoices
+            const relevantInvoices = invoices.filter(inv => {
+                const dateVal = inv.date || (inv as any).datec || 0;
+                const timestamp = typeof dateVal === 'string' ? new Date(dateVal).getTime() : (dateVal < 10000000000 ? dateVal * 1000 : dateVal);
+                const invDate = new Date(timestamp);
+                const invMonth = invDate.getMonth();
+                const invYear = invDate.getFullYear();
+
+                // A. Recent Trend: Last 6 months
+                const monthsDiff = (currentYear * 12 + currentMonth) - (invYear * 12 + invMonth);
+                if (monthsDiff >= 0 && monthsDiff <= 6) return true;
+
+                // B. Seasonality: Same target months in previous years
+                if (invYear < currentYear && targetMonths.includes(invMonth)) return true;
+
+                return false;
+            });
+
+            // Sort by date asc
+            relevantInvoices.sort((a, b) => {
+                const dA = typeof a.date === 'string' ? new Date(a.date).getTime() : a.date;
+                const dB = typeof b.date === 'string' ? new Date(b.date).getTime() : b.date;
+                return dA - dB;
+            });
+
             const response = await axios.post(`${API_URL}/analyze/sales-forecast`, {
-                invoices: invoices.slice(0, 100).map(i => ({
+                invoices: relevantInvoices.map(i => ({
                     ref: i.ref,
                     total_ttc: i.total_ttc,
                     status: i.statut,
                     date: i.date
-                }))
+                })),
+                context: {
+                    referenceDate: now.toISOString(),
+                    targetMonths: targetMonths // Inform backend which months we are targeting
+                }
             }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
@@ -282,6 +353,17 @@ export const AiService = {
             return "Erro ao gerar relatório. Verifique sua conexão ou tente novamente.";
         }
     },
+
+    analyzeMonthlyReport: async (data: any) => {
+        try {
+            const response = await axios.post(`${API_URL}/analyze/monthly-report`, { data }, getAuthHeaders());
+            return response.data.result;
+        } catch (error: any) {
+            console.error("Monthly Report Analysis Error", error);
+            return "Erro ao gerar análise do relatório mensal.";
+        }
+    },
+
     draftMessage: async (customer: ThirdParty, context: string, channels: ('email' | 'whatsapp')[], additionalData?: any) => {
         try {
             let dataContext = "";

@@ -24,7 +24,9 @@ const SYNC_MODULES = [
     { type: 'orders', store: 'orders', mapFn: mappers.mapOrder },
     { type: 'shipments', store: 'shipments', mapFn: mappers.mapShipment },
     { type: 'projects', store: 'projects', mapFn: mappers.mapProject },
+    { type: 'project_contacts', store: 'projectContacts', mapFn: mappers.mapProjectContact },
     { type: 'tasks', store: 'tasks', mapFn: mappers.mapTask },
+    { type: 'task_contacts', store: 'taskContacts', mapFn: mappers.mapTaskContact },
     { type: 'bank_accounts', store: 'bankAccounts', mapFn: mappers.mapBankAccount },
     { type: 'bank_lines', store: 'bankLines', mapFn: mappers.mapBankLine },
     { type: 'events', store: 'events', mapFn: mappers.mapAgendaEvent },
@@ -54,13 +56,32 @@ const SYNC_MODULES = [
     { type: 'supplier_invoice_lines', store: 'supplierInvoiceLines', mapFn: mappers.mapSupplierInvoiceLine },
     { type: 'intervention_lines', store: 'interventionLines', mapFn: mappers.mapInterventionLine },
     { type: 'bom_lines', store: 'bomLines', mapFn: mappers.mapBOMLine },
+
+    // Groups & Members
+    { type: 'groups', store: 'groups', mapFn: mappers.mapUserGroup },
+    { type: 'permissions', store: 'permissions', mapFn: mappers.mapPermission },
+    { type: 'group_users', store: 'groupUsers', mapFn: mappers.mapGroupUser },
+    { type: 'group_rights', store: 'groupRights', mapFn: mappers.mapGroupRight },
+    { type: 'user_rights', store: 'userRights', mapFn: mappers.mapUserRight },
+
+    // Additional Payment Types & Links
+    { type: 'payment_invoice_links', store: 'paymentInvoiceLinks', mapFn: mappers.mapPaymentInvoiceLink },
+    { type: 'supplier_payment_invoice_links', store: 'supplierPaymentInvoiceLinks', mapFn: mappers.mapSupplierPaymentInvoiceLink },
+    { type: 'expense_report_payments', store: 'expenseReportPayments', mapFn: mappers.mapExpenseReportPayment },
+    { type: 'expense_report_payment_links', store: 'expenseReportPaymentLinks', mapFn: mappers.mapExpenseReportPaymentLink },
+    { type: 'vat_payments', store: 'vatPayments', mapFn: mappers.mapVATPayment },
+    { type: 'salary_payments', store: 'salaryPayments', mapFn: mappers.mapSalaryPayment },
+    { type: 'social_contribution_payments', store: 'socialContributionPayments', mapFn: mappers.mapSocialContributionPayment },
+    { type: 'loan_payments', store: 'loanPayments', mapFn: mappers.mapLoanPayment },
+    { type: 'various_payments', store: 'variousPayments', mapFn: mappers.mapVariousPayment },
 ];
 
 /**
  * Execute background sync for all modules
  */
-export async function runBackgroundSync(config: DolibarrConfig): Promise<{ synced: number; errors: string[] }> {
+export async function runBackgroundSync(config: DolibarrConfig): Promise<{ synced: number; errors: string[]; changes: Record<string, any[]> }> {
     const errors: string[] = [];
+    const changes: Record<string, any[]> = {};
     let synced = 0;
 
     console.log('[BackgroundSync] Starting full background sync for', SYNC_MODULES.length, 'modules...');
@@ -69,7 +90,7 @@ export async function runBackgroundSync(config: DolibarrConfig): Promise<{ synce
         try {
             // 1. Get watermark for this store
             const lastModified = await dbService.getLastModified(module.store, 'date_modification');
-            console.log(`[BackgroundSync] ${module.type}: watermark=${lastModified}`);
+            // console.log(`[BackgroundSync] ${module.type}: watermark=${lastModified}`);
 
             // 2. Fetch delta from API
             const delta = await DolibarrService.fetchDelta(config, module.type, lastModified);
@@ -82,9 +103,12 @@ export async function runBackgroundSync(config: DolibarrConfig): Promise<{ synce
                 await dbService.upsertAll(module.store, mappedData);
                 synced += delta.length;
 
+                // 5. Record changes
+                changes[module.store] = mappedData;
+
                 console.log(`[BackgroundSync] ✅ ${module.type}: Synced ${delta.length} records to ${module.store}`);
             } else {
-                console.log(`[BackgroundSync] ⏭️ ${module.type}: No new data (delta empty)`);
+                // console.log(`[BackgroundSync] ⏭️ ${module.type}: No new data (delta empty)`);
             }
         } catch (error: any) {
             const errorMsg = `${module.type}: ${error.message || 'Unknown error'}`;
@@ -98,7 +122,7 @@ export async function runBackgroundSync(config: DolibarrConfig): Promise<{ synce
         console.warn('[BackgroundSync] Errors encountered:', errors);
     }
 
-    return { synced, errors };
+    return { synced, errors, changes };
 }
 
 export const backgroundSyncService = {

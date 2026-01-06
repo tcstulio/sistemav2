@@ -7,6 +7,7 @@ interface UserModalProps {
     isOpen: boolean;
     onClose: () => void;
     config: DolibarrConfig;
+    users?: DolibarrUser[]; // Added users list
     userToEdit?: DolibarrUser | null;
     prefillData?: Partial<DolibarrUser> | null;
     onRefresh?: () => void;
@@ -16,11 +17,12 @@ export const UserModal: React.FC<UserModalProps> = ({
     isOpen,
     onClose,
     config,
+    users = [], // Default to empty array
     userToEdit,
     prefillData,
     onRefresh
 }) => {
-    const [userForm, setUserForm] = useState<Partial<DolibarrUser>>({ login: '', firstname: '', lastname: '', email: '', job: '' });
+    const [userForm, setUserForm] = useState<Partial<DolibarrUser> & { supervisor_id?: string }>({ login: '', firstname: '', lastname: '', email: '', job: '', supervisor_id: '' });
     const [isSubmittingUser, setIsSubmittingUser] = useState(false);
 
     useEffect(() => {
@@ -31,12 +33,13 @@ export const UserModal: React.FC<UserModalProps> = ({
                     firstname: userToEdit.firstname || '',
                     lastname: userToEdit.lastname || '',
                     email: userToEdit.email || '',
-                    job: userToEdit.job || ''
+                    job: userToEdit.job || '',
+                    supervisor_id: userToEdit.supervisor_id || ''
                 });
             } else if (prefillData) {
-                setUserForm(prefillData);
+                setUserForm({ ...prefillData, supervisor_id: '' });
             } else {
-                setUserForm({ login: '', firstname: '', lastname: '', email: '', job: '' });
+                setUserForm({ login: '', firstname: '', lastname: '', email: '', job: '', supervisor_id: '' });
             }
         }
     }, [isOpen, userToEdit, prefillData]);
@@ -45,12 +48,22 @@ export const UserModal: React.FC<UserModalProps> = ({
         e.preventDefault();
         if (!userForm.login || !userForm.email) return;
         setIsSubmittingUser(true);
+
+        // Map supervisor_id to fk_user for API
+        const payload: any = { ...userForm };
+        if (payload.supervisor_id) {
+            payload.fk_user = payload.supervisor_id;
+            // delete payload.supervisor_id; // Clean up? API usually ignores extra fields but safer to keep clean if mapped
+        } else {
+            payload.fk_user = null; // Or '0'? Dolibarr usually takes null or specific ID.
+        }
+
         try {
             if (userToEdit && userToEdit.id) {
-                await DolibarrService.updateUser(config, userToEdit.id, userForm);
+                await DolibarrService.updateUser(config, userToEdit.id, payload);
                 alert("Usuário atualizado com sucesso");
             } else {
-                await DolibarrService.createUser(config, userForm);
+                await DolibarrService.createUser(config, payload);
                 alert("Usuário criado com sucesso");
             }
             onClose();
@@ -72,6 +85,28 @@ export const UserModal: React.FC<UserModalProps> = ({
                     </div>
                     <input className="w-full p-2 border rounded dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Email" value={userForm.email} onChange={e => setUserForm({ ...userForm, email: e.target.value })} />
                     <input className="w-full p-2 border rounded dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Cargo" value={userForm.job} onChange={e => setUserForm({ ...userForm, job: e.target.value })} />
+
+                    {/* Supervisor Select */}
+                    <div>
+                        <label className="block text-xs font-medium text-slate-500 mb-1">Supervisor (Gestor)</label>
+                        <select
+                            className="w-full p-2 border rounded dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={userForm.supervisor_id || ''}
+                            onChange={e => setUserForm({ ...userForm, supervisor_id: e.target.value })}
+                        >
+                            <option value="">Selecione um supervisor...</option>
+                            {users
+                                .filter(u => u.id !== userToEdit?.id) // Prevent selecting self
+                                .sort((a, b) => (a.firstname || '').localeCompare(b.firstname || ''))
+                                .map(u => (
+                                    <option key={u.id} value={u.id}>
+                                        {u.firstname} {u.lastname} ({u.login})
+                                    </option>
+                                ))
+                            }
+                        </select>
+                    </div>
+
                 </div>
                 <div className="flex justify-end gap-2 mt-4">
                     <button onClick={onClose} className="px-4 py-2 text-slate-500 hover:text-slate-700">Cancelar</button>

@@ -1,21 +1,30 @@
-import React, { useState } from 'react';
-import { DolibarrUser, Task, ExpenseReport, LeaveRequest, Project, DolibarrConfig, AppView } from '../../types';
+import React, { useState, useMemo } from 'react';
+import { DolibarrUser, Task, ExpenseReport, LeaveRequest, Project, DolibarrConfig, AppView, GroupUser as DolibarrGroupUser, ExpenseReportLine, ExpenseReportPayment } from '../../types';
 import { UserAvatar } from './UserAvatar';
 import { formatDuration, getProjectName, getLeaveIcon, getLeaveStatusBadge, getExpenseStatusBadge } from './utils';
-import { UserCheck, Clock, Receipt, Plane, Shield, Edit2, Trash2, X, ArrowLeft, CreditCard, Fingerprint, Mail, Phone } from 'lucide-react';
+import { UserCheck, Clock, Receipt, Plane, Shield, Edit2, Trash2, X, ArrowLeft, CreditCard, Fingerprint, Mail, Phone, Users, Plus } from 'lucide-react';
 import { formatDateOnly } from '../../utils/dateUtils';
+import { useGroups, useGroupUsers } from '../../hooks/dolibarr';
+import * as HRAdmin from '../../services/api/hrAdmin';
+
+import { PermissionManager } from './PermissionManager';
+import { ExpenseDetailModal } from './modals/ExpenseDetailModal';
 
 interface UserDetailProps {
     user: DolibarrUser;
     userTasks: Task[];
     userExpenses: ExpenseReport[];
     userLeaves: LeaveRequest[];
+    subordinates: DolibarrUser[];
     projects: Project[];
     config: DolibarrConfig;
     onClose: () => void;
     onEditUser: () => void;
     onDeleteUser: (id: string) => void;
     onNavigate?: (view: AppView, id: string) => void;
+    allUsers?: DolibarrUser[];
+    expenseReportLines?: ExpenseReportLine[];
+    expenseReportPayments?: ExpenseReportPayment[];
 }
 
 export const UserDetail: React.FC<UserDetailProps> = ({
@@ -23,26 +32,68 @@ export const UserDetail: React.FC<UserDetailProps> = ({
     userTasks,
     userExpenses,
     userLeaves,
+    subordinates,
     projects,
     config,
     onClose,
     onEditUser,
     onDeleteUser,
-    onNavigate
+    onNavigate,
+    allUsers = [],
+    expenseReportLines = [],
+    expenseReportPayments = []
 }) => {
-    const [detailTab, setDetailTab] = useState<'overview' | 'time' | 'expenses' | 'leaves' | 'permissions'>('overview');
+    const [detailTab, setDetailTab] = useState<'overview' | 'time' | 'expenses' | 'leaves' | 'team' | 'groups' | 'permissions'>('overview');
 
-    // Mock Permissions (from original code)
-    const [mockPermissions, setMockPermissions] = useState({
-        manufacturing: true,
-        crm: true,
-        accounting: false,
-        hr: true,
-        inventory: true
-    });
+    // Hooks for Groups Management
+    const { data: allGroups } = useGroups(config);
+    const { data: allGroupLinks } = useGroupUsers(config);
 
-    const togglePermission = (key: string) => {
-        setMockPermissions(prev => ({ ...prev, [key]: !prev[key as keyof typeof prev] }));
+    // Derived Groups Data,
+    const userGroupIds = useMemo(() => {
+        if (!allGroupLinks) return [];
+        return (allGroupLinks as unknown as DolibarrGroupUser[])
+            .filter(link => String(link.fk_user) === String(user.id))
+            .map(link => String(link.fk_usergroup));
+    }, [allGroupLinks, user.id]);
+
+    const userGroups = useMemo(() => {
+        if (!allGroups) return [];
+        return allGroups.filter(g => userGroupIds.includes(String(g.id)));
+    }, [allGroups, userGroupIds]);
+
+    const availableGroups = useMemo(() => {
+        if (!allGroups) return [];
+        return allGroups.filter(g => !userGroupIds.includes(String(g.id)));
+    }, [allGroups, userGroupIds]);
+
+    const [isAddingGroup, setIsAddingGroup] = useState(false);
+    const [selectedGroupToAdd, setSelectedGroupToAdd] = useState('');
+    const [selectedExpenseReport, setSelectedExpenseReport] = useState<ExpenseReport | null>(null);
+
+    const handleAddToGroup = async () => {
+        if (!selectedGroupToAdd) return;
+        try {
+            await HRAdmin.addUserToGroup(config, selectedGroupToAdd, user.id);
+            // Ideally trigger refresh, but we rely on re-fetch or manual refresh for now
+            alert("Usuário adicionado ao grupo (sync necessário para atualizar lista)");
+            setIsAddingGroup(false);
+            setSelectedGroupToAdd('');
+        } catch (e) {
+            console.error(e);
+            alert("Erro ao adicionar ao grupo");
+        }
+    };
+
+    const handleRemoveFromGroup = async (groupId: string) => {
+        if (!confirm('Remover usuário deste grupo?')) return;
+        try {
+            await HRAdmin.removeUserFromGroup(config, groupId, user.id);
+            alert("Usuário removido do grupo (sync necessário para atualizar lista)");
+        } catch (e) {
+            console.error(e);
+            alert("Erro ao remover do grupo");
+        }
     };
 
     const totalTaskTime = userTasks.reduce((acc, t) => acc + (t.duration_effective || 0), 0);
@@ -69,7 +120,9 @@ export const UserDetail: React.FC<UserDetailProps> = ({
             <div className="flex border-b border-slate-100 dark:border-slate-800 px-4 overflow-x-auto flex-none">
                 {[
                     { id: 'overview', label: 'Visão Geral', icon: UserCheck },
-                    { id: 'time', label: 'Logs de Tempo', icon: Clock },
+                    { id: 'team', label: `Equipe (${subordinates.length})`, icon: Users },
+                    { id: 'groups', label: `Grupos (${userGroups.length})`, icon: Users },
+                    { id: 'time', label: 'Logs', icon: Clock },
                     { id: 'expenses', label: 'Despesas', icon: Receipt },
                     { id: 'leaves', label: 'Licenças', icon: Plane },
                     { id: 'permissions', label: 'Permissões', icon: Shield }
@@ -107,6 +160,10 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                                     <span className="block font-bold text-slate-800 dark:text-white">{userLeaves.length}</span>
                                     <span className="text-xs text-slate-500">Licenças</span>
                                 </div>
+                                <div className="bg-slate-50 dark:bg-slate-800 px-4 py-2 rounded-lg border border-slate-100 dark:border-slate-700">
+                                    <span className="block font-bold text-slate-800 dark:text-white">{subordinates.length}</span>
+                                    <span className="text-xs text-slate-500">Equipe</span>
+                                </div>
                             </div>
                         </div>
 
@@ -129,6 +186,74 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                     </>
                 )}
 
+                {detailTab === 'team' && (
+                    <div className="space-y-3">
+                        {subordinates.length === 0 ? <p className="text-center text-slate-400 py-10">Este usuário não supervisiona ninguém.</p> : subordinates.map(sub => (
+                            <div key={sub.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:shadow-md transition-all flex items-center gap-4">
+                                <UserAvatar user={sub} config={config} />
+                                <div className="flex-1">
+                                    <div className="font-bold text-slate-800 dark:text-white text-sm">{sub.firstname} {sub.lastname}</div>
+                                    <div className="text-xs text-slate-500">{sub.job || 'Membro da Equipe'}</div>
+                                </div>
+                                <div className="text-right">
+                                    <span className="text-xs px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                                        ID: {sub.id}
+                                    </span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {detailTab === 'groups' && (
+                    <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                            <h4 className="font-bold text-slate-800 dark:text-white">Grupos Associados</h4>
+                            {!isAddingGroup && (
+                                <button onClick={() => setIsAddingGroup(true)} className="text-sm text-blue-600 flex items-center gap-1"><Plus size={14} /> Adicionar ao Grupo</button>
+                            )}
+                        </div>
+
+                        {isAddingGroup && (
+                            <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg flex gap-2">
+                                <select
+                                    className="flex-1 p-2 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm"
+                                    value={selectedGroupToAdd}
+                                    onChange={(e) => setSelectedGroupToAdd(e.target.value)}
+                                >
+                                    <option value="">Selecione um grupo...</option>
+                                    {availableGroups.map(g => (
+                                        <option key={g.id} value={g.id}>{g.name}</option>
+                                    ))}
+                                </select>
+                                <button onClick={handleAddToGroup} className="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-bold">Salvar</button>
+                                <button onClick={() => setIsAddingGroup(false)} className="px-3 py-2 bg-slate-200 text-slate-600 rounded hover:bg-slate-300 text-sm">Cancelar</button>
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-1 gap-3">
+                            {userGroups.length === 0 ? (
+                                <p className="text-slate-400 italic text-center py-4">Usuário não pertence a nenhum grupo.</p>
+                            ) : (
+                                userGroups.map(group => (
+                                    <div key={group.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold">
+                                                <Users size={16} />
+                                            </div>
+                                            <div>
+                                                <div className="font-bold text-slate-800 dark:text-white text-sm">{group.name}</div>
+                                                <div className="text-xs text-slate-500">{group.note || 'Sem descrição'}</div>
+                                            </div>
+                                        </div>
+                                        <button onClick={() => handleRemoveFromGroup(group.id)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={16} /></button>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {detailTab === 'time' && (
                     <div className="space-y-4">
                         {userTasks.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhuma tarefa atribuída.</p> : userTasks.map(task => (
@@ -144,11 +269,6 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                                         <span className={task.project_id ? 'text-indigo-600 dark:text-indigo-400 hover:underline' : ''}>
                                             {task.project_id ? getProjectName(task.project_id, projects) : 'Sem Projeto'}
                                         </span>
-                                        {task.fk_user_creat && (
-                                            <span className="ml-2 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                                                Criado por: {task.fk_user_creat === user.id ? 'Mim' : `User ${task.fk_user_creat}`}
-                                            </span>
-                                        )}
                                     </div>
                                 </div>
                                 <div className="text-right">
@@ -163,11 +283,46 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                 {detailTab === 'expenses' && (
                     <div className="space-y-3">
                         {userExpenses.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhuma despesa registrada.</p> : userExpenses.map(exp => (
-                            <div key={exp.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:shadow-md transition-all flex justify-between items-center">
-                                <div><div className="font-bold text-slate-800 dark:text-white text-sm">{exp.ref}</div><div className="text-xs text-slate-500">{formatDateOnly(exp.date_debut)}</div></div>
-                                <div className="text-right"><div className="font-bold text-slate-800 dark:text-white">${exp.total_ttc.toLocaleString()}</div>{getExpenseStatusBadge(exp.statut)}</div>
+                            <div
+                                key={exp.id}
+                                className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-600"
+                                onClick={() => setSelectedExpenseReport(exp)}
+                            >
+                                <div className="flex items-start gap-3">
+                                    <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-lg">
+                                        <Receipt size={24} />
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <h4 className="font-bold text-slate-900 dark:text-white">{exp.ref}</h4>
+                                            {getExpenseStatusBadge(exp.statut)}
+                                        </div>
+                                        <p className="text-sm text-slate-600 dark:text-slate-400 mt-1 line-clamp-1">{exp.note_public || "Sem descrição"}</p>
+                                        <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
+                                            <span className="flex items-center gap-1"><Calendar size={12} /> {formatDateOnly(exp.date_debut)}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="text-right">
+                                    <span className="block text-xl font-bold text-slate-900 dark:text-white">${exp.total_ttc.toFixed(2)}</span>
+                                    <span className="text-xs text-slate-500">Total TTC</span>
+                                </div>
                             </div>
                         ))}
+
+                        {selectedExpenseReport && (
+                            <ExpenseDetailModal
+                                expense={selectedExpenseReport}
+                                config={config}
+                                onClose={() => setSelectedExpenseReport(null)}
+                                users={allUsers.length > 0 ? allUsers : [user]} // Pass all users for robust name resolution
+                                onNavigate={onNavigate}
+                                expenseReportLines={expenseReportLines}
+                                expenseReportPayments={expenseReportPayments}
+                                projects={projects}
+                                variant="side"
+                            />
+                        )}
                     </div>
                 )}
 
@@ -186,22 +341,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                 )}
 
                 {detailTab === 'permissions' && (
-                    <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                        <h4 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2"><Shield size={18} className="text-red-500" /> Controle de Acesso</h4>
-                        <div className="space-y-2">
-                            {Object.entries(mockPermissions).map(([key, val]) => (
-                                <div key={key} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
-                                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300 capitalize">{key} Access</span>
-                                    <button
-                                        onClick={() => togglePermission(key)}
-                                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${val ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
-                                    >
-                                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${val ? 'translate-x-5' : 'translate-x-1'}`} />
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
+                    <PermissionManager targetId={user.id} targetType="user" config={config} />
                 )}
             </div>
         </div>

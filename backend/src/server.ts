@@ -61,7 +61,7 @@ app.use('/api/email', emailRoutes);
 
 // Health Check
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok', server: 'Doligen Backend' });
+    res.json({ status: 'ok', server: 'CoolGroove Backend' });
 });
 
 // Socket.io initialization
