@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate } from 'react-router-dom';
 import { useDolibarr } from '../context/DolibarrContext';
 import { Server, ShieldCheck, PlayCircle, Loader2 } from 'lucide-react';
@@ -12,7 +12,7 @@ import InvoiceList from './InvoiceList';
 import ProductList from './ProductList';
 import ProposalList from './ProposalList';
 import SupplierProposalList from './SupplierProposalList';
-import { SmartQuotationWizard } from './SmartQuotationWizard'; // Import
+import { SmartQuotationWizard } from './SmartQuotationWizard';
 import OrderList from './OrderList';
 import ProjectList from './ProjectList';
 import TicketList from './TicketList';
@@ -33,8 +33,6 @@ import AgendaEntryDetail from './AgendaEntryDetail';
 import ShipmentList from './ShipmentList';
 import PaymentList from './PaymentList';
 import CategoryList from './CategoryList';
-// PaymentDetail refactored into PaymentList
-
 import WhatsAppView from './WhatsAppView';
 import EmailView from './Email/EmailView';
 import SchedulerAdmin from './SchedulerAdmin';
@@ -51,7 +49,6 @@ import TaxPaymentDetail from './Finance/TaxPaymentDetail';
 import UserTaskDashboard from './Tasks/UserTaskDashboard';
 import { MonthlyReport } from '../pages/Reports/MonthlyReport';
 import { ChatPage, ChatConversation } from '../pages/ChatPage';
-
 
 const ViewWrapper = ({ Component, viewId, passProps = {} }: any) => {
     const { id } = useParams();
@@ -119,9 +116,6 @@ const App: React.FC = () => {
                 <NotificationHandler />
                 <Routes>
                     <Route element={<MainLayout />}>
-                        {/* import UserTaskDashboard from './Tasks/UserTaskDashboard'; // Import at top */}
-
-                        {/* ... inside Routes ... */}
                         <Route path="/" element={<ViewWrapper Component={Dashboard} viewId="dashboard" />} />
                         <Route path="/my-tasks" element={<ViewWrapper Component={UserTaskDashboard} viewId="projects" />} />
 

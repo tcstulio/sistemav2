@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "9558655720",
+    "project_id": "coolgroove-4b6bd",
+    "storage_bucket": "coolgroove-4b6bd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:9558655720:android:bb68d78c86e653d6e57f5d",
+        "android_client_info": {
+          "package_name": "com.coolgroove.sistema"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBqjuY24BRm0QrwIrAKKK8wNsQuG1HhziE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
