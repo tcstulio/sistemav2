@@ -17,6 +17,31 @@ export interface ExpenseReport {
     raw?: any;
 }
 
+export interface ExpenseReportLine {
+    id: string;
+    parent_id: string;
+    type_id: string;
+    type_code: string;
+    type_label: string;
+    project_id?: string;
+    description?: string;
+    qty: number;
+    unit_price: number;
+    total_ht: number;
+    total_ttc: number;
+    total_tva: number;
+    date_expense: number;
+    date_modification?: number;
+}
+
+export interface ExpenseType {
+    id: string;
+    code: string;
+    label: string;
+    active: '0' | '1';
+    date_modification?: number;
+}
+
 export interface LeaveRequest {
     id: string;
     ref?: string;
@@ -66,4 +91,31 @@ export interface Candidate {
     date_creation?: number;
     ref?: string;
     date_birth?: number;
+}
+
+export interface UserGroup {
+    id: string;
+    name: string;
+    note?: string;
+    datec?: number;
+    tms?: number;
+}
+
+export interface GroupUser {
+    id: string;
+    fk_user: string;
+    fk_usergroup: string;
+    raw?: any;
+}
+
+export interface PermissionDefinition {
+    id: string;
+    libelle: string;
+    module: string;
+    perms: string;
+    subperms: string;
+    type: string;
+    module_position?: number;
+    family_position?: number;
+    raw?: any;
 }

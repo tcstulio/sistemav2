@@ -6,7 +6,7 @@ const API_URL = `${config.API_BASE_URL}/api/email`;
 
 // Helper to get Headers
 const getHeaders = () => {
-    const savedConfig = localStorage.getItem('doligen_config');
+    const savedConfig = localStorage.getItem('coolgroove_config');
     let apiKey = '';
     if (savedConfig) {
         try {

@@ -53,7 +53,9 @@ export interface Ticket {
     origin_email?: string;
     datec: number;
     tms: number;
+    date_modification?: number; // Added for Delta Sync
     // Inferred/Joined fields
     linked_objects?: any;
     messages?: any[];
+    array_options?: Record<string, any>;
 }

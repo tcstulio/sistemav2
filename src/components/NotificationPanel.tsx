@@ -11,9 +11,10 @@ interface NotificationPanelProps {
     onMarkRead: (id: string) => void;
     onNavigate: (view: AppView, id: string) => void;
     onClearAll: () => void;
+    onMarkAllRead: () => void;
 }
 
-const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, notifications, onMarkRead, onNavigate, onClearAll }) => {
+const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, notifications, onMarkRead, onNavigate, onClearAll, onMarkAllRead }) => {
     if (!isOpen) return null;
 
     const getIcon = (type: string, priority: string) => {
@@ -39,7 +40,8 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
                         </span>
                     </div>
                     <div className="flex gap-2">
-                        <button onClick={onClearAll} className="text-xs text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium">Limpar Tudo</button>
+                        <button onClick={onMarkAllRead} className="text-xs text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium">Lidas</button>
+                        <button onClick={onClearAll} className="text-xs text-slate-500 hover:text-red-600 dark:hover:text-red-400 font-medium">Limpar</button>
                         <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
                     </div>
                 </div>

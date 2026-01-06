@@ -50,6 +50,24 @@ import {
     ProposalLine,
     OrderLine,
     InvoiceLine,
+    PaymentInvoiceLink,
+    SupplierPaymentInvoiceLink,
+    ExpenseReportPayment,
+    ExpenseReportPaymentLink,
+    VATPayment,
+    SalaryPayment,
+    SocialContributionPayment,
+    LoanPayment,
+    VariousPayment,
+    TaskTimeLog,
+    TaskContact,
+    ProjectContact,
+    ExpenseReportLine,
+    ExpenseType,
+    SupplierProposal,
+    SupplierProposalLine,
+    UserGroup,
+    GroupUser,
 } from '../../types';
 
 // ============ Helper Functions ============
@@ -229,14 +247,18 @@ export const mapTask = (raw: any): Task => ({
     description: raw.description,
     project_id: raw.project_id ? toString(raw.project_id) : '',
     date_start: raw.date_start ? toTimestamp(raw.date_start) : 0,
-    date_end: raw.date_end ? toTimestamp(raw.date_end) : 0,
+    date_end: toTimestamp(raw.date_end || raw.datee),
     progress: toNumber(raw.progress),
+    priority: toNumber(raw.priority),
+    status: toNumber(raw.status), // or fk_statut from generic response if easier
     planned_workload: toNumber(raw.planned_workload),
     duration_effective: toNumber(raw.duration_effective),
     fk_user_assign: raw.fk_user_assign ? toString(raw.fk_user_assign) : undefined,
     fk_user_creat: raw.fk_user_creat ? toString(raw.fk_user_creat) : undefined,
     date_creation: toTimestamp(raw.datec),
     date_modification: toTimestamp(raw.tms),
+    project_ref: raw.project_ref || undefined,
+    project_title: raw.project_title || undefined,
 });
 
 /**
@@ -254,6 +276,26 @@ export const mapProposal = (raw: any): Proposal => ({
     project_id: raw.project_id ? toString(raw.project_id) : undefined,
     fk_user_author: raw.fk_user_author ? toString(raw.fk_user_author) : undefined, // ADDED
     fk_user_valid: raw.fk_user_valid ? toString(raw.fk_user_valid) : undefined, // ADDED
+    date_modification: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw supplier proposal data
+ */
+export const mapSupplierProposal = (raw: any): SupplierProposal => ({
+    id: toString(raw.id),
+    ref: raw.ref || '',
+    socid: raw.socid ? toString(raw.socid) : '',
+    project_id: raw.project_id ? toString(raw.project_id) : undefined,
+    datec: toTimestamp(raw.datec),
+    date_valid: raw.date_valid ? toTimestamp(raw.date_valid) : undefined,
+    date_delivery: raw.date_delivery ? toTimestamp(raw.date_delivery) : undefined,
+    total_ht: toNumber(raw.total_ht),
+    total_ttc: toNumber(raw.total_ttc),
+    total_tva: toNumber(raw.total_tva),
+    statut: toString(raw.statut) as '0' | '1' | '2' | '3' | '4',
+    fk_user_author: raw.fk_user_author ? toString(raw.fk_user_author) : undefined,
+    fk_user_valid: raw.fk_user_valid ? toString(raw.fk_user_valid) : undefined,
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -279,34 +321,46 @@ export const mapTicket = (raw: any): Ticket => ({
     fk_user_close: raw.fk_user_close ? toString(raw.fk_user_close) : undefined,
     origin_email: raw.origin_email,
     tms: toTimestamp(raw.tms),
+    date_modification: toTimestamp(raw.tms), // Added for compatibility
+    array_options: Object.keys(raw).reduce((acc, key) => {
+        if (key.startsWith('options_')) {
+            acc[key] = raw[key];
+        }
+        return acc;
+    }, {} as Record<string, any>),
 });
 
 /**
  * Map raw payment data to Payment entity
  */
-export const mapPayment = (raw: any): Payment => ({
-    id: toString(raw.id),
-    ref: raw.ref || '',
-    date_payment: toTimestamp(raw.datep || raw.date_payment),
-    amount: toNumber(raw.amount),
-    fk_bank: raw.fk_bank ? toString(raw.fk_bank) : '',
-    fk_user_create: raw.fk_user_create ? toString(raw.fk_user_create) : undefined,
-    date_creation: toTimestamp(raw.datec),
-    date_modification: toTimestamp(raw.tms),
+export const mapPayment = (data: any): Payment => ({
+    id: Number(data.id),
+    ref: data.ref || `PAY-${data.id}`,
+    date_payment: new Date(toTimestamp(data.date_payment)).toISOString(),
+    amount: Number(data.amount || 0),
+    fk_bank: data.fk_bank ? Number(data.fk_bank) : undefined,
+    transaction_id: data.transaction_id ? Number(data.transaction_id) : (data.fk_bank ? Number(data.fk_bank) : undefined),
+    bank_account_id: data.bank_account_id ? Number(data.bank_account_id) : undefined,
+    num_paiement: data.num_paiement,
+    note: data.note,
+    mode_id: data.mode_id ? Number(data.mode_id) : undefined,
+    user_author_id: data.user_author_id ? Number(data.user_author_id) : undefined,
+    date_modification: toTimestamp(data.tms),
 });
 
-/**
- * Map raw supplier payment data to SupplierPayment entity
- */
-export const mapSupplierPayment = (raw: any): SupplierPayment => ({
-    id: toString(raw.id),
-    ref: raw.ref || '',
-    date_payment: toTimestamp(raw.datep || raw.date_payment),
-    amount: toNumber(raw.amount),
-    fk_bank: raw.fk_bank ? toString(raw.fk_bank) : '',
-    fk_user_create: raw.fk_user_create ? toString(raw.fk_user_create) : undefined,
-    date_creation: toTimestamp(raw.datec),
-    date_modification: toTimestamp(raw.tms),
+export const mapSupplierPayment = (data: any): SupplierPayment => ({
+    id: Number(data.id),
+    ref: data.ref || `SPAY-${data.id}`,
+    date_payment: new Date(toTimestamp(data.date_payment)).toISOString(),
+    amount: Number(data.amount || 0),
+    fk_bank: data.fk_bank ? Number(data.fk_bank) : undefined,
+    transaction_id: data.transaction_id ? Number(data.transaction_id) : (data.fk_bank ? Number(data.fk_bank) : undefined),
+    bank_account_id: data.bank_account_id ? Number(data.bank_account_id) : undefined,
+    num_paiement: data.num_paiement,
+    note: data.note,
+    mode_id: data.mode_id ? Number(data.mode_id) : undefined,
+    user_author_id: data.user_author_id ? Number(data.user_author_id) : undefined,
+    date_modification: toTimestamp(data.tms),
 });
 
 /**
@@ -327,20 +381,22 @@ export const mapContract = (raw: any): Contract => ({
 /**
  * Map raw intervention data to Intervention entity
  */
-export const mapIntervention = (raw: any): Intervention => ({
-    id: toString(raw.id),
-    ref: raw.ref || '',
-    socid: raw.socid ? toString(raw.socid) : (raw.fk_soc ? toString(raw.fk_soc) : ''),
-    project_id: raw.project_id ? toString(raw.project_id) : (raw.fk_project ? toString(raw.fk_project) : undefined),
-    date: toTimestamp(raw.date_creation || raw.datei || raw.datec),
-    // Backend returns 'date_creation', legacy might use 'datec'
-    date_creation: toTimestamp(raw.date_creation || raw.datec),
-    description: raw.description,
-    statut: toString(raw.statut) as '0' | '1' | '2',
-    fk_user_author: raw.fk_user_author ? toString(raw.fk_user_author) : undefined,
-    duration: raw.duration ? toNumber(raw.duration) : undefined,
-    date_modification: toTimestamp(raw.tms),
-});
+export const mapIntervention = (raw: any): Intervention => {
+    return {
+        id: toString(raw.id),
+        ref: raw.ref || '',
+        socid: raw.socid ? toString(raw.socid) : (raw.fk_soc ? toString(raw.fk_soc) : ''),
+        project_id: raw.project_id ? toString(raw.project_id) : (raw.fk_project ? toString(raw.fk_project) : undefined),
+        date: toTimestamp(raw.date_creation || raw.datei || raw.datec),
+        // Backend returns 'date_creation', legacy might use 'datec'
+        date_creation: toTimestamp(raw.date_creation || raw.datec),
+        description: raw.description,
+        statut: toString(raw.statut) as '0' | '1' | '2',
+        fk_user_author: raw.fk_user_author ? toString(raw.fk_user_author) : undefined,
+        duration: raw.duration ? toNumber(raw.duration) : undefined,
+        date_modification: toTimestamp(raw.tms),
+    };
+};
 
 /**
  * Map raw bank account data to BankAccount entity
@@ -399,6 +455,7 @@ export const mapProduct = (raw: any): Product => ({
     duration: raw.duration,
 
     date_modification: toTimestamp(raw.tms),
+    category_ids: raw.category_ids ? String(raw.category_ids).split(',') : undefined,
 });
 
 /**
@@ -412,6 +469,14 @@ export const mapCategory = (raw: any): Category => ({
     date_modification: toTimestamp(raw.tms),
     parent_id: raw.parent_id ? toString(raw.parent_id) : undefined,
 });
+
+export const mapUserRight = (raw: any): { id: string, fk_user: string, fk_id: string } => {
+    return {
+        id: String(raw.id || raw.rowid || ''),
+        fk_user: String(raw.fk_user || raw.user_id || ''),
+        fk_id: String(raw.fk_id || raw.right_id || '')
+    };
+};
 
 /**
  * Map raw agenda event data to AgendaEvent entity
@@ -522,6 +587,7 @@ export const mapUser = (raw: any): DolibarrUser => ({
     job: raw.job,
     admin: raw.admin,
     rights: raw.rights,
+    supervisor_id: raw.supervisor_id ? toString(raw.supervisor_id) : undefined,
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -712,15 +778,17 @@ export const mapSupplierOrderLine = (raw: any): SupplierOrderLine => ({
 /**
  * Map raw intervention line data
  */
-export const mapInterventionLine = (raw: any): InterventionLine => ({
-    id: toString(raw.id),
-    parent_id: toString(raw.parent_id),
-    desc: raw.description || '',
-    qty: toNumber(raw.qty),
-    date: toTimestamp(raw.tms),
-    duration: 0,
-    date_modification: toTimestamp(raw.tms),
-});
+export const mapInterventionLine = (raw: any): InterventionLine => {
+    return {
+        id: toString(raw.id),
+        parent_id: toString(raw.parent_id),
+        desc: raw.description || '',
+        qty: toNumber(raw.qty),
+        date: toTimestamp(raw.tms),
+        duration: raw.duration ? toNumber(raw.duration) : 0,
+        date_modification: toTimestamp(raw.tms),
+    };
+};
 
 /**
  * Map raw proposal line data
@@ -739,9 +807,53 @@ export const mapProposalLine = (raw: any): ProposalLine => ({
     total_tva: toNumber(raw.total_tva),
     product_id: raw.product_id ? toString(raw.product_id) : undefined,
     rang: toNumber(raw.rang),
-    remise_percent: toNumber(raw.remise_percent), // ADDED
     date_modification: toTimestamp(raw.tms),
 });
+
+/**
+ * Map raw User Group data
+ */
+export const mapUserGroup = (raw: any): UserGroup => ({
+    id: toString(raw.id),
+    name: raw.name || '',
+    note: raw.note,
+    datec: toTimestamp(raw.datec),
+    tms: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw Group User Link data
+ */
+export const mapGroupUser = (raw: any): GroupUser => {
+    return {
+        id: String(raw.id || raw.rowid || ''),
+        fk_user: String(raw.fk_user || raw.user_id || ''),
+        fk_usergroup: String(raw.fk_usergroup || raw.group_id || ''),
+        raw: raw
+    };
+};
+
+export const mapPermission = (raw: any): PermissionDefinition => {
+    return {
+        id: String(raw.id || raw.rowid || ''),
+        libelle: raw.libelle || '',
+        module: raw.module || '',
+        perms: raw.perms || '',
+        subperms: raw.subperms || '',
+        type: raw.type || '',
+        module_position: raw.module_position ? parseInt(raw.module_position) : undefined,
+        family_position: raw.family_position ? parseInt(raw.family_position) : undefined,
+        raw: raw
+    };
+};
+
+export const mapGroupRight = (raw: any): { id: string, fk_usergroup: string, fk_id: string } => {
+    return {
+        id: String(raw.id || raw.rowid || ''),
+        fk_usergroup: String(raw.fk_usergroup || raw.group_id || ''),
+        fk_id: String(raw.fk_id || raw.right_id || '')
+    };
+};
 
 /**
  * Map raw order line data
@@ -781,6 +893,212 @@ export const mapInvoiceLine = (raw: any): InvoiceLine => ({
     product_id: raw.fk_product ? toString(raw.fk_product) : (raw.product_id ? toString(raw.product_id) : undefined),
     product_ref: raw.product_ref || undefined,
     product_label: raw.product_label || undefined,
-    rang: toNumber(raw.rang),
     date_modification: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw task time log data
+ */
+export const mapTaskTimeLog = (raw: any): TaskTimeLog => ({
+    id: toString(raw.id),
+    task_id: toString(raw.task_id),
+    date: toTimestamp(raw.date),
+    date_start: raw.date_start ? toTimestamp(raw.date_start) : undefined, // Map precise start time
+    duration: toNumber(raw.duration),
+    user_id: raw.user_id ? toString(raw.user_id) : undefined,
+    note: raw.note,
+    date_modification: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw task contact data
+ */
+export const mapTaskContact = (raw: any): TaskContact => ({
+    id: toString(raw.id),
+    task_id: toString(raw.task_id),
+    contact_id: raw.contact_id ? toString(raw.contact_id) : undefined,
+    user_id: raw.user_id ? toString(raw.user_id) : undefined,
+    type_id: toString(raw.type_id),
+    date_modification: toTimestamp(raw.tms), // Added for delta sync
+});
+
+/**
+ * Map raw project contact data
+ */
+export const mapProjectContact = (raw: any): ProjectContact => ({
+    id: toString(raw.id),
+    project_id: toString(raw.project_id),
+    contact_id: raw.contact_id ? toString(raw.contact_id) : undefined,
+    user_id: raw.user_id ? toString(raw.user_id) : undefined,
+    type_id: toString(raw.type_id),
+    date_modification: toTimestamp(raw.tms), // Updated to use TMS for delta sync
+});
+/**
+ * Map raw payment invoice link data
+ */
+export const mapPaymentInvoiceLink = (raw: any): PaymentInvoiceLink => ({
+    id: toString(raw.id),
+    fk_paiement: toString(raw.fk_paiement),
+    fk_facture: toString(raw.fk_facture),
+    amount: toNumber(raw.amount),
+    date_modification: Number(raw.id), // No TMS, use ID
+});
+
+/**
+ * Map raw supplier payment invoice link data
+ */
+export const mapSupplierPaymentInvoiceLink = (raw: any): SupplierPaymentInvoiceLink => ({
+    id: toString(raw.id),
+    fk_paiementfourn: toString(raw.fk_paiementfourn),
+    fk_facturefourn: toString(raw.fk_facturefourn),
+    amount: toNumber(raw.amount),
+    date_modification: Number(raw.id), // No TMS, use ID
+});
+
+
+
+/**
+ * Map raw expense report line data
+ */
+export const mapExpenseReportLine = (raw: any): ExpenseReportLine => ({
+    id: toString(raw.id),
+    parent_id: toString(raw.parent_id),
+    type_id: toString(raw.type_id),
+    type_code: raw.type_code || '',
+    type_label: raw.type_label || '',
+    project_id: raw.project_id ? toString(raw.project_id) : undefined,
+    description: raw.description,
+    qty: toNumber(raw.qty),
+    unit_price: toNumber(raw.unit_price),
+    total_ht: toNumber(raw.total_ht),
+    total_ttc: toNumber(raw.total_ttc),
+    total_tva: toNumber(raw.total_tva),
+    date_expense: toTimestamp(raw.date_expense),
+    date_modification: toTimestamp(raw.tms), // Uses parent TMS from custom_sync
+});
+
+/**
+ * Map raw expense type data
+ */
+export const mapExpenseType = (raw: any): ExpenseType => ({
+    id: toString(raw.id),
+    code: raw.code || '',
+    label: raw.label || '',
+    active: toString(raw.active) as '0' | '1',
+    date_modification: Number(raw.id), // No TMS, use ID logic
+});
+
+/**
+ * Map raw expense report payment data
+ */
+export const mapExpenseReportPayment = (raw: any): ExpenseReportPayment => ({
+    id: toString(raw.id),
+    ref: raw.ref || '',
+    fk_expensereport: toString(raw.fk_expensereport),
+    date_payment: toTimestamp(raw.date_payment || raw.datep),
+    amount: toNumber(raw.amount),
+    fk_bank: toString(raw.fk_bank),
+    transaction_id: raw.transaction_id ? toString(raw.transaction_id) : (raw.fk_bank ? toString(raw.fk_bank) : undefined),
+    bank_account_id: raw.bank_account_id ? toString(raw.bank_account_id) : undefined,
+    fk_user_creat: toString(raw.fk_user_creat),
+    date_modification: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw expense report payment link data
+ */
+export const mapExpenseReportPaymentLink = (raw: any): ExpenseReportPaymentLink => ({
+    id: toString(raw.id),
+    fk_payment: toString(raw.fk_payment),
+    fk_expensereport: toString(raw.fk_expensereport),
+    amount: toNumber(raw.amount),
+    date_modification: Number(raw.id),
+});
+
+/**
+ * Map raw VAT payment data
+ */
+export const mapVATPayment = (raw: any): VATPayment => ({
+    id: toString(raw.id),
+    ref: raw.ref || '',
+    fk_tva: toString(raw.fk_tva),
+    date_payment: toTimestamp(raw.date_payment || raw.datep),
+    amount: toNumber(raw.amount),
+    fk_bank: toString(raw.fk_bank),
+    date_modification: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw Salary payment data
+ */
+export const mapSalaryPayment = (raw: any): SalaryPayment => ({
+    id: toString(raw.id),
+    ref: raw.ref || '',
+    num_payment: raw.num_payment || undefined,
+    fk_user: toString(raw.fk_user),
+    date_payment: toTimestamp(raw.date_payment || raw.datep),
+    amount: toNumber(raw.amount),
+    salary: toNumber(raw.salary),
+    fk_bank: toString(raw.fk_bank),
+    date_modification: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw Social Contribution payment data
+ */
+export const mapSocialContributionPayment = (raw: any): SocialContributionPayment => ({
+    id: toString(raw.id),
+    ref: raw.ref || '',
+    fk_charge: toString(raw.fk_charge),
+    date_payment: toTimestamp(raw.date_payment || raw.datep),
+    amount: toNumber(raw.amount),
+    fk_bank: toString(raw.fk_bank),
+    date_modification: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw Loan payment data
+ */
+export const mapLoanPayment = (raw: any): LoanPayment => ({
+    id: toString(raw.id),
+    ref: raw.ref || '',
+    fk_loan: toString(raw.fk_loan),
+    date_payment: toTimestamp(raw.date_payment || raw.datep),
+    amount_capital: toNumber(raw.amount_capital),
+    amount_insurance: toNumber(raw.amount_insurance),
+    amount_interest: toNumber(raw.amount_interest),
+    fk_bank: toString(raw.fk_bank),
+    date_modification: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw Various payment data
+ */
+export const mapVariousPayment = (raw: any): VariousPayment => ({
+    id: toString(raw.id),
+    ref: raw.ref || '',
+    num_payment: raw.num_payment || undefined,
+    label: raw.label || '',
+    date_payment: toTimestamp(raw.date_payment || raw.datep),
+    amount: toNumber(raw.amount),
+    fk_bank: toString(raw.fk_bank),
+    date_modification: toTimestamp(raw.tms),
+});
+
+/**
+ * Map raw supplier proposal line data
+ */
+export const mapSupplierProposalLine = (raw: any): SupplierProposalLine => ({
+    id: toString(raw.id),
+    parent_id: toString(raw.parent_id),
+    description: raw.description || '',
+    qty: toNumber(raw.qty),
+    vat_rate: toNumber(raw.vat_rate),
+    subprice: toNumber(raw.subprice),
+    total_ht: toNumber(raw.total_ht),
+    total_ttc: toNumber(raw.total_ttc),
+    total_tva: toNumber(raw.total_tva),
+    product_id: raw.product_id ? toString(raw.product_id) : undefined,
+    rang: toNumber(raw.rang),
+    date_modification: toNumber(raw.tms),
 });

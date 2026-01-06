@@ -1,10 +1,13 @@
-
 import React, { useState, useMemo } from 'react';
-import { Category, DolibarrConfig, AppView } from '../types';
-import { Tag, Search, Plus, Trash2, X, Loader2, CheckCircle2, Folder, Box, User } from 'lucide-react';
+import { Category, AppView } from '../types';
+import { Tag, Search, Plus, Trash2, X, Loader2, CheckCircle2, Folder, Box, User, ArrowUpRight, ChevronLeft, StickyNote } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useCategories } from '../hooks/dolibarr';
+import { GenericListLayout } from './common/GenericListLayout';
+import { FixedSizeList as ListWindow } from 'react-window';
+import AutoSizer from 'react-virtualized-auto-sizer';
+import { toast } from 'sonner';
 
 interface CategoryListProps {
     onRefresh?: () => void;
@@ -16,15 +19,16 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
     const { data: categoriesData } = useCategories(config);
     const categories = categoriesData || [];
 
-    if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
-
     const [searchTerm, setSearchTerm] = useState('');
     const [filterType, setFilterType] = useState<'all' | 'product' | 'customer' | 'supplier'>('all');
+    const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
 
     // Create State
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [newCat, setNewCat] = useState({ label: '', type: 'product', description: '' });
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    if (!config) return <div className="p-8 text-center text-slate-500">Carregando configuração...</div>;
 
     const filteredCategories = useMemo(() => {
         return categories.filter(c => {
@@ -51,43 +55,217 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
             if (newCat.type === 'customer') typeVal = '2';
 
             await DolibarrService.createCategory(config, { ...newCat, type: typeVal });
-            alert("Categoria criada!");
+            toast.success("Categoria criada com sucesso!");
             setIsCreateModalOpen(false);
             setNewCat({ label: '', type: 'product', description: '' });
             if (onRefresh) onRefresh();
         } catch (e: any) {
             console.error(e);
-            alert(`Falha: ${e.message}`);
+            toast.error(`Falha ao criar categoria: ${e.message}`);
         } finally {
             setIsSubmitting(false);
         }
     };
 
     const handleDelete = async (id: string) => {
-        if (!confirm("Excluir esta categoria? Objetos vinculados não serão excluídos.")) return;
+        if (!confirm("Excluir esta categoria? Objetos vinculados não serão excluídos, apenas a categoria.")) return;
         try {
             await DolibarrService.deleteCategory(config, id);
+            toast.success("Categoria excluída.");
             if (onRefresh) onRefresh();
+            setSelectedCategory(null);
         } catch (e) {
             console.error(e);
-            alert("Falha ao excluir categoria");
+            toast.error("Falha ao excluir categoria");
         }
     };
 
-    const getTypeBadge = (type: string) => {
+    const getTypeBadge = (type: string | number) => {
         const t = String(type);
         if (t === '0' || t === 'product') return <span className="flex items-center gap-1 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded"><Box size={10} /> Produto</span>;
         if (t === '2' || t === 'customer') return <span className="flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded"><User size={10} /> Cliente</span>;
         if (t === '1' || t === 'supplier') return <span className="flex items-center gap-1 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded"><User size={10} /> Fornecedor</span>;
-        return <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">Outro</span>;
+        return <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">Outro ({t})</span>;
     };
 
-    return (
-        <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors relative">
+    // --- RENDERERS ---
 
-            {/* Create Modal */}
+    const renderHeader = (
+        <div className="p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                <div>
+                    <h2 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-2"><Tag className="text-indigo-500" /> Categorias / Tags</h2>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Organize seus dados com tags</p>
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                        <input
+                            type="text"
+                            placeholder="Buscar categorias..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="pl-10 pr-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white w-64"
+                        />
+                    </div>
+                    <button onClick={() => setIsCreateModalOpen(true)} className={`flex items-center gap-1.5 px-3 py-2 bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors`}>
+                        <Plus size={18} /> Nova
+                    </button>
+                </div>
+            </div>
+            <div className="flex gap-2 border-b border-slate-100 dark:border-slate-800 overflow-x-auto">
+                {['all', 'product', 'customer', 'supplier'].map(type => (
+                    <button
+                        key={type}
+                        onClick={() => setFilterType(type as any)}
+                        className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 capitalize whitespace-nowrap ${filterType === type ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                    >
+                        {type === 'all' ? 'Todas' : type === 'product' ? 'Produto' : type === 'customer' ? 'Cliente' : 'Fornecedor'}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+
+    const Row = ({ index, style }: { index: number, style: React.CSSProperties }) => {
+        const cat = filteredCategories[index];
+        const itemStyle = {
+            ...style,
+            top: (parseFloat(style.top as string) + 8) + 'px',
+            height: (parseFloat(style.height as string) - 8) + 'px',
+            left: '8px',
+            width: 'calc(100% - 16px)'
+        };
+
+        return (
+            <div
+                style={itemStyle}
+                onClick={() => setSelectedCategory(cat)}
+                className={`p-4 rounded-xl border cursor-pointer transition-all hover:shadow-md group flex items-center justify-between gap-4 ${selectedCategory?.id === cat.id
+                        ? 'bg-indigo-50 dark:bg-indigo-900/10 border-indigo-500 dark:border-indigo-500'
+                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-800'
+                    }`}
+            >
+                <div>
+                    <div className="flex items-center gap-2 mb-1">
+                        <Folder size={18} className="text-indigo-400" />
+                        <h4 className="font-bold text-slate-800 dark:text-white truncate">{cat.label}</h4>
+                    </div>
+                    {cat.description && <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1 ml-6">{cat.description}</p>}
+                </div>
+                <div className="flex items-center gap-2">
+                    {getTypeBadge(cat.type)}
+                    <div className="lg:hidden">
+                        <ArrowUpRight size={16} className="text-slate-400" />
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const renderListContent = filteredCategories.length === 0 ? (
+        <div className="text-center py-20 text-slate-400">
+            <Tag size={48} className="mx-auto mb-4 opacity-50" />
+            <p>Nenhuma categoria encontrada.</p>
+        </div>
+    ) : (
+        <AutoSizer>
+            {({ height, width }) => (
+                <ListWindow
+                    height={height}
+                    width={width}
+                    itemCount={filteredCategories.length}
+                    itemSize={80}
+                >
+                    {Row}
+                </ListWindow>
+            )}
+        </AutoSizer>
+    );
+
+    const renderDetail = selectedCategory ? (
+        <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950/50">
+            {/* Detail Header */}
+            <div className="flex-none bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 p-4 flex items-center justify-between z-10">
+                <div className="flex items-center gap-3">
+                    <button onClick={() => setSelectedCategory(null)} className="lg:hidden p-2 -ml-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"><ChevronLeft size={20} /></button>
+                    <div>
+                        <h2 className="text-lg font-bold dark:text-white leading-tight flex items-center gap-2">
+                            <Tag className="text-indigo-500" size={20} />
+                            {selectedCategory.label}
+                        </h2>
+                        <div className="mt-1">
+                            {getTypeBadge(selectedCategory.type)}
+                        </div>
+                    </div>
+                </div>
+                <button onClick={() => setSelectedCategory(null)} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
+
+                {/* Description */}
+                <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-6">
+                    <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 mb-4">
+                        <StickyNote size={18} className="text-slate-500" />
+                        Descrição
+                    </h3>
+                    <p className="text-slate-600 dark:text-slate-300 text-sm whitespace-pre-wrap leading-relaxed">
+                        {selectedCategory.description || <span className="italic text-slate-400">Sem descrição.</span>}
+                    </p>
+                </div>
+
+                {/* Actions */}
+                <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 p-6">
+                    <h3 className="font-bold text-slate-800 dark:text-white mb-4">Ações</h3>
+                    <div className="space-y-3">
+                        <button
+                            onClick={() => {
+                                const t = String(selectedCategory.type);
+                                setSelectedCategory(null);
+                                if ((t === '0' || t === 'product') && onNavigate) onNavigate('products', ''); // TODO: Filter by category ID if possible?
+                                if ((t === '2' || t === 'customer') && onNavigate) onNavigate('customers', '');
+                                if ((t === '1' || t === 'supplier') && onNavigate) onNavigate('suppliers', '');
+                            }}
+                            className="w-full flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors text-sm font-medium text-slate-700 dark:text-slate-300"
+                        >
+                            <span className="flex items-center gap-2"><ArrowUpRight size={16} /> Ver itens vinculados</span>
+                        </button>
+
+                        <button
+                            onClick={() => handleDelete(selectedCategory.id)}
+                            className="w-full flex items-center justify-between p-3 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-colors text-sm font-medium text-red-600 dark:text-red-400"
+                        >
+                            <span className="flex items-center gap-2"><Trash2 size={16} /> Excluir Categoria</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div className="px-2">
+                    <div className="text-xs text-slate-400">ID Interno: <span className="font-mono">{selectedCategory.id}</span></div>
+                </div>
+
+            </div>
+        </div>
+    ) : (
+        <div className="flex flex-col items-center justify-center h-full text-slate-400">
+            <Tag size={48} className="mb-4 opacity-50" />
+            <p>Selecione uma categoria para ver detalhes.</p>
+        </div>
+    );
+
+    return (
+        <div className="h-full flex flex-col">
+            <GenericListLayout
+                header={renderHeader}
+                content={renderListContent}
+                detail={renderDetail}
+                isDetailOpen={!!selectedCategory}
+            />
+
+            {/* Create Modal - Kept Global/Overlay */}
             {isCreateModalOpen && (
-                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
                     <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-sm p-6 border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="font-bold text-lg dark:text-white">Nova Categoria</h3>
@@ -120,77 +298,6 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                     </div>
                 </div>
             )}
-
-            {/* Header */}
-            <div className="p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-                    <div>
-                        <h2 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-2"><Tag className="text-indigo-500" /> Categorias / Tags</h2>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">Organize seus dados com tags</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="relative">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                            <input
-                                type="text"
-                                placeholder="Buscar categorias..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                className="pl-10 pr-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white w-64"
-                            />
-                        </div>
-                        <button onClick={() => setIsCreateModalOpen(true)} className={`flex items-center gap-1.5 px-3 py-2 bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors`}>
-                            <Plus size={18} /> Nova
-                        </button>
-                    </div>
-                </div>
-                <div className="flex gap-2 border-b border-slate-100 dark:border-slate-800 overflow-x-auto">
-                    {['all', 'product', 'customer', 'supplier'].map(type => (
-                        <button
-                            key={type}
-                            onClick={() => setFilterType(type as any)}
-                            className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 capitalize whitespace-nowrap ${filterType === type ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
-                        >
-                            {type === 'all' ? 'Todas' : type === 'product' ? 'Produto' : type === 'customer' ? 'Cliente' : 'Fornecedor'}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
-            {/* List */}
-            <div className="flex-1 overflow-y-auto p-4 md:p-6">
-                {filteredCategories.length === 0 ? (
-                    <div className="text-center py-20 text-slate-400">
-                        <Tag size={48} className="mx-auto mb-4 opacity-50" />
-                        <p>Nenhuma categoria encontrada.</p>
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                        {filteredCategories.map(cat => (
-                            <div
-                                key={cat.id}
-                                className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all group cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-600"
-                                onClick={() => {
-                                    const t = String(cat.type);
-                                    if ((t === '0' || t === 'product') && onNavigate) onNavigate('products', '');
-                                    if ((t === '2' || t === 'customer') && onNavigate) onNavigate('customers', '');
-                                    if ((t === '1' || t === 'supplier') && onNavigate) onNavigate('suppliers', '');
-                                }}
-                            >
-                                <div className="flex justify-between items-start mb-2">
-                                    <div className="flex items-center gap-2">
-                                        <Folder size={18} className="text-indigo-400" />
-                                        <h4 className="font-bold text-slate-800 dark:text-white truncate">{cat.label}</h4>
-                                    </div>
-                                    <button onClick={(e) => { e.stopPropagation(); handleDelete(cat.id); }} className="text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16} /></button>
-                                </div>
-                                <div className="mb-3">{getTypeBadge(cat.type)}</div>
-                                {cat.description && <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">{cat.description}</p>}
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
         </div>
     );
 };

@@ -81,7 +81,7 @@ export const LlmSettingsTab: React.FC = () => {
 
     // Get auth token
     const getToken = () => {
-        const savedConfig = JSON.parse(localStorage.getItem('doligen_config') || '{}');
+        const savedConfig = JSON.parse(localStorage.getItem('coolgroove_config') || '{}');
         return savedConfig.apiKey || '';
     };
 

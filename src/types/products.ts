@@ -23,6 +23,7 @@ export interface Product {
     date_creation?: number;
     date_modification?: number;
     array_options?: Record<string, any>;
+    category_ids?: string[]; // IDs das categorias vinculadas
 }
 
 export interface Category {

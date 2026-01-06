@@ -14,6 +14,11 @@
     "generate:types": "npx swagger2openapi -p -o openapi_3.json swagger_full.json && npx openapi-typescript ./openapi_3.json -o ./src/types/dolibarr.actions.d.ts"
   },
   "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/cli": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/push-notifications": "^8.0.0",
+    "@capgo/capacitor-updater": "^8.41.2",
     "@google/genai": "^1.30.0",
     "@tanstack/react-query": "^5.90.12",
     "axios": "^1.13.2",

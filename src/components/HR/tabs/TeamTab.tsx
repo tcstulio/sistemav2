@@ -8,9 +8,10 @@ interface TeamTabProps {
     searchTerm: string;
     sortConfig: { key: string, direction: 'asc' | 'desc' };
     displayLimit: number;
-    selectedUserId?: string | null;
+    selectedUserIds: string[];
+    onToggleUser: (userId: string, multiSelect: boolean) => void;
+    onSelectUser: (u: DolibarrUser) => void; // Keeps focusing logic
     config: DolibarrConfig;
-    onSelectUser: (u: DolibarrUser) => void;
     setDisplayLimit: React.Dispatch<React.SetStateAction<number>>;
 }
 
@@ -19,9 +20,10 @@ export const TeamTab: React.FC<TeamTabProps> = ({
     searchTerm,
     sortConfig,
     displayLimit,
-    selectedUserId,
-    config,
+    selectedUserIds,
+    onToggleUser,
     onSelectUser,
+    config,
     setDisplayLimit
 }) => {
 
@@ -66,23 +68,45 @@ export const TeamTab: React.FC<TeamTabProps> = ({
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4">
-                {displayedUsers.map(u => (
-                    <div
-                        key={u.id}
-                        onClick={() => onSelectUser(u)}
-                        className={`p-4 rounded-xl border cursor-pointer transition-all flex items-center justify-between gap-4 ${selectedUserId === u.id ? `bg-${config.themeColor}-50 dark:bg-${config.themeColor}-900/20 border-${config.themeColor}-200 dark:border-${config.themeColor}-800` : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md'}`}
-                    >
-                        <div className="flex items-center gap-4">
-                            <div className="shrink-0">
-                                <UserAvatar user={u} config={config} size="md" />
+                {displayedUsers.map(u => {
+                    const isSelected = selectedUserIds.includes(u.id);
+                    return (
+                        <div
+                            key={u.id}
+                            className={`group relative p-4 rounded-xl border transition-all flex items-center justify-between gap-4 ${isSelected
+                                ? `bg-${config.themeColor}-50 dark:bg-${config.themeColor}-900/20 border-${config.themeColor}-200 dark:border-${config.themeColor}-800`
+                                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md'
+                                }`}
+                        >
+                            <div
+                                className="flex items-center gap-4 flex-1 cursor-pointer"
+                                onClick={() => onSelectUser(u)}
+                            >
+                                <div className="shrink-0">
+                                    <UserAvatar user={u} config={config} size="md" />
+                                </div>
+                                <div>
+                                    <h4 className="font-bold text-slate-800 dark:text-white">{u.firstname} {u.lastname}</h4>
+                                    <p className="text-xs text-slate-500">{u.job || u.login}</p>
+                                </div>
                             </div>
-                            <div>
-                                <h4 className="font-bold text-slate-800 dark:text-white">{u.firstname} {u.lastname}</h4>
-                                <p className="text-xs text-slate-500">{u.job || u.login}</p>
+
+                            {/* Checkbox for Multi-Selection */}
+                            <div
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onToggleUser(u.id, true);
+                                }}
+                                className={`w-6 h-6 rounded border flex items-center justify-center cursor-pointer transition-colors ${isSelected
+                                    ? `bg-${config.themeColor}-600 border-${config.themeColor}-600 text-white`
+                                    : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 hover:border-slate-400'
+                                    }`}
+                            >
+                                {isSelected && <ChevronDown size={14} className="stroke-[4]" />}
                             </div>
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
             {filteredUsers.length > displayedUsers.length && (
                 <button

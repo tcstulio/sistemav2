@@ -177,7 +177,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                 <div className="w-24 h-24 bg-slate-200 dark:bg-slate-800 rounded-full flex items-center justify-center mb-6">
                     <MessageSquare size={48} className="text-slate-400 opacity-50" />
                 </div>
-                <h2 className="text-2xl font-light text-slate-600 dark:text-slate-300 mb-2">WhatsApp Web DoliGen</h2>
+                <h2 className="text-2xl font-light text-slate-600 dark:text-slate-300 mb-2">WhatsApp Web CoolGroove</h2>
                 <p className="text-sm">Envie e receba mensagens sem manter seu celular conectado.</p>
                 <p className="text-sm mt-1">Selecione uma conversa para começar.</p>
             </div>

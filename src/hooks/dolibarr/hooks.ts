@@ -54,6 +54,23 @@ import {
     ProposalLine,
     OrderLine,
     InvoiceLine,
+    PaymentInvoiceLink,
+    SupplierPaymentInvoiceLink,
+    ExpenseReportPayment,
+    ExpenseReportPaymentLink,
+    VATPayment,
+    SalaryPayment,
+    SocialContributionPayment,
+    LoanPayment,
+    VariousPayment,
+    TaskTimeLog,
+    TaskContact,
+    ProjectContact,
+    SupplierProposal,
+    SupplierProposalLine,
+    UserGroup,
+    GroupUser,
+    PermissionDefinition,
 } from '../../types';
 
 // ============ System & Utilities ============
@@ -68,6 +85,116 @@ export const useLinks = createDolibarrHook<any, Link>({
     dateField: 'id', // Links table has no TMS, usage of ID for rough sync or full fetch
     mapper: mappers.mapLink,
     sortFn: (a, b) => Number(b.id) - Number(a.id),
+});
+
+/**
+ * Hook for fetching and syncing payment invoice links
+ */
+export const usePaymentInvoiceLinks = createDolibarrHook<any, PaymentInvoiceLink>({
+    queryKey: 'payment_invoice_links',
+    storeName: 'paymentInvoiceLinks',
+    endpoint: 'payment_invoice_links',
+    dateField: 'date_modification',
+    mapper: mappers.mapPaymentInvoiceLink,
+});
+
+/**
+ * Hook for fetching and syncing supplier payment invoice links
+ */
+export const useSupplierPaymentInvoiceLinks = createDolibarrHook<any, SupplierPaymentInvoiceLink>({
+    queryKey: 'supplier_payment_invoice_links',
+    storeName: 'supplierPaymentInvoiceLinks',
+    endpoint: 'supplier_payment_invoice_links',
+    dateField: 'date_modification',
+    mapper: mappers.mapSupplierPaymentInvoiceLink,
+});
+
+/**
+ * Hook for fetching and syncing expense report payments
+ */
+export const useExpenseReportPayments = createDolibarrHook<any, ExpenseReportPayment>({
+    queryKey: 'expense_report_payments',
+    storeName: 'expenseReportPayments',
+    endpoint: 'expense_report_payments',
+    dateField: 'tms',
+    mapper: mappers.mapExpenseReportPayment,
+});
+
+/**
+ * Hook for fetching and syncing expense report payment links
+ */
+export const useExpenseReportPaymentLinks = createDolibarrHook<any, ExpenseReportPaymentLink>({
+    queryKey: 'expense_report_payment_links',
+    storeName: 'expenseReportPaymentLinks',
+    endpoint: 'expense_report_payment_links',
+    dateField: 'date_modification',
+    mapper: mappers.mapExpenseReportPaymentLink,
+});
+
+/**
+ * Hook for fetching and syncing expense report lines
+ */
+export const useExpenseReportLines = createDolibarrHook<any, ExpenseReportLine>({
+    queryKey: 'expense_report_lines',
+    storeName: 'expenseReportLines',
+    endpoint: 'expense_report_lines',
+    dateField: 'tms',
+    mapper: mappers.mapExpenseReportLine,
+});
+
+/**
+ * Hook for fetching and syncing VAT payments
+ */
+export const useVATPayments = createDolibarrHook<any, VATPayment>({
+    queryKey: 'vat_payments',
+    storeName: 'vatPayments',
+    endpoint: 'vat_payments',
+    dateField: 'tms',
+    mapper: mappers.mapVATPayment,
+});
+
+/**
+ * Hook for fetching and syncing Salary payments
+ */
+export const useSalaryPayments = createDolibarrHook<any, SalaryPayment>({
+    queryKey: 'salary_payments',
+    storeName: 'salaryPayments',
+    endpoint: 'salary_payments',
+    dateField: 'tms',
+    mapper: mappers.mapSalaryPayment,
+});
+
+/**
+ * Hook for fetching and syncing Social Contribution payments
+ */
+export const useSocialContributionPayments = createDolibarrHook<any, SocialContributionPayment>({
+    queryKey: 'social_contribution_payments',
+    storeName: 'socialContributionPayments',
+    endpoint: 'social_contribution_payments',
+    dateField: 'tms',
+    mapper: mappers.mapSocialContributionPayment,
+});
+
+/**
+ * Hook for fetching and syncing Loan payments
+ */
+export const useLoanPayments = createDolibarrHook<any, LoanPayment>({
+    queryKey: 'loan_payments',
+    storeName: 'loanPayments',
+    endpoint: 'loan_payments',
+    dateField: 'tms',
+    mapper: mappers.mapLoanPayment,
+});
+
+/**
+ * Hook for fetching and syncing Various payments
+ */
+export const useVariousPayments = createDolibarrHook<any, VariousPayment>({
+    queryKey: 'various_payments',
+    storeName: 'variousPayments',
+    endpoint: 'various_payments',
+    dateField: 'tms',
+    mapper: mappers.mapVariousPayment,
 });
 
 // ============ Customers & Suppliers ============
@@ -222,15 +349,7 @@ export const useShipmentLines = createDolibarrHook<any, ShipmentLine>({
     // So I can't use 'tms' or 'date_modification' for lines.
     // I must use 'id' or force parent sync.
     // For now, use 'id' which forces full sync if ids change? No, dateField decides if we re-fetch.
-    // If I use 'id', it will be inefficient.
-    // But since I missed 'tms' in the query for shipment_lines...
-    // Let's check custom_sync.php again. shipment_lines case.
-    // "SELECT d.rowid as id... FROM ... WHERE p.tms >= ..."
-    // Effectively, we can't track modification of lines individually easily without 'tms'.
-    // I should have added 'tms' to line query.
-    // But for now, 'id' is safe fallback (or 0 to always fetch?).
-    // Actually, 'dateField' is used to filter "WHERE dateField >= lastSync".
-    // If I set 'id', it will do "WHERE id >= lastSync". That's WRONG.
+    // If I use 'id', it will do "WHERE id >= lastSync". That's WRONG.
     // I need to use a field that represents time.
     // Since I rely on parent TMS in custom_sync (joined), I should probably use 'id' for dedupe but for filtering...
     // Wait, custom_sync handles the filtering logic. The hook just identifies the field to read from the Result to update the local 'lastSync'.
@@ -303,6 +422,28 @@ export const useSupplierPayments = createDolibarrHook<any, SupplierPayment>({
     mapper: mappers.mapSupplierPayment,
 });
 
+/**
+ * Hook for fetching and syncing supplier proposals
+ */
+export const useSupplierProposals = createDolibarrHook<any, SupplierProposal>({
+    queryKey: 'supplier_proposals',
+    storeName: 'supplierProposals',
+    endpoint: 'supplier_proposals',
+    dateField: 'date_modification',
+    mapper: mappers.mapSupplierProposal,
+});
+
+/**
+ * Hook for fetching and syncing supplier proposal lines
+ */
+export const useSupplierProposalLines = createDolibarrHook<any, SupplierProposalLine>({
+    queryKey: 'supplier_proposal_lines',
+    storeName: 'supplierProposalLines',
+    endpoint: 'supplier_proposal_lines',
+    dateField: 'date_modification',
+    mapper: mappers.mapSupplierProposalLine,
+});
+
 // ============ Projects & Tasks ============
 
 /**
@@ -325,6 +466,39 @@ export const useTasks = createDolibarrHook<any, Task>({
     endpoint: 'tasks',
     dateField: 'date_modification',
     mapper: mappers.mapTask,
+});
+
+/**
+ * Hook for fetching and syncing task time logs
+ */
+export const useTaskTimeLogs = createDolibarrHook<any, TaskTimeLog>({
+    queryKey: 'task_time_logs',
+    storeName: 'taskTimeLogs',
+    endpoint: 'task_time_logs',
+    dateField: 'date_modification',
+    mapper: mappers.mapTaskTimeLog,
+});
+
+/**
+ * Hook for fetching and syncing task contacts
+ */
+export const useTaskContacts = createDolibarrHook<any, TaskContact>({
+    queryKey: 'task_contacts',
+    storeName: 'taskContacts',
+    endpoint: 'task_contacts',
+    dateField: 'date_modification', // Switched to true delta sync using parent task TMS
+    mapper: mappers.mapTaskContact,
+});
+
+/**
+ * Hook for fetching and syncing project contacts
+ */
+export const useProjectContacts = createDolibarrHook<any, ProjectContact>({
+    queryKey: 'project_contacts',
+    storeName: 'projectContacts',
+    endpoint: 'project_contacts',
+    dateField: 'date_modification', // Switched to true delta sync using parent project TMS
+    mapper: mappers.mapProjectContact,
 });
 
 /**
@@ -546,3 +720,52 @@ export const useSystemLogs = createDolibarrHook<any, SystemLog>({
     mapper: mappers.mapSystemLog,
     sortFn: (a, b) => (b.date_action || 0) - (a.date_action || 0),
 });
+
+// ============ Groups ============
+
+/**
+ * Hook for fetching and syncing user groups
+ */
+export const useGroups = createDolibarrHook<any, UserGroup>({
+    queryKey: 'groups',
+    storeName: 'groups', // Check storeName collision? Should be fine if configured in context/DB
+    endpoint: 'groups',
+    dateField: 'tms',
+    mapper: mappers.mapUserGroup,
+});
+
+/**
+ * Hook for fetching and syncing group users
+ */
+export const useGroupUsers = createDolibarrHook<GroupUser>({
+    queryKey: 'group_users',
+    storeName: 'groupUsers',
+    endpoint: 'group_users',
+    dateField: 'id', // See mapGroupUser
+    mapper: mappers.mapGroupUser
+});
+
+export const usePermissions = createDolibarrHook<PermissionDefinition>({
+    queryKey: 'permissions',
+    storeName: 'permissions',
+    endpoint: 'permissions',
+    dateField: 'id',
+    mapper: mappers.mapPermission
+});
+
+export const useGroupRights = createDolibarrHook<{ id: string, fk_usergroup: string, fk_id: string }>({
+    queryKey: 'group_rights',
+    storeName: 'groupRights',
+    endpoint: 'group_rights',
+    dateField: 'id',
+    mapper: mappers.mapGroupRight
+});
+
+export const useUserRights = createDolibarrHook<{ id: string, fk_user: string, fk_id: string }>({
+    queryKey: 'user_rights',
+    storeName: 'userRights',
+    endpoint: 'user_rights',
+    dateField: 'id',
+    mapper: mappers.mapUserRight
+});
+

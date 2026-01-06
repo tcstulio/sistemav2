@@ -1,8 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
 import axios from 'axios';
+import { dolibarrService } from './dolibarrService';
 import { config } from '../config/env';
 import fs from 'fs/promises';
 import path from 'path';
+import { ScraperService } from './scraperService';
 
 // --- Interfaces ---
 
@@ -23,11 +25,12 @@ interface AIProvider {
     getModels?(): Promise<string[]>;
     // New methods
     draftCollectionEmail?(customer: any, amount: number): Promise<string>;
-    generateSalesForecast?(invoices: any[]): Promise<string>;
+    generateSalesForecast?(invoices: any[], context?: any): Promise<string>;
     analyzeCustomerSentiment?(customer: any, invoices: any[]): Promise<string>;
     auditProposal?(proposal: any): Promise<string>;
     auditProject?(project: any, tasks?: any[], projectInvoices?: any[]): Promise<string>;
     analyzeSystemLogs?(logs: any[]): Promise<string>;
+    analyzeMonthlyReport?(data: any): Promise<string>;
 }
 
 // --- Google GenAI Provider ---
@@ -49,7 +52,9 @@ class GoogleProvider implements AIProvider {
     async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string): Promise<string> {
         if (!this.ai) throw new Error("Google AI not configured");
 
-        const { dolibarrService } = require('./dolibarrService'); // Lazy load to avoid circular deps if any
+        if (!this.ai) throw new Error("Google AI not configured");
+
+        // const { dolibarrService } = require('./dolibarrService'); // Replaced by static import
 
         // Tool Definitions
         const toolsPrompt = `
@@ -87,11 +92,14 @@ class GoogleProvider implements AIProvider {
         27. list_boms(search: string) - Lista listas técnicas (BOM).
         28. list_manufacturing_orders(status: 'draft'|'validated'|'inprogress') - Lista ordens de produção.
         29. list_candidates(search: string) - Lista candidatos (RH/Recrutamento).
+        29. list_candidates(search: string) - Lista candidatos (RH/Recrutamento).
         30. list_job_positions() - Lista vagas de emprego abertas.
+        31. search_web(query: string) - Pesquisa preços e fornecedores na internet (Google via Serper).
+        32. extract_from_url(url: string) - Acessa um link e extrai o conteúdo da página.
 
         EXEMPLO:
-        User: "Quantas faturas em aberto o Cliente X tem?"
-        Assistant: { "tool": "search_customer", "args": { "query": "Cliente X" } }
+        User: "Preço do item X no link Y"
+        Assistant: { "tool": "extract_from_url", "args": { "url": "https://loja.com/produto" } }
         User: (Sistema retorna lista de clientes)
         Assistant: { "tool": "get_customer_details", "args": { "id": "123" } }
         User: (Sistema retorna detalhes)
@@ -287,6 +295,14 @@ class GoogleProvider implements AIProvider {
                             const jobs = await dolibarrService.listJobPositions();
                             toolResult = `Vagas: ${JSON.stringify(jobs.map((j: any) => ({ ref: j.ref, label: j.label, status: j.status })))}`;
                             break;
+                        case 'search_web':
+                            const searchResults = await ScraperService.searchGoogle(toolCall.args.query);
+                            toolResult = `[WEB SEARCH RESULTS]:\n${JSON.stringify(searchResults)}`;
+                            break;
+                        case 'extract_from_url':
+                            const pageContent = await ScraperService.fetchPageContent(toolCall.args.url);
+                            toolResult = `[PAGE CONTENT for ${toolCall.args.url}]:\n${pageContent ? pageContent.substring(0, 10000) : 'Falha ao acessar página or conteúdo vazio'}`;
+                            break;
                         default:
                             toolResult = "Ferramenta desconhecida.";
                     }
@@ -343,26 +359,55 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async generateSalesForecast(invoices: any[]): Promise<string> {
+    async generateSalesForecast(invoices: any[], context?: any): Promise<string> {
         if (!this.ai) return JSON.stringify({ forecast: [], summary: "IA não configurada" });
-        const invoicesSummary = invoices.slice(0, 100).map(i => ({
-            date: i.date || i.datec,
-            total: i.total_ttc,
-            status: i.status
+
+        // Group invoices by Month/Year for clearer token usage if needed, 
+        // but raw list is fine if not too huge. The frontend already filters relevant ones.
+
+        const invoicesSummary = invoices.map(i => ({
+            d: i.date || i.datec,
+            v: i.total_ttc,
+            s: i.status
         }));
+
+        console.log("DEBUG BACKEND: Received Context:", context);
+        console.log("DEBUG BACKEND: Computed Ref Date String:", new Date(context?.referenceDate).toLocaleDateString('pt-BR'));
+        console.log("DEBUG BACKEND: Invoice Count:", invoicesSummary.length);
+        if (invoicesSummary.length > 0) {
+            console.log("DEBUG BACKEND: Last Invoice Date:", invoicesSummary[invoicesSummary.length - 1].d);
+        }
+
+        const refDate = context?.referenceDate ? new Date(context.referenceDate).toLocaleDateString('pt-BR') : 'Data Atual';
+
         const prompt = `
-            Você é um analista de dados financeiros.
-            Com base nestes dados de faturas, gere uma previsão de vendas para os próximos 3 meses.
+            Atue como um analista financeiro sênior especializado em Sazonalidade e Previsão de Vendas.
             
-            DADOS DE FATURAS (últimas ${invoicesSummary.length}):
+            OBJETIVO:
+            Gerar uma estimativa de vendas para os próximos 3 meses do ano corrente.
+            
+            DATA DE REFERÊNCIA (HOJE): ${refDate}
+            (Importante: O "Mês Atual" está incompleto. Sua previsão para ele deve ser um "Landing" (Previsão de Fechamento), somando o que já foi realizado (nas faturas enviadas) com a projeção para os dias restantes baseada na sazonalidade).
+
+            METODOLOGIA DE ANÁLISE:
+            1. MÊS ATUAL (LANDING): Estime o fechamento do mês atual somando Realizado + Tendência para dias restantes.
+            2. PRÓXIMOS MESES (SAZONALIDADE): Utilize os meses seguintes dos anos anteriores para estimar os meses futuros (padrão de comportamento).
+            3. TENDÊNCIA (AJUSTE): Utilize os dados recentes (últimos 6 meses) para ajustar a escala volumétrica geral.
+
+            DADOS (Faturas Selecionadas - Recentes + Sazonalidade Histórica):
             ${JSON.stringify(invoicesSummary)}
-            
-            Retorne APENAS um JSON válido:
+
+            INSTRUÇÕES:
+            - Identifique o padrão de vendas (picos/quedas) nos meses alvo em anos anteriores.
+            - Projete esse padrão para os próximos 3 meses.
+            - Ajuste os valores finais baseando-se na média de faturamento dos últimos 6 meses (Tendência).
+
+            SAÍDA (JSON Puro):
             {
                 "forecast": [
-                    { "month": "Janeiro 2025", "predicted_revenue": 15000.00, "confidence": "high" }
+                    { "month": "Nome Mês Ano", "predicted_revenue": 0.00, "confidence": "high|medium|low" } // 3 meses
                 ],
-                "summary": "Resumo da análise em português",
+                "summary": "Explique a lógica (ex: 'Projeção baseada nos meses X, Y, Z de 2024, ajustada pelo crescimento recente...')",
                 "trend": "up" | "down" | "stable"
             }
         `;
@@ -516,6 +561,57 @@ class GoogleProvider implements AIProvider {
         }
     }
 
+    async analyzeMonthlyReport(data: any): Promise<string> {
+        if (!this.ai) return "Análise indisponível (Erro de Configuração)";
+
+        const prompt = `
+            Atue como um CFO (Chief Financial Officer) e COO (Chief Operating Officer) experiente.
+            Você está gerando o RELATÓRIO MENSAL EXECUTIVO para a diretoria.
+
+            DADOS DO MÊS:
+            ${JSON.stringify(data, null, 2)}
+
+            Sua tarefa é analisar estes dados brutos e escrever um resumo executivo profissional em Markdown.
+
+            ESTRUTURA OBRIGATÓRIA DO RELATÓRIO:
+
+            ## 1. Resumo Executivo
+            Uma visão geral do mês em 1-2 parágrafos. O mês foi bom? Quais foram as grandes vitórias? Houve algum problema crítico?
+
+            ## 2. Destaques Financeiros
+            - Analise a receita vs despesas.
+            - Comente sobre o fluxo de caixa.
+            - Aponte tendências preocupantes ou positivas.
+
+            ## 3. Performance Comercial
+            - Taxa de conversão de propostas.
+            - Volume de novos negócios.
+            - Previsão para o próximo mês (se houver dados de pipeline).
+
+            ## 4. Eficiência Operacional & RH
+            - Carga de trabalho da equipe.
+            - Projetos em risco ou atrasados.
+            - Saúde do time (absenteísmo, turnover).
+
+            ## 5. Recomendações Estratégicas
+            3 a 5 ações concretas que a diretoria deve tomar baseada nestes números.
+
+            TOM DE VOZ:
+            Profissional, direto, focado em insights e não apenas repetir números. Use formatação (negrito, listas) para facilitar a leitura.
+        `;
+
+        try {
+            const response = await this.ai.models.generateContent({
+                model: config.geminiModel,
+                contents: prompt
+            });
+            return response.text || "Não foi possível gerar o relatório.";
+        } catch (e) {
+            console.error("analyzeMonthlyReport Error", e);
+            return "Erro ao analisar o relatório mensal.";
+        }
+    }
+
     async analyzeSystem(query: string, fileContext: string): Promise<string> {
         if (!this.ai) throw new Error("Google AI not configured");
 
@@ -593,8 +689,12 @@ class GoogleProvider implements AIProvider {
             - vendor (string)
             - total (number)
             - currency (string, e.g. BRL, USD)
-            - items: array of { description, quantity, unit_price, total_price }
-            - category: string (suggested expense category)
+            - items: array of objects with:
+                - description (full product name/text)
+                - quantity (count, default to 1 if not specified)
+                - unit_price (price per unit)
+                - total_price (line total)
+            - category: string (suggested expense category based on items)
 
             Return ONLY raw JSON.
             `;
@@ -798,7 +898,7 @@ class LocalProvider implements AIProvider {
         // We need to implement the ReAct loop here too because standard OpenAI interface doesn't automate this
         // unless we use the Function Calling API. But for generic Local LLM compatibility, prompting is safer.
 
-        const { dolibarrService } = require('./dolibarrService');
+        // const { dolibarrService } = require('./dolibarrService'); // Replaced by static import
 
         const toolsPrompt = `
         FERRAMENTAS DISPONÍVEIS:
@@ -818,6 +918,8 @@ class LocalProvider implements AIProvider {
         - get_customer_details(id)
         - list_invoices(status)
         - list_projects(search)
+        - search_web(query)
+        - extract_from_url(url)
         
         To use a tool, REPLY ONLY JSON: { "tool": "name", "args": {} }
         Example: { "tool": "search_customer", "args": { "query": "Cliente" } }
@@ -875,6 +977,15 @@ class LocalProvider implements AIProvider {
                             case 'list_invoices':
                                 const invs = await dolibarrService.listInvoices(toolCall.args || {});
                                 toolResult = `Faturas: ${JSON.stringify(invs.map((i: any) => ({ ref: i.ref, total: i.total_ttc, status: i.statut })))}`;
+                                break;
+
+                            case 'search_web':
+                                const searchRes = await ScraperService.searchGoogle(toolCall.args?.query || '');
+                                toolResult = `Search Results: ${JSON.stringify(searchRes)}`;
+                                break;
+                            case 'extract_from_url':
+                                const pageContent = await ScraperService.fetchPageContent(toolCall.args?.url || '');
+                                toolResult = `Page Content: ${pageContent ? pageContent.substring(0, 5000) : 'Failed'}`;
                                 break;
                             default:
                                 toolResult = "Tool not found or not supported in Lite mode.";
@@ -1181,10 +1292,10 @@ export const aiService = {
         return JSON.stringify({ subject: "N/A", body: "Método não disponível neste provider." });
     },
 
-    generateSalesForecast: async (invoices: any[]) => {
+    generateSalesForecast: async (invoices: any[], context?: any) => {
         const provider = getProvider();
         if ('generateSalesForecast' in provider && provider.generateSalesForecast) {
-            return provider.generateSalesForecast(invoices);
+            return provider.generateSalesForecast(invoices, context);
         }
         return JSON.stringify({ forecast: [], summary: "Método não disponível." });
     },
@@ -1219,6 +1330,14 @@ export const aiService = {
             return provider.analyzeSystemLogs(logs);
         }
         return "[]";
+    },
+
+    analyzeMonthlyReport: async (data: any) => {
+        const provider = getProvider();
+        if ('analyzeMonthlyReport' in provider && provider.analyzeMonthlyReport) {
+            return provider.analyzeMonthlyReport(data);
+        }
+        return "Método não disponível neste provider.";
     }
 };
 

@@ -95,6 +95,7 @@ const AVAILABLE_EVENTS = [
     { value: 'ticket_closed', label: 'Chamado Fechado' },
     { value: 'ticket_updated', label: 'Chamado Atualizado' },
     { value: 'order_created', label: 'Pedido Criado' },
+    { value: 'notification_created', label: 'Nova Notificação (Sistema)' },
     { value: 'custom', label: 'Evento Customizado' }
 ];
 
@@ -395,6 +396,9 @@ export const SchedulerAdmin: React.FC = () => {
     };
 
     const getEventVariables = (event: string): string[] => {
+        if (event === 'notification_created') {
+            return ['{{title}}', '{{message}}', '{{type}}', '{{user_phone}}'];
+        }
         return eventVariables[event] || ['{{customerName}}', '{{ref}}', '{{total}}'];
     };
 

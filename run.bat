@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
 echo ==========================================
-echo      INICIANDO SISTEMA DOLIGEN
+echo      INICIANDO SISTEMA COOLGROOVE
 echo ==========================================
 echo.
 

@@ -25,23 +25,130 @@ export interface BankLine {
 }
 
 export interface Payment {
-    id: string;
+    id: number;
     ref: string;
-    date_payment: number;
+    date_payment: string; // ISO date string
     amount: number;
-    fk_bank: string;
-    fk_user_create?: string;
-    date_creation?: number;
+    fk_bank?: number;
+    transaction_id?: number; // The fk_bank in Dolibarr mostly points to llx_bank rowid
+    bank_account_id?: number; // The resolved real bank account ID
+    num_paiement?: string;
+    note?: string;
+    mode_id?: number;
+    user_author_id?: number;
     date_modification?: number;
 }
 
 export interface SupplierPayment {
+    id: number;
+    ref: string;
+    date_payment: string; // ISO date string
+    amount: number;
+    fk_bank?: number;
+    transaction_id?: number;
+    bank_account_id?: number;
+    num_paiement?: string;
+    note?: string;
+    mode_id?: number;
+    user_author_id?: number;
+    date_modification?: number;
+}
+
+export interface PaymentInvoiceLink {
+    id: string;
+    fk_paiement: string;
+    fk_facture: string;
+    amount: number;
+    date_modification?: number; // Needed for sync even if not present in DB (will use ID or Parent TMS)
+}
+
+export interface SupplierPaymentInvoiceLink {
+    id: string;
+    fk_paiementfourn: string;
+    fk_facturefourn: string; // or fk_facture_fourn depending on key naming? Custom Sync returns fk_facturefourn
+    amount: number;
+    date_modification?: number;
+}
+
+// === Expense Report Payments ===
+export interface ExpenseReportPayment {
     id: string;
     ref: string;
+    fk_expensereport: string;
     date_payment: number;
     amount: number;
     fk_bank: string;
-    fk_user_create?: string;
-    date_creation?: number;
+    transaction_id?: string;
+    bank_account_id?: string;
+    fk_user_creat: string;
     date_modification?: number;
 }
+
+export interface ExpenseReportPaymentLink {
+    id: string;
+    fk_payment: string;
+    fk_expensereport: string;
+    amount: number;
+    date_modification?: number;
+}
+
+// === VAT Payments ===
+export interface VATPayment {
+    id: string;
+    ref: string;
+    fk_tva: string;
+    date_payment: number;
+    amount: number;
+    fk_bank: string;
+    date_modification?: number;
+}
+
+// === Salary Payments ===
+export interface SalaryPayment {
+    id: string;
+    ref: string;
+    num_payment?: string;
+    fk_user: string;
+    date_payment: number;
+    amount: number;
+    salary: number; // Gross salary?
+    fk_bank: string;
+    date_modification?: number;
+}
+
+// === Social Contribution Payments ===
+export interface SocialContributionPayment {
+    id: string;
+    ref: string;
+    fk_charge: string;
+    date_payment: number;
+    amount: number;
+    fk_bank: string;
+    date_modification?: number;
+}
+
+// === Loan Payments ===
+export interface LoanPayment {
+    id: string;
+    ref: string;
+    fk_loan: string;
+    date_payment: number;
+    amount_capital: number;
+    amount_insurance: number;
+    amount_interest: number;
+    fk_bank: string;
+    date_modification?: number;
+}
+
+// === Various Payments ===
+export interface VariousPayment {
+    id: string;
+    ref: string;
+    num_payment?: string;
+    label: string;
+    date_payment: number;
+    amount: number;
+    fk_bank: string;
+    date_modification?: number;
+}
+

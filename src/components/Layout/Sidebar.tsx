@@ -6,7 +6,7 @@ import {
     Layout, Users, FileText, Package, ShoppingCart, Truck, Settings, LifeBuoy,
     BarChart3, Menu, X, LogOut, FileSignature, TrendingUp, PenTool, Factory,
     FolderKanban, ClipboardList, Landmark, CalendarDays, Tag, MessageSquare,
-    Activity, Bug, UserCircle, Bot, Mail, Clock, Receipt, Banknote
+    Activity, Bug, UserCircle, LayoutDashboard, Sparkles, Mail, Bot, Clock, Receipt, Banknote
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -37,6 +37,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
         {
             items: [
                 { id: 'dashboard', path: '/', label: 'Painel Principal', icon: Layout },
+                { id: 'my-tasks', path: '/my-tasks', label: 'Minhas Tarefas', icon: ClipboardList },
                 { id: 'agenda', path: '/agenda', label: 'Agenda', icon: CalendarDays },
             ]
         },
@@ -44,6 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
             title: 'AGENTE IA',
             items: [
                 { id: 'whatsapp', path: '/whatsapp', label: 'WhatsApp Omni', icon: MessageSquare },
+                { id: 'chat', path: '/chat', label: 'Chat Interno', icon: MessageSquare },
                 { id: 'email', path: '/email', label: 'Emails', icon: Mail },
                 { id: 'automation', path: '/automation', label: 'Automação', icon: Bot },
             ]
@@ -61,18 +63,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
             ]
         },
         {
-            title: 'FINANCEIRO (ENTRADA)',
+            title: 'FINANCEIRO',
             items: [
                 { id: 'invoices', path: '/invoices', label: 'Faturas', icon: FileText },
                 { id: 'payments', path: '/payments', label: 'Pagamentos', icon: TrendingUp },
+                { id: 'tax_payments', path: '/tax_payments', label: 'Impostos e Encargos', icon: Landmark },
             ]
         },
         {
             title: 'COMPRAS & DESPESAS',
             items: [
                 { id: 'suppliers', path: '/suppliers', label: 'Fornecedores', icon: Truck },
+                { id: 'supplier_proposals', path: '/supplier_proposals', label: 'Solicitações de Preço', icon: FileSignature },
                 { id: 'supplier_invoices', path: '/supplier_invoices', label: 'Faturas de Fornecedor', icon: FileText },
+                { id: 'supplier_payments', path: '/supplier_payments', label: 'Pagamentos de Fornecedor', icon: TrendingUp },
                 { id: 'pending_payments', path: '/pending_payments', label: 'Pendências Financeiras', icon: Clock },
+                { id: 'expense_report_payments', path: '/expense_report_payments', label: 'Pagamentos de Despesas', icon: Receipt },
             ]
         },
         {
@@ -80,8 +86,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
             items: [
                 { id: 'projects', path: '/projects', label: 'Projetos', icon: FolderKanban },
                 { id: 'hr', path: '/hr', label: 'RH & Equipe', icon: UserCircle },
+                { id: 'salary_payments', path: '/salary_payments', label: 'Salários', icon: Banknote },
                 { id: 'bank_accounts', path: '/bank_accounts', label: 'Bancos', icon: Landmark },
                 { id: 'reports', path: '/reports', label: 'Relatórios', icon: BarChart3 },
+                { id: 'monthly_report', path: '/monthly-report', label: 'Relatório Mensal (IA)', icon: FileText },
             ]
         },
         {
@@ -126,6 +134,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
             case 'agenda': return activeModules.includes('agenda');
             case 'customers': return activeModules.includes('societe');
             case 'suppliers': return activeModules.includes('fournisseur');
+            case 'supplier_proposals': return activeModules.includes('fournisseur') || activeModules.includes('supplier_proposal');
             case 'products': return activeModules.includes('product') || activeModules.includes('service');
             default: return true;
         }
@@ -174,7 +183,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
             {/* Header / Logo */}
             <div className="p-4 flex items-center gap-3 border-b border-slate-800 shrink-0">
                 <div className={`w-8 h-8 rounded-lg bg-gradient-to-br from-${config.themeColor}-500 to-${config.themeColor}-700 flex items-center justify-center font-bold text-lg shadow-lg`}>D</div>
-                <span className="font-bold text-lg tracking-tight">DoliGenAI</span>
+                <span className="font-bold text-lg tracking-tight">CoolGroove</span>
                 <button onClick={() => setIsOpen(false)} className="lg:hidden ml-auto text-slate-400 hover:text-white transition-colors"><X size={20} /></button>
             </div>
 

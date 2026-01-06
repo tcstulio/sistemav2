@@ -337,3 +337,89 @@ export const markExpenseReportAsPaid = async (config: DolibarrConfig, id: string
         body: JSON.stringify({})
     });
 };
+
+/* --- GROUPS --- */
+
+export const createGroup = async (config: DolibarrConfig, data: any) => {
+    // Endpoint usually /users/groups
+    const url = `${sanitizeUrl(config.apiUrl)}/users/groups`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const updateGroup = async (config: DolibarrConfig, id: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const deleteGroup = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${id}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+export const addUserToGroup = async (config: DolibarrConfig, groupId: string, userId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${groupId}/users/${userId}`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+export const removeUserFromGroup = async (config: DolibarrConfig, groupId: string, userId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${groupId}/users/${userId}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+/* --- PERMISSIONS --- */
+
+// Add Permission (to User or Group)
+// For User: POST /users/{id}/rights/{rightId} (or rightsdef id?)
+// For Group: POST /users/groups/{id}/rights/{rightId}
+// Note: Standard API is tricky with rights. Often requires module trigger.
+// Checking common format: POST /users/{id}/rights is used to add. But often needs body with right ID or module.
+// Assume endpoint /users/{id}/rights/{right_id} logic works if right_id is passed.
+
+export const addPermissionToUser = async (config: DolibarrConfig, userId: string, rightId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/users/${userId}/rights/${rightId}`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+export const removePermissionFromUser = async (config: DolibarrConfig, userId: string, rightId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/users/${userId}/rights/${rightId}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+export const addPermissionToGroup = async (config: DolibarrConfig, groupId: string, rightId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${groupId}/rights/${rightId}`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+export const removePermissionFromGroup = async (config: DolibarrConfig, groupId: string, rightId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${groupId}/rights/${rightId}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};

@@ -53,12 +53,12 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
 
     // Tab State
     const [activeTab, setActiveTabState] = useState<'overview' | 'timeline' | 'contacts' | 'invoices' | 'proposals' | 'orders' | 'shipments' | 'projects' | 'tickets'>(() => {
-        return (localStorage.getItem('doligen_customer_tab') as any) || 'overview';
+        return (localStorage.getItem('coolgroove_customer_tab') as any) || 'overview';
     });
 
     const setActiveTab = (tab: typeof activeTab) => {
         setActiveTabState(tab);
-        localStorage.setItem('doligen_customer_tab', tab);
+        localStorage.setItem('coolgroove_customer_tab', tab);
     };
 
     // UI States (Modals, AI)

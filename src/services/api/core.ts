@@ -65,7 +65,7 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
     // Use our Backend Proxy
     const proxyUrl = `${AppConfig.API_BASE_URL}/api/dolibarr/${path}`;
 
-    console.log(`[DoliProxy] Requesting: ${proxyUrl} (Original: ${endpointUrl})`);
+    console.log(`[BackendProxy] Requesting: ${proxyUrl} (Original: ${endpointUrl})`);
 
     const method = options.method || 'GET';
     const requestBody = options.body ? String(options.body) : undefined;
@@ -82,7 +82,7 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
                 errorMsg = await response.text();
             }
 
-            console.error('[DoliProxy] Error:', errorMsg);
+            console.error('[BackendProxy] Error:', errorMsg);
 
             // Log error
             dbService.add('api_logs', {
@@ -124,7 +124,7 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
         return data;
 
     } catch (error: any) {
-        console.error('[DoliProxy] Network/System Error:', error);
+        console.error('[BackendProxy] Network/System Error:', error);
         throw error;
     }
 };
@@ -231,7 +231,7 @@ export const fetchList = async (config: DolibarrConfig, endpoint: string, params
                 newItemsCount = cleanData.length;
 
                 if (newItemsCount === 0 && data.length > 0) {
-                    console.warn(`[DoliGenAI] Loop detected in ${endpoint} (all items in page already seen). Stopping.`);
+                    console.warn(`[CoolGroove] Loop detected in ${endpoint} (all items in page already seen). Stopping.`);
                     keepFetching = false;
                 } else {
                     allItems = [...allItems, ...cleanData];
@@ -253,14 +253,14 @@ export const fetchList = async (config: DolibarrConfig, endpoint: string, params
             if (page === 0 && e.message && (e.message.includes('404') || e.message.includes('Not Found'))) {
                 keepFetching = false;
             } else if (e.message && (e.message.includes('401') || e.message.includes('Unauthorized'))) {
-                console.warn(`[DoliGenAI] Não autorizado (401) para ${endpoint}. Parando busca.`);
+                console.warn(`[CoolGroove] Não autorizado (401) para ${endpoint}. Parando busca.`);
                 if (page === 0) throw e;
                 keepFetching = false;
             } else if (e.message && (e.message.toLowerCase().includes('forbidden') || e.message.includes('403'))) {
-                console.warn(`[DoliGenAI] Acesso negado (403) para ${endpoint}. Retornando dados parciais/vazios.`);
+                console.warn(`[CoolGroove] Acesso negado (403) para ${endpoint}. Retornando dados parciais/vazios.`);
                 keepFetching = false;
             } else {
-                console.error(`[DoliGenAI] Erro buscando ${endpoint} página ${page}:`, e);
+                console.error(`[CoolGroove] Erro buscando ${endpoint} página ${page}:`, e);
                 keepFetching = false;
                 if (page === 0 && e.message && e.message.includes('Network Error')) {
                     throw e;
@@ -322,7 +322,7 @@ export const fetchDelta = async (config: DolibarrConfig, entityType: string, las
                 offset += limit;
 
                 if (response.data.length > 0) {
-                    console.log(`[DoliDelta] ${entityType}: Fetched ${allData.length} records (page ${safetyCounter + 1})`);
+                    console.log(`[CoolGrooveDelta] ${entityType}: Fetched ${allData.length} records (page ${safetyCounter + 1})`);
                 }
             } else {
                 // Unknown format, stop
@@ -333,12 +333,12 @@ export const fetchDelta = async (config: DolibarrConfig, entityType: string, las
         }
 
         if (safetyCounter >= 20) {
-            console.warn(`[DoliDelta] ${entityType}: Reached max pages (100,000 records). Some data may be missing.`);
+            console.warn(`[CoolGrooveDelta] ${entityType}: Reached max pages (100,000 records). Some data may be missing.`);
         }
 
         return allData;
     } catch (error) {
-        console.error(`[DoliDelta] Failed to fetch delta for ${entityType}:`, error);
+        console.error(`[CoolGrooveDelta] Failed to fetch delta for ${entityType}:`, error);
         return [];
     }
 };

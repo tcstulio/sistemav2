@@ -7,7 +7,7 @@ import path from 'path';
 // Mock Config - Replace with valid credentials if not loading from file
 // For this environment, we try to load from local storage file if possible or just use a dummy to see if we can trigger a request?
 // Actually simpler: we can't easily access localStorage from node script.
-// But we have the user's workspace. We can try to read 'doligen_config' from a file if it was saved by the app?
+// But we have the user's workspace. We can try to read 'coolgroove_config' from a file if it was saved by the app?
 // The app saves to localStorage.
 // LET'S ASSUME we can just ask the user or try to find a way.
 // Wait, I can't interactively ask for credentials easily in a script without prompt.

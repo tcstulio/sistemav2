@@ -11,16 +11,33 @@ export const DolibarrService = {
 
     // Commercial
     ...Commercial,
+    createSupplierInvoice: Commercial.createSupplierInvoice,
     validateSupplierInvoice: Commercial.validateSupplierInvoice,
+    updateSupplierInvoice: Commercial.updateSupplierInvoice,
+    deleteSupplierInvoice: Commercial.deleteSupplierInvoice,
+    addSupplierInvoiceLine: Commercial.addSupplierInvoiceLine,
+    updateSupplierInvoiceLine: Commercial.updateSupplierInvoiceLine,
+    deleteSupplierInvoiceLine: Commercial.deleteSupplierInvoiceLine,
     paySupplierInvoice: Commercial.paySupplierInvoice,
     markSupplierInvoiceAsPaid: Commercial.markSupplierInvoiceAsPaid,
+    setSupplierInvoiceToDraft: Commercial.setSupplierInvoiceToDraft,
     updateProposal: Commercial.updateProposal,
     addProposalLine: Commercial.addProposalLine,
     updateProposalLine: Commercial.updateProposalLine,
     deleteProposalLine: Commercial.deleteProposalLine,
 
+    // Invoice Lines
+    updateInvoice: Commercial.updateInvoice,
+    addInvoiceLine: Commercial.addInvoiceLine,
+    updateInvoiceLine: Commercial.updateInvoiceLine,
+    deleteInvoiceLine: Commercial.deleteInvoiceLine,
+    markInvoiceAsPaid: Commercial.markInvoiceAsPaid,
+    abandonInvoice: Commercial.abandonInvoice,
+    setInvoiceToDraft: Commercial.setInvoiceToDraft,
+
     // Operations
     ...Operations,
+    addTaskTimeLog: Operations.addTaskTimeLog,
 
     // Inventory
     ...Inventory,

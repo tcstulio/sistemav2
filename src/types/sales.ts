@@ -140,6 +140,7 @@ export interface InvoiceLine {
     product_ref?: string;
     product_label?: string;
     rang?: number;
+    remise_percent?: number;
     date_modification?: number;
 }
 
@@ -194,6 +195,40 @@ export interface SupplierOrder {
     lines?: SupplierOrderLine[];
     fk_user_author?: string; // ADDED
     fk_user_approve?: string; // ADDED
+    date_modification?: number;
+    array_options?: Record<string, any>;
+}
+
+export interface SupplierProposalLine {
+    id: string;
+    parent_id: string;
+    description: string;
+    qty: number;
+    subprice: number;
+    vat_rate: number;
+    total_ht: number;
+    total_ttc: number;
+    total_tva: number;
+    product_id?: string;
+    rang?: number;
+    date_modification?: number;
+}
+
+export interface SupplierProposal {
+    id: string;
+    ref: string;
+    socid: string;
+    project_id?: string;
+    datec: number;
+    date_valid?: number;
+    date_delivery?: number;
+    total_ht: number;
+    total_ttc: number;
+    total_tva: number;
+    statut: '0' | '1' | '2' | '3' | '4'; // 0=Draft, 1=Validated, 2=Approved, 3=Refused, 4=Ordered
+    lines?: SupplierProposalLine[];
+    fk_user_author?: string;
+    fk_user_valid?: string;
     date_modification?: number;
     array_options?: Record<string, any>;
 }

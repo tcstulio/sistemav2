@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { WhatsAppProvider, useWhatsAppContext } from '../contexts/WhatsAppContext'; // Wraps the view
+import { useWhatsAppContext } from '../contexts/WhatsAppContext'; // Wraps the view
 import { useSessions } from '../hooks/whatsapp/useSessions';
 import { useConversations } from '../hooks/whatsapp/useConversations';
 import { useMessages } from '../hooks/whatsapp/useMessages';
@@ -424,12 +424,6 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
 };
 
 // Wrap with Provider
-const WhatsAppView: React.FC<WhatsAppViewProps> = (props) => {
-    return (
-        <WhatsAppProvider>
-            <WhatsAppInner {...props} />
-        </WhatsAppProvider>
-    );
-};
+const WhatsAppView: React.FC<WhatsAppViewProps> = WhatsAppInner;
 
 export default WhatsAppView;

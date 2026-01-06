@@ -6,6 +6,7 @@ import NotificationPanel from '../NotificationPanel';
 import GlobalSearch from '../GlobalSearch';
 import VirtualAssistant from '../VirtualAssistant';
 import { useDolibarr } from '../../context/DolibarrContext';
+import { useNotifications } from '../../hooks/useNotifications';
 
 export const MainLayout: React.FC = () => {
     const {
@@ -31,6 +32,8 @@ export const MainLayout: React.FC = () => {
         }
     };
 
+    useNotifications(setNotifications, handleNavigate);
+
     if (!config) return null;
 
     return (
@@ -55,6 +58,7 @@ export const MainLayout: React.FC = () => {
                     onClose={() => setIsNotificationPanelOpen(false)}
                     notifications={notifications}
                     onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))}
+                    onMarkAllRead={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
                     onNavigate={handleNavigate}
                     onClearAll={() => setNotifications([])}
                 />

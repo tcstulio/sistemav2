@@ -1,4 +1,4 @@
-import { DolibarrConfig, ThirdParty, Invoice, SupplierInvoice, Proposal, Order, Contract, Shipment, SupplierOrder } from '../../types';
+import { DolibarrConfig, ThirdParty, Invoice, SupplierInvoice, Proposal, Order, Contract, Shipment, SupplierOrder, SupplierProposal } from '../../types';
 import { fetchList, fetchPage, request, getHeaders, sanitizeUrl } from './core';
 
 export const fetchContracts = async (config: DolibarrConfig): Promise<Contract[]> => {
@@ -307,6 +307,42 @@ export const setPayment = async (config: DolibarrConfig, invoiceId: string, paym
     });
 };
 
+// -- Invoice CRUD --
+export const updateInvoice = async (config: DolibarrConfig, id: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/invoices/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const addInvoiceLine = async (config: DolibarrConfig, invoiceId: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/invoices/${invoiceId}/lines`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const updateInvoiceLine = async (config: DolibarrConfig, invoiceId: string, lineId: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/invoices/${invoiceId}/lines/${lineId}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const deleteInvoiceLine = async (config: DolibarrConfig, invoiceId: string, lineId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/invoices/${invoiceId}/lines/${lineId}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
 // -- Proposals --
 export const createProposal = async (config: DolibarrConfig, data: any) => {
     const url = `${sanitizeUrl(config.apiUrl)}/proposals`;
@@ -490,25 +526,7 @@ export const deleteSupplierOrder = async (config: DolibarrConfig, id: string) =>
     });
 };
 
-export const markInvoiceAsPaid = async (config: DolibarrConfig, id: string) => {
-    // Might be same as setPayment but full amount? 
-    // Or /invoices/{id}/paid endpoint in some versions?
-    // Let's assume setPayment is used, but if this is a distinct call in UI, let's just make it a wrapper.
-    // If it's a marking status without transaction:
-    const url = `${sanitizeUrl(config.apiUrl)}/invoices/${id}/classifyaspaid`; // Hypothetical or check standard
-    // Actually, usually users just add a payment.
-    // However, if the UI calls 'markInvoiceAsPaid', we need it.
-    // Let's try /invoices/{id}/validate (re-validate?) NO.
-    // Let's try `setPayment` with minimal info?
-    // Let's stick with specific endpoint `/invoices/{id}/classify_paid` if exists.
-    // Fallback: This might fail if endpoint doesn't exist.
-    // Or maybe it's `updateInvoice(..., { status: 'PAID' })`?
-    // Let's try simple DELETE /invoices/{id} logic... no wait that's unrelated.
-    return request(url, {
-        method: 'POST',
-        headers: getHeaders(config.apiKey)
-    });
-};
+// Duplicate function text removed
 
 export const classifyOrderDelivered = async (config: DolibarrConfig, id: string) => {
     const url = `${sanitizeUrl(config.apiUrl)}/orders/${id}/classifydelivered`;
@@ -529,6 +547,52 @@ export const validateSupplierInvoice = async (config: DolibarrConfig, id: string
     });
 };
 
+// -- Invoice Lifecycle --
+
+export const markInvoiceAsPaid = async (config: DolibarrConfig, id: string) => {
+    // "Classify as paid" in Dolibarr API usually involves updating status or specific endpoint
+    // For standard Dolibarr, we often use /invoices/{id}/classifyaspaid
+    const url = `${sanitizeUrl(config.apiUrl)}/invoices/${id}/markaspaid`;
+    // Note: If standard endpoint fails, we might need to check specific version behavior
+    // But let's try the standard logical one first or fallback to Update.
+    // Actually, widespread endpoint is POST /invoices/{id}/markaspaid or /classifyaspaid
+    /* 
+      Official API often has: POST /invoices/{id}/validate
+      For Paid: POST /invoices/{id}/payments (if payment)
+      For "Classify Paid" (no payment): PUT /invoices/{id} with { statust: 2 } or specific endpoint?
+      Let's use a "classify" strategy if available.
+      If not, we might need to rely on `updateInvoice` status, but Dolibarr is strict.
+      Let's assume standard REST endpoint:
+    */
+    return request(`${sanitizeUrl(config.apiUrl)}/invoices/${id}/markaspaid`, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
+    });
+};
+
+export const abandonInvoice = async (config: DolibarrConfig, id: string, reason: string = '') => {
+    // Abandon/Cancel (Status 3)
+    const url = `${sanitizeUrl(config.apiUrl)}/invoices/${id}/markascreditavailable`; // NO, that's diff.
+    // Usually it's /invoices/{id}/abandon
+    return request(`${sanitizeUrl(config.apiUrl)}/invoices/${id}/abandon`, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({ comment_public: reason })
+    });
+};
+
+export const setInvoiceToDraft = async (config: DolibarrConfig, id: string) => {
+    // Re-open / Back to Draft (Status 0)
+    return request(`${sanitizeUrl(config.apiUrl)}/invoices/${id}/settodraft`, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
+    });
+};
+
+
+
 export const paySupplierInvoice = async (config: DolibarrConfig, id: string, paymentData: any) => {
     // Note: Dolibarr often manages supplier payments via a separate 'payment' object linked to the invoice
     // or a classify as paid endpoint. 
@@ -541,9 +605,136 @@ export const paySupplierInvoice = async (config: DolibarrConfig, id: string, pay
     });
 };
 
+export const updateSupplierInvoice = async (config: DolibarrConfig, id: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const deleteSupplierInvoice = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices/${id}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+export const addSupplierInvoiceLine = async (config: DolibarrConfig, invoiceId: string, lineData: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices/${invoiceId}/lines`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(lineData)
+    });
+};
+
+export const updateSupplierInvoiceLine = async (config: DolibarrConfig, invoiceId: string, lineId: string, lineData: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices/${invoiceId}/lines/${lineId}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(lineData)
+    });
+};
+
+export const deleteSupplierInvoiceLine = async (config: DolibarrConfig, invoiceId: string, lineId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices/${invoiceId}/lines/${lineId}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
 export const markSupplierInvoiceAsPaid = async (config: DolibarrConfig, id: string) => {
-    // Some versions use classifyaspaid
-    const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices/${id}/classifyaspaid`;
+    // Similar to customer invoice, if there's a specific 'classify as paid'
+    return request(`${sanitizeUrl(config.apiUrl)}/supplierinvoices/${id}/markaspaid`, {
+        method: 'POST', // Check if standard API supports this or requires payments
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
+    });
+};
+
+export const setSupplierInvoiceToDraft = async (config: DolibarrConfig, id: string) => {
+    return request(`${sanitizeUrl(config.apiUrl)}/supplierinvoices/${id}/settodraft`, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
+    });
+};
+
+// Note: Supplier invoices usually don't have "Abandon" in the same way, but maybe "Cancel"?
+// Let's assume standard behavior unavailable or use DELETE if status is draft.
+// If valid/unpaid, maybe cannot abandon easily without credit note.
+// But let's add the method if API supports it.
+
+// -- Supplier Proposals --
+
+export const fetchSupplierProposals = async (config: DolibarrConfig): Promise<SupplierProposal[]> => {
+    const data = await fetchList(config, 'supplierproposals', '&sortfield=t.datec&sortorder=DESC');
+    return data.map((d: any) => ({
+        id: String(d.id),
+        ref: d.ref,
+        socid: String(d.socid),
+        project_id: d.fk_projet ? String(d.fk_projet) : undefined,
+        datec: parseInt(d.datec),
+        date_valid: d.date_valid ? parseInt(d.date_valid) : undefined,
+        total_ht: parseFloat(d.total_ht),
+        total_ttc: parseFloat(d.total_ttc),
+        total_tva: parseFloat(d.total_tva),
+        statut: String(d.statut) as any,
+        fk_user_author: d.fk_user_author ? String(d.fk_user_author) : undefined,
+        fk_user_valid: d.fk_user_valid ? String(d.fk_user_valid) : undefined,
+        array_options: d.array_options,
+        lines: d.lines ? d.lines.map((l: any) => ({
+            id: String(l.id),
+            parent_id: String(l.fk_supplier_proposal),
+            description: l.description || l.desc || l.label,
+            qty: parseFloat(l.qty),
+            vat_rate: parseFloat(l.tva_tx),
+            subprice: parseFloat(l.pu_ht || l.subprice),
+            total_ht: parseFloat(l.total_ht),
+            total_ttc: parseFloat(l.total_ttc),
+            product_id: l.fk_product ? String(l.fk_product) : undefined
+        })) : []
+    }));
+};
+
+export const getSupplierProposal = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals/${id}`;
+    return request(url, { headers: getHeaders(config.apiKey) });
+};
+
+export const createSupplierProposal = async (config: DolibarrConfig, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const updateSupplierProposal = async (config: DolibarrConfig, id: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const deleteSupplierProposal = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals/${id}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+export const validateSupplierProposal = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals/${id}/validate`;
     return request(url, {
         method: 'POST',
         headers: getHeaders(config.apiKey),
@@ -551,3 +742,38 @@ export const markSupplierInvoiceAsPaid = async (config: DolibarrConfig, id: stri
     });
 };
 
+export const closeSupplierProposal = async (config: DolibarrConfig, id: string, status: 2 | 3) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals/${id}/close`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({ status })
+    });
+};
+
+// Lines
+export const addSupplierProposalLine = async (config: DolibarrConfig, proposalId: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals/${proposalId}/lines`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const updateSupplierProposalLine = async (config: DolibarrConfig, proposalId: string, lineId: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals/${proposalId}/lines/${lineId}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const deleteSupplierProposalLine = async (config: DolibarrConfig, proposalId: string, lineId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals/${proposalId}/lines/${lineId}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};

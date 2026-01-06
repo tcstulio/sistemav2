@@ -14,6 +14,8 @@ export const config = {
     llmProvider: process.env.LLM_PROVIDER || 'local', // 'google' | 'local'
     localLlmUrl: process.env.LOCAL_LLM_URL || 'http://localhost:11434/v1', // Standard Ollama/LocalAI endpoint
     localModelName: process.env.LOCAL_LLM_MODEL || 'llama3', // Default model
+    serperApiKey: process.env.SERPER_API_KEY || '', // Added
+
 
     // Banco Inter
     interClientId: process.env.INTER_CLIENT_ID || '',
