@@ -11,7 +11,7 @@ interface SalesTabProps {
 export const SalesTab: React.FC<SalesTabProps> = ({ salesStats, proposals, orders }) => {
     // Sort orders by value
     const topOrders = [...orders]
-        .sort((a, b) => parseFloat(b.total_ttc) - parseFloat(a.total_ttc))
+        .sort((a, b) => Number(b.total_ttc) - Number(a.total_ttc))
         .slice(0, 5);
 
     const COLORS = ['#94A3B8', '#10B981'];
@@ -90,7 +90,7 @@ export const SalesTab: React.FC<SalesTabProps> = ({ salesStats, proposals, order
                                     <td className="px-4 py-2 font-medium">{o.ref}</td>
                                     <td className="px-4 py-2">{o.socid ? `Cliente #${o.socid}` : '-'}</td>
                                     <td className="px-4 py-2">{new Date(o.date_commande || o.datec).toLocaleDateString()}</td>
-                                    <td className="px-4 py-2 text-right text-emerald-600 font-bold">R$ {parseFloat(o.total_ttc).toFixed(2)}</td>
+                                    <td className="px-4 py-2 text-right text-emerald-600 font-bold">R$ {Number(o.total_ttc).toFixed(2)}</td>
                                 </tr>
                             )) : (
                                 <tr>

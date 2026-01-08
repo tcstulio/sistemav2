@@ -194,7 +194,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const handleAddItem = () => {
         setNewInvoice({
             ...newInvoice,
-            items: [...newInvoice.items, { productId: '', desc: '', qty: 1, price: 0 }]
+            items: [...newInvoice.items, { productId: '', desc: '', qty: 1, price: 0, remise_percent: 0 }]
         });
     };
 
@@ -266,7 +266,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                 productId: l.product_id || '',
                 desc: l.description || '',
                 qty: l.qty,
-                price: l.subprice || 0
+                price: l.subprice || 0,
+                remise_percent: l.remise_percent || 0
             })),
             deletedLineIds: []
         });
@@ -376,7 +377,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
 
             // Optimistic update
             selectedInvoiceForPay.statut = '2'; // Paid
-            selectedInvoiceForPay.paye = 1;
+            selectedInvoiceForPay.paye = '1';
 
             if (refreshData) refreshData();
             // Close modal handled by component prop, but we reset state here
@@ -594,7 +595,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                             </button>
                         </>
                     )}
-                    {(selectedInvoice.statut === '1' || selectedInvoice.statut === '2' || selectedInvoice.statut === '3') && (
+                    {(selectedInvoice.statut === '1' || selectedInvoice.statut === '2') && (
                         <button
                             onClick={async (e) => {
                                 e.stopPropagation();
@@ -810,7 +811,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                                             {payment ? (
                                                                 <span
                                                                     className="cursor-pointer hover:underline"
-                                                                    onClick={() => onNavigate && onNavigate('payments', payment.id)}
+                                                                    onClick={() => onNavigate && onNavigate('payments', String(payment.id))}
                                                                 >
                                                                     {payment.ref}
                                                                 </span>

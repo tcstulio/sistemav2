@@ -344,8 +344,16 @@ export const fetchDelta = async (config: DolibarrConfig, entityType: string, las
 };
 
 export const fetchSetupModules = async (config: DolibarrConfig) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/setup/modules`;
-    return request(url, { headers: getHeaders(config.apiKey) });
+    try {
+        const url = `${sanitizeUrl(config.apiUrl)}/setup/modules`;
+        return await request(url, { headers: getHeaders(config.apiKey) });
+    } catch (e: any) {
+        if (e.message && (e.message.includes('403') || e.message.toLowerCase().includes('forbidden'))) {
+            console.warn('[CoolGroove] Access to setup/modules denied (403). Assuming default module config.');
+            return [];
+        }
+        throw e;
+    }
 };
 
 export const getCompanyInfo = async (config: DolibarrConfig) => {
@@ -567,5 +575,15 @@ export const deleteDocument = async (config: DolibarrConfig, modulePart: string,
     return request(url, {
         method: 'DELETE',
         headers: getHeaders(config.apiKey)
+    });
+};
+
+// Generic Object Update
+export const updateObject = async (config: DolibarrConfig, objectType: string, id: string, data: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/${objectType}/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
     });
 };

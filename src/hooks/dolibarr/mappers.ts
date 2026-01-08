@@ -68,6 +68,7 @@ import {
     SupplierProposalLine,
     UserGroup,
     GroupUser,
+    PermissionDefinition,
 } from '../../types';
 
 // ============ Helper Functions ============
@@ -470,11 +471,12 @@ export const mapCategory = (raw: any): Category => ({
     parent_id: raw.parent_id ? toString(raw.parent_id) : undefined,
 });
 
-export const mapUserRight = (raw: any): { id: string, fk_user: string, fk_id: string } => {
+export const mapUserRight = (raw: any): { id: string, fk_user: string, fk_id: string, date_modification?: number } => {
     return {
         id: String(raw.id || raw.rowid || ''),
         fk_user: String(raw.fk_user || raw.user_id || ''),
-        fk_id: String(raw.fk_id || raw.right_id || '')
+        fk_id: String(raw.fk_id || raw.right_id || ''),
+        date_modification: Number(raw.id) // Use ID as pseudo-modification marker
     };
 };
 
@@ -847,11 +849,12 @@ export const mapPermission = (raw: any): PermissionDefinition => {
     };
 };
 
-export const mapGroupRight = (raw: any): { id: string, fk_usergroup: string, fk_id: string } => {
+export const mapGroupRight = (raw: any): { id: string, fk_usergroup: string, fk_id: string, date_modification?: number } => {
     return {
         id: String(raw.id || raw.rowid || ''),
         fk_usergroup: String(raw.fk_usergroup || raw.group_id || ''),
-        fk_id: String(raw.fk_id || raw.right_id || '')
+        fk_id: String(raw.fk_id || raw.right_id || ''),
+        date_modification: Number(raw.id) // Use ID as pseudo-modification marker
     };
 };
 

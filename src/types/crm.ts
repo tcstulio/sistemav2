@@ -8,10 +8,12 @@ export interface ThirdParty {
     town?: string;
     email?: string;
     phone?: string;
+    phone_mobile?: string;
     status: '0' | '1'; // 0=inactive, 1=active
     client: string; // '0'|'1'|'2'|'3'
     fournisseur: string; // '0'|'1'
     code_client?: string;
+    code_fournisseur?: string;
     state_id?: string;
     country_id?: string;
     tva_intra?: string;
@@ -52,6 +54,7 @@ export interface Ticket {
     fk_user_close?: string; // ADDED
     origin_email?: string;
     datec: number;
+    date_c?: number; // Alias for datec, for backward compatibility
     tms: number;
     date_modification?: number; // Added for Delta Sync
     // Inferred/Joined fields

@@ -16,6 +16,7 @@ export interface Invoice {
     fk_user_author?: string; // ADDED
     fk_user_valid?: string; // ADDED
     date_modification?: number; // Added for Delta Sync
+    soc_name?: string; // Joined customer name
     array_options?: Record<string, any>;
 }
 
@@ -46,6 +47,7 @@ export interface SupplierInvoice {
     total_ttc: number;
     paye: '0' | '1';
     statut: '0' | '1' | '2'; // Status: 0=draft, 1=unpaid, 2=paid
+    soc_name?: string; // Joined supplier name
     date_lim_reglement?: number;
     lines?: SupplierInvoiceLine[];
     fk_user_author?: string;
@@ -60,6 +62,8 @@ export interface Proposal {
     socid: string;
     project_id?: string;
     date: number;
+    datec?: number; // Alias: creation date (same as date)
+    date_creation?: number; // Alias
     total_ht: number;
     total_ttc: number;
     total_tva: number;
@@ -95,6 +99,8 @@ export interface Order {
     socid: string;
     project_id?: string;
     date: number;
+    date_commande?: number; // Alias: order date (same as date)
+    datec?: number; // Alias: creation date 
     total_ttc: number;
     statut: '0' | '1' | '2' | '3'; // 0=draft, 1=validated, 2=in process, 3=delivered
     lines?: OrderLine[];

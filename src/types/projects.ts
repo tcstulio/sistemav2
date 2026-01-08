@@ -37,6 +37,8 @@ export interface Task {
     raw?: any;
     date_creation?: number;
     date_modification?: number;
+    datec?: number; // Alias for creation date
+    tms?: number; // Timestamp last modified (alias)
     project_ref?: string;
     project_title?: string;
 }
@@ -67,32 +69,7 @@ export interface Intervention {
     array_options?: Record<string, any>;
 }
 
-export interface Ticket {
-    id: string;
-    ref: string;
-    track_id: string;
-    socid: string;
-    project_id?: string;
-    subject: string;
-    message: string;
-    type_code: string;
-    category_code?: string;
-    severity_code: string;
-    statut: string; // '1'=New, '5'=In Progress, '8'=Closed/Resolved
-    progress?: number; // 0-100 from JSON
-    date_c: number;
-    fk_user_assign?: string;
-    origin_email?: string;
-    array_options?: {
-        options_resumo_da_conversa?: string;
-        options_resumo_vaga?: string;
-        options_cf_session_id?: string;
-        options_quantidade_publico_evento?: string;
-        options_valor_budget?: string;
-        [key: string]: any;
-    };
-    date_modification?: number;
-}
+// Ticket is now defined in crm.ts - removed duplicate to avoid export conflict
 
 export interface AgendaEvent {
     id: string;

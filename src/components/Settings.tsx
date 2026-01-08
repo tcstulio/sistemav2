@@ -3,6 +3,7 @@ import { DolibarrConfig } from '../types';
 import { Save, CheckCircle, Palette, Moon, Sun, User, ShieldCheck, LogOut, RefreshCw } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
 import { DolibarrService } from '../services/dolibarrService';
+import { dbService } from '../services/dbService';
 
 interface SettingsProps {
     config: DolibarrConfig;
@@ -280,7 +281,9 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                                 type="button"
                                 onClick={async () => {
                                     if (confirm('Isso irá apagar todas as tarefas locais e baixar novamente. Continuar?')) {
-                                        await dbService.table('tasks').clear();
+                                        const allTasks = await dbService.getAll('tasks');
+                                        // Clear tasks store by re-saving empty
+                                        await dbService.saveAll('tasks', []);
                                         alert('Tarefas limpas. O sistema irá sincronizar novamente em instantes.');
                                         window.location.reload();
                                     }

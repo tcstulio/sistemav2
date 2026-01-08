@@ -1,16 +1,16 @@
-import { User, LeaveRequest } from "../../types/hr";
+import { DolibarrUser, LeaveRequest } from "../../types";
 
 export const getTeamHealth = (
     month: number,
     year: number,
-    users: User[],
+    users: DolibarrUser[],
     leaves: LeaveRequest[]
 ) => {
     const startDate = new Date(year, month - 1, 1).getTime() / 1000;
     const endDate = new Date(year, month, 0, 23, 59, 59).getTime() / 1000;
 
     // Active Users (simplified - total users enabled)
-    const activeUsers = users.filter(u => u.statut === 1);
+    const activeUsers = users.filter(u => u.statut === '1');
 
     // Leave Days in this month
     // Leave Days in this month
