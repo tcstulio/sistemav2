@@ -64,13 +64,13 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
         return rawPayments.filter(p => {
             const matchesSearch = p.ref.toLowerCase().includes(searchTerm.toLowerCase());
             return matchesSearch;
-        }).sort((a, b) => b.date_payment - a.date_payment);
+        }).sort((a, b) => new Date(b.date_payment).getTime() - new Date(a.date_payment).getTime());
     }, [rawPayments, searchTerm]);
 
     const totalReceived = useMemo(() => payments.reduce((acc, p) => acc + p.amount, 0), [payments]);
 
     // Find linked invoices for a payment
-    const getLinkedInvoices = (paymentId: string) => {
+    const getLinkedInvoices = (paymentId: number | string) => {
         const paymentLinks = links.filter(l => String(l.fk_paiement) === String(paymentId));
         return paymentLinks.map(link => {
             const inv = invoices.find(i => String(i.id) === String(link.fk_facture));

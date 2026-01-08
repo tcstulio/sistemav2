@@ -1,13 +1,24 @@
 export const config = {
     get API_BASE_URL() {
-        // Use relative path to leverage Vite Proxy (avoids Mixed Content issues on HTTPS)
-        // If needed for production build, we might need env vars, but for this setup:
-        return window.location.origin; // e.g., https://localhost:3003
-        // The Vite proxy will intercept /api calls and forward to http://localhost:3004
+        // [ANTIGRAVITY] Fix for Android/Capacitor
+        // On mobile, window.location.origin is 'http://localhost' (the webview),
+        // so relative paths fail. We must use the remote server URL.
+        const isCapacitor = (window as any).Capacitor?.isNativePlatform();
+
+        if (isCapacitor) {
+            // Fallback to the known production domain
+            // We derive it from the Dolibarr URL in env to avoid magic strings if possible,
+            // or hardcode the known domain structure.
+            // Dolibarr URL: https://sistema.coolgroove.com.br/api/index.php
+            // Node Backend: https://sistema.coolgroove.com.br
+            // [USER REQUEST] Use local IP for testing
+            return 'http://192.168.191.210:3004';
+        }
+
+        // On Web, relative paths are fine (and preferred for proxying)
+        return window.location.origin;
     },
     get WHATSAPP_API_URL() {
-        // Before: http://host:3004/api/whatsapp
-        // Now: https://host:3003/api/whatsapp (Proxied -> 3004)
         return `${this.API_BASE_URL}/api/whatsapp`;
     },
     get SOCKET_URL() {

@@ -9,6 +9,7 @@ export interface Product {
     price_ttc?: number;
     vat_rate?: number;
     stock_reel?: number;
+    stock?: number; // Alias for stock_reel
     stock_details?: { warehouse: string; qty: number }[];
     seuil_stock_alerte?: number;
 

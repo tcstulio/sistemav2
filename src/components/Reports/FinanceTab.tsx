@@ -12,7 +12,7 @@ interface FinanceTabProps {
 export const FinanceTab: React.FC<FinanceTabProps> = ({ financialStats, payments, supplierPayments, salaries }) => {
     // Top Expenses Calculation
     const topSupplierPayments = [...supplierPayments]
-        .sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount))
+        .sort((a, b) => Number(b.amount) - Number(a.amount))
         .slice(0, 5);
 
     const dataPie = [
@@ -96,7 +96,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({ financialStats, payments
                                     <td className="px-4 py-2 font-medium">{p.ref}</td>
                                     <td className="px-4 py-2">{new Date(p.date_payment).toLocaleDateString()}</td>
                                     <td className="px-4 py-2 text-gray-500 truncate max-w-xs">{p.note || '-'}</td>
-                                    <td className="px-4 py-2 text-right text-red-600 font-bold">R$ {parseFloat(p.amount).toFixed(2)}</td>
+                                    <td className="px-4 py-2 text-right text-red-600 font-bold">R$ {Number(p.amount).toFixed(2)}</td>
                                 </tr>
                             )) : (
                                 <tr>

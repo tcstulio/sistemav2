@@ -21,12 +21,12 @@ const TaxPaymentDetail: React.FC<TaxPaymentDetailProps> = ({ onNavigate }) => {
     const { data: bankAccounts } = useBankAccounts(config);
 
     // Find payment in either list
-    const payment = useMemo(() => {
-        let found = vatPayments?.find(p => String(p.id) === String(id));
-        if (found) return { ...found, type: 'VAT' as const, label: 'Imposto (IVA)' } as any;
+    const payment = useMemo((): { type: 'VAT' | 'SOCIAL'; label: string; id: string; ref: string; amount: number; date_payment: number; fk_bank: string; fk_tva?: string; fk_charge?: string } | null => {
+        const vatFound = vatPayments?.find(p => String(p.id) === String(id));
+        if (vatFound) return { ...vatFound, type: 'VAT' as const, label: 'Imposto (IVA)' };
 
-        found = socialPayments?.find(p => String(p.id) === String(id));
-        if (found) return { ...found, type: 'SOCIAL' as const, label: 'Encargo Social' } as any;
+        const socialFound = socialPayments?.find(p => String(p.id) === String(id));
+        if (socialFound) return { ...socialFound, type: 'SOCIAL' as const, label: 'Encargo Social' };
 
         return null;
     }, [vatPayments, socialPayments, id]);

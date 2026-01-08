@@ -67,8 +67,8 @@ app.get('/health', (req, res) => {
 // Socket.io initialization
 import { socketService } from './services/socketService';
 
-const server = app.listen(config.port, () => {
-    console.log(`Backend running on http://localhost:${config.port}`);
+const server = app.listen(Number(config.port), '0.0.0.0', () => {
+    console.log(`Backend running on http://0.0.0.0:${config.port}`);
 });
 
 // Initialize Socket.io with the HTTP server

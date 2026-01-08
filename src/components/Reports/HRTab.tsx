@@ -1,10 +1,16 @@
 import React from 'react';
-import { User, LeaveRequest } from '../../types/hr';
+import { DolibarrUser, LeaveRequest } from '../../types';
+
+// Extended type for display purposes
+interface LeaveRequestWithUser extends LeaveRequest {
+    user_login?: string;
+    type_label?: string;
+}
 
 interface HRTabProps {
     hrStats: any;
-    users: User[];
-    leaves: LeaveRequest[];
+    users: DolibarrUser[];
+    leaves: LeaveRequestWithUser[];
 }
 
 export const HRTab: React.FC<HRTabProps> = ({ hrStats, users, leaves }) => {

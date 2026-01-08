@@ -58,6 +58,7 @@ import {
     SupplierPaymentInvoiceLink,
     ExpenseReportPayment,
     ExpenseReportPaymentLink,
+    ExpenseReportLine,
     VATPayment,
     SalaryPayment,
     SocialContributionPayment,
@@ -737,7 +738,7 @@ export const useGroups = createDolibarrHook<any, UserGroup>({
 /**
  * Hook for fetching and syncing group users
  */
-export const useGroupUsers = createDolibarrHook<GroupUser>({
+export const useGroupUsers = createDolibarrHook<any, GroupUser>({
     queryKey: 'group_users',
     storeName: 'groupUsers',
     endpoint: 'group_users',
@@ -745,7 +746,7 @@ export const useGroupUsers = createDolibarrHook<GroupUser>({
     mapper: mappers.mapGroupUser
 });
 
-export const usePermissions = createDolibarrHook<PermissionDefinition>({
+export const usePermissions = createDolibarrHook<any, PermissionDefinition>({
     queryKey: 'permissions',
     storeName: 'permissions',
     endpoint: 'permissions',
@@ -753,7 +754,7 @@ export const usePermissions = createDolibarrHook<PermissionDefinition>({
     mapper: mappers.mapPermission
 });
 
-export const useGroupRights = createDolibarrHook<{ id: string, fk_usergroup: string, fk_id: string }>({
+export const useGroupRights = createDolibarrHook<any, { id: string, fk_usergroup: string, fk_id: string, date_modification?: number }>({
     queryKey: 'group_rights',
     storeName: 'groupRights',
     endpoint: 'group_rights',
@@ -761,7 +762,7 @@ export const useGroupRights = createDolibarrHook<{ id: string, fk_usergroup: str
     mapper: mappers.mapGroupRight
 });
 
-export const useUserRights = createDolibarrHook<{ id: string, fk_user: string, fk_id: string }>({
+export const useUserRights = createDolibarrHook<any, { id: string, fk_user: string, fk_id: string, date_modification?: number }>({
     queryKey: 'user_rights',
     storeName: 'userRights',
     endpoint: 'user_rights',

@@ -36,6 +36,7 @@ export interface Payment {
     note?: string;
     mode_id?: number;
     user_author_id?: number;
+    date_creation?: number; // Creation timestamp
     date_modification?: number;
 }
 
@@ -74,6 +75,7 @@ export interface SupplierPaymentInvoiceLink {
 export interface ExpenseReportPayment {
     id: string;
     ref: string;
+    num_paiement?: string; // Payment number/reference
     fk_expensereport: string;
     date_payment: number;
     amount: number;
@@ -121,6 +123,7 @@ export interface SocialContributionPayment {
     id: string;
     ref: string;
     fk_charge: string;
+    fk_tva?: string; // For compatibility with VATPayment
     date_payment: number;
     amount: number;
     fk_bank: string;

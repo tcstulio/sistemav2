@@ -212,6 +212,24 @@ export const approveLeaveRequest = async (config: DolibarrConfig, id: string) =>
     });
 };
 
+export const validateLeaveRequest = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/holiday/${id}/validate`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
+    });
+};
+
+export const refuseLeaveRequest = async (config: DolibarrConfig, id: string, reason?: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/holiday/${id}/refuse`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({ detail_refuse: reason })
+    });
+};
+
 export const createCandidate = async (config: DolibarrConfig, data: any) => {
     const url = `${sanitizeUrl(config.apiUrl)}/recruitmentcandidates`;
     return request(url, {

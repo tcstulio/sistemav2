@@ -99,6 +99,7 @@ export interface UserGroup {
     note?: string;
     datec?: number;
     tms?: number;
+    date_modification?: number; // Added for hook compatibility
 }
 
 export interface GroupUser {
@@ -106,6 +107,7 @@ export interface GroupUser {
     fk_user: string;
     fk_usergroup: string;
     raw?: any;
+    date_modification?: number; // Added for hook compatibility
 }
 
 export interface PermissionDefinition {
@@ -118,4 +120,5 @@ export interface PermissionDefinition {
     module_position?: number;
     family_position?: number;
     raw?: any;
+    date_modification?: number; // Added for hook compatibility
 }

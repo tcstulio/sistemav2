@@ -15,7 +15,13 @@ import { StatusFilterBar } from './common/StatusFilterBar';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
 import { TaskWizard } from './Projects/TaskWizard';
-import { ChatInterface } from './Chat/ChatInterface'; // Import direct or via index
+import {
+    ProjectTeamTab, ProjectDebugTab, ProjectDocumentsTab, ProjectOverviewTab,
+    ProjectTasksTab, ProjectTicketsTab, ProjectEventsTab, ProjectFinancialsTab,
+    ProjectSalesTab, ProjectShipmentsTab, ProjectPurchasesTab, ProjectManufacturingTab,
+    ProjectContractsTab, ProjectInterventionsTab, ProjectChatTab
+} from './Projects/tabs';
+import { CreateProjectModal, EditProjectModal, TaskModal, TicketModal } from './Projects/modals';
 
 interface ProjectListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -183,12 +189,11 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
         }
     };
 
-    const handleCreateProject = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!newProjectForm.title || !newProjectForm.socid || !config) return;
+    const handleCreateProject = async (form: { ref: string; title: string; socid: string }) => {
+        if (!form.title || !form.socid || !config) return;
         setIsSubmitting(true);
         try {
-            await DolibarrService.createProject(config, newProjectForm);
+            await DolibarrService.createProject(config, form);
             alert("Projeto Criado com Sucesso");
             setIsCreateModalOpen(false);
             setNewProjectForm({ ref: '', title: '', socid: '' });
@@ -653,494 +658,104 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
             <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-950/50">
                 <div className="max-w-4xl mx-auto space-y-6">
                     {activeTab === 'team' && (
-                        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
-                            <h3 className="font-bold text-slate-800 dark:text-white mb-4">Equipe do Projeto</h3>
-                            {(() => {
-                                const team = projectContacts.filter(c => String(c.project_id) === String(selectedProject.id));
-
-                                const resolveParticipantName = (p: { user_id?: string, contact_id?: string }) => {
-                                    if (p.user_id) {
-                                        const u = users.find(u => String(u.id) === String(p.user_id));
-                                        return u ? (u.firstname + ' ' + (u.lastname || '')).trim() : 'Usuário ' + p.user_id;
-                                    }
-                                    if (p.contact_id) {
-                                        const c = contacts.find(c => String(c.id) === String(p.contact_id));
-                                        return c ? (c.firstname + ' ' + (c.lastname || '')).trim() : 'Contato ' + p.contact_id;
-                                    }
-                                    return 'Desconhecido';
-                                };
-
-                                if (team.length === 0) return <p className="text-slate-400">Nenhum membro na equipe.</p>;
-
-                                return (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                        {team.map(p => (
-                                            <div key={p.id} className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
-                                                <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/50 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-bold text-xs">
-                                                    {(resolveParticipantName(p)[0] || '?').toUpperCase()}
-                                                </div>
-                                                <div>
-                                                    <p className="text-sm font-medium text-slate-900 dark:text-white">{resolveParticipantName(p)}</p>
-                                                    <p className="text-xs text-slate-500 capitalize">{p.type_id}</p>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                );
-                            })()}
-                        </div>
-                    )}
-                    {activeTab === 'debug' && (
-                        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-auto">
-                            <h3 className="font-bold text-slate-800 dark:text-white mb-4">Raw Links Debugger</h3>
-                            <div className="mb-4 p-4 bg-yellow-50 text-yellow-800 rounded border border-yellow-200 text-sm">
-                                Project ID: {selectedProject.id} <br />
-                                Total Links in Store: {links.length}
-                            </div>
-                            <table className="w-full text-xs text-left">
-                                <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 uppercase">
-                                    <tr>
-                                        <th className="p-2">Link ID</th>
-                                        <th className="p-2">Source Type</th>
-                                        <th className="p-2">Source ID</th>
-                                        <th className="p-2">Target Type</th>
-                                        <th className="p-2">Target ID</th>
-                                        <th className="p-2">Match?</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                    {links.filter(l =>
-                                        (String(l.sourceid) === String(selectedProject.id) && l.sourcetype === 'project') ||
-                                        (String(l.targetid) === String(selectedProject.id) && l.targettype === 'project')
-                                    ).map(link => (
-                                        <tr key={link.id} className="hover:bg-slate-50 dark:hover:bg-slate-800">
-                                            <td className="p-2 font-mono">{link.id}</td>
-                                            <td className="p-2 font-mono text-blue-600">{link.sourcetype}</td>
-                                            <td className="p-2 font-mono">{link.sourceid}</td>
-                                            <td className="p-2 font-mono text-green-600">{link.targettype}</td>
-                                            <td className="p-2 font-mono">{link.targetid}</td>
-                                            <td className="p-2">
-                                                {String(link.sourceid) === String(selectedProject.id) ? 'Source' : 'Target'}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                            {links.filter(l =>
-                                (String(l.sourceid) === String(selectedProject.id) && l.sourcetype === 'project') ||
-                                (String(l.targetid) === String(selectedProject.id) && l.targettype === 'project')
-                            ).length === 0 && (
-                                    <p className="text-center py-4 text-slate-400">No links found for this project ID in local store.</p>
-                                )}
-                        </div>
-                    )}
-                    {activeTab === 'chat' && (
-                        <ChatInterface
-                            elementId={selectedProject.id}
-                            elementType="project"
-                            title={`Chat do Projeto ${selectedProject.ref}`}
+                        <ProjectTeamTab
+                            project={selectedProject}
+                            team={projectContacts.filter(c => String(c.project_id) === String(selectedProject.id))}
+                            users={users}
+                            contacts={contacts}
                         />
                     )}
+                    {activeTab === 'debug' && (
+                        <ProjectDebugTab project={selectedProject} links={links} />
+                    )}
+                    {activeTab === 'chat' && (
+                        <ProjectChatTab project={selectedProject} />
+                    )}
                     {activeTab === 'overview' && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                                <h3 className="font-bold text-slate-800 dark:text-white mb-4">Detalhes</h3>
-                                <div className="space-y-3">
-                                    <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
-                                        <span className="text-sm text-slate-500">Cliente</span>
-                                        <span
-                                            className="text-sm font-medium text-indigo-600 dark:text-indigo-400 cursor-pointer hover:underline"
-                                            onClick={() => onNavigate && onNavigate('customers', selectedProject.socid)}
-                                        >
-                                            {getCustomerName(selectedProject.socid)}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
-                                        <span className="text-sm text-slate-500">Progresso</span>
-                                        <span className="text-sm font-bold text-slate-800 dark:text-white">{selectedProject.progress}%</span>
-                                    </div>
-                                    <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
-                                        <span className="text-sm text-slate-500">Início</span>
-                                        <span className="text-sm text-slate-800 dark:text-white">{formatDateOnly(selectedProject.date_start) || '-'}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-sm text-slate-500">Fim</span>
-                                        <span className="text-sm text-slate-800 dark:text-white">{formatDateOnly(selectedProject.date_end) || '-'}</span>
-                                    </div>
-                                    {selectedProject.fk_user_creat && (
-                                        <div className="flex justify-between border-t border-slate-100 dark:border-slate-800 pt-2 mt-2">
-                                            <span className="text-xs text-slate-500">Criado por</span>
-                                            <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{resolveUserName(selectedProject.fk_user_creat)}</span>
-                                        </div>
-                                    )}
-                                    {selectedProject.fk_user_modif && (
-                                        <div className="flex justify-between">
-                                            <span className="text-xs text-slate-500">Modificado por</span>
-                                            <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{resolveUserName(selectedProject.fk_user_modif)}</span>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                                <h3 className="font-bold text-slate-800 dark:text-white mb-4">Resumo Financeiro</h3>
-                                <div className="space-y-4">
-                                    <div className="flex items-center justify-between p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-100 dark:border-emerald-900/30">
-                                        <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
-                                            <ArrowDown size={18} /> <span className="text-sm font-medium">Faturado</span>
-                                        </div>
-                                        <span className="font-bold text-emerald-700 dark:text-emerald-400">${totalInvoiced.toLocaleString()}</span>
-                                    </div>
-                                    <div className="flex items-center justify-between p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-100 dark:border-red-900/30">
-                                        <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
-                                            <ArrowUp size={18} /> <span className="text-sm font-medium">Custos</span>
-                                        </div>
-                                        <span className="font-bold text-red-700 dark:text-red-400">${(totalSupplierBills + totalExpenses).toLocaleString()}</span>
-                                    </div>
-                                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
-                                        <span className="text-sm font-bold text-slate-500">Margem</span>
-                                        <span className={`text-lg font-bold ${(totalInvoiced - totalSupplierBills - totalExpenses) >= 0 ? 'text-slate-800 dark:text-white' : 'text-red-500'}`}>
-                                            ${(totalInvoiced - totalSupplierBills - totalExpenses).toLocaleString()}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm md:col-span-2">
-                                <LinkedObjects
-                                    id={selectedProject.id}
-                                    type="project"
-                                    onNavigate={onNavigate}
-                                />
-                            </div>
-                        </div>
+                        <ProjectOverviewTab
+                            project={selectedProject}
+                            customerName={getCustomerName(selectedProject.socid)}
+                            totalInvoiced={totalInvoiced}
+                            totalSupplierBills={totalSupplierBills}
+                            totalExpenses={totalExpenses}
+                            createdByName={selectedProject.fk_user_creat ? resolveUserName(selectedProject.fk_user_creat) : undefined}
+                            modifiedByName={selectedProject.fk_user_modif ? resolveUserName(selectedProject.fk_user_modif) : undefined}
+                            onNavigate={onNavigate}
+                        />
                     )}
 
                     {activeTab === 'tasks' && (
-                        <div className="space-y-3">
-                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-                                <h3 className="font-bold text-slate-800 dark:text-white">Tarefas do Projeto</h3>
-                                <div className="flex gap-2 w-full sm:w-auto">
-                                    <button onClick={() => setIsWizardOpen(true)} className="flex-1 sm:flex-none justify-center flex items-center gap-2 px-3 py-1.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded-lg text-xs font-medium hover:bg-indigo-200 transition-colors">
-                                        <Sparkles size={16} /> Wizard
-                                    </button>
-                                    <button onClick={() => openTaskModal()} className="flex-1 sm:flex-none justify-center flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition-colors">
-                                        <Plus size={16} /> Nova Tarefa
-                                    </button>
-                                </div>
-                            </div>
-                            {projectTasks.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhuma tarefa encontrada.</p> : projectTasks.map(t => (
-                                <div key={t.id} onClick={() => onNavigate && onNavigate('tasks', t.id)} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center hover:shadow-sm transition-shadow group cursor-pointer hover:border-indigo-300">
-                                    <div>
-                                        <h4 className="font-bold text-slate-800 dark:text-white text-sm">{t.label}</h4>
-                                        <div className="text-xs text-slate-500 mt-1">{t.ref} • {t.progress}% Concluído</div>
-                                    </div>
-                                    <div className="flex items-center gap-4">
-                                        <div className="text-right text-xs">
-                                            <div className="text-slate-500">Planejado: {(t.planned_workload || 0) / 3600}h</div>
-                                            <div className="text-indigo-600 dark:text-indigo-400 font-medium">Gasto: {(t.duration_effective || 0) / 3600}h</div>
-                                        </div>
-                                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={(e) => { e.stopPropagation(); openTaskModal(t); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
-                                                <Pencil size={16} />
-                                            </button>
-                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteTask(t.id); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                        <ProjectTasksTab
+                            tasks={projectTasks}
+                            onNavigate={onNavigate}
+                            onCreateTask={() => openTaskModal()}
+                            onEditTask={(t) => openTaskModal(t)}
+                            onDeleteTask={handleDeleteTask}
+                            onOpenWizard={() => setIsWizardOpen(true)}
+                        />
                     )}
 
                     {activeTab === 'tickets' && (
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-center mb-4">
-                                <h3 className="font-bold text-slate-800 dark:text-white">Chamados Vinculados</h3>
-                                <button onClick={() => openTicketModal()} className="flex items-center gap-2 px-3 py-1.5 bg-orange-600 text-white rounded-lg text-xs font-medium hover:bg-orange-700 transition-colors">
-                                    <Plus size={16} /> Novo Chamado
-                                </button>
-                            </div>
-                            {projectTickets.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhum chamado encontrado.</p> : projectTickets.map(t => (
-                                <div key={t.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center hover:shadow-sm transition-shadow group">
-                                    <div className="flex items-center gap-3">
-                                        <div className={`p-2 rounded-lg ${t.type_code === 'ISSUE' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
-                                            <AlertTriangle size={20} />
-                                        </div>
-                                        <div>
-                                            <div className="font-bold text-slate-800 dark:text-white text-sm">{t.ref} - {t.subject}</div>
-                                            <div className="text-xs text-slate-500">{t.message?.substring(0, 50)}...</div>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-4">
-                                        <div className="text-right text-xs">
-                                            <div className="font-bold text-slate-700 dark:text-slate-300">{t.severity_code}</div>
-                                            <div className="text-slate-400">{t.statut}</div>
-                                        </div>
-                                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={() => openTicketModal(t)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded">
-                                                <Pencil size={16} />
-                                            </button>
-                                            <button onClick={() => handleDeleteTicket(t.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                        <ProjectTicketsTab
+                            tickets={projectTickets}
+                            onCreateTicket={() => openTicketModal()}
+                            onEditTicket={(t) => openTicketModal(t)}
+                            onDeleteTicket={handleDeleteTicket}
+                        />
                     )}
 
-                    {activeTab === 'documents' && (
-                        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm p-6">
-                            <div className="flex justify-between items-center mb-6">
-                                <h3 className="font-bold text-slate-800 dark:text-white">Arquivos do Projeto</h3>
-                                <div className="relative">
-                                    <input type="file" id="file-upload" className="hidden" onChange={handleFileUpload} disabled={isUploading} />
-                                    <label htmlFor="file-upload" className={`flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-indigo-700 transition-colors ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                                        {isUploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Upload
-                                    </label>
-                                </div>
-                            </div>
-                            {documents.length === 0 ? (
-                                <div className="text-center py-10 text-slate-400 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
-                                    <Files size={32} className="mx-auto mb-2 opacity-50" />
-                                    <p>Nenhum documento encontrado.</p>
-                                </div>
-                            ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                                    {documents.map((doc, idx) => (
-                                        <div key={idx} className="p-3 border border-slate-200 dark:border-slate-800 rounded-lg flex items-center justify-between group hover:border-indigo-300 transition-colors">
-                                            <div className="flex items-center gap-3 overflow-hidden">
-                                                <div className="p-2 bg-slate-100 dark:bg-slate-800 rounded text-slate-500">
-                                                    <File size={20} />
-                                                </div>
-                                                <div className="min-w-0">
-                                                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate" title={doc.name}>{doc.name}</p>
-                                                    <p className="text-xs text-slate-400">{(doc.size ? doc.size / 1024 : 0).toFixed(1)} KB</p>
-                                                </div>
-                                            </div>
-                                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <button
-                                                    onClick={() => DolibarrService.downloadDocument(config, 'project', `${selectedProject.ref}/${doc.name}`)}
-                                                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded"
-                                                >
-                                                    <ExternalLink size={14} />
-                                                </button>
-                                                <button
-                                                    onClick={() => handleDeleteDocument(doc.name)}
-                                                    className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
+                    {activeTab === 'documents' && selectedProject && (
+                        <ProjectDocumentsTab
+                            project={selectedProject}
+                            config={config}
+                            documents={documents}
+                            isLoading={isLoadingDocs}
+                            isUploading={isUploading}
+                            onUpload={handleFileUpload}
+                            onDelete={handleDeleteDocument}
+                        />
                     )}
 
                     {activeTab === 'sales' && (
-                        <div className="space-y-6">
-                            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                                <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2"><FileSignature size={18} className="text-orange-500" /> Propostas ({projectProposals.length})</h3>
-                                <div className="space-y-2">
-                                    {projectProposals.length === 0 ? <p className="text-sm text-slate-400">Nenhuma proposta encontrada.</p> : projectProposals.map(p => (
-                                        <div key={p.id} className="flex justify-between items-center p-3 border border-slate-100 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer" onClick={() => onNavigate && onNavigate('proposals', p.id)}>
-                                            <div>
-                                                <div className="font-medium text-slate-800 dark:text-white text-sm">{p.ref}</div>
-                                                <div className="text-xs text-slate-500">{formatDateOnly(p.date)}</div>
-                                            </div>
-                                            <div className="text-right font-bold text-slate-700 dark:text-slate-300 px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded-full text-xs">
-                                                ${p.total_ttc.toLocaleString()}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                                <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2"><ShoppingCart size={18} className="text-indigo-500" /> Pedidos ({projectOrders.length})</h3>
-                                <div className="space-y-2">
-                                    {projectOrders.length === 0 ? <p className="text-sm text-slate-400">Nenhum pedido encontrado.</p> : projectOrders.map(o => (
-                                        <div key={o.id} className="flex justify-between items-center p-3 border border-slate-100 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer" onClick={() => onNavigate && onNavigate('orders', o.id)}>
-                                            <div>
-                                                <div className="font-medium text-slate-800 dark:text-white text-sm">{o.ref}</div>
-                                                <div className="text-xs text-slate-500">{formatDateOnly(o.date)}</div>
-                                            </div>
-                                            <div className="text-right font-bold text-indigo-600 dark:text-indigo-400">
-                                                ${o.total_ttc.toLocaleString()}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
+                        <ProjectSalesTab
+                            proposals={projectProposals}
+                            orders={projectOrders}
+                            onNavigate={onNavigate}
+                        />
                     )}
 
 
 
                     {activeTab === 'shipments' && (
-                        <div className="space-y-3">
-                            {projectShipments.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhum envio encontrado.</p> : projectShipments.map(s => (
-                                <div key={s.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center cursor-pointer hover:shadow-md" onClick={() => onNavigate && onNavigate('shipments', s.id)}>
-                                    <div className="flex items-center gap-3">
-                                        <Truck size={20} className="text-blue-500" />
-                                        <div>
-                                            <div className="font-bold text-slate-800 dark:text-white text-sm">{s.ref}</div>
-                                            <div className="text-xs text-slate-500 flex gap-2">
-                                                <span>{formatDateOnly(s.date_creation)}</span>
-                                                {s.tracking_number && (
-                                                    <span className="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">TRK: {s.tracking_number}</span>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <span className={`px-2 py-1 rounded-full text-xs font-bold ${s.status === '1' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}`}>
-                                            {s.status === '1' ? 'Enviado' : 'Aberto'}
-                                        </span>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                        <ProjectShipmentsTab shipments={projectShipments} onNavigate={onNavigate} />
                     )}
 
                     {activeTab === 'purchases' && (
-                        <div className="space-y-3">
-                            {projectSupplierOrders.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhum pedido de compra encontrado.</p> : projectSupplierOrders.map(so => (
-                                <div key={so.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center cursor-pointer hover:shadow-md">
-                                    <div className="flex items-center gap-3">
-                                        <ShoppingCart size={20} className="text-orange-500" />
-                                        <div>
-                                            <div className="font-bold text-slate-800 dark:text-white text-sm">{so.ref}</div>
-                                            <div className="text-xs text-slate-500">{formatDateOnly(so.date_creation)}</div>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="font-bold text-slate-700 dark:text-slate-300">${so.total_ttc.toLocaleString()}</div>
-                                        <div className="text-xs text-slate-400">{so.statut}</div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                        <ProjectPurchasesTab supplierOrders={projectSupplierOrders} />
                     )}
 
                     {activeTab === 'financials' && (
-                        <div className="space-y-6">
-                            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                                <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2"><Receipt size={18} className="text-emerald-500" /> Faturas de Cliente ({projectInvoices.length})</h3>
-                                <div className="space-y-2">
-                                    {projectInvoices.map(inv => (
-                                        <div key={inv.id} className="flex justify-between items-center p-3 border border-slate-100 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer" onClick={() => onNavigate && onNavigate('invoices', inv.id)}>
-                                            <div>
-                                                <div className="font-medium text-slate-800 dark:text-white text-sm">{inv.ref}</div>
-                                                <div className="text-xs text-slate-500">{formatDateOnly(inv.date)}</div>
-                                            </div>
-                                            <div className="text-right font-bold text-emerald-600 dark:text-emerald-400">${inv.total_ttc.toLocaleString()}</div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                                <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2"><Receipt size={18} className="text-red-500" /> Faturas de Fornecedor ({projectSupplierInvoices.length})</h3>
-                                <div className="space-y-2">
-                                    {projectSupplierInvoices.map(inv => (
-                                        <div key={inv.id} className="flex justify-between items-center p-3 border border-slate-100 dark:border-slate-700 rounded-lg">
-                                            <div>
-                                                <div className="font-medium text-slate-800 dark:text-white text-sm">{inv.ref}</div>
-                                                <div className="text-xs text-slate-500">{inv.label || 'Sem descrição'}</div>
-                                            </div>
-                                            <div className="text-right font-bold text-red-600 dark:text-red-400">-${inv.total_ttc.toLocaleString()}</div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
+                        <ProjectFinancialsTab
+                            invoices={projectInvoices}
+                            supplierInvoices={projectSupplierInvoices}
+                            onNavigate={onNavigate}
+                        />
                     )}
 
                     {activeTab === 'events' && (
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-center mb-4">
-                                <h3 className="font-bold text-slate-800 dark:text-white">Eventos do Projeto</h3>
-                            </div>
-                            {projectEvents.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhum evento encontrado.</p> : projectEvents.map(e => (
-                                <div key={e.id} onClick={() => onNavigate && onNavigate('agenda', e.id)} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:shadow-sm transition-shadow cursor-pointer">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <div className="flex items-center gap-2">
-                                            <Calendar size={18} className="text-indigo-500" />
-                                            <span className="font-bold text-slate-800 dark:text-white text-sm">{e.label}</span>
-                                        </div>
-                                        <span className={`px-2 py-0.5 rounded text-xs ${e.percentage === 100 ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}`}>
-                                            {e.percentage}%
-                                        </span>
-                                    </div>
-                                    <div className="text-xs text-slate-500 space-y-1">
-                                        <div className="flex items-center gap-2">
-                                            <Clock size={14} />
-                                            <span>{formatDateOnly(e.date_start)} - {formatDateOnly(e.date_end)}</span>
-                                        </div>
-                                        {e.location && (
-                                            <div className="flex items-center gap-2">
-                                                <MapPin size={14} />
-                                                <span>{e.location}</span>
-                                            </div>
-                                        )}
-                                        {e.description && (
-                                            <p className="mt-2 text-slate-600 dark:text-slate-400 line-clamp-2">{e.description}</p>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                        <ProjectEventsTab events={projectEvents} onNavigate={onNavigate} />
                     )}
 
                     {activeTab === 'manufacturing' && (
-                        <div className="space-y-3">
-                            {projectMOs.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhuma ordem de produção vinculada.</p> : projectMOs.map(mo => (
-                                <div key={mo.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center">
-                                    <div>
-                                        <div className="font-bold text-slate-800 dark:text-white text-sm">{mo.ref}</div>
-                                        <div className="text-xs text-slate-500">{mo.label}</div>
-                                    </div>
-                                    <div className="flex items-center gap-2 text-sm">
-                                        <Factory size={16} className="text-orange-500" />
-                                        <span className="font-medium">Qtd: {mo.qty}</span>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                        <ProjectManufacturingTab manufacturingOrders={projectMOs} />
                     )}
 
                     {activeTab === 'contracts' && (
-                        <div className="space-y-3">
-                            {projectContracts.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhum contrato vinculado.</p> : projectContracts.map(c => (
-                                <div key={c.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center cursor-pointer hover:shadow-md" onClick={() => onNavigate && onNavigate('contracts', c.id)}>
-                                    <div className="flex items-center gap-3">
-                                        <FileSignature size={20} className="text-indigo-500" />
-                                        <div>
-                                            <div className="font-bold text-slate-800 dark:text-white text-sm">{c.ref}</div>
-                                            <div className="text-xs text-slate-500">{formatDateOnly(c.date_contrat)}</div>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                        <ProjectContractsTab contracts={projectContracts} onNavigate={onNavigate} />
                     )}
 
                     {activeTab === 'interventions' && (
-                        <div className="space-y-3">
-                            {projectInterventions.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhuma intervenção encontrada.</p> : projectInterventions.map(int => (
-                                <div key={int.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center cursor-pointer hover:shadow-md" onClick={() => onNavigate && onNavigate('interventions', int.id)}>
-                                    <div>
-                                        <div className="font-bold text-slate-800 dark:text-white text-sm">{int.ref}</div>
-                                        <div className="text-xs text-slate-500">{int.description}</div>
-                                    </div>
-                                    <div className="text-xs text-slate-500">{formatDateOnly(int.date)}</div>
-                                </div>
-                            ))}
-                        </div>
+                        <ProjectInterventionsTab interventions={projectInterventions} onNavigate={onNavigate} />
                     )}
                 </div>
             </div>
@@ -1172,251 +787,45 @@ const ProjectList: React.FC<ProjectListProps> = ({ onNavigate, initialItemId }) 
             />
 
             {/* Create Project Modal */}
-            {isCreateModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800">
-                        <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800">
-                            <h3 className="font-bold text-lg dark:text-white">Novo Projeto</h3>
-                            <button onClick={() => setIsCreateModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
-                        </div>
-                        <form onSubmit={handleCreateProject} className="p-4 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Referência</label>
-                                <input
-                                    type="text"
-                                    required
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={newProjectForm.ref}
-                                    onChange={e => setNewProjectForm({ ...newProjectForm, ref: e.target.value.toUpperCase() })}
-                                    placeholder="PROJ-2024-001"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Título</label>
-                                <input
-                                    type="text"
-                                    required
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={newProjectForm.title}
-                                    onChange={e => setNewProjectForm({ ...newProjectForm, title: e.target.value })}
-                                    placeholder="Nome do projeto"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cliente (SocID)</label>
-                                <select
-                                    required
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={newProjectForm.socid}
-                                    onChange={e => setNewProjectForm({ ...newProjectForm, socid: e.target.value })}
-                                >
-                                    <option value="">Selecione...</option>
-                                    {customers.map(c => (
-                                        <option key={c.id} value={c.id}>{c.name}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div className="pt-2 flex justify-end gap-2">
-                                <button type="button" onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancelar</button>
-                                <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50">
-                                    {isSubmitting ? 'Criando...' : 'Criar Projeto'}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+            <CreateProjectModal
+                isOpen={isCreateModalOpen}
+                onClose={() => setIsCreateModalOpen(false)}
+                onSubmit={async (form) => {
+                    await handleCreateProject(form);
+                }}
+                customers={customers}
+                isSubmitting={isSubmitting}
+            />
 
             {/* Edit Project Modal */}
-            {isEditModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800">
-                        <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800">
-                            <h3 className="font-bold text-lg dark:text-white">Editar Projeto</h3>
-                            <button onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
-                        </div>
-                        <form onSubmit={handleUpdateProject} className="p-4 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Título</label>
-                                <input
-                                    type="text"
-                                    required
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={editProjectForm.title}
-                                    onChange={e => setEditProjectForm({ ...editProjectForm, title: e.target.value })}
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Status</label>
-                                <select
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={editProjectForm.status}
-                                    onChange={e => setEditProjectForm({ ...editProjectForm, status: e.target.value })}
-                                >
-                                    <option value="0">Rascunho</option>
-                                    <option value="1">Aberto</option>
-                                    <option value="2">Fechado</option>
-                                </select>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data Início</label>
-                                    <input
-                                        type="date"
-                                        className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                        value={editProjectForm.date_start}
-                                        onChange={e => setEditProjectForm({ ...editProjectForm, date_start: e.target.value })}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data Fim</label>
-                                    <input
-                                        type="date"
-                                        className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                        value={editProjectForm.date_end}
-                                        onChange={e => setEditProjectForm({ ...editProjectForm, date_end: e.target.value })}
-                                    />
-                                </div>
-                            </div>
-                            <div className="pt-2 flex justify-end gap-2">
-                                <button type="button" onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancelar</button>
-                                <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50">
-                                    {isSubmitting ? 'Salvando...' : 'Salvar Alterações'}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+            <EditProjectModal
+                isOpen={isEditModalOpen}
+                onClose={() => setIsEditModalOpen(false)}
+                onSubmit={handleUpdateProject}
+                form={editProjectForm}
+                setForm={setEditProjectForm}
+                isSubmitting={isSubmitting}
+            />
             {/* Task Modal */}
-            {isTaskModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800">
-                        <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800">
-                            <h3 className="font-bold text-lg dark:text-white">{editingTaskId ? 'Editar Tarefa' : 'Nova Tarefa'}</h3>
-                            <button onClick={() => setIsTaskModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
-                        </div>
-                        <form onSubmit={handleCreateOrUpdateTask} className="p-4 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Título</label>
-                                <input
-                                    type="text"
-                                    required
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={taskForm.label}
-                                    onChange={e => setTaskForm({ ...taskForm, label: e.target.value })}
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Carga Horária Planejada (h)</label>
-                                <input
-                                    type="number"
-                                    step="0.5"
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={taskForm.planned_workload}
-                                    onChange={e => setTaskForm({ ...taskForm, planned_workload: parseFloat(e.target.value) || 0 })}
-                                />
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Início</label>
-                                    <input
-                                        type="date"
-                                        className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                        value={taskForm.date_start}
-                                        onChange={e => setTaskForm({ ...taskForm, date_start: e.target.value })}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Fim</label>
-                                    <input
-                                        type="date"
-                                        className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                        value={taskForm.date_end}
-                                        onChange={e => setTaskForm({ ...taskForm, date_end: e.target.value })}
-                                    />
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
-                                <textarea
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white h-24"
-                                    value={taskForm.description}
-                                    onChange={e => setTaskForm({ ...taskForm, description: e.target.value })}
-                                />
-                            </div>
-                            <div className="pt-2 flex justify-end gap-2">
-                                <button type="button" onClick={() => setIsTaskModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancelar</button>
-                                <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50">
-                                    {isSubmitting ? 'Salvando...' : (editingTaskId ? 'Atualizar' : 'Criar')}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+            <TaskModal
+                isOpen={isTaskModalOpen}
+                onClose={() => setIsTaskModalOpen(false)}
+                onSubmit={handleCreateOrUpdateTask}
+                form={taskForm}
+                setForm={setTaskForm}
+                isSubmitting={isSubmitting}
+                isEditing={!!editingTaskId}
+            />
             {/* Ticket Modal */}
-            {isTicketModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800">
-                        <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800">
-                            <h3 className="font-bold text-lg dark:text-white">{editingTicketId ? 'Editar Chamado' : 'Novo Chamado'}</h3>
-                            <button onClick={() => setIsTicketModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
-                        </div>
-                        <form onSubmit={handleCreateOrUpdateTicket} className="p-4 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Assunto</label>
-                                <input
-                                    type="text"
-                                    required
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={ticketForm.subject}
-                                    onChange={e => setTicketForm({ ...ticketForm, subject: e.target.value })}
-                                />
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
-                                    <select
-                                        className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                        value={ticketForm.type_code}
-                                        onChange={e => setTicketForm({ ...ticketForm, type_code: e.target.value })}
-                                    >
-                                        <option value="ISSUE">Incidente</option>
-                                        <option value="REQUEST">Requisição</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Severidade</label>
-                                    <select
-                                        className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                        value={ticketForm.severity_code}
-                                        onChange={e => setTicketForm({ ...ticketForm, severity_code: e.target.value })}
-                                    >
-                                        <option value="LOW">Baixa</option>
-                                        <option value="NORMAL">Normal</option>
-                                        <option value="HIGH">Alta</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Mensagem/Descrição</label>
-                                <textarea
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white h-24"
-                                    value={ticketForm.message}
-                                    onChange={e => setTicketForm({ ...ticketForm, message: e.target.value })}
-                                />
-                            </div>
-                            <div className="pt-2 flex justify-end gap-2">
-                                <button type="button" onClick={() => setIsTicketModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancelar</button>
-                                <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50">
-                                    {isSubmitting ? 'Salvando...' : (editingTicketId ? 'Atualizar' : 'Criar')}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+            <TicketModal
+                isOpen={isTicketModalOpen}
+                onClose={() => setIsTicketModalOpen(false)}
+                onSubmit={handleCreateOrUpdateTicket}
+                form={ticketForm}
+                setForm={setTicketForm}
+                isSubmitting={isSubmitting}
+                isEditing={!!editingTicketId}
+            />
             {/* Task Wizard */}
             {selectedProject && (
                 <TaskWizard

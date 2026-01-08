@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { DolibarrUser, Task, ExpenseReport, LeaveRequest, Project, DolibarrConfig, AppView, GroupUser as DolibarrGroupUser, ExpenseReportLine, ExpenseReportPayment } from '../../types';
 import { UserAvatar } from './UserAvatar';
 import { formatDuration, getProjectName, getLeaveIcon, getLeaveStatusBadge, getExpenseStatusBadge } from './utils';
-import { UserCheck, Clock, Receipt, Plane, Shield, Edit2, Trash2, X, ArrowLeft, CreditCard, Fingerprint, Mail, Phone, Users, Plus } from 'lucide-react';
+import { UserCheck, Clock, Receipt, Plane, Shield, Edit2, Trash2, X, ArrowLeft, CreditCard, Fingerprint, Mail, Phone, Users, Plus, Calendar } from 'lucide-react';
 import { formatDateOnly } from '../../utils/dateUtils';
 import { useGroups, useGroupUsers } from '../../hooks/dolibarr';
 import * as HRAdmin from '../../services/api/hrAdmin';

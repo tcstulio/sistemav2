@@ -23,8 +23,8 @@ export const getSalesPerformance = (
         return date >= startDate && date <= endDate;
     });
 
-    const totalProposalValue = monthlyProposals.reduce((sum, p) => sum + parseFloat(p.total_ttc), 0);
-    const totalOrderValue = monthlyOrders.reduce((sum, o) => sum + parseFloat(o.total_ttc), 0);
+    const totalProposalValue = monthlyProposals.reduce((sum, p) => sum + Number(p.total_ttc), 0);
+    const totalOrderValue = monthlyOrders.reduce((sum, o) => sum + Number(o.total_ttc), 0);
 
     // Conversion Rate (Count based)
     // Note: This is a simple approximation. Ideally, we track proposals *converted* to orders in this month, regardless of when proposal was created.
@@ -58,5 +58,5 @@ export const getRevenueForecast = (
     // Dolibarr Order Statuses: 0=Draft, 1=Validated, 2=Delivered, 3=Billed/Closed
     const pipelineOrders = orders.filter(o => o.statut === '1' || o.statut === '2');
 
-    return pipelineOrders.reduce((sum, o) => sum + parseFloat(o.total_ttc), 0);
+    return pipelineOrders.reduce((sum, o) => sum + Number(o.total_ttc), 0);
 }

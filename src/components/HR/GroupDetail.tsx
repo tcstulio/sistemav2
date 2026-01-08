@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { UserGroup, DolibarrUser, GroupUser, DolibarrConfig } from '../../../types';
+import { UserGroup, DolibarrUser, GroupUser, DolibarrConfig } from '../../types';
 import { X, UserPlus, Trash2, Save, Shield, Check, MinusCircle } from 'lucide-react';
 import { useGroupUsers, useGroups } from '../../hooks/dolibarr';
 import * as HRAdmin from '../../services/api/hrAdmin';
