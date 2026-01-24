@@ -1,8 +1,9 @@
 import React, { useMemo, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, useParams, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useParams, useNavigate, Navigate } from 'react-router-dom';
 import { useDolibarr } from '../context/DolibarrContext';
 import { Server, ShieldCheck, PlayCircle, Loader2 } from 'lucide-react';
 import { RestrictedAccess } from './RestrictedAccess';
+import Simulator from '../pages/Simulator';
 import { Toaster } from 'sonner';
 
 // Components
@@ -18,6 +19,7 @@ import ProjectList from './ProjectList';
 import TicketList from './TicketList';
 import BankAccountList from './BankAccountList';
 import { SupplierList } from './SupplierList';
+import { VenueList } from './VenueList';
 import SupplierInvoiceList from './SupplierInvoiceList';
 import SettingsView from './Settings';
 import SetupWizard from './SetupWizard';
@@ -129,6 +131,9 @@ const App: React.FC = () => {
                         <Route path="/suppliers" element={<ViewWrapper Component={SupplierList} viewId="suppliers" />} />
                         <Route path="/suppliers/:id" element={<ViewWrapper Component={SupplierList} viewId="suppliers" />} />
 
+                        <Route path="/venues" element={<ViewWrapper Component={VenueList} viewId="partnerships" />} />
+                        <Route path="/venues/:id" element={<ViewWrapper Component={VenueList} viewId="partnerships" />} />
+
                         <Route path="/invoices" element={<ViewWrapper Component={InvoiceList} viewId="invoices" />} />
                         <Route path="/invoices/:id" element={<ViewWrapper Component={InvoiceList} viewId="invoices" />} />
 
@@ -205,7 +210,8 @@ const App: React.FC = () => {
                             <Route path=":type/:id" element={<ChatConversation />} />
                         </Route>
 
-                        <Route path="/perfil" element={<SettingsView config={config} onSave={setConfig} />} />
+                        <Route path="/simulator" element={<ViewWrapper Component={Simulator} viewId="simulator" />} />
+                        <Route path="*" element={<Navigate to="/" replace />} />
                     </Route>
                 </Routes>
             </BrowserRouter>

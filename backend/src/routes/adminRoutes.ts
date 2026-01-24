@@ -76,7 +76,38 @@ router.get('/config/llm', (req, res) => {
 
 router.get('/config/llm/models', async (req, res) => {
     try {
-        const models = await aiService.getModels();
+        const providerName = req.query.provider as string;
+
+        let models: string[] = [];
+
+        if (providerName && (providerName === 'local' || providerName === 'google')) {
+            // Create a temporary provider instance to fetch models
+            const { GoogleGenAI } = require('@google/genai');
+            const axios = require('axios'); // Ensure axios is available
+
+            if (providerName === 'google') {
+                if (!config.googleApiKey) return res.json({ models: [] });
+                // Reuse GoogleProvider logic or just minimal fetch
+                const ai = new GoogleGenAI({ apiKey: config.googleApiKey });
+                const response = await ai.models.list();
+                for await (const model of response) {
+                    if (model.name?.startsWith('models/gemini')) {
+                        models.push(model.name.replace('models/', ''));
+                    }
+                }
+            } else {
+                // Local
+                if (!config.localLlmUrl) return res.json({ models: [] });
+                try {
+                    const response = await axios.get(`${config.localLlmUrl}/models`);
+                    if (response.data?.data) models = response.data.data.map((m: any) => m.id);
+                    else if (response.data?.models) models = response.data.models.map((m: any) => m.name);
+                } catch (e) { console.warn("Local model fetch failed", e); }
+            }
+        } else {
+            // Default behavior: use active provider
+            models = await aiService.getModels();
+        }
         res.json({ models });
     } catch (e: any) {
         res.status(500).json({ error: "Failed to fetch models", details: e.message });
@@ -149,21 +180,7 @@ router.get('/logs', (req, res) => {
 });
 
 // --- Advanced LLM Configuration Endpoints ---
-
-// In-memory storage for module configs and prompts (persists until restart)
-let llmModuleConfigs: Record<string, { provider: string; model: string }> = {
-    chat: { provider: config.llmProvider, model: config.localModelName },
-    banking: { provider: config.llmProvider, model: config.localModelName },
-    system_analysis: { provider: config.llmProvider, model: config.localModelName },
-    proposals: { provider: config.llmProvider, model: config.localModelName }
-};
-
-let llmCustomPrompts: Record<string, string> = {
-    system_base: 'Você é um assistente virtual inteligente do sistema ERP.',
-    banking_categorization: 'Categorize as transações bancárias fornecidas.',
-    banking_anomalies: 'Identifique gastos suspeitos ou fora do padrão.',
-    chat_signature: '~ Assistente Virtual'
-};
+const { configService } = require('../services/configService');
 
 // Simple usage stats tracking
 let llmStats = {
@@ -183,96 +200,16 @@ const resetStatsIfNewDay = () => {
     }
 };
 
-// Test LLM connection
-router.post('/config/llm/test', async (req, res) => {
-    const { provider, url, model, apiKey } = req.body;
-
-    try {
-        if (provider === 'local') {
-            // Test local LLM connection
-            const axios = require('axios');
-            const testUrl = url || config.localLlmUrl;
-
-            // Try to list models first
-            try {
-                const modelsResponse = await axios.get(`${testUrl}/models`, { timeout: 5000 });
-                const models = modelsResponse.data?.data?.map((m: any) => m.id) ||
-                    modelsResponse.data?.models?.map((m: any) => m.name) || [];
-
-                // Try a simple completion
-                const testResponse = await axios.post(`${testUrl}/chat/completions`, {
-                    model: model || config.localModelName,
-                    messages: [{ role: 'user', content: 'Responda apenas: OK' }],
-                    max_tokens: 10
-                }, { timeout: 10000 });
-
-                const reply = testResponse.data?.choices?.[0]?.message?.content || '';
-
-                res.json({
-                    success: true,
-                    provider: 'local',
-                    url: testUrl,
-                    model: model || config.localModelName,
-                    availableModels: models,
-                    testResponse: reply.substring(0, 100),
-                    latencyMs: Date.now() - (req as any).startTime || 0
-                });
-            } catch (connErr: any) {
-                res.json({
-                    success: false,
-                    provider: 'local',
-                    error: connErr.message,
-                    suggestion: 'Verifique se o servidor LLM está rodando e a URL está correta'
-                });
-            }
-        } else if (provider === 'google') {
-            // Test Google Gemini
-            const testKey = apiKey || config.googleApiKey;
-            if (!testKey) {
-                return res.json({ success: false, provider: 'google', error: 'API Key não configurada' });
-            }
-
-            try {
-                const { GoogleGenAI } = require('@google/genai');
-                const ai = new GoogleGenAI({ apiKey: testKey });
-                const response = await ai.models.generateContent({
-                    model: model || 'gemini-2.0-flash-exp',
-                    contents: 'Responda apenas: OK'
-                });
-
-                res.json({
-                    success: true,
-                    provider: 'google',
-                    model: model || 'gemini-2.0-flash-exp',
-                    testResponse: response.text?.substring(0, 100) || 'OK',
-                    availableModels: ['gemini-2.0-flash-exp', 'gemini-1.5-flash', 'gemini-1.5-pro']
-                });
-            } catch (geminiErr: any) {
-                res.json({
-                    success: false,
-                    provider: 'google',
-                    error: geminiErr.message,
-                    suggestion: 'Verifique se a API Key está válida'
-                });
-            }
-        } else {
-            res.status(400).json({ error: 'Provider inválido' });
-        }
-    } catch (e: any) {
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
 // Get/Set module-specific LLM configurations
 router.get('/config/llm/modules', (req, res) => {
-    res.json(llmModuleConfigs);
+    res.json(configService.getAllModuleConfigs());
 });
 
 router.post('/config/llm/modules', (req, res) => {
     const { modules } = req.body;
     if (modules && typeof modules === 'object') {
-        llmModuleConfigs = { ...llmModuleConfigs, ...modules };
-        res.json({ success: true, modules: llmModuleConfigs });
+        configService.setModuleConfigs(modules);
+        res.json({ success: true, modules: configService.getAllModuleConfigs() });
     } else {
         res.status(400).json({ error: 'Invalid modules format' });
     }
@@ -280,14 +217,14 @@ router.post('/config/llm/modules', (req, res) => {
 
 // Get/Set custom prompts
 router.get('/config/llm/prompts', (req, res) => {
-    res.json(llmCustomPrompts);
+    res.json(configService.getAllPrompts());
 });
 
 router.post('/config/llm/prompts', (req, res) => {
     const { prompts } = req.body;
     if (prompts && typeof prompts === 'object') {
-        llmCustomPrompts = { ...llmCustomPrompts, ...prompts };
-        res.json({ success: true, prompts: llmCustomPrompts });
+        configService.setPrompts(prompts);
+        res.json({ success: true, prompts: configService.getAllPrompts() });
     } else {
         res.status(400).json({ error: 'Invalid prompts format' });
     }

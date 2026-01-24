@@ -27,7 +27,9 @@
     }
   },
   "chat_settings": {
-    "5511986781025@c.us": {},
+    "5511986781025@c.us": {
+      "autoReplyEnabled": true
+    },
     "120363423265522880@g.us": {
       "groupSettings": {
         "lastRepliedAt": 1766163947043,
@@ -41,12 +43,16 @@
           "enabled": false,
           "threshold": 5
         }
-      }
+      },
+      "autoReplyEnabled": true
     },
     "5231689642015@lid": {
       "autoReplyEnabled": false
     },
     "182364311425240@lid": {
+      "autoReplyEnabled": false
+    },
+    "0@c.us": {
       "autoReplyEnabled": false
     }
   },

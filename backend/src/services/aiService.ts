@@ -14,8 +14,8 @@ export interface ChatMessage {
 }
 
 interface AIProvider {
-    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string): Promise<string>;
-    analyzeSystem(query: string, fileContext: string): Promise<string>;
+    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<string>;
+    analyzeSystem(query: string, fileContext: string, options?: { provider?: string, model?: string }): Promise<string>;
     analyzeSentiment(text: string): Promise<{ score: number; label: string }>;
     extractCustomerInfo(text: string): Promise<any>;
     extractReceiptData(imageBase64: string): Promise<any>;
@@ -37,22 +37,25 @@ interface AIProvider {
 
 class GoogleProvider implements AIProvider {
     private ai: GoogleGenAI | null = null;
-
     private modelName: string | undefined;
 
     constructor(apiKey: string, modelName?: string) {
+        // console.log('[AI Service] Initializing GoogleProvider...'); // Reduce noise
         if (apiKey) {
-            this.ai = new GoogleGenAI({ apiKey });
-            this.modelName = modelName;
-        } else {
-            console.warn("GOOGLE_API_KEY missing. Google provider disabled.");
+            try {
+                this.ai = new GoogleGenAI({ apiKey });
+                this.modelName = modelName;
+            } catch (e: any) {
+                console.error('[AI Service] Error initializing GoogleGenAI:', e);
+            }
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string): Promise<string> {
-        if (!this.ai) throw new Error("Google AI not configured");
-
-        if (!this.ai) throw new Error("Google AI not configured");
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<string> {
+        if (!this.ai) {
+            console.error('[AI Service] Google AI not configured.');
+            throw new Error("Google AI not configured.");
+        }
 
         // const { dolibarrService } = require('./dolibarrService'); // Replaced by static import
 
@@ -155,7 +158,7 @@ class GoogleProvider implements AIProvider {
             }
 
             const response = await this.ai.models.generateContent({
-                model: this.modelName || config.geminiModel || 'gemini-2.0-flash',
+                model: options?.model || this.modelName || config.geminiModel || 'gemini-2.0-flash',
                 contents,
             });
 
@@ -893,7 +896,7 @@ class LocalProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string): Promise<string> {
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<string> {
         // Reuse same tools prompt as Google Provider
         // We need to implement the ReAct loop here too because standard OpenAI interface doesn't automate this
         // unless we use the Function Calling API. But for generic Local LLM compatibility, prompting is safer.
@@ -946,7 +949,7 @@ class LocalProvider implements AIProvider {
 
             try {
                 const response = await axios.post(`${this.baseUrl}/chat/completions`, {
-                    model: this.modelName,
+                    model: options?.model || this.modelName,
                     messages: messages,
                     temperature: 0.5 // Lower temperature for tool precision
                 });
@@ -1196,7 +1199,17 @@ class LocalProvider implements AIProvider {
 
 let currentProvider: AIProvider | null = null;
 
-const getProvider = (): AIProvider => {
+const getProvider = (specificProviderName?: string): AIProvider => {
+    // If specific provider requested, return a new temporary instance or cached one
+    // Ideally we should cache these instances too.
+    if (specificProviderName) {
+        if (specificProviderName === 'google') {
+            return new GoogleProvider(config.googleApiKey);
+        } else if (specificProviderName === 'local') {
+            return new LocalProvider(config.localLlmUrl, config.localModelName); // Model name might be overridden later by options
+        }
+    }
+
     if (currentProvider) return currentProvider;
 
     // Initialize default
@@ -1226,8 +1239,27 @@ export const aiService = {
         return [];
     },
 
-    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string) => {
-        return getProvider().generateReply(conversationHistory, context, imageBase64);
+    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string, moduleName: string = 'chat') => {
+        // Dynamic Config Lookup
+        // We might want to import configService dynamically if needed, or assume it's available.
+        // But since this is inside a function, we can use the imported instance.
+        const { configService } = require('./configService');
+        const moduleConfig = configService.getModuleConfig(moduleName);
+
+        // Determine which provider to use for this Specific Request
+        const providerName = moduleConfig.provider || config.llmProvider;
+        const modelName = moduleConfig.model; // Specific model for this module
+
+        // We can either switch the global provider (not thread safe) or get the specific provider instance.
+        // Better: getProvider(providerName)
+        let specificProvider = getProvider(providerName);
+
+        if (!specificProvider) {
+            // Fallback to default
+            specificProvider = getProvider();
+        }
+
+        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName });
     },
 
     analyzeSystem: async (query: string, rootPath: string = '../src') => {

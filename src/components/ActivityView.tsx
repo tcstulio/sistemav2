@@ -1,16 +1,24 @@
 import React, { useMemo, useState } from 'react';
-import { Activity, Users, TrendingUp, Clock, FileText, Package, Receipt, Ticket, FolderKanban, User, Filter, RefreshCw, Search, Inbox, ChevronRight, Sparkles } from 'lucide-react';
+import { Activity, Users, TrendingUp, Clock, FileText, Package, Receipt, Ticket, Inbox, ChevronRight, Sparkles, RefreshCw, Filter } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useSystemLogs, useUsers } from '../hooks/dolibarr';
 import { SystemLog, AppView } from '../types';
 import { formatRelativeTime } from '../utils/dateUtils';
 import { getEntityLink } from '../utils/navigationUtils';
 
+import ActivityReportModal from './ActivityReportModal';
+import {
+    PageHeader,
+    Button,
+    Input,
+    Card,
+    EmptyState,
+    PageLayout,
+} from './ui';
+
 interface ActivityViewProps {
     onNavigate?: (view: AppView, id: string) => void;
 }
-
-
 
 // Helper to get action description from code
 const getEntityLabel = (elementtype: string | undefined): string => {
@@ -44,47 +52,45 @@ const getActionDescription = (log: SystemLog): { action: string; color: string; 
     const entity = getEntityLabel(log.elementtype);
 
     let action = 'Atualizou';
-    let color = 'text-slate-600 bg-slate-50';
+    let color = 'text-slate-600 bg-slate-50 dark:bg-slate-800 dark:text-slate-400';
     let icon = <Activity size={14} />;
 
     if (code.includes('_create')) {
         action = `Criou ${entity}`;
-        color = 'text-blue-600 bg-blue-50';
+        color = 'text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400';
         icon = <Sparkles size={14} />;
     } else if (code.includes('_modify')) {
         action = `Atualizou ${entity}`;
-        color = 'text-amber-600 bg-amber-50';
+        color = 'text-amber-600 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-400';
         icon = <FileText size={14} />;
     } else if (code.includes('_validate')) {
         action = `Validou ${entity}`;
-        color = 'text-green-600 bg-green-50';
+        color = 'text-green-600 bg-green-50 dark:bg-green-900/20 dark:text-green-400';
         icon = <TrendingUp size={14} />;
     } else if (code.includes('_delete')) {
         action = `Removeu ${entity}`;
-        color = 'text-red-600 bg-red-50';
+        color = 'text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400';
         icon = <Activity size={14} />;
     } else if (code.includes('_close')) {
         action = `Fechou ${entity}`;
-        color = 'text-slate-600 bg-slate-100';
+        color = 'text-slate-600 bg-slate-100 dark:bg-slate-800 dark:text-slate-300';
         icon = <Package size={14} />;
     } else if (code.includes('_payed') || code.includes('_paid')) {
         action = `Pagou ${entity}`;
-        color = 'text-emerald-600 bg-emerald-50';
+        color = 'text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 dark:text-emerald-400';
         icon = <Receipt size={14} />;
     } else if (code.includes('_sentbymail')) {
         action = `Enviou ${entity} por Email`;
-        color = 'text-purple-600 bg-purple-50';
+        color = 'text-purple-600 bg-purple-50 dark:bg-purple-900/20 dark:text-purple-400';
         icon = <Inbox size={14} />;
     } else if (code.includes('ticket_msg')) {
         action = `Respondeu Ticket`;
-        color = 'text-indigo-600 bg-indigo-50';
+        color = 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 dark:text-indigo-400';
         icon = <Ticket size={14} />;
     }
 
     return { action, color, icon };
 };
-
-import ActivityReportModal from './ActivityReportModal';
 
 const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
     const { config } = useDolibarr();
@@ -182,20 +188,14 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
         if (!onNavigate) return;
 
         // Use utility to find target
-        const link = getEntityLink(log.elementtype, log.fk_element || log.id, { socid: log.socid }); // Assuming fk_element exists or fallback to id
-        // Note: SystemLog type might not have fk_element strictly typed yet in some versions, 
-        // but typically 'fk_element' or 'elementid' is the ID of the target. 
-        // Checking ActivityView usage previously: it didn't use ID.
-        // Let's check `SystemLog` definition if possible. 
-        // But passing `log.fk_element` is a good guess if it exists on the object at runtime.
-        // If not, we might need to map it differently.
+        const link = getEntityLink(log.elementtype, log.fk_element || log.id, { socid: log.socid });
 
         if (link) {
             onNavigate(link.view, link.id);
         }
     };
 
-    // Calculate user activity stats (last 7 days)
+    // Calculate user activity stats (last 7 days) (Refactored to be cleaner)
     const userStats = useMemo(() => {
         const now = Date.now();
         const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
@@ -244,14 +244,15 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
 
     if (!config) {
         return (
-            <div className="flex items-center justify-center h-full text-slate-400">
+            <div className="flex items-center justify-center p-20 text-slate-400">
+                <RefreshCw className="animate-spin mr-2" />
                 <p>Carregando configurações...</p>
             </div>
         );
     }
 
     return (
-        <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-hidden">
+        <PageLayout title="Painel de Atividades" noPadding>
 
             {/* Report Modal */}
             <ActivityReportModal
@@ -263,103 +264,82 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
             />
 
             {/* Header */}
-            <div className="p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none">
-                <div className="flex flex-col gap-4">
-                    <div className="flex justify-between items-start md:items-center">
-                        <div>
-                            <h2 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                                <Activity className="text-indigo-600" /> Painel de Atividades
-                            </h2>
-                            <p className="text-sm text-slate-500 dark:text-slate-400">
-                                {filteredLogs.length} ações encontradas
-                            </p>
-                        </div>
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() => setIsReportModalOpen(true)}
-                                className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm"
-                            >
-                                <Sparkles size={14} />
-                                <span className="hidden sm:inline">Relatório IA</span>
-                            </button>
-                            <button
-                                onClick={() => refetch()}
-                                disabled={isLoadingLogs}
-                                className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors"
-                            >
-                                <RefreshCw size={14} className={isLoadingLogs ? 'animate-spin' : ''} />
-                                <span className="hidden sm:inline">Atualizar</span>
-                            </button>
-                        </div>
+            <PageHeader
+                title="Painel de Atividades"
+                subtitle={`${filteredLogs.length} atividades encontradas`}
+                actions={
+                    <div className="flex items-center gap-2">
+                        <Button
+                            onClick={() => setIsReportModalOpen(true)}
+                            variant="secondary"
+                            icon={<Sparkles size={16} />}
+                        >
+                            Relatório IA
+                        </Button>
+                        <Button
+                            onClick={() => refetch()}
+                            loading={isLoadingLogs}
+                            variant="primary"
+                            icon={<RefreshCw size={16} />}
+                        >
+                            Atualizar
+                        </Button>
+                    </div>
+                }
+            />
+
+            {/* Filter Bar */}
+            <div className="px-4 md:px-6 py-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex flex-col xl:flex-row gap-4 sticky top-0 z-10 shadow-sm">
+                <div className="flex-1">
+                    <Input
+                        placeholder="Buscar por usuário, ação ou referência..."
+                        value={searchText}
+                        onChange={(e) => setSearchText(e.target.value)}
+                        icon={<Filter size={16} />}
+                        fullWidth
+                    />
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 rounded-lg px-3 py-0.5 border border-slate-200 dark:border-slate-700 h-[42px]">
+                        <span className="text-xs text-slate-500">De</span>
+                        <input
+                            type="date"
+                            value={dateRange.start}
+                            onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                            className="bg-transparent text-sm text-slate-700 dark:text-slate-300 border-none focus:ring-0 p-1 w-28 h-full"
+                        />
+                        <span className="text-xs text-slate-500">Até</span>
+                        <input
+                            type="date"
+                            value={dateRange.end}
+                            onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                            className="bg-transparent text-sm text-slate-700 dark:text-slate-300 border-none focus:ring-0 p-1 w-28 h-full"
+                        />
                     </div>
 
-                    {/* Filters Bar */}
-                    <div className="flex flex-col md:flex-row gap-3">
-                        {/* Custom Search Filter */}
-                        <div className="flex-1 relative">
-                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <Search size={14} className="text-slate-400" />
-                            </div>
-                            <input
-                                type="text"
-                                value={searchText}
-                                onChange={(e) => setSearchText(e.target.value)}
-                                placeholder="Buscar por usuário, ação ou referência..."
-                                className="w-full pl-9 pr-3 py-1.5 bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-sm text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-indigo-500"
-                            />
-                        </div>
+                    <select
+                        value={filterUser}
+                        onChange={(e) => setFilterUser(e.target.value)}
+                        className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-sm px-3 focus:ring-indigo-500 focus:border-indigo-500 h-[42px] min-w-[150px]"
+                    >
+                        <option value="all">Todos Usuários</option>
+                        {users.map(u => (
+                            <option key={u.id} value={u.id}>
+                                {u.firstname} {u.lastname}
+                            </option>
+                        ))}
+                    </select>
 
-                        <div className="flex gap-2 overflow-x-auto pb-1 md:pb-0">
-                            {/* Date Filter */}
-                            <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 rounded-lg px-2 py-1.5 whitespace-nowrap">
-                                <input
-                                    type="date"
-                                    value={dateRange.start}
-                                    onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
-                                    className="bg-transparent text-xs text-slate-600 dark:text-slate-300 border-none focus:ring-0 p-0 w-24"
-                                />
-                                <span className="text-slate-400">-</span>
-                                <input
-                                    type="date"
-                                    value={dateRange.end}
-                                    onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
-                                    className="bg-transparent text-xs text-slate-600 dark:text-slate-300 border-none focus:ring-0 p-0 w-24"
-                                />
-                            </div>
-
-                            {/* User Filter */}
-                            <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 rounded-lg px-3 py-1.5">
-                                <User size={14} className="text-slate-500" />
-                                <select
-                                    value={filterUser}
-                                    onChange={(e) => setFilterUser(e.target.value)}
-                                    className="bg-transparent text-sm font-medium text-slate-700 dark:text-slate-300 border-none focus:ring-0 cursor-pointer w-24 sm:w-auto"
-                                >
-                                    <option value="all">Todos Users</option>
-                                    {users.map(u => (
-                                        <option key={u.id} value={u.id}>
-                                            {u.firstname} {u.lastname}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            {/* Action Type Filter */}
-                            <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 rounded-lg px-3 py-1.5">
-                                <Filter size={14} className="text-slate-500" />
-                                <select
-                                    value={filterType}
-                                    onChange={(e) => setFilterType(e.target.value)}
-                                    className="bg-transparent text-sm font-medium text-slate-700 dark:text-slate-300 border-none focus:ring-0 cursor-pointer w-24 sm:w-auto"
-                                >
-                                    <option value="all">Todas Ações</option>
-                                    {actionTypes.slice(0, 20).map(type => (
-                                        <option key={type} value={type}>{type}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        </div>
-                    </div>
+                    <select
+                        value={filterType}
+                        onChange={(e) => setFilterType(e.target.value)}
+                        className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-sm px-3 focus:ring-indigo-500 focus:border-indigo-500 h-[42px] min-w-[150px]"
+                    >
+                        <option value="all">Todas as Ações</option>
+                        {actionTypes.slice(0, 20).map(type => (
+                            <option key={type} value={type}>{type}</option>
+                        ))}
+                    </select>
                 </div>
             </div>
 
@@ -369,23 +349,25 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
 
                     {/* Activity Feed (2 columns) */}
                     <div className="lg:col-span-2 space-y-4">
-                        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-                            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                        <Card className="min-h-[200px]" padding="none">
+                            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/30">
                                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                                    <Clock size={18} className="text-indigo-600" /> Atividades Recentes
+                                    <Clock size={16} className="text-indigo-600" /> Atividades Recentes
                                 </h3>
                                 {(searchText || dateRange.start || filterUser !== 'all' || filterType !== 'all') && (
-                                    <button
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
                                         onClick={() => {
                                             setSearchText('');
                                             setDateRange({ start: '', end: '' });
                                             setFilterUser('all');
                                             setFilterType('all');
                                         }}
-                                        className="text-xs text-indigo-600 hover:underline"
+                                        className="!px-2 !py-0.5 text-xs h-auto"
                                     >
                                         Limpar filtros
-                                    </button>
+                                    </Button>
                                 )}
                             </div>
 
@@ -396,23 +378,17 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
                                         Carregando atividades...
                                     </div>
                                 ) : paginatedLogs.length === 0 ? (
-                                    <div className="p-12 text-center text-slate-400">
-                                        <div className="inline-flex p-3 bg-slate-100 dark:bg-slate-800 rounded-full mb-3">
-                                            <Inbox size={24} className="text-slate-300" />
-                                        </div>
-                                        <p>Nenhuma atividade encontrada com os filtros atuais</p>
-                                    </div>
+                                    <EmptyState
+                                        icon={Inbox}
+                                        title="Nenhuma atividade encontrada"
+                                        description="Tente ajustar os filtros para ver mais resultados."
+                                    />
                                 ) : (
                                     <>
                                         {paginatedLogs.map((log) => {
                                             const { action, color, icon } = getActionDescription(log);
                                             const userName = log.fk_user_author ? userMap[log.fk_user_author] || `Usuário #${log.fk_user_author}` : 'Sistema';
                                             const entityLabel = getEntityLabel(log.elementtype);
-
-                                            // Optional: Check if clicking leads anywhere (for visual feedback)
-                                            // const link = getEntityLink(log.elementtype, log.fk_element);
-                                            // const isClickable = !!link; 
-                                            // Actually let's assume all are hoverable for consistency, passing to click handler
 
                                             return (
                                                 <div
@@ -443,7 +419,7 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
                                                                     <Clock size={10} />
                                                                     {formatRelativeTime(log.date_action)}
                                                                 </span>
-                                                                <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                                                                <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 font-mono">
                                                                     {log.type_code}
                                                                 </span>
                                                             </div>
@@ -456,27 +432,29 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
                                         {/* Load More Button */}
                                         {filteredLogs.length > visibleItems && (
                                             <div className="p-3 text-center bg-slate-50 dark:bg-slate-800/20">
-                                                <button
+                                                <Button
+                                                    variant="ghost"
+                                                    fullWidth
                                                     onClick={handleLoadMore}
-                                                    className="text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 hover:underline py-1"
+                                                    className="text-xs"
                                                 >
                                                     Carregar mais atividades ({filteredLogs.length - visibleItems} restantes)
-                                                </button>
+                                                </Button>
                                             </div>
                                         )}
                                     </>
                                 )}
                             </div>
-                        </div>
+                        </Card>
                     </div>
 
                     {/* Sidebar Stats (1 column) */}
                     <div className="space-y-4">
                         {/* User Productivity */}
-                        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-                            <div className="p-4 border-b border-slate-100 dark:border-slate-800">
+                        <Card padding="none">
+                            <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
                                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                                    <Users size={18} className="text-indigo-600" /> Produtividade
+                                    <Users size={16} className="text-indigo-600" /> Produtividade
                                 </h3>
                             </div>
                             <div className="p-4 space-y-3">
@@ -505,13 +483,13 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
                                     ))
                                 )}
                             </div>
-                        </div>
+                        </Card>
 
                         {/* Action Distribution */}
-                        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-                            <div className="p-4 border-b border-slate-100 dark:border-slate-800">
+                        <Card padding="none">
+                            <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
                                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                                    <TrendingUp size={18} className="text-indigo-600" /> Tipos de Ação
+                                    <TrendingUp size={16} className="text-indigo-600" /> Tipos de Ação
                                 </h3>
                             </div>
                             <div className="p-4 space-y-2">
@@ -535,11 +513,11 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
                                     );
                                 })}
                             </div>
-                        </div>
+                        </Card>
                     </div>
                 </div>
             </div>
-        </div>
+        </PageLayout>
     );
 };
 

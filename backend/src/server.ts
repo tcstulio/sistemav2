@@ -1,5 +1,9 @@
 import express from 'express';
 import cors from 'cors';
+import { initLogger } from './utils/logger';
+
+// Initialize logger with timestamp
+initLogger();
 import { config } from './config/env';
 import whatsappRoutes from './routes/whatsappRoutes';
 import schedulerRoutes from './routes/schedulerRoutes';

@@ -56,7 +56,9 @@ export const LlmSettingsTab: React.FC = () => {
         localUrl: 'http://localhost:11434/v1',
         modelName: 'llama3'
     });
-    const [availableModels, setAvailableModels] = useState<string[]>([]);
+    const [availableModels, setAvailableModels] = useState<string[]>([]); // Global active provider models
+    const [localModels, setLocalModels] = useState<string[]>([]);
+    const [googleModels, setGoogleModels] = useState<string[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [isFetchingModels, setIsFetchingModels] = useState(false);
@@ -153,24 +155,33 @@ export const LlmSettingsTab: React.FC = () => {
         const targetProvider = forProvider || config.provider;
         setIsFetchingModels(true);
         try {
-            const response = await axios.get('/api/admin/config/llm/models', {
+            const response = await axios.get(`/api/admin/config/llm/models?provider=${targetProvider}`, {
                 headers: { 'Authorization': 'Bearer ' + getToken() }
             });
+
             if (response.data?.models) {
-                setAvailableModels(response.data.models);
+                if (targetProvider === 'local') setLocalModels(response.data.models);
+                if (targetProvider === 'google') setGoogleModels(response.data.models);
+
+                // If fetching for current global provider, update main list too
+                if (targetProvider === config.provider) {
+                    setAvailableModels(response.data.models);
+                }
             }
         } catch (e) {
             console.error("Failed to fetch models", e);
             // Fallback for Google if API fails
             if (targetProvider === 'google') {
-                setAvailableModels([
+                const defaults = [
                     'gemini-2.0-flash',
                     'gemini-2.0-flash-lite',
                     'gemini-1.5-flash',
                     'gemini-1.5-flash-8b',
                     'gemini-1.5-pro',
                     'gemini-pro'
-                ]);
+                ];
+                setGoogleModels(defaults);
+                if (config.provider === 'google') setAvailableModels(defaults);
             }
         } finally {
             setIsFetchingModels(false);
@@ -370,7 +381,10 @@ export const LlmSettingsTab: React.FC = () => {
                                 </label>
                                 <div className="grid grid-cols-2 gap-4">
                                     <button
-                                        onClick={() => setConfig({ ...config, provider: 'local' })}
+                                        onClick={() => {
+                                            setConfig({ ...config, provider: 'local', modelName: 'llama3' });
+                                            fetchModels('local');
+                                        }}
                                         className={`p-4 rounded-xl border-2 text-left transition-all ${config.provider === 'local'
                                             ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
                                             : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300'
@@ -383,7 +397,10 @@ export const LlmSettingsTab: React.FC = () => {
                                         <p className="text-xs text-slate-500">Ollama, LM Studio, LocalAI</p>
                                     </button>
                                     <button
-                                        onClick={() => setConfig({ ...config, provider: 'google' })}
+                                        onClick={() => {
+                                            setConfig({ ...config, provider: 'google', modelName: 'gemini-2.0-flash' });
+                                            fetchModels('google');
+                                        }}
                                         className={`p-4 rounded-xl border-2 text-left transition-all ${config.provider === 'google'
                                             ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
                                             : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300'
@@ -572,25 +589,56 @@ export const LlmSettingsTab: React.FC = () => {
                                             <div className="grid grid-cols-2 gap-3">
                                                 <select
                                                     value={value.provider}
-                                                    onChange={(e) => setModuleConfigs({
-                                                        ...moduleConfigs,
-                                                        [key]: { ...value, provider: e.target.value }
-                                                    })}
+                                                    onChange={(e) => {
+                                                        const newProvider = e.target.value;
+                                                        setModuleConfigs({
+                                                            ...moduleConfigs,
+                                                            [key]: { ...value, provider: newProvider }
+                                                        });
+                                                        // Auto-fetch models if list empty for this provider
+                                                        if (newProvider === 'local' && localModels.length === 0) fetchModels('local');
+                                                        if (newProvider === 'google' && googleModels.length === 0) fetchModels('google');
+                                                    }}
                                                     className="p-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm"
                                                 >
                                                     <option value="local">Local LLM</option>
                                                     <option value="google">Google Gemini</option>
                                                 </select>
-                                                <input
-                                                    type="text"
-                                                    value={value.model}
-                                                    onChange={(e) => setModuleConfigs({
-                                                        ...moduleConfigs,
-                                                        [key]: { ...value, model: e.target.value }
-                                                    })}
-                                                    className="p-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-mono"
-                                                    placeholder="Nome do modelo"
-                                                />
+
+                                                <div className="flex gap-2">
+                                                    {(value.provider === 'local' ? localModels : googleModels).length > 0 ? (
+                                                        <select
+                                                            value={value.model}
+                                                            onChange={(e) => setModuleConfigs({
+                                                                ...moduleConfigs,
+                                                                [key]: { ...value, model: e.target.value }
+                                                            })}
+                                                            className="flex-1 p-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm"
+                                                        >
+                                                            {(value.provider === 'local' ? localModels : googleModels).map(m => (
+                                                                <option key={m} value={m}>{m}</option>
+                                                            ))}
+                                                        </select>
+                                                    ) : (
+                                                        <input
+                                                            type="text"
+                                                            value={value.model}
+                                                            onChange={(e) => setModuleConfigs({
+                                                                ...moduleConfigs,
+                                                                [key]: { ...value, model: e.target.value }
+                                                            })}
+                                                            className="flex-1 p-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-mono"
+                                                            placeholder="Nome do modelo"
+                                                        />
+                                                    )}
+                                                    <button
+                                                        onClick={() => fetchModels(value.provider)}
+                                                        className="px-3 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 rounded-lg"
+                                                        title="Buscar modelos"
+                                                    >
+                                                        <List size={16} className={isFetchingModels ? "animate-spin" : ""} />
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     );

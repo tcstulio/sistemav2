@@ -6,7 +6,8 @@ import {
     WhatsAppMessage,
     WahaSession,
     WahaChat,
-    WahaMessage
+    WahaMessage,
+    WhatsAppProfile
 } from '../types';
 import { config } from '../config';
 
@@ -305,5 +306,67 @@ export const WhatsAppService = {
 
     updateChatSettings: async (chatId: string, settings: any) => {
         await axios.post(`${config.WHATSAPP_API_URL}/settings/chat`, { chatId, ...settings }, { headers: getHeaders() });
+    },
+
+    // Profile Settings
+    getProfile: async (sessionId: string = 'default'): Promise<WhatsAppProfile> => {
+        try {
+            const response = await axios.get(`${config.WHATSAPP_API_URL}/profile?sessionId=${sessionId}`, { headers: getHeaders() });
+            return response.data;
+        } catch (e) {
+            handleApiError('Failed to get profile', e);
+            throw e;
+        }
+    },
+
+    setProfilePicture: async (file: File, sessionId: string = 'default') => {
+        try {
+            const base64 = await fileToBase64(file); // Reuse existing helper
+            await axios.post(`${config.WHATSAPP_API_URL}/profile/picture`, {
+                sessionId,
+                fileData: base64,
+                mimetype: file.type,
+                filename: file.name
+            }, { headers: getHeaders() });
+        } catch (e) {
+            handleApiError('Failed to set profile picture', e);
+            throw e;
+        }
+    },
+
+    deleteProfilePicture: async (sessionId: string = 'default') => {
+        try {
+            await axios.delete(`${config.WHATSAPP_API_URL}/profile/picture?sessionId=${sessionId}`, { headers: getHeaders() });
+        } catch (e) {
+            handleApiError('Failed to delete profile picture', e);
+            throw e;
+        }
+    },
+
+    setDisplayName: async (name: string, sessionId: string = 'default') => {
+        try {
+            await axios.post(`${config.WHATSAPP_API_URL}/profile/name`, { sessionId, name }, { headers: getHeaders() });
+        } catch (e) {
+            handleApiError('Failed to set display name', e);
+            throw e;
+        }
+    },
+
+    setAbout: async (status: string, sessionId: string = 'default') => {
+        try {
+            await axios.post(`${config.WHATSAPP_API_URL}/profile/status`, { sessionId, status }, { headers: getHeaders() });
+        } catch (e) {
+            handleApiError('Failed to set status/about', e);
+            throw e;
+        }
+    },
+
+    setPresence: async (presence: 'online' | 'offline', sessionId: string = 'default') => {
+        try {
+            await axios.post(`${config.WHATSAPP_API_URL}/profile/presence`, { sessionId, presence }, { headers: getHeaders() });
+        } catch (e) {
+            handleApiError('Failed to set presence', e);
+            throw e;
+        }
     }
 };

@@ -70,26 +70,34 @@ export const useMessages = (sessionId: string, chatId: string | null) => {
 
             setMessages(prev => {
                 // Deduplication Logic
-                const exists = prev.some(m => m.id === newMsg.id);
-                if (exists) return prev;
+                const existingIndex = prev.findIndex(m => m.id === newMsg.id);
+                if (existingIndex > -1) {
+                    // If message exists, check if we need to update it (e.g. status changed or text changed/signature added)
+                    const existingMsg = prev[existingIndex];
+                    if (existingMsg.status !== newMsg.status || existingMsg.text !== newMsg.text) {
+                        const updated = [...prev];
+                        updated[existingIndex] = newMsg;
+                        return updated;
+                    }
+                    return prev;
+                }
 
                 if (newMsg.sender === 'agent') {
                     // Heuristic: Check for optimistic message
-                    // Find 'sent' message with same text within last 10 seconds
-                    // Optimistic IDs usually start with 'temp_' or similar if we set them, 
-                    // but WhatsAppService.sendMessage might return a temp ID too.
+                    // Find 'sent' message with similar text within last 10 seconds
                     const now = newMsg.timestamp;
                     const matchIndex = prev.findIndex(m =>
                         m.sender === 'agent' &&
-                        m.text === newMsg.text &&
                         m.status === 'sent' && // Optimistic status
-                        (now - m.timestamp) < 10000 // 10s window (broad)
+                        (m.id.startsWith('temp_') || m.id.includes('temp')) && // Ensure we only replace temps
+                        (newMsg.text?.includes(m.text || '') || m.text === newMsg.text) && // Allow signature append
+                        (now - m.timestamp) < 20000 // 20s window 
                     );
 
                     if (matchIndex > -1) {
                         // Replace optimistic with real
                         const updated = [...prev];
-                        updated[matchIndex] = { ...newMsg, status: 'sent' }; // Keep 'sent' or 'delivered'? Real msg says 'sent' (ack=1)
+                        updated[matchIndex] = { ...newMsg, status: 'sent' }; 
                         return updated;
                     }
                 }

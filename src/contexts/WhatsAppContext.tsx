@@ -21,8 +21,21 @@ export const WhatsAppProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const socketRef = useRef<Socket | null>(null);
 
     useEffect(() => {
-        const apiKey = localStorage.getItem('dolibarr_api_key');
-        if (!apiKey) return;
+        const savedConfig = localStorage.getItem('coolgroove_config');
+        let apiKey = '';
+        if (savedConfig) {
+            try {
+                const parsed = JSON.parse(savedConfig);
+                apiKey = parsed.apiKey || '';
+            } catch (e) {
+                console.error("Failed to parse config for socket auth");
+            }
+        }
+
+        if (!apiKey) {
+            console.warn('[WhatsAppProvider] No API Key found in coolgroove_config. Socket will not connect.');
+            return;
+        }
 
         console.log('[WhatsAppProvider] Connecting to Socket.IO...');
         const newSocket = io(config.SOCKET_URL || 'http://localhost:3000', {

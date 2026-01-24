@@ -1,0 +1,235 @@
+/* ========================================
+   Design System - CSS Variables (Tokens)
+   Sistema CoolGroove
+   ======================================== */
+
+:root {
+  /* ===== Color Tokens ===== */
+  
+  /* Primary (configurable via JS) */
+  --color-primary: 99 102 241;          /* indigo-500 RGB */
+  --color-primary-hover: 79 70 229;     /* indigo-600 RGB */
+  --color-primary-light: 224 231 255;   /* indigo-100 RGB */
+  
+  /* Semantic Colors */
+  --color-success: 16 185 129;          /* emerald-500 */
+  --color-success-light: 209 250 229;   /* emerald-100 */
+  --color-warning: 245 158 11;          /* amber-500 */
+  --color-warning-light: 254 243 199;   /* amber-100 */
+  --color-danger: 239 68 68;            /* red-500 */
+  --color-danger-light: 254 226 226;    /* red-100 */
+  --color-info: 59 130 246;             /* blue-500 */
+  --color-info-light: 219 234 254;      /* blue-100 */
+  
+  /* Neutral - Light Mode */
+  --color-bg-page: 248 250 252;         /* slate-50 */
+  --color-bg-card: 255 255 255;         /* white */
+  --color-bg-input: 255 255 255;        /* white */
+  --color-bg-hover: 241 245 249;        /* slate-100 */
+  --color-border: 226 232 240;          /* slate-200 */
+  --color-border-hover: 203 213 225;    /* slate-300 */
+  --color-text-primary: 30 41 59;       /* slate-800 */
+  --color-text-secondary: 100 116 139;  /* slate-500 */
+  --color-text-muted: 148 163 184;      /* slate-400 */
+  
+  /* ===== Spacing Tokens ===== */
+  --spacing-xs: 0.25rem;    /* 4px */
+  --spacing-sm: 0.5rem;     /* 8px */
+  --spacing-md: 1rem;       /* 16px */
+  --spacing-lg: 1.5rem;     /* 24px */
+  --spacing-xl: 2rem;       /* 32px */
+  --spacing-page: 1.5rem;   /* Default page padding */
+  
+  /* ===== Border Radius ===== */
+  --radius-sm: 0.375rem;    /* 6px */
+  --radius-md: 0.5rem;      /* 8px */
+  --radius-lg: 0.75rem;     /* 12px */
+  --radius-xl: 1rem;        /* 16px */
+  --radius-full: 9999px;    /* Circle */
+  
+  /* ===== Shadows ===== */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-card: 0 2px 4px rgba(0, 0, 0, 0.05);
+  
+  /* ===== Typography ===== */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  
+  /* Font Sizes */
+  --text-xs: 0.75rem;       /* 12px */
+  --text-sm: 0.875rem;      /* 14px */
+  --text-base: 1rem;        /* 16px */
+  --text-lg: 1.125rem;      /* 18px */
+  --text-xl: 1.25rem;       /* 20px */
+  --text-2xl: 1.5rem;       /* 24px */
+  
+  /* ===== Transitions ===== */
+  --transition-fast: 150ms ease;
+  --transition-normal: 200ms ease;
+  --transition-slow: 300ms ease;
+  
+  /* ===== Z-Index Scale ===== */
+  --z-dropdown: 50;
+  --z-sticky: 100;
+  --z-modal: 200;
+  --z-popover: 250;
+  --z-toast: 300;
+}
+
+/* ===== Dark Mode Overrides ===== */
+.dark {
+  --color-bg-page: 2 6 23;              /* slate-950 */
+  --color-bg-card: 15 23 42;            /* slate-900 */
+  --color-bg-input: 30 41 59;           /* slate-800 */
+  --color-bg-hover: 30 41 59;           /* slate-800 */
+  --color-border: 51 65 85;             /* slate-700 */
+  --color-border-hover: 71 85 105;      /* slate-600 */
+  --color-text-primary: 248 250 252;    /* slate-50 */
+  --color-text-secondary: 148 163 184;  /* slate-400 */
+  --color-text-muted: 100 116 139;      /* slate-500 */
+  
+  /* Semantic Colors - Darker variants */
+  --color-primary-light: 49 46 129;     /* indigo-900/30 */
+  --color-success-light: 6 78 59;       /* emerald-900/30 */
+  --color-warning-light: 120 53 15;     /* amber-900/30 */
+  --color-danger-light: 127 29 29;      /* red-900/30 */
+  --color-info-light: 30 58 138;        /* blue-900/30 */
+}
+
+/* ===== Theme Color Variants ===== */
+/* Override --color-primary via JS when theme changes */
+
+.theme-indigo {
+  --color-primary: 99 102 241;
+  --color-primary-hover: 79 70 229;
+  --color-primary-light: 224 231 255;
+}
+
+.theme-emerald {
+  --color-primary: 16 185 129;
+  --color-primary-hover: 5 150 105;
+  --color-primary-light: 209 250 229;
+}
+
+.theme-blue {
+  --color-primary: 59 130 246;
+  --color-primary-hover: 37 99 235;
+  --color-primary-light: 219 234 254;
+}
+
+.theme-violet {
+  --color-primary: 139 92 246;
+  --color-primary-hover: 124 58 237;
+  --color-primary-light: 237 233 254;
+}
+
+.theme-rose {
+  --color-primary: 244 63 94;
+  --color-primary-hover: 225 29 72;
+  --color-primary-light: 255 228 230;
+}
+
+/* ===== Utility Classes ===== */
+
+/* Page container with proper scrolling */
+.page-container {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--spacing-page);
+  background: rgb(var(--color-bg-page));
+}
+
+/* Card styles */
+.card {
+  background: rgb(var(--color-bg-card));
+  border: 1px solid rgb(var(--color-border));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--transition-normal);
+}
+
+.card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+/* Button base */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+  cursor: pointer;
+  border: none;
+  outline: none;
+}
+
+.btn:focus-visible {
+  outline: 2px solid rgb(var(--color-primary));
+  outline-offset: 2px;
+}
+
+.btn-primary {
+  background: rgb(var(--color-primary));
+  color: white;
+}
+
+.btn-primary:hover {
+  background: rgb(var(--color-primary-hover));
+}
+
+.btn-secondary {
+  background: rgb(var(--color-bg-hover));
+  color: rgb(var(--color-text-primary));
+  border: 1px solid rgb(var(--color-border));
+}
+
+.btn-secondary:hover {
+  background: rgb(var(--color-border));
+}
+
+.btn-danger {
+  background: rgb(var(--color-danger));
+  color: white;
+}
+
+.btn-danger:hover {
+  background: rgb(220 38 38);
+}
+
+/* Input styles */
+.input {
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  font-size: var(--text-sm);
+  background: rgb(var(--color-bg-input));
+  border: 1px solid rgb(var(--color-border));
+  border-radius: var(--radius-md);
+  color: rgb(var(--color-text-primary));
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.input:focus {
+  outline: none;
+  border-color: rgb(var(--color-primary));
+  box-shadow: 0 0 0 3px rgb(var(--color-primary) / 0.1);
+}
+
+.input::placeholder {
+  color: rgb(var(--color-text-muted));
+}
+
+/* Label */
+.label {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: rgb(var(--color-text-secondary));
+  margin-bottom: var(--spacing-xs);
+}

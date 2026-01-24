@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { UserGroup, DolibarrConfig } from '../../../types';
 import { Users, ChevronDown, Edit, Trash2 } from 'lucide-react';
-import { useGroups } from '../../../hooks/dolibarr';
+import { EmptyState, Button } from '../../ui';
 
 interface GroupsTabProps {
     groups: UserGroup[];
@@ -56,10 +56,11 @@ export const GroupsTab: React.FC<GroupsTabProps> = ({
 
     if (displayedGroups.length === 0) {
         return (
-            <div className="text-center py-20 text-slate-400">
-                <Users size={48} className="mx-auto mb-4 opacity-50" />
-                <p>Nenhum grupo encontrado.</p>
-            </div>
+            <EmptyState
+                icon={Users}
+                title="Nenhum grupo encontrado"
+                description="Tente ajustar os filtros."
+            />
         );
     }
 
@@ -83,35 +84,39 @@ export const GroupsTab: React.FC<GroupsTabProps> = ({
                         </div>
 
                         <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
+                            <Button
+                                variant="ghost"
+                                size="sm"
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     onEditGroup(group);
                                 }}
-                                className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-500 transition-colors"
-                            >
-                                <Edit size={16} />
-                            </button>
-                            <button
+                                icon={<Edit size={16} />}
+                                className="text-slate-400 hover:text-blue-500"
+                            />
+                            <Button
+                                variant="ghost"
+                                size="sm"
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     onDeleteGroup(group.id);
                                 }}
-                                className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-red-500 transition-colors"
-                            >
-                                <Trash2 size={16} />
-                            </button>
+                                icon={<Trash2 size={16} />}
+                                className="text-slate-400 hover:text-red-500"
+                            />
                         </div>
                     </div>
                 ))}
             </div>
             {filteredGroups.length > displayedGroups.length && (
-                <button
+                <Button
+                    variant="secondary"
                     onClick={() => setDisplayLimit(prev => prev + 50)}
-                    className="w-full py-3 mt-4 text-sm font-medium text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 border border-dashed border-slate-300 dark:border-slate-700 rounded-lg hover:border-slate-400 transition-colors flex items-center justify-center gap-2"
+                    className="w-full border-dashed"
+                    icon={<ChevronDown size={16} />}
                 >
-                    <ChevronDown size={16} /> Carregar Mais ({filteredGroups.length - displayedGroups.length} restantes)
-                </button>
+                    Carregar Mais ({filteredGroups.length - displayedGroups.length} restantes)
+                </Button>
             )}
         </div>
     );

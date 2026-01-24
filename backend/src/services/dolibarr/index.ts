@@ -14,6 +14,7 @@ import { DolibarrOperationsService } from './operations';
 import { DolibarrHRService } from './hr';
 import { DolibarrManufacturingService } from './manufacturing';
 import { DolibarrSuppliersService } from './suppliers';
+import { DolibarrPartnershipsService, VenuePartnership } from './partnerships';
 
 // Re-export types for backward compatibility
 export { CreateThirdPartyModel, CreateInvoiceModel, AddPaymentModel, ValidateSupplierOrderModel, CloseProposalModel, AddTimeSpentModel };
@@ -32,6 +33,7 @@ export class DolibarrService extends DolibarrServiceBase {
     private hr = new DolibarrHRService();
     private manufacturing = new DolibarrManufacturingService();
     private suppliers = new DolibarrSuppliersService();
+    private partnerships = new DolibarrPartnershipsService();
 
     // === Third Parties ===
     createThirdParty = (data: CreateThirdPartyModel, userKey?: string) => this.thirdParties.createThirdParty(data, userKey);
@@ -89,6 +91,12 @@ export class DolibarrService extends DolibarrServiceBase {
     validateSupplierOrder = (orderId: string, data: ValidateSupplierOrderModel, userKey?: string) => this.suppliers.validateSupplierOrder(orderId, data, userKey);
     listSupplierInvoices = (status?: string) => this.suppliers.listSupplierInvoices(status);
     listSupplierOrders = (status?: string) => this.suppliers.listSupplierOrders(status);
+
+    // === Partnerships (Venues) ===
+    listPartnerships = (params?: { limit?: number, status?: string }) => this.partnerships.listPartnerships(params);
+    getPartnership = (id: string) => this.partnerships.getPartnership(id);
+    searchPartnerships = (params?: { search?: string, minCapacity?: number, typeCode?: string, limit?: number }) => this.partnerships.searchPartnerships(params);
+    getPartnershipsByType = () => this.partnerships.getPartnershipsByType();
 }
 
 // Export singleton instance for backward compatibility
@@ -104,3 +112,4 @@ export { DolibarrOperationsService } from './operations';
 export { DolibarrHRService } from './hr';
 export { DolibarrManufacturingService } from './manufacturing';
 export { DolibarrSuppliersService } from './suppliers';
+export { DolibarrPartnershipsService, VenuePartnership } from './partnerships';

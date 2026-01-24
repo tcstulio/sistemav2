@@ -27,11 +27,12 @@ export const AiService = {
         try {
             const response = await axios.post(`${API_URL}/generate-reply`, {
                 context: `Assunto: ${ticketSubject}. Msg Inicial: ${ticketMessage}`,
-                history: history.map(h => ({ role: 'user', parts: h }))
+                history: history.map(h => ({ role: 'user', parts: h })),
+                module: 'chat'
             }, getAuthHeaders());
             return response.data.reply;
         } catch (error: any) {
-            console.error("Erro AI Backend", error);
+            console.error("Erro AI Backend details:", error.response?.data || error.message);
             return null;
         }
     },
@@ -48,7 +49,8 @@ export const AiService = {
             `;
             const response = await axios.post(`${API_URL}/generate-reply`, {
                 history: [{ role: 'user', parts: prompt }],
-                context: "You are a project manager. Output JSON only."
+                context: "You are a project manager. Output JSON only.",
+                module: 'proposals'
             }, getAuthHeaders());
 
             // The backend returns a string. We attempt to parse it if the model wrapped it in code blocks or just text.
@@ -235,7 +237,8 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/generate-reply`, {
                 history: backendHistory,
                 context: dataContext,
-                image: userImage
+                image: userImage,
+                module: 'chat'
             }, getAuthHeaders());
 
             return response.data.reply;
@@ -345,7 +348,8 @@ export const AiService = {
             // Using the generate-reply endpoint as a generic text generator
             const response = await axios.post(`${API_URL}/generate-reply`, {
                 history: [{ role: 'user', parts: `Generate a detailed activity report based on the following logs and context. summarize by project or main activity type. Focus on what was actually accomplished.\n\n${context}` }],
-                context: "You are a project manager assistant generating a work report."
+                context: "You are a project manager assistant generating a work report.",
+                module: 'system_analysis'
             }, getAuthHeaders());
             return response.data.reply;
         } catch (error: any) {
@@ -395,7 +399,8 @@ export const AiService = {
 
             const response = await axios.post(`${API_URL}/generate-reply`, {
                 history: [{ role: 'user', parts: prompt }],
-                context: "You are a professional business assistant."
+                context: "You are a professional business assistant.",
+                module: 'chat'
             }, getAuthHeaders());
 
             // The backend returns a string in 'reply'. We need to parse it if it's JSON.
