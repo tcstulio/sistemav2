@@ -1,4 +1,4 @@
-import { Client, LocalAuth } from 'whatsapp-web.js';
+import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
 import * as QRCode from 'qrcode';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -366,6 +366,62 @@ export class SessionService {
         this.qrCodes.clear();
         console.log('[SessionService] All clients destroyed.');
     }
+    async getProfile(sessionId: string) {
+        const client = this.clients.get(sessionId);
+        if (!client) {
+            throw new Error(`Session ${sessionId} not found`);
+        }
+
+        const wid = client.info.wid._serialized;
+        const contact = await client.getContactById(wid);
+
+        const picUrl = await contact.getProfilePicUrl().catch(() => '');
+        const about = await contact.getAbout().catch(() => '');
+
+        return {
+            name: client.info.pushname,
+            number: client.info.wid.user,
+            about: about || '',
+            profilePicUrl: picUrl,
+            status: await client.getState()
+        };
+    }
+
+    async setProfilePicture(sessionId: string, media: MessageMedia) {
+        const client = this.clients.get(sessionId);
+        if (!client) throw new Error(`Session ${sessionId} not found`);
+        return await client.setProfilePicture(media);
+    }
+
+    async deleteProfilePicture(sessionId: string) {
+        const client = this.clients.get(sessionId);
+        if (!client) throw new Error(`Session ${sessionId} not found`);
+        return await client.deleteProfilePicture();
+    }
+
+    async setDisplayName(sessionId: string, name: string) {
+        const client = this.clients.get(sessionId);
+        if (!client) throw new Error(`Session ${sessionId} not found`);
+        return await client.setDisplayName(name);
+    }
+
+    async setAbout(sessionId: string, status: string) {
+        const client = this.clients.get(sessionId);
+        if (!client) throw new Error(`Session ${sessionId} not found`);
+        return await client.setStatus(status);
+    }
+
+    async setPresence(sessionId: string, presence: 'online' | 'offline') {
+        const client = this.clients.get(sessionId);
+        if (!client) throw new Error(`Session ${sessionId} not found`);
+
+        if (presence === 'online') {
+            await client.sendPresenceAvailable();
+        } else {
+            await client.sendPresenceUnavailable();
+        }
+    }
+
 }
 
 export const sessionService = SessionService.getInstance();

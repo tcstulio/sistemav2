@@ -1,10 +1,24 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { AgendaEvent, AppView } from '../types';
-import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronRight, CheckCircle2, Circle, Bot, List, Calendar as CalendarIcon, ChevronLeft, Plus, Loader2, X, Phone, Mail, Users, ShoppingCart, FileSignature, Ticket as TicketIcon } from 'lucide-react';
+import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronRight, CheckCircle2, Circle, Bot, List, Calendar as CalendarIcon, ChevronLeft, Plus, Loader2, X, Phone, Mail, Users, ShoppingCart, FileSignature, Ticket as TicketIcon, ArrowUp, ArrowDown } from 'lucide-react';
 import { formatDateOnly, formatDateTime, formatDateLong } from '../utils/dateUtils';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useEvents, useTasks, useInterventions, useProjects } from '../hooks/dolibarr';
+import AgendaEntryDetail from './AgendaEntryDetail';
+
+// Design System
+import {
+    PageHeader,
+    Button,
+    Input,
+    Modal,
+    Tabs,
+    Tab,
+    EmptyState,
+    Card,
+    MasterDetailLayout
+} from './ui';
 
 interface AgendaViewProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -25,6 +39,12 @@ interface AgendaItem {
     contextView?: AppView; // View to navigate to
 }
 
+interface EncapsulatedGroup {
+    dateStr: string;
+    dateTs: number;
+    items: AgendaItem[];
+}
+
 const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     const { config, refreshData } = useDolibarr();
 
@@ -37,9 +57,18 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
 
     const [filterType, setFilterType] = useState<'all' | 'event' | 'task' | 'deadline'>('all');
     const [showSystemEvents, setShowSystemEvents] = useState(false);
+
     // Default to 'list' on small screens
     const [viewMode, setViewMode] = useState<'list' | 'calendar'>(window.innerWidth < 768 ? 'list' : 'calendar');
     const [currentDate, setCurrentDate] = useState(new Date());
+
+    // Selection State for MasterDetail
+    const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+
+    // Pagination / Windowing State
+    // We store indices relative to the 'groupedList'
+    const [visibleRange, setVisibleRange] = useState({ start: 0, end: 10 });
+    const [hasInitializedScroll, setHasInitializedScroll] = useState(false);
 
     // Event Creation State
     const [isEventModalOpen, setIsEventModalOpen] = useState(false);
@@ -88,17 +117,14 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
         // 1. Events
         events.forEach(e => {
             const isLog = isSystemLog(e);
-
-            if (isLog && !showSystemEvents) return; // Skip logs if hidden
-
+            if (isLog && !showSystemEvents) return;
             const context = getContextLink(e);
-
             items.push({
                 id: `evt-${e.id}`,
                 type: isLog ? 'system_log' : 'event',
                 subType: e.type_code,
                 title: e.label,
-                date: e.date_start, // Hooks already return MS
+                date: e.date_start,
                 endDate: e.date_end ? e.date_end : undefined,
                 description: e.description,
                 status: e.percentage === 100 ? 'done' : 'todo',
@@ -109,14 +135,14 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
             });
         });
 
-        // 2. Tasks (Start Dates)
+        // 2. Tasks
         tasks.forEach(t => {
             if (t.date_start) {
                 items.push({
                     id: `tsk-${t.id}`,
                     type: 'task',
                     title: t.label,
-                    date: t.date_start, // Hooks already return MS
+                    date: t.date_start,
                     endDate: t.date_end ? t.date_end : undefined,
                     description: t.description,
                     status: t.progress === 100 ? 'done' : 'todo',
@@ -134,7 +160,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                 id: `int-${i.id}`,
                 type: 'intervention',
                 title: `Intervenção ${i.ref}`,
-                date: i.date, // Hooks already return MS
+                date: i.date,
                 description: i.description,
                 status: i.statut === '2' ? 'done' : 'todo',
                 ref: i.ref,
@@ -143,14 +169,14 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
             });
         });
 
-        // 4. Projects (End Dates/Deadlines)
+        // 4. Projects
         projects.forEach(p => {
             if (p.date_end) {
                 items.push({
                     id: `prj-${p.id}`,
                     type: 'project_deadline',
                     title: `Prazo: ${p.title}`,
-                    date: p.date_end, // Hooks already return MS
+                    date: p.date_end,
                     status: p.statut === '2' ? 'done' : 'todo',
                     ref: p.ref,
                     contextId: p.id,
@@ -159,7 +185,6 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
             }
         });
 
-        // Sort by Date
         return items.sort((a, b) => a.date - b.date);
     }, [events, tasks, interventions, projects, showSystemEvents]);
 
@@ -174,55 +199,83 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
         });
     }, [consolidatedItems, filterType]);
 
-    // Group by Date String for List View
-    const groupedItems = useMemo(() => {
-        const groups: Record<string, AgendaItem[]> = {};
-        const now = new Date();
-        now.setHours(0, 0, 0, 0);
+    // Group by Date String for List View - RETURNS ARRAY NOW
+    const groupedList = useMemo(() => {
+        const list: EncapsulatedGroup[] = [];
 
         filteredItems.forEach(item => {
-            const dateObj = new Date(item.date);
             const dateKey = formatDateLong(item.date);
+            let lastGroup = list[list.length - 1];
 
-            if (!groups[dateKey]) groups[dateKey] = [];
-            groups[dateKey].push(item);
+            // Check if matches last group
+            if (!lastGroup || lastGroup.dateStr !== dateKey) {
+                list.push({
+                    dateStr: dateKey,
+                    dateTs: item.date, // Approximate ts for group
+                    items: []
+                });
+                lastGroup = list[list.length - 1];
+            }
+            lastGroup.items.push(item);
         });
-        return groups;
+
+        return list;
     }, [filteredItems]);
 
-    // Auto-scroll to today
-    const itemRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
-    const containerRef = React.useRef<HTMLDivElement>(null);
-
-    React.useEffect(() => {
-        if (viewMode === 'list' && Object.keys(groupedItems).length > 0) {
+    // Initialize Window on Data Load / View Change
+    useEffect(() => {
+        if (groupedList.length > 0 && viewMode === 'list') {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
+            const todayTs = today.getTime();
 
-            // Find first item >= today
-            const firstFutureItem = filteredItems.find(item => item.date >= today.getTime());
+            // Find index of first group >= today
+            const todayIndex = groupedList.findIndex(g => g.dateTs >= todayTs);
 
-            if (firstFutureItem) {
-                const key = formatDateLong(firstFutureItem.date);
-                // Delay slightly to allow layout to stabilize
-                setTimeout(() => {
-                    const element = itemRefs.current[key];
-                    const container = containerRef.current;
-
-                    if (element && container) {
-                        // Calculate position relative to container
-                        const elementTop = element.offsetTop;
-                        // Add some top padding (e.g. 20px) so it's not glued to the top
-                        // And account for the container's own padding if needed, though offsetTop usually handles that relative to parent
-                        container.scrollTo({
-                            top: Math.max(0, elementTop - 16), // 16px buffer
-                            behavior: 'smooth'
-                        });
-                    }
-                }, 100);
+            if (todayIndex !== -1) {
+                // Show 5 days back, 15 days forward initially
+                const start = Math.max(0, todayIndex - 5);
+                const end = Math.min(groupedList.length, todayIndex + 15);
+                setVisibleRange({ start, end });
+                setHasInitializedScroll(false); // Trigger scroll
+            } else {
+                // If all dates are in past, show last 20
+                if (groupedList.length > 0 && groupedList[groupedList.length - 1].dateTs < todayTs) {
+                    setVisibleRange({ start: Math.max(0, groupedList.length - 20), end: groupedList.length });
+                } else {
+                    // All in future? Show first 20
+                    setVisibleRange({ start: 0, end: Math.min(20, groupedList.length) });
+                }
             }
         }
-    }, [viewMode, groupedItems, filteredItems]);
+    }, [groupedList.length, viewMode, filterType]); // Re-calc on data/filter change
+
+    // Auto-scroll to today AFTER window runs
+    const itemRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
+
+    useEffect(() => {
+        if (viewMode === 'list' && groupedList.length > 0 && !hasInitializedScroll && !selectedItemId) {
+            // Wait for render
+            setTimeout(() => {
+                // Find Today element in DOM
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                // We need to look in the VISIBLE entries
+                const firstFutureGroup = groupedList.slice(visibleRange.start, visibleRange.end)
+                    .find(g => g.dateTs >= today.getTime());
+
+                if (firstFutureGroup) {
+                    const el = itemRefs.current[firstFutureGroup.dateStr];
+                    if (el) {
+                        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        setHasInitializedScroll(true);
+                    }
+                }
+            }, 300);
+        }
+    }, [visibleRange, viewMode, groupedList]);
+
 
     // Calendar Logic
     const calendarDays = useMemo(() => {
@@ -245,7 +298,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
         // Current month days
         for (let i = 1; i <= daysInMonth; i++) {
             const currentDayDate = new Date(year, month, i);
-            // Normalize time for comparison (optional but safer)
+            // Normalize time for comparison
             const itemsForDay = filteredItems.filter(item => {
                 const d = new Date(item.date);
                 return d.getDate() === i && d.getMonth() === month && d.getFullYear() === year;
@@ -279,14 +332,15 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     };
 
     const handleItemClick = (item: AgendaItem) => {
-        // Navigate to dedicated Agenda Entry Panel for ALL items
-        if (onNavigate) {
-            onNavigate('agenda', item.id);
+        if (viewMode === 'list') {
+            setSelectedItemId(item.id);
+        } else {
+            setViewMode('list');
+            setSelectedItemId(item.id);
         }
     };
 
-    const handleCreateEvent = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleCreateEvent = async () => {
         if (!newEventForm.label || !newEventForm.date_start || !config) return;
 
         setIsSubmittingEvent(true);
@@ -317,99 +371,202 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     if (!config) {
         return (
             <div className="flex items-center justify-center p-20 text-slate-400">
+                <Loader2 className="animate-spin mr-2" />
                 <p>Carregando configurações...</p>
             </div>
         )
     }
 
+    // Render the List Content (The 'Left' side of MasterDetail)
+    const renderListContent = () => {
+        if (groupedList.length === 0) {
+            return (
+                <EmptyState
+                    icon={CalendarDays}
+                    title="Nenhum item na agenda"
+                    description="Tente alterar os filtros ou crie um novo evento."
+                    action={
+                        <Button onClick={() => setIsEventModalOpen(true)}>
+                            Criar Evento
+                        </Button>
+                    }
+                />
+            );
+        }
+
+        const visibleItems = groupedList.slice(visibleRange.start, visibleRange.end);
+        const hasOlder = visibleRange.start > 0;
+        const hasNewer = visibleRange.end < groupedList.length;
+
+        const loadOlder = () => setVisibleRange(prev => ({ ...prev, start: Math.max(0, prev.start - 10) }));
+        const loadNewer = () => setVisibleRange(prev => ({ ...prev, end: Math.min(groupedList.length, prev.end + 10) }));
+
+        return (
+            <div className="space-y-6 max-w-4xl mx-auto pb-20 pt-4 px-2">
+
+                {/* LOAD OLDER BUTTON */}
+                {hasOlder && (
+                    <div className="flex justify-center mb-4">
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={loadOlder}
+                            icon={<ArrowUp size={16} />}
+                        >
+                            Carregar Anteriores ({visibleRange.start} ocultos)
+                        </Button>
+                    </div>
+                )}
+
+                {visibleItems.map((group) => {
+                    const { dateStr, items } = group;
+                    return (
+                        <div key={dateStr} ref={el => { itemRefs.current[dateStr] = el; }} className="animate-in slide-in-from-bottom-2 fade-in">
+                            <h3 className="sticky top-0 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur py-2 px-1 text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 z-10 flex items-center gap-2">
+                                <CalendarDays size={14} /> {dateStr}
+                            </h3>
+                            <Card padding="none" className="overflow-hidden">
+                                {items.map((item, idx) => (
+                                    <div
+                                        key={item.id}
+                                        className={`p-4 flex items-start gap-4 transition-colors cursor-pointer border-l-4
+                                            ${idx !== items.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''} 
+                                            ${selectedItemId === item.id
+                                                ? 'bg-indigo-50/50 dark:bg-indigo-900/10 border-l-indigo-500'
+                                                : 'border-l-transparent hover:bg-slate-50 dark:hover:bg-slate-800'
+                                            }
+                                            ${item.type === 'system_log' ? 'opacity-75' : ''}
+                                        `}
+                                        onClick={() => handleItemClick(item)}
+                                    >
+                                        <div className="mt-1">{getIcon(item)}</div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex justify-between items-start">
+                                                <h4 className={`font-bold ${item.type === 'system_log' ? 'text-slate-600 dark:text-slate-400 font-normal italic' : 'text-slate-800 dark:text-white'} ${item.status === 'done' ? 'line-through opacity-60' : ''}`}>
+                                                    {item.title}
+                                                </h4>
+                                                <span className="text-xs font-mono text-slate-400 ml-2 whitespace-nowrap">{formatDateTime(item.date).split(' ')[1]}</span>
+                                            </div>
+
+                                            {item.description && typeof item.description === 'string' && (
+                                                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-1">{item.description}</p>
+                                            )}
+
+                                            <div className="flex gap-2 mt-2 flex-wrap">
+                                                {item.ref && <span className="text-xs bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-500 border border-slate-200 dark:border-slate-700">{item.ref}</span>}
+                                                {item.type === 'task' && <span className="text-xs bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded border border-orange-100 dark:border-orange-900/30">Tarefa</span>}
+                                                {item.type === 'project_deadline' && <span className="text-xs bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 px-1.5 py-0.5 rounded border border-red-100 dark:border-red-900/30">Prazo</span>}
+                                                {item.contextView === 'orders' && <span className="text-xs bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100">Pedido</span>}
+                                                {item.contextView === 'proposals' && <span className="text-xs bg-cyan-50 text-cyan-600 px-1.5 py-0.5 rounded border border-cyan-100">Proposta</span>}
+                                                {item.contextView === 'contracts' && <span className="text-xs bg-teal-50 text-teal-600 px-1.5 py-0.5 rounded border border-teal-100">Contrato</span>}
+                                                {item.contextView === 'invoices' && <span className="text-xs bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded border border-emerald-100">Fatura</span>}
+                                                {item.contextView === 'tickets' && <span className="text-xs bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded border border-purple-100">Chamado</span>}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </Card>
+                        </div>
+                    )
+                })}
+
+                {/* LOAD NEWER BUTTON */}
+                {hasNewer && (
+                    <div className="flex justify-center mt-4">
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={loadNewer}
+                            icon={<ArrowDown size={16} />}
+                        >
+                            Carregar Próximos (+{groupedList.length - visibleRange.end})
+                        </Button>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     return (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors relative">
 
             {/* Create Event Modal */}
-            {isEventModalOpen && (
-                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
-                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                <CalendarDays size={18} className="text-indigo-600" /> Novo Evento na Agenda
-                            </h3>
-                            <button onClick={() => setIsEventModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
-                        </div>
-                        <form onSubmit={handleCreateEvent} className="p-6 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Assunto</label>
-                                <input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" required value={newEventForm.label} onChange={e => setNewEventForm({ ...newEventForm, label: e.target.value })} placeholder="Título da reunião" />
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Início</label>
-                                    <input type="datetime-local" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" required value={newEventForm.date_start} onChange={e => setNewEventForm({ ...newEventForm, date_start: e.target.value })} />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Fim</label>
-                                    <input type="datetime-local" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={newEventForm.date_end} onChange={e => setNewEventForm({ ...newEventForm, date_end: e.target.value })} />
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
-                                <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={newEventForm.type_code} onChange={e => setNewEventForm({ ...newEventForm, type_code: e.target.value })}>
-                                    <option value="AC_RDV">Reunião (Rendez-vous)</option>
-                                    <option value="AC_TEL">Chamada Telefônica</option>
-                                    <option value="AC_EMAIL">Email</option>
-                                    <option value="AC_OTH">Outro</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
-                                <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white h-24 resize-none" value={newEventForm.description} onChange={e => setNewEventForm({ ...newEventForm, description: e.target.value })} placeholder="Notas..." />
-                            </div>
-                            <div className="flex justify-end gap-3 pt-4">
-                                <button type="button" onClick={() => setIsEventModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
-                                <button type="submit" disabled={isSubmittingEvent} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
-                                    {isSubmittingEvent ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} Criar Evento
-                                </button>
-                            </div>
-                        </form>
+            <Modal
+                isOpen={isEventModalOpen}
+                onClose={() => setIsEventModalOpen(false)}
+                title={
+                    <span className="flex items-center gap-2">
+                        <CalendarDays size={18} className="text-indigo-600" /> Novo Evento na Agenda
+                    </span>
+                }
+                size="md"
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={() => setIsEventModalOpen(false)}>Cancelar</Button>
+                        <Button
+                            onClick={handleCreateEvent}
+                            loading={isSubmittingEvent}
+                            icon={<CheckCircle2 size={16} />}
+                        >
+                            Criar Evento
+                        </Button>
+                    </>
+                }
+            >
+                <div className="space-y-4">
+                    <Input
+                        label="Assunto"
+                        required
+                        value={newEventForm.label}
+                        onChange={e => setNewEventForm({ ...newEventForm, label: e.target.value })}
+                        placeholder="Título da reunião"
+                    />
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input
+                            label="Início"
+                            type="datetime-local"
+                            required
+                            value={newEventForm.date_start}
+                            onChange={e => setNewEventForm({ ...newEventForm, date_start: e.target.value })}
+                        />
+                        <Input
+                            label="Fim"
+                            type="datetime-local"
+                            value={newEventForm.date_end}
+                            onChange={e => setNewEventForm({ ...newEventForm, date_end: e.target.value })}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={newEventForm.type_code}
+                            onChange={e => setNewEventForm({ ...newEventForm, type_code: e.target.value })}
+                        >
+                            <option value="AC_RDV">Reunião (Rendez-vous)</option>
+                            <option value="AC_TEL">Chamada Telefônica</option>
+                            <option value="AC_EMAIL">Email</option>
+                            <option value="AC_OTH">Outro</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
+                        <textarea
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white h-24 resize-none"
+                            value={newEventForm.description}
+                            onChange={e => setNewEventForm({ ...newEventForm, description: e.target.value })}
+                            placeholder="Notas..."
+                        />
                     </div>
                 </div>
-            )}
+            </Modal>
 
-            {/* Header */}
-            <div className="p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none">
-                <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-2">
-                    <div>
-                        <h2 className="text-2xl font-bold text-slate-800 dark:text-white">Agenda Global</h2>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">Cronograma mestre de eventos, tarefas e prazos</p>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3">
-                        {/* Filters */}
-                        <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700 overflow-x-auto">
-                            <button onClick={() => setFilterType('all')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === 'all' ? 'bg-white dark:bg-slate-700 shadow-sm text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>
-                                Todos
-                            </button>
-                            <button onClick={() => setFilterType('event')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === 'event' ? 'bg-white dark:bg-slate-700 shadow-sm text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>
-                                <span className="w-2 h-2 rounded-full bg-blue-500"></span> Eventos
-                            </button>
-                            <button onClick={() => setFilterType('task')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === 'task' ? 'bg-white dark:bg-slate-700 shadow-sm text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>
-                                <span className="w-2 h-2 rounded-full bg-orange-500"></span> Tarefas
-                            </button>
-                            <button onClick={() => setFilterType('deadline')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterType === 'deadline' ? 'bg-white dark:bg-slate-700 shadow-sm text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>
-                                <span className="w-2 h-2 rounded-full bg-red-500"></span> Prazos
-                            </button>
-                        </div>
-
-
-
-                        <div className="h-6 w-px bg-slate-200 dark:bg-slate-700 mx-1 hidden sm:block"></div>
-
-                        <button
-                            onClick={() => setIsEventModalOpen(true)}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors`}
-                        >
-                            <Plus size={16} /> <span className="hidden sm:inline">Novo Evento</span>
-                        </button>
-
+            {/* Page Header */}
+            <PageHeader
+                title="Agenda Global"
+                subtitle="Cronograma mestre de eventos, tarefas e prazos"
+                actions={
+                    <div className="flex items-center gap-3">
                         {/* View Toggle */}
                         <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
                             <button
@@ -427,72 +584,48 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                                 <CalendarIcon size={18} />
                             </button>
                         </div>
+
+                        <Button
+                            icon={<Plus size={16} />}
+                            onClick={() => setIsEventModalOpen(true)}
+                        >
+                            <span className="hidden sm:inline">Novo Evento</span>
+                            <span className="sm:hidden">Novo</span>
+                        </Button>
                     </div>
-                </div>
-            </div>
+                }
+                tabs={
+                    <Tabs value={filterType} onChange={(v) => setFilterType(v as any)}>
+                        <Tab value="all">Todos</Tab>
+                        <Tab value="event">Eventos</Tab>
+                        <Tab value="task">Tarefas</Tab>
+                        <Tab value="deadline">Prazos</Tab>
+                    </Tabs>
+                }
+            />
 
             {/* Main Content Area */}
-            <div ref={containerRef} className="flex-1 overflow-y-auto p-4 md:p-6 relative">
-
-                {/* VIEW: LIST */}
-                {viewMode === 'list' && (
-                    <div className="space-y-6 max-w-4xl mx-auto">
-                        {Object.entries(groupedItems).length === 0 ? (
-                            <div className="text-center py-20 text-slate-400">
-                                <CalendarDays size={48} className="mx-auto mb-4 opacity-50" />
-                                <p>Nenhum item na agenda encontrado.</p>
-                            </div>
-                        ) : (
-                            Object.entries(groupedItems).map(([date, rawItems]) => {
-                                const items = rawItems as AgendaItem[];
-                                return (
-                                    <div key={date} ref={el => { itemRefs.current[date] = el; }} className="animate-in slide-in-from-bottom-2 fade-in">
-                                        <h3 className="sticky top-0 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur py-2 px-1 text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 z-10 flex items-center gap-2">
-                                            <CalendarDays size={14} /> {date}
-                                        </h3>
-                                        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
-                                            {items.map((item, idx) => (
-                                                <div
-                                                    key={item.id}
-                                                    className={`p-4 flex items-start gap-4 transition-colors ${idx !== items.length - 1 ? 'border-b border-slate-100 dark:border-slate-800' : ''} ${item.type === 'system_log' ? 'bg-slate-50/50 dark:bg-slate-900/50 opacity-75' : 'hover:bg-slate-50 dark:hover:bg-slate-800'} ${item.contextId ? 'cursor-pointer' : ''}`}
-                                                    onClick={() => handleItemClick(item)}
-                                                >
-                                                    <div className="mt-1">{getIcon(item)}</div>
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="flex justify-between items-start">
-                                                            <h4 className={`font-bold ${item.type === 'system_log' ? 'text-slate-600 dark:text-slate-400 font-normal italic' : 'text-slate-800 dark:text-white'} ${item.status === 'done' ? 'line-through opacity-60' : ''}`}>
-                                                                {item.title}
-                                                            </h4>
-                                                            <span className="text-xs font-mono text-slate-400 ml-2 whitespace-nowrap">{formatDateTime(item.date).split(' ')[1]}</span>
-                                                        </div>
-
-                                                        {item.description && typeof item.description === 'string' && (
-                                                            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-1">{item.description}</p>
-                                                        )}
-
-                                                        <div className="flex gap-2 mt-2">
-                                                            {item.ref && <span className="text-xs bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-500 border border-slate-200 dark:border-slate-700">{item.ref}</span>}
-                                                            {item.type === 'task' && <span className="text-xs bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 px-1.5 py-0.5 rounded border border-orange-100 dark:border-orange-900/30">Tarefa</span>}
-                                                            {item.type === 'project_deadline' && <span className="text-xs bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 px-1.5 py-0.5 rounded border border-red-100 dark:border-red-900/30">Prazo</span>}
-                                                            {item.contextView === 'orders' && <span className="text-xs bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100">Pedido</span>}
-                                                            {item.contextView === 'proposals' && <span className="text-xs bg-cyan-50 text-cyan-600 px-1.5 py-0.5 rounded border border-cyan-100">Proposta</span>}
-                                                            {item.contextView === 'contracts' && <span className="text-xs bg-teal-50 text-teal-600 px-1.5 py-0.5 rounded border border-teal-100">Contrato</span>}
-                                                            {item.contextView === 'invoices' && <span className="text-xs bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded border border-emerald-100">Fatura</span>}
-                                                            {item.contextView === 'tickets' && <span className="text-xs bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded border border-purple-100">Chamado</span>}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )
-                            })
-                        )}
-                    </div>
-                )}
-
-                {/* VIEW: CALENDAR */}
-                {viewMode === 'calendar' && (
+            {viewMode === 'list' ? (
+                // VIEW: LIST with MasterDetail
+                <div className="flex-1 overflow-hidden">
+                    <MasterDetailLayout
+                        showDetail={!!selectedItemId}
+                        onCloseDetail={() => setSelectedItemId(null)}
+                        list={renderListContent()}
+                        detail={
+                            selectedItemId ? (
+                                <AgendaEntryDetail
+                                    config={config}
+                                    initialItemId={selectedItemId}
+                                    onNavigate={onNavigate || (() => { })}
+                                />
+                            ) : undefined
+                        }
+                    />
+                </div>
+            ) : (
+                // VIEW: CALENDAR (Independent Scroll)
+                <div className="flex-1 overflow-y-auto p-4 md:p-6 relative">
                     <div className="flex flex-col h-full bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
                         {/* Calendar Nav */}
                         <div className="p-4 flex items-center justify-between border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
@@ -501,11 +634,11 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                                     {currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
                                 </h3>
                                 <div className="flex items-center gap-1">
-                                    <button onClick={prevMonth} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full"><ChevronLeft size={20} /></button>
-                                    <button onClick={nextMonth} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full"><ChevronRight size={20} /></button>
+                                    <Button variant="ghost" size="sm" onClick={prevMonth} icon={<ChevronLeft size={20} />} />
+                                    <Button variant="ghost" size="sm" onClick={nextMonth} icon={<ChevronRight size={20} />} />
                                 </div>
                             </div>
-                            <button onClick={today} className="text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:underline">Hoje</button>
+                            <Button variant="ghost" size="sm" onClick={today}>Hoje</Button>
                         </div>
 
                         {/* Responsive Scroll Wrapper */}
@@ -568,9 +701,8 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                             </div>
                         </div>
                     </div>
-                )}
-
-            </div>
+                </div>
+            )}
         </div>
     );
 };

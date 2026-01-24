@@ -34,9 +34,23 @@ export const useSessions = () => {
 
         const handleStatus = (data: { sessionId: string, status: string }) => {
             // console.log('[useSessions] Status Update:', data);
-            setSessions(prev => prev.map(s =>
-                s.id === data.sessionId ? { ...s, status: (data.status === 'SCAN_QR_CODE' ? 'qr_code' : data.status) as any } : s
-            ));
+            setSessions(prev => {
+                const exists = prev.find(s => s.id === data.sessionId);
+                if (exists) {
+                    return prev.map(s =>
+                        s.id === data.sessionId ? { ...s, status: (data.status === 'SCAN_QR_CODE' ? 'qr_code' : data.status) as any } : s
+                    );
+                } else {
+                    // New session appearing!
+                    return [...prev, {
+                        id: data.sessionId,
+                        name: `Sessão ${data.sessionId}`,
+                        status: (data.status === 'SCAN_QR_CODE' ? 'qr_code' : data.status) as any,
+                        phoneNumber: '---',
+                        platform: 'WAHA'
+                    }];
+                }
+            });
 
             // If new session appeared or something changed drastically, maybe refetch?
             // For now, optimistic update is fine for status.
@@ -51,14 +65,26 @@ export const useSessions = () => {
             }
         };
 
-        const handleQr = (data: { sessionId: string, qr: string }) => {
-            // We can update the session state to indicate QR is available
-            // But usually QR is handled in specific component. 
-            // We'll update status to 'SCAN_QR_CODE' if not set
+        const handleQr = async (data: { sessionId: string, qr: string }) => {
+            // We received the RAW QR code string (signal that QR is ready).
+            // Since we can't render raw QR without a library, and we don't want to rely on DataURIs causing lag,
+            // we fetch the generated image from the backend (which handles the Auth headers via Service).
+
+            // 1. Update status
             setSessions(prev => prev.map(s =>
                 s.id === data.sessionId ? { ...s, status: 'qr_code' } : s
             ));
-            setQrCodes(prev => ({ ...prev, [data.sessionId]: data.qr }));
+
+            // 2. Fetch Image
+            try {
+                const blob = await WhatsAppService.getQrCode(data.sessionId);
+                if (blob) {
+                    const url = URL.createObjectURL(blob);
+                    setQrCodes(prev => ({ ...prev, [data.sessionId]: url }));
+                }
+            } catch (e) {
+                console.error('Failed to load QR image', e);
+            }
         };
 
         socket.on('session_status', handleStatus);

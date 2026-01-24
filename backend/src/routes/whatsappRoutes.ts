@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { MessageMedia } from 'whatsapp-web.js';
 import { sessionService } from '../services/sessionService';
 import { messageService } from '../services/messageService';
 import { storeService } from '../services/storeService';
@@ -210,6 +211,78 @@ router.get('/settings/session/:sessionId', (req, res) => {
 router.get('/settings/chat/:chatId', (req, res) => {
     const { chatId } = req.params;
     res.json(storeService.getChatSettings(chatId));
+});
+
+
+// 4. Profile Settings
+router.get('/profile', async (req, res) => {
+    const sessionId = getSessionId(req);
+    try {
+        const profile = await sessionService.getProfile(sessionId);
+        res.json(profile);
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/profile/picture', async (req, res) => {
+    const sessionId = getSessionId(req);
+    try {
+        const { fileData, mimetype, filename } = z.object({
+            fileData: z.string().min(1),
+            mimetype: z.string().min(1),
+            filename: z.string().optional()
+        }).parse(req.body);
+
+        const media = new MessageMedia(mimetype, fileData, filename);
+        const result = await sessionService.setProfilePicture(sessionId, media);
+        res.json({ success: result });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.delete('/profile/picture', async (req, res) => {
+    const sessionId = getSessionId(req);
+    try {
+        const result = await sessionService.deleteProfilePicture(sessionId);
+        res.json({ success: result });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/profile/name', async (req, res) => {
+    const sessionId = getSessionId(req);
+    try {
+        const { name } = z.object({ name: z.string().min(1) }).parse(req.body);
+        const result = await sessionService.setDisplayName(sessionId, name);
+        res.json({ success: result });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/profile/status', async (req, res) => {
+    const sessionId = getSessionId(req);
+    try {
+        const { status } = z.object({ status: z.string().min(1) }).parse(req.body);
+        const result = await sessionService.setAbout(sessionId, status);
+        res.json({ success: result });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/profile/presence', async (req, res) => {
+    const sessionId = getSessionId(req);
+    try {
+        const { presence } = z.object({ presence: z.enum(['online', 'offline']) }).parse(req.body);
+        await sessionService.setPresence(sessionId, presence);
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 

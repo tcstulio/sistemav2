@@ -16,7 +16,8 @@ const GenerateReplySchema = z.object({
         parts: z.string()
     })).optional(),
     context: z.string().optional(),
-    image: z.string().optional() // Base64 image for multimodal chat
+    image: z.string().optional(), // Base64 image for multimodal chat
+    module: z.string().default('chat')
 });
 
 const AnalyzeSystemSchema = z.object({
@@ -25,13 +26,26 @@ const AnalyzeSystemSchema = z.object({
 
 router.post('/generate-reply', async (req, res) => {
     try {
-        const { history, context, image } = GenerateReplySchema.parse(req.body);
-        const reply = await aiService.generateReply(history as any || [], context || '', image);
+        const { history, context, image, module } = GenerateReplySchema.parse(req.body);
+        const reply = await aiService.generateReply(history as any || [], context || '', image, module);
         res.json({ reply });
     } catch (error: any) {
+        console.error('[AI Route] Generate Reply Error:', error);
+
+        // Handle Validation Errors
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
         }
+
+        // Handle Google API Errors
+        const errorMessage = error?.message || '';
+        const errorBody = error?.response?.data?.error?.message || ''; // Axios style
+        const fullMessage = `${errorMessage} ${errorBody}`;
+
+        if (fullMessage.includes('API key expired') || fullMessage.includes('API_KEY_INVALID')) {
+            return res.status(401).json({ error: 'A chave da API do Google Gemini expirou. Por favor, atualize o arquivo .env com uma nova chave.' });
+        }
+
         res.status(500).json({ error: error.message });
     }
 });

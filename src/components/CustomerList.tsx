@@ -20,6 +20,9 @@ import { StatusFilterBar } from './common/StatusFilterBar';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
 
+// Design System
+import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState } from './ui';
+
 interface CustomerListProps {
     onNavigate?: (view: AppView, id: string) => void;
     initialItemId?: string;
@@ -329,50 +332,41 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
     // --- Sub-components --
 
     const renderHeader = (
-        <div className="p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800 dark:text-white">Clientes & Prospects</h2>
-                    <p className="text-sm text-slate-500 dark:text-slate-400">Gerencie seu relacionamento comercial</p>
-                </div>
+        <PageHeader
+            title="Clientes & Prospects"
+            subtitle="Gerencie seu relacionamento comercial"
+            actions={
                 <div className="flex items-center gap-2">
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                            type="text"
-                            placeholder="Buscar cliente..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className={`pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-${config?.themeColor}-500 focus:border-${config?.themeColor}-500 outline-none w-full md:w-64 text-sm transition-all`}
-                        />
-                    </div>
-                    <button
-                        onClick={() => setIsCreateModalOpen(true)}
-                        className={`flex items-center gap-1.5 px-3 py-2 bg-${config?.themeColor}-600 hover:bg-${config?.themeColor}-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors`}
-                    >
-                        <UserPlus size={18} /> Novo
-                    </button>
+                    <Input
+                        placeholder="Buscar cliente..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        icon={<Search size={16} />}
+                        className="w-48"
+                        fullWidth={false}
+                    />
+                    <Button icon={<UserPlus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
+                        Novo
+                    </Button>
                 </div>
-            </div>
-
-            <StatusFilterBar
-                filters={[
-                    { id: 'all', label: 'Todos' },
-                    { id: 'customer', label: 'Clientes', color: 'emerald' },
-                    { id: 'prospect', label: 'Prospects', color: 'blue' }
-                ]}
-                activeFilter={filterType}
-                onFilterChange={(id) => setFilterType(id as any)}
-                themeColor={config?.themeColor}
-            />
-        </div>
+            }
+            tabs={
+                <Tabs value={filterType} onChange={(v) => setFilterType(v as any)}>
+                    <Tab value="all">Todos</Tab>
+                    <Tab value="customer">Clientes</Tab>
+                    <Tab value="prospect">Prospects</Tab>
+                </Tabs>
+            }
+        />
     );
 
     const renderListContent = filteredCustomers.length === 0 ? (
-        <div className="text-center py-20 text-slate-400">
-            <UserCircle size={48} className="mx-auto mb-4 opacity-50" />
-            <p>Nenhum cliente encontrado.</p>
-        </div>
+        <EmptyState
+            icon={UserCircle}
+            title="Nenhum cliente encontrado"
+            description="Tente ajustar os filtros ou adicione um novo cliente."
+            action={<Button onClick={() => setIsCreateModalOpen(true)}>Adicionar Cliente</Button>}
+        />
     ) : (
         <AutoSizer>
             {({ height, width }) => (
@@ -586,395 +580,385 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
             />
 
             {/* Create Modal */}
-            {isCreateModalOpen && (
-                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 flex flex-col max-h-[90vh]">
-                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                <UserPlus size={18} className="text-indigo-600" /> Novo Cliente
-                            </h3>
-                            <button onClick={() => setIsCreateModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
+            <Modal
+                isOpen={isCreateModalOpen}
+                onClose={() => setIsCreateModalOpen(false)}
+                title={
+                    <span className="flex items-center gap-2">
+                        <UserPlus size={18} className="text-indigo-600" /> Novo Cliente
+                    </span>
+                }
+                size="md"
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={() => setIsCreateModalOpen(false)}>Cancelar</Button>
+                        <Button
+                            loading={isCreating}
+                            icon={<CheckCircle2 size={16} />}
+                            onClick={handleCreateCustomer}
+                        >
+                            Criar Cliente
+                        </Button>
+                    </>
+                }
+            >
+                {/* AI Magic Fill Section */}
+                {showMagicInput && (
+                    <Card padding="md" className="mb-4 bg-indigo-50 dark:bg-indigo-900/20 border-indigo-100 dark:border-indigo-900/30">
+                        <div className="flex items-start gap-3">
+                            <Sparkles size={18} className="text-indigo-600 mt-1" />
+                            <div className="flex-1">
+                                <label className="block text-sm font-bold text-indigo-900 dark:text-indigo-200 mb-1">Preenchimento Mágico IA</label>
+                                <textarea
+                                    className="w-full p-2 border border-indigo-200 dark:border-indigo-800 rounded bg-white dark:bg-slate-950 text-sm resize-none"
+                                    rows={3}
+                                    placeholder="Cole texto de email, assinatura ou site aqui..."
+                                    value={magicText}
+                                    onChange={e => setMagicText(e.target.value)}
+                                />
+                                <div className="flex justify-end mt-2">
+                                    <Button
+                                        size="sm"
+                                        onClick={handleMagicFill}
+                                        disabled={isMagicFilling || !magicText}
+                                        loading={isMagicFilling}
+                                        icon={<Sparkles size={12} />}
+                                    >
+                                        Extrair Dados
+                                    </Button>
+                                </div>
+                            </div>
                         </div>
-                        {/* Magic Input ... */}
-                        {showMagicInput && (
-                            <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 border-b border-indigo-100 dark:border-indigo-900/30">
-                                <div className="flex items-start gap-3">
-                                    <Sparkles size={18} className="text-indigo-600 mt-1" />
-                                    <div className="flex-1">
-                                        <label className="block text-sm font-bold text-indigo-900 dark:text-indigo-200 mb-1">Preenchimento Mágico IA</label>
-                                        <textarea
-                                            className="w-full p-2 border border-indigo-200 dark:border-indigo-800 rounded bg-white dark:bg-slate-950 text-sm resize-none"
-                                            rows={3}
-                                            placeholder="Cole texto de email, assinatura ou site aqui..."
-                                            value={magicText}
-                                            onChange={e => setMagicText(e.target.value)}
-                                        />
-                                        <div className="flex justify-end mt-2">
-                                            <button
-                                                onClick={handleMagicFill}
-                                                disabled={isMagicFilling || !magicText}
-                                                className="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded flex items-center gap-1 hover:bg-indigo-700 disabled:opacity-50"
-                                            >
-                                                {isMagicFilling ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Extrair Dados
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                    </Card>
+                )}
 
-                        <form onSubmit={handleCreateCustomer} className="p-6 space-y-4 overflow-y-auto">
-                            {!showMagicInput && (
-                                <button type="button" onClick={() => setShowMagicInput(true)} className="w-full py-2 border-2 border-dashed border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 rounded-lg text-sm font-medium hover:bg-indigo-50 dark:hover:bg-indigo-900/20 flex items-center justify-center gap-2">
-                                    <Sparkles size={16} /> Usar IA para Preencher
-                                </button>
-                            )}
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="col-span-2">
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome da Empresa / Pessoa</label>
-                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" required value={createForm.name} onChange={e => setCreateForm({ ...createForm, name: e.target.value })} placeholder="Ex: Acme Corp" />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Email</label>
-                                    <input type="email" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={createForm.email} onChange={e => setCreateForm({ ...createForm, email: e.target.value })} />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Telefone</label>
-                                    <input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={createForm.phone} onChange={e => setCreateForm({ ...createForm, phone: e.target.value })} />
-                                </div>
-                                <div className="col-span-2">
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Endereço</label>
-                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={createForm.address} onChange={e => setCreateForm({ ...createForm, address: e.target.value })} placeholder="Rua, Número..." />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cidade</label>
-                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={createForm.town} onChange={e => setCreateForm({ ...createForm, town: e.target.value })} />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">CEP</label>
-                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={createForm.zip} onChange={e => setCreateForm({ ...createForm, zip: e.target.value })} />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
-                                    <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={createForm.client} onChange={e => setCreateForm({ ...createForm, client: e.target.value as any })}>
-                                        <option value="1">Cliente</option>
-                                        <option value="2">Prospect</option>
-                                        <option value="3">Ambos</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-                                <button type="button" onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
-                                <button type="submit" disabled={isCreating} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
-                                    {isCreating ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} Criar Cliente
-                                </button>
-                            </div>
-                        </form>
+                {/* AI Trigger Button */}
+                {!showMagicInput && (
+                    <button
+                        type="button"
+                        onClick={() => setShowMagicInput(true)}
+                        className="w-full py-2 mb-4 border-2 border-dashed border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 rounded-lg text-sm font-medium hover:bg-indigo-50 dark:hover:bg-indigo-900/20 flex items-center justify-center gap-2"
+                    >
+                        <Sparkles size={16} /> Usar IA para Preencher
+                    </button>
+                )}
+
+                {/* Form Fields */}
+                <div className="space-y-4">
+                    <Input
+                        label="Nome da Empresa / Pessoa"
+                        required
+                        value={createForm.name || ''}
+                        onChange={e => setCreateForm({ ...createForm, name: e.target.value })}
+                        placeholder="Ex: Acme Corp"
+                    />
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input
+                            label="Email"
+                            type="email"
+                            value={createForm.email || ''}
+                            onChange={e => setCreateForm({ ...createForm, email: e.target.value })}
+                        />
+                        <Input
+                            label="Telefone"
+                            value={createForm.phone || ''}
+                            onChange={e => setCreateForm({ ...createForm, phone: e.target.value })}
+                        />
+                    </div>
+                    <Input
+                        label="Endereço"
+                        value={createForm.address || ''}
+                        onChange={e => setCreateForm({ ...createForm, address: e.target.value })}
+                        placeholder="Rua, Número..."
+                    />
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input
+                            label="Cidade"
+                            value={createForm.town || ''}
+                            onChange={e => setCreateForm({ ...createForm, town: e.target.value })}
+                        />
+                        <Input
+                            label="CEP"
+                            value={createForm.zip || ''}
+                            onChange={e => setCreateForm({ ...createForm, zip: e.target.value })}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={createForm.client}
+                            onChange={e => setCreateForm({ ...createForm, client: e.target.value as any })}
+                        >
+                            <option value="1">Cliente</option>
+                            <option value="2">Prospect</option>
+                            <option value="3">Ambos</option>
+                        </select>
                     </div>
                 </div>
-            )}
+            </Modal>
 
             {/* Wizard Configuration Modal */}
-            {isConfigModalOpen && (
-                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 flex flex-col h-[500px]">
-
-                        {/* Header */}
-                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                <Sparkles size={18} className="text-purple-600" />
-                                {wizardStep === 'topic' && "Passo 1: Objetivo"}
-                                {wizardStep === 'data' && "Passo 2: Seleção de Dados"}
-                                {wizardStep === 'channels' && "Passo 3: Canais"}
-                            </h3>
-                            <button onClick={() => setIsConfigModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
-                        </div>
-
-                        {/* Body */}
-                        <div className="p-6 flex-1 overflow-y-auto">
-
-                            {/* Step 1: Topic */}
-                            {wizardStep === 'topic' && (
-                                <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-200">
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Qual o motivo do contato?</label>
-                                        <textarea
-                                            className="w-full p-3 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-sm resize-none focus:ring-2 focus:ring-purple-500 outline-none transition-all h-32"
-                                            placeholder="Ex: Cobrar fatura atrasada com educação..."
-                                            value={messageConfig.topic}
-                                            onChange={e => setMessageConfig({ ...messageConfig, topic: e.target.value })}
-                                            autoFocus
-                                        />
-                                        <p className="text-xs text-slate-500 mt-2">Dica: Seja específico sobre o tom de voz desejado (formal, amigável, urgente).</p>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Step 2: Data Selection */}
-                            {wizardStep === 'data' && (
-                                <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-200">
-                                    <p className="text-sm text-slate-500 mb-2">Selecione os dados que a IA deve mencionar na mensagem:</p>
-
-                                    {/* Invoices Selection */}
-                                    <div>
-                                        <h4 className="text-xs font-bold uppercase text-slate-400 mb-2 flex items-center gap-1"><Building2 size={12} /> Faturas em Aberto</h4>
-                                        {customerInvoices.length > 0 ? (
-                                            <div className="space-y-2 max-h-32 overflow-y-auto border rounded-lg p-2 dark:border-slate-700">
-                                                {customerInvoices.filter(i => i.statut !== '2').map(inv => (
-                                                    <label key={inv.id} className="flex items-center gap-2 p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded cursor-pointer text-sm">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={messageConfig.selectedData.invoices.includes(String(inv.id))}
-                                                            onChange={(e) => {
-                                                                const current = messageConfig.selectedData.invoices;
-                                                                const newVal = e.target.checked ? [...current, String(inv.id)] : current.filter(id => id !== String(inv.id));
-                                                                setMessageConfig({ ...messageConfig, selectedData: { ...messageConfig.selectedData, invoices: newVal } });
-                                                            }}
-                                                            className="rounded text-purple-600 focus:ring-purple-500"
-                                                        />
-                                                        <span className="flex-1 font-medium">{inv.ref}</span>
-                                                        <span className="text-slate-500">${inv.total_ttc}</span>
-                                                    </label>
-                                                ))}
-                                                {customerInvoices.filter(i => i.statut !== '2').length === 0 && <p className="text-xs text-slate-400 p-2">Nenhuma fatura em aberto.</p>}
-                                            </div>
-                                        ) : <p className="text-xs text-slate-400 italic">Nenhuma fatura encontrada.</p>}
-                                    </div>
-
-                                    {/* Projects Selection */}
-                                    <div>
-                                        <h4 className="text-xs font-bold uppercase text-slate-400 mb-2 flex items-center gap-1"><Building2 size={12} /> Projetos Ativos</h4>
-                                        {customerProjects.length > 0 ? (
-                                            <div className="space-y-2 max-h-32 overflow-y-auto border rounded-lg p-2 dark:border-slate-700">
-                                                {customerProjects.map(proj => (
-                                                    <label key={proj.id} className="flex items-center gap-2 p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded cursor-pointer text-sm">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={messageConfig.selectedData.projects.includes(String(proj.id))}
-                                                            onChange={(e) => {
-                                                                const current = messageConfig.selectedData.projects;
-                                                                const newVal = e.target.checked ? [...current, String(proj.id)] : current.filter(id => id !== String(proj.id));
-                                                                setMessageConfig({ ...messageConfig, selectedData: { ...messageConfig.selectedData, projects: newVal } });
-                                                            }}
-                                                            className="rounded text-purple-600 focus:ring-purple-500"
-                                                        />
-                                                        <span className="flex-1 font-medium truncate">{proj.title}</span>
-                                                        <span className="text-xs text-slate-500">{proj.progress}%</span>
-                                                    </label>
-                                                ))}
-                                            </div>
-                                        ) : <p className="text-xs text-slate-400 italic">Nenhum projeto encontrado.</p>}
-                                    </div>
-
-                                </div>
-                            )}
-
-                            {/* Step 3: Channels */}
-                            {wizardStep === 'channels' && (
-                                <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-200">
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Onde você quer enviar?</label>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <label className={`flex flex-col items-center justify-center gap-3 p-6 rounded-xl border-2 cursor-pointer transition-all ${messageConfig.channels.includes('email') ? 'bg-indigo-50 border-indigo-500 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-500' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 dark:bg-slate-900 dark:border-slate-700'}`}>
-                                                <input
-                                                    type="checkbox"
-                                                    className="hidden"
-                                                    checked={messageConfig.channels.includes('email')}
-                                                    onChange={(e) => {
-                                                        if (e.target.checked) setMessageConfig({ ...messageConfig, channels: [...messageConfig.channels, 'email'] });
-                                                        else setMessageConfig({ ...messageConfig, channels: messageConfig.channels.filter(c => c !== 'email') });
-                                                    }}
-                                                />
-                                                <Mail size={32} />
-                                                <span className="font-bold">Email</span>
-                                            </label>
-                                            <label className={`flex flex-col items-center justify-center gap-3 p-6 rounded-xl border-2 cursor-pointer transition-all ${messageConfig.channels.includes('whatsapp') ? 'bg-emerald-50 border-emerald-500 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-500' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 dark:bg-slate-900 dark:border-slate-700'}`}>
-                                                <input
-                                                    type="checkbox"
-                                                    className="hidden"
-                                                    checked={messageConfig.channels.includes('whatsapp')}
-                                                    onChange={(e) => {
-                                                        if (e.target.checked) setMessageConfig({ ...messageConfig, channels: [...messageConfig.channels, 'whatsapp'] });
-                                                        else setMessageConfig({ ...messageConfig, channels: messageConfig.channels.filter(c => c !== 'whatsapp') });
-                                                    }}
-                                                />
-                                                <MessageSquare size={32} />
-                                                <span className="font-bold">WhatsApp</span>
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                        </div>
-
-                        {/* Footer / Navigation */}
-                        <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-between bg-slate-50 dark:bg-slate-800/50 rounded-b-xl">
-                            <button onClick={() => {
+            <Modal
+                isOpen={isConfigModalOpen}
+                onClose={() => setIsConfigModalOpen(false)}
+                title={
+                    <span className="flex items-center gap-2">
+                        <Sparkles size={18} className="text-purple-600" />
+                        {wizardStep === 'topic' && "Passo 1: Objetivo"}
+                        {wizardStep === 'data' && "Passo 2: Seleção de Dados"}
+                        {wizardStep === 'channels' && "Passo 3: Canais"}
+                    </span>
+                }
+                size="md"
+                footer={
+                    <div className="flex justify-between w-full">
+                        <Button
+                            variant="secondary"
+                            onClick={() => {
                                 if (wizardStep === 'topic') setIsConfigModalOpen(false);
                                 if (wizardStep === 'data') setWizardStep('topic');
                                 if (wizardStep === 'channels') setWizardStep('data');
-                            }} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">
-                                {wizardStep === 'topic' ? 'Cancelar' : 'Voltar'}
-                            </button>
-
-                            <button
-                                onClick={() => {
-                                    if (wizardStep === 'topic') setWizardStep('data');
-                                    else if (wizardStep === 'data') setWizardStep('channels');
-                                    else if (wizardStep === 'channels') handleGenerateMessage();
-                                }}
-                                disabled={wizardStep === 'topic' && !messageConfig.topic.trim()}
-                                className="px-6 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                            >
-                                {wizardStep === 'channels' ? (
-                                    <>
-                                        {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />} Gerar
-                                    </>
-                                ) : (
-                                    <>Próximo <ChevronRight size={16} /></>
-                                )}
-                            </button>
+                            }}
+                        >
+                            {wizardStep === 'topic' ? 'Cancelar' : 'Voltar'}
+                        </Button>
+                        <Button
+                            className="!bg-purple-600 hover:!bg-purple-700"
+                            icon={wizardStep === 'channels'
+                                ? <Sparkles size={16} />
+                                : <ChevronRight size={16} />
+                            }
+                            loading={wizardStep === 'channels' && isGenerating}
+                            disabled={wizardStep === 'topic' && !messageConfig.topic.trim()}
+                            onClick={() => {
+                                if (wizardStep === 'topic') setWizardStep('data');
+                                else if (wizardStep === 'data') setWizardStep('channels');
+                                else if (wizardStep === 'channels') handleGenerateMessage();
+                            }}
+                        >
+                            {wizardStep === 'channels' ? 'Gerar' : 'Próximo'}
+                        </Button>
+                    </div>
+                }
+            >
+                {/* Step 1: Topic */}
+                {wizardStep === 'topic' && (
+                    <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-200">
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Qual o motivo do contato?</label>
+                            <textarea
+                                className="w-full p-3 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-950 text-sm resize-none focus:ring-2 focus:ring-purple-500 outline-none transition-all h-32"
+                                placeholder="Ex: Cobrar fatura atrasada com educação..."
+                                value={messageConfig.topic}
+                                onChange={e => setMessageConfig({ ...messageConfig, topic: e.target.value })}
+                                autoFocus
+                            />
+                            <p className="text-xs text-slate-500 mt-2">Dica: Seja específico sobre o tom de voz desejado (formal, amigável, urgente).</p>
                         </div>
                     </div>
-                </div>
-            )}
+                )}
+
+                {/* Step 2: Data Selection */}
+                {wizardStep === 'data' && (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-200">
+                        <p className="text-sm text-slate-500 mb-2">Selecione os dados que a IA deve mencionar na mensagem:</p>
+
+                        {/* Invoices Selection */}
+                        <Card padding="md">
+                            <h4 className="text-xs font-bold uppercase text-slate-400 mb-2 flex items-center gap-1"><Building2 size={12} /> Faturas em Aberto</h4>
+                            {customerInvoices.length > 0 ? (
+                                <div className="space-y-2 max-h-32 overflow-y-auto">
+                                    {customerInvoices.filter(i => i.statut !== '2').map(inv => (
+                                        <label key={inv.id} className="flex items-center gap-2 p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded cursor-pointer text-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={messageConfig.selectedData.invoices.includes(String(inv.id))}
+                                                onChange={(e) => {
+                                                    const current = messageConfig.selectedData.invoices;
+                                                    const newVal = e.target.checked ? [...current, String(inv.id)] : current.filter(id => id !== String(inv.id));
+                                                    setMessageConfig({ ...messageConfig, selectedData: { ...messageConfig.selectedData, invoices: newVal } });
+                                                }}
+                                                className="rounded text-purple-600 focus:ring-purple-500"
+                                            />
+                                            <span className="flex-1 font-medium">{inv.ref}</span>
+                                            <span className="text-slate-500">${inv.total_ttc}</span>
+                                        </label>
+                                    ))}
+                                    {customerInvoices.filter(i => i.statut !== '2').length === 0 && <p className="text-xs text-slate-400 p-2">Nenhuma fatura em aberto.</p>}
+                                </div>
+                            ) : <p className="text-xs text-slate-400 italic">Nenhuma fatura encontrada.</p>}
+                        </Card>
+
+                        {/* Projects Selection */}
+                        <Card padding="md">
+                            <h4 className="text-xs font-bold uppercase text-slate-400 mb-2 flex items-center gap-1"><Building2 size={12} /> Projetos Ativos</h4>
+                            {customerProjects.length > 0 ? (
+                                <div className="space-y-2 max-h-32 overflow-y-auto">
+                                    {customerProjects.map(proj => (
+                                        <label key={proj.id} className="flex items-center gap-2 p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded cursor-pointer text-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={messageConfig.selectedData.projects.includes(String(proj.id))}
+                                                onChange={(e) => {
+                                                    const current = messageConfig.selectedData.projects;
+                                                    const newVal = e.target.checked ? [...current, String(proj.id)] : current.filter(id => id !== String(proj.id));
+                                                    setMessageConfig({ ...messageConfig, selectedData: { ...messageConfig.selectedData, projects: newVal } });
+                                                }}
+                                                className="rounded text-purple-600 focus:ring-purple-500"
+                                            />
+                                            <span className="flex-1 font-medium truncate">{proj.title}</span>
+                                            <span className="text-xs text-slate-500">{proj.progress}%</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            ) : <p className="text-xs text-slate-400 italic">Nenhum projeto encontrado.</p>}
+                        </Card>
+                    </div>
+                )}
+
+                {/* Step 3: Channels */}
+                {wizardStep === 'channels' && (
+                    <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-200">
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Onde você quer enviar?</label>
+                            <div className="grid grid-cols-2 gap-4">
+                                <label className={`flex flex-col items-center justify-center gap-3 p-6 rounded-xl border-2 cursor-pointer transition-all ${messageConfig.channels.includes('email') ? 'bg-indigo-50 border-indigo-500 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-500' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 dark:bg-slate-900 dark:border-slate-700'}`}>
+                                    <input
+                                        type="checkbox"
+                                        className="hidden"
+                                        checked={messageConfig.channels.includes('email')}
+                                        onChange={(e) => {
+                                            if (e.target.checked) setMessageConfig({ ...messageConfig, channels: [...messageConfig.channels, 'email'] });
+                                            else setMessageConfig({ ...messageConfig, channels: messageConfig.channels.filter(c => c !== 'email') });
+                                        }}
+                                    />
+                                    <Mail size={32} />
+                                    <span className="font-bold">Email</span>
+                                </label>
+                                <label className={`flex flex-col items-center justify-center gap-3 p-6 rounded-xl border-2 cursor-pointer transition-all ${messageConfig.channels.includes('whatsapp') ? 'bg-emerald-50 border-emerald-500 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-500' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300 dark:bg-slate-900 dark:border-slate-700'}`}>
+                                    <input
+                                        type="checkbox"
+                                        className="hidden"
+                                        checked={messageConfig.channels.includes('whatsapp')}
+                                        onChange={(e) => {
+                                            if (e.target.checked) setMessageConfig({ ...messageConfig, channels: [...messageConfig.channels, 'whatsapp'] });
+                                            else setMessageConfig({ ...messageConfig, channels: messageConfig.channels.filter(c => c !== 'whatsapp') });
+                                        }}
+                                    />
+                                    <MessageSquare size={32} />
+                                    <span className="font-bold">WhatsApp</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </Modal>
 
             {/* Generated Message Result Modal */}
-            {generatedMessage && (
-                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 flex flex-col max-h-[90vh]">
-                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                            <div className="flex items-center gap-4">
-                                <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                    <Sparkles size={18} className="text-purple-600" /> Resultado
-                                </h3>
-                                {/* Tabs */}
-                                <div className="flex bg-slate-200 dark:bg-slate-700 rounded-lg p-1">
-                                    {generatedMessage.email && (
-                                        <button
-                                            onClick={() => setActiveResultTab('email')}
-                                            className={`px-3 py-1 rounded text-xs font-bold transition-all ${activeResultTab === 'email' ? 'bg-white dark:bg-slate-600 shadow text-slate-800 dark:text-white' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}
-                                        >
-                                            Email
-                                        </button>
-                                    )}
-                                    {generatedMessage.whatsapp && (
-                                        <button
-                                            onClick={() => setActiveResultTab('whatsapp')}
-                                            className={`px-3 py-1 rounded text-xs font-bold transition-all ${activeResultTab === 'whatsapp' ? 'bg-white dark:bg-slate-600 shadow text-slate-800 dark:text-white' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}
-                                        >
-                                            WhatsApp
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                            <button onClick={() => setGeneratedMessage(null)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
-                        </div>
-
-                        <div className="p-6 overflow-y-auto">
-                            {activeResultTab === 'email' && generatedMessage.email && (
-                                <div className="space-y-4">
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">Assunto</label>
-                                        <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-sm font-medium">
-                                            {generatedMessage.email.subject}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">Corpo</label>
-                                        <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-sm whitespace-pre-wrap h-64 overflow-y-auto">
-                                            {generatedMessage.email.body}
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {activeResultTab === 'whatsapp' && generatedMessage.whatsapp && (
-                                <div className="space-y-4">
-                                    <div>
-                                        <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">Mensagem</label>
-                                        <div className="relative p-4 bg-[#e5ddd5] dark:bg-[#0b141a] rounded-lg border border-slate-200 dark:border-slate-700 min-h-[300px]">
-                                            <div className="bg-white dark:bg-[#202c33] p-3 rounded-lg shadow-sm text-sm text-slate-800 dark:text-slate-200 inline-block max-w-[90%] whitespace-pre-wrap relative">
-                                                {generatedMessage.whatsapp.text}
-                                                <div className="absolute top-0 right-0 -mr-2 -mt-0 w-4 h-4 bg-white dark:bg-[#202c33] transform rotate-45"></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2 bg-slate-50 dark:bg-slate-800/50 rounded-b-xl">
-                            <button onClick={() => setGeneratedMessage(null)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Fechar</button>
-                            <button onClick={() => {
+            <Modal
+                isOpen={!!generatedMessage}
+                onClose={() => setGeneratedMessage(null)}
+                title={
+                    <div className="flex items-center gap-4">
+                        <span className="flex items-center gap-2">
+                            <Sparkles size={18} className="text-purple-600" /> Resultado
+                        </span>
+                        <Tabs value={activeResultTab} onChange={(v) => setActiveResultTab(v as any)}>
+                            {generatedMessage?.email && <Tab value="email">Email</Tab>}
+                            {generatedMessage?.whatsapp && <Tab value="whatsapp">WhatsApp</Tab>}
+                        </Tabs>
+                    </div>
+                }
+                size="lg"
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={() => setGeneratedMessage(null)}>Fechar</Button>
+                        <Button
+                            icon={<CheckCircle2 size={16} />}
+                            onClick={() => {
                                 const content = activeResultTab === 'email'
-                                    ? `${generatedMessage.email?.subject}\n\n${generatedMessage.email?.body}`
-                                    : generatedMessage.whatsapp?.text;
+                                    ? `${generatedMessage?.email?.subject}\n\n${generatedMessage?.email?.body}`
+                                    : generatedMessage?.whatsapp?.text;
                                 navigator.clipboard.writeText(content || '');
                                 toast.success("Copiado para a área de transferência!");
-                            }} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
-                                <CheckCircle2 size={16} /> Copiar Conteúdo
-                            </button>
-                            {activeResultTab === 'whatsapp' && (
-                                <button onClick={() => {
-                                    window.open(`https://wa.me/${selectedCustomer?.phone?.replace(/\D/g, '')}?text=${encodeURIComponent(generatedMessage.whatsapp?.text || '')}`, '_blank');
-                                }} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
-                                    <Send size={16} /> Enviar
-                                </button>
-                            )}
-                        </div>
+                            }}
+                        >
+                            Copiar Conteúdo
+                        </Button>
+                        {activeResultTab === 'whatsapp' && (
+                            <Button
+                                variant="primary"
+                                icon={<Send size={16} />}
+                                className="!bg-emerald-600 hover:!bg-emerald-700"
+                                onClick={() => {
+                                    window.open(`https://wa.me/${selectedCustomer?.phone?.replace(/\D/g, '')}?text=${encodeURIComponent(generatedMessage?.whatsapp?.text || '')}`, '_blank');
+                                }}
+                            >
+                                Enviar
+                            </Button>
+                        )}
+                    </>
+                }
+            >
+                {activeResultTab === 'email' && generatedMessage?.email && (
+                    <div className="space-y-4">
+                        <Card padding="md">
+                            <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Assunto</label>
+                            <div className="text-slate-800 dark:text-slate-200 text-sm font-medium">
+                                {generatedMessage.email.subject}
+                            </div>
+                        </Card>
+                        <Card padding="md">
+                            <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Corpo</label>
+                            <div className="text-slate-800 dark:text-slate-200 text-sm whitespace-pre-wrap max-h-64 overflow-y-auto">
+                                {generatedMessage.email.body}
+                            </div>
+                        </Card>
                     </div>
-                </div>
-            )}
+                )}
 
-            {/* Edit Modal (Implied/Simplified for brevity, similar structure to create) */}
-            {isEditModalOpen && (
-                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 flex flex-col max-h-[90vh]">
-                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                <Pencil size={18} className="text-indigo-600" /> Editar Cliente
-                            </h3>
-                            <button onClick={() => setIsEditModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
-                        </div>
-                        <form onSubmit={handleSaveCustomer} className="p-6 space-y-4 overflow-y-auto">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="col-span-2">
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome</label>
-                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" required value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Email</label>
-                                    <input type="email" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })} />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Telefone</label>
-                                    <input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} />
-                                </div>
-                                <div className="col-span-2">
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Endereço</label>
-                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.address} onChange={e => setEditForm({ ...editForm, address: e.target.value })} />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cidade</label>
-                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.town} onChange={e => setEditForm({ ...editForm, town: e.target.value })} />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">CEP</label>
-                                    <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.zip} onChange={e => setEditForm({ ...editForm, zip: e.target.value })} />
+                {activeResultTab === 'whatsapp' && generatedMessage?.whatsapp && (
+                    <div className="space-y-4">
+                        <Card padding="md">
+                            <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Mensagem</label>
+                            <div className="relative p-4 bg-[#e5ddd5] dark:bg-[#0b141a] rounded-lg min-h-[300px]">
+                                <div className="bg-white dark:bg-[#202c33] p-3 rounded-lg shadow-sm text-sm text-slate-800 dark:text-slate-200 inline-block max-w-[90%] whitespace-pre-wrap relative">
+                                    {generatedMessage.whatsapp.text}
+                                    <div className="absolute top-0 right-0 -mr-2 -mt-0 w-4 h-4 bg-white dark:bg-[#202c33] transform rotate-45"></div>
                                 </div>
                             </div>
-                            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-                                <button type="button" onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
-                                <button type="submit" disabled={isSaving} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
-                                    {isSaving ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} Salvar Alterações
-                                </button>
-                            </div>
-                        </form>
+                        </Card>
+                    </div>
+                )}
+            </Modal>
+
+            {/* Edit Modal */}
+            <Modal
+                isOpen={isEditModalOpen}
+                onClose={() => setIsEditModalOpen(false)}
+                title="Editar Cliente"
+                size="md"
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={() => setIsEditModalOpen(false)}>Cancelar</Button>
+                        <Button loading={isSaving} onClick={handleSaveCustomer}>Salvar Alterações</Button>
+                    </>
+                }
+            >
+                <div className="space-y-4">
+                    <Input label="Nome" required value={editForm.name || ''} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input label="Email" type="email" value={editForm.email || ''} onChange={e => setEditForm({ ...editForm, email: e.target.value })} />
+                        <Input label="Telefone" value={editForm.phone || ''} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} />
+                    </div>
+                    <Input label="Endereço" value={editForm.address || ''} onChange={e => setEditForm({ ...editForm, address: e.target.value })} />
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input label="Cidade" value={editForm.town || ''} onChange={e => setEditForm({ ...editForm, town: e.target.value })} />
+                        <Input label="CEP" value={editForm.zip || ''} onChange={e => setEditForm({ ...editForm, zip: e.target.value })} />
                     </div>
                 </div>
-            )}
+            </Modal>
         </React.Fragment>
     );
 };

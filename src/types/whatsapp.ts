@@ -10,6 +10,14 @@ export interface WhatsAppAccount {
     platform: 'META' | 'WAHA' | 'TWILIO';
 }
 
+export interface WhatsAppProfile {
+    name: string;
+    number: string;
+    about: string;
+    profilePicUrl: string;
+    status: string; // Connection status
+}
+
 export interface WhatsAppMessage {
     id: string;
     conversationId: string;

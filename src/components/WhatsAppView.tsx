@@ -11,6 +11,7 @@ import { ChatWindow } from './whatsapp/ChatWindow';
 import { MessageInput } from './whatsapp/MessageInput';
 import { ContextPanel } from './whatsapp/ContextPanel';
 import { ConnectModal } from './whatsapp/ConnectModal';
+import { WhatsAppProfileSettings } from './whatsapp/WhatsAppProfileSettings';
 import { AppView } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useUsers, useCustomers, useInvoices, useOrders, useTickets } from '../hooks/dolibarr';
@@ -59,6 +60,7 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
     const [isSending, setIsSending] = useState(false);
     const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState(false);
 
     // Settings State
     const [settingsSessionId, setSettingsSessionId] = useState<string>('default');
@@ -82,7 +84,13 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
     // Load Settings on Open
     useEffect(() => {
         if (isSettingsOpen) {
-            const targetSession = (selectedAccount !== 'all') ? selectedAccount : 'default';
+            let targetSession = (selectedAccount !== 'all') ? selectedAccount : 'default';
+
+            // If defaulting to 'default' but it doesn't exist in sessions, pick the first one
+            if (targetSession === 'default' && sessions.length > 0 && !sessions.find(s => s.id === 'default')) {
+                targetSession = sessions[0].id;
+            }
+
             setSettingsSessionId(targetSession);
 
             WhatsAppService.getSessionSettings(targetSession).then(s => {
@@ -246,6 +254,7 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
                     onCreateSession={() => {
                         const newId = `session_${Math.floor(Math.random() * 10000)}`;
                         setSelectedAccount(newId);
+                        startSession(newId);
                         setIsConnectModalOpen(true);
                     }}
                     isLoading={isLoading}
@@ -410,12 +419,39 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
                                     />
                                 </div>
                             </div>
+
+                            <div className="mt-6 pt-4 border-t border-slate-200 dark:border-slate-700">
+                                <button
+                                    onClick={() => {
+                                        setIsSettingsOpen(false);
+                                        setIsProfileSettingsOpen(true);
+                                    }}
+                                    className="w-full py-2 px-4 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-md text-sm font-medium text-slate-700 dark:text-gray-200 transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <span>👤</span> Editar Perfil e Presença (Foto, Nome, Recado)
+                                </button>
+                            </div>
                         </div>
 
                         <div className="flex justify-end gap-2 mt-6">
                             <button onClick={() => setIsSettingsOpen(false)} className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400">Cancelar</button>
                             <button onClick={handleSaveSettings} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Salvar</button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* PROFILE SETTINGS MODAL */}
+            {isProfileSettingsOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                    <div className="relative w-full max-w-2xl">
+                        <WhatsAppProfileSettings sessionId={settingsSessionId} />
+                        <button
+                            onClick={() => setIsProfileSettingsOpen(false)}
+                            className="absolute -top-10 right-0 text-white hover:text-gray-200"
+                        >
+                            Fechar
+                        </button>
                     </div>
                 </div>
             )}

@@ -6,7 +6,10 @@ import {
     Layout, Users, FileText, Package, ShoppingCart, Truck, Settings, LifeBuoy,
     BarChart3, Menu, X, LogOut, FileSignature, TrendingUp, PenTool, Factory,
     FolderKanban, ClipboardList, Landmark, CalendarDays, Tag, MessageSquare,
-    Activity, Bug, UserCircle, LayoutDashboard, Sparkles, Mail, Bot, Clock, Receipt, Banknote
+    Activity, Bug, UserCircle, LayoutDashboard, Sparkles, Mail, Bot, Clock, Receipt, Banknote,
+    CheckSquare,
+    Calculator,
+    Building2
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -48,6 +51,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
                 { id: 'chat', path: '/chat', label: 'Chat Interno', icon: MessageSquare },
                 { id: 'email', path: '/email', label: 'Emails', icon: Mail },
                 { id: 'automation', path: '/automation', label: 'Automação', icon: Bot },
+                { id: 'venues', path: '/venues', label: 'Espaços', icon: Building2 },
+                { id: 'simulator', path: '/simulator', label: 'Simulador', icon: Calculator },
             ]
         },
         {
