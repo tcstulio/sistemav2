@@ -952,6 +952,8 @@ class LocalProvider implements AIProvider {
                     model: options?.model || this.modelName,
                     messages: messages,
                     temperature: 0.5 // Lower temperature for tool precision
+                }, {
+                    timeout: 120000 // 120 seconds timeout for slow local models
                 });
 
                 const reply = response.data.choices[0].message.content;

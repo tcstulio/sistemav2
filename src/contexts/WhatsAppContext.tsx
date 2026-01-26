@@ -21,52 +21,70 @@ export const WhatsAppProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const socketRef = useRef<Socket | null>(null);
 
     useEffect(() => {
-        const savedConfig = localStorage.getItem('coolgroove_config');
-        let apiKey = '';
-        if (savedConfig) {
-            try {
-                const parsed = JSON.parse(savedConfig);
-                apiKey = parsed.apiKey || '';
-            } catch (e) {
-                console.error("Failed to parse config for socket auth");
+        const connectSocket = () => {
+            const savedConfig = localStorage.getItem('coolgroove_config');
+            let apiKey = '';
+            if (savedConfig) {
+                try {
+                    const parsed = JSON.parse(savedConfig);
+                    apiKey = parsed.apiKey || '';
+                } catch (e) {
+                    console.error("Failed to parse config for socket auth");
+                }
             }
+
+            if (!apiKey) {
+                return false;
+            }
+
+            console.log('[WhatsAppProvider] Connecting to Socket.IO...');
+            const newSocket = io(config.SOCKET_URL, {
+                auth: { token: apiKey },
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionAttempts: 10,
+                reconnectionDelay: 1000,
+            });
+
+            newSocket.on('connect', () => {
+                console.log('[WhatsAppProvider] Connected: ', newSocket.id);
+                setIsConnected(true);
+            });
+
+            newSocket.on('disconnect', (reason) => {
+                console.log('[WhatsAppProvider] Disconnected:', reason);
+                setIsConnected(false);
+            });
+
+            newSocket.on('connect_error', (err) => {
+                console.error('[WhatsAppProvider] Connection Error:', err);
+                setIsConnected(false);
+            });
+
+            socketRef.current = newSocket;
+            setSocket(newSocket);
+            return true;
+        };
+
+        // Attempt initial connection
+        const connected = connectSocket();
+
+        // If not connected (no API key yet), check every 2 seconds
+        let interval: any;
+        if (!connected) {
+            interval = setInterval(() => {
+                if (connectSocket()) {
+                    clearInterval(interval);
+                }
+            }, 2000);
         }
-
-        if (!apiKey) {
-            console.warn('[WhatsAppProvider] No API Key found in coolgroove_config. Socket will not connect.');
-            return;
-        }
-
-        console.log('[WhatsAppProvider] Connecting to Socket.IO...');
-        const newSocket = io(config.SOCKET_URL || 'http://localhost:3000', {
-            auth: { token: apiKey },
-            transports: ['websocket', 'polling'],
-            reconnection: true,
-            reconnectionAttempts: 10,
-            reconnectionDelay: 1000,
-        });
-
-        newSocket.on('connect', () => {
-            console.log('[WhatsAppProvider] Connected: ', newSocket.id);
-            setIsConnected(true);
-        });
-
-        newSocket.on('disconnect', (reason) => {
-            console.log('[WhatsAppProvider] Disconnected:', reason);
-            setIsConnected(false);
-        });
-
-        newSocket.on('connect_error', (err) => {
-            console.error('[WhatsAppProvider] Connection Error:', err);
-            setIsConnected(false);
-        });
-
-        socketRef.current = newSocket;
-        setSocket(newSocket);
 
         return () => {
-            console.log('[WhatsAppProvider] Disconnecting...');
-            newSocket.disconnect();
+            if (interval) clearInterval(interval);
+            if (socketRef.current) {
+                console.log('[WhatsAppProvider] Disconnecting...');
+                socketRef.current.disconnect();
+            }
         };
     }, []);
 

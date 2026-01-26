@@ -21,14 +21,18 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b
 )
 
-echo 3. Iniciando Backend e Frontend (Modo Unificado)...
+echo 3. Iniciando Backend, Frontend e Cloudflare Tunnel...
 echo     - Backend (Inclui WhatsApp): http://localhost:3004
-echo     - Frontend: http://localhost:5173
+echo     - Frontend: http://localhost:3003
+echo     - Public URL: https://app.coolgroove.com.br
 echo.
 echo Pressione CTRL+C para parar todos os servicos.
 echo.
 
-:: Executa ambos no mesmo terminal usando concurrently
+:: Inicia o Cloudflare Tunnel em uma janela separada
+start "Cloudflare Tunnel" cloudflared tunnel --config cloudflared.config.yaml run
+
+:: Executa Backend e Frontend no terminal principal
 call npm run dev:all
 
 if %ERRORLEVEL% NEQ 0 (

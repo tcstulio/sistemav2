@@ -114,6 +114,95 @@ router.get('/config/llm/models', async (req, res) => {
     }
 });
 
+router.post('/config/llm/test', async (req, res) => {
+    try {
+        const { provider, url, model, apiKey } = req.body;
+
+        if (provider === 'google') {
+            const testKey = apiKey || config.googleApiKey;
+            if (!testKey) {
+                return res.json({ success: false, error: "API Key ausente para o Google Gemini." });
+            }
+
+            const { GoogleGenAI } = require('@google/genai');
+            const genAI = new GoogleGenAI({ apiKey: testKey });
+            const testModel = genAI.getGenerativeModel({ model: model || 'gemini-1.5-flash' });
+
+            const result = await testModel.generateContent("Respond with 'OK'");
+            const responseString = result.response.text();
+
+            // Fetch models
+            const modelList: string[] = [];
+            try {
+                const responseList = await genAI.models.list();
+                for await (const m of responseList) {
+                    if (m.name?.startsWith('models/gemini')) {
+                        modelList.push(m.name.replace('models/', ''));
+                    }
+                }
+            } catch (e) { }
+
+            return res.json({
+                success: true,
+                provider: 'google',
+                testResponse: responseString,
+                availableModels: modelList
+            });
+        } else if (provider === 'local') {
+            const testUrl = url || config.localLlmUrl;
+            const testModelName = model || config.localModelName;
+
+            if (!testUrl) {
+                return res.json({ success: false, error: "URL do servidor local ausente." });
+            }
+
+            const axios = require('axios');
+            const startTime = Date.now();
+
+            // Try to fetch models
+            const modelsResponse = await axios.get(`${testUrl}/models`, { timeout: 10000 });
+            let modelList: string[] = [];
+            if (modelsResponse.data?.data) modelList = modelsResponse.data.data.map((m: any) => m.id);
+            else if (modelsResponse.data?.models) modelList = modelsResponse.data.models.map((m: any) => m.name);
+
+            // Quick completion test
+            let testResponse = "Conectado ao servidor local.";
+            try {
+                const chatResponse = await axios.post(`${testUrl}/completions`, {
+                    model: testModelName,
+                    prompt: 'Respond with "OK"',
+                    max_tokens: 5
+                }, { timeout: 5000 }).catch(() =>
+                    axios.post(`${testUrl}/chat/completions`, {
+                        model: testModelName,
+                        messages: [{ role: 'user', content: 'Respond with "OK"' }],
+                        max_tokens: 5
+                    }, { timeout: 5000 })
+                );
+
+                testResponse = chatResponse.data.choices[0].text || chatResponse.data.choices[0].message?.content || testResponse;
+            } catch (e) { }
+
+            return res.json({
+                success: true,
+                provider: 'local',
+                testResponse: testResponse.trim(),
+                availableModels: modelList,
+                latencyMs: Date.now() - startTime
+            });
+        }
+
+        res.status(400).json({ success: false, error: "Provedor inválido." });
+    } catch (e: any) {
+        console.error("LLM Test Error:", e);
+        res.json({
+            success: false,
+            error: e.message,
+            suggestion: e.code === 'ECONNREFUSED' ? "Servidor local offline ou URL incorreta." : undefined
+        });
+    }
+});
+
 router.post('/config/llm', async (req, res) => {
     try {
         const { provider, url, key, modelName } = req.body;

@@ -11,17 +11,53 @@ import { useCustomerMutations } from '../hooks/useMutations';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 
-// Hooks
-
-// Common Components
-import { GenericListLayout } from './common/GenericListLayout';
-import { PaginationControls } from './common/PaginationControls';
-import { StatusFilterBar } from './common/StatusFilterBar';
-import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
 
+// Common Components
+import { PaginationControls } from './common/PaginationControls';
+import { LinkedObjects } from './common/LinkedObjects';
+
+// ============================================
+// Sub-components
+// ============================================
+
+/** Customer row item in the list */
+const CustomerRow: React.FC<{
+    customer: ThirdParty;
+    isSelected: boolean;
+    onSelect: () => void;
+}> = ({ customer, isSelected, onSelect }) => {
+    return (
+        <Card
+            onClick={onSelect}
+            selected={isSelected}
+            hoverable
+            padding="md"
+            className="mb-2"
+        >
+            <div className="flex justify-between items-start mb-2">
+                <div className="flex items-center gap-2">
+                    <UserCircle size={16} className="text-indigo-400 shrink-0" />
+                    <h4 className="font-bold text-slate-800 dark:text-white truncate text-sm">{customer.name}</h4>
+                </div>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${customer.client === '1' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                    {customer.client === '1' ? 'Cliente' : 'Prospect'}
+                </span>
+            </div>
+            <div className="text-xs text-slate-600 dark:text-slate-400 flex items-center gap-2 mb-1 ml-6">
+                <Mail size={12} className="opacity-50" /> {customer.email || 'Sem email'}
+            </div>
+            {customer.town && (
+                <div className="text-[11px] text-slate-500 flex items-center gap-2 ml-6">
+                    <MapPin size={12} className="opacity-50" /> {customer.town}
+                </div>
+            )}
+        </Card>
+    );
+};
+
 // Design System
-import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState } from './ui';
+import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState, MasterDetailLayout } from './ui';
 
 interface CustomerListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -309,22 +345,17 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
             ...style,
             top: (parseFloat(style.top as string) + 8) + 'px',
             height: (parseFloat(style.height as string) - 8) + 'px',
-            left: '8px',
-            width: 'calc(100% - 16px)'
+            paddingLeft: '8px',
+            paddingRight: '8px'
         };
 
         return (
-            <div style={itemStyle} onClick={() => setSelectedCustomer(customer)} className={`p-4 rounded-xl border cursor-pointer transition-all ${selectedCustomer?.id === customer.id ? `border-${config?.themeColor}-500 bg-${config?.themeColor}-50 dark:bg-${config?.themeColor}-900/20` : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md'}`}>
-                <div className="flex justify-between items-start mb-2">
-                    <h4 className="font-bold text-slate-800 dark:text-white truncate">{customer.name}</h4>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${customer.client === '1' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
-                        {customer.client === '1' ? 'Cliente' : 'Prospect'}
-                    </span>
-                </div>
-                <div className="text-sm text-slate-600 dark:text-slate-400 flex items-center gap-2 mb-1">
-                    <Mail size={12} /> {customer.email || 'Sem email'}
-                </div>
-                {customer.town && <div className="text-xs text-slate-500 flex items-center gap-2"><MapPin size={12} /> {customer.town}</div>}
+            <div style={itemStyle}>
+                <CustomerRow
+                    customer={customer}
+                    isSelected={selectedCustomer?.id === customer.id}
+                    onSelect={() => setSelectedCustomer(customer)}
+                />
             </div>
         );
     };
@@ -338,7 +369,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
             actions={
                 <div className="flex items-center gap-2">
                     <Input
-                        placeholder="Buscar cliente..."
+                        placeholder="Buscar..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         icon={<Search size={16} />}
@@ -383,82 +414,110 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
     );
 
     const renderDetail = selectedCustomer ? (
-        <>
-            <div className="flex-none bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 p-4 flex items-center justify-between z-10">
-                <div className="flex items-center gap-3">
-                    <button onClick={() => setSelectedCustomer(null)} className="lg:hidden p-2 -ml-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"><ArrowLeft size={20} /></button>
-                    <div>
-                        <h2 className="text-lg font-bold dark:text-white leading-tight">{selectedCustomer.name}</h2>
-                        <span className="text-xs text-slate-500">{selectedCustomer.email}</span>
+        <div className="flex flex-col h-full">
+            <PageHeader
+                title={selectedCustomer.name}
+                subtitle={selectedCustomer.email || 'Sem email'}
+                onBack={() => setSelectedCustomer(null)}
+                actions={
+                    <div className="flex items-center gap-1">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={<Sparkles size={18} className="text-purple-500" />}
+                            onClick={() => handleOpenMessageConfig(selectedCustomer)}
+                            title="Gerar Mensagem IA"
+                        />
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={<Pencil size={18} />}
+                            onClick={handleEditClick}
+                        />
                     </div>
-                </div>
-                <div className="flex items-center gap-2">
-                    <button onClick={() => handleGenerateEmail(selectedCustomer, 'welcome')} className="p-2 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400" title="Gerar Email"><Sparkles size={20} /></button>
-                    <button onClick={handleEditClick} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200" title="Editar"><Pencil size={20} /></button>
-                    <button onClick={() => setSelectedCustomer(null)} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
-                </div>
+                }
+            />
+
+            <div className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4">
+                <Tabs value={activeTab} onChange={(v) => setActiveTab(v as any)}>
+                    <Tab value="overview">Visão Geral</Tab>
+                    <Tab value="projects" badge={customerProjects.length}>Projetos</Tab>
+                    <Tab value="invoices" badge={customerInvoices.length}>Faturas</Tab>
+                    <Tab value="orders" badge={customerOrders.length}>Pedidos</Tab>
+                    <Tab value="proposals" badge={customerProposals.length}>Propostas</Tab>
+                </Tabs>
             </div>
 
-            {/* Tabs */}
-            <div className="flex border-b border-slate-100 dark:border-slate-800 px-4 overflow-x-auto flex-none bg-slate-50 dark:bg-slate-800/30">
-                {[
-                    { id: 'overview', label: 'Visão Geral' },
-                    { id: 'projects', label: `Projetos (${customerProjects.length})` },
-                    { id: 'invoices', label: `Faturas (${customerInvoices.length})` },
-                    { id: 'orders', label: `Pedidos (${customerOrders.length})` },
-                    { id: 'proposals', label: `Propostas (${customerProposals.length})` }
-                ].map(tab => (
-                    <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id as any)}
-                        className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === tab.id ? `border-${config?.themeColor}-600 text-${config?.themeColor}-600 dark:text-${config?.themeColor}-400 dark:border-${config?.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
-                    >
-                        {tab.label}
-                    </button>
-                ))}
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-950/50">
-                <div className="max-w-4xl mx-auto space-y-6">
-                    {activeTab === 'overview' && (
+            {activeTab === 'overview' && (
+                <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-950/50">
+                    <div className="max-w-4xl mx-auto space-y-6">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                                <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2"><Building2 size={18} className="text-indigo-500" /> Detalhes</h3>
+                            <Card padding="lg">
+                                <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+                                    <Building2 size={18} className="text-indigo-500" />
+                                    Informações
+                                </h3>
                                 <div className="space-y-3">
-                                    {selectedCustomer.address && <div className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300"><MapPin size={16} className="mt-0.5 text-slate-400" /> {selectedCustomer.address}, {selectedCustomer.zip} {selectedCustomer.town}</div>}
-                                    {selectedCustomer.phone && <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"><Phone size={16} className="text-slate-400" /> {selectedCustomer.phone}</div>}
-                                    {selectedCustomer.email && <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"><Mail size={16} className="text-slate-400" /> {selectedCustomer.email}</div>}
+                                    {selectedCustomer.address && (
+                                        <div className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300">
+                                            <MapPin size={16} className="mt-0.5 text-slate-400" />
+                                            {selectedCustomer.address}, {selectedCustomer.zip} {selectedCustomer.town}
+                                        </div>
+                                    )}
+                                    {selectedCustomer.phone && (
+                                        <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                                            <Phone size={16} className="text-slate-400" />
+                                            {selectedCustomer.phone}
+                                        </div>
+                                    )}
+                                    {selectedCustomer.email && (
+                                        <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                                            <Mail size={16} className="text-slate-400" />
+                                            {selectedCustomer.email}
+                                        </div>
+                                    )}
                                 </div>
-                            </div>
+                            </Card>
 
-                            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                                <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2"><Sparkles size={18} className="text-purple-500" /> Insights IA</h3>
+                            <Card padding="lg" className="border-purple-100 dark:border-purple-900/30">
+                                <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+                                    <Sparkles size={18} className="text-purple-500" />
+                                    Saúde do Cliente
+                                </h3>
                                 {!sentimentAnalysis ? (
                                     <div className="text-center py-4">
-                                        <p className="text-sm text-slate-500 mb-2">Analise o perfil e histórico deste cliente.</p>
-                                        <button onClick={() => handleAnalyzeSentiment(selectedCustomer)} disabled={isAnalyzing} className="text-xs bg-purple-600 text-white px-3 py-1.5 rounded flex items-center justify-center gap-1 mx-auto hover:bg-purple-700">
-                                            {isAnalyzing ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} Analisar
-                                        </button>
+                                        <p className="text-sm text-slate-500 mb-4">Análise preditiva baseada no histórico.</p>
+                                        <Button
+                                            size="sm"
+                                            className="!bg-purple-600 hover:!bg-purple-700"
+                                            onClick={() => handleAnalyzeSentiment(selectedCustomer)}
+                                            loading={isAnalyzing}
+                                            icon={!isAnalyzing && <Sparkles size={14} />}
+                                        >
+                                            Gerar Insights
+                                        </Button>
                                     </div>
                                 ) : (
-                                    <div className="space-y-3">
+                                    <div className="space-y-4">
                                         <div className="flex justify-between items-center">
-                                            <span className="text-sm text-slate-500">Saúde do Cliente</span>
-                                            <div className="flex items-center gap-2">
-                                                <div className="w-24 h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                                                    <div className="h-full bg-gradient-to-r from-red-500 to-green-500" style={{ width: `${sentimentAnalysis.score}%` }}></div>
-                                                </div>
-                                                <span className="font-bold text-slate-800 dark:text-white">{sentimentAnalysis.score}/100</span>
-                                            </div>
+                                            <span className="text-sm text-slate-500 font-medium">Score de Fidelidade</span>
+                                            <span className="font-bold text-slate-800 dark:text-white text-lg">{sentimentAnalysis.score}/100</span>
                                         </div>
-                                        <div className="p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-100 dark:border-purple-800 text-sm text-purple-800 dark:text-purple-200">
-                                            <p className="font-medium mb-1">{sentimentAnalysis.label}</p>
-                                            <p className="opacity-90 text-xs">{sentimentAnalysis.insight}</p>
+                                        <div className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                                            <div
+                                                className="h-full bg-gradient-to-r from-red-500 via-yellow-400 to-green-500 transition-all duration-1000"
+                                                style={{ width: `${sentimentAnalysis.score}%` }}
+                                            ></div>
+                                        </div>
+                                        <div className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-xl border border-purple-100 dark:border-purple-800 text-sm">
+                                            <p className="font-bold text-purple-900 dark:text-purple-200 mb-1">{sentimentAnalysis.label}</p>
+                                            <p className="text-purple-800/80 dark:text-purple-300/80 text-xs leading-relaxed">{sentimentAnalysis.insight}</p>
                                         </div>
                                     </div>
                                 )}
-                            </div>
-                            <div className="md:col-span-2 mt-6">
+                            </Card>
+
+                            <div className="md:col-span-2">
                                 <LinkedObjects
                                     id={selectedCustomer.id}
                                     type="societe"
@@ -466,17 +525,21 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                                 />
                             </div>
                         </div>
-                    )}
+                    </div>
+                </div>
+            )}
 
-                    {activeTab === 'projects' && (
-                        <div className="space-y-3">
-                            {customerProjects.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhum projeto encontrado.</p> :
+            {(activeTab === 'projects' || activeTab === 'invoices' || activeTab === 'orders' || activeTab === 'proposals') && (
+                <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-950/50">
+                    <div className="max-w-4xl mx-auto space-y-3">
+                        {activeTab === 'projects' && (
+                            customerProjects.length === 0 ? <EmptyState title="Nenhum projeto encontrado" /> :
                                 customerProjects.map(proj => (
-                                    <div key={proj.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center hover:shadow-sm cursor-pointer" onClick={() => onNavigate && onNavigate('projects', proj.id)}>
+                                    <Card key={proj.id} onClick={() => onNavigate && onNavigate('projects', proj.id)} hoverable className="flex justify-between items-center p-4">
                                         <div>
                                             <div className="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2">
                                                 {proj.ref}
-                                                <span className={`text-xs px-2 py-0.5 rounded ${proj.statut === '1' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
+                                                <span className={`text-[10px] px-2 py-0.5 rounded uppercase font-bold ${proj.statut === '1' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>
                                                     {proj.statut === '1' ? 'Aberto' : 'Fechado'}
                                                 </span>
                                             </div>
@@ -484,75 +547,69 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                                         </div>
                                         <div className="flex items-center gap-4">
                                             <div className="w-24 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                                                <div className="h-full bg-blue-500" style={{ width: `${proj.progress}%` }}></div>
+                                                <div className="h-full bg-indigo-500" style={{ width: `${proj.progress}%` }}></div>
                                             </div>
-                                            <span className="text-xs font-medium text-slate-600 dark:text-slate-400">{proj.progress}%</span>
+                                            <span className="text-xs font-mono text-slate-600 dark:text-slate-400">{proj.progress}%</span>
                                         </div>
-                                    </div>
-                                ))}
-                        </div>
-                    )}
+                                    </Card>
+                                ))
+                        )}
 
-                    {activeTab === 'invoices' && (
-                        <div className="space-y-3">
-                            {customerInvoices.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhuma fatura encontrada.</p> :
+                        {activeTab === 'invoices' && (
+                            customerInvoices.length === 0 ? <EmptyState title="Nenhuma fatura encontrada" /> :
                                 customerInvoices.map(inv => (
-                                    <div key={inv.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center hover:shadow-sm cursor-pointer" onClick={() => onNavigate && onNavigate('invoices', inv.id)}>
+                                    <Card key={inv.id} onClick={() => onNavigate && onNavigate('invoices', inv.id)} hoverable className="flex justify-between items-center p-4">
                                         <div>
                                             <div className="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2">
                                                 {inv.ref}
-                                                {inv.statut === '2' ? <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Pago</span> : <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded">Aberto</span>}
+                                                {inv.statut === '2' ? <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded font-bold uppercase">Pago</span> : <span className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded font-bold uppercase">Aberto</span>}
                                             </div>
                                             <div className="text-xs text-slate-500 mt-1">{formatDateOnly(inv.date)}</div>
                                         </div>
-                                        <div className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString()}</div>
-                                    </div>
-                                ))}
-                        </div>
-                    )}
+                                        <div className="font-bold text-slate-900 dark:text-white">${inv.total_ttc.toLocaleString()}</div>
+                                    </Card>
+                                ))
+                        )}
 
-                    {activeTab === 'orders' && (
-                        <div className="space-y-3">
-                            {customerOrders.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhum pedido encontrado.</p> :
+                        {activeTab === 'orders' && (
+                            customerOrders.length === 0 ? <EmptyState title="Nenhum pedido encontrado" /> :
                                 customerOrders.map(ord => (
-                                    <div key={ord.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center hover:shadow-sm cursor-pointer" onClick={() => onNavigate && onNavigate('orders', ord.id)}>
+                                    <Card key={ord.id} onClick={() => onNavigate && onNavigate('orders', ord.id)} hoverable className="flex justify-between items-center p-4">
                                         <div>
                                             <div className="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2">
                                                 {ord.ref}
-                                                <span className={`text-xs px-2 py-0.5 rounded ${ord.statut === '3' ? 'bg-emerald-100 text-emerald-700' : ord.statut === '0' ? 'bg-slate-100 text-slate-700' : 'bg-blue-100 text-blue-700'}`}>
+                                                <span className={`text-[10px] px-2 py-0.5 rounded uppercase font-bold ${ord.statut === '3' ? 'bg-emerald-100 text-emerald-700' : ord.statut === '0' ? 'bg-slate-100 text-slate-700' : 'bg-blue-100 text-blue-700'}`}>
                                                     {ord.statut === '3' ? 'Entregue' : ord.statut === '0' ? 'Rascunho' : 'Em Processo'}
                                                 </span>
                                             </div>
                                             <div className="text-xs text-slate-500 mt-1">{formatDateOnly(ord.date)}</div>
                                         </div>
-                                        <div className="font-bold text-slate-800 dark:text-white">${ord.total_ttc.toLocaleString()}</div>
-                                    </div>
-                                ))}
-                        </div>
-                    )}
+                                        <div className="font-bold text-slate-900 dark:text-white">${ord.total_ttc.toLocaleString()}</div>
+                                    </Card>
+                                ))
+                        )}
 
-                    {activeTab === 'proposals' && (
-                        <div className="space-y-3">
-                            {customerProposals.length === 0 ? <p className="text-center text-slate-400 py-10">Nenhuma proposta encontrada.</p> :
+                        {activeTab === 'proposals' && (
+                            customerProposals.length === 0 ? <EmptyState title="Nenhuma proposta encontrada" /> :
                                 customerProposals.map(prop => (
-                                    <div key={prop.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex justify-between items-center hover:shadow-sm cursor-pointer" onClick={() => onNavigate && onNavigate('proposals', prop.id)}>
+                                    <Card key={prop.id} onClick={() => onNavigate && onNavigate('proposals', prop.id)} hoverable className="flex justify-between items-center p-4">
                                         <div>
                                             <div className="font-bold text-slate-800 dark:text-white text-sm flex items-center gap-2">
                                                 {prop.ref}
-                                                <span className={`text-xs px-2 py-0.5 rounded ${prop.statut === '2' ? 'bg-emerald-100 text-emerald-700' : prop.statut === '3' ? 'bg-red-100 text-red-700' : 'bg-purple-100 text-purple-700'}`}>
+                                                <span className={`text-[10px] px-2 py-0.5 rounded uppercase font-bold ${prop.statut === '2' ? 'bg-emerald-100 text-emerald-700' : prop.statut === '3' ? 'bg-red-100 text-red-700' : 'bg-purple-100 text-purple-700'}`}>
                                                     {prop.statut === '2' ? 'Assinada' : prop.statut === '3' ? 'Recusada' : 'Aberta'}
                                                 </span>
                                             </div>
                                             <div className="text-xs text-slate-500 mt-1">{formatDateOnly(prop.date)}</div>
                                         </div>
-                                        <div className="font-bold text-slate-800 dark:text-white">${prop.total_ttc.toLocaleString()}</div>
-                                    </div>
-                                ))}
-                        </div>
-                    )}
+                                        <div className="font-bold text-slate-900 dark:text-white">${prop.total_ttc.toLocaleString()}</div>
+                                    </Card>
+                                ))
+                        )}
+                    </div>
                 </div>
-            </div>
-        </>
+            )}
+        </div>
     ) : (
         <div className="flex flex-col items-center justify-center h-full text-slate-400">
             <UserCircle size={48} className="mb-4 opacity-50" />
@@ -561,23 +618,36 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
     );
 
     return (
-        <React.Fragment>
-            <GenericListLayout
-                header={renderHeader}
-                content={renderListContent}
-                detail={renderDetail}
-                isDetailOpen={!!selectedCustomer}
-                pagination={
-                    <PaginationControls
-                        page={page}
-                        limit={limit}
-                        onPageChange={setPage}
-                        onLimitChange={setLimit}
-                        hasNext={customers.length >= limit}
-                        hasPrev={page > 0}
-                    />
+        <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
+            {/* Header shown only if no item or on desktop */}
+            <div className={selectedCustomer ? 'hidden lg:block' : 'block'}>
+                {renderHeader}
+            </div>
+
+            <MasterDetailLayout
+                showDetail={!!selectedCustomer}
+                onCloseDetail={() => setSelectedCustomer(null)}
+                listWidth="1/3"
+                list={
+                    <div className="flex flex-col h-full">
+                        <div className="flex-1 min-h-0">
+                            {renderListContent}
+                        </div>
+                        <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                            <PaginationControls
+                                page={page}
+                                limit={limit}
+                                onPageChange={setPage}
+                                onLimitChange={setLimit}
+                                hasNext={customers.length >= limit}
+                                hasPrev={page > 0}
+                            />
+                        </div>
+                    </div>
                 }
+                detail={renderDetail}
             />
+
 
             {/* Create Modal */}
             <Modal
@@ -959,6 +1029,6 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                     </div>
                 </div>
             </Modal>
-        </React.Fragment>
+        </div>
     );
 };
