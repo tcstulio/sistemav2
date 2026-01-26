@@ -9,6 +9,12 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3003,
       host: '0.0.0.0',
+      allowedHosts: 'all',
+      hmr: {
+        host: 'app.coolgroove.com.br',
+        protocol: 'wss',
+        clientPort: 443,
+      },
       watch: {
         ignored: ['**/.wwebjs_auth/**', '**/.wwebjs_cache/**', '**/backend/**']
       },

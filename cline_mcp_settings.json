@@ -1,0 +1,20 @@
+{
+  "servers": {
+    "github.com/danield137/mcp-workflowy": {
+      "path": "mcp-workflowy",
+      "active": true,
+      "port": 3000
+    },
+    "filesystem": {
+      "path": "mcp-filesystem",
+      "active": false, // New server configuration
+      "port": 3001 // Using different port to avoid conflicts
+    }
+  }
+}
+<task_progress>- [x] Read cline_mcp_settings.json (completed)
+- [ ] Create directory for new MCP server (already done)
+- [ ] Update settings file with new filesystem server configuration (attempting again)
+- [ ] Verify installation and demonstrate capabilities
+</task_progress>
+</write_to_file>

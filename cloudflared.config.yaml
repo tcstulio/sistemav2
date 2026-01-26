@@ -1,0 +1,9 @@
+tunnel: 58ca216c-266c-4b85-a346-ddf98b628135
+credentials-file: C:\Users\Mars\.cloudflared\58ca216c-266c-4b85-a346-ddf98b628135.json
+
+ingress:
+  - hostname: app.coolgroove.com.br
+    service: https://localhost:3003
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404
