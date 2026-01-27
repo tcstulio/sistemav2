@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useDolibarr } from '../../context/DolibarrContext';
-import { Send, User as UserIcon, Calendar, Clock, Loader2, Search, X, CheckSquare, Paperclip } from 'lucide-react';
+import { Send, User as UserIcon, Calendar, Clock, Loader2, Search, X, CheckSquare, Paperclip, ArrowLeft } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import * as Operations from '../../services/api/operations';
@@ -15,9 +15,10 @@ interface ChatInterfaceProps {
     elementType: string; // 'project', 'task', 'facture', etc.
     title?: string;
     height?: string;
+    onBack?: () => void;
 }
 
-export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, elementType, title = "Comentários", height = "400px" }) => {
+export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, elementType, title = "Comentários", height = "400px", onBack }) => {
     const { config, currentUser, refreshData } = useDolibarr();
     const { data: events, isLoading, refetch } = useEvents(config);
 
@@ -184,14 +185,24 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
             <div className="p-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 flex justify-between items-center h-[50px]">
                 {!showSearch ? (
                     <>
-                        <h3 className="font-medium text-gray-700 dark:text-gray-200 flex items-center gap-2">
-                            <UserIcon size={16} />
-                            {title}
-                        </h3>
                         <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500">{chatMessages.length} mensagens</span>
-                            <button onClick={() => setShowSearch(true)} className="text-gray-400 hover:text-blue-500">
-                                <Search size={16} />
+                            {onBack && (
+                                <button
+                                    onClick={onBack}
+                                    className="lg:hidden p-2 -ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                                >
+                                    <ArrowLeft size={20} />
+                                </button>
+                            )}
+                            <h3 className="font-medium text-gray-700 dark:text-gray-200 flex items-center gap-2">
+                                <UserIcon size={16} />
+                                {title}
+                            </h3>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500 hidden sm:inline">{chatMessages.length} mensagens</span>
+                            <button onClick={() => setShowSearch(true)} className="p-2 text-gray-400 hover:text-blue-500">
+                                <Search size={20} />
                             </button>
                         </div>
                     </>
@@ -239,14 +250,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                                     />
 
                                     {/* Action Bar */}
-                                    <div className={`absolute top-0 right-[-10px] opacity-0 group-hover:opacity-100 transition-opacity translate-x-full pr-2 flex flex-col gap-1`}>
+                                    <div className={`absolute top-0 right-[-8px] lg:opacity-0 lg:group-hover:opacity-100 opacity-100 transition-opacity translate-x-full pr-2 flex flex-col gap-2`}>
                                         <button
                                             onClick={() => setReplyingTo(msg)}
-                                            className="p-1.5 bg-white dark:bg-gray-700 shadow-sm border border-gray-100 dark:border-gray-600 rounded-full text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:shadow-md transition-all"
+                                            className="p-2 bg-white dark:bg-gray-700 shadow-sm border border-gray-100 dark:border-gray-600 rounded-full text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:shadow-md transition-all sm:p-1.5"
                                             title="Responder"
                                         >
                                             <div className="transform scale-x-[-1]">
-                                                <Send size={12} />
+                                                <Send size={14} />
                                             </div>
                                         </button>
 
@@ -264,10 +275,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                                                     }]);
                                                     setShowTaskWizard(true);
                                                 }}
-                                                className="p-1.5 bg-white dark:bg-gray-700 shadow-sm border border-gray-100 dark:border-gray-600 rounded-full text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:shadow-md transition-all"
+                                                className="p-2 bg-white dark:bg-gray-700 shadow-sm border border-gray-100 dark:border-gray-600 rounded-full text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:shadow-md transition-all sm:p-1.5"
                                                 title="Criar Tarefa"
                                             >
-                                                <CheckSquare size={12} />
+                                                <CheckSquare size={14} />
                                             </button>
                                         )}
                                     </div>
@@ -319,17 +330,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                     <button
                         onClick={() => fileInputRef.current?.click()}
                         disabled={isSending || isUploading}
-                        className="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 p-2 rounded-full transition-colors disabled:opacity-50"
+                        className="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 p-3 rounded-full transition-colors disabled:opacity-50 sm:p-2"
                         title="Anexar arquivo"
                     >
-                        {isUploading ? <Loader2 size={18} className="animate-spin" /> : <Paperclip size={18} />}
+                        {isUploading ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
                     </button>
                     <button
                         onClick={() => handleSendMessage()}
                         disabled={isSending || !newMessage.trim()}
-                        className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-colors sm:p-2"
                     >
-                        {isSending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+                        {isSending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
                     </button>
                 </div>
             </div>
