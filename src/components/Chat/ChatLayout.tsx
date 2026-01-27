@@ -1,19 +1,24 @@
-
 import React from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useNavigate, useParams } from 'react-router-dom';
 import { ChatSidebar } from './ChatSidebar';
+import { MasterDetailLayout } from '../ui/MasterDetailLayout';
 
 export const ChatLayout: React.FC = () => {
     const navigate = useNavigate();
+    const { type, id } = useParams<{ type: string; id: string }>();
+    const hasActiveChat = !!(type && id);
 
     return (
-        <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-white dark:bg-slate-950">
-            <ChatSidebar onSelect={(type, id) => {
-                navigate(`/chat/${type}/${id}`);
-            }} />
-            <div className="flex-1 flex flex-col min-w-0">
-                <Outlet />
-            </div>
+        <div className="h-[calc(100vh-64px)] overflow-hidden bg-white dark:bg-slate-950 flex flex-col">
+            <MasterDetailLayout
+                list={
+                    <ChatSidebar onSelect={() => { }} />
+                }
+                detail={<Outlet />}
+                showDetail={hasActiveChat}
+                onCloseDetail={() => navigate('/chat')}
+                listWidth="1/4"
+            />
         </div>
     );
 };

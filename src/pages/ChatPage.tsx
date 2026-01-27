@@ -49,6 +49,7 @@ export const ChatConversation: React.FC = () => {
                 elementType={type}
                 title={title}
                 height="100%"
+                onBack={() => window.history.back()}
             />
         </div>
     );
