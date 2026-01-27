@@ -113,134 +113,136 @@ export const TimeAnalysisDashboard: React.FC<TimeAnalysisDashboardProps> = ({
     }, [filteredLogs, tasks]);
 
     return (
-        <div className="flex flex-col h-full bg-gray-50 p-6 rounded-xl overflow-y-auto w-full"> {/* Ensure w-full for tab view */}
+        <div className="flex flex-col min-h-full bg-slate-50 dark:bg-slate-950 p-3 sm:p-6 rounded-xl w-full">
             {/* Header */}
-            <div className="flex justify-between items-center mb-8">
-                <div className="flex items-center gap-3">
-                    {/* Back button removed as requested for Tab view */}
-                    <div>
-                        <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-                            <Clock className="w-7 h-7 text-indigo-600" />
-                            Análise de Tempo
-                        </h1>
-                        <p className="text-sm text-gray-500">Visualize a distribuição de carga horária da equipe.</p>
+            <div className="flex flex-col gap-4 mb-6 sm:mb-8">
+                <div className="flex flex-wrap justify-between items-center gap-4">
+                    <div className="flex items-center gap-3">
+                        <div>
+                            <h1 className="text-xl sm:text-2xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                                <Clock className="w-5 h-5 sm:w-7 sm:h-7 text-indigo-600" />
+                                Análise de Tempo
+                            </h1>
+                            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">Distribuição de carga horária da equipe.</p>
+                        </div>
                     </div>
-                </div>
-
-                <div className="flex items-center gap-4">
                     {/* AI Button */}
                     <button
                         onClick={() => setShowAiAssistant(true)}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors shadow-sm"
+                        className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 sm:py-2 rounded-xl sm:rounded-lg flex items-center justify-center gap-2 text-sm font-semibold transition-colors shadow-md shadow-indigo-500/20 active:scale-[0.98]"
                     >
                         <Sparkles className="w-4 h-4" />
                         Assistente IA
                     </button>
+                </div>
 
-                    <div className="flex items-center gap-4 bg-white p-3 rounded-lg shadow-sm border border-gray-100">
-                        {/* User Filter (Searchable) */}
-                        <div className="relative">
-                            <button
-                                onClick={() => setIsUserDropdownOpen(!isUserDropdownOpen)}
-                                className="p-2 border rounded-md text-sm bg-gray-50 hover:bg-white focus:ring-2 focus:ring-indigo-500 outline-none min-w-[200px] flex justify-between items-center text-left transition-all shadow-sm"
-                            >
-                                <span className="truncate max-w-[180px]">
-                                    {selectedUserId === 'all'
-                                        ? 'Todas as Pessoas'
-                                        : (users.find(u => u.id === selectedUserId)?.firstname || users.find(u => u.id === selectedUserId)?.login || 'Desconhecido')
-                                    }
-                                </span>
-                                <ChevronDown className="w-4 h-4 text-gray-400" />
-                            </button>
+                <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3 bg-white dark:bg-slate-900 p-2 sm:p-3 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800">
+                    {/* User Filter (Searchable) */}
+                    <div className="relative w-full md:w-auto">
+                        <button
+                            onClick={() => setIsUserDropdownOpen(!isUserDropdownOpen)}
+                            className="w-full md:min-w-[200px] p-3 sm:p-2 border border-slate-200 dark:border-slate-700 rounded-xl sm:rounded-md text-sm bg-slate-50 dark:bg-slate-800 hover:bg-white dark:hover:bg-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none flex justify-between items-center text-left transition-all shadow-sm min-h-[44px] sm:min-h-0"
+                        >
+                            <span className="truncate pr-2">
+                                {selectedUserId === 'all'
+                                    ? 'Todas as Pessoas'
+                                    : (users.find(u => u.id === selectedUserId)?.firstname || users.find(u => u.id === selectedUserId)?.login || 'Desconhecido')
+                                }
+                            </span>
+                            <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+                        </button>
 
-                            {isUserDropdownOpen && (
-                                <>
-                                    <div
-                                        className="fixed inset-0 z-10"
-                                        onClick={() => setIsUserDropdownOpen(false)}
-                                    />
-                                    <div className="absolute top-full right-0 mt-2 w-[250px] bg-white rounded-xl shadow-xl border border-gray-100 z-20 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                                        <div className="p-2 border-b border-gray-50 bg-gray-50/50">
-                                            <div className="relative">
-                                                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                                                <input
-                                                    type="text"
-                                                    placeholder="Buscar pessoa..."
-                                                    className="w-full pl-9 pr-3 py-1.5 text-sm border-none rounded-lg bg-white shadow-sm ring-1 ring-gray-200 focus:ring-2 focus:ring-indigo-500 outline-none"
-                                                    value={userSearchQuery}
-                                                    onChange={(e) => setUserSearchQuery(e.target.value)}
-                                                    autoFocus
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="max-h-[250px] overflow-y-auto p-1 custom-scrollbar">
-                                            <button
-                                                onClick={() => {
-                                                    setSelectedUserId('all');
-                                                    setIsUserDropdownOpen(false);
-                                                }}
-                                                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between ${selectedUserId === 'all'
-                                                    ? 'bg-indigo-50 text-indigo-700 font-medium'
-                                                    : 'text-gray-700 hover:bg-gray-50'
-                                                    }`}
-                                            >
-                                                <span>Todas as Pessoas</span>
-                                                {selectedUserId === 'all' && <Check className="w-4 h-4" />}
-                                            </button>
-
-                                            {users
-                                                .filter(u => {
-                                                    if (!userSearchQuery) return true;
-                                                    const search = userSearchQuery.toLowerCase();
-                                                    return (u.firstname || '').toLowerCase().includes(search) ||
-                                                        (u.login || '').toLowerCase().includes(search);
-                                                })
-                                                .map(u => (
-                                                    <button
-                                                        key={u.id}
-                                                        onClick={() => {
-                                                            setSelectedUserId(u.id);
-                                                            setIsUserDropdownOpen(false);
-                                                        }}
-                                                        className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between ${selectedUserId === u.id
-                                                            ? 'bg-indigo-50 text-indigo-700 font-medium'
-                                                            : 'text-gray-700 hover:bg-gray-50'
-                                                            }`}
-                                                    >
-                                                        <div className="flex items-center gap-2 truncate">
-                                                            <div className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center text-[10px] text-gray-600 font-bold shrink-0">
-                                                                {(u.firstname?.[0] || u.login?.[0] || '?').toUpperCase()}
-                                                            </div>
-                                                            <span className="truncate">{u.firstname || u.login}</span>
-                                                        </div>
-                                                        {selectedUserId === u.id && <Check className="w-4 h-4 shrink-0" />}
-                                                    </button>
-                                                ))}
-
-                                            {users.filter(u => (u.firstname || '').toLowerCase().includes(userSearchQuery.toLowerCase()) || (u.login || '').toLowerCase().includes(userSearchQuery.toLowerCase())).length === 0 && (
-                                                <div className="px-3 py-4 text-center text-xs text-gray-400">
-                                                    Ninguém encontrado
-                                                </div>
-                                            )}
+                        {isUserDropdownOpen && (
+                            <>
+                                <div
+                                    className="fixed inset-0 z-10"
+                                    onClick={() => setIsUserDropdownOpen(false)}
+                                />
+                                <div className="absolute top-full left-0 md:right-0 md:left-auto mt-2 w-[calc(100vw-2rem)] sm:w-[280px] max-w-[280px] bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-gray-100 dark:border-slate-800 z-20 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                    <div className="p-2 border-b border-gray-50 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-800/50">
+                                        <div className="relative">
+                                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500" />
+                                            <input
+                                                type="text"
+                                                placeholder="Buscar pessoa..."
+                                                className="w-full pl-9 pr-3 py-1.5 text-sm border-none rounded-lg bg-white dark:bg-slate-800 shadow-sm ring-1 ring-gray-200 dark:ring-slate-700 focus:ring-2 focus:ring-indigo-500 outline-none text-slate-900 dark:text-slate-100 placeholder:text-slate-400"
+                                                value={userSearchQuery}
+                                                onChange={(e) => setUserSearchQuery(e.target.value)}
+                                                autoFocus
+                                            />
                                         </div>
                                     </div>
-                                </>
-                            )}
-                        </div>
+                                    <div className="max-h-[250px] overflow-y-auto p-1 custom-scrollbar">
+                                        <button
+                                            onClick={() => {
+                                                setSelectedUserId('all');
+                                                setIsUserDropdownOpen(false);
+                                            }}
+                                            className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors flex items-center justify-between ${selectedUserId === 'all'
+                                                ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-medium'
+                                                : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'
+                                                }`}
+                                        >
+                                            <span>Todas as Pessoas</span>
+                                            {selectedUserId === 'all' && <Check className="w-4 h-4" />}
+                                        </button>
 
-                        {/* Date Range - Simplified Month Picker for MVP */}
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500 uppercase font-semibold">De</span>
+                                        {users
+                                            .filter(u => {
+                                                if (!userSearchQuery) return true;
+                                                const search = userSearchQuery.toLowerCase();
+                                                return (u.firstname || '').toLowerCase().includes(search) ||
+                                                    (u.login || '').toLowerCase().includes(search);
+                                            })
+                                            .map(u => (
+                                                <button
+                                                    key={u.id}
+                                                    onClick={() => {
+                                                        setSelectedUserId(u.id);
+                                                        setIsUserDropdownOpen(false);
+                                                    }}
+                                                    className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors flex items-center justify-between ${selectedUserId === u.id
+                                                        ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-medium'
+                                                        : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'
+                                                        }`}
+                                                >
+                                                    <div className="flex items-center gap-2 truncate">
+                                                        <div className="w-6 h-6 rounded-full bg-gray-200 dark:bg-slate-700 flex items-center justify-center text-[10px] text-gray-600 dark:text-slate-300 font-bold shrink-0">
+                                                            {(u.firstname?.[0] || u.login?.[0] || '?').toUpperCase()}
+                                                        </div>
+                                                        <span className="truncate">{u.firstname || u.login}</span>
+                                                    </div>
+                                                    {selectedUserId === u.id && <Check className="w-4 h-4 shrink-0" />}
+                                                </button>
+                                            ))}
+
+                                        {users.filter(u => (u.firstname || '').toLowerCase().includes(userSearchQuery.toLowerCase()) || (u.login || '').toLowerCase().includes(userSearchQuery.toLowerCase())).length === 0 && (
+                                            <div className="px-3 py-4 text-center text-xs text-gray-400 dark:text-slate-500">
+                                                Ninguém encontrado
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
+
+                    {/* Date Range */}
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1">
+                        <div className="flex items-center gap-2 flex-1">
+                            <span className="text-[10px] text-slate-500 uppercase font-bold w-6">De</span>
                             <input
                                 type="date"
-                                className="p-2 border rounded-md text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-500 outline-none"
+                                className="flex-1 p-3 sm:p-2 border border-slate-200 dark:border-slate-700 rounded-xl sm:rounded-md text-sm bg-slate-50 dark:bg-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none min-h-[44px] sm:min-h-0"
                                 value={dateRange.start}
                                 onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
                             />
-                            <span className="text-xs text-gray-500 uppercase font-semibold">Até</span>
+                        </div>
+                        <div className="flex items-center gap-2 flex-1">
+                            <span className="text-[10px] text-slate-500 uppercase font-bold w-6">Até</span>
                             <input
                                 type="date"
-                                className="p-2 border rounded-md text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-500 outline-none"
+                                className="flex-1 p-3 sm:p-2 border border-slate-200 dark:border-slate-700 rounded-xl sm:rounded-md text-sm bg-slate-50 dark:bg-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none min-h-[44px] sm:min-h-0"
                                 value={dateRange.end}
                                 onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
                             />
@@ -250,52 +252,49 @@ export const TimeAnalysisDashboard: React.FC<TimeAnalysisDashboardProps> = ({
             </div>
 
             {/* Metrics Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6 mb-6 sm:mb-8">
+                <div className="bg-white dark:bg-slate-900 p-3 sm:p-5 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 flex items-center justify-between">
                     <div>
-                        <p className="text-sm font-medium text-gray-500 uppercase tracking-wide">Total Horas</p>
-                        <h3 className="text-3xl font-bold text-gray-900 mt-1">{totalHours.toFixed(1)}h</h3>
+                        <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">Horas</p>
+                        <h3 className="text-xl sm:text-3xl font-extrabold text-slate-900 dark:text-white mt-1">{totalHours.toFixed(1)}h</h3>
                     </div>
-                    <div className="bg-indigo-50 p-3 rounded-full">
-                        <Clock className="w-6 h-6 text-indigo-600" />
+                    <div className="hidden sm:block bg-indigo-50 dark:bg-indigo-900/30 p-3 rounded-full">
+                        <Clock className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
                     </div>
                 </div>
 
-                <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+                <div className="bg-white dark:bg-slate-900 p-3 sm:p-5 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 flex items-center justify-between">
                     <div>
-                        <p className="text-sm font-medium text-gray-500 uppercase tracking-wide">Dias Trabalhados</p>
-                        <h3 className="text-3xl font-bold text-gray-900 mt-1">{activeDays}</h3>
+                        <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">Dias</p>
+                        <h3 className="text-xl sm:text-3xl font-extrabold text-slate-900 dark:text-white mt-1">{activeDays}</h3>
                     </div>
-                    <div className="bg-blue-50 p-3 rounded-full">
-                        <Calendar className="w-6 h-6 text-blue-600" />
+                    <div className="hidden sm:block bg-blue-50 dark:bg-blue-900/30 p-3 rounded-full">
+                        <Calendar className="w-6 h-6 text-blue-600 dark:text-blue-400" />
                     </div>
                 </div>
 
-                <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+                <div className="col-span-2 md:col-span-1 bg-white dark:bg-slate-900 p-3 sm:p-5 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 flex items-center justify-between">
                     <div>
-                        <p className="text-sm font-medium text-gray-500 uppercase tracking-wide">Média Diária</p>
-                        <h3 className={`text-3xl font-bold mt-1 ${avgHoursPerDay > 8 ? 'text-red-500' : 'text-emerald-600'}`}>
+                        <p className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">Média</p>
+                        <h3 className={`text-xl sm:text-3xl font-extrabold mt-1 ${avgHoursPerDay > 8 ? 'text-red-500' : 'text-emerald-600'}`}>
                             {avgHoursPerDay.toFixed(1)}h
                         </h3>
                     </div>
-                    {avgHoursPerDay > 8 ? (
-                        <div className="bg-red-50 p-3 rounded-full animate-pulse">
-                            <AlertCircle className="w-6 h-6 text-red-500" />
-                        </div>
-                    ) : (
-                        <div className="bg-emerald-50 p-3 rounded-full">
-                            <Clock className="w-6 h-6 text-emerald-600" />
-                        </div>
-                    )}
+                    <div className={`p-3 rounded-full ${avgHoursPerDay > 8 ? 'bg-red-50 dark:bg-red-900/30' : 'bg-emerald-50 dark:bg-emerald-900/30'}`}>
+                        {avgHoursPerDay > 8 ? (
+                            <AlertCircle className="w-5 h-5 sm:w-6 sm:h-6 text-red-500" />
+                        ) : (
+                            <Clock className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600 dark:text-emerald-400" />
+                        )}
+                    </div>
                 </div>
             </div>
 
             {/* Charts Row */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8 flex-1 min-h-[400px]">
-
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8 lg:flex-1 min-h-[400px]">
                 {/* Bar Chart: Daily Workload */}
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col">
-                    <h3 className="text-lg font-bold text-gray-800 mb-6 px-2 border-l-4 border-indigo-500">Carga Horária Diária</h3>
+                <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col">
+                    <h3 className="text-base sm:text-lg font-bold text-slate-800 dark:text-white mb-6 px-2 border-l-4 border-indigo-500">Carga Diária</h3>
                     <div className="flex-1 w-full min-h-[300px]">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={dailyData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
@@ -318,8 +317,8 @@ export const TimeAnalysisDashboard: React.FC<TimeAnalysisDashboardProps> = ({
                 </div>
 
                 {/* Pie Chart: Project Distribution */}
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col">
-                    <h3 className="text-lg font-bold text-gray-800 mb-6 px-2 border-l-4 border-purple-500">Por Projeto</h3>
+                <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col">
+                    <h3 className="text-base sm:text-lg font-bold text-slate-800 dark:text-white mb-6 px-2 border-l-4 border-purple-500">Por Projeto</h3>
                     <div className="flex-1 w-full min-h-[300px]">
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
@@ -327,8 +326,8 @@ export const TimeAnalysisDashboard: React.FC<TimeAnalysisDashboardProps> = ({
                                     data={projectData}
                                     cx="50%"
                                     cy="50%"
-                                    innerRadius={70}
-                                    outerRadius={110}
+                                    innerRadius={60}
+                                    outerRadius={90}
                                     paddingAngle={5}
                                     dataKey="value"
                                 >
@@ -336,20 +335,20 @@ export const TimeAnalysisDashboard: React.FC<TimeAnalysisDashboardProps> = ({
                                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                     ))}
                                 </Pie>
-                                <Tooltip />
-                                <Legend verticalAlign="middle" align="right" layout="vertical" iconType="circle" />
+                                <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', backgroundColor: 'rgba(255, 255, 255, 0.96)' }} />
+                                <Legend verticalAlign="bottom" align="center" iconType="circle" />
                             </PieChart>
                         </ResponsiveContainer>
                     </div>
                 </div>
             </div>
 
-            {/* Detailed Table (Optional for MVP but good for "ver o que fez") */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mt-auto">
-                <h3 className="text-lg font-bold text-gray-800 mb-4 px-2 border-l-4 border-emerald-500">Detalhes dos Apontamentos</h3>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left text-gray-600">
-                        <thead className="text-xs text-gray-700 uppercase bg-gray-50">
+            {/* Detailed Table */}
+            <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 lg:mt-auto">
+                <h3 className="text-base sm:text-lg font-bold text-slate-800 dark:text-white mb-4 px-2 border-l-4 border-emerald-500">Apontamentos</h3>
+                <div className="overflow-x-auto -mx-4 sm:mx-0">
+                    <table className="w-full text-sm text-left text-slate-600 dark:text-slate-400">
+                        <thead className="text-[10px] sm:text-xs text-slate-700 dark:text-slate-300 uppercase bg-slate-50 dark:bg-slate-800">
                             <tr>
                                 <th className="px-6 py-3">Data</th>
                                 <th className="px-6 py-3">Início*</th>
@@ -368,14 +367,14 @@ export const TimeAnalysisDashboard: React.FC<TimeAnalysisDashboardProps> = ({
                                 const user = users.find(u => u.id === log.user_id);
 
                                 return (
-                                    <tr key={log.id} className="bg-white border-b hover:bg-gray-50">
+                                    <tr key={log.id} className="bg-white border-b hover:bg-gray-50 dark:bg-slate-900 dark:hover:bg-slate-800 dark:border-slate-800">
                                         <td className="px-6 py-4">{format(date, 'dd/MM/yyyy')}</td>
                                         <td className="px-6 py-4 font-mono text-xs">
                                             {startTime
                                                 ? format(startTime, 'HH:mm')
                                                 : (log.date_start ? '00:00' : '-')}
                                         </td>
-                                        <td className="px-6 py-4 font-medium text-gray-900">{user?.firstname || log.user_id}</td>
+                                        <td className="px-6 py-4 font-medium text-slate-900 dark:text-white">{user?.firstname || log.user_id}</td>
                                         <td className="px-6 py-4 truncate max-w-[200px]" title={task?.label}>{task?.label || log.task_id}</td>
                                         <td className="px-6 py-4 truncate max-w-[150px]">{project?.title || '-'}</td>
                                         <td className="px-6 py-4 text-right font-medium">{(log.duration / 3600).toFixed(2)}h</td>
@@ -384,7 +383,7 @@ export const TimeAnalysisDashboard: React.FC<TimeAnalysisDashboardProps> = ({
                             })}
                         </tbody>
                     </table>
-                    <p className="text-xs text-center text-gray-400 mt-4">Mostrando os últimos 50 registros do período.</p>
+                    <p className="text-xs text-center text-slate-400 mt-4">Mostrando os últimos 50 registros do período.</p>
                 </div>
             </div>
 
