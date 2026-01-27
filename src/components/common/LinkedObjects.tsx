@@ -62,29 +62,29 @@ export const LinkedObjects: React.FC<LinkedObjectsProps> = ({ id, type, onNaviga
     if (relatedLinks.length === 0) return null;
 
     return (
-        <div className="bg-white dark:bg-slate-900 rounded-xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm mt-6 animate-in fade-in slide-in-from-bottom-2">
+        <div className="bg-white dark:bg-slate-900 rounded-xl p-4 sm:p-6 border border-slate-200 dark:border-slate-800 shadow-sm mt-4 sm:mt-6 animate-in fade-in slide-in-from-bottom-2">
             <h4 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
                 <LinkIcon size={18} className="text-indigo-500" /> Itens Relacionados
             </h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                 {relatedLinks.map(link => (
                     <div
                         key={link.id}
-                        className={`flex items-center gap-3 p-3 rounded-lg border border-slate-100 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors ${link.def.view ? 'cursor-pointer bg-slate-50 dark:bg-slate-800/50' : 'bg-slate-50 opacity-75'}`}
+                        className={`flex items-center gap-2 sm:gap-3 p-3 rounded-lg border border-slate-100 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors min-h-[56px] ${link.def.view ? 'cursor-pointer bg-slate-50 dark:bg-slate-800/50' : 'bg-slate-50 opacity-75'}`}
                         onClick={() => {
                             if (link.def.view && onNavigate) {
                                 onNavigate(link.def.view as any, link.remoteId);
                             }
                         }}
                     >
-                        <div className={`p-2 rounded-full ${link.direction === 'out' ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300' : 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300'}`}>
+                        <div className={`p-2 rounded-full shrink-0 ${link.direction === 'out' ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300' : 'bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-300'}`}>
                             {link.def.icon}
                         </div>
                         <div className="flex-1 min-w-0">
-                            <div className="text-xs text-slate-500 flex items-center gap-1">
-                                {link.direction === 'out' ? 'Origina' : 'Originado de'} <ArrowRight size={10} />
+                            <div className="text-[10px] text-slate-500 flex items-center gap-1">
+                                {link.direction === 'out' ? 'Origina' : 'Originado'} <ArrowRight size={10} />
                             </div>
-                            <div className="font-medium text-slate-800 dark:text-white truncate">
+                            <div className="text-xs sm:text-sm font-medium text-slate-800 dark:text-white truncate">
                                 {link.def.label} #{link.remoteId}
                             </div>
                         </div>
