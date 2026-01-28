@@ -36,7 +36,19 @@ export const fetchSupplierOrders = async (config: DolibarrConfig): Promise<Suppl
         total_ttc: parseFloat(d.total_ttc),
         statut: String(d.statut),
         array_options: d.array_options,
-        lines: [] // TODO: lines mapping if needed
+        lines: d.lines ? d.lines.map((l: any) => ({
+            id: String(l.id || l.rowid),
+            parent_id: String(d.id),
+            label: l.label || l.product_label,
+            description: l.description || l.desc,
+            qty: parseFloat(l.qty),
+            vat_rate: parseFloat(l.tva_tx),
+            subprice: parseFloat(l.subprice || l.pu_ht),
+            total_ht: parseFloat(l.total_ht),
+            total_ttc: parseFloat(l.total_ttc),
+            product_id: l.fk_product ? String(l.fk_product) : undefined,
+            fk_product: l.fk_product ? String(l.fk_product) : undefined
+        })) : []
     }));
 };
 
