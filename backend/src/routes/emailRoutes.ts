@@ -21,7 +21,7 @@ router.get('/accounts', (req, res) => {
     res.json(safeAccounts);
 });
 
-router.post('/accounts', (req, res) => {
+router.post('/accounts', async (req, res) => {
     try {
         const schema = z.object({
             name: z.string(),
@@ -42,16 +42,16 @@ router.post('/accounts', (req, res) => {
         const data = schema.parse(req.body);
 
         // ID generation moved to service
-        const newId = emailStoreService.addAccount({ ...data, id: '' } as any); // Service generates ID
+        const newId = await emailStoreService.addAccount({ ...data, id: '' } as any); // Service generates ID
         res.json({ success: true, id: newId });
     } catch (error: any) {
         res.status(400).json({ error: error.message });
     }
 });
 
-router.delete('/accounts/:id', (req, res) => {
+router.delete('/accounts/:id', async (req, res) => {
     const { id } = req.params;
-    emailStoreService.deleteAccount(id);
+    await emailStoreService.deleteAccount(id);
     res.json({ success: true });
 });
 
@@ -119,7 +119,7 @@ router.post('/send', async (req, res) => {
 // --- Metadata & Automations ---
 
 // Assign Thread
-router.post('/assign', (req, res) => {
+router.post('/assign', async (req, res) => {
     try {
         const schema = z.object({
             threadId: z.string(), // MessageID or a hash representing the thread
@@ -127,7 +127,7 @@ router.post('/assign', (req, res) => {
         });
         const { threadId, userId } = schema.parse(req.body);
 
-        emailStoreService.assignThread(threadId, userId);
+        await emailStoreService.assignThread(threadId, userId);
         res.json({ success: true });
     } catch (error: any) {
         res.status(400).json({ error: error.message });
@@ -142,7 +142,7 @@ router.get('/assign/:threadId', (req, res) => {
 });
 
 // Update Thread Settings (Auto-Reply, etc)
-router.post('/settings/thread', (req, res) => {
+router.post('/settings/thread', async (req, res) => {
     try {
         const schema = z.object({
             threadId: z.string(),
@@ -150,7 +150,7 @@ router.post('/settings/thread', (req, res) => {
         });
         const { threadId, settings } = schema.parse(req.body);
 
-        emailStoreService.updateThreadSettings(threadId, settings);
+        await emailStoreService.updateThreadSettings(threadId, settings);
         res.json({ success: true });
     } catch (error: any) {
         res.status(400).json({ error: error.message });
@@ -165,7 +165,7 @@ router.get('/settings/thread/:threadId', (req, res) => {
 });
 
 // Update User Settings (Signature)
-router.post('/settings/user', (req, res) => {
+router.post('/settings/user', async (req, res) => {
     try {
         const user = (req as any).user;
         if (!user) return res.status(401).json({ error: 'User not found' });
@@ -175,7 +175,7 @@ router.post('/settings/user', (req, res) => {
         });
         const { signature } = schema.parse(req.body);
 
-        emailStoreService.updateUserSettings(user.id, { signature });
+        await emailStoreService.updateUserSettings(user.id, { signature });
         res.json({ success: true });
     } catch (error: any) {
         res.status(400).json({ error: error.message });

@@ -41,6 +41,7 @@ interface EmailMetadata {
 class EmailStoreService {
     private accounts: EmailAccountConfig[] = [];
     private metadata: EmailMetadata = { assignments: {}, threadSettings: {}, userSettings: {} };
+    private savePromise: Promise<void> = Promise.resolve();
 
     constructor() {
         this.load();
@@ -69,13 +70,33 @@ class EmailStoreService {
         }
     }
 
-    private save() {
-        fs.writeFileSync(STORE_FILE, JSON.stringify(this.accounts, null, 2));
-        this.saveMetadata();
+    private enqueueSave(task: () => Promise<void>) {
+        const taskPromise = this.savePromise.then(task);
+        this.savePromise = taskPromise.catch(e => {
+            console.error('Save failed:', e);
+        });
+        return taskPromise;
     }
 
-    private saveMetadata() {
-        fs.writeFileSync(METADATA_FILE, JSON.stringify(this.metadata, null, 2));
+    private async _saveAccountsToDisk() {
+        await fs.promises.writeFile(STORE_FILE, JSON.stringify(this.accounts, null, 2));
+    }
+
+    private async _saveMetadataToDisk() {
+        await fs.promises.writeFile(METADATA_FILE, JSON.stringify(this.metadata, null, 2));
+    }
+
+    private async save() {
+        return this.enqueueSave(async () => {
+            await this._saveAccountsToDisk();
+            await this._saveMetadataToDisk();
+        });
+    }
+
+    private async saveMetadata() {
+        return this.enqueueSave(async () => {
+            await this._saveMetadataToDisk();
+        });
     }
 
     getAllAccounts(): EmailAccountConfig[] {
@@ -86,7 +107,7 @@ class EmailStoreService {
         return this.accounts.find(a => a.id === id);
     }
 
-    addAccount(config: EmailAccountConfig): string {
+    async addAccount(config: EmailAccountConfig): Promise<string> {
         const id = config.id || `acc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const accountWithId = { ...config, id };
 
@@ -96,56 +117,56 @@ class EmailStoreService {
         }
 
         this.accounts.push(accountWithId);
-        this.save();
+        await this.save();
         return id;
     }
 
-    updateAccount(id: string, updates: Partial<EmailAccountConfig>) {
+    async updateAccount(id: string, updates: Partial<EmailAccountConfig>) {
         const index = this.accounts.findIndex(a => a.id === id);
         if (index === -1) throw new Error('Account not found');
 
         this.accounts[index] = { ...this.accounts[index], ...updates };
-        this.save();
+        await this.save();
     }
 
-    deleteAccount(id: string) {
+    async deleteAccount(id: string) {
         this.accounts = this.accounts.filter(a => a.id !== id);
-        this.save();
+        await this.save();
     }
 
     // --- Metadata Methods ---
 
-    assignThread(threadId: string, userId: string | null) {
+    async assignThread(threadId: string, userId: string | null) {
         if (userId) {
             this.metadata.assignments[threadId] = userId;
         } else {
             delete this.metadata.assignments[threadId];
         }
-        this.saveMetadata();
+        await this.saveMetadata();
     }
 
     getAssignment(threadId: string): string | undefined {
         return this.metadata.assignments[threadId];
     }
 
-    updateThreadSettings(threadId: string, settings: any) {
+    async updateThreadSettings(threadId: string, settings: any) {
         this.metadata.threadSettings[threadId] = {
             ...(this.metadata.threadSettings[threadId] || {}),
             ...settings
         };
-        this.saveMetadata();
+        await this.saveMetadata();
     }
 
     getThreadSettings(threadId: string): any {
         return this.metadata.threadSettings[threadId] || {};
     }
 
-    updateUserSettings(userId: string, settings: { signature?: string }) {
+    async updateUserSettings(userId: string, settings: { signature?: string }) {
         this.metadata.userSettings[userId] = {
             ...(this.metadata.userSettings[userId] || {}),
             ...settings
         };
-        this.saveMetadata();
+        await this.saveMetadata();
     }
 
     getUserSettings(userId: string): { signature?: string } {
