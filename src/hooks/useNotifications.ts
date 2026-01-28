@@ -3,12 +3,15 @@ import { PushNotifications } from '@capacitor/push-notifications';
 import { Capacitor } from '@capacitor/core';
 import { useWhatsAppContext } from '../contexts/WhatsAppContext'; // Import context
 import { AppNotification, AppView } from '../types';
+import { useDolibarr } from '../context/DolibarrContext';
+import { DolibarrService } from '../services/dolibarrService';
 
 export const useNotifications = (
     setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>,
     onNavigate: (view: string, id: string) => void // Relaxed type to string to match MainLayout adapter
 ) => {
     const { socket } = useWhatsAppContext();
+    const { currentUser, config } = useDolibarr();
 
     useEffect(() => {
         if (!Capacitor.isNativePlatform()) {
@@ -36,7 +39,34 @@ export const useNotifications = (
         // Listener for registration success
         const registrationListener = PushNotifications.addListener('registration', token => {
             console.log('Push registration success, token: ' + token.value);
-            // TODO: Send token to backend if needed
+
+            // Send token to backend if needed
+            if (currentUser && config) {
+                const existingToken = currentUser.array_options?.options_push_token;
+
+                if (existingToken !== token.value) {
+                    console.log('Updating push token on backend...');
+
+                    // Prepare updated options
+                    // Ensure we preserve existing options
+                    const updatedOptions = {
+                        ...(currentUser.array_options || {}),
+                        options_push_token: token.value
+                    };
+
+                    DolibarrService.updateUser(config, currentUser.id, {
+                        array_options: updatedOptions
+                    }).then(() => {
+                        console.log('Push token updated successfully.');
+                    }).catch(err => {
+                        console.error('Failed to update push token:', err);
+                    });
+                } else {
+                    console.log('Push token already up to date.');
+                }
+            } else {
+                console.log('Cannot update push token: User not logged in or config missing.');
+            }
         });
 
         // Listener for registration error
@@ -83,7 +113,7 @@ export const useNotifications = (
             actionListener.then(handle => handle.remove());
         };
 
-    }, [setNotifications, onNavigate]);
+    }, [setNotifications, onNavigate, currentUser, config]);
 
     useEffect(() => {
         if (!socket) return;
