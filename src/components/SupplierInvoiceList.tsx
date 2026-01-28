@@ -115,10 +115,10 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
         setActiveTab('details');
     }, [selectedInvoice?.id]);
 
-    // Reset page on search
+    // Reset page on search or filter change
     useEffect(() => {
         setPage(0);
-    }, [searchTerm]);
+    }, [searchTerm, filterStatus]);
 
     // Helper to find supplier name
     const getSupplierName = (socid: string) => {
@@ -426,7 +426,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                 </div>
             ) : (
                 <div className="grid grid-cols-1 gap-3">
-                    {filteredInvoices.map((inv) => {
+                    {filteredInvoices.slice(page * limit, (page + 1) * limit).map((inv) => {
                         const projectName = getProjectName(inv.project_id);
                         return (
                             <div
@@ -863,7 +863,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                         limit={limit}
                         onPageChange={setPage}
                         onLimitChange={setLimit}
-                        hasNext={filteredInvoices.length >= limit}
+                        hasNext={(page + 1) * limit < filteredInvoices.length}
                         hasPrev={page > 0}
                     />
                 }
