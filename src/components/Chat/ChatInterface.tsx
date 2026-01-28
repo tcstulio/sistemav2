@@ -190,6 +190,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                                 <button
                                     onClick={onBack}
                                     className="lg:hidden p-2 -ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                                    aria-label="Voltar"
                                 >
                                     <ArrowLeft size={20} />
                                 </button>
@@ -201,7 +202,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                         </div>
                         <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-500 hidden sm:inline">{chatMessages.length} mensagens</span>
-                            <button onClick={() => setShowSearch(true)} className="p-2 text-gray-400 hover:text-blue-500">
+                            <button onClick={() => setShowSearch(true)} className="p-2 text-gray-400 hover:text-blue-500" aria-label="Buscar na conversa">
                                 <Search size={20} />
                             </button>
                         </div>
@@ -217,7 +218,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                             placeholder="Buscar na conversa..."
                             className="flex-1 bg-transparent border-none text-sm focus:ring-0 px-0 dark:text-gray-200 placeholder:text-gray-400"
                         />
-                        <button onClick={() => { setShowSearch(false); setSearchTerm(''); }} className="text-gray-400 hover:text-red-500">
+                        <button onClick={() => { setShowSearch(false); setSearchTerm(''); }} className="text-gray-400 hover:text-red-500" aria-label="Limpar busca">
                             <X size={16} />
                         </button>
                     </div>
@@ -255,6 +256,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                                             onClick={() => setReplyingTo(msg)}
                                             className="p-2 bg-white dark:bg-gray-700 shadow-sm border border-gray-100 dark:border-gray-600 rounded-full text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:shadow-md transition-all sm:p-1.5"
                                             title="Responder"
+                                            aria-label="Responder"
                                         >
                                             <div className="transform scale-x-[-1]">
                                                 <Send size={14} />
@@ -277,6 +279,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                                                 }}
                                                 className="p-2 bg-white dark:bg-gray-700 shadow-sm border border-gray-100 dark:border-gray-600 rounded-full text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:shadow-md transition-all sm:p-1.5"
                                                 title="Criar Tarefa"
+                                                aria-label="Criar Tarefa"
                                             >
                                                 <CheckSquare size={14} />
                                             </button>
@@ -303,7 +306,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                             <span className="font-bold">Respondendo a {replyingTo.user_author_name}: </span>
                             <span className="text-gray-500 dark:text-gray-400" dangerouslySetInnerHTML={{ __html: (replyingTo.description || '').substring(0, 50) + '...' }}></span>
                         </div>
-                        <button onClick={() => setReplyingTo(null)} className="text-gray-500 hover:text-red-500">
+                        <button onClick={() => setReplyingTo(null)} className="text-gray-500 hover:text-red-500" aria-label="Cancelar resposta">
                             &times;
                         </button>
                     </div>
@@ -332,6 +335,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                         disabled={isSending || isUploading}
                         className="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 p-3 rounded-full transition-colors disabled:opacity-50 sm:p-2"
                         title="Anexar arquivo"
+                        aria-label="Anexar arquivo"
                     >
                         {isUploading ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
                     </button>
@@ -339,6 +343,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                         onClick={() => handleSendMessage()}
                         disabled={isSending || !newMessage.trim()}
                         className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-colors sm:p-2"
+                        aria-label="Enviar mensagem"
                     >
                         {isSending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
                     </button>

@@ -173,6 +173,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                             else window.history.back();
                         }}
                         className="p-2 -ml-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 transition-colors"
+                        aria-label="Voltar"
                     >
                         <ChevronLeft size={20} />
                     </button>
@@ -206,7 +207,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                         <div className={`px-3 py-1.5 rounded-full text-sm font-medium border ${task.progress === 100 ? 'bg-green-100 text-green-700 border-green-200' : 'bg-blue-100 text-blue-700 border-blue-200'}`}>
                             {task.progress}% Concluído
                         </div>
-                        <button onClick={() => openLink('task', task.id)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="Abrir no Dolibarr">
+                        <button onClick={() => openLink('task', task.id)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="Abrir no Dolibarr" aria-label="Abrir no Dolibarr">
                             <Settings size={20} />
                         </button>
                     </div>
@@ -252,6 +253,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                                         onClick={() => setIsEditingDesc(true)}
                                         className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
                                         title="Editar descrição"
+                                        aria-label="Editar descrição"
                                     >
                                         <Edit size={16} />
                                     </button>
@@ -462,12 +464,13 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                             <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
                                 <Clock size={18} className="text-indigo-600" /> Lançar Horas
                             </h3>
-                            <button onClick={() => setIsTimeModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
+                            <button onClick={() => setIsTimeModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded" aria-label="Fechar"><X size={20} /></button>
                         </div>
                         <form onSubmit={handleAddTime} className="p-6 space-y-4">
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
+                                <label htmlFor="time-date" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
                                 <input
+                                    id="time-date"
                                     type="date"
                                     className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                                     value={timeForm.date}
@@ -477,8 +480,9 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Horas</label>
+                                    <label htmlFor="time-hours" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Horas</label>
                                     <input
+                                        id="time-hours"
                                         type="number"
                                         min="0"
                                         className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
@@ -487,8 +491,9 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Minutos</label>
+                                    <label htmlFor="time-minutes" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Minutos</label>
                                     <input
+                                        id="time-minutes"
                                         type="number"
                                         min="0"
                                         max="59"
@@ -499,8 +504,9 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                                 </div>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
+                                <label htmlFor="time-note" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
                                 <textarea
+                                    id="time-note"
                                     className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white resize-none h-20"
                                     placeholder="O que foi feito?"
                                     value={timeForm.note}
