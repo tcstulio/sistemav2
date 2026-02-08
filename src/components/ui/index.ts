@@ -16,6 +16,10 @@ export { Input } from './Input';
 
 // Navigation Components
 export { Tabs, Tab } from './Tabs';
+export { Breadcrumbs, usePageTitle } from './Breadcrumbs';
+
+// Feedback Components
+export { Spinner, LoadingOverlay, LoadingCard, LoadingButton, Skeleton, SkeletonText, SkeletonCard, SkeletonTableRow, ErrorState } from './LoadingStates';
 
 // Overlay Components
 export { Modal } from './Modal';

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
+import { Breadcrumbs } from '../ui/Breadcrumbs';
 import NotificationPanel from '../NotificationPanel';
 import GlobalSearch from '../GlobalSearch';
 import VirtualAssistant from '../VirtualAssistant';
@@ -46,6 +47,8 @@ export const MainLayout: React.FC = () => {
                     setIsNotificationPanelOpen={setIsNotificationPanelOpen}
                     setIsSearchOpen={setIsSearchOpen}
                 />
+
+                <Breadcrumbs className="px-4 py-2 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0" />
 
                 <div className="flex-1 overflow-hidden relative p-0">
                     <Outlet />

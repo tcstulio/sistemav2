@@ -137,6 +137,9 @@ export default defineConfig(({ mode }) => {
             'vendor-query': ['@tanstack/react-query'],
             'vendor-recharts': ['recharts'],
             'vendor-ui': ['lucide-react', 'sonner'],
+            'vendor-data': ['date-fns', 'react-markdown'],
+            'vendor-realtime': ['socket.io-client'],
+            'vendor-virtualization': ['react-window', 'react-virtualized-auto-sizer'],
           }
         }
       }
