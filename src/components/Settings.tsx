@@ -7,13 +7,28 @@ import { dbService } from '../services/dbService';
 import { PageLayout, PageHeader, Card, Button, Input, Modal } from './ui';
 
 interface SettingsProps {
-    config: DolibarrConfig;
-    onSave: (config: DolibarrConfig) => void;
+    config: DolibarrConfig | null;
+    onSave?: (config: DolibarrConfig) => void;
+    onNavigate?: (view: string, id?: string) => void;
+    onRefresh?: (options?: { forceFull?: boolean; limit?: number; page?: number; query?: string }) => Promise<void>;
+    initialItemId?: string;
 }
 
 const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
-    const { logout } = useDolibarr();
-    const [localConfig, setLocalConfig] = useState<DolibarrConfig>(config);
+    const { logout, setConfig } = useDolibarr();
+    const [localConfig, setLocalConfig] = useState<DolibarrConfig | null>(config);
+
+    // Handle null config
+    if (!config || !localConfig) {
+        return (
+            <PageLayout>
+                <PageHeader title="Configurações" />
+                <Card className="p-6 text-center">
+                    <p className="text-slate-500">Configuração não disponível</p>
+                </Card>
+            </PageLayout>
+        );
+    }
     const [isSaved, setIsSaved] = useState(false);
 
     const colors = [

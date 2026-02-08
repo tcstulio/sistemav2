@@ -11,10 +11,12 @@ import { ChatWindow } from './whatsapp/ChatWindow';
 import { MessageInput } from './whatsapp/MessageInput';
 import { ContextPanel } from './whatsapp/ContextPanel';
 import { ConnectModal } from './whatsapp/ConnectModal';
+import { CreateSessionModal } from './whatsapp/CreateSessionModal';
+import { NewConversationModal } from './whatsapp/NewConversationModal';
 import { WhatsAppProfileSettings } from './whatsapp/WhatsAppProfileSettings';
-import { AppView } from '../types';
+import { AppView, WhatsAppConversation } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useUsers, useCustomers, useInvoices, useOrders, useTickets } from '../hooks/dolibarr';
+import { useUsers, useCustomers, useInvoices, useOrders, useTickets, useContacts, useSuppliers } from '../hooks/dolibarr';
 import { AiService } from '../services/aiService';
 import { toast } from 'sonner';
 
@@ -28,6 +30,8 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
     // CRM Data
     const { data: users = [] } = useUsers(config || null, !!config);
     const { data: customers = [] } = useCustomers(config || null, !!config);
+    const { data: contacts = [] } = useContacts(config || null, !!config);
+    const { data: suppliers = [] } = useSuppliers(config || null, !!config);
     const { data: invoices = [] } = useInvoices(config || null, !!config);
     const { data: orders = [] } = useOrders(config || null, !!config);
     const { data: tickets = [] } = useTickets(config || null, !!config);
@@ -59,6 +63,8 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
     const [isContextOpen, setIsContextOpen] = useState(false);
     const [isSending, setIsSending] = useState(false);
     const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+    const [isCreateSessionModalOpen, setIsCreateSessionModalOpen] = useState(false);
+    const [isNewConversationModalOpen, setIsNewConversationModalOpen] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState(false);
 
@@ -222,6 +228,48 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
         }
     };
 
+    const handleCreateSession = async (sessionId: string, name: string) => {
+        setIsCreateSessionModalOpen(false);
+        setSelectedAccount(sessionId);
+        try {
+            await WhatsAppService.startSession(sessionId, name);
+            toast.success('Iniciando sessão...');
+            setIsConnectModalOpen(true);
+        } catch (e: any) {
+            toast.error('Erro ao criar sessão: ' + e.message);
+        }
+    };
+
+    const handleStartNewConversation = async (phoneNumber: string, sessionId: string, initialMessage?: string) => {
+        const chatId = `${phoneNumber}@c.us`;
+        setIsNewConversationModalOpen(false);
+
+        if (initialMessage) {
+            try {
+                await WhatsAppService.sendMessage(chatId, initialMessage, sessionId);
+            } catch (e: any) {
+                toast.error('Erro ao enviar mensagem: ' + e.message);
+                return;
+            }
+        }
+
+        const newConversation: WhatsAppConversation = {
+            id: chatId,
+            accountId: sessionId,
+            customerName: phoneNumber,
+            customerNumber: phoneNumber,
+            lastMessage: initialMessage || '',
+            lastMessageTimestamp: Date.now(),
+            unreadCount: 0,
+            status: 'open',
+            isGroup: false
+        };
+
+        setSelectedConversation(newConversation);
+        setSelectedAccount(sessionId);
+        refreshConversations();
+    };
+
     if (!currentUser) return <div className="p-4 text-center text-slate-400">Carregando...</div>;
 
     // Resolve QR Code for Modal
@@ -251,12 +299,8 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
                         }
                     }}
                     onRefresh={() => { refreshSessions(); refreshConversations(); }}
-                    onCreateSession={() => {
-                        const newId = `session_${Math.floor(Math.random() * 10000)}`;
-                        setSelectedAccount(newId);
-                        startSession(newId);
-                        setIsConnectModalOpen(true);
-                    }}
+                    onCreateSession={() => setIsCreateSessionModalOpen(true)}
+                    onNewConversation={() => setIsNewConversationModalOpen(true)}
                     isLoading={isLoading}
                     searchTerm={searchTerm}
                     onSearchChange={setSearchTerm}
@@ -346,6 +390,24 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
                 qrCodeUrl={activeQrCode}
                 isLoading={!activeQrCode && ((sessions.find(s => s.id === selectedAccount)?.status as any) === 'INITIALIZING' || (sessions.find(s => s.id === selectedAccount)?.status as any) === 'STARTING')}
                 onRefresh={refreshSessions}
+            />
+
+            <CreateSessionModal
+                isOpen={isCreateSessionModalOpen}
+                onClose={() => setIsCreateSessionModalOpen(false)}
+                onSessionCreated={handleCreateSession}
+            />
+
+            <NewConversationModal
+                isOpen={isNewConversationModalOpen}
+                onClose={() => setIsNewConversationModalOpen(false)}
+                onStartConversation={handleStartNewConversation}
+                sessions={sessions}
+                selectedSessionId={selectedAccount}
+                customers={customers}
+                contacts={contacts}
+                suppliers={suppliers}
+                users={users}
             />
 
             {/* SETTINGS MODAL */}

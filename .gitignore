@@ -26,3 +26,28 @@ dist-ssr
 # WhatsApp Web.js session files
 backend/.wwebjs_auth/
 backend/.wwebjs_cache/
+
+# Environment files with secrets
+backend/.env
+.env
+*.env.local
+*.env.*.local
+
+# Certificate files
+backend/certs/
+*.pem
+*.key
+*.crt
+
+# Database files
+*.db
+*.sqlite
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+screenshots/
+*.png
+*.jpg
+*.jpeg

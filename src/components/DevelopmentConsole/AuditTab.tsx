@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { CheckCircle2, AlertOctagon, AlertTriangle, Info, RefreshCw } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useCustomers, useInvoices, useProjects, useTasks, useProducts } from '../../hooks/dolibarr';
+import { AiService } from '../../services/aiService';
 
 interface AuditIssue {
     type: 'error' | 'warning' | 'info';
@@ -89,7 +90,7 @@ export const AuditTab: React.FC<AuditTabProps> = () => {
     const [aiAnalyzing, setAiAnalyzing] = useState(false);
     const [aiAnalysisResult, setAiAnalysisResult] = useState<any[]>([]);
     const [aiAnalysisType, setAiAnalysisType] = useState<string>('');
-    const { analyzeDataQuality } = React.useMemo(() => require('../../services/aiService').AiService, []);
+    const { analyzeDataQuality } = AiService;
 
     const runAiAudit = async (type: 'customers' | 'products') => {
         setAiAnalyzing(true);

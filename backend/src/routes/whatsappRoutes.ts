@@ -62,8 +62,12 @@ router.get('/status', async (req, res) => {
 // Start Session
 router.post('/start', async (req, res) => {
     const sessionId = getSessionId(req);
+    const { name } = req.body;
     try {
         const result = await sessionService.startSession(sessionId);
+        if (name) {
+            storeService.updateSessionSettings(sessionId, { name });
+        }
         res.json({ sessionId, ...result });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -76,6 +80,23 @@ router.delete('/sessions/:sessionId', async (req, res) => {
     try {
         const result = await sessionService.deleteSession(sessionId);
         res.json(result);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Check if number is registered on WhatsApp
+router.get('/check-number/:number', async (req, res) => {
+    const sessionId = getSessionId(req);
+    const { number } = req.params;
+    try {
+        const client = sessionService.getClient(sessionId);
+        if (!client) {
+            return res.status(400).json({ error: 'Session not found or not connected' });
+        }
+        const formattedId = number.includes('@') ? number : `${number}@c.us`;
+        const isRegistered = await client.isRegisteredUser(formattedId);
+        res.json({ number, isRegistered, chatId: formattedId });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }

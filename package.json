@@ -11,7 +11,18 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "generate:types": "npx swagger2openapi -p -o openapi_3.json swagger_full.json && npx openapi-typescript ./openapi_3.json -o ./src/types/dolibarr.actions.d.ts"
+    "generate:types": "npx swagger2openapi -p -o openapi_3.json swagger_full.json && npx openapi-typescript ./openapi_3.json -o ./src/types/dolibarr.actions.d.ts",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "playwright:codegen": "playwright codegen",
+    "scrape": "npx tsx scripts/web-scraper.ts",
+    "test:app": "npx tsx scripts/test-own-app.ts",
+    "browser": "npx tsx scripts/interactive-browser.ts",
+    "test:ui-full": "npx tsx scripts/comprehensive-ui-test.ts",
+    "test:coolgroove": "npx tsx scripts/coolgroove-complete-test.ts",
+    "explore:pages": "npx tsx scripts/explore-all-pages.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.0.0",
@@ -37,6 +48,7 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/node": "^22.14.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
@@ -49,7 +61,9 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "openapi-typescript": "^7.10.1",
+    "playwright": "^1.58.1",
     "sqlite3": "^5.1.7",
+    "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

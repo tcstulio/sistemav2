@@ -640,7 +640,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     );
 };
 
-const Card = ({ title, value, icon: Icon, color, onClick, subValue }: any) => (
+interface CardProps {
+    title: string;
+    value: string | number;
+    icon: React.ElementType;
+    color: string;
+    onClick?: () => void;
+    subValue?: string;
+}
+
+const Card: React.FC<CardProps> = ({ title, value, icon: Icon, color, onClick, subValue }) => (
     <div onClick={onClick} className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 cursor-pointer hover:shadow-md transition-all">
         <div className="flex justify-between items-start">
             <div>

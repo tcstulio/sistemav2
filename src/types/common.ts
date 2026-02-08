@@ -57,7 +57,7 @@ export interface DolibarrDictionary {
     active?: string;
 }
 
-export type AppView = 'dashboard' | 'reports' | 'agenda' | 'tickets' | 'customers' | 'suppliers' | 'projects' | 'proposals' | 'supplier_proposals' | 'orders' | 'invoices' | 'supplier_invoices' | 'pending_payments' | 'payments' | 'contracts' | 'interventions' | 'products' | 'categories' | 'inventory' | 'bank_accounts' | 'hr' | 'settings' | 'development' | 'manufacturing' | 'shipments' | 'whatsapp' | 'tasks' | 'monitor' | 'activity' | 'tax_payments' | 'salary_payments' | 'expense_report_payments' | 'supplier_payments' | 'email';
+export type AppView = 'dashboard' | 'reports' | 'agenda' | 'tickets' | 'customers' | 'suppliers' | 'projects' | 'proposals' | 'supplier_proposals' | 'orders' | 'invoices' | 'supplier_invoices' | 'pending_payments' | 'payments' | 'contracts' | 'interventions' | 'products' | 'services' | 'categories' | 'inventory' | 'bank_accounts' | 'hr' | 'settings' | 'development' | 'manufacturing' | 'shipments' | 'whatsapp' | 'tasks' | 'monitor' | 'activity' | 'tax_payments' | 'salary_payments' | 'expense_report_payments' | 'supplier_payments' | 'email' | 'venues';
 
 export interface AppNotification {
     id: string;

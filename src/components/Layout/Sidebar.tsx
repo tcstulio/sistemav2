@@ -111,6 +111,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
             items: [
                 { id: 'activity', path: '/activity', label: 'Atividades', icon: Activity },
                 { id: 'development', path: '/development', label: 'Console Dev', icon: Bug },
+                { id: 'settings', path: '/settings', label: 'Configurações', icon: Settings },
             ]
         }
     ];
