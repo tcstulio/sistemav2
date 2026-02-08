@@ -1,5 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import './styles/design-tokens.css';
+import './index.css';
 import App from './components/App';
 import AdminApp from './components/AdminApp';
 import { DolibarrProvider } from './context/DolibarrContext';
