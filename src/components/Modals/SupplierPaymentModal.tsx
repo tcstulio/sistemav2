@@ -4,12 +4,13 @@ import { SupplierInvoice, BankAccount } from '../../types';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useBankAccounts } from '../../hooks/dolibarr';
 import { toast } from 'sonner';
+import { PaymentData } from './CustomerPaymentModal';
 
 interface SupplierPaymentModalProps {
     invoice: SupplierInvoice;
     isOpen: boolean;
     onClose: () => void;
-    onConfirm: (paymentData: any) => Promise<void>;
+    onConfirm: (paymentData: PaymentData) => Promise<void>;
 }
 
 // Map Dolibarr Payment Mode IDs to Labels (Standard + Common BR)

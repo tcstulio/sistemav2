@@ -1,4 +1,5 @@
-import { MessageSquare, Search, Plus, Trash2, RefreshCw, Loader2, Settings, Users, User } from 'lucide-react';
+import React, { useMemo, useCallback } from 'react';
+import { MessageSquare, MessageSquarePlus, Search, Plus, Trash2, RefreshCw, Loader2, Settings, Users, User } from 'lucide-react';
 import { WhatsAppConversation, WhatsAppAccount } from '../../types';
 import { formatDateLocal } from '../../utils/dateUtils';
 
@@ -14,14 +15,26 @@ interface ConversationListProps {
     onRefresh: () => void;
     isLoading: boolean;
     onCreateSession: () => void;
+    onNewConversation?: () => void;
     searchTerm: string;
     onSearchChange: (term: string) => void;
     filterMode: 'all' | 'mine' | 'unassigned';
     onFilterChange: (mode: 'all' | 'mine' | 'unassigned') => void;
     currentUser: any;
-    users?: any[]; // [ANTIGRAVITY] Users list
-    onSettingsClick?: () => void; // [NEW]
+    users?: any[];
+    onSettingsClick?: () => void;
 }
+
+const statusConfig: Record<string, { dot: string; label: string }> = {
+    connected: { dot: 'bg-green-500', label: 'Conectado' },
+    disconnected: { dot: 'bg-red-500', label: 'Desconectado' },
+    qr_code: { dot: 'bg-yellow-500', label: 'Aguardando QR' },
+    WORKING: { dot: 'bg-green-500', label: 'Conectado' },
+    STOPPED: { dot: 'bg-red-500', label: 'Parado' },
+    INITIALIZING: { dot: 'bg-yellow-500', label: 'Iniciando' },
+    STARTING: { dot: 'bg-yellow-500', label: 'Iniciando' },
+    SCAN_QR_CODE: { dot: 'bg-yellow-500', label: 'Aguardando QR' },
+};
 
 export const ConversationList: React.FC<ConversationListProps> = ({
     conversations,
@@ -35,6 +48,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
     onRefresh,
     isLoading,
     onCreateSession,
+    onNewConversation,
     searchTerm,
     onSearchChange,
     filterMode,
@@ -44,26 +58,33 @@ export const ConversationList: React.FC<ConversationListProps> = ({
     onSettingsClick
 }) => {
 
-    const getAvatarColor = (name: string) => {
+    const getAvatarColor = useCallback((name: string) => {
         if (!name) return 'bg-slate-500';
         const colors = ['bg-red-500', 'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-purple-500', 'bg-pink-500'];
         const index = name.length % colors.length;
         return colors[index];
-    };
+    }, []);
 
-    // Filter Logic
-    const filteredConversations = conversations.filter(c => {
+    // Memoized filter logic for performance
+    const filteredConversations = useMemo(() => {
         const searchLower = searchTerm.toLowerCase();
-        const matchesSearch = c.customerName.toLowerCase().includes(searchLower) || c.customerNumber.includes(searchLower);
-        if (!matchesSearch) return false;
+        return conversations
+            .filter(c => {
+                const matchesSearch = c.customerName.toLowerCase().includes(searchLower) || c.customerNumber.includes(searchLower);
+                if (!matchesSearch) return false;
 
-        if (filterMode === 'mine') return c.assignedUserId === currentUser?.id;
-        if (filterMode === 'unassigned') return !c.assignedUserId;
+                if (filterMode === 'mine') return c.assignedUserId === currentUser?.id;
+                if (filterMode === 'unassigned') return !c.assignedUserId;
 
-        return true;
-    }).sort((a, b) => b.lastMessageTimestamp - a.lastMessageTimestamp);
+                return true;
+            })
+            .sort((a, b) => b.lastMessageTimestamp - a.lastMessageTimestamp);
+    }, [conversations, searchTerm, filterMode, currentUser?.id]);
 
-    const isCurrentAccountConnected = accounts.find(a => a.id === selectedAccount)?.status === 'connected';
+    const isCurrentAccountConnected = useMemo(
+        () => accounts.find(a => a.id === selectedAccount)?.status === 'connected',
+        [accounts, selectedAccount]
+    );
 
     return (
         <div className="flex flex-col h-full bg-white dark:bg-slate-900">
@@ -73,12 +94,15 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                     <h2 className="font-bold text-xl text-slate-800 dark:text-white flex items-center gap-2">
                         <MessageSquare className="text-green-500" /> WhatsApp
                     </h2>
-                    <div className="flex gap-2">
+                    <div className="flex gap-1">
+                        {onNewConversation && (
+                            <button onClick={onNewConversation} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-green-500" title="Nova Conversa"><MessageSquarePlus size={18} /></button>
+                        )}
                         {onSettingsClick && (
                             <button onClick={onSettingsClick} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-slate-500" title="Configurações"><Settings size={18} /></button>
                         )}
-                        <button onClick={onCreateSession} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-indigo-500" title="Nova Sessão"><Plus size={18} /></button>
-                        {(selectedAccount !== 'all') && ( // [ANTIGRAVITY] Allowed deletion of default session
+                        <button onClick={onCreateSession} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full text-indigo-500" title="Nova Conta"><Plus size={18} /></button>
+                        {(selectedAccount !== 'all') && (
                             <button
                                 onClick={() => onDeleteSession && onDeleteSession(selectedAccount)}
                                 className="p-2 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-full text-red-500"
@@ -98,17 +122,23 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                         value={selectedAccount}
                         onChange={(e) => onAccountChange(e.target.value)}
                     >
-                        <option value="all">Todas as Contas</option>
-                        {accounts.map(acc => (
-                            <option key={acc.id} value={acc.id}>{acc.name} ({acc.status})</option>
-                        ))}
+                        <option value="all">Todas as Contas ({accounts.length})</option>
+                        {accounts.map(acc => {
+                            const st = statusConfig[acc.status] || { label: acc.status };
+                            const phone = acc.phoneNumber && acc.phoneNumber !== '---' ? ` - ${acc.phoneNumber}` : '';
+                            return (
+                                <option key={acc.id} value={acc.id}>
+                                    {acc.name}{phone} ({st.label})
+                                </option>
+                            );
+                        })}
                     </select>
                     {selectedAccount !== 'all' && !isCurrentAccountConnected && (
                         <button
                             onClick={onConnect}
                             className="w-full mt-2 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-colors"
                         >
-                            <RefreshCw size={16} /> Conectar {selectedAccount}
+                            <RefreshCw size={16} /> Conectar {accounts.find(a => a.id === selectedAccount)?.name || selectedAccount}
                         </button>
                     )}
                 </div>

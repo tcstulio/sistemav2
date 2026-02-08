@@ -1,7 +1,10 @@
 import express from 'express';
 import os from 'os';
+import { logger } from '../utils/logger';
 // import { wahaService } from '../services/wahaService'; // DEPRECATED
 import { sessionService } from '../services/sessionService'; // ADDED
+
+const log = logger.child('AdminRoutes');
 // import { dbService } from '../../../services/dbService'; // REMOVED to prevent crash
 // Correction: We cannot import client-side dbService here. Backend has no IndexedDB.
 // If backend needs logs, it should read from a file or its own DB.
@@ -102,7 +105,7 @@ router.get('/config/llm/models', async (req, res) => {
                     const response = await axios.get(`${config.localLlmUrl}/models`);
                     if (response.data?.data) models = response.data.data.map((m: any) => m.id);
                     else if (response.data?.models) models = response.data.models.map((m: any) => m.name);
-                } catch (e) { console.warn("Local model fetch failed", e); }
+                } catch (e) { log.warn('Local model fetch failed', e); }
             }
         } else {
             // Default behavior: use active provider
@@ -194,7 +197,7 @@ router.post('/config/llm/test', async (req, res) => {
 
         res.status(400).json({ success: false, error: "Provedor inválido." });
     } catch (e: any) {
-        console.error("LLM Test Error:", e);
+        log.error('LLM Test Error', e);
         res.json({
             success: false,
             error: e.message,
@@ -245,10 +248,10 @@ router.post('/config/llm', async (req, res) => {
                 if (modelName) updateOrAdd('LOCAL_LLM_MODEL', modelName);
 
                 fs.writeFileSync(envPath, envContent);
-                console.log('Saved config to .env');
+                log.info('Saved config to .env');
             }
         } catch (err) {
-            console.error("Failed to save .env file:", err);
+            log.error('Failed to save .env file', err);
             // Non-blocking error for client, but logged
         }
 

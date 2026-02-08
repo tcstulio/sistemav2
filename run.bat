@@ -12,6 +12,18 @@ echo Limpando processos antigos do Chrome...
 powershell -ExecutionPolicy Bypass -File "backend/src/scripts/clean-ghosts.ps1"
 echo.
 
+:: 1.5. Limpando portas ocupadas
+echo 1.5. Limpando portas 3003 e 3004...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :3003') do (
+    echo Matando processo na porta 3003 (PID: %%a)
+    taskkill /F /PID %%a 2>nul
+)
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :3004') do (
+    echo Matando processo na porta 3004 (PID: %%a)
+    taskkill /F /PID %%a 2>nul
+)
+echo.
+
 :: 2. Verificando NPM
 echo 2. Verificando NPM...
 where npm >nul 2>nul

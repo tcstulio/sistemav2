@@ -10,6 +10,7 @@ import {
     WhatsAppProfile
 } from '../types';
 import { config } from '../config';
+import { safeStorage } from '../utils/safeStorage';
 
 // Helper to convert File to Base64
 const fileToBase64 = (file: File): Promise<string> => {
@@ -35,16 +36,8 @@ const handleApiError = (context: string, error: unknown) => {
 
 // Helper to get Headers
 const getHeaders = () => {
-    const savedConfig = localStorage.getItem('coolgroove_config');
-    let apiKey = '';
-    if (savedConfig) {
-        try {
-            const parsed = JSON.parse(savedConfig);
-            apiKey = parsed.apiKey || '';
-        } catch (e) {
-            console.error("Failed to parse config for auth header");
-        }
-    }
+    const parsed = safeStorage.getJSON<{ apiKey?: string }>('coolgroove_config', {});
+    const apiKey = parsed.apiKey || '';
     return {
         'Content-Type': 'application/json',
         'DOLAPIKEY': apiKey
@@ -52,9 +45,9 @@ const getHeaders = () => {
 };
 
 export const WhatsAppService = {
-    startSession: async (sessionId: string = 'default'): Promise<any> => {
+    startSession: async (sessionId: string = 'default', name?: string): Promise<any> => {
         try {
-            const response = await axios.post(`${config.WHATSAPP_API_URL}/start`, { sessionId }, { headers: getHeaders() });
+            const response = await axios.post(`${config.WHATSAPP_API_URL}/start`, { sessionId, name }, { headers: getHeaders() });
             return response.data;
         } catch (e) {
             handleApiError(`Failed to start session ${sessionId}`, e);
@@ -366,6 +359,19 @@ export const WhatsAppService = {
             await axios.post(`${config.WHATSAPP_API_URL}/profile/presence`, { sessionId, presence }, { headers: getHeaders() });
         } catch (e) {
             handleApiError('Failed to set presence', e);
+            throw e;
+        }
+    },
+
+    checkNumber: async (phoneNumber: string, sessionId: string = 'default'): Promise<{ number: string; isRegistered: boolean; chatId: string }> => {
+        try {
+            const response = await axios.get(
+                `${config.WHATSAPP_API_URL}/check-number/${phoneNumber}?sessionId=${sessionId}`,
+                { headers: getHeaders() }
+            );
+            return response.data;
+        } catch (e) {
+            handleApiError('Failed to check number', e);
             throw e;
         }
     }

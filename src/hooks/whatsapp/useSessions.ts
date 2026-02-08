@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useWhatsAppContext } from '../../contexts/WhatsAppContext'; // Adjust path
+import { useWhatsAppContext } from '../../contexts/WhatsAppContext';
 import { WhatsAppService } from '../../services/whatsappService';
 import { WhatsAppAccount } from '../../types';
 import { toast } from 'sonner';
+import { safeStorage } from '../../utils/safeStorage';
 
 export const useSessions = () => {
     const { socket } = useWhatsAppContext();
@@ -12,21 +13,27 @@ export const useSessions = () => {
     const [qrCodes, setQrCodes] = useState<Record<string, string>>({});
 
     const fetchSessions = useCallback(async () => {
+        // Guard: don't fetch if no apiKey is configured
+        const parsed = safeStorage.getJSON<{ apiKey?: string }>('coolgroove_config', {});
+        if (!parsed.apiKey) {
+            setLoading(false);
+            return;
+        }
         setLoading(true);
         try {
             const data = await WhatsAppService.getAccounts();
             setSessions(data || []);
         } catch (error) {
             console.error('[useSessions] Failed to fetch sessions', error);
-            toast.error('Erro ao carregar sessões');
         } finally {
             setLoading(false);
         }
     }, []);
 
+    // Re-fetch when socket connects (means apiKey became available)
     useEffect(() => {
         fetchSessions();
-    }, [fetchSessions]);
+    }, [fetchSessions, socket]);
 
     // Socket Events
     useEffect(() => {

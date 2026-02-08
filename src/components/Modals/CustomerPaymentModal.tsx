@@ -5,11 +5,20 @@ import { useDolibarr } from '../../context/DolibarrContext';
 import { useBankAccounts } from '../../hooks/dolibarr';
 import { toast } from 'sonner';
 
+export interface PaymentData {
+    date: number;
+    amount: number;
+    payment_mode_id: string;
+    num_payment: string;
+    fk_account: string;
+    note: string;
+}
+
 interface CustomerPaymentModalProps {
     invoice: Invoice;
     isOpen: boolean;
     onClose: () => void;
-    onConfirm: (paymentData: any) => Promise<void>;
+    onConfirm: (paymentData: PaymentData) => Promise<void>;
 }
 
 // Map Dolibarr Payment Mode IDs to Labels (Standard + Common BR)

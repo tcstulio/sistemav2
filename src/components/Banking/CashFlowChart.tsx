@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
 import {
     BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-    ResponsiveContainer, Area, AreaChart, ComposedChart
+    ResponsiveContainer, Area, AreaChart, ComposedChart, TooltipProps
 } from 'recharts';
 import { TrendingUp, TrendingDown, Calendar, DollarSign } from 'lucide-react';
+import { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent';
 
 interface CashFlowData {
     period: string;
@@ -54,14 +55,14 @@ const CashFlowChart: React.FC<CashFlowChartProps> = ({
         return period;
     };
 
-    const CustomTooltip = ({ active, payload, label }: any) => {
+    const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ color?: string; name?: string; value?: number | string }>; label?: string }) => {
         if (active && payload && payload.length) {
             return (
                 <div className="bg-white dark:bg-slate-800 p-3 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700">
-                    <p className="font-medium text-slate-700 dark:text-slate-300 mb-2">{formatPeriod(label)}</p>
-                    {payload.map((entry: any, index: number) => (
+                    <p className="font-medium text-slate-700 dark:text-slate-300 mb-2">{formatPeriod(String(label))}</p>
+                    {payload.map((entry, index) => (
                         <p key={index} className="text-sm" style={{ color: entry.color }}>
-                            {entry.name}: {formatCurrency(entry.value)}
+                            {entry.name}: {formatCurrency(Number(entry.value))}
                         </p>
                     ))}
                 </div>

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { atomicWriteSync } from '../utils/atomicWrite';
+import { encrypt, decrypt, isEncrypted } from '../utils/crypto';
 import { logger } from '../utils/logger';
 
 const log = logger.child('EmailStoreService');
@@ -23,7 +24,7 @@ export interface EmailAccountConfig {
     imapHost: string;
     imapPort: number;
     imapUser: string;
-    imapPassword: string; // Stored in plain text for now as per MVP
+    imapPassword: string;
     imapTls: boolean;
 
     // SMTP
@@ -55,6 +56,7 @@ class EmailStoreService {
             try {
                 const data = fs.readFileSync(STORE_FILE, 'utf-8');
                 this.accounts = JSON.parse(data);
+                this.migratePasswords();
             } catch (e) {
                 log.error('Failed to load email accounts', e);
                 this.accounts = [];
@@ -73,6 +75,47 @@ class EmailStoreService {
         }
     }
 
+    /** Encrypt any plain-text passwords found on first load */
+    private migratePasswords() {
+        let migrated = false;
+        for (const acc of this.accounts) {
+            if (acc.imapPassword && !isEncrypted(acc.imapPassword)) {
+                acc.imapPassword = encrypt(acc.imapPassword);
+                migrated = true;
+            }
+            if (acc.smtpPassword && !isEncrypted(acc.smtpPassword)) {
+                acc.smtpPassword = encrypt(acc.smtpPassword);
+                migrated = true;
+            }
+        }
+        if (migrated) {
+            atomicWriteSync(STORE_FILE, this.accounts);
+            log.info(`Migrated ${this.accounts.length} account(s) — passwords now encrypted`);
+        }
+    }
+
+    /** Return account with passwords decrypted (for internal/service use) */
+    private decryptAccount(acc: EmailAccountConfig): EmailAccountConfig {
+        return {
+            ...acc,
+            imapPassword: acc.imapPassword ? decrypt(acc.imapPassword) : '',
+            smtpPassword: acc.smtpPassword ? decrypt(acc.smtpPassword) : '',
+        };
+    }
+
+    /** Encrypt password fields before persisting */
+    private encryptPasswords(acc: EmailAccountConfig): EmailAccountConfig {
+        return {
+            ...acc,
+            imapPassword: acc.imapPassword && !isEncrypted(acc.imapPassword)
+                ? encrypt(acc.imapPassword)
+                : acc.imapPassword,
+            smtpPassword: acc.smtpPassword && !isEncrypted(acc.smtpPassword)
+                ? encrypt(acc.smtpPassword)
+                : acc.smtpPassword,
+        };
+    }
+
     private save() {
         atomicWriteSync(STORE_FILE, this.accounts);
         this.saveMetadata();
@@ -82,17 +125,20 @@ class EmailStoreService {
         atomicWriteSync(METADATA_FILE, this.metadata);
     }
 
+    /** Returns all accounts with passwords decrypted (for service use like IMAP/SMTP connections) */
     getAllAccounts(): EmailAccountConfig[] {
-        return this.accounts;
+        return this.accounts.map(a => this.decryptAccount(a));
     }
 
+    /** Returns a single account with passwords decrypted */
     getAccount(id: string): EmailAccountConfig | undefined {
-        return this.accounts.find(a => a.id === id);
+        const acc = this.accounts.find(a => a.id === id);
+        return acc ? this.decryptAccount(acc) : undefined;
     }
 
     addAccount(config: EmailAccountConfig): string {
         const id = config.id || `acc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const accountWithId = { ...config, id };
+        const accountWithId = this.encryptPasswords({ ...config, id });
 
         // Check for duplicate ID
         if (this.accounts.find(a => a.id === id)) {
@@ -108,7 +154,9 @@ class EmailStoreService {
         const index = this.accounts.findIndex(a => a.id === id);
         if (index === -1) throw new Error('Account not found');
 
-        this.accounts[index] = { ...this.accounts[index], ...updates };
+        // Encrypt any new passwords coming in
+        const encrypted = this.encryptPasswords({ ...this.accounts[index], ...updates });
+        this.accounts[index] = encrypted;
         this.save();
     }
 

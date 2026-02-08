@@ -16,47 +16,131 @@ export const getEntityLink = (
 
     const id = String(elementId);
 
-    switch (elementType) {
+    // Normalize element type to lowercase for consistent matching
+    const normalizedType = elementType.toLowerCase();
+
+    switch (normalizedType) {
+        // Projects
         case 'projet':
         case 'project':
             return { view: 'projects', id };
 
+        // Tasks
+        case 'task':
+        case 'projet_task':
+            return { view: 'tasks', id };
+
+        // Tickets
         case 'ticket':
             return { view: 'tickets', id };
 
+        // Proposals (Customer)
         case 'propal':
         case 'comm/propal':
+        case 'proposal':
             return { view: 'proposals', id };
 
+        // Supplier Proposals
+        case 'supplier_proposal':
+        case 'supplier_propal':
+            return { view: 'supplier_proposals', id };
+
+        // Orders
         case 'commande':
         case 'order':
             return { view: 'orders', id };
 
+        // Invoices (Customer)
         case 'facture':
         case 'invoice':
             return { view: 'invoices', id };
 
-        case 'facture_fourn': // Supplier invoice
+        // Supplier Invoices
+        case 'facture_fourn':
+        case 'supplier_invoice':
             return { view: 'supplier_invoices', id };
 
+        // Contracts
         case 'contrat':
         case 'contract':
             return { view: 'contracts', id };
 
+        // Customers / Third Parties
         case 'societe':
         case 'company':
         case 'thirdparty':
+        case 'customer':
             return { view: 'customers', id };
 
-        case 'task':
-            // Task navigation usually relies on Project ID if tasks are sub-views of projects?
-            // Or if there is a global task view.
-            // AgendaView mapped tasks to 'projects' with project_id.
-            // Here we might only have task ID and elementtype 'task'.
-            // If we don't have project context, we strictly can't navigate if the view depends on it.
-            // But if there is a 'tasks' view:
-            // "Clicking on a "Task" should lead to the task details" (Previous user conversation)
-            return { view: 'tasks', id }; // Assuming a global task handler or similar exists/was added.
+        // Suppliers
+        case 'supplier':
+        case 'fournisseur':
+            return { view: 'suppliers', id };
+
+        // Interventions
+        case 'intervention':
+        case 'ficheinter':
+            return { view: 'interventions', id };
+
+        // Shipments
+        case 'shipment':
+        case 'expedition':
+            return { view: 'shipments', id };
+
+        // Payments (Customer)
+        case 'payment':
+        case 'paiement':
+            return { view: 'payments', id };
+
+        // Supplier Payments
+        case 'supplier_payment':
+        case 'paiement_fourn':
+            return { view: 'supplier_payments', id };
+
+        // Products
+        case 'product':
+        case 'produit':
+            return { view: 'products', id };
+
+        // Services
+        case 'service':
+            return { view: 'services', id };
+
+        // Users / HR
+        case 'user':
+        case 'utilisateur':
+            return { view: 'hr', id };
+
+        // Venues / Partnerships
+        case 'venue':
+        case 'partnership':
+            return { view: 'venues', id };
+
+        // Agenda Events
+        case 'agenda':
+        case 'agenda_event':
+        case 'actioncomm':
+            return { view: 'agenda', id };
+
+        // Bank Accounts
+        case 'bank':
+        case 'bank_account':
+            return { view: 'bank_accounts', id };
+
+        // Tax Payments
+        case 'tax_payment':
+        case 'chargesociales':
+            return { view: 'tax_payments', id };
+
+        // Salary Payments
+        case 'salary_payment':
+        case 'salary':
+            return { view: 'salary_payments', id };
+
+        // Expense Reports
+        case 'expense_report':
+        case 'expensereport':
+            return { view: 'expense_report_payments', id };
 
         default:
             // Fallback for society if present (e.g. contact linked to society)

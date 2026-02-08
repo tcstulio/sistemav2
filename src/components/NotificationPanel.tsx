@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useMemo, useCallback } from 'react';
 import { AppNotification, AppView } from '../types';
 import { X, Bell, AlertTriangle, CheckCircle, Info, Clock, AlertCircle as AlertCircleIcon } from 'lucide-react';
 import { formatTime } from '../utils/dateUtils';
@@ -15,16 +15,24 @@ interface NotificationPanelProps {
 }
 
 const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, notifications, onMarkRead, onNavigate, onClearAll, onMarkAllRead }) => {
-    if (!isOpen) return null;
-
-    const getIcon = (type: string, priority: string) => {
+    const getIcon = useCallback((type: string, priority: string) => {
         if (priority === 'high') return <AlertCircleIcon size={20} className="text-red-500" />;
         if (type === 'stock') return <AlertTriangle size={20} className="text-orange-500" />;
         if (type === 'invoice') return <AlertTriangle size={20} className="text-yellow-500" />;
         return <Info size={20} className="text-blue-500" />;
-    };
+    }, []);
 
-    const sortedNotifications = [...notifications].sort((a, b) => b.date - a.date);
+    const sortedNotifications = useMemo(
+        () => [...notifications].sort((a, b) => b.date - a.date),
+        [notifications]
+    );
+
+    const unreadCount = useMemo(
+        () => notifications.filter(n => !n.read).length,
+        [notifications]
+    );
+
+    if (!isOpen) return null;
 
     return (
         <>
@@ -36,7 +44,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
                         <Bell size={18} className="text-slate-600 dark:text-slate-300" />
                         <h3 className="font-bold text-slate-800 dark:text-white">Notificações</h3>
                         <span className="text-xs bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 px-2 py-0.5 rounded-full font-bold">
-                            {notifications.filter(n => !n.read).length}
+                            {unreadCount}
                         </span>
                     </div>
                     <div className="flex gap-2">

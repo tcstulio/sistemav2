@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { DolibarrUser, DolibarrConfig } from '../../../types';
 import { UserAvatar } from '../UserAvatar';
 import { ChevronDown, User as UserIcon } from 'lucide-react';
+import { getThemeClasses } from '../../../utils/theme';
 
 interface TeamTabProps {
     users: DolibarrUser[];
@@ -65,6 +66,8 @@ export const TeamTab: React.FC<TeamTabProps> = ({
         );
     }
 
+    const theme = getThemeClasses(config.themeColor);
+
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4">
@@ -74,8 +77,8 @@ export const TeamTab: React.FC<TeamTabProps> = ({
                         <div
                             key={u.id}
                             className={`group relative p-4 rounded-xl border transition-all flex items-center justify-between gap-4 ${isSelected
-                                ? `bg-${config.themeColor}-50 dark:bg-${config.themeColor}-900/20 border-${config.themeColor}-200 dark:border-${config.themeColor}-800`
-                                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md'
+                                ? theme.activeCard
+                                : theme.inactiveCard
                                 }`}
                         >
                             <div
@@ -98,7 +101,7 @@ export const TeamTab: React.FC<TeamTabProps> = ({
                                     onToggleUser(u.id, true);
                                 }}
                                 className={`w-6 h-6 rounded border flex items-center justify-center cursor-pointer transition-colors ${isSelected
-                                    ? `bg-${config.themeColor}-600 border-${config.themeColor}-600 text-white`
+                                    ? `${theme.bg600} ${theme.border500} text-white`
                                     : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 hover:border-slate-400'
                                     }`}
                             >

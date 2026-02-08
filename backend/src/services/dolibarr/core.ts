@@ -6,7 +6,11 @@
 
 import axios, { AxiosError } from 'axios';
 import https from 'https';
+import fs from 'fs';
 import { config } from '../../config/env';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('DolibarrService');
 import { components } from '../../types/dolibarr.actions';
 
 // Extract strict types from the schema
@@ -17,6 +21,18 @@ export type ValidateSupplierOrderModel = components['schemas']['supplierordersVa
 export type CloseProposalModel = components['schemas']['proposalsCloseModel'];
 export type AddTimeSpentModel = components['schemas']['tasksAddTimeSpentModel'];
 
+// API Key validation regex - only alphanumeric, hyphens, and underscores
+const API_KEY_PATTERN = /^[a-zA-Z0-9\-_]{20,}$/;
+
+function isValidApiKey(key: string): boolean {
+    return API_KEY_PATTERN.test(key);
+}
+
+function sanitizeForSqlFilter(value: string): string {
+    // Escape special SQL characters
+    return value.replace(/['";\\]/g, '');
+}
+
 export class DolibarrServiceBase {
     protected baseUrl: string;
     protected apiKey: string;
@@ -25,9 +41,31 @@ export class DolibarrServiceBase {
     constructor() {
         this.baseUrl = config.dolibarrUrl.endsWith('/') ? config.dolibarrUrl : `${config.dolibarrUrl}/`;
         this.apiKey = config.dolibarrKey;
-        this.httpsAgent = new https.Agent({
-            rejectUnauthorized: false
-        });
+
+        // SSL Configuration - secure by default in production
+        const isProduction = process.env.NODE_ENV === 'production';
+        const caCertPath = process.env.DOLIBARR_CA_CERT;
+
+        if (isProduction) {
+            // Production: Validate SSL certificates
+            const agentOptions: https.AgentOptions = {
+                rejectUnauthorized: true
+            };
+
+            // Support custom CA certificate for self-signed certs
+            if (caCertPath && fs.existsSync(caCertPath)) {
+                agentOptions.ca = fs.readFileSync(caCertPath);
+                log.info('Using custom CA certificate for SSL validation');
+            }
+
+            this.httpsAgent = new https.Agent(agentOptions);
+        } else {
+            // Development: Allow self-signed certificates with warning
+            log.warn('SSL validation disabled (development mode only)');
+            this.httpsAgent = new https.Agent({
+                rejectUnauthorized: false
+            });
+        }
     }
 
     protected getHeaders(userKey?: string) {
@@ -64,7 +102,7 @@ export class DolibarrServiceBase {
             message = error.message;
         }
 
-        console.error(`[DolibarrService] ${context}: ${message}`);
+        log.error(`${context}: ${message}`);
 
         throw {
             message,
@@ -117,14 +155,14 @@ export class DolibarrServiceBase {
             });
             return response.status === 200;
         } catch (error: any) {
-            console.error('[Dolibarr] API Key Validation Error:', error.message);
+            log.error(`API Key Validation Error: ${error.message}`);
             return false;
         }
     }
 
     async login(login: string, password: string): Promise<{ token: string, entity: string, message: string }> {
         const url = `${this.baseUrl}login?login=${encodeURIComponent(login)}&password=${encodeURIComponent(password)}`;
-        console.log(`[DolibarrService] Attempting login for user: ${login}`);
+        log.debug(`Attempting login for user: ${login}`);
 
         try {
             const headers = {
@@ -136,13 +174,13 @@ export class DolibarrServiceBase {
             const response = await axios.get(url, { headers, httpsAgent: this.httpsAgent });
 
             if (response.status === 200 && response.data && response.data.success) {
-                console.log(`[DolibarrService] Login successful for ${login}`);
+                log.info(`Login successful for ${login}`);
                 return response.data.success;
             } else {
                 throw new Error(response.data?.error?.message || `Falha no login (${response.status})`);
             }
         } catch (error: any) {
-            console.error(`[DolibarrService] Login Exception:`, error.message);
+            log.error(`Login Exception: ${error.message}`);
             throw new Error(error.message || 'Erro de conexão com Dolibarr');
         }
     }
@@ -152,7 +190,7 @@ export class DolibarrServiceBase {
             const url = `${this.baseUrl}setup/company`;
             const headers = this.getHeaders(apiKey);
 
-            console.log(`[DoliService] Verifying Admin Status for key ${apiKey.substring(0, 5)}...`);
+            log.debug(`Verifying Admin Status for key ${apiKey.substring(0, 5)}...`);
 
             const response = await axios.get(url, {
                 headers,
@@ -161,15 +199,15 @@ export class DolibarrServiceBase {
             });
 
             if (response.status === 200) {
-                console.log(`[DoliService] Admin Verified (Access to /setup/company granted).`);
+                log.info('Admin Verified (Access to /setup/company granted)');
                 return true;
             }
             return false;
         } catch (error: any) {
             if (error.response) {
-                console.warn(`[DoliService] Admin Verification Failed. Status: ${error.response.status}`);
+                log.warn(`Admin Verification Failed. Status: ${error.response.status}`);
             } else {
-                console.error('[DoliService] Check Error:', error.message);
+                log.error(`Check Error: ${error.message}`);
             }
             return false;
         }
@@ -177,6 +215,12 @@ export class DolibarrServiceBase {
 
     async getUserByKey(apiKey: string): Promise<any> {
         try {
+            // Validate API key format to prevent injection
+            if (!apiKey || !isValidApiKey(apiKey)) {
+                log.warn('Invalid API key format rejected');
+                return null;
+            }
+
             const drivers = ['users/info', 'users/myself'];
             const headers = this.getHeaders(apiKey);
 
@@ -190,7 +234,9 @@ export class DolibarrServiceBase {
                     });
 
                     if (response.data && response.data.id) {
-                        console.log(`[DoliService] User identified via /${endpoint}: ${response.data.login}`);
+                        if (process.env.NODE_ENV !== 'production') {
+                            log.debug(`User identified via /${endpoint}: ${response.data.login}`);
+                        }
                         return response.data;
                     }
                 } catch (ignore) {
@@ -198,12 +244,13 @@ export class DolibarrServiceBase {
                 }
             }
 
-            // Fallback: SQL filter
+            // Fallback: SQL filter with sanitized input
             const url = `${this.baseUrl}users`;
             try {
+                const sanitizedKey = sanitizeForSqlFilter(apiKey);
                 const response = await axios.get(url, {
                     headers,
-                    params: { sqlfilters: `(t.api_key:=:'${apiKey}')` },
+                    params: { sqlfilters: `(t.api_key:=:'${sanitizedKey}')` },
                     httpsAgent: this.httpsAgent
                 });
 
@@ -213,12 +260,12 @@ export class DolibarrServiceBase {
                     if (response.data.length > 0) return response.data[0];
                 }
             } catch (sqlErr: any) {
-                console.warn(`[DoliService] SQL Filter fallback failed: ${sqlErr.message}`);
+                log.warn(`SQL Filter fallback failed: ${sqlErr.message}`);
             }
 
             return null;
         } catch (error: any) {
-            console.error('[DolibarrService] GetUserByKey Error:', error.message);
+            log.error(`GetUserByKey Error: ${error.message}`);
             return null;
         }
     }
@@ -242,7 +289,7 @@ export class DolibarrServiceBase {
         }
 
         try {
-            console.log(`[DolibarrProxy] ${method} ${targetUrl}`);
+            log.debug(`Proxy ${method} ${targetUrl}`);
             const response = await axios({
                 method: method,
                 url: targetUrl,
@@ -259,7 +306,7 @@ export class DolibarrServiceBase {
                 headers: response.headers
             };
         } catch (error: any) {
-            console.error(`[DolibarrProxy] Error: ${error.message}`);
+            log.error(`Proxy Error: ${error.message}`);
             if (axios.isAxiosError(error) && error.response) {
                 return {
                     status: error.response.status,
@@ -299,7 +346,7 @@ export class DolibarrServiceBase {
         }
 
         try {
-            console.log(`[DolibarrCustomSync] GET ${targetUrl}?type=${query.type}&last_modified=${query.last_modified}`);
+            log.debug(`CustomSync GET ${targetUrl}?type=${query.type}&last_modified=${query.last_modified}`);
             const response = await axios.get(targetUrl, {
                 headers: finalHeaders,
                 params: query,
@@ -313,7 +360,7 @@ export class DolibarrServiceBase {
                 headers: response.headers
             };
         } catch (error: any) {
-            console.error(`[DolibarrCustomSync] Error: ${error.message}`);
+            log.error(`CustomSync Error: ${error.message}`);
             if (axios.isAxiosError(error) && error.response) {
                 return {
                     status: error.response.status,
