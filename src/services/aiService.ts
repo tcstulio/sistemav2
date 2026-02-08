@@ -1,9 +1,20 @@
 import axios from 'axios';
+import { toast } from 'sonner';
 import { ThirdParty, Invoice, Project, Ticket } from '../types';
+import { logger } from '../utils/logger';
+import { safeStorage } from '../utils/safeStorage';
+
+const log = logger.child('AiService');
+
+const handleAiError = (context: string, error: any): void => {
+    const msg = error.response?.data?.error || error.message || 'Erro desconhecido';
+    log.error(`${context}: ${msg}`);
+    toast.error(`IA indisponível: ${context}`);
+};
 
 // Utility to get headers with Auth
 const getAuthHeaders = () => {
-    const savedConfigObj = JSON.parse(localStorage.getItem('coolgroove_config') || '{}');
+    const savedConfigObj = safeStorage.getJSON<Record<string, any>>('coolgroove_config', {});
     const token = savedConfigObj.apiKey || '';
     return {
         headers: {
@@ -32,7 +43,7 @@ export const AiService = {
             }, getAuthHeaders());
             return response.data.reply;
         } catch (error: any) {
-            console.error("Erro AI Backend details:", error.response?.data || error.message);
+            handleAiError('Resposta de ticket', error);
             return null;
         }
     },
@@ -59,7 +70,7 @@ export const AiService = {
             reply = reply.replace(/```json/g, '').replace(/```/g, '').trim();
             return JSON.parse(reply);
         } catch (error: any) {
-            console.error("generateProjectTasks Error", error);
+            handleAiError('Geração de tarefas', error);
             return [];
         }
     },
@@ -69,7 +80,7 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/extract/customer`, { text }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("extractProjectInfo Error", error);
+            handleAiError('Extração de projeto', error);
             return null;
         }
     },
@@ -79,13 +90,13 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/analyze/financial`, { data }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("Financial Analysis Error", error);
+            handleAiError('Análise financeira', error);
             return "Erro ao processar análise.";
         }
     },
 
     logCorrection: async (logId: string, correction: string) => {
-        console.log("Correction logged", logId, correction);
+        log.debug('Correction logged', { logId, correction });
     },
 
     draftCollectionEmail: async (customer: ThirdParty, totalDue: number) => {
@@ -96,7 +107,7 @@ export const AiService = {
             }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("draftCollectionEmail Error", error);
+            handleAiError('Email de cobrança', error);
             return JSON.stringify({ subject: "Lembrete de Pagamento", body: "Erro ao gerar email." });
         }
     },
@@ -105,8 +116,8 @@ export const AiService = {
         try {
             // Intelligent Data Selection for Seasonality
             const now = new Date();
-            console.log("DEBUG: Reference Date (Front) =", now.toString());
-            console.log("DEBUG: Context sent to AI =", { referenceDate: now.toISOString() });
+            log.debug(`Reference Date (Front) = ${now.toString()}`);
+            log.debug('Context sent to AI', { referenceDate: now.toISOString() });
 
             const currentYear = now.getFullYear();
             const currentMonth = now.getMonth(); // 0-11
@@ -158,7 +169,7 @@ export const AiService = {
             }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("generateSalesForecast Error", error);
+            handleAiError('Previsão de vendas', error);
             return null;
         }
     },
@@ -177,7 +188,7 @@ export const AiService = {
             // Return in the format expected by the component
             return { text: response.data.result, logId: Date.now().toString() };
         } catch (error: any) {
-            console.error("analyzeCustomerSentiment Error", error);
+            handleAiError('Análise de sentimento', error);
             return null;
         }
     },
@@ -187,7 +198,7 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/extract/receipt`, { image: base64 }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("Receipt Extraction Error", error);
+            handleAiError('Extração de recibo', error);
             return null;
         }
     },
@@ -197,7 +208,7 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/audit/proposal`, { proposal }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("auditProposal Error", error);
+            handleAiError('Auditoria de proposta', error);
             return null;
         }
     },
@@ -211,7 +222,7 @@ export const AiService = {
             }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("auditProject Error", error);
+            handleAiError('Auditoria de projeto', error);
             return null;
         }
     },
@@ -244,7 +255,7 @@ export const AiService = {
             return response.data.reply;
 
         } catch (error: any) {
-            console.error("Chat Error", error);
+            handleAiError('Chat', error);
             return "Erro de conexão com o Assistente Virtual.";
         }
     },
@@ -256,7 +267,7 @@ export const AiService = {
             }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("analyzeSystemLogs Error", error);
+            handleAiError('Análise de logs', error);
             return "[]";
         }
     },
@@ -266,7 +277,7 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/analyze-system`, { query: `Analyze this API structure: ${json}` }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("analyzeApiStructure Error", error);
+            handleAiError('Análise de API', error);
             return null;
         }
     },
@@ -276,7 +287,7 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/analyze-system`, { query }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("System Analysis Error", error);
+            log.error('System Analysis Error', error);
             return "Erro ao analisar sistema: " + (error.response?.data?.error || error.message);
         }
     },
@@ -286,7 +297,7 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/analyze-sentiment`, { text }, getAuthHeaders());
             return response.data;
         } catch (error: any) {
-            console.error("Sentiment Analysis Error", error);
+            log.error('Sentiment Analysis Error', error);
             return { score: 50, label: "Error" };
         }
     },
@@ -296,7 +307,7 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/extract/customer`, { text }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("Extraction Error", error);
+            log.error('Extraction Error', error);
             return null;
         }
     },
@@ -306,7 +317,7 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/fix/api-call`, { log: failedLog }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("Fix API Error", error);
+            log.error('Fix API Error', error);
             return "Erro ao analisar log: " + (error.response?.data?.error || error.message);
         }
     },
@@ -325,7 +336,7 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/transcribe-audio`, { audio: audioBase64, mimeType }, getAuthHeaders());
             return response.data.transcription;
         } catch (error: any) {
-            console.error("Transcription Error", error);
+            log.error('Transcription Error', error);
             return "[Erro na transcrição]";
         }
     },
@@ -338,7 +349,7 @@ export const AiService = {
             }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("Data Quality Analysis Error", error);
+            handleAiError('Qualidade de dados', error);
             return null;
         }
     },
@@ -353,7 +364,7 @@ export const AiService = {
             }, getAuthHeaders());
             return response.data.reply;
         } catch (error: any) {
-            console.error("Activity Report Error", error);
+            log.error('Activity Report Error', error);
             return "Erro ao gerar relatório. Verifique sua conexão ou tente novamente.";
         }
     },
@@ -363,7 +374,7 @@ export const AiService = {
             const response = await axios.post(`${API_URL}/analyze/monthly-report`, { data }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {
-            console.error("Monthly Report Analysis Error", error);
+            log.error('Monthly Report Analysis Error', error);
             return "Erro ao gerar análise do relatório mensal.";
         }
     },
@@ -407,7 +418,7 @@ export const AiService = {
             // But generate-reply returns text. We rely on the model obeying the JSON instruction.
             return response.data.reply;
         } catch (error: any) {
-            console.error("draftMessage Error", error);
+            handleAiError('Rascunho de mensagem', error);
             return null;
         }
     }

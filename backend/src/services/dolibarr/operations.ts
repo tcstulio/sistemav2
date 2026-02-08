@@ -6,6 +6,9 @@
 
 import axios from 'axios';
 import { DolibarrServiceBase, AddTimeSpentModel } from './core';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('DolibarrOperations');
 
 export class DolibarrOperationsService extends DolibarrServiceBase {
 
@@ -30,7 +33,7 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
             }
             return null;
         } catch (error: any) {
-            console.error(`[DoliService] GetTicket Error for ${id}:`, error.message);
+            log.error(`GetTicket Error for ${id}`, error.message);
             return null;
         }
     }
@@ -58,7 +61,7 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
 
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listProjects Error", error);
+            log.error('listProjects Error', error);
             return [];
         }
     }
@@ -79,7 +82,7 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listTasks Error", error);
+            log.error('listTasks Error', error);
             return [];
         }
     }
@@ -108,7 +111,7 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
 
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listTickets Error", error);
+            log.error('listTickets Error', error);
             return [];
         }
     }
@@ -129,7 +132,7 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listShipments Error", error);
+            log.error('listShipments Error', error);
             return [];
         }
     }
@@ -146,7 +149,7 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listEvents Error", error);
+            log.error('listEvents Error', error);
             return [];
         }
     }
@@ -167,7 +170,7 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listInterventions Error", error);
+            log.error('listInterventions Error', error);
             return [];
         }
     }

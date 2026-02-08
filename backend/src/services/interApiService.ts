@@ -8,6 +8,7 @@
  * - API Cobrança (boletos)
  */
 
+import { logger } from '../utils/logger';
 import { config } from '../config/env';
 import {
     SaldoInter,
@@ -55,6 +56,8 @@ const SCOPES = {
 };
 
 // ===== InterApiService Class =====
+
+const log = logger.child('InterApiService');
 
 class InterApiService extends BankingApiBase {
     // ===== Abstract Method Implementations =====
@@ -138,7 +141,7 @@ class InterApiService extends BankingApiBase {
      * Get account balance (Inter format)
      */
     async getSaldo(): Promise<SaldoInter> {
-        console.log('[Inter] Getting account balance...');
+        log.info('Getting account balance...');
         return this.request<SaldoInter>('GET', '/banking/v2/saldo');
     }
 
@@ -146,7 +149,7 @@ class InterApiService extends BankingApiBase {
      * Get account statement (Inter format)
      */
     async getExtrato(dataInicial: string, dataFinal: string): Promise<ExtratoInter> {
-        console.log(`[Inter] Getting statement from ${dataInicial} to ${dataFinal}...`);
+        log.info(`Getting statement from ${dataInicial} to ${dataFinal}...`);
         return this.request<ExtratoInter>('GET', '/banking/v2/extrato', null, {
             dataInicio: dataInicial,
             dataFim: dataFinal,
@@ -165,7 +168,7 @@ class InterApiService extends BankingApiBase {
      * Pay a boleto
      */
     async pagarBoleto(dados: PagamentoBoletoRequest): Promise<PagamentoBoletoResponse> {
-        console.log('[Inter] Paying boleto...');
+        log.info('Paying boleto...');
         return this.request<PagamentoBoletoResponse>('POST', '/banking/v2/pagamento', dados);
     }
 
@@ -173,7 +176,7 @@ class InterApiService extends BankingApiBase {
      * Get payment receipt
      */
     async getComprovantePagamento(codigoTransacao: string): Promise<Buffer> {
-        console.log(`[Inter] Getting payment receipt: ${codigoTransacao}`);
+        log.info(`Getting payment receipt: ${codigoTransacao}`);
         return this.requestBinary('GET', `/banking/v2/pagamento/${codigoTransacao}/pdf`);
     }
 
@@ -183,7 +186,7 @@ class InterApiService extends BankingApiBase {
      * Create immediate Pix charge (Cob)
      */
     async criarPixCobranca(dados: PixCobrancaRequest, txid?: string): Promise<PixCobrancaResponse> {
-        console.log('[Inter] Creating Pix charge...');
+        log.info('Creating Pix charge...');
 
         if (txid) {
             return this.request<PixCobrancaResponse>('PUT', `/pix/v2/cob/${txid}`, dados);
@@ -196,7 +199,7 @@ class InterApiService extends BankingApiBase {
      * Create Pix charge with due date (CobV)
      */
     async criarPixCobrancaVencimento(txid: string, dados: PixCobrancaRequest): Promise<PixCobrancaResponse> {
-        console.log(`[Inter] Creating Pix charge with due date: ${txid}`);
+        log.info(`Creating Pix charge with due date: ${txid}`);
         return this.request<PixCobrancaResponse>('PUT', `/pix/v2/cobv/${txid}`, dados);
     }
 
@@ -204,7 +207,7 @@ class InterApiService extends BankingApiBase {
      * Get Pix charge info
      */
     async consultarPixCobranca(txid: string): Promise<PixCobrancaResponse> {
-        console.log(`[Inter] Consulting Pix charge: ${txid}`);
+        log.info(`Consulting Pix charge: ${txid}`);
         return this.request<PixCobrancaResponse>('GET', `/pix/v2/cob/${txid}`);
     }
 
@@ -212,7 +215,7 @@ class InterApiService extends BankingApiBase {
      * Get QR Code for Pix charge
      */
     async getPixQRCode(locationId: number): Promise<PixQRCodeResponse> {
-        console.log(`[Inter] Getting Pix QR Code for location: ${locationId}`);
+        log.info(`Getting Pix QR Code for location: ${locationId}`);
         return this.request<PixQRCodeResponse>('GET', `/pix/v2/loc/${locationId}/qrcode`);
     }
 
@@ -220,7 +223,7 @@ class InterApiService extends BankingApiBase {
      * Send Pix payment
      */
     async enviarPix(dados: PixPagamentoRequest): Promise<PixPagamentoResponse> {
-        console.log('[Inter] Sending Pix payment...');
+        log.info('Sending Pix payment...');
         return this.request<PixPagamentoResponse>('POST', '/pix/v2/pix', dados);
     }
 
@@ -228,7 +231,7 @@ class InterApiService extends BankingApiBase {
      * List received Pix
      */
     async listarPixRecebidos(inicio: string, fim: string): Promise<PixRecebido[]> {
-        console.log(`[Inter] Listing received Pix from ${inicio} to ${fim}...`);
+        log.info(`Listing received Pix from ${inicio} to ${fim}...`);
         const response = await this.request<PixListaRecebidosResponse>('GET', '/pix/v2/pix', null, {
             inicio,
             fim,
@@ -240,7 +243,7 @@ class InterApiService extends BankingApiBase {
      * Get Pix by endToEndId
      */
     async consultarPix(endToEndId: string): Promise<PixRecebido> {
-        console.log(`[Inter] Consulting Pix: ${endToEndId}`);
+        log.info(`Consulting Pix: ${endToEndId}`);
         return this.request<PixRecebido>('GET', `/pix/v2/pix/${endToEndId}`);
     }
 
@@ -250,7 +253,7 @@ class InterApiService extends BankingApiBase {
      * Issue a new boleto
      */
     async emitirBoleto(dados: BoletoEmissaoRequest): Promise<BoletoResponse> {
-        console.log(`[Inter] Issuing boleto: ${dados.seuNumero}`);
+        log.info(`Issuing boleto: ${dados.seuNumero}`);
         return this.request<BoletoResponse>('POST', '/cobranca/v3/cobrancas', dados);
     }
 
@@ -258,7 +261,7 @@ class InterApiService extends BankingApiBase {
      * Get boleto info by nossoNumero
      */
     async consultarBoleto(nossoNumero: string): Promise<BoletoConsultaResponse> {
-        console.log(`[Inter] Consulting boleto: ${nossoNumero}`);
+        log.info(`Consulting boleto: ${nossoNumero}`);
         return this.request<BoletoConsultaResponse>('GET', `/cobranca/v3/cobrancas/${nossoNumero}`);
     }
 
@@ -272,7 +275,7 @@ class InterApiService extends BankingApiBase {
         pagina?: number;
         tamanhoPagina?: number;
     }): Promise<BoletoListaResponse> {
-        console.log('[Inter] Listing boletos...');
+        log.info('Listing boletos...');
         return this.request<BoletoListaResponse>('GET', '/cobranca/v3/cobrancas', null, {
             dataInicio: params.dataInicial,
             dataFim: params.dataFinal,
@@ -286,7 +289,7 @@ class InterApiService extends BankingApiBase {
      * Cancel a boleto
      */
     async cancelarBoleto(nossoNumero: string, motivoCancelamento: string): Promise<void> {
-        console.log(`[Inter] Cancelling boleto: ${nossoNumero}`);
+        log.info(`Cancelling boleto: ${nossoNumero}`);
         await this.request<void>('POST', `/cobranca/v3/cobrancas/${nossoNumero}/cancelar`, {
             motivoCancelamento,
         });
@@ -296,7 +299,7 @@ class InterApiService extends BankingApiBase {
      * Download boleto PDF
      */
     async downloadBoletoPDF(nossoNumero: string): Promise<Buffer> {
-        console.log(`[Inter] Downloading boleto PDF: ${nossoNumero}`);
+        log.info(`Downloading boleto PDF: ${nossoNumero}`);
         return this.requestBinary('GET', `/cobranca/v3/cobrancas/${nossoNumero}/pdf`);
     }
 
@@ -306,7 +309,7 @@ class InterApiService extends BankingApiBase {
      * Configure Pix webhook
      */
     async configurarWebhookPix(chave: string, webhookUrl: string): Promise<void> {
-        console.log(`[Inter] Configuring Pix webhook for key: ${chave}`);
+        log.info(`Configuring Pix webhook for key: ${chave}`);
         await this.request<void>('PUT', `/pix/v2/webhook/${chave}`, {
             webhookUrl,
         });
@@ -316,7 +319,7 @@ class InterApiService extends BankingApiBase {
      * Get Pix webhook config
      */
     async consultarWebhookPix(chave: string): Promise<{ webhookUrl: string }> {
-        console.log(`[Inter] Getting Pix webhook config for key: ${chave}`);
+        log.info(`Getting Pix webhook config for key: ${chave}`);
         return this.request<{ webhookUrl: string }>('GET', `/pix/v2/webhook/${chave}`);
     }
 
@@ -324,7 +327,7 @@ class InterApiService extends BankingApiBase {
      * Delete Pix webhook
      */
     async deletarWebhookPix(chave: string): Promise<void> {
-        console.log(`[Inter] Deleting Pix webhook for key: ${chave}`);
+        log.info(`Deleting Pix webhook for key: ${chave}`);
         await this.request<void>('DELETE', `/pix/v2/webhook/${chave}`);
     }
 }

@@ -1,8 +1,12 @@
 import fs from 'fs';
 import path from 'path';
+import { atomicWriteSync } from '../utils/atomicWrite';
 import { messageService } from './messageService';
 import { emailService } from './emailService'; // New
 import { socketService } from './socketService';
+import { logger } from '../utils/logger';
+
+const log = logger.child('SchedulerService');
 
 // --- Interfaces ---
 
@@ -261,7 +265,7 @@ class SchedulerService {
             }
         });
 
-        if (added) console.log('[Scheduler] Default rules initialized');
+        if (added) log.info('Default rules initialized');
     }
 
     // --- Persistence ---
@@ -285,18 +289,18 @@ class SchedulerService {
                     chatFlows: parsed.chatFlows || [],
                     activeFlows: parsed.activeFlows || {}
                 };
-                console.log(`[Scheduler] Loaded ${this.data.messages.length} messages, ${this.data.templates.length} templates, ${this.data.automationRules.length} rules, ${this.data.chatFlows.length} flows`);
+                log.info(`Loaded ${this.data.messages.length} messages, ${this.data.templates.length} templates, ${this.data.automationRules.length} rules, ${this.data.chatFlows.length} flows`);
             }
         } catch (error) {
-            console.error('[Scheduler] Load Error:', error);
+            log.error('Load Error', error);
         }
     }
 
     private save() {
         try {
-            fs.writeFileSync(STORE_PATH, JSON.stringify(this.data, null, 2));
+            atomicWriteSync(STORE_PATH, this.data);
         } catch (error) {
-            console.error('[Scheduler] Save Error:', error);
+            log.error('Save Error', error);
         }
     }
 
@@ -304,11 +308,11 @@ class SchedulerService {
 
     startWorker() {
         if (this.intervalId) {
-            console.log('[Scheduler] Worker already running');
+            log.info('Worker already running');
             return;
         }
 
-        console.log(`[Scheduler] Starting worker (check every ${CHECK_INTERVAL_MS / 1000}s)`);
+        log.info(`Starting worker (check every ${CHECK_INTERVAL_MS / 1000}s)`);
         this.intervalId = setInterval(() => this.processQueue(), CHECK_INTERVAL_MS);
 
         // Also run immediately
@@ -319,7 +323,7 @@ class SchedulerService {
         if (this.intervalId) {
             clearInterval(this.intervalId);
             this.intervalId = null;
-            console.log('[Scheduler] Worker stopped');
+            log.info('Worker stopped');
         }
     }
 
@@ -339,13 +343,13 @@ class SchedulerService {
 
         if (pending.length === 0) return;
 
-        console.log(`[Scheduler] Processing ${pending.length} pending messages`);
+        log.info(`Processing ${pending.length} pending messages`);
 
         for (const msg of pending) {
             // Rate limiting per session
             const sessionCount = this.messagesSentPerSession.get(msg.sessionId) || 0;
             if (sessionCount >= MAX_MESSAGES_PER_MINUTE) {
-                console.warn(`[Scheduler] Rate limit reached for session ${msg.sessionId}, skipping`);
+                log.warn(`Rate limit reached for session ${msg.sessionId}, skipping`);
                 continue; // Skip this message but continue with others from different sessions
             }
 
@@ -355,7 +359,7 @@ class SchedulerService {
 
     private async sendScheduledMessage(msg: ScheduledMessage) {
         try {
-            console.log(`[Scheduler] Sending to ${msg.chatId}: "${msg.message.substring(0, 50)}..."`);
+            log.info(`Sending to ${msg.chatId}: "${msg.message.substring(0, 50)}..."`);
 
             if (msg.channel === 'email') {
                 await emailService.sendEmail(msg.sessionId, msg.chatId, msg.subject || 'Notificação', msg.message);
@@ -409,7 +413,7 @@ class SchedulerService {
             this.save();
 
         } catch (error: any) {
-            console.error(`[Scheduler] Failed to send ${msg.id}:`, error.message);
+            log.error(`Failed to send ${msg.id}: ${error.message}`);
             msg.status = 'failed';
             msg.error = error.message;
             this.save();
@@ -454,7 +458,7 @@ class SchedulerService {
         this.data.messages.push(msg);
         this.save();
 
-        console.log(`[Scheduler] Scheduled message ${msg.id} for ${new Date(msg.scheduledAt).toISOString()}`);
+        log.info(`Scheduled message ${msg.id} for ${new Date(msg.scheduledAt).toISOString()}`);
 
         socketService.emit('scheduler_created', msg);
 
@@ -493,7 +497,7 @@ class SchedulerService {
             messages.push(msg);
         }
 
-        console.log(`[Scheduler] Created broadcast ${broadcastId} with ${messages.length} messages`);
+        log.info(`Created broadcast ${broadcastId} with ${messages.length} messages`);
 
         return messages;
     }
@@ -610,7 +614,7 @@ class SchedulerService {
         if (msg && msg.status === 'pending') {
             msg.status = 'cancelled';
             this.save();
-            console.log(`[Scheduler] Cancelled message ${id}`);
+            log.info(`Cancelled message ${id}`);
             return true;
         }
         return false;
@@ -680,7 +684,7 @@ class SchedulerService {
         delete this.data.confirmations[chatId];
         this.save();
 
-        console.log(`[Scheduler] Confirmation ${isConfirmed ? 'accepted' : 'rejected'} for ${chatId}`);
+        log.info(`Confirmation ${isConfirmed ? 'accepted' : 'rejected'} for ${chatId}`);
 
         return conf.callback;
     }
@@ -800,7 +804,7 @@ class SchedulerService {
 
         this.data.automationRules.push(rule);
         this.save();
-        console.log(`[Scheduler] Created automation rule: ${rule.name}`);
+        log.info(`Created automation rule: ${rule.name}`);
 
         return rule;
     }
@@ -852,7 +856,7 @@ class SchedulerService {
         if (updates.conditions !== undefined) rule.conditions = updates.conditions;
 
         this.save();
-        console.log(`[Scheduler] Updated automation rule: ${rule.name}`);
+        log.info(`Updated automation rule: ${rule.name}`);
         return rule;
     }
 
@@ -947,7 +951,7 @@ class SchedulerService {
 
         this.data.chatFlows.push(flow);
         this.save();
-        console.log(`[Scheduler] Created chatbot flow: ${flow.name}`);
+        log.info(`Created chatbot flow: ${flow.name}`);
 
         return flow;
     }
@@ -1015,7 +1019,7 @@ class SchedulerService {
         };
 
         this.save();
-        console.log(`[Scheduler] Started flow ${flow.name} for ${chatId}`);
+        log.info(`Started flow ${flow.name} for ${chatId}`);
 
         return firstStep;
     }
@@ -1093,7 +1097,7 @@ class SchedulerService {
     endFlow(chatId: string) {
         delete this.data.activeFlows[chatId];
         this.save();
-        console.log(`[Scheduler] Ended flow for ${chatId}`);
+        log.info(`Ended flow for ${chatId}`);
     }
 
     // --- CSV Import ---

@@ -1,5 +1,8 @@
 import { sessionService } from './sessionService';
 import { messageService } from './messageService';
+import { logger } from '../utils/logger';
+
+const log = logger.child('WahaService');
 
 /*
  * [ANTIGRAVITY] Legacy Support Layer
@@ -10,14 +13,14 @@ import { messageService } from './messageService';
 
 export class WahaService {
     constructor() {
-        console.log('[WahaService] Facade Initialized.');
+        log.info('Facade Initialized.');
     }
 
     // --- Session Management ---
 
     public init() {
         // SessionService initializes itself via singleton pattern
-        console.log('[WahaService] Init delegated to SessionService (already self-initialized).');
+        log.info('Init delegated to SessionService (already self-initialized).');
     }
 
     async startSession(sessionId: string) {

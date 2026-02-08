@@ -18,7 +18,9 @@ import {
     BoletoWebhookItauPayload,
 } from '../types/itau.types';
 import { config } from '../config/env';
+import { logger } from '../utils/logger';
 
+const log = logger.child('ItauBankingRoutes');
 const router = Router();
 
 // Configure multer for certificate uploads
@@ -225,7 +227,7 @@ router.post('/pix/cobranca', async (req: Request, res: Response) => {
             try {
                 qrcode = await itauApiService.getPixQRCode(cobranca.loc.id);
             } catch (e) {
-                console.warn('[ItauRoutes] Could not get QR code:', e);
+                log.warn('Could not get QR code', e);
             }
         }
 
@@ -426,13 +428,13 @@ router.post('/boleto/:nossoNumero/baixar', async (req: Request, res: Response) =
  */
 router.post('/webhook/pix', async (req: Request, res: Response) => {
     try {
-        console.log('[ItauWebhook] Received PIX webhook:', JSON.stringify(req.body));
+        log.info('Received PIX webhook', req.body);
 
         const payload: PixWebhookItauPayload = req.body;
 
         if (payload.pix && Array.isArray(payload.pix)) {
             for (const pix of payload.pix) {
-                console.log(`[ItauWebhook] PIX received: ${pix.endToEndId} - R$ ${pix.valor}`);
+                log.info(`PIX received: ${pix.endToEndId} - R$ ${pix.valor}`);
                 // TODO: Emit event via socket for real-time notification
                 // TODO: Update local database/cache
             }
@@ -440,7 +442,7 @@ router.post('/webhook/pix', async (req: Request, res: Response) => {
 
         res.status(200).json({ success: true });
     } catch (error: any) {
-        console.error('[ItauWebhook] PIX webhook error:', error);
+        log.error('PIX webhook error', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -451,15 +453,15 @@ router.post('/webhook/pix', async (req: Request, res: Response) => {
  */
 router.post('/webhook/boleto', async (req: Request, res: Response) => {
     try {
-        console.log('[ItauWebhook] Received Boleto webhook:', JSON.stringify(req.body));
+        log.info('Received Boleto webhook', req.body);
 
         const payload: BoletoWebhookItauPayload = req.body;
 
         if (payload.nossoNumero) {
-            console.log(`[ItauWebhook] Boleto ${payload.nossoNumero} - Event: ${payload.evento}`);
+            log.info(`Boleto ${payload.nossoNumero} - Event: ${payload.evento}`);
 
             if (payload.evento === 'LIQUIDACAO') {
-                console.log(`[ItauWebhook] Boleto paid: R$ ${payload.valor} on ${payload.dataPagamento}`);
+                log.info(`Boleto paid: R$ ${payload.valor} on ${payload.dataPagamento}`);
             }
 
             // TODO: Emit event via socket
@@ -468,7 +470,7 @@ router.post('/webhook/boleto', async (req: Request, res: Response) => {
 
         res.status(200).json({ success: true });
     } catch (error: any) {
-        console.error('[ItauWebhook] Boleto webhook error:', error);
+        log.error('Boleto webhook error', error);
         res.status(500).json({ error: error.message });
     }
 });

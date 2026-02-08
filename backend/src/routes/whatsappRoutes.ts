@@ -6,7 +6,9 @@ import { storeService } from '../services/storeService';
 import { socketService } from '../services/socketService'; // Webhook needs this
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { z } from 'zod';
+import { logger } from '../utils/logger';
 
+const log = logger.child('WhatsAppRoutes');
 const router = Router();
 const DEFAULT_SESSION = 'default';
 
@@ -14,7 +16,7 @@ const DEFAULT_SESSION = 'default';
 // Webhook Receiver (Legacy / External) - Must be before Auth Middleware
 router.post('/webhook', (req, res) => {
     const event = req.body;
-    console.log('Webhook received:', JSON.stringify(event, null, 2));
+    log.info('Webhook received', event);
     socketService.emit('whatsapp_message', event);
     res.json({ status: 'received' });
 });
@@ -338,7 +340,7 @@ router.get('/messages/:chatId', async (req, res) => {
         const messages = await messageService.getMessages(sessionId, chatId, limit);
         res.json(messages);
     } catch (error: any) {
-        console.error(`[WhatsApp Route] Error fetching messages for ${req.params.chatId}:`, error);
+        log.error(`Error fetching messages for ${req.params.chatId}`, error);
         res.status(500).json({ error: 'Failed to fetch messages' });
     }
 });
@@ -399,7 +401,7 @@ router.post('/send-voice', async (req, res) => {
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
         }
-        console.error("Send Voice Error:", error);
+        log.error('Send Voice Error', error);
         res.status(500).json({ error: error.message || 'Failed to send voice' });
     }
 });

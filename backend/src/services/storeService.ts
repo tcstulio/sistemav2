@@ -1,5 +1,9 @@
 import fs from 'fs';
 import path from 'path';
+import { atomicWriteSync } from '../utils/atomicWrite';
+import { logger } from '../utils/logger';
+
+const log = logger.child('StoreService');
 
 interface WhatsAppStore {
     // Per-User (Signature preferences for manual messages - optional/legacy)
@@ -79,15 +83,15 @@ class StoreService {
                 };
             }
         } catch (error) {
-            console.error('[StoreService] Load Error:', error);
+            log.error('Load Error', error);
         }
     }
 
     private save() {
         try {
-            fs.writeFileSync(STORE_PATH, JSON.stringify(this.data, null, 2));
+            atomicWriteSync(STORE_PATH, this.data);
         } catch (error) {
-            console.error('[StoreService] Save Error:', error);
+            log.error('Save Error', error);
         }
     }
 

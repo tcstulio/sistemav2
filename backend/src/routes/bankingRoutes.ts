@@ -1,22 +1,21 @@
 import { Router, Request, Response } from 'express';
 import { bankingService, CSVFormat } from '../services/bankingService';
 import multer from 'multer';
+import { logger } from '../utils/logger';
+import { createFileFilter, validateFileUpload, containsExecutableCode, sanitizeFilename } from '../utils/fileValidation';
+import { requireDolibarrLogin } from '../middleware/authMiddleware';
 
+const log = logger.child('BankingRoutes');
 const router = Router();
 
-// Configure multer for file uploads
+// Protect all banking routes
+router.use(requireDolibarrLogin);
+
+// Configure multer for file uploads with enhanced validation
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
-    fileFilter: (req, file, cb) => {
-        const allowedTypes = ['.ofx', '.qfx', '.csv', '.txt'];
-        const ext = '.' + file.originalname.split('.').pop()?.toLowerCase();
-        if (allowedTypes.includes(ext)) {
-            cb(null, true);
-        } else {
-            cb(new Error('Formato de arquivo não suportado. Use OFX, QFX ou CSV.'));
-        }
-    }
+    fileFilter: createFileFilter('banking')
 });
 
 // --- Import Endpoints ---
@@ -28,8 +27,23 @@ router.post('/import/ofx', upload.single('file'), async (req: Request, res: Resp
             return res.status(400).json({ error: 'Nenhum arquivo enviado' });
         }
 
+        // Additional security validation
+        const validation = validateFileUpload(req.file, 'banking');
+        if (!validation.valid) {
+            log.warn(`File upload rejected: ${validation.error}`);
+            return res.status(400).json({ error: validation.error });
+        }
+
+        // Check for executable code
+        if (containsExecutableCode(req.file.buffer)) {
+            log.warn('Blocked file with executable code');
+            return res.status(400).json({ error: 'Invalid file content' });
+        }
+
         const content = req.file.buffer.toString('utf-8');
         const result = bankingService.parseOFX(content);
+
+        log.info(`OFX imported: ${result.transactions.length} transactions`);
 
         res.json({
             success: true,
@@ -43,7 +57,7 @@ router.post('/import/ofx', upload.single('file'), async (req: Request, res: Resp
             }
         });
     } catch (error: any) {
-        console.error('[BankingRoutes] OFX import error:', error);
+        log.error('OFX import error', error);
         res.status(500).json({ error: error.message || 'Falha ao importar arquivo OFX' });
     }
 });
@@ -77,7 +91,7 @@ router.post('/import/csv', upload.single('file'), async (req: Request, res: Resp
             }
         });
     } catch (error: any) {
-        console.error('[BankingRoutes] CSV import error:', error);
+        log.error('CSV import error', error);
         res.status(500).json({ error: error.message || 'Falha ao importar arquivo CSV' });
     }
 });
@@ -103,7 +117,7 @@ router.post('/import/auto', upload.single('file'), async (req: Request, res: Res
             }
         });
     } catch (error: any) {
-        console.error('[BankingRoutes] Auto import error:', error);
+        log.error('Auto import error', error);
         res.status(500).json({ error: error.message || 'Falha ao importar arquivo' });
     }
 });
@@ -132,7 +146,7 @@ router.post('/analyze/categorize', async (req: Request, res: Response) => {
             data: categorized
         });
     } catch (error: any) {
-        console.error('[BankingRoutes] Categorization error:', error);
+        log.error('Categorization error', error);
         res.status(500).json({ error: error.message || 'Falha ao categorizar transações' });
     }
 });
@@ -159,7 +173,7 @@ router.post('/analyze/anomalies', async (req: Request, res: Response) => {
             data: anomalies
         });
     } catch (error: any) {
-        console.error('[BankingRoutes] Anomaly detection error:', error);
+        log.error('Anomaly detection error', error);
         res.status(500).json({ error: error.message || 'Falha ao detectar anomalias' });
     }
 });
@@ -191,7 +205,7 @@ router.post('/insights/cash-flow', async (req: Request, res: Response) => {
             data: insights
         });
     } catch (error: any) {
-        console.error('[BankingRoutes] Cash flow insights error:', error);
+        log.error('Cash flow insights error', error);
         res.status(500).json({ error: error.message || 'Falha ao gerar insights' });
     }
 });
@@ -217,7 +231,7 @@ router.post('/insights/chart-data', async (req: Request, res: Response) => {
             data: chartData
         });
     } catch (error: any) {
-        console.error('[BankingRoutes] Chart data error:', error);
+        log.error('Chart data error', error);
         res.status(500).json({ error: error.message || 'Falha ao gerar dados do gráfico' });
     }
 });
@@ -241,7 +255,7 @@ router.post('/reconcile/suggest', async (req: Request, res: Response) => {
             data: suggestions
         });
     } catch (error: any) {
-        console.error('[BankingRoutes] Reconciliation suggestion error:', error);
+        log.error('Reconciliation suggestion error', error);
         res.status(500).json({ error: error.message || 'Falha ao sugerir conciliação' });
     }
 });
@@ -263,7 +277,7 @@ router.post('/reconcile/save', async (req: Request, res: Response) => {
             message: success ? 'Conciliação salva com sucesso' : 'Falha ao salvar conciliação'
         });
     } catch (error: any) {
-        console.error('[BankingRoutes] Save reconciliation error:', error);
+        log.error('Save reconciliation error', error);
         res.status(500).json({ error: error.message || 'Falha ao salvar conciliação' });
     }
 });
@@ -289,7 +303,7 @@ router.post('/balance/calculate', async (req: Request, res: Response) => {
             data: result
         });
     } catch (error: any) {
-        console.error('[BankingRoutes] Balance calculation error:', error);
+        log.error('Balance calculation error', error);
         res.status(500).json({ error: error.message || 'Falha ao calcular saldo' });
     }
 });

@@ -7,6 +7,9 @@ import { schedulerService } from './schedulerService';
 import { approvalService } from './approvalService';
 import { interApiService } from './interApiService';
 import { itauApiService } from './itauApiService';
+import { logger } from '../utils/logger';
+
+const log = logger.child('BotService');
 
 // Delay helper
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -25,7 +28,7 @@ async function retryWithBackoff<T>(
             lastError = e;
             if (attempt < maxRetries - 1) {
                 const delay = baseDelayMs * Math.pow(2, attempt);
-                console.warn(`[Bot] Retry attempt ${attempt + 1}/${maxRetries} failed. Retrying in ${delay}ms...`);
+                log.warn(`Retry attempt ${attempt + 1}/${maxRetries} failed. Retrying in ${delay}ms...`);
                 await sleep(delay);
             }
         }
@@ -51,7 +54,7 @@ class BotService {
 
             // AUDIO TRANSCRIPTION - Transcribe voice messages for LLM processing
             if ((message.type === 'ptt' || message.type === 'audio') && message.hasMedia) {
-                console.log(`[Bot] Audio message detected, attempting transcription...`);
+                log.info('Audio message detected, attempting transcription...');
                 try {
                     const media = await messageService.getMessageMedia(sessionId, message.id);
                     if (media && media.data) {
@@ -61,17 +64,17 @@ class BotService {
                         const mimeType = media.contentType || 'audio/ogg';
                         const transcription = await aiService.transcribeAudio(base64Audio, mimeType);
                         body = `[Áudio transcrito]: ${transcription}`;
-                        console.log(`[Bot] Audio transcribed: ${transcription.substring(0, 50)}...`);
+                        log.debug(`Audio transcribed: ${transcription.substring(0, 50)}...`);
                     }
                 } catch (e: any) {
-                    console.warn(`[Bot] Audio transcription failed:`, e.message);
+                    log.warn(`Audio transcription failed: ${e.message}`);
                     body = '[Áudio recebido - transcrição falhou]';
                 }
             }
 
             if (!body || body.length < 2) return; // Ignore empty/short messages
 
-            console.log(`[Bot] Processing incoming message from ${chatId} (Session: ${sessionId})`);
+            log.info(`Processing incoming message from ${chatId} (Session: ${sessionId})`);
 
             // SPECIAL COMMANDS - Process before auto-reply check
             if (body.startsWith('/')) {
@@ -92,7 +95,7 @@ class BotService {
                         ? '✅ Confirmação recebida! Obrigado.'
                         : '❌ Cancelamento registrado.';
                     await messageService.sendText(sessionId, chatId, response);
-                    console.log(`[Bot] Confirmation ${isConfirm ? 'accepted' : 'rejected'} for ${chatId}`);
+                    log.info(`Confirmation ${isConfirm ? 'accepted' : 'rejected'} for ${chatId}`);
                     return; // Don't process further
                 }
             }
@@ -111,7 +114,7 @@ class BotService {
                     await messageService.sendText(sessionId, chatId, result.nextStep.message);
                 }
 
-                console.log(`[Bot] Flow processed for ${chatId}, ended: ${result.endFlow}`);
+                log.debug(`Flow processed for ${chatId}, ended: ${result.endFlow}`);
                 return; // Don't continue to LLM
             } else {
                 // Check if message triggers a new flow
@@ -120,7 +123,7 @@ class BotService {
                     const firstStep = schedulerService.startFlow(chatId, triggeredFlow);
                     if (firstStep) {
                         await messageService.sendText(sessionId, chatId, firstStep.message);
-                        console.log(`[Bot] Started flow "${triggeredFlow.name}" for ${chatId}`);
+                        log.info(`Started flow "${triggeredFlow.name}" for ${chatId}`);
                         return; // Don't continue to LLM
                     }
                 }
@@ -135,7 +138,7 @@ class BotService {
 
             if (chatSettings.autoReplyEnabled !== undefined) {
                 shouldReply = chatSettings.autoReplyEnabled;
-                console.log(`[Bot] Chat ${chatId} has override: ${shouldReply}`);
+                log.debug(`Chat ${chatId} has override: ${shouldReply}`);
             } else {
                 shouldReply = sessionSettings.autoReply;
             }
@@ -147,7 +150,7 @@ class BotService {
                     const groupSettings = chatSettings.groupSettings;
 
                     if (groupSettings?.llmEnabled) {
-                        console.log(`[Bot] Group ${chatId} has LLM explicitly enabled.`);
+                        log.debug(`Group ${chatId} has LLM explicitly enabled.`);
 
                         // 1. Frequency Check
                         if (groupSettings.responseFrequency && groupSettings.lastRepliedAt) {
@@ -158,7 +161,7 @@ class BotService {
                             if (groupSettings.responseFrequency.unit === 'minutes') required = groupSettings.responseFrequency.value * 60000;
 
                             if (elapsed < required) {
-                                console.log(`[Bot] Group ${chatId} skipping: Frequency limit not met. (Elapsed: ${elapsed / 1000}s, Required: ${required / 1000}s)`);
+                                log.debug(`Group ${chatId} skipping: Frequency limit not met. (Elapsed: ${elapsed / 1000}s, Required: ${required / 1000}s)`);
                                 return;
                             }
                         }
@@ -168,7 +171,7 @@ class BotService {
                             const threshold = groupSettings.burstHandling.threshold || 5;
                             const currentCount = (groupSettings.messageCounter || 0) + 1;
 
-                            console.log(`[Bot] Group ${chatId} Burst Counter: ${currentCount}/${threshold}`);
+                            log.debug(`Group ${chatId} Burst Counter: ${currentCount}/${threshold}`);
 
                             // Update Counter
                             storeService.updateChatSettings(chatId, {
@@ -195,7 +198,7 @@ class BotService {
                 return;
             }
 
-            console.log(`[Bot] Generating Auto-Reply for ${chatId}...`);
+            log.info(`Generating Auto-Reply for ${chatId}...`);
 
             // Detect if this is a group chat
             const isGroup = chatId.endsWith('@g.us');
@@ -246,7 +249,7 @@ class BotService {
                 // Remove senderName before sending to AI (it's embedded in parts now)
                 history = consolidated.map(m => ({ role: m.role, parts: m.parts }));
             } catch (e) {
-                console.warn(`[Bot] Failed to fetch history for ${chatId}, using explicit prompt only.`);
+                log.warn(`Failed to fetch history for ${chatId}, using explicit prompt only.`);
             }
 
             // 6. Resolve Signature & Context (Session/Account Level)
@@ -269,14 +272,14 @@ class BotService {
                 const customer = await dolibarrService.getThirdPartyByPhone(phone);
 
                 if (customer) {
-                    console.log(`[Bot] Found CRM Customer: ${customer.name}`);
+                    log.info(`Found CRM Customer: ${customer.name}`);
                     const crmData = await dolibarrService.getCustomerContext(customer.id);
                     context += `\n\n[DADOS DO CLIENTE IDENTIFICADO NO CRM]\nNome: ${customer.name}\n${crmData}\n\nUse estes dados para responder perguntas sobre faturas, tickets ou status.`;
                 } else {
                     context += `\n\n[CRM] Telefone ${phone} não encontrado no banco de dados.`;
                 }
             } catch (crmError) {
-                console.error("[Bot] CRM Injection Failed:", crmError);
+                log.error("CRM Injection Failed", crmError);
             }
 
             let signatureName = "Assistente Virtual";
@@ -288,7 +291,7 @@ class BotService {
             try {
                 await sessionService.sendTyping(sessionId, chatId);
             } catch (e) {
-                console.warn('[Bot] Failed to send typing indicator');
+                log.warn('Failed to send typing indicator');
             }
 
             // Generate reply with retry on failure
@@ -309,7 +312,7 @@ class BotService {
             await sleep(1500); // Reduced to 1.5s since real typing is now shown
 
             await messageService.sendText(sessionId, chatId, finalMessage);
-            console.log(`[Bot] Auto-reply sent to ${chatId}`);
+            log.info(`Auto-reply sent to ${chatId}`);
 
             // [ANTIGRAVITY] Update Group Stats (Last Replied / Reset Burst)
             if (chatId.endsWith('@g.us')) {
@@ -324,7 +327,7 @@ class BotService {
             }
 
         } catch (error: any) {
-            console.error('[Bot] Process Error:', error.message);
+            log.error(`Process Error: ${error.message}`);
         }
     }
 
@@ -509,7 +512,7 @@ class BotService {
                     return false;
             }
         } catch (error: any) {
-            console.error(`[Bot] Command error (${cmd}):`, error.message);
+            log.error(`Command error (${cmd}): ${error.message}`);
             return false;
         }
     }

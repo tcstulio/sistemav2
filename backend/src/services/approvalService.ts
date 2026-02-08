@@ -11,6 +11,9 @@ import { interApiService } from './interApiService';
 import { itauApiService } from './itauApiService';
 import { messageService } from './messageService';
 import { dolibarrService } from './dolibarrService';
+import { logger } from '../utils/logger';
+
+const log = logger.child('ApprovalService');
 
 // ===== Types =====
 
@@ -87,7 +90,7 @@ class ApprovalService {
             message: `Nova ação pendente: ${action.description}`,
         });
 
-        console.log(`[ApprovalService] Ação criada: ${action.id} - ${action.description}`);
+        log.info(`Ação criada: ${action.id} - ${action.description}`);
 
         return action;
     }
@@ -152,7 +155,7 @@ class ApprovalService {
         action.reviewedBy = approvedBy;
         action.reviewedAt = new Date();
 
-        console.log(`[ApprovalService] Ação aprovada: ${actionId} por ${approvedBy}`);
+        log.info(`Ação aprovada: ${actionId} por ${approvedBy}`);
 
         // Executar a ação
         try {
@@ -221,7 +224,7 @@ class ApprovalService {
             reason,
         });
 
-        console.log(`[ApprovalService] Ação rejeitada: ${actionId} por ${rejectedBy}. Motivo: ${reason}`);
+        log.info(`Ação rejeitada: ${actionId} por ${rejectedBy}. Motivo: ${reason}`);
 
         return { success: true };
     }
@@ -312,7 +315,7 @@ class ApprovalService {
     }
 
     private async executeAction(action: PendingAction): Promise<any> {
-        console.log(`[ApprovalService] Executando ação: ${action.type}`);
+        log.info(`Executando ação: ${action.type}`);
 
         let result: any;
         switch (action.type) {
@@ -373,7 +376,7 @@ class ApprovalService {
     private async executeBaixarFatura(action: PendingAction): Promise<any> {
         // TODO: Implementar integração com Dolibarr para baixar fatura
         const { payload } = action;
-        console.log('[ApprovalService] Baixando fatura:', payload);
+        log.info('Baixando fatura', payload);
         return { success: true, message: 'Fatura baixada (simulado)' };
     }
 
@@ -389,7 +392,7 @@ class ApprovalService {
         const { lineId, invoiceId, userApiKey } = payload;
 
         // TODO: Implementar reconciliação real quando API Dolibarr disponível
-        console.log(`[ApprovalService] Reconciliando linha ${lineId} com fatura ${invoiceId}`);
+        log.info(`Reconciliando linha ${lineId} com fatura ${invoiceId}`);
         return { success: true, message: `Reconciliação ${lineId} → ${invoiceId} aplicada` };
     }
 
@@ -427,9 +430,9 @@ class ApprovalService {
 
         try {
             await messageService.sendText(sessionId, chatId, message);
-            console.log(`[ApprovalService] Notificação enviada para ${chatId}`);
+            log.info(`Notificação enviada para ${chatId}`);
         } catch (e: any) {
-            console.error(`[ApprovalService] Falha ao notificar: ${e.message}`);
+            log.error(`Falha ao notificar: ${e.message}`);
         }
     }
 }

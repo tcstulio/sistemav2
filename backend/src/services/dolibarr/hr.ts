@@ -6,6 +6,9 @@
 
 import axios from 'axios';
 import { DolibarrServiceBase } from './core';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('DolibarrHR');
 
 export class DolibarrHRService extends DolibarrServiceBase {
 
@@ -25,7 +28,7 @@ export class DolibarrHRService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listUsers Error", error);
+            log.error('listUsers Error', error);
             return [];
         }
     }
@@ -46,7 +49,7 @@ export class DolibarrHRService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listExpenseReports Error", error);
+            log.error('listExpenseReports Error', error);
             return [];
         }
     }
@@ -63,7 +66,7 @@ export class DolibarrHRService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listLeaveRequests Error", error);
+            log.error('listLeaveRequests Error', error);
             return [];
         }
     }
@@ -84,7 +87,7 @@ export class DolibarrHRService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listCandidates Error", error);
+            log.error('listCandidates Error', error);
             return [];
         }
     }
@@ -101,7 +104,7 @@ export class DolibarrHRService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listJobPositions Error", error);
+            log.error('listJobPositions Error', error);
             return [];
         }
     }

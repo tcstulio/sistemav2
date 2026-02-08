@@ -1,6 +1,9 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { config } from '../config/env';
+import { logger } from '../utils/logger';
+
+const log = logger.child('ScraperService');
 
 export const ScraperService = {
 
@@ -12,7 +15,7 @@ export const ScraperService = {
             const apiKey = config.serperApiKey || process.env.SERPER_API_KEY;
 
             if (!apiKey) {
-                console.warn("Serper API Key missing. Returning simulation.");
+                log.warn("Serper API Key missing. Returning simulation.");
                 return [];
             }
 
@@ -51,7 +54,7 @@ export const ScraperService = {
             return results;
 
         } catch (error: any) {
-            console.error("Serper Search Error:", error.message);
+            log.error(`Serper Search Error: ${error.message}`);
             return [];
         }
     },
@@ -90,7 +93,7 @@ export const ScraperService = {
             return text;
 
         } catch (error: any) {
-            console.error(`Scrape Error (${url}):`, error.message);
+            log.error(`Scrape Error (${url}): ${error.message}`);
             return null;
         }
     }

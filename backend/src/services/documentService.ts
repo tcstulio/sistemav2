@@ -10,6 +10,9 @@ import { itauApiService } from './itauApiService';
 import { messageService } from './messageService';
 import { approvalService } from './approvalService';
 import { dolibarrService } from './dolibarrService';
+import { logger } from '../utils/logger';
+
+const log = logger.child('DocumentService');
 
 // ===== Types =====
 
@@ -68,7 +71,7 @@ class DocumentService {
 
             throw new Error('Documento não encontrado');
         } catch (error: any) {
-            console.error(`[DocumentService] Erro ao obter PDF da fatura ${invoiceId}:`, error.message);
+            log.error(`Erro ao obter PDF da fatura ${invoiceId}: ${error.message}`);
             throw new Error(`Falha ao obter PDF da fatura: ${error.message}`);
         }
     }
@@ -93,7 +96,7 @@ class DocumentService {
 
             return null;
         } catch (error: any) {
-            console.error(`[DocumentService] Erro ao buscar telefone do cliente ${thirdPartyId}:`, error.message);
+            log.error(`Erro ao buscar telefone do cliente ${thirdPartyId}: ${error.message}`);
             return null;
         }
     }
@@ -196,7 +199,7 @@ class DocumentService {
         // Enviar via WhatsApp
         const result = await messageService.sendFile(sessionId, chatId, fileData, filename, caption);
 
-        console.log(`[DocumentService] Documento enviado: ${filename} para ${chatId}`);
+        log.info(`Documento enviado: ${filename} para ${chatId}`);
 
         return { messageId: result.id };
     }

@@ -1,10 +1,12 @@
 
 import { Router } from 'express';
 import { dolibarrService } from '../services/dolibarrService';
+import { logger } from '../utils/logger';
 
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
 
+const log = logger.child('AuthRoutes');
 const router = Router();
 
 // Login Rate Limiter (100 attempts per 15 min for Dev)
@@ -36,7 +38,7 @@ router.post('/login', loginLimiter, async (req, res) => {
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
         }
-        console.error('[Auth] Login Error:', error.message);
+        log.error('Login Error', error.message);
         res.status(401).json({
             success: false,
             error: error.message || 'Authentication failed'

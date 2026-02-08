@@ -1,6 +1,21 @@
 /**
  * Date Utility Functions for Dolibarr Sync
- * 
+ *
+ * Time constants (use instead of magic numbers like 30 * 24 * 60 * 60):
+ */
+export const SECONDS_PER_DAY = 86400;
+export const MS_PER_HOUR = 3_600_000;
+export const MS_PER_DAY = 86_400_000;
+
+/** Add days to a Unix timestamp (seconds) */
+export const addDaysToTimestamp = (timestamp: number, days: number): number =>
+    timestamp + days * SECONDS_PER_DAY;
+
+/** Check if a timestamp (ms) is older than N hours from now */
+export const isOlderThanHours = (timestampMs: number, hours: number): boolean =>
+    Date.now() - timestampMs > hours * MS_PER_HOUR;
+
+/**
  * Dolibarr returns all dates as Unix Timestamps (seconds).
  * However, we must treat them differently based on semnatics:
  * 

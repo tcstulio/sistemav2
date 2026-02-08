@@ -6,6 +6,9 @@
 
 import axios from 'axios';
 import { DolibarrServiceBase, ValidateSupplierOrderModel } from './core';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('DolibarrSuppliers');
 
 export class DolibarrSuppliersService extends DolibarrServiceBase {
 
@@ -30,7 +33,7 @@ export class DolibarrSuppliersService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listSupplierInvoices Error", error);
+            log.error('listSupplierInvoices Error', error);
             return [];
         }
     }
@@ -50,7 +53,7 @@ export class DolibarrSuppliersService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listSupplierOrders Error", error);
+            log.error('listSupplierOrders Error', error);
             return [];
         }
     }

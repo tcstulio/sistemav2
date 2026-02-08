@@ -3,7 +3,9 @@ import { schedulerService } from '../services/schedulerService';
 import { dolibarrService } from '../services/dolibarrService';
 import { emailService } from '../services/emailService';
 import { messageService } from '../services/messageService';
+import { logger } from '../utils/logger';
 
+const log = logger.child('WebhookRoutes');
 const router = Router();
 
 // --- Webhook Receiver (Generic) ---
@@ -41,7 +43,7 @@ router.post('/trigger', async (req: Request, res: Response) => {
             metadata: { templateId, variables }
         });
 
-        console.log(`[Webhook] Triggered: ${event || 'manual'} -> ${chatId}`);
+        log.info(`Triggered: ${event || 'manual'} -> ${chatId}`);
 
         res.json({
             success: true,
@@ -51,7 +53,7 @@ router.post('/trigger', async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        console.error('[Webhook] Trigger error:', error);
+        log.error('Trigger error', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -84,7 +86,7 @@ router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
         const activeRules = schedulerService.getRules().filter(r => r.event === eventBefore && r.enabled);
 
         if (activeRules.length === 0) {
-            console.log(`[Webhook] No active rules for ${eventBefore}`);
+            log.info(`No active rules for ${eventBefore}`);
             return res.json({ success: true, action, message: 'No active rules' });
         }
 
@@ -101,13 +103,13 @@ router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
             let destinationId = '';
             if (rule.channel === 'email') {
                 if (!email) {
-                    console.log(`[Webhook] Skipping email rule ${rule.name}: No email for customer ${invoice.socid}`);
+                    log.info(`Skipping email rule ${rule.name}: No email for customer ${invoice.socid}`);
                     continue;
                 }
                 destinationId = email;
             } else {
                 if (!phone) {
-                    console.log(`[Webhook] Skipping whatsapp rule ${rule.name}: No phone for customer ${invoice.socid}`);
+                    log.info(`Skipping whatsapp rule ${rule.name}: No phone for customer ${invoice.socid}`);
                     continue;
                 }
                 destinationId = phone.replace(/\D/g, '') + '@c.us';
@@ -153,7 +155,7 @@ router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
         res.json({ success: true, action, invoiceRef, messageIds: messages });
 
     } catch (error: any) {
-        console.error('[Webhook] Dolibarr invoice error:', error);
+        log.error('Dolibarr invoice error', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -186,7 +188,7 @@ router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
         const activeRules = schedulerService.getRules().filter(r => r.event === eventBefore && r.enabled);
 
         if (activeRules.length === 0) {
-            console.log(`[Webhook] No active rules for ${eventBefore}`);
+            log.info(`No active rules for ${eventBefore}`);
             return res.json({ success: true, action, message: 'No active rules' });
         }
 
@@ -202,13 +204,13 @@ router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
             let destinationId = '';
             if (rule.channel === 'email') {
                 if (!email) {
-                    console.log(`[Webhook] Skipping email rule ${rule.name}: No email for ticket customer`);
+                    log.info(`Skipping email rule ${rule.name}: No email for ticket customer`);
                     continue;
                 }
                 destinationId = email;
             } else {
                 if (!phone) {
-                    console.log(`[Webhook] Skipping whatsapp rule ${rule.name}: No phone for ticket customer`);
+                    log.info(`Skipping whatsapp rule ${rule.name}: No phone for ticket customer`);
                     continue;
                 }
                 destinationId = phone.replace(/\D/g, '') + '@c.us';
@@ -252,7 +254,7 @@ router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
         res.json({ success: true, action, ticketRef, messageIds: messages });
 
     } catch (error: any) {
-        console.error('[Webhook] Dolibarr ticket error:', error);
+        log.error('Dolibarr ticket error', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -283,7 +285,7 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
         const activeRules = schedulerService.getRules().filter(r => r.event === eventName && r.enabled);
 
         if (activeRules.length === 0) {
-            console.log(`[Webhook] No active rules for ${eventName}`);
+            log.info(`No active rules for ${eventName}`);
             return res.json({ success: true, action, message: 'No active rules' });
         }
 
@@ -300,13 +302,13 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
             let destinationId = '';
             if (rule.channel === 'email') {
                 if (!email) {
-                    console.log(`[Webhook] Skipping email rule ${rule.name}: No email for customer ${order.socid}`);
+                    log.info(`Skipping email rule ${rule.name}: No email for customer ${order.socid}`);
                     continue;
                 }
                 destinationId = email;
             } else {
                 if (!phone) {
-                    console.log(`[Webhook] Skipping whatsapp rule ${rule.name}: No phone for customer ${order.socid}`);
+                    log.info(`Skipping whatsapp rule ${rule.name}: No phone for customer ${order.socid}`);
                     continue;
                 }
                 destinationId = phone.replace(/\D/g, '') + '@c.us';
@@ -350,7 +352,7 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
         res.json({ success: true, action, orderRef, messageIds: messages });
 
     } catch (error: any) {
-        console.error('[Webhook] Dolibarr order error:', error);
+        log.error('Dolibarr order error', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -487,7 +489,7 @@ router.post('/rules/:id/test', async (req: Request, res: Response) => {
 
         let sentResult = null;
         if (target) {
-            console.log(`[Test] Sending real message for rule ${rule.name} to ${target}`);
+            log.info(`Sending real message for rule ${rule.name} to ${target}`);
             if (rule.channel === 'email') {
                 await emailService.sendEmail(rule.sessionId, target, rule.subject || 'Teste de Automação', renderedMessage);
                 sentResult = 'Email sent';
@@ -515,7 +517,7 @@ router.post('/rules/:id/test', async (req: Request, res: Response) => {
             realSend: sentResult
         });
     } catch (error: any) {
-        console.error('Test error:', error);
+        log.error('Test error', error);
         res.status(500).json({ error: error.message });
     }
 });

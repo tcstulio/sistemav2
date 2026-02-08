@@ -6,6 +6,16 @@ import { WhatsAppService } from '../services/whatsappService';
 import { AutomationService } from '../services/automationService';
 import { useDolibarrData } from '../hooks/useDolibarrData';
 import { runBackgroundSync } from '../services/backgroundSyncService';
+import { logger } from '../utils/logger';
+import { safeStorage } from '../utils/safeStorage';
+
+const log = logger.child('DolibarrContext');
+
+// Normalize Dolibarr user admin field (API returns number, string, or boolean)
+const normalizeUser = (user: DolibarrUser): DolibarrUser => ({
+  ...user,
+  admin: (user.admin === 1 || user.admin === '1' || user.admin === true) ? 1 : 0
+} as DolibarrUser);
 
 interface DolibarrContextType {
   config: DolibarrConfig | null;
@@ -31,12 +41,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [currentUser, setCurrentUser] = useState<DolibarrUser | null>(null);
   // 1. Load notifications from local storage
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    try {
-      const saved = localStorage.getItem('coolgroove_notifications');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
+    return safeStorage.getJSON<AppNotification[]>('coolgroove_notifications', []);
   });
   const [isInitialized, setIsInitialized] = useState(false);
 
@@ -47,8 +52,8 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     // 0. Public Modules (Accessible to everyone)
     if (module === 'dashboard') return true;
 
-    // 1. Admin Override (Robust check for loose API types)
-    if (currentUser.admin === 1 || currentUser.admin === '1' || currentUser.admin === true) return true;
+    // 1. Admin Override (normalized to number by normalizeUser)
+    if (currentUser.admin === 1) return true;
 
     if (!currentUser.rights) {
       return false;
@@ -62,12 +67,19 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
 
       // Sales / Finance
       'proposals': { module: 'propale', perms: ['lire', 'read'] },
+      'supplier_proposals': { module: 'fournisseur', perms: ['lire', 'read'] },
       'orders': { module: 'commande', perms: ['lire', 'read'] },
       'invoices': { module: 'facture', perms: ['lire', 'read'] },
       'payments': { module: 'facture', perms: ['lire', 'read'] },
       'contracts': { module: 'contrat', perms: ['lire', 'read'] },
       'supplier_orders': { module: 'fournisseur', perms: ['commande.lire'] },
       'supplier_invoices': { module: 'fournisseur', perms: ['facture.lire'] },
+      'supplier_payments': { module: 'fournisseur', perms: ['facture.lire'] },
+
+      // Finance - Payments
+      'tax_payments': { module: 'tax', perms: ['charges.lire', 'read', 'lire'] },
+      'salary_payments': { module: 'salaries', perms: ['read', 'lire'] },
+      'expense_report_payments': { module: 'expensereport', perms: ['lire', 'read'] },
 
       // Projects / Operations
       'projects': { module: 'projet', perms: ['lire', 'read'] },
@@ -91,6 +103,26 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
       'tickets': { module: 'ticket', perms: ['read', 'lire'] },
       'bank_accounts': { module: 'banque', perms: ['lire', 'read'] },
       'categories': { module: 'categorie', perms: ['lire', 'read'] },
+
+      // Communication & AI (Available to all authenticated users)
+      'whatsapp': { module: 'societe', perms: ['lire', 'read'] },
+      'email': { module: 'societe', perms: ['lire', 'read'] },
+      'chat': { module: 'societe', perms: ['lire', 'read'] },
+      'automation': { module: 'societe', perms: ['lire', 'read'] },
+
+      // Partnerships & Venues
+      'partnerships': { module: 'societe', perms: ['lire', 'read'] },
+      'venues': { module: 'societe', perms: ['lire', 'read'] },
+
+      // Reports & Analytics
+      'reports': { module: 'facture', perms: ['lire', 'read'] },
+      'monthly_report': { module: 'facture', perms: ['lire', 'read'] },
+
+      // System (Admin-only modules handled by admin override above)
+      'activity': { module: 'agenda', perms: ['myevent.read', 'allactions.read'] },
+      'development': { module: 'user', perms: ['user.lire'] }, // Admin-restricted in practice
+      'settings': { module: 'user', perms: ['self.read'] },
+      'simulator': { module: 'societe', perms: ['lire', 'read'] },
     };
 
     const mapping = rightsMap[module];
@@ -133,7 +165,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   // 3. Persistence for notifications
   useEffect(() => {
-    localStorage.setItem('coolgroove_notifications', JSON.stringify(notifications));
+    safeStorage.setJSON('coolgroove_notifications', notifications);
   }, [notifications]);
 
   // 3b. Effect to bubble up hook errors to notifications
@@ -298,21 +330,22 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [currentUser, notifications]);
 
-  // Background sync flag
+  // Background sync flag and abort controller
   const hasRunBackgroundSync = useRef(false);
+  const syncAbortRef = useRef<AbortController | null>(null);
 
   // 4. Config & User Loading Logic (Existing)
   useEffect(() => {
     const loadConfig = async () => {
-      const savedConfigObj = JSON.parse(localStorage.getItem('coolgroove_config') || '{}');
+      const savedConfigObj: any = safeStorage.getJSON('coolgroove_config', {});
 
       if (Object.keys(savedConfigObj).length > 0) {
         try {
           const parsed = savedConfigObj;
 
           if (!parsed.apiKey || parsed.apiKey.trim() === '') {
-            console.warn("[DolibarrContext] Invalid config. Resetting.");
-            localStorage.removeItem('coolgroove_config');
+            log.warn('Invalid config. Resetting.');
+            safeStorage.removeItem('coolgroove_config');
           } else {
             // Load User from Cache
             if (parsed.currentUser) {
@@ -322,11 +355,11 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
                   const freshUser = await DolibarrService.fetchCurrentUser(parsed, parsed.currentUser.login);
                   if (freshUser) {
                     parsed.currentUser = freshUser;
-                    localStorage.setItem('coolgroove_config', JSON.stringify(parsed));
+                    safeStorage.setJSON('coolgroove_config', parsed);
                   }
-                } catch (e) { console.error("User refresh failed", e); }
+                } catch (e) { log.error('User refresh failed', e); }
               }
-              setCurrentUser(parsed.currentUser);
+              setCurrentUser(normalizeUser(parsed.currentUser));
             }
 
             setConfigState(parsed);
@@ -334,32 +367,34 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
             // Background User Refresh
             DolibarrService.fetchCurrentUser(parsed, parsed.currentUser?.login).then(u => {
               if (u) {
-                setCurrentUser(u);
+                setCurrentUser(normalizeUser(u));
                 const updated = { ...parsed, currentUser: u };
                 setConfigState(updated);
-                localStorage.setItem('coolgroove_config', JSON.stringify(updated));
+                safeStorage.setJSON('coolgroove_config', updated);
               }
-            }).catch(err => console.warn("Background user refresh failed", err));
+            }).catch(err => log.warn('Background user refresh failed', err));
 
             // Run Background Sync (once per session)
             if (!hasRunBackgroundSync.current) {
               hasRunBackgroundSync.current = true;
-              console.log('[DolibarrContext] Starting background sync for all modules...');
-              runBackgroundSync(parsed).then(result => {
-                console.log(`[DolibarrContext] Background sync complete: ${result.synced} records synced`);
+              syncAbortRef.current?.abort();
+              syncAbortRef.current = new AbortController();
+              log.debug('Starting background sync for all modules...');
+              runBackgroundSync(parsed, syncAbortRef.current.signal).then(result => {
+                log.debug(`Background sync complete: ${result.synced} records synced`);
                 if (result.errors.length > 0) {
-                  console.warn('[DolibarrContext] Background sync errors:', result.errors);
+                  log.warn('Background sync errors', result.errors);
                 }
                 // Process notifications
                 processSyncChanges(result.changes);
               }).catch(err => {
-                console.error('[DolibarrContext] Background sync failed:', err);
+                log.error('Background sync failed', err);
               });
             }
           }
         } catch (e) {
-          console.error("Failed to parse saved config", e);
-          localStorage.removeItem('doligen_config');
+          log.error('Failed to parse saved config', e);
+          safeStorage.removeItem('coolgroove_config');
         }
       }
       setIsInitialized(true);
@@ -372,26 +407,47 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   useEffect(() => {
     if (config) {
       document.documentElement.classList.toggle('dark', config.darkMode);
-      localStorage.setItem('coolgroove_config', JSON.stringify(config));
+      safeStorage.setJSON('coolgroove_config', config);
     }
   }, [config]);
 
   // 6. Auto-Sync Interval
+  // Use refs to avoid recreating the interval when callbacks change
+  const refreshDataRef = useRef(refreshData);
+  const configRef = useRef(config);
+  const syncStateRef = useRef({ isSyncPaused, isLoading, isSyncing });
+
+  // Keep refs updated
+  useEffect(() => {
+    refreshDataRef.current = refreshData;
+    configRef.current = config;
+    syncStateRef.current = { isSyncPaused, isLoading, isSyncing };
+  }, [refreshData, config, isSyncPaused, isLoading, isSyncing]);
+
   useEffect(() => {
     if (!config?.autoSyncInterval || config.autoSyncInterval <= 0) return;
+
     const intervalId = setInterval(() => {
-      if (!isSyncPaused && !isLoading && !isSyncing && config) {
-        console.log("Auto-sync triggering...");
+      const { isSyncPaused, isLoading, isSyncing } = syncStateRef.current;
+      const currentConfig = configRef.current;
+
+      if (!isSyncPaused && !isLoading && !isSyncing && currentConfig) {
+        if (process.env.NODE_ENV !== 'production') {
+          log.debug('AutoSync triggering background sync...');
+        }
         // Call global background sync to ensure DB is updated
-        runBackgroundSync(config).then((result) => {
+        runBackgroundSync(currentConfig).then((result) => {
           processSyncChanges(result.changes);
           // Then invalidate queries to refresh UI
-          refreshData();
+          refreshDataRef.current?.();
+        }).catch((err) => {
+          log.error('AutoSync background sync failed', err);
         });
       }
     }, config.autoSyncInterval * 60 * 1000);
+
     return () => clearInterval(intervalId);
-  }, [config?.autoSyncInterval, isSyncPaused, isLoading, isSyncing, refreshData]);
+  }, [config?.autoSyncInterval]); // Only recreate interval when interval value changes
 
   const toggleSyncPause = useCallback(() => setIsSyncPaused(prev => !prev), []);
 
@@ -399,25 +455,28 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     setConfigState(newConfig);
     if (newConfig) {
       if (newConfig.currentUser) {
-        setCurrentUser(newConfig.currentUser);
+        setCurrentUser(normalizeUser(newConfig.currentUser));
       }
       // Trigger background sync on new config (login)
       if (!hasRunBackgroundSync.current) {
         hasRunBackgroundSync.current = true;
-        console.log('[DolibarrContext] Starting background sync for all modules (on login)...');
-        runBackgroundSync(newConfig).then(result => {
-          console.log(`[DolibarrContext] Background sync complete: ${result.synced} records synced`);
+        syncAbortRef.current?.abort();
+        syncAbortRef.current = new AbortController();
+        log.debug('Starting background sync for all modules (on login)...');
+        runBackgroundSync(newConfig, syncAbortRef.current.signal).then(result => {
+          log.debug(`Background sync complete: ${result.synced} records synced`);
           if (result.errors.length > 0) {
-            console.warn('[DolibarrContext] Background sync errors:', result.errors);
+            log.warn('Background sync errors', result.errors);
           }
           processSyncChanges(result.changes);
         }).catch(err => {
-          console.error('[DolibarrContext] Background sync failed:', err);
+          log.error('Background sync failed', err);
         });
       }
     } else {
-      localStorage.removeItem('coolgroove_config');
-      dbService.clearAll().catch(console.error);
+      syncAbortRef.current?.abort(); // Cancel any running sync
+      safeStorage.removeItem('coolgroove_config');
+      dbService.clearAll().catch(err => log.error('Failed to clear DB', err));
       setCurrentUser(null);
       hasRunBackgroundSync.current = false; // Reset on logout
     }

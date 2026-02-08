@@ -6,6 +6,9 @@
 
 import axios from 'axios';
 import { DolibarrServiceBase, CreateInvoiceModel, CloseProposalModel } from './core';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('DolibarrCommercial');
 
 export class DolibarrCommercialService extends DolibarrServiceBase {
 
@@ -35,7 +38,7 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
             }
             return null;
         } catch (error: any) {
-            console.error(`[DoliService] GetInvoice Error for ${id}:`, error.message);
+            log.error(`GetInvoice Error for ${id}`, error.message);
             return null;
         }
     }
@@ -56,7 +59,7 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
             }
             return null;
         } catch (error: any) {
-            console.error(`[DoliService] GetOrder Error for ${id}:`, error.message);
+            log.error(`GetOrder Error for ${id}`, error.message);
             return null;
         }
     }
@@ -85,7 +88,7 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
 
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listInvoices Error", error);
+            log.error('listInvoices Error', error);
             return [];
         }
     }
@@ -118,7 +121,7 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
 
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listOrders Error", error);
+            log.error('listOrders Error', error);
             return [];
         }
     }
@@ -152,7 +155,7 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
 
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listProposals Error", error);
+            log.error('listProposals Error', error);
             return [];
         }
     }
@@ -174,7 +177,7 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listContracts Error", error);
+            log.error('listContracts Error', error);
             return [];
         }
     }

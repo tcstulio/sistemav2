@@ -8,6 +8,7 @@
  * - API Boleto V2.0 (híbrido)
  */
 
+import { logger } from '../utils/logger';
 import { config } from '../config/env';
 import {
     SaldoItau,
@@ -59,6 +60,8 @@ const SCOPES = {
 };
 
 // ===== ItauApiService Class =====
+
+const log = logger.child('ItauApiService');
 
 class ItauApiService extends BankingApiBase {
     // ===== Abstract Method Implementations =====
@@ -197,7 +200,7 @@ class ItauApiService extends BankingApiBase {
      * Get account balance (Itaú format)
      */
     async getSaldo(): Promise<SaldoItau> {
-        console.log('[Itaú] Getting account balance...');
+        log.info('Getting account balance...');
         return this.itauRequest<SaldoItau>('GET', this.getApiUrl('banking'), '/contas/saldo');
     }
 
@@ -205,7 +208,7 @@ class ItauApiService extends BankingApiBase {
      * Get account statement (Itaú format)
      */
     async getExtrato(dataInicial: string, dataFinal: string): Promise<ExtratoItau> {
-        console.log(`[Itaú] Getting statement from ${dataInicial} to ${dataFinal}...`);
+        log.info(`Getting statement from ${dataInicial} to ${dataFinal}...`);
         return this.itauRequest<ExtratoItau>('GET', this.getApiUrl('banking'), '/contas/extrato', null, {
             dataInicio: dataInicial,
             dataFim: dataFinal,
@@ -226,7 +229,7 @@ class ItauApiService extends BankingApiBase {
      * Create immediate PIX charge (Cob)
      */
     async criarPixCobranca(dados: PixCobrancaItauRequest, txid?: string): Promise<PixCobrancaItauResponse> {
-        console.log('[Itaú] Creating PIX charge...');
+        log.info('Creating PIX charge...');
         const id = txid || this.generateTxId();
         return this.itauRequest<PixCobrancaItauResponse>('PUT', this.getApiUrl('api'), `/cob/${id}`, dados);
     }
@@ -235,7 +238,7 @@ class ItauApiService extends BankingApiBase {
      * Create PIX charge with due date (CobV)
      */
     async criarPixCobrancaVencimento(txid: string, dados: PixCobrancaVencimentoItauRequest): Promise<PixCobrancaItauResponse> {
-        console.log(`[Itaú] Creating PIX charge with due date: ${txid}`);
+        log.info(`Creating PIX charge with due date: ${txid}`);
         return this.itauRequest<PixCobrancaItauResponse>('PUT', this.getApiUrl('api'), `/cobv/${txid}`, dados);
     }
 
@@ -243,7 +246,7 @@ class ItauApiService extends BankingApiBase {
      * Get PIX charge info
      */
     async consultarPixCobranca(txid: string): Promise<PixCobrancaItauResponse> {
-        console.log(`[Itaú] Consulting PIX charge: ${txid}`);
+        log.info(`Consulting PIX charge: ${txid}`);
         return this.itauRequest<PixCobrancaItauResponse>('GET', this.getApiUrl('api'), `/cob/${txid}`);
     }
 
@@ -251,7 +254,7 @@ class ItauApiService extends BankingApiBase {
      * Get QR Code for PIX charge
      */
     async getPixQRCode(locationId: number): Promise<PixQRCodeItauResponse> {
-        console.log(`[Itaú] Getting PIX QR Code for location: ${locationId}`);
+        log.info(`Getting PIX QR Code for location: ${locationId}`);
         return this.itauRequest<PixQRCodeItauResponse>('GET', this.getApiUrl('api'), `/loc/${locationId}/qrcode`);
     }
 
@@ -259,7 +262,7 @@ class ItauApiService extends BankingApiBase {
      * Send PIX payment
      */
     async enviarPix(dados: PixPagamentoItauRequest): Promise<PixPagamentoItauResponse> {
-        console.log('[Itaú] Sending PIX payment...');
+        log.info('Sending PIX payment...');
         return this.itauRequest<PixPagamentoItauResponse>('POST', this.getApiUrl('api'), '/pix', dados);
     }
 
@@ -267,7 +270,7 @@ class ItauApiService extends BankingApiBase {
      * List received PIX
      */
     async listarPixRecebidos(inicio: string, fim: string): Promise<PixRecebidoItau[]> {
-        console.log(`[Itaú] Listing received PIX from ${inicio} to ${fim}...`);
+        log.info(`Listing received PIX from ${inicio} to ${fim}...`);
         const response = await this.itauRequest<{ pix: PixRecebidoItau[] }>('GET', this.getApiUrl('api'), '/pix', null, {
             inicio,
             fim,
@@ -279,7 +282,7 @@ class ItauApiService extends BankingApiBase {
      * Get PIX by endToEndId
      */
     async consultarPix(endToEndId: string): Promise<PixRecebidoItau> {
-        console.log(`[Itaú] Consulting PIX: ${endToEndId}`);
+        log.info(`Consulting PIX: ${endToEndId}`);
         return this.itauRequest<PixRecebidoItau>('GET', this.getApiUrl('api'), `/pix/${endToEndId}`);
     }
 
@@ -289,7 +292,7 @@ class ItauApiService extends BankingApiBase {
      * Issue a new boleto
      */
     async emitirBoleto(dados: BoletoItauRequest): Promise<BoletoItauResponse> {
-        console.log('[Itaú] Issuing boleto...');
+        log.info('Issuing boleto...');
         return this.itauRequest<BoletoItauResponse>('POST', this.getApiUrl('boleto'), '/boletos', dados);
     }
 
@@ -297,7 +300,7 @@ class ItauApiService extends BankingApiBase {
      * Get boleto info by nossoNumero
      */
     async consultarBoleto(nossoNumero: string): Promise<BoletoConsultaItauResponse> {
-        console.log(`[Itaú] Consulting boleto: ${nossoNumero}`);
+        log.info(`Consulting boleto: ${nossoNumero}`);
         return this.itauRequest<BoletoConsultaItauResponse>('GET', this.getApiUrl('boleto'), `/boletos/${nossoNumero}`);
     }
 
@@ -311,7 +314,7 @@ class ItauApiService extends BankingApiBase {
         pagina?: number;
         tamanhoPagina?: number;
     }): Promise<BoletoListaItauResponse> {
-        console.log('[Itaú] Listing boletos...');
+        log.info('Listing boletos...');
         return this.itauRequest<BoletoListaItauResponse>('GET', this.getApiUrl('boleto'), '/boletos', null, {
             data_inicial: params.dataInicial,
             data_final: params.dataFinal,
@@ -325,7 +328,7 @@ class ItauApiService extends BankingApiBase {
      * Cancel/baixa a boleto
      */
     async baixarBoleto(nossoNumero: string, motivoBaixa: string = 'ACERTOS'): Promise<void> {
-        console.log(`[Itaú] Cancelling boleto: ${nossoNumero}`);
+        log.info(`Cancelling boleto: ${nossoNumero}`);
         await this.itauRequest<void>('PATCH', this.getApiUrl('boleto'), `/boletos/${nossoNumero}/baixa`, {
             motivo_baixa: motivoBaixa,
         });
@@ -335,7 +338,7 @@ class ItauApiService extends BankingApiBase {
      * Download boleto PDF
      */
     async downloadBoletoPDF(nossoNumero: string): Promise<Buffer> {
-        console.log(`[Itaú] Downloading boleto PDF: ${nossoNumero}`);
+        log.info(`Downloading boleto PDF: ${nossoNumero}`);
 
         if (!this.isReady()) {
             await this.initialize();
@@ -363,7 +366,7 @@ class ItauApiService extends BankingApiBase {
      * Pay a boleto
      */
     async pagarBoleto(dados: PagamentoBoletoItauRequest): Promise<PagamentoBoletoItauResponse> {
-        console.log('[Itaú] Paying boleto...');
+        log.info('Paying boleto...');
         return this.itauRequest<PagamentoBoletoItauResponse>('POST', this.getApiUrl('banking'), '/pagamentos/boletos', {
             codigo_barras_linha_digitavel: dados.codigo_barras_linha_digitavel,
             valor_pagamento: dados.valor_pagamento,
@@ -376,7 +379,7 @@ class ItauApiService extends BankingApiBase {
      * Get payment receipt PDF
      */
     async getComprovantePagamento(idTransacao: string): Promise<Buffer> {
-        console.log(`[Itaú] Getting payment receipt: ${idTransacao}`);
+        log.info(`Getting payment receipt: ${idTransacao}`);
 
         if (!this.isReady()) {
             await this.initialize();
@@ -404,7 +407,7 @@ class ItauApiService extends BankingApiBase {
      * Configure PIX webhook
      */
     async configurarWebhookPix(chave: string, webhookUrl: string): Promise<void> {
-        console.log(`[Itaú] Configuring PIX webhook for key: ${chave}`);
+        log.info(`Configuring PIX webhook for key: ${chave}`);
         await this.itauRequest<void>('PUT', this.getApiUrl('api'), `/webhook/${chave}`, { webhookUrl });
     }
 
@@ -412,7 +415,7 @@ class ItauApiService extends BankingApiBase {
      * Get PIX webhook configuration
      */
     async consultarWebhookPix(chave: string): Promise<{ webhookUrl: string }> {
-        console.log(`[Itaú] Getting PIX webhook config for key: ${chave}`);
+        log.info(`Getting PIX webhook config for key: ${chave}`);
         return this.itauRequest<{ webhookUrl: string }>('GET', this.getApiUrl('api'), `/webhook/${chave}`);
     }
 
@@ -420,7 +423,7 @@ class ItauApiService extends BankingApiBase {
      * Delete PIX webhook
      */
     async deletarWebhookPix(chave: string): Promise<void> {
-        console.log(`[Itaú] Deleting PIX webhook for key: ${chave}`);
+        log.info(`Deleting PIX webhook for key: ${chave}`);
         await this.itauRequest<void>('DELETE', this.getApiUrl('api'), `/webhook/${chave}`);
     }
 
