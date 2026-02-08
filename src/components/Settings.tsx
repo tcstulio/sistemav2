@@ -32,11 +32,28 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
     const [isSaved, setIsSaved] = useState(false);
 
     const colors = [
-        { name: 'Índigo', value: 'indigo', class: 'bg-indigo-600' },
-        { name: 'Azul', value: 'blue', class: 'bg-blue-600' },
-        { name: 'Esmeralda', value: 'emerald', class: 'bg-emerald-600' },
-        { name: 'Rosa', value: 'rose', class: 'bg-rose-600' },
-        { name: 'Ardósia', value: 'slate', class: 'bg-slate-600' },
+        { name: 'Índigo', value: 'indigo', hex: '#4f46e5' },
+        { name: 'Azul', value: 'blue', hex: '#2563eb' },
+        { name: 'Celeste', value: 'sky', hex: '#0284c7' },
+        { name: 'Ciano', value: 'cyan', hex: '#0891b2' },
+        { name: 'Cerceta', value: 'teal', hex: '#0d9488' },
+        { name: 'Esmeralda', value: 'emerald', hex: '#059669' },
+        { name: 'Verde', value: 'green', hex: '#16a34a' },
+        { name: 'Lima', value: 'lime', hex: '#65a30d' },
+        { name: 'Amarelo', value: 'yellow', hex: '#ca8a04' },
+        { name: 'Âmbar', value: 'amber', hex: '#d97706' },
+        { name: 'Laranja', value: 'orange', hex: '#ea580c' },
+        { name: 'Vermelho', value: 'red', hex: '#dc2626' },
+        { name: 'Rosa', value: 'rose', hex: '#e11d48' },
+        { name: 'Pink', value: 'pink', hex: '#db2777' },
+        { name: 'Fúcsia', value: 'fuchsia', hex: '#c026d3' },
+        { name: 'Roxo', value: 'purple', hex: '#9333ea' },
+        { name: 'Violeta', value: 'violet', hex: '#7c3aed' },
+        { name: 'Ardósia', value: 'slate', hex: '#475569' },
+        { name: 'Cinza', value: 'gray', hex: '#4b5563' },
+        { name: 'Zinco', value: 'zinc', hex: '#52525b' },
+        { name: 'Neutro', value: 'neutral', hex: '#525252' },
+        { name: 'Pedra', value: 'stone', hex: '#57534e' },
     ];
 
     // Edit Profile State
@@ -180,19 +197,20 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                 <Card header={<h3 className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider"><Palette size={16} /> Personalização</h3>}>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         {/* Color Picker */}
-                        <div className="space-y-3">
+                        <div className="space-y-3 md:col-span-2">
                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Cor de Destaque</label>
-                            <div className="flex gap-3 flex-wrap">
+                            <div className="flex gap-2 flex-wrap">
                                 {colors.map((c) => (
                                     <button
                                         key={c.value}
                                         type="button"
                                         onClick={() => setLocalConfig({ ...localConfig, themeColor: c.value })}
-                                        className={`w-10 h-10 rounded-full ${c.class} transition-all flex items-center justify-center ring-offset-2 dark:ring-offset-slate-800 ${localConfig.themeColor === c.value ? 'ring-2 ring-slate-400 scale-110 shadow-md' : 'hover:scale-105'}`}
+                                        className={`w-9 h-9 rounded-full transition-all flex items-center justify-center ring-offset-2 dark:ring-offset-slate-800 ${localConfig.themeColor === c.value ? 'ring-2 ring-slate-400 scale-110 shadow-md' : 'hover:scale-105'}`}
+                                        style={{ backgroundColor: c.hex }}
                                         title={c.name}
                                         aria-label={`Selecionar cor ${c.name}`}
                                     >
-                                        {localConfig.themeColor === c.value && <CheckCircle size={16} className="text-white" />}
+                                        {localConfig.themeColor === c.value && <CheckCircle size={14} className="text-white" />}
                                     </button>
                                 ))}
                             </div>

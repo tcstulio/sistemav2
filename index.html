@@ -5,98 +5,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CoolGroove</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            slate: {
-              850: '#1e293b',
-              900: '#0f172a',
-              950: '#020617',
-            }
-          },
-          animation: {
-            'in': 'in 0.2s ease-out',
-            'out': 'out 0.2s ease-in',
-          }
-        }
-      }
-    }
-  </script>
-  <style>
-    /* Custom scrollbar for webkit */
-    ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: transparent;
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: #cbd5e1;
-      border-radius: 3px;
-    }
-
-    .dark ::-webkit-scrollbar-thumb {
-      background: #475569;
-    }
-
-    ::-webkit-scrollbar-thumb:hover {
-      background: #94a3b8;
-    }
-
-    /* Custom Animation Utilities to mimic tailwindcss-animate */
-    .animate-in {
-      animation-name: enter;
-      animation-duration: 0.3s;
-      --tw-enter-opacity: initial;
-      --tw-enter-scale: initial;
-      --tw-enter-rotate: initial;
-      --tw-enter-translate-x: initial;
-      --tw-enter-translate-y: initial;
-    }
-
-    .fade-in {
-      --tw-enter-opacity: 0;
-    }
-
-    .zoom-in-95 {
-      --tw-enter-scale: 0.95;
-    }
-
-    .slide-in-from-bottom-2 {
-      --tw-enter-translate-y: 0.5rem;
-    }
-
-    .slide-in-from-top-2 {
-      --tw-enter-translate-y: -0.5rem;
-    }
-
-    .slide-in-from-right {
-      --tw-enter-translate-x: 100%;
-    }
-
-    .slide-in-from-right-4 {
-      --tw-enter-translate-x: 1rem;
-    }
-
-    @keyframes enter {
-      from {
-        opacity: var(--tw-enter-opacity, 1);
-        transform: translate3d(var(--tw-enter-translate-x, 0), var(--tw-enter-translate-y, 0), 0) scale3d(var(--tw-enter-scale, 1), var(--tw-enter-scale, 1), 1) rotate(var(--tw-enter-rotate, 0));
-      }
-    }
-
-    /* Utilities usually handled by plugin */
-    .text-pretty {
-      text-wrap: pretty;
-    }
-  </style>
   <script type="importmap">
 {
   "imports": {
@@ -111,8 +19,6 @@
   }
 }
 </script>
-  <link rel="stylesheet" href="/src/styles/design-tokens.css">
-  <link rel="stylesheet" href="/src/index.css">
 </head>
 
 <body

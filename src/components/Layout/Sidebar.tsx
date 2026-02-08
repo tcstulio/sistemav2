@@ -1,15 +1,14 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useModules } from '../../hooks/dolibarr';
+import { safeStorage } from '../../utils/safeStorage';
 import {
     Layout, Users, FileText, Package, ShoppingCart, Truck, Settings, LifeBuoy,
-    BarChart3, Menu, X, LogOut, FileSignature, TrendingUp, PenTool, Factory,
+    BarChart3, X, LogOut, FileSignature, TrendingUp, PenTool, Factory,
     FolderKanban, ClipboardList, Landmark, CalendarDays, Tag, MessageSquare,
-    Activity, Bug, UserCircle, LayoutDashboard, Sparkles, Mail, Bot, Clock, Receipt, Banknote,
-    CheckSquare,
-    Calculator,
-    Building2
+    Activity, Bug, UserCircle, Mail, Bot, Clock, Receipt, Banknote,
+    Calculator, Building2, ChevronDown, ChevronRight
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -29,11 +28,25 @@ interface MenuGroup {
     items: MenuItem[];
 }
 
+const COLLAPSED_GROUPS_KEY = 'sidebar_collapsed_groups';
+
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
     const { config, setConfig, canAccess } = useDolibarr();
     const { data: modules } = useModules(config);
     const navigate = useNavigate();
     const location = useLocation();
+
+    const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() =>
+        safeStorage.getJSON(COLLAPSED_GROUPS_KEY, {} as Record<string, boolean>)
+    );
+
+    const toggleGroup = useCallback((title: string) => {
+        setCollapsedGroups(prev => {
+            const next = { ...prev, [title]: !prev[title] };
+            safeStorage.setJSON(COLLAPSED_GROUPS_KEY, next);
+            return next;
+        });
+    }, []);
 
     // Menu Configuration
     const menuGroups: MenuGroup[] = [
@@ -170,6 +183,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
         }).filter(group => group.items.length > 0);
     }, [config, modules, canAccess]);
 
+    // Auto-expand group if it contains the active route
+    const groupHasActiveItem = useCallback((group: MenuGroup): boolean => {
+        return group.items.some(item =>
+            location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path))
+        );
+    }, [location.pathname]);
+
     const handleLogout = () => {
         if (confirm("Deseja desconectar do ERP?")) {
             setConfig(null);
@@ -194,35 +214,53 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
             </div>
 
             {/* Scrollable Navigation */}
-            <nav className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar">
-                {visibleMenuGroups.map((group, groupIdx) => (
-                    <div key={groupIdx}>
-                        {group.title && (
-                            <h3 className="px-3 text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                                {group.title}
-                            </h3>
-                        )}
-                        <div className="space-y-1">
-                            {group.items.map(item => {
-                                const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path));
-                                return (
-                                    <button
-                                        key={item.id}
-                                        onClick={() => handleNavigate(item.path)}
-                                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium
-                                            ${isActive
-                                                ? `bg-${config.themeColor}-600 text-white shadow-md`
-                                                : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                                            }`}
-                                    >
-                                        <item.icon size={18} className={isActive ? 'text-white' : 'text-slate-500 group-hover:text-white'} />
-                                        <span>{item.label}</span>
-                                    </button>
-                                )
-                            })}
+            <nav className="flex-1 overflow-y-auto p-4 space-y-1 custom-scrollbar">
+                {visibleMenuGroups.map((group, groupIdx) => {
+                    const hasTitle = !!group.title;
+                    const isCollapsed = hasTitle && collapsedGroups[group.title!] && !groupHasActiveItem(group);
+
+                    return (
+                        <div key={groupIdx}>
+                            {hasTitle ? (
+                                <button
+                                    onClick={() => toggleGroup(group.title!)}
+                                    className="w-full flex items-center justify-between px-3 py-2 mt-3 mb-1 rounded-md hover:bg-slate-800/50 transition-colors group"
+                                >
+                                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-400 transition-colors">
+                                        {group.title}
+                                    </h3>
+                                    {isCollapsed
+                                        ? <ChevronRight size={14} className="text-slate-600 group-hover:text-slate-400 transition-colors" />
+                                        : <ChevronDown size={14} className="text-slate-600 group-hover:text-slate-400 transition-colors" />
+                                    }
+                                </button>
+                            ) : null}
+                            <div
+                                className={`space-y-0.5 overflow-hidden transition-all duration-200 ${
+                                    isCollapsed ? 'max-h-0 opacity-0' : 'max-h-[1000px] opacity-100'
+                                }`}
+                            >
+                                {group.items.map(item => {
+                                    const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path));
+                                    return (
+                                        <button
+                                            key={item.id}
+                                            onClick={() => handleNavigate(item.path)}
+                                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-sm font-medium
+                                                ${isActive
+                                                    ? `bg-${config.themeColor}-600 text-white shadow-md`
+                                                    : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                                                }`}
+                                        >
+                                            <item.icon size={18} className={isActive ? 'text-white' : 'text-slate-500'} />
+                                            <span className="truncate">{item.label}</span>
+                                        </button>
+                                    )
+                                })}
+                            </div>
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
             </nav>
 
             {/* Footer / Logout */}
