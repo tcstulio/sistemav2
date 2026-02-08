@@ -10,6 +10,9 @@ import { DolibarrConfig } from '../types';
 import { DolibarrService } from './dolibarrService';
 import { dbService } from './dbService';
 import * as mappers from '../hooks/dolibarr/mappers';
+import { logger } from '../utils/logger';
+
+const log = logger.child('BackgroundSync');
 
 // Module definitions for background sync
 const SYNC_MODULES = [
@@ -79,14 +82,20 @@ const SYNC_MODULES = [
 /**
  * Execute background sync for all modules
  */
-export async function runBackgroundSync(config: DolibarrConfig): Promise<{ synced: number; errors: string[]; changes: Record<string, any[]> }> {
+export async function runBackgroundSync(config: DolibarrConfig, signal?: AbortSignal): Promise<{ synced: number; errors: string[]; changes: Record<string, any[]> }> {
     const errors: string[] = [];
     const changes: Record<string, any[]> = {};
     let synced = 0;
 
-    console.log('[BackgroundSync] Starting full background sync for', SYNC_MODULES.length, 'modules...');
+    log.debug(`Starting full background sync for ${SYNC_MODULES.length} modules...`);
 
     for (const module of SYNC_MODULES) {
+        // Check if sync was cancelled
+        if (signal?.aborted) {
+            log.debug('Background sync aborted');
+            break;
+        }
+
         try {
             // 1. Get watermark for this store
             const lastModified = await dbService.getLastModified(module.store, 'date_modification');
@@ -106,20 +115,20 @@ export async function runBackgroundSync(config: DolibarrConfig): Promise<{ synce
                 // 5. Record changes
                 changes[module.store] = mappedData;
 
-                console.log(`[BackgroundSync] ✅ ${module.type}: Synced ${delta.length} records to ${module.store}`);
+                log.debug(`${module.type}: Synced ${delta.length} records to ${module.store}`);
             } else {
                 // console.log(`[BackgroundSync] ⏭️ ${module.type}: No new data (delta empty)`);
             }
         } catch (error: any) {
             const errorMsg = `${module.type}: ${error.message || 'Unknown error'}`;
             errors.push(errorMsg);
-            console.error(`[BackgroundSync] ❌ Error syncing ${module.type}:`, error.message || error);
+            log.error(`Error syncing ${module.type}: ${error.message || error}`);
         }
     }
 
-    console.log(`[BackgroundSync] Complete. Synced ${synced} records total.`);
+    log.info(`Complete. Synced ${synced} records total.`);
     if (errors.length > 0) {
-        console.warn('[BackgroundSync] Errors encountered:', errors);
+        log.warn('Errors encountered', errors);
     }
 
     return { synced, errors, changes };

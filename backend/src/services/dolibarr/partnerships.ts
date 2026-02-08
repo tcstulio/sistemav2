@@ -6,6 +6,9 @@
 
 import axios from 'axios';
 import { DolibarrServiceBase } from './core';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('DolibarrPartnerships');
 
 /**
  * Venue Partnership extra fields structure
@@ -225,7 +228,7 @@ export class DolibarrPartnershipsService extends DolibarrServiceBase {
 
             return response.data.map((p: DolibarrPartnership) => this.transformPartnership(p));
         } catch (error: any) {
-            console.error('[DoliService] listPartnerships Error:', error.message);
+            log.error('listPartnerships Error', error.message);
             return [];
         }
     }
@@ -249,7 +252,7 @@ export class DolibarrPartnershipsService extends DolibarrServiceBase {
             }
             return null;
         } catch (error: any) {
-            console.error(`[DoliService] getPartnership Error for ${id}:`, error.message);
+            log.error(`getPartnership Error for ${id}`, error.message);
             return null;
         }
     }
@@ -291,7 +294,7 @@ export class DolibarrPartnershipsService extends DolibarrServiceBase {
 
             return filtered;
         } catch (error: any) {
-            console.error('[DoliService] searchPartnerships Error:', error.message);
+            log.error('searchPartnerships Error', error.message);
             return [];
         }
     }

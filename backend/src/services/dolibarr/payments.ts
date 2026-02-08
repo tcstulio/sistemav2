@@ -6,6 +6,9 @@
 
 import axios from 'axios';
 import { DolibarrServiceBase, AddPaymentModel } from './core';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('DolibarrPayments');
 
 export class DolibarrPaymentsService extends DolibarrServiceBase {
 
@@ -26,7 +29,7 @@ export class DolibarrPaymentsService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listPayments Error", error);
+            log.error('listPayments Error', error);
             return [];
         }
     }
@@ -45,7 +48,7 @@ export class DolibarrPaymentsService extends DolibarrServiceBase {
 
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listBankAccounts Error", error);
+            log.error('listBankAccounts Error', error);
             return [];
         }
     }
@@ -62,7 +65,7 @@ export class DolibarrPaymentsService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listBankLines Error", error);
+            log.error('listBankLines Error', error);
             return [];
         }
     }

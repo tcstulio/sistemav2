@@ -6,7 +6,7 @@ export const config = {
     port: process.env.PORT || 3004,
     dolibarrUrl: process.env.DOLIBARR_URL || 'https://sistema.coolgroove.com.br/api/index.php',
     dolibarrKey: process.env.DOLIBARR_API_KEY || '',
-    adminKey: process.env.ADMIN_KEY || 'admin-secret-123',
+    adminKey: process.env.ADMIN_KEY || '',
     googleApiKey: process.env.GOOGLE_API_KEY || '',
     chromeBin: process.env.CHROME_BIN,
     dolibarrBypassCookie: process.env.DOLIBARR_BYPASS_COOKIE || 'humans_21909=1', // Default to known working cookie

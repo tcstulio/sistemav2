@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3003,
       host: '0.0.0.0',
-      allowedHosts: 'all',
+      allowedHosts: true,
       hmr: {
         host: 'app.coolgroove.com.br',
         protocol: 'wss',
@@ -127,6 +127,18 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
+      }
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+            'vendor-query': ['@tanstack/react-query'],
+            'vendor-recharts': ['recharts'],
+            'vendor-ui': ['lucide-react', 'sonner'],
+          }
+        }
       }
     }
   };

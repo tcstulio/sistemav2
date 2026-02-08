@@ -1,7 +1,10 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import ffmpeg from 'fluent-ffmpeg';
+import { logger } from './logger';
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+
+const log = logger.child('AudioTranscoder');
 
 const ffmpegExecutablePath = ffmpegInstaller.path;
 
@@ -30,7 +33,7 @@ export const AudioTranscoder = {
                 .toFormat('ogg')
                 .audioCodec('libopus')
                 .on('error', (err: any) => {
-                    console.error('[AudioTranscoder] FFmpeg Error:', err);
+                    log.error('FFmpeg Error', err);
                     cleanup(inputPath, outputPath);
                     reject(err);
                 })

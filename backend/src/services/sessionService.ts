@@ -5,6 +5,9 @@ import * as path from 'path';
 import { socketService } from './socketService';
 import { config } from '../config/env';
 import { botService } from './botService';
+import { logger } from '../utils/logger';
+
+const log = logger.child('SessionService');
 
 // Helper to find local browser
 const getBrowserPath = () => {
@@ -39,7 +42,7 @@ export class SessionService {
     private sessionStartTimes: Map<string, number> = new Map();
 
     private constructor() {
-        console.log('[SessionService] Instantiated.');
+        log.info('Instantiated.');
         this.loadSessionsFromDisk();
     }
 
@@ -73,26 +76,26 @@ export class SessionService {
             files.forEach(dirent => {
                 if (dirent.isDirectory()) {
                     if (dirent.name === 'session') {
-                        console.log(`[SessionService] Found legacy default session: session`);
-                        this.startSession('default').catch(err => console.error(`[SessionService] Failed to auto-start default`, err));
+                        log.info('Found legacy default session: session');
+                        this.startSession('default').catch(err => log.error('Failed to auto-start default', err));
                     }
 
                     const match = dirent.name.match(/^session-(.+)$/);
                     if (match) {
                         const sessionId = match[1];
-                        console.log(`[SessionService] Found persisted session: ${sessionId}`);
-                        this.startSession(sessionId).catch(err => console.error(`[SessionService] Failed to auto-start ${sessionId}`, err));
+                        log.info(`Found persisted session: ${sessionId}`);
+                        this.startSession(sessionId).catch(err => log.error(`Failed to auto-start ${sessionId}`, err));
                     }
                 }
             });
         } catch (error) {
-            console.error('[SessionService] Failed to load sessions from disk:', error);
+            log.error('Failed to load sessions from disk', error);
         }
     }
 
     async startSession(sessionId: string) {
         if (this.initializationLocks.get(sessionId)) {
-            console.log(`[SessionService] Session ${sessionId} is already initializing. Skipping.`);
+            log.info(`Session ${sessionId} is already initializing. Skipping.`);
             return { status: 'STARTING' };
         }
 
@@ -103,7 +106,7 @@ export class SessionService {
                 const startTime = this.sessionStartTimes.get(sessionId) || 0;
                 const elapsed = Date.now() - startTime;
                 if (elapsed > 45000 && startTime > 0) {
-                    console.warn(`[SessionService] Session ${sessionId} stuck in ${currentStatus}. Force restarting...`);
+                    log.warn(`Session ${sessionId} stuck in ${currentStatus}. Force restarting...`);
                     await this.stopSession(sessionId);
                 } else {
                     return { status: currentStatus };
@@ -114,7 +117,7 @@ export class SessionService {
                     try {
                         const state = await client.getState();
                         if (state === null) {
-                            console.warn(`[SessionService] Session ${sessionId} state null. Resetting.`);
+                            log.warn(`Session ${sessionId} state null. Resetting.`);
                             await this.stopSession(sessionId);
                         } else {
                             return { status: currentStatus };
@@ -128,7 +131,7 @@ export class SessionService {
             }
         }
 
-        console.log(`[SessionService] Creating new session: ${sessionId}`);
+        log.info(`Creating new session: ${sessionId}`);
         this.setStatus(sessionId, 'INITIALIZING');
         this.initializationLocks.set(sessionId, true);
         this.sessionStartTimes.set(sessionId, Date.now());
@@ -140,7 +143,7 @@ export class SessionService {
             const legacyPath = path.join('.wwebjs_auth', 'session');
 
             if (sessionId === 'default' && fs.existsSync(legacyPath)) {
-                console.log(`[SessionService] Using legacy 'session' folder for default.`);
+                log.info("Using legacy 'session' folder for default.");
                 authStrategy = new LocalAuth();
             } else {
                 authStrategy = new LocalAuth({ clientId: sessionId });
@@ -167,12 +170,12 @@ export class SessionService {
             this.setupEvents(client, sessionId);
 
             client.initialize().then(() => {
-                console.log(`[SessionService ${sessionId}] client.initialize() resolved.`);
+                log.info(`[${sessionId}] client.initialize() resolved.`);
                 if (this.getStatus(sessionId) !== 'WORKING') {
                     this.setStatus(sessionId, 'STARTING');
                 }
             }).catch(error => {
-                console.error(`[SessionService] Failed to init ${sessionId}:`, error);
+                log.error(`Failed to init ${sessionId}`, error);
                 this.setStatus(sessionId, 'STOPPED');
                 this.clients.delete(sessionId);
             }).finally(() => {
@@ -180,7 +183,7 @@ export class SessionService {
             });
 
         } catch (err: any) {
-            console.error(`[SessionService] CRITICAL ERROR creating client for ${sessionId}:`, err);
+            log.error(`CRITICAL ERROR creating client for ${sessionId}`, err);
             this.setStatus(sessionId, 'STOPPED');
             this.initializationLocks.delete(sessionId);
             throw err;
@@ -195,7 +198,7 @@ export class SessionService {
             try {
                 await client.destroy();
             } catch (e) {
-                console.error(`[SessionService] Error destroying ${sessionId}:`, e);
+                log.error(`Error destroying ${sessionId}`, e);
             }
             this.clients.delete(sessionId);
             this.sessionStatus.delete(sessionId);
@@ -217,9 +220,9 @@ export class SessionService {
         if (fs.existsSync(authPath)) {
             try {
                 fs.rmSync(authPath, { recursive: true, force: true });
-                console.log(`[SessionService] Deleted session folder: ${authPath}`);
+                log.info(`Deleted session folder: ${authPath}`);
             } catch (error: any) {
-                console.error(`[SessionService] Failed to delete session folder:`, error.message);
+                log.error(`Failed to delete session folder: ${error.message}`);
                 throw new Error(`Failed to delete session folder: ${error.message}`);
             }
         }
@@ -250,7 +253,7 @@ export class SessionService {
     async sendTyping(sessionId: string, chatId: string) {
         const client = this.clients.get(sessionId);
         if (!client) {
-            console.warn(`[SessionService] Cannot send typing: Session ${sessionId} not found`);
+            log.warn(`Cannot send typing: Session ${sessionId} not found`);
             return;
         }
 
@@ -258,10 +261,10 @@ export class SessionService {
             const chat = await client.getChatById(chatId);
             if (chat) {
                 await chat.sendStateTyping();
-                console.log(`[SessionService] Typing indicator sent to ${chatId}`);
+                log.debug(`Typing indicator sent to ${chatId}`);
             }
         } catch (e: any) {
-            console.warn(`[SessionService] Failed to send typing to ${chatId}:`, e.message);
+            log.warn(`Failed to send typing to ${chatId}: ${e.message}`);
         }
     }
 
@@ -276,24 +279,24 @@ export class SessionService {
 
     private setupEvents(client: Client, sessionId: string) {
         client.on('qr', (qr) => {
-            console.log(`[SessionService ${sessionId}] QR Code received`);
+            log.info(`[${sessionId}] QR Code received`);
             this.qrCodes.set(sessionId, qr);
             this.setStatus(sessionId, 'SCAN_QR_CODE');
             socketService.emit('session_qr', { sessionId, qr });
         });
 
         client.on('ready', () => {
-            console.log(`[SessionService ${sessionId}] Ready!`);
+            log.info(`[${sessionId}] Ready!`);
             this.setStatus(sessionId, 'WORKING');
             this.qrCodes.delete(sessionId);
         });
 
         client.on('authenticated', () => {
-            console.log(`[SessionService ${sessionId}] Authenticated`);
+            log.info(`[${sessionId}] Authenticated`);
         });
 
         client.on('disconnected', (reason) => {
-            console.log(`[SessionService ${sessionId}] Disconnected: ${reason}`);
+            log.info(`[${sessionId}] Disconnected: ${reason}`);
             this.setStatus(sessionId, 'STOPPED');
 
             const nonRecoverableReasons = ['LOGOUT', 'DELETED_SESSION'];
@@ -301,7 +304,7 @@ export class SessionService {
                 setTimeout(() => {
                     const currentStatus = this.getStatus(sessionId);
                     if (currentStatus === 'STOPPED') {
-                        console.log(`[SessionService ${sessionId}] Auto-reconnecting...`);
+                        log.info(`[${sessionId}] Auto-reconnecting...`);
                         this.startSession(sessionId);
                     }
                 }, 5000);
@@ -328,7 +331,7 @@ export class SessionService {
             socketService.emit('whatsapp_message', payload);
 
             if (!msg.fromMe) {
-                botService.processMessage(payload).catch(err => console.error('[Bot Trigger] Failed:', err));
+                botService.processMessage(payload).catch(err => log.error('Bot Trigger Failed', err));
             }
         });
 
@@ -343,17 +346,17 @@ export class SessionService {
     }
 
     async destroy() {
-        console.log('[SessionService] Shutting down. Destroying all clients...');
+        log.info('Shutting down. Destroying all clients...');
         const promises: Promise<any>[] = [];
 
         this.clients.forEach((client, sessionId) => {
-            console.log(`[SessionService] Destroying session ${sessionId}...`);
+            log.info(`Destroying session ${sessionId}...`);
             const destroyPromise = client.destroy()
-                .then(() => console.log(`[SessionService] Session ${sessionId} destroyed.`))
-                .catch(e => console.error(`[SessionService] Error destroying ${sessionId}:`, e));
+                .then(() => log.info(`Session ${sessionId} destroyed.`))
+                .catch(e => log.error(`Error destroying ${sessionId}`, e));
 
             const timeoutPromise = new Promise(resolve => setTimeout(() => {
-                console.warn(`[SessionService] Destroy timeout for ${sessionId}. Ignoring.`);
+                log.warn(`Destroy timeout for ${sessionId}. Ignoring.`);
                 resolve(null);
             }, 3000));
 
@@ -364,7 +367,7 @@ export class SessionService {
         this.clients.clear();
         this.sessionStatus.clear();
         this.qrCodes.clear();
-        console.log('[SessionService] All clients destroyed.');
+        log.info('All clients destroyed.');
     }
     async getProfile(sessionId: string) {
         const client = this.clients.get(sessionId);

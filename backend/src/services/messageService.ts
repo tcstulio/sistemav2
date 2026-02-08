@@ -2,6 +2,9 @@ import { sessionService } from './sessionService';
 import { AudioTranscoder } from '../utils/audioTranscoder';
 import { MessageMedia } from 'whatsapp-web.js';
 import * as path from 'path';
+import { logger } from '../utils/logger';
+
+const log = logger.child('MessageService');
 
 export class MessageService {
     private static instance: MessageService;
@@ -48,7 +51,7 @@ export class MessageService {
 
         if (!fileData.startsWith('data:')) throw new Error('Invalid Audio Data Format');
 
-        console.log(`[MessageService] Transcoding audio for ${chatId}...`);
+        log.info(`Transcoding audio for ${chatId}...`);
 
         // Use isolated AudioTranscoder
         const convertedBase64 = await AudioTranscoder.convertAudioToOgg(fileData);
@@ -132,7 +135,7 @@ export class MessageService {
                 }
             }
         } catch (e) {
-            console.error(`Error fetching media:`, e);
+            log.error('Error fetching media', e);
         }
         return null;
     }

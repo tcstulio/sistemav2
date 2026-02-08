@@ -6,6 +6,9 @@
 
 import axios from 'axios';
 import { DolibarrServiceBase } from './core';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('DolibarrProducts');
 
 export class DolibarrProductsService extends DolibarrServiceBase {
 
@@ -33,7 +36,7 @@ export class DolibarrProductsService extends DolibarrServiceBase {
 
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listProducts Error", error);
+            log.error('listProducts Error', error);
             return [];
         }
     }
@@ -50,7 +53,7 @@ export class DolibarrProductsService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listWarehouses Error", error);
+            log.error('listWarehouses Error', error);
             return [];
         }
     }
@@ -71,7 +74,7 @@ export class DolibarrProductsService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listStockMovements Error", error);
+            log.error('listStockMovements Error', error);
             return [];
         }
     }

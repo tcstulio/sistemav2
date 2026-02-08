@@ -5,6 +5,9 @@ import { config } from '../config/env';
 import fs from 'fs/promises';
 import path from 'path';
 import { ScraperService } from './scraperService';
+import { logger } from '../utils/logger';
+
+const log = logger.child('AiService');
 
 // --- Interfaces ---
 
@@ -20,7 +23,7 @@ interface AIProvider {
     extractCustomerInfo(text: string): Promise<any>;
     extractReceiptData(imageBase64: string): Promise<any>;
     analyzeFinancialHealth(data: any): Promise<string>;
-    fixApiCall(log: any, context?: string): Promise<string>;
+    fixApiCall(logData: any, context?: string): Promise<string>;
     generateCode(endpoint: string, method: string, description?: string, context?: string): Promise<string>;
     getModels?(): Promise<string[]>;
     // New methods
@@ -40,20 +43,20 @@ class GoogleProvider implements AIProvider {
     private modelName: string | undefined;
 
     constructor(apiKey: string, modelName?: string) {
-        // console.log('[AI Service] Initializing GoogleProvider...'); // Reduce noise
+        log.debug('Initializing GoogleProvider...');
         if (apiKey) {
             try {
                 this.ai = new GoogleGenAI({ apiKey });
                 this.modelName = modelName;
             } catch (e: any) {
-                console.error('[AI Service] Error initializing GoogleGenAI:', e);
+                log.error('Error initializing GoogleGenAI', e);
             }
         }
     }
 
     async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<string> {
         if (!this.ai) {
-            console.error('[AI Service] Google AI not configured.');
+            log.error('Google AI not configured.');
             throw new Error("Google AI not configured.");
         }
 
@@ -172,7 +175,7 @@ class GoogleProvider implements AIProvider {
                     const jsonBlock = toolMatch[0];
                     const toolCall = JSON.parse(jsonBlock);
 
-                    console.log(`[AI] Tool Call: ${toolCall.tool}`, toolCall.args);
+                    log.info(`Tool Call: ${toolCall.tool}`, toolCall.args);
 
                     let toolResult = "";
 
@@ -322,7 +325,7 @@ class GoogleProvider implements AIProvider {
                     continue; // Loop again
 
                 } catch (e: any) {
-                    console.error("Tool execution failed", e);
+                    log.error("Tool execution failed", e);
                     const errorMsg = `Erro na execução da ferramenta ${toolMatch ? (JSON.parse(toolMatch[0]).tool || 'desconhecida') : 'desconhecida'}: ${e.message}`;
                     // Continue to next iteration so LLM can see the error
                     currentContext += `\n\n[ERRO NA EXECUÇÃO]:\n${errorMsg}\n`;
@@ -357,7 +360,7 @@ class GoogleProvider implements AIProvider {
             const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0] || "{}";
             return jsonStr;
         } catch (e) {
-            console.error("draftCollectionEmail Error", e);
+            log.error("draftCollectionEmail Error", e);
             return JSON.stringify({ subject: "Lembrete de Pagamento", body: "Erro ao gerar email." });
         }
     }
@@ -374,11 +377,11 @@ class GoogleProvider implements AIProvider {
             s: i.status
         }));
 
-        console.log("DEBUG BACKEND: Received Context:", context);
-        console.log("DEBUG BACKEND: Computed Ref Date String:", new Date(context?.referenceDate).toLocaleDateString('pt-BR'));
-        console.log("DEBUG BACKEND: Invoice Count:", invoicesSummary.length);
+        log.debug("Received Context", context);
+        log.debug(`Computed Ref Date String: ${new Date(context?.referenceDate).toLocaleDateString('pt-BR')}`);
+        log.debug(`Invoice Count: ${invoicesSummary.length}`);
         if (invoicesSummary.length > 0) {
-            console.log("DEBUG BACKEND: Last Invoice Date:", invoicesSummary[invoicesSummary.length - 1].d);
+            log.debug(`Last Invoice Date: ${invoicesSummary[invoicesSummary.length - 1].d}`);
         }
 
         const refDate = context?.referenceDate ? new Date(context.referenceDate).toLocaleDateString('pt-BR') : 'Data Atual';
@@ -420,7 +423,7 @@ class GoogleProvider implements AIProvider {
             const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0] || "{}";
             return jsonStr;
         } catch (e) {
-            console.error("generateSalesForecast Error", e);
+            log.error("generateSalesForecast Error", e);
             return JSON.stringify({ forecast: [], summary: "Erro na previsão." });
         }
     }
@@ -458,7 +461,7 @@ class GoogleProvider implements AIProvider {
             const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0] || "{}";
             return jsonStr;
         } catch (e) {
-            console.error("analyzeCustomerSentiment Error", e);
+            log.error("analyzeCustomerSentiment Error", e);
             return JSON.stringify({ score: 50, label: "Error", insights: "Erro na análise." });
         }
     }
@@ -487,7 +490,7 @@ class GoogleProvider implements AIProvider {
             const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0] || "{}";
             return jsonStr;
         } catch (e) {
-            console.error("auditProposal Error", e);
+            log.error("auditProposal Error", e);
             return JSON.stringify({ score: 0, issues: ["Erro na auditoria."] });
         }
     }
@@ -522,7 +525,7 @@ class GoogleProvider implements AIProvider {
             const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0] || "{}";
             return jsonStr;
         } catch (e) {
-            console.error("auditProject Error", e);
+            log.error("auditProject Error", e);
             return JSON.stringify({ health: "unknown", issues: ["Erro na análise."] });
         }
     }
@@ -559,7 +562,7 @@ class GoogleProvider implements AIProvider {
             const jsonStr = raw.match(/\[[\s\S]*\]/)?.[0] || "[]";
             return jsonStr;
         } catch (e) {
-            console.error("analyzeSystemLogs Error", e);
+            log.error("analyzeSystemLogs Error", e);
             return "[]";
         }
     }
@@ -610,7 +613,7 @@ class GoogleProvider implements AIProvider {
             });
             return response.text || "Não foi possível gerar o relatório.";
         } catch (e) {
-            console.error("analyzeMonthlyReport Error", e);
+            log.error("analyzeMonthlyReport Error", e);
             return "Erro ao analisar o relatório mensal.";
         }
     }
@@ -656,7 +659,7 @@ class GoogleProvider implements AIProvider {
             const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0] || "{}";
             return JSON.parse(jsonStr);
         } catch (error) {
-            console.error("Sentiment Error", error);
+            log.error("Sentiment Error", error);
             return { score: 50, label: 'Error' };
         }
     }
@@ -676,7 +679,7 @@ class GoogleProvider implements AIProvider {
             const cleanJson = raw.replace(/```json|```/g, '').trim();
             return JSON.parse(cleanJson);
         } catch (e) {
-            console.error("Gemini Extract Error", e);
+            log.error("Gemini Extract Error", e);
             return null;
         }
     }
@@ -719,7 +722,7 @@ class GoogleProvider implements AIProvider {
             const cleanJson = raw.replace(/```json|```/g, '').trim();
             return JSON.parse(cleanJson);
         } catch (error) {
-            console.error("Gemini Vision Error:", error);
+            log.error("Gemini Vision Error", error);
             return null;
         }
     }
@@ -738,12 +741,12 @@ class GoogleProvider implements AIProvider {
             });
             return result.text || "";
         } catch (error) {
-            console.error("Gemini Finance Analysis Error:", error);
+            log.error("Gemini Finance Analysis Error", error);
             return "Não foi possível gerar a análise financeira no momento.";
         }
     }
 
-    async fixApiCall(log: any, context?: string): Promise<string> {
+    async fixApiCall(logData: any, context?: string): Promise<string> {
         if (!this.ai) return "Service Unavailable";
         const prompt = `
         You are a Senior TypeScript/React Developer.
@@ -753,7 +756,7 @@ class GoogleProvider implements AIProvider {
         ${context || 'No context provided.'}
 
         FAILED REQUEST LOG:
-        ${JSON.stringify(log, null, 2)}
+        ${JSON.stringify(logData, null, 2)}
 
         Task: Explain failure and provide corrected code.
         `;
@@ -764,7 +767,7 @@ class GoogleProvider implements AIProvider {
             });
             return result.text || "";
         } catch (e) {
-            console.error("Gemini fixApiCall Error", e);
+            log.error("Gemini fixApiCall Error", e);
             return "Analysis failed.";
         }
     }
@@ -791,7 +794,7 @@ class GoogleProvider implements AIProvider {
             });
             return result.text || "";
         } catch (e) {
-            console.error("Gemini CodeGen Error", e);
+            log.error("Gemini CodeGen Error", e);
             return "// Generation failed";
         }
     }
@@ -816,7 +819,7 @@ class GoogleProvider implements AIProvider {
 
             return result.text?.trim() || "[Áudio não reconhecido]";
         } catch (error) {
-            console.error("Gemini Audio Transcription Error:", error);
+            log.error("Gemini Audio Transcription Error", error);
             return "[Erro na transcrição]";
         }
     }
@@ -852,7 +855,7 @@ class GoogleProvider implements AIProvider {
                 return a.localeCompare(b);
             });
         } catch (error) {
-            console.error("Failed to fetch Gemini models:", error);
+            log.error("Failed to fetch Gemini models", error);
             // Fallback to known models if API fails
             return [
                 'gemini-2.0-flash',
@@ -891,7 +894,7 @@ class LocalProvider implements AIProvider {
             }
             return [];
         } catch (error) {
-            console.error("Failed to fetch local models:", error);
+            log.error("Failed to fetch local models", error);
             return [];
         }
     }
@@ -965,7 +968,7 @@ class LocalProvider implements AIProvider {
                     try {
                         const jsonBlock = toolMatch[0];
                         const toolCall = JSON.parse(jsonBlock);
-                        console.log(`[Local LLM] Tool Call: ${toolCall.tool}`, toolCall.args);
+                        log.info(`Local LLM Tool Call: ${toolCall.tool}`, toolCall.args);
 
                         let toolResult = "";
 
@@ -1002,7 +1005,7 @@ class LocalProvider implements AIProvider {
                         continue;
 
                     } catch (e: any) {
-                        console.error("[Local LLM] Tool Error", e);
+                        log.error("Local LLM Tool Error", e);
                         // If invalid JSON, maybe it's just text. Return it.
                         return reply;
                     }
@@ -1011,7 +1014,7 @@ class LocalProvider implements AIProvider {
                 return reply;
 
             } catch (error: any) {
-                console.error("Local LLM Error:", error.message);
+                log.error(`Local LLM Error: ${error.message}`);
                 return `Erro LLM Local: ${error.message}`;
             }
         }
@@ -1043,7 +1046,7 @@ class LocalProvider implements AIProvider {
             });
             return response.data.choices[0].message.content;
         } catch (error: any) {
-            console.error("Local LLM Error:", error.message);
+            log.error(`Local LLM Error: ${error.message}`);
             return "Erro ao conectar com LLM Local.";
         }
     }
@@ -1071,7 +1074,7 @@ class LocalProvider implements AIProvider {
             const jsonStr = content.match(/\{[\s\S]*\}/)?.[0] || "{}";
             return JSON.parse(jsonStr);
         } catch (error: any) {
-            console.error("Local LLM Error:", error.message);
+            log.error(`Local LLM Error: ${error.message}`);
             return { score: 50, label: 'Error' };
         }
     }
@@ -1098,13 +1101,13 @@ class LocalProvider implements AIProvider {
             const jsonStr = content.match(/\{[\s\S]*\}/)?.[0] || "{}";
             return JSON.parse(jsonStr);
         } catch (error: any) {
-            console.error("Local LLM Error:", error.message);
+            log.error(`Local LLM Error: ${error.message}`);
             return {};
         }
     }
 
     async extractReceiptData(imageBase64: string): Promise<any> {
-        console.warn("LocalProvider does not support extractReceiptData directly.");
+        log.warn("LocalProvider does not support extractReceiptData directly.");
         return null;
     }
 
@@ -1127,12 +1130,12 @@ class LocalProvider implements AIProvider {
             });
             return response.data.choices[0].message.content;
         } catch (error: any) {
-            console.error("Local LLM Error:", error.message);
+            log.error(`Local LLM Error: ${error.message}`);
             return "Erro ao gerar análise financeira local.";
         }
     }
 
-    async fixApiCall(log: any, context?: string): Promise<string> {
+    async fixApiCall(logData: any, context?: string): Promise<string> {
         const prompt = `
             [INST]
             You are a Senior Developer. Analyze this failed API log and fix it.
@@ -1141,7 +1144,7 @@ class LocalProvider implements AIProvider {
             ${context ? context.substring(0, 3000) : "N/A"}
 
             LOG:
-            ${JSON.stringify(log)}
+            ${JSON.stringify(logData)}
 
             Provide explanation and fixed code.
             [/INST]
@@ -1157,7 +1160,7 @@ class LocalProvider implements AIProvider {
             });
             return response.data.choices[0].message.content;
         } catch (error: any) {
-            console.error("Local LLM fixApiCall Error", error);
+            log.error("Local LLM fixApiCall Error", error);
             return "Local diagnosis failed.";
         }
     }
@@ -1192,7 +1195,7 @@ class LocalProvider implements AIProvider {
     async transcribeAudio(audioBase64: string, mimeType: string = 'audio/ogg'): Promise<string> {
         // LocalProvider doesn't support audio transcription natively
         // You could integrate with local Whisper API here if available
-        console.warn("[LocalProvider] Audio transcription not supported. Consider using Google provider.");
+        log.warn("LocalProvider: Audio transcription not supported. Consider using Google provider.");
         return "[Transcrição não disponível - LLM local não suporta áudio]";
     }
 }
@@ -1230,7 +1233,7 @@ export const aiService = {
         } else {
             currentProvider = new LocalProvider(url || config.localLlmUrl, modelName || config.localModelName);
         }
-        console.log(`AI Provider switched to: ${providerName} (Model: ${modelName})`);
+        log.info(`AI Provider switched to: ${providerName} (Model: ${modelName})`);
     },
 
     getModels: async () => {
@@ -1269,7 +1272,7 @@ export const aiService = {
             const fileContext = await readSystemContext(rootPath);
             return getProvider().analyzeSystem(query, fileContext);
         } catch (e: any) {
-            console.error("Analysis Error:", e);
+            log.error("Analysis Error", e);
             throw new Error("Falha na análise do sistema.");
         }
     },
@@ -1290,12 +1293,12 @@ export const aiService = {
         return getProvider().analyzeFinancialHealth(data);
     },
 
-    fixApiCall: async (log: any) => {
+    fixApiCall: async (logData: any) => {
         try {
             const context = await readSystemContext('../src');
-            return getProvider().fixApiCall(log, context);
+            return getProvider().fixApiCall(logData, context);
         } catch (e) {
-            console.error("fixApiCall Wrapper Error", e);
+            log.error("fixApiCall Wrapper Error", e);
             return "Could not perform analysis.";
         }
     },

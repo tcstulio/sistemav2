@@ -1,5 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config/env';
+import { logger } from '../utils/logger';
+
+const log = logger.child('Auth');
 
 // Basic API Key check
 // In production, use a more robust auth system (JWT, etc)
@@ -96,18 +99,16 @@ export const requireDolibarrAdmin = async (req: Request, res: Response, next: Ne
         userKey = authHeader.substring(7);
     }
 
-    console.log(`[AuthDebug] Headers:`, req.headers);
-    console.log(`[AuthDebug] Extracted Key: ${userKey ? userKey.substring(0, 5) + '...' : 'NONE'}`);
+    log.debug(`Admin auth check: ${req.method} ${req.path}`);
 
     // 2. Fallback to System Admin Key (if provided directly)
-    // This allows the server-side admin key to bypass user checks if explicitly used
-    if (userKey === config.adminKey) {
-        console.log('[AuthDebug] System Admin Key used. Bypassing check.');
+    if (userKey && userKey === config.adminKey) {
+        log.debug('System admin key used');
         return next();
     }
 
     if (!userKey) {
-        console.warn('[AuthDebug] No key provided.');
+        log.warn(`Admin access denied: no key provided for ${req.method} ${req.path}`);
         return res.status(401).json({
             status: 'error',
             message: 'Authentication Required: Admin Access Only.'
@@ -118,14 +119,12 @@ export const requireDolibarrAdmin = async (req: Request, res: Response, next: Ne
     const { dolibarrService } = require('../services/dolibarrService');
 
     try {
-        console.log('[AuthDebug] Calling verifyAdminStatus...');
         const isAdmin = await dolibarrService.verifyAdminStatus(userKey);
 
         if (isAdmin) {
-            console.log('[AuthDebug] Access Granted.');
             return next();
         } else {
-            console.warn('[AuthDebug] Access Denied. User is not admin (or key invalid).');
+            log.warn(`Admin access denied for ${req.method} ${req.path}`);
             return res.status(403).json({
                 status: 'error',
                 message: 'Access Denied: You must be an Administrator to perform this action.'
@@ -133,7 +132,7 @@ export const requireDolibarrAdmin = async (req: Request, res: Response, next: Ne
         }
 
     } catch (e: any) {
-        console.error('[AuthDebug] Validation Error:', e);
+        log.error(`Admin auth error for ${req.method} ${req.path}: ${e.message}`);
         return res.status(500).json({ status: 'error', message: 'Auth Verification Error' });
     }
 };

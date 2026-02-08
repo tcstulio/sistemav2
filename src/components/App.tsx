@@ -1,58 +1,76 @@
-import React, { useMemo, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, useParams, useNavigate, Navigate } from 'react-router-dom';
+import React, { Suspense } from 'react';
+import { BrowserRouter, Routes, Route, useParams, useNavigate } from 'react-router-dom';
 import { useDolibarr } from '../context/DolibarrContext';
-import { Server, ShieldCheck, PlayCircle, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { RestrictedAccess } from './RestrictedAccess';
-import Simulator from '../pages/Simulator';
+import { ErrorBoundary } from './ui/ErrorBoundary';
 import { Toaster } from 'sonner';
 
-// Components
+// Static imports (critical path - always needed)
 import Dashboard from './Dashboard';
-import { CustomerList } from './CustomerList';
-import InvoiceList from './InvoiceList';
-import ProductList from './ProductList';
-import ProposalList from './ProposalList';
-import SupplierProposalList from './SupplierProposalList';
-import { SmartQuotationWizard } from './SmartQuotationWizard';
-import OrderList from './OrderList';
-import ProjectList from './ProjectList';
-import TicketList from './TicketList';
-import BankAccountList from './BankAccountList';
-import { SupplierList } from './SupplierList';
-import { VenueList } from './VenueList';
-import SupplierInvoiceList from './SupplierInvoiceList';
-import SettingsView from './Settings';
 import SetupWizard from './SetupWizard';
-import HRList from './HRList';
-import { InventoryView } from './InventoryView';
-import ReportsView from './ReportsView';
-import DevelopmentView from './DevelopmentView';
-import ManufacturingView from './ManufacturingView';
-import InterventionList from './InterventionList';
-import ContractList from './ContractList';
-import AgendaView from './AgendaView';
-import AgendaEntryDetail from './AgendaEntryDetail';
-import ShipmentList from './ShipmentList';
-import PaymentList from './PaymentList';
-import CategoryList from './CategoryList';
-import WhatsAppView from './WhatsAppView';
-import EmailView from './Email/EmailView';
-import SchedulerAdmin from './SchedulerAdmin';
-import ActivityView from './ActivityView';
-import TaskDetail from './TaskDetail';
-import { PendingPayments } from './PendingPayments';
-import SupplierPaymentList from './SupplierPaymentList';
 import { MainLayout } from './Layout/MainLayout';
 import { useNotifications } from '../hooks/useNotifications';
-import SalaryPaymentList from './HR/SalaryPaymentList';
-import TaxPaymentList from './Finance/TaxPaymentList';
-import ExpenseReportPaymentList from './Finance/ExpenseReportPaymentList';
-import TaxPaymentDetail from './Finance/TaxPaymentDetail';
-import UserTaskDashboard from './Tasks/UserTaskDashboard';
-import { MonthlyReport } from '../pages/Reports/MonthlyReport';
-import { ChatPage, ChatConversation } from '../pages/ChatPage';
+import NotFound from './NotFound';
+import { DolibarrConfig } from '../types';
 
-const ViewWrapper = ({ Component, viewId, passProps = {} }: any) => {
+// Lazy imports - Route components loaded on demand
+const CustomerList = React.lazy(() => import('./CustomerList').then(m => ({ default: m.CustomerList })));
+const InvoiceList = React.lazy(() => import('./InvoiceList'));
+const ProductList = React.lazy(() => import('./ProductList'));
+const ProposalList = React.lazy(() => import('./ProposalList'));
+const SupplierProposalList = React.lazy(() => import('./SupplierProposalList'));
+const SmartQuotationWizard = React.lazy(() => import('./SmartQuotationWizard').then(m => ({ default: m.SmartQuotationWizard })));
+const OrderList = React.lazy(() => import('./OrderList'));
+const ProjectList = React.lazy(() => import('./ProjectList'));
+const TicketList = React.lazy(() => import('./TicketList'));
+const BankAccountList = React.lazy(() => import('./BankAccountList'));
+const SupplierList = React.lazy(() => import('./SupplierList').then(m => ({ default: m.SupplierList })));
+const VenueList = React.lazy(() => import('./VenueList').then(m => ({ default: m.VenueList })));
+const SupplierInvoiceList = React.lazy(() => import('./SupplierInvoiceList'));
+const SettingsView = React.lazy(() => import('./Settings'));
+const HRList = React.lazy(() => import('./HRList'));
+const InventoryView = React.lazy(() => import('./InventoryView').then(m => ({ default: m.InventoryView })));
+const ReportsView = React.lazy(() => import('./ReportsView'));
+const DevelopmentView = React.lazy(() => import('./DevelopmentView'));
+const ManufacturingView = React.lazy(() => import('./ManufacturingView'));
+const InterventionList = React.lazy(() => import('./InterventionList'));
+const ContractList = React.lazy(() => import('./ContractList'));
+const AgendaView = React.lazy(() => import('./AgendaView'));
+const AgendaEntryDetail = React.lazy(() => import('./AgendaEntryDetail'));
+const ShipmentList = React.lazy(() => import('./ShipmentList'));
+const PaymentList = React.lazy(() => import('./PaymentList'));
+const CategoryList = React.lazy(() => import('./CategoryList'));
+const WhatsAppView = React.lazy(() => import('./WhatsAppView'));
+const EmailView = React.lazy(() => import('./Email/EmailView'));
+const SchedulerAdmin = React.lazy(() => import('./SchedulerAdmin'));
+const ActivityView = React.lazy(() => import('./ActivityView'));
+const TaskDetail = React.lazy(() => import('./TaskDetail'));
+const PendingPayments = React.lazy(() => import('./PendingPayments').then(m => ({ default: m.PendingPayments })));
+const SupplierPaymentList = React.lazy(() => import('./SupplierPaymentList'));
+const SalaryPaymentList = React.lazy(() => import('./HR/SalaryPaymentList'));
+const TaxPaymentList = React.lazy(() => import('./Finance/TaxPaymentList'));
+const ExpenseReportPaymentList = React.lazy(() => import('./Finance/ExpenseReportPaymentList'));
+const TaxPaymentDetail = React.lazy(() => import('./Finance/TaxPaymentDetail'));
+const UserTaskDashboard = React.lazy(() => import('./Tasks/UserTaskDashboard'));
+const MonthlyReport = React.lazy(() => import('../pages/Reports/MonthlyReport').then(m => ({ default: m.MonthlyReport })));
+const ChatPage = React.lazy(() => import('../pages/ChatPage').then(m => ({ default: m.ChatPage })));
+const ChatConversation = React.lazy(() => import('../pages/ChatPage').then(m => ({ default: m.ChatConversation })));
+const Simulator = React.lazy(() => import('../pages/Simulator'));
+
+interface ViewWrapperProps {
+    Component: React.ComponentType<{
+        config: DolibarrConfig | null;
+        onNavigate: (view: string, id?: string) => void;
+        initialItemId?: string;
+        onRefresh: (options?: { forceFull?: boolean; limit?: number; page?: number; query?: string }) => Promise<void>;
+        [key: string]: unknown;
+    }>;
+    viewId?: string;
+    passProps?: Record<string, unknown>;
+}
+
+const ViewWrapper: React.FC<ViewWrapperProps> = ({ Component, viewId, passProps = {} }) => {
     const { id } = useParams();
     const navigate = useNavigate();
     const { config, canAccess, refreshData } = useDolibarr();
@@ -116,6 +134,12 @@ const App: React.FC = () => {
             <Toaster richColors position="top-right" />
             <BrowserRouter>
                 <NotificationHandler />
+                <ErrorBoundary componentName="CoolGroove Sistema">
+                <Suspense fallback={
+                    <div className="flex h-screen w-full items-center justify-center bg-slate-50 dark:bg-slate-950">
+                        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+                    </div>
+                }>
                 <Routes>
                     <Route element={<MainLayout />}>
                         <Route path="/" element={<ViewWrapper Component={Dashboard} viewId="dashboard" />} />
@@ -205,15 +229,19 @@ const App: React.FC = () => {
 
                         <Route path="/development" element={<ViewWrapper Component={DevelopmentView} viewId="development" />} />
 
+                        <Route path="/settings" element={<ViewWrapper Component={SettingsView} viewId="settings" />} />
+
                         <Route path="/chat" element={<ViewWrapper Component={ChatPage} viewId="chat" />}>
                             <Route index element={<ChatConversation />} />
                             <Route path=":type/:id" element={<ChatConversation />} />
                         </Route>
 
                         <Route path="/simulator" element={<ViewWrapper Component={Simulator} viewId="simulator" />} />
-                        <Route path="*" element={<Navigate to="/" replace />} />
+                        <Route path="*" element={<NotFound />} />
                     </Route>
                 </Routes>
+                </Suspense>
+                </ErrorBoundary>
             </BrowserRouter>
         </>
     );

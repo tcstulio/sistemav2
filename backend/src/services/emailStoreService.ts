@@ -1,5 +1,9 @@
 import fs from 'fs';
 import path from 'path';
+import { atomicWriteSync } from '../utils/atomicWrite';
+import { logger } from '../utils/logger';
+
+const log = logger.child('EmailStoreService');
 
 const DATA_DIR = path.join(__dirname, '../../data');
 const STORE_FILE = path.join(DATA_DIR, 'email_accounts.json');
@@ -52,7 +56,7 @@ class EmailStoreService {
                 const data = fs.readFileSync(STORE_FILE, 'utf-8');
                 this.accounts = JSON.parse(data);
             } catch (e) {
-                console.error('Failed to load email accounts:', e);
+                log.error('Failed to load email accounts', e);
                 this.accounts = [];
             }
         }
@@ -63,19 +67,19 @@ class EmailStoreService {
                 const data = fs.readFileSync(METADATA_FILE, 'utf-8');
                 this.metadata = JSON.parse(data);
             } catch (e) {
-                console.error('Failed to load email metadata:', e);
+                log.error('Failed to load email metadata', e);
                 this.metadata = { assignments: {}, threadSettings: {}, userSettings: {} };
             }
         }
     }
 
     private save() {
-        fs.writeFileSync(STORE_FILE, JSON.stringify(this.accounts, null, 2));
+        atomicWriteSync(STORE_FILE, this.accounts);
         this.saveMetadata();
     }
 
     private saveMetadata() {
-        fs.writeFileSync(METADATA_FILE, JSON.stringify(this.metadata, null, 2));
+        atomicWriteSync(METADATA_FILE, this.metadata);
     }
 
     getAllAccounts(): EmailAccountConfig[] {

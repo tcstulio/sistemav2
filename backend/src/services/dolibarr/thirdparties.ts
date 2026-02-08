@@ -6,6 +6,9 @@
 
 import axios from 'axios';
 import { DolibarrServiceBase, CreateThirdPartyModel } from './core';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('DolibarrThirdParties');
 
 export class DolibarrThirdPartiesService extends DolibarrServiceBase {
 
@@ -32,12 +35,12 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
 
             if (response.status === 200 && Array.isArray(response.data) && response.data.length > 0) {
                 const found = response.data[0];
-                console.log(`[DoliService] Phone match found: ${found.name} (ID: ${found.id})`);
+                log.info(`Phone match found: ${found.name} (ID: ${found.id})`);
                 return found;
             }
             return null;
         } catch (error: any) {
-            console.error(`[DoliService] Phone Search Error for ${phoneNumber}:`, error.message);
+            log.error(`Phone Search Error for ${phoneNumber}`, error.message);
             return null;
         }
     }
@@ -58,7 +61,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
             }
             return null;
         } catch (error: any) {
-            console.error(`[DoliService] GetThirdParty Error for ${id}:`, error.message);
+            log.error(`GetThirdParty Error for ${id}`, error.message);
             return null;
         }
     }
@@ -78,7 +81,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
 
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("searchThirdParty Error", error);
+            log.error('searchThirdParty Error', error);
             return [];
         }
     }
@@ -162,7 +165,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
 
             return context;
         } catch (error) {
-            console.error('[DoliService] Context Fetch Error:', error);
+            log.error('Context Fetch Error', error);
             return "Erro ao buscar dados detalhados do cliente no CRM.";
         }
     }
@@ -183,7 +186,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listSuppliers Error", error);
+            log.error('listSuppliers Error', error);
             return [];
         }
     }
@@ -204,7 +207,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listContacts Error", error);
+            log.error('listContacts Error', error);
             return [];
         }
     }
@@ -221,7 +224,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
             });
             return Array.isArray(response.data) ? response.data : [];
         } catch (error) {
-            console.error("listCategories Error", error);
+            log.error('listCategories Error', error);
             return [];
         }
     }

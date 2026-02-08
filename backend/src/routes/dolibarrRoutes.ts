@@ -2,7 +2,9 @@ import { Router } from 'express';
 import { dolibarrService } from '../services/dolibarrService';
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
+import { logger } from '../utils/logger';
 
+const log = logger.child('DolibarrRoutes');
 const router = Router();
 
 // Basic Rate Limiter: 5000 requests per 15 minutes per IP
@@ -149,7 +151,7 @@ router.get('/custom_sync.php', async (req, res) => {
         const response = await dolibarrService.proxyCustomSync(req.query, req.headers);
         res.status(response.status).json(response.data);
     } catch (error: any) {
-        console.error('[Dolibarr CustomSync Proxy] Error:', error.message);
+        log.error('CustomSync Proxy Error', error.message);
         const status = error.status || 500;
         res.status(status).json({ error: error.message || 'Custom Sync Error' });
     }
@@ -176,7 +178,7 @@ router.all('/*', async (req, res) => {
         res.status(response.status).json(response.data);
 
     } catch (error: any) {
-        console.error('[Dolibarr Proxy] Error:', error.message);
+        log.error('Proxy Error', error.message);
         const status = error.status || 500;
         res.status(status).json({ error: error.message || 'Internal Proxy Error', details: error.details });
     }

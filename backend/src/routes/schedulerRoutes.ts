@@ -1,7 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { schedulerService } from '../services/schedulerService';
+import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { logger } from '../utils/logger';
 
+const log = logger.child('SchedulerRoutes');
 const router = Router();
+
+// Protect all scheduler routes
+router.use(requireDolibarrLogin);
 
 // --- Schedule a single message ---
 
@@ -53,7 +59,7 @@ router.post('/schedule', async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        console.error('[Scheduler Route] Schedule error:', error);
+        log.error('Schedule error', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -91,7 +97,7 @@ router.post('/broadcast', async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        console.error('[Scheduler Route] Broadcast error:', error);
+        log.error('Broadcast error', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -122,7 +128,7 @@ router.post('/confirmation', async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        console.error('[Scheduler Route] Confirmation error:', error);
+        log.error('Confirmation error', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -163,7 +169,7 @@ router.post('/reminder', async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        console.error('[Scheduler Route] Reminder error:', error);
+        log.error('Reminder error', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -357,7 +363,7 @@ router.post('/import-csv', async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        console.error('[Scheduler Route] CSV Import error:', error);
+        log.error('CSV Import error', error);
         res.status(500).json({ error: error.message });
     }
 });

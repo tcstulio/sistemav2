@@ -1,5 +1,8 @@
 import { Server as SocketIOServer } from 'socket.io';
 import { Server as HttpServer } from 'http';
+import { logger } from '../utils/logger';
+
+const log = logger.child('SocketService');
 
 let io: SocketIOServer | null = null;
 
@@ -34,20 +37,20 @@ export const socketService = {
                     next(new Error("Authentication error: Invalid API Key"));
                 }
             } catch (e) {
-                console.error("Socket Auth Check Failed", e);
+                log.error("Socket Auth Check Failed", e);
                 next(new Error("Authentication failed"));
             }
         });
 
         io.on('connection', (socket) => {
-            console.log('Frontend Client Connected:', socket.id);
+            log.info(`Frontend Client Connected: ${socket.id}`);
 
             socket.on('disconnect', () => {
-                console.log('Client disconnected:', socket.id);
+                log.info(`Client disconnected: ${socket.id}`);
             });
         });
 
-        console.log("Socket.io initialized");
+        log.info("Socket.io initialized");
     },
 
     getIO: () => {
@@ -59,10 +62,10 @@ export const socketService = {
 
     emit: (event: string, data: any) => {
         if (io) {
-            console.log(`[SocketService] Emitting event: ${event}`, data);
+            log.debug(`Emitting event: ${event}`, data);
             io.emit(event, data);
         } else {
-            console.warn("Socket.io not initialized, cannot emit event:", event);
+            log.warn(`Socket.io not initialized, cannot emit event: ${event}`);
         }
     }
 };

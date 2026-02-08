@@ -15,6 +15,9 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import axios, { AxiosInstance, AxiosError } from 'axios';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('BankingApiBase');
 
 // ============ Common Types ============
 
@@ -168,10 +171,10 @@ export abstract class BankingApiBase {
      */
     async initialize(): Promise<boolean> {
         const bankName = this.getBankName();
-        console.log(`[${bankName}] Initializing...`);
+        log.info(`[${bankName}] Initializing...`);
 
         if (!this.getClientId() || !this.getClientSecret()) {
-            console.warn(`[${bankName}] Missing credentials`);
+            log.warn(`[${bankName}] Missing credentials`);
             return false;
         }
 
@@ -180,12 +183,12 @@ export abstract class BankingApiBase {
             const keyPath = path.resolve(this.getKeyPath());
 
             if (!fs.existsSync(certPath)) {
-                console.error(`[${bankName}] Certificate not found: ${certPath}`);
+                log.error(`[${bankName}] Certificate not found: ${certPath}`);
                 return false;
             }
 
             if (!fs.existsSync(keyPath)) {
-                console.error(`[${bankName}] Key not found: ${keyPath}`);
+                log.error(`[${bankName}] Key not found: ${keyPath}`);
                 return false;
             }
 
@@ -210,10 +213,10 @@ export abstract class BankingApiBase {
             });
 
             this.initialized = true;
-            console.log(`[${bankName}] Initialized successfully (${this.isSandbox() ? 'SANDBOX' : 'PRODUCTION'})`);
+            log.info(`[${bankName}] Initialized successfully (${this.isSandbox() ? 'SANDBOX' : 'PRODUCTION'})`);
             return true;
         } catch (error: any) {
-            console.error(`[${bankName}] Initialization error:`, error.message);
+            log.error(`[${bankName}] Initialization error`, error.message);
             return false;
         }
     }
@@ -259,7 +262,7 @@ export abstract class BankingApiBase {
         }
 
         const bankName = this.getBankName();
-        console.log(`[${bankName}] Fetching new access token...`);
+        log.info(`[${bankName}] Fetching new access token...`);
 
         const urls = this.getUrls();
         const authUrl = this.isSandbox() ? urls.sandbox.auth : urls.production.auth;
@@ -286,10 +289,10 @@ export abstract class BankingApiBase {
                 expiresAt: Date.now() + (expires_in - 60) * 1000,
             };
 
-            console.log(`[${bankName}] Token obtained, expires in ${expires_in}s`);
+            log.info(`[${bankName}] Token obtained, expires in ${expires_in}s`);
             return access_token;
         } catch (error: any) {
-            console.error(`[${bankName}] Token error:`, error.response?.data || error.message);
+            log.error(`[${bankName}] Token error`, error.response?.data || error.message);
             throw new Error(`Falha na autenticação com ${bankName}: ${error.message}`);
         }
     }
@@ -334,7 +337,7 @@ export abstract class BankingApiBase {
             const axiosError = error as AxiosError;
             const apiError = axiosError.response?.data as any;
 
-            console.error(`[${bankName}] API Error on ${method} ${endpoint}:`, {
+            log.error(`[${bankName}] API Error on ${method} ${endpoint}`, {
                 status: axiosError.response?.status,
                 error: apiError,
             });

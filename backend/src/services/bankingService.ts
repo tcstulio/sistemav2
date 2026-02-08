@@ -5,6 +5,9 @@ import { aiService } from './aiService';
 import { dolibarrService } from './dolibarrService';
 import { approvalService } from './approvalService';
 import { socketService } from './socketService';
+import { logger } from '../utils/logger';
+
+const log = logger.child('BankingService');
 
 
 // --- Interfaces ---
@@ -213,13 +216,13 @@ class BankingService {
 
     // Parse OFX file content
     parseOFX(content: string): ParsedStatement {
-        console.log('[BankingService] Parsing OFX content...');
+        log.info('Parsing OFX content...');
         return parseOFXContent(content);
     }
 
     // Parse CSV file content
     parseCSV(content: string, format: CSVFormat): ParsedStatement {
-        console.log('[BankingService] Parsing CSV content...');
+        log.info('Parsing CSV content...');
         return parseCSVContent(content, format);
     }
 
@@ -257,7 +260,7 @@ class BankingService {
 
     // Categorize transactions using LLM
     async categorizeTransactions(transactions: ParsedTransaction[]): Promise<CategorizedTransaction[]> {
-        console.log(`[BankingService] Categorizing ${transactions.length} transactions with LLM...`);
+        log.info(`Categorizing ${transactions.length} transactions with LLM...`);
 
         const prompt = `Categorize as seguintes transações bancárias. Para cada uma, retorne a categoria principal e subcategoria.
 
@@ -293,7 +296,7 @@ Responda APENAS no formato JSON:
                 });
             }
         } catch (error) {
-            console.error('[BankingService] Categorization error:', error);
+            log.error('Categorization error', error);
         }
 
         // Fallback: basic rule-based categorization
@@ -307,7 +310,7 @@ Responda APENAS no formato JSON:
 
     // Detect spending anomalies using LLM
     async detectAnomalies(transactions: ParsedTransaction[], historicalAvg?: Record<string, number>): Promise<SpendingAnomaly[]> {
-        console.log(`[BankingService] Detecting anomalies in ${transactions.length} transactions...`);
+        log.info(`Detecting anomalies in ${transactions.length} transactions...`);
 
         // Calculate basic statistics
         const amounts = transactions.filter(t => t.type === 'debit').map(t => t.amount);
@@ -363,7 +366,7 @@ Responda em JSON: [{"description": "...", "amount": 0, "reason": "...", "severit
                     }
                 }
             } catch (error) {
-                console.error('[BankingService] LLM anomaly detection error:', error);
+                log.error('LLM anomaly detection error', error);
             }
         }
 
@@ -376,7 +379,7 @@ Responda em JSON: [{"description": "...", "amount": 0, "reason": "...", "severit
         transactions: ParsedTransaction[],
         period: 'week' | 'month' | 'quarter' = 'month'
     ): Promise<CashFlowInsight> {
-        console.log(`[BankingService] Generating cash flow insights for ${period}...`);
+        log.info(`Generating cash flow insights for ${period}...`);
 
         // Calculate basic metrics
         const credits = transactions.filter(t => t.type === 'credit');
@@ -428,7 +431,7 @@ Responda em JSON:
                 riskFactors = insights.riskFactors || [];
             }
         } catch (error) {
-            console.error('[BankingService] Cash flow insights error:', error);
+            log.error('Cash flow insights error', error);
             trends = [netCashFlow > 0 ? 'Fluxo de caixa positivo' : 'Fluxo de caixa negativo'];
             recommendations = ['Continue monitorando as despesas'];
             riskFactors = netCashFlow < 0 ? ['Saídas superam entradas'] : [];
@@ -452,7 +455,7 @@ Responda em JSON:
         bankLines: Array<{ id: string; amount: number; label: string; date_operation: number }>,
         invoices: Array<{ id: string; ref: string; total_ttc: number; date: number; socid: string }>
     ): Promise<ReconciliationSuggestion[]> {
-        console.log(`[BankingService] Suggesting reconciliation for ${bankLines.length} bank lines...`);
+        log.info(`Suggesting reconciliation for ${bankLines.length} bank lines...`);
 
         const suggestions: ReconciliationSuggestion[] = [];
 
@@ -512,7 +515,7 @@ Responda em JSON (apenas matches com confiança > 0.6):
                     }
                 }
             } catch (error) {
-                console.error('[BankingService] LLM reconciliation error:', error);
+                log.error('LLM reconciliation error', error);
             }
         }
 
@@ -526,7 +529,7 @@ Responda em JSON (apenas matches com confiança > 0.6):
         invoiceRef: string,
         requestedBy: string
     ): Promise<{ pending: boolean; actionId?: string; executed?: boolean }> {
-        console.log(`[BankingService] Requesting reconciliation approval: line ${lineId} -> invoice ${invoiceId}`);
+        log.info(`Requesting reconciliation approval: line ${lineId} -> invoice ${invoiceId}`);
 
         const action = await approvalService.createPendingAction({
             type: 'aprovar_reconciliacao',
@@ -547,7 +550,7 @@ Responda em JSON (apenas matches com confiança > 0.6):
 
     // Save reconciliation to Dolibarr (via API) - called internally after approval
     async saveReconciliation(lineId: string, invoiceId: string, userApiKey?: string): Promise<boolean> {
-        console.log(`[BankingService] Saving reconciliation: line ${lineId} -> invoice ${invoiceId}`);
+        log.info(`Saving reconciliation: line ${lineId} -> invoice ${invoiceId}`);
 
         // Note: Dolibarr standard API may not have direct reconciliation endpoint
         // This would need custom endpoint in Dolibarr or use payments API
@@ -559,7 +562,7 @@ Responda em JSON (apenas matches com confiança > 0.6):
         // 2. Custom PHP endpoint in Dolibarr
         // 3. Direct SQL via custom_sync.php
 
-        console.log('[BankingService] Reconciliation saved (logged for future implementation)');
+        log.info('Reconciliation saved (logged for future implementation)');
         return true;
     }
 
@@ -633,7 +636,7 @@ Responda em JSON (apenas matches com confiança > 0.6):
 
     // Process Inter Webhook
     async processInterWebhook(payload: any, type: 'pix' | 'boleto'): Promise<void> {
-        console.log(`[BankingService] Processing Inter ${type} webhook:`, JSON.stringify(payload));
+        log.info(`Processing Inter ${type} webhook`, payload);
 
         // Emit socket event for frontend real-time update
         try {
@@ -643,7 +646,7 @@ Responda em JSON (apenas matches com confiança > 0.6):
                 data: payload
             });
         } catch (error) {
-            console.warn('[BankingService] Failed to emit socket event:', error);
+            log.warn('Failed to emit socket event', error);
         }
 
         // TODO: Persist transaction / Reconciliation logic
