@@ -273,7 +273,7 @@ export class SessionService {
         try {
             const contact = await msg.getContact();
             if (contact) return contact.name || contact.pushname || contact.shortName || (msg.author ? msg.author.split('@')[0] : '');
-        } catch (e) { }
+        } catch (e) { /* contact info unavailable, fallback to author */ }
         return msg.author ? msg.author.split('@')[0] : '';
     }
 

@@ -11,6 +11,9 @@ import {
 } from '../types';
 import { config } from '../config';
 import { safeStorage } from '../utils/safeStorage';
+import { logger } from '../utils/logger';
+
+const log = logger.child('WhatsApp');
 
 // Helper to convert File to Base64
 const fileToBase64 = (file: File): Promise<string> => {
@@ -27,9 +30,9 @@ const fileToBase64 = (file: File): Promise<string> => {
 
 const handleApiError = (context: string, error: unknown) => {
     if (axios.isAxiosError(error)) {
-        console.error(`[WhatsAppService] ${context}: ${error.message}`, error.response?.data);
+        log.error(`${context}: ${error.message}`, error.response?.data);
     } else {
-        console.error(`[WhatsAppService] ${context}:`, error);
+        log.error(context, error);
     }
     throw error;
 };
@@ -80,7 +83,7 @@ export const WhatsAppService = {
                 platform: 'WAHA'
             }));
         } catch (e) {
-            console.error("Failed to get sessions", e);
+            log.error('Failed to get sessions', e);
             return [];
         }
     },
@@ -121,7 +124,7 @@ export const WhatsAppService = {
                 };
             });
         } catch (e) {
-            console.error(`Failed to fetch conversations for ${sessionId}`, e);
+            log.error(`Failed to fetch conversations for ${sessionId}`, e);
             return [];
         }
     },
@@ -162,7 +165,7 @@ export const WhatsAppService = {
                 };
             });
         } catch (e) {
-            console.error("Failed to fetch messages", e);
+            log.error('Failed to fetch messages', e);
             return [];
         }
     },
@@ -262,7 +265,7 @@ export const WhatsAppService = {
             const response = await axios.get(`${config.WHATSAPP_API_URL}/store`, { headers: getHeaders() });
             return response.data?.mySettings || {};
         } catch (e) {
-            console.error("Failed to get user settings", e);
+            log.error('Failed to get user settings', e);
             throw e;
         }
     },
@@ -272,7 +275,7 @@ export const WhatsAppService = {
             const response = await axios.get(`${config.WHATSAPP_API_URL}/settings/session/${sessionId}`, { headers: getHeaders() });
             return response.data;
         } catch (e) {
-            console.error("Failed to get session settings", e);
+            log.error('Failed to get session settings', e);
             throw e;
         }
     },
@@ -284,7 +287,7 @@ export const WhatsAppService = {
             const response = await axios.get(`${config.WHATSAPP_API_URL}/settings/chat/${encoded}`, { headers: getHeaders() });
             return response.data;
         } catch (e) {
-            console.error("Failed to get chat settings", e);
+            log.error('Failed to get chat settings', e);
             throw e;
         }
     },

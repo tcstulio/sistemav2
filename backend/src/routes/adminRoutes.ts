@@ -143,7 +143,7 @@ router.post('/config/llm/test', async (req, res) => {
                         modelList.push(m.name.replace('models/', ''));
                     }
                 }
-            } catch (e) { }
+            } catch (e) { /* model listing failed, return empty list */ }
 
             return res.json({
                 success: true,
@@ -184,7 +184,7 @@ router.post('/config/llm/test', async (req, res) => {
                 );
 
                 testResponse = chatResponse.data.choices[0].text || chatResponse.data.choices[0].message?.content || testResponse;
-            } catch (e) { }
+            } catch (e) { /* LLM test call failed, return default response */ }
 
             return res.json({
                 success: true,

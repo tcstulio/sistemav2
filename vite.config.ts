@@ -120,10 +120,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     plugins: [react(), basicSsl()],
-    define: {
-      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
-    },
+    // Gemini API key is only used on backend (/api/ai) - never expose in frontend bundle
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),

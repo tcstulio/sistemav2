@@ -1,6 +1,9 @@
 ﻿import { DolibarrConfig, DolibarrDictionary, DolibarrUser, Category } from '../../types';
 import { dbService } from '../dbService';
 import { config as AppConfig } from '../../config';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('ApiCore');
 
 // Safe UUID Generator
 export const generateUUID = () => {
@@ -65,7 +68,7 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
     // Use our Backend Proxy
     const proxyUrl = `${AppConfig.API_BASE_URL}/api/dolibarr/${path}`;
 
-    console.log(`[BackendProxy] Requesting: ${proxyUrl} (Original: ${endpointUrl})`);
+    log.debug(`Requesting: ${proxyUrl} (Original: ${endpointUrl})`);
 
     const method = options.method || 'GET';
     const requestBody = options.body ? String(options.body) : undefined;
@@ -82,7 +85,7 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
                 errorMsg = await response.text();
             }
 
-            console.error('[BackendProxy] Error:', errorMsg);
+            log.error(`Proxy error: ${errorMsg}`);
 
             // Log error
             dbService.add('api_logs', {
@@ -124,7 +127,7 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
         return data;
 
     } catch (error: any) {
-        console.error('[BackendProxy] Network/System Error:', error);
+        log.error('Network/System Error', error);
         throw error;
     }
 };
@@ -142,7 +145,7 @@ export const checkConnection = async (apiUrl: string, apiKey: string) => {
     try {
         await request(statusUrl, { headers: getHeaders(apiKey) });
     } catch (e: any) {
-        console.warn(`[Connection] Status check warning: ${e.message}. Proceeding to Auth check.`);
+        log.warn(`Status check warning: ${e.message}. Proceeding to Auth check.`);
     }
 
     // Try Auth explicitly - Better Error Handling
@@ -150,7 +153,7 @@ export const checkConnection = async (apiUrl: string, apiKey: string) => {
         const companyData = await request(authUrl, { headers: getHeaders(apiKey) });
         return companyData;
     } catch (authError: any) {
-        console.error("Auth Check Failed:", authError);
+        log.error('Auth Check Failed', authError);
 
         if (authError.message && authError.message.includes('404')) {
             throw new Error(`Conexão estabelecida, mas endpoint de autenticação não encontrado (404). Verifique a URL.`);
@@ -176,7 +179,7 @@ export const fetchPage = async (config: DolibarrConfig, endpoint: string, page: 
         });
         return Array.isArray(data) ? data : [];
     } catch (e: any) {
-        console.error(`[fetchPage] Error fetching ${endpoint}:`, e);
+        log.error(`fetchPage error for ${endpoint}`, e);
         throw e;
     }
 };
@@ -202,7 +205,7 @@ export const fetchList = async (config: DolibarrConfig, endpoint: string, params
 
         // Usage of >= to ensure we catch items modified exactly at that second too
         timeFilter = `&sqlfilters=(${dateField}:>=:'${dateStr}')`;
-        console.log(`[Incremental] Fetching ${endpoint} modified after ${dateStr} (${dateField})`);
+        log.debug(`Incremental: Fetching ${endpoint} modified after ${dateStr} (${dateField})`);
     }
 
     const userLimit = config.apiLimit || 0;
@@ -231,7 +234,7 @@ export const fetchList = async (config: DolibarrConfig, endpoint: string, params
                 newItemsCount = cleanData.length;
 
                 if (newItemsCount === 0 && data.length > 0) {
-                    console.warn(`[CoolGroove] Loop detected in ${endpoint} (all items in page already seen). Stopping.`);
+                    log.warn(`Loop detected in ${endpoint} (all items in page already seen). Stopping.`);
                     keepFetching = false;
                 } else {
                     allItems = [...allItems, ...cleanData];
@@ -245,7 +248,7 @@ export const fetchList = async (config: DolibarrConfig, endpoint: string, params
                 }
             } else {
                 if (timeFilter && page === 0) {
-                    console.log(`[Incremental] No changes for ${endpoint} since last sync.`);
+                    log.debug(`No changes for ${endpoint} since last sync.`);
                 }
                 keepFetching = false;
             }
@@ -253,14 +256,14 @@ export const fetchList = async (config: DolibarrConfig, endpoint: string, params
             if (page === 0 && e.message && (e.message.includes('404') || e.message.includes('Not Found'))) {
                 keepFetching = false;
             } else if (e.message && (e.message.includes('401') || e.message.includes('Unauthorized'))) {
-                console.warn(`[CoolGroove] Não autorizado (401) para ${endpoint}. Parando busca.`);
+                log.warn(`Unauthorized (401) for ${endpoint}. Stopping fetch.`);
                 if (page === 0) throw e;
                 keepFetching = false;
             } else if (e.message && (e.message.toLowerCase().includes('forbidden') || e.message.includes('403'))) {
-                console.warn(`[CoolGroove] Acesso negado (403) para ${endpoint}. Retornando dados parciais/vazios.`);
+                log.warn(`Forbidden (403) for ${endpoint}. Returning partial/empty data.`);
                 keepFetching = false;
             } else {
-                console.error(`[CoolGroove] Erro buscando ${endpoint} página ${page}:`, e);
+                log.error(`Error fetching ${endpoint} page ${page}`, e);
                 keepFetching = false;
                 if (page === 0 && e.message && e.message.includes('Network Error')) {
                     throw e;
@@ -315,7 +318,7 @@ export const fetchDelta = async (config: DolibarrConfig, entityType: string, las
                 allData.push(...response);
                 hasMore = false;
                 if (response.length > 0) {
-                    console.log(`[CoolGrooveDelta] ${entityType}: Fetched ${response.length} records (legacy format)`);
+                    log.debug(`Delta ${entityType}: Fetched ${response.length} records (legacy format)`);
                 }
             } else if (response && response.data && Array.isArray(response.data)) {
                 // New paginated format
@@ -324,7 +327,7 @@ export const fetchDelta = async (config: DolibarrConfig, entityType: string, las
                 offset += limit;
 
                 if (response.data.length > 0) {
-                    console.log(`[CoolGrooveDelta] ${entityType}: Fetched ${allData.length} records (page ${safetyCounter + 1})`);
+                    log.debug(`Delta ${entityType}: Fetched ${allData.length} records (page ${safetyCounter + 1})`);
                 }
             } else if (response === null || (response && !response.data)) {
                 // Empty or no-data response
@@ -338,12 +341,12 @@ export const fetchDelta = async (config: DolibarrConfig, entityType: string, las
         }
 
         if (safetyCounter >= 20) {
-            console.warn(`[CoolGrooveDelta] ${entityType}: Reached max pages (100,000 records). Some data may be missing.`);
+            log.warn(`Delta ${entityType}: Reached max pages (100,000 records). Some data may be missing.`);
         }
 
         return allData;
     } catch (error) {
-        console.error(`[CoolGrooveDelta] Failed to fetch delta for ${entityType}:`, error);
+        log.error(`Delta failed for ${entityType}`, error);
         return [];
     }
 };
@@ -354,7 +357,7 @@ export const fetchSetupModules = async (config: DolibarrConfig) => {
         return await request(url, { headers: getHeaders(config.apiKey) });
     } catch (e: any) {
         if (e.message && (e.message.includes('403') || e.message.toLowerCase().includes('forbidden'))) {
-            console.warn('[CoolGroove] Access to setup/modules denied (403). Assuming default module config.');
+            log.warn('Access to setup/modules denied (403). Assuming default module config.');
             return [];
         }
         throw e;
@@ -372,7 +375,7 @@ export const fetchDictionary = async (config: DolibarrConfig, dictionaryType: st
         const data = await request(url, { headers: getHeaders(config.apiKey) });
         return Array.isArray(data) ? data : [];
     } catch (e) {
-        console.warn(`Falha ao buscar dicionário ${dictionaryType}`, e);
+        log.warn(`Failed to fetch dictionary ${dictionaryType}`, e);
         return [];
     }
 };
@@ -398,7 +401,7 @@ export const fetchCurrentUser = async (config: DolibarrConfig, loginHint?: strin
             return fullUser;
         }
     } catch (e) {
-        console.error("fetchCurrentUser failed", e);
+        log.error('fetchCurrentUser failed', e);
     }
     return null;
 };
@@ -429,18 +432,18 @@ export const login = async (login: string, password: string): Promise<{ token: s
                         return { ...data, user: userProfile };
                     }
                 } catch (userErr) {
-                    console.warn("Failed to fetch user profile after login", userErr);
+                    log.warn('Failed to fetch user profile after login', userErr);
                 }
             }
 
             return data;
         } else {
             const text = await response.text();
-            console.error("[Login Error] Non-JSON response:", text);
+            log.error(`Login: Non-JSON response: ${text}`);
             throw new Error(`Erro no Servidor (${response.status}): Resposta inválida.`);
         }
     } catch (error: any) {
-        console.error("Login Network Error:", error);
+        log.error('Login network error', error);
         throw error;
     }
 };
@@ -456,7 +459,7 @@ export const updateUser = async (config: DolibarrConfig, userId: string, data: a
         });
         return response;
     } catch (e: any) {
-        console.error("updateUser failed", e);
+        log.error('updateUser failed', e);
         throw e;
     }
 };
