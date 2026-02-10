@@ -1,12 +1,21 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Invoice, AppView, SupplierInvoice } from '../types';
-import { FileText, Search, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, X, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, ArrowUp, Lock, ShoppingCart, ArrowLeft, Truck, RefreshCcw, Landmark, Receipt, User, Upload } from 'lucide-react';
+import { AppView, SupplierInvoice } from '../types';
+import { FileText, Search, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, X, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, ArrowUp, RefreshCcw, Landmark, Receipt, User, Upload } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
-import { GenericListLayout } from './common/GenericListLayout';
 import { LinkedObjects } from './common/LinkedObjects';
 import { PaginationControls } from './common/PaginationControls';
-import { StatusFilterBar } from './common/StatusFilterBar';
+
+// Design System
+import { PageHeader, MasterDetailLayout, Card, Button, Input, Tabs, Tab, EmptyState, StatusBadge } from './ui';
+import type { StatusConfig } from './ui';
+
+const supplierInvoiceStatuses: Record<string, StatusConfig> = {
+    draft: { label: 'Rascunho', variant: 'slate', icon: <FileEdit size={12} /> },
+    unpaid: { label: 'A Pagar', variant: 'orange', icon: <Clock size={12} /> },
+    paid: { label: 'Pago', variant: 'emerald', icon: <CheckCircle2 size={12} /> },
+    credit: { label: 'Nota de Crédito', variant: 'red', icon: <RefreshCcw size={12} /> },
+};
 import { useDolibarr } from '../context/DolibarrContext';
 import { useSupplierInvoices, useSuppliers, useProjects, useSupplierInvoiceLines, useUsers, useSupplierPayments, useSupplierPaymentInvoiceLinks } from '../hooks/dolibarr';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
@@ -166,16 +175,8 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
     }, [selectedInvoice, allInvoiceLines]);
 
     const getStatusBadge = (invoice: SupplierInvoice) => {
-        if (invoice.type === '2') {
-            return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800"><RefreshCcw size={12} /> Nota de Crédito</span>;
-        }
-        if (invoice.statut === '0') {
-            return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700"><FileEdit size={12} /> Rascunho</span>;
-        }
-        if (invoice.statut === '2') {
-            return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"><CheckCircle2 size={12} /> Pago</span>;
-        }
-        return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800"><Clock size={12} /> A Pagar</span>;
+        const key = invoice.type === '2' ? 'credit' : invoice.statut === '0' ? 'draft' : invoice.statut === '2' ? 'paid' : 'unpaid';
+        return <StatusBadge status={key} config={supplierInvoiceStatuses} />;
     };
 
     const { openLink } = useDolibarrLink(config);
@@ -359,59 +360,47 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
 
     // 1. Header
     const renderHeader = (
-        <div className="p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                        <FileText className="text-orange-500" /> Faturas de Fornecedor
-                    </h2>
-                    <p className="text-sm text-slate-500 dark:text-slate-400">Gerencie contas a pagar e despesas</p>
-                </div>
-                <div className="flex items-center gap-2">
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                            type="text"
+        <div className={selectedInvoice ? 'hidden lg:block' : 'block'}>
+            <PageHeader
+                title={
+                    <span className="flex items-center gap-2">
+                        <FileText className="text-orange-500" size={24} /> Faturas de Fornecedor
+                    </span>
+                }
+                subtitle="Gerencie contas a pagar e despesas"
+                actions={
+                    <div className="flex items-center gap-2">
+                        <Input
                             placeholder="Buscar ref ou fornecedor..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className={`pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-${config.themeColor}-500 focus:border-${config.themeColor}-500 outline-none w-full md:w-64 text-sm transition-all`}
+                            icon={<Search size={16} />}
+                            className="w-48 md:w-64"
+                            fullWidth={false}
                         />
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
+                            icon={sortOrder === 'desc' ? <ArrowDown size={16} /> : <ArrowUp size={16} />}
+                            title={sortOrder === 'desc' ? "Mais recentes" : "Mais antigos"}
+                        />
+                        <Button icon={<Plus size={16} />} onClick={handleCreateClick}>
+                            Nova Fatura
+                        </Button>
+                        <Button variant="secondary" icon={<Receipt size={16} />} onClick={() => setIsScannerOpen(true)}>
+                            Digitalizar
+                        </Button>
                     </div>
-                    <button
-                        onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
-                        className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1 text-sm font-medium"
-                        title={sortOrder === 'desc' ? "Mais recentes" : "Mais antigos"}
-                    >
-                        {sortOrder === 'desc' ? <ArrowDown size={18} /> : <ArrowUp size={18} />}
-                    </button>
-                    <div className="flex gap-2">
-                        <button
-                            onClick={handleCreateClick}
-                            className={`flex items-center gap-1.5 px-3 py-2 bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors`}
-                        >
-                            <Plus size={18} /> Nova Fatura
-                        </button>
-                        <button
-                            onClick={() => setIsScannerOpen(true)}
-                            className={`flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors`}
-                        >
-                            <Receipt size={18} /> Digitalizar Recibo
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <StatusFilterBar
-                filters={[
-                    { id: 'all', label: 'Todas' },
-                    { id: 'unpaid', label: 'A Pagar', color: 'orange' },
-                    { id: 'paid', label: 'Pagas', color: 'emerald' },
-                    { id: 'draft', label: 'Rascunhos', color: 'slate' }
-                ]}
-                activeFilter={filterStatus}
-                onFilterChange={(id) => setFilterStatus(id as any)}
-                themeColor={config.themeColor}
+                }
+                tabs={
+                    <Tabs value={filterStatus} onChange={(v) => setFilterStatus(v as any)}>
+                        <Tab value="all">Todas</Tab>
+                        <Tab value="unpaid">A Pagar</Tab>
+                        <Tab value="paid">Pagas</Tab>
+                        <Tab value="draft">Rascunhos</Tab>
+                    </Tabs>
+                }
             />
         </div>
     );
@@ -420,19 +409,17 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
     const renderListContent = (
         <>
             {filteredInvoices.length === 0 ? (
-                <div className="text-center py-20 text-slate-400">
-                    <FileText size={48} className="mx-auto mb-4 opacity-50" />
-                    <p>Nenhuma fatura encontrada com estes critérios.</p>
-                </div>
+                <EmptyState icon={FileText} title="Nenhuma fatura encontrada" description="Nenhuma fatura encontrada com estes critérios." />
             ) : (
                 <div className="grid grid-cols-1 gap-3">
                     {filteredInvoices.map((inv) => {
                         const projectName = getProjectName(inv.project_id);
                         return (
-                            <div
+                            <Card
                                 key={inv.id}
                                 onClick={() => setSelectedInvoice(inv)}
-                                className={`p-4 rounded-xl border transition-all cursor-pointer ${selectedInvoice?.id === inv.id ? `border-${config.themeColor}-500 ring-1 ring-${config.themeColor}-500 shadow-sm dark:bg-slate-800` : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm hover:border-slate-300 dark:hover:border-slate-700'} `}
+                                selected={selectedInvoice?.id === inv.id}
+                                className="cursor-pointer"
                             >
                                 <div className="flex justify-between items-start mb-2">
                                     <div className="flex items-center gap-2">
@@ -462,7 +449,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                     <span className="text-xs text-slate-500">{formatDateOnly(inv.date)}</span>
                                     <span className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                 </div>
-                            </div>
+                            </Card>
                         )
                     })}
                 </div>
@@ -473,67 +460,54 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
     // 3. Detail Content
     const renderDetailContent = selectedInvoice ? (
         <>
-            <div className="flex-none bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 p-4 flex items-center justify-between z-10 w-full">
-                <div className="flex items-center gap-3">
-                    <button onClick={() => setSelectedInvoice(null)} className="lg:hidden p-2 -ml-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"><ArrowLeft size={20} /></button>
-                    <div>
-                        <h2 className="text-lg font-bold text-slate-900 dark:text-white leading-tight flex items-center gap-2">
-                            {selectedInvoice.ref}
-                            {getStatusBadge(selectedInvoice)}
-                        </h2>
-                        <span
-                            className="text-xs text-slate-400 cursor-pointer hover:underline hover:text-indigo-500"
-                            onClick={() => onNavigate && onNavigate('suppliers', selectedInvoice.socid)}
-                        >
-                            Fornecedor: {getSupplierName(selectedInvoice.socid)}
-                        </span>
-                    </div>
-                </div>
-                <div className="flex items-center gap-2">
-                    {selectedInvoice.statut === '0' && (
-                        <button
-                            onClick={(e) => handleEditClick(e, selectedInvoice)}
-                            className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
-                        >
-                            <FileEdit size={14} /> Editar
-                        </button>
-                    )}
-                    {selectedInvoice.statut === '0' && (
-                        <button
-                            onClick={async () => {
+            <PageHeader
+                onBack={() => setSelectedInvoice(null)}
+                title={
+                    <span className="flex items-center gap-2">
+                        {selectedInvoice.ref}
+                        {getStatusBadge(selectedInvoice)}
+                    </span>
+                }
+                subtitle={
+                    <span
+                        className="cursor-pointer hover:underline hover:text-indigo-500"
+                        onClick={() => onNavigate && onNavigate('suppliers', selectedInvoice.socid)}
+                    >
+                        Fornecedor: {getSupplierName(selectedInvoice.socid)}
+                    </span>
+                }
+                actions={
+                    <div className="flex items-center gap-2">
+                        {selectedInvoice.statut === '0' && (
+                            <Button variant="secondary" size="sm" icon={<FileEdit size={14} />} onClick={(e) => handleEditClick(e, selectedInvoice)}>
+                                Editar
+                            </Button>
+                        )}
+                        {selectedInvoice.statut === '0' && (
+                            <Button size="sm" icon={<CheckCircle size={14} />} onClick={async () => {
                                 if (!window.confirm('Confirma a validação desta fatura?')) return;
                                 try {
                                     await DolibarrService.validateSupplierInvoice(config, selectedInvoice.id);
-                                    refreshData(); // Trigger sync/refresh
+                                    refreshData();
                                     setSelectedInvoice(null);
                                 } catch (e) {
                                     console.error(e);
-                                    alert('Erro ao validar fatura. Verifique permissões.');
+                                    toast.error('Erro ao validar fatura. Verifique permissões.');
                                 }
-                            }}
-                            className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
-                        >
-                            <CheckCircle size={14} /> Validar
-                        </button>
-                    )}
-                    {(selectedInvoice.statut === '1' || selectedInvoice.statut === '0') && ( // 0=Draft can sometimes be paid directly in flexible workflows, but usually 1=Unpaid
-                        // Showing 'Pagar' for Unpaid ('1') specifically. If user wants to skip validate, logic might fail on API.
-                        // Let's stick to Unpaid ('1').
-                        selectedInvoice.statut === '1' && (
-                            <button
-                                onClick={() => {
-                                    setPaymentInvoice(selectedInvoice);
-                                    setIsPaymentModalOpen(true);
-                                }}
-                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1"
-                            >
-                                <CreditCard size={14} /> Pagar
-                            </button>
-                        ))}
-                    {(selectedInvoice.statut === '1' || selectedInvoice.statut === '2') && (
-                        <button
-                            onClick={async (e) => {
-                                e.stopPropagation();
+                            }}>
+                                Validar
+                            </Button>
+                        )}
+                        {selectedInvoice.statut === '1' && (
+                            <Button variant="secondary" size="sm" icon={<CreditCard size={14} />} onClick={() => {
+                                setPaymentInvoice(selectedInvoice);
+                                setIsPaymentModalOpen(true);
+                            }}>
+                                Pagar
+                            </Button>
+                        )}
+                        {(selectedInvoice.statut === '1' || selectedInvoice.statut === '2') && (
+                            <Button variant="ghost" size="sm" onClick={async () => {
                                 if (!confirm("Reabrir fatura de fornecedor (voltar para rascunho)?")) return;
                                 try {
                                     await DolibarrService.setSupplierInvoiceToDraft(config, selectedInvoice.id);
@@ -544,37 +518,23 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                     console.error(err);
                                     toast.error("Erro ao reabrir fatura: " + err.message);
                                 }
-                            }}
-                            className="p-2 rounded-lg text-xs text-slate-500 hover:text-slate-800 underline"
-                        >
-                            Reabrir
-                        </button>
-                    )}
-                    <button onClick={() => openInDolibarr(selectedInvoice.id)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200" title="Abrir no Dolibarr"><ExternalLink size={20} /></button>
-                    {selectedInvoice.statut === '0' && (
-                        <button onClick={handleDeleteInvoice} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" title="Excluir"><Trash2 size={20} /></button>
-                    )}
-                    <button onClick={() => setSelectedInvoice(null)} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
-                </div>
-            </div>
-
-            {/* Content Switcher */}
-            <div className="border-b border-slate-100 dark:border-slate-800 px-4 bg-white dark:bg-slate-900 border-t border-slate-50 dark:border-slate-800/50">
-                <div className="flex gap-4">
-                    <button
-                        onClick={() => setActiveTab('details')}
-                        className={`py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'details' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400` : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
-                    >
-                        Detalhes
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('documents')}
-                        className={`py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'documents' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400` : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
-                    >
-                        Documentos
-                    </button>
-                </div>
-            </div>
+                            }}>
+                                Reabrir
+                            </Button>
+                        )}
+                        <Button variant="ghost" size="sm" icon={<ExternalLink size={16} />} onClick={() => openInDolibarr(selectedInvoice.id)} title="Abrir no Dolibarr" />
+                        {selectedInvoice.statut === '0' && (
+                            <Button variant="danger" size="sm" icon={<Trash2 size={16} />} onClick={handleDeleteInvoice} title="Excluir" />
+                        )}
+                    </div>
+                }
+                tabs={
+                    <Tabs value={activeTab} onChange={(v) => setActiveTab(v as any)}>
+                        <Tab value="details">Detalhes</Tab>
+                        <Tab value="documents">Documentos</Tab>
+                    </Tabs>
+                }
+            />
 
             <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-50 dark:bg-slate-950/50 w-full">
                 {activeTab === 'details' ? (
@@ -842,32 +802,31 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                 )}
             </div >
         </>
-    ) : (
-        <div className="text-center p-8 max-w-sm mx-auto">
-            <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300 dark:text-slate-600"><FileText size={32} /></div>
-            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-1">Selecione uma Fatura</h3>
-            <p className="text-slate-500 dark:text-slate-400 text-sm">Ver detalhes da fatura do fornecedor.</p>
-        </div>
-    );
+    ) : null;
 
     return (
         <>
-            <GenericListLayout
-                header={renderHeader}
-                content={renderListContent}
-                detail={renderDetailContent}
-                isDetailOpen={!!selectedInvoice}
-                pagination={
-                    <PaginationControls
-                        page={page}
-                        limit={limit}
-                        onPageChange={setPage}
-                        onLimitChange={setLimit}
-                        hasNext={filteredInvoices.length >= limit}
-                        hasPrev={page > 0}
-                    />
-                }
-            />
+            <div className="flex flex-col h-full">
+                {renderHeader}
+                <MasterDetailLayout
+                    list={
+                        <>
+                            {renderListContent}
+                            <PaginationControls
+                                page={page}
+                                limit={limit}
+                                onPageChange={setPage}
+                                onLimitChange={setLimit}
+                                hasNext={filteredInvoices.length >= limit}
+                                hasPrev={page > 0}
+                            />
+                        </>
+                    }
+                    detail={renderDetailContent}
+                    showDetail={!!selectedInvoice}
+                    onCloseDetail={() => setSelectedInvoice(null)}
+                />
+            </div>
             {/* Receipt Scanner */}
             {
                 isScannerOpen && (
@@ -1001,7 +960,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                     <button
                                         type="submit"
                                         disabled={isSubmittingInvoice}
-                                        className={`px-4 py-2 bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white rounded-lg font-medium shadow-sm transition-colors disabled:opacity-50 flex items-center gap-2`}
+                                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm transition-colors disabled:opacity-50 flex items-center gap-2"
                                     >
                                         {isSubmittingInvoice && <Loader2 className="animate-spin" size={16} />}
                                         {editingInvoiceData.id ? 'Salvar Alterações' : 'Criar Fatura'}

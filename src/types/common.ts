@@ -61,7 +61,7 @@ export type AppView = 'dashboard' | 'reports' | 'agenda' | 'tickets' | 'customer
 
 export interface AppNotification {
     id: string;
-    type: 'stock' | 'invoice' | 'ticket' | 'info' | 'whatsapp';
+    type: 'stock' | 'invoice' | 'ticket' | 'info' | 'whatsapp' | 'email';
     title: string;
     message: string;
     date: number;

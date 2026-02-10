@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { Order, AppView } from '../types';
-import { ShoppingCart, Search, ExternalLink, Package, CheckCircle, Truck, X, Clock, FilePlus, Download, ArrowLeft, Receipt, ArrowDown, ArrowUp, Lock, CheckSquare, Trash2 } from 'lucide-react';
+import { ShoppingCart, Search, ExternalLink, Package, CheckCircle, Truck, Clock, FilePlus, Download, Receipt, ArrowDown, ArrowUp, Lock, CheckSquare, Trash2 } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useOrders, useCustomers, useShipments, useInvoices, useUsers } from '../hooks/dolibarr';
@@ -9,7 +9,8 @@ import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 
 // Design System
-import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState, MasterDetailLayout } from './ui';
+import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState, MasterDetailLayout, StatusBadge } from './ui';
+import type { StatusConfig } from './ui/StatusBadge';
 
 interface OrderListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -17,20 +18,12 @@ interface OrderListProps {
     onRefresh?: () => void;
 }
 
-// Helper Functions
-const getStatusBadge = (status: string) => {
-    switch (status) {
-        case '0':
-            return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700"><Clock size={12} /> Rascunho</span>;
-        case '1':
-            return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"><CheckCircle size={12} /> Validado</span>;
-        case '2':
-            return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800"><Truck size={12} /> Em Envio</span>;
-        case '3':
-            return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"><Package size={12} /> Entregue</span>;
-        default:
-            return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">Desconhecido</span>;
-    }
+// Status Config
+const orderStatuses: Record<string, StatusConfig> = {
+    '0': { label: 'Rascunho', variant: 'slate', icon: <Clock size={12} /> },
+    '1': { label: 'Validado', variant: 'blue', icon: <CheckCircle size={12} /> },
+    '2': { label: 'Em Envio', variant: 'orange', icon: <Truck size={12} /> },
+    '3': { label: 'Entregue', variant: 'emerald', icon: <Package size={12} /> },
 };
 
 const getShipmentStatus = (status: string) => {
@@ -107,7 +100,7 @@ const OrderDetail: React.FC<{
                     title={
                         <span className="flex items-center gap-2">
                             {order.ref}
-                            {getStatusBadge(order.statut)}
+                            <StatusBadge status={order.statut} config={orderStatuses} />
                         </span>
                     }
                     subtitle={
@@ -566,17 +559,18 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                             description="Tente ajustar os filtros ou a busca."
                         />
                     ) : (
-                        <div className="grid grid-cols-1 gap-3">
+                        <div className="grid grid-cols-1 gap-3 p-4">
                             {filteredOrders.map((ord) => (
-                                <div
+                                <Card
                                     key={ord.id}
                                     onClick={() => setSelectedOrder(ord)}
-                                    className={`p-4 rounded-xl border transition-all cursor-pointer ${selectedOrder?.id === ord.id ? `border-${config.themeColor}-500 ring-1 ring-${config.themeColor}-500 shadow-sm dark:bg-slate-800` : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm hover:border-slate-300 dark:hover:border-slate-700'}`}
+                                    selected={selectedOrder?.id === ord.id}
+                                    hoverable
                                 >
                                     <div className="flex justify-between items-start mb-2">
                                         <div className="flex items-center gap-2">
                                             <span className="font-mono text-xs text-slate-400">{ord.ref}</span>
-                                            {getStatusBadge(ord.statut)}
+                                            <StatusBadge status={ord.statut} config={orderStatuses} size="sm" />
                                         </div>
                                     </div>
                                     <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-1 line-clamp-1">{getCustomerName(ord.socid)}</h3>
@@ -584,7 +578,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                                         <span className="text-xs text-slate-500">{formatDateOnly(ord.date)}</span>
                                         <span className="font-bold text-slate-800 dark:text-white">${ord.total_ttc.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                     </div>
-                                </div>
+                                </Card>
                             ))}
                         </div>
                     )

@@ -341,13 +341,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
                 {/* Main Chart Column */}
-                <div className="lg:col-span-2 space-y-6">
+                <div className="lg:col-span-2 space-y-6 min-w-0">
 
                     {/* Cash Flow Chart */}
                     {canAccess('bank_accounts') && (
-                        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col transition-colors">
+                        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col transition-colors min-w-0">
                             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-6">Fluxo de Caixa (Receita vs Despesas)</h3>
-                            <div className="w-full h-[300px]" style={{ width: '100%', height: 300 }}>
+                            <div className="w-full h-[300px] min-w-0" style={{ width: '100%', height: 300 }}>
                                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                                     <AreaChart data={cashFlowData}>
                                         <defs>
@@ -380,9 +380,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
                     {/* Cash Flow Forecast Chart - 90 Days */}
                     {(canAccess('invoices') || canAccess('supplier_invoices')) && (
-                        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col transition-colors">
+                        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col transition-colors min-w-0">
                             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-6">Projeção de Fluxo de Caixa (90 dias)</h3>
-                            <div className="w-full h-[250px]" style={{ width: '100%', height: 250 }}>
+                            <div className="w-full h-[250px] min-w-0" style={{ width: '100%', height: 250 }}>
                                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                                     <AreaChart data={cashFlowForecast}>
                                         <defs>

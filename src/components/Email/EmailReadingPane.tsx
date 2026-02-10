@@ -1,5 +1,5 @@
-import React from 'react';
-import { ArrowLeft, UserX, ChevronDown, Bot, SidebarClose, SidebarOpen, Send, Inbox, Folder } from 'lucide-react';
+import React, { useState } from 'react';
+import { ArrowLeft, UserX, ChevronDown, Bot, SidebarClose, SidebarOpen, Send, Inbox, Folder, Forward, FolderInput } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { EmailBody } from '../../types/email';
@@ -20,6 +20,10 @@ interface EmailReadingPaneProps {
     isContextOpen: boolean;
     setIsContextOpen: (isOpen: boolean) => void;
     onReply: () => void;
+    onForward?: () => void;
+    folders?: string[];
+    selectedFolder?: string;
+    onMoveMessage?: (destinationFolder: string) => void;
 }
 
 export const EmailReadingPane: React.FC<EmailReadingPaneProps> = ({
@@ -35,8 +39,13 @@ export const EmailReadingPane: React.FC<EmailReadingPaneProps> = ({
     setThreadSettings,
     isContextOpen,
     setIsContextOpen,
-    onReply
+    onReply,
+    onForward,
+    folders = [],
+    selectedFolder = 'INBOX',
+    onMoveMessage
 }) => {
+    const [showMoveMenu, setShowMoveMenu] = useState(false);
 
     if (!messageBody) {
         return (
@@ -54,6 +63,8 @@ export const EmailReadingPane: React.FC<EmailReadingPaneProps> = ({
             </div>
         );
     }
+
+    const otherFolders = folders.filter(f => f !== selectedFolder);
 
     return (
         <div className="flex flex-col h-full bg-white dark:bg-slate-900">
@@ -125,6 +136,39 @@ export const EmailReadingPane: React.FC<EmailReadingPaneProps> = ({
                             <Bot size={14} />
                             {threadSettings?.autoReplyEnabled ? 'ON' : 'OFF'}
                         </button>
+
+                        {/* Move Message */}
+                        {onMoveMessage && otherFolders.length > 0 && (
+                            <div className="relative">
+                                <button
+                                    onClick={() => setShowMoveMenu(!showMoveMenu)}
+                                    className="flex items-center gap-1.5 px-2 py-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-md text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50"
+                                >
+                                    <FolderInput size={14} />
+                                    Mover
+                                    <ChevronDown size={12} />
+                                </button>
+                                {showMoveMenu && (
+                                    <div className="absolute top-full left-0 mt-1 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
+                                        <div className="p-1">
+                                            {otherFolders.map(f => (
+                                                <button
+                                                    key={f}
+                                                    onClick={() => {
+                                                        onMoveMessage(f);
+                                                        setShowMoveMenu(false);
+                                                    }}
+                                                    className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center gap-2"
+                                                >
+                                                    <Folder size={12} />
+                                                    {f}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* Context Toggle */}
@@ -148,7 +192,10 @@ export const EmailReadingPane: React.FC<EmailReadingPaneProps> = ({
                             </div>
                             <div className="min-w-0">
                                 <p className="font-medium text-slate-900 dark:text-white truncate text-sm">{messageBody.from}</p>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">para {messageBody.to}</p>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                                    para {messageBody.to}
+                                    {messageBody.cc && <span className="ml-1">| cc: {messageBody.cc}</span>}
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -156,13 +203,24 @@ export const EmailReadingPane: React.FC<EmailReadingPaneProps> = ({
                         <span className="text-xs text-slate-500 dark:text-slate-400 block mb-2">
                             {format(new Date(messageBody.date), "dd/MM/yyyy HH:mm", { locale: ptBR })}
                         </span>
-                        <button
-                            onClick={onReply}
-                            className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-bold shadow-sm"
-                        >
-                            <div className="rotate-180 transform"><Send size={12} /></div>
-                            Responder
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={onReply}
+                                className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-bold shadow-sm"
+                            >
+                                <div className="rotate-180 transform"><Send size={12} /></div>
+                                Responder
+                            </button>
+                            {onForward && (
+                                <button
+                                    onClick={onForward}
+                                    className="flex items-center gap-2 px-3 py-1.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors text-xs font-bold shadow-sm"
+                                >
+                                    <Forward size={12} />
+                                    Encaminhar
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>

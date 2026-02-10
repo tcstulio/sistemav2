@@ -20,6 +20,7 @@ const ROUTE_LABELS: Record<string, string> = {
     'email': 'E-mail',
     'chat': 'Chat',
     'automation': 'Automação',
+    'centrovibe': 'CentroVibe',
 
     // CRM
     'customers': 'Clientes',

@@ -345,6 +345,11 @@ export class DolibarrServiceBase {
             finalHeaders['DOLAPIKEY'] = query.DOLAPIKEY;
         }
 
+        // Ensure DOLAPIKEY is in query params for custom_sync.php (it reads from $_GET)
+        if (!query.DOLAPIKEY && finalHeaders['DOLAPIKEY']) {
+            query.DOLAPIKEY = finalHeaders['DOLAPIKEY'];
+        }
+
         try {
             log.debug(`CustomSync GET ${targetUrl}?type=${query.type}&last_modified=${query.last_modified}`);
             const response = await axios.get(targetUrl, {

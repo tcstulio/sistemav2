@@ -1,7 +1,7 @@
 
 import React, { useMemo, useCallback } from 'react';
 import { AppNotification, AppView } from '../types';
-import { X, Bell, AlertTriangle, CheckCircle, Info, Clock, AlertCircle as AlertCircleIcon } from 'lucide-react';
+import { X, Bell, AlertTriangle, CheckCircle, Info, Clock, AlertCircle as AlertCircleIcon, Mail } from 'lucide-react';
 import { formatTime } from '../utils/dateUtils';
 
 interface NotificationPanelProps {
@@ -19,6 +19,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
         if (priority === 'high') return <AlertCircleIcon size={20} className="text-red-500" />;
         if (type === 'stock') return <AlertTriangle size={20} className="text-orange-500" />;
         if (type === 'invoice') return <AlertTriangle size={20} className="text-yellow-500" />;
+        if (type === 'email') return <Mail size={20} className="text-indigo-500" />;
         return <Info size={20} className="text-blue-500" />;
     }, []);
 

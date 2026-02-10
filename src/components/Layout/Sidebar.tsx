@@ -8,7 +8,7 @@ import {
     BarChart3, X, LogOut, FileSignature, TrendingUp, PenTool, Factory,
     FolderKanban, ClipboardList, Landmark, CalendarDays, Tag, MessageSquare,
     Activity, Bug, UserCircle, Mail, Bot, Clock, Receipt, Banknote,
-    Calculator, Building2, ChevronDown, ChevronRight
+    Calculator, Building2, ChevronDown, ChevronRight, Music
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -65,6 +65,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
                 { id: 'email', path: '/email', label: 'Emails', icon: Mail },
                 { id: 'automation', path: '/automation', label: 'Automação', icon: Bot },
                 { id: 'venues', path: '/venues', label: 'Espaços', icon: Building2 },
+                { id: 'centrovibe', path: '/centrovibe', label: 'CentroVibe', icon: Music },
                 { id: 'simulator', path: '/simulator', label: 'Simulador', icon: Calculator },
             ]
         },

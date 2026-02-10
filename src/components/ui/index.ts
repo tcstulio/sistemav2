@@ -23,6 +23,11 @@ export { Spinner, LoadingOverlay, LoadingCard, LoadingButton, Skeleton, Skeleton
 
 // Overlay Components
 export { Modal } from './Modal';
+export { ConfirmModal } from './ConfirmModal';
+
+// Data Display
+export { StatusBadge } from './StatusBadge';
+export type { StatusConfig, BadgeVariant } from './StatusBadge';
 
 // Usage:
 // import { PageLayout, PageHeader, Card, Button, Input, Modal } from '../components/ui';

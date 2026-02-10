@@ -99,10 +99,13 @@ export async function runBackgroundSync(config: DolibarrConfig, signal?: AbortSi
         try {
             // 1. Get watermark for this store
             const lastModified = await dbService.getLastModified(module.store, 'date_modification');
-            // console.log(`[BackgroundSync] ${module.type}: watermark=${lastModified}`);
+            // Add 1s when watermark exists to skip the boundary record
+            // (custom_sync.php uses >= comparison, and tms has second-level precision)
+            const watermark = lastModified > 0 ? lastModified + 1000 : 0;
+            log.debug(`${module.type}: watermark=${watermark}`);
 
             // 2. Fetch delta from API
-            const delta = await DolibarrService.fetchDelta(config, module.type, lastModified);
+            const delta = await DolibarrService.fetchDelta(config, module.type, watermark);
 
             if (delta.length > 0) {
                 // 3. Map data (use type assertion to handle varied return types)

@@ -37,15 +37,26 @@ export interface EmailAccountConfig {
     signature?: string;
 }
 
+export interface EmailTemplate {
+    id: string;
+    name: string;
+    subject: string;
+    body: string;
+    createdBy: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
 interface EmailMetadata {
     assignments: Record<string, string>; // threadId -> userId
     threadSettings: Record<string, any>; // threadId -> settings
-    userSettings: Record<string, { signature?: string }>; // userId -> settings
+    userSettings: Record<string, { signature?: string; pollInterval?: number }>; // userId -> settings
+    templates: EmailTemplate[];
 }
 
 class EmailStoreService {
     private accounts: EmailAccountConfig[] = [];
-    private metadata: EmailMetadata = { assignments: {}, threadSettings: {}, userSettings: {} };
+    private metadata: EmailMetadata = { assignments: {}, threadSettings: {}, userSettings: {}, templates: [] };
 
     constructor() {
         this.load();
@@ -70,7 +81,7 @@ class EmailStoreService {
                 this.metadata = JSON.parse(data);
             } catch (e) {
                 log.error('Failed to load email metadata', e);
-                this.metadata = { assignments: {}, threadSettings: {}, userSettings: {} };
+                this.metadata = { assignments: {}, threadSettings: {}, userSettings: {}, templates: [] };
             }
         }
     }
@@ -192,7 +203,7 @@ class EmailStoreService {
         return this.metadata.threadSettings[threadId] || {};
     }
 
-    updateUserSettings(userId: string, settings: { signature?: string }) {
+    updateUserSettings(userId: string, settings: { signature?: string; pollInterval?: number }) {
         this.metadata.userSettings[userId] = {
             ...(this.metadata.userSettings[userId] || {}),
             ...settings
@@ -200,8 +211,47 @@ class EmailStoreService {
         this.saveMetadata();
     }
 
-    getUserSettings(userId: string): { signature?: string } {
+    getUserSettings(userId: string): { signature?: string; pollInterval?: number } {
         return this.metadata.userSettings[userId] || {};
+    }
+
+    // --- Templates ---
+
+    getTemplates(): EmailTemplate[] {
+        return this.metadata.templates || [];
+    }
+
+    addTemplate(data: { name: string; subject: string; body: string; createdBy: string }): string {
+        const id = `tpl_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const now = new Date().toISOString();
+        const template: EmailTemplate = {
+            id,
+            ...data,
+            createdAt: now,
+            updatedAt: now
+        };
+        if (!this.metadata.templates) this.metadata.templates = [];
+        this.metadata.templates.push(template);
+        this.saveMetadata();
+        return id;
+    }
+
+    updateTemplate(id: string, updates: Partial<Pick<EmailTemplate, 'name' | 'subject' | 'body'>>) {
+        if (!this.metadata.templates) return;
+        const index = this.metadata.templates.findIndex(t => t.id === id);
+        if (index === -1) throw new Error('Template not found');
+        this.metadata.templates[index] = {
+            ...this.metadata.templates[index],
+            ...updates,
+            updatedAt: new Date().toISOString()
+        };
+        this.saveMetadata();
+    }
+
+    deleteTemplate(id: string) {
+        if (!this.metadata.templates) return;
+        this.metadata.templates = this.metadata.templates.filter(t => t.id !== id);
+        this.saveMetadata();
     }
 }
 

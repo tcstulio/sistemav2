@@ -45,9 +45,21 @@ backend/certs/
 
 # Playwright
 test-results/
+test-reports/
 playwright-report/
 playwright/.cache/
 screenshots/
 *.png
 *.jpg
 *.jpeg
+
+# Claude Code / AI tools
+.claude/
+.mcp.json
+cline_mcp_settings.json
+
+# Temporary / debug files
+nul
+patch-chrome.cjs
+test-automation.js
+centrovibe-manager.zip

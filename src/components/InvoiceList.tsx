@@ -1,24 +1,37 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Invoice, ThirdParty, DolibarrConfig, AppView, Project, Product, Shipment } from '../types';
-import { FileText, Search, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, X, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, ArrowUp, Lock, ShoppingCart, ArrowLeft, Truck, RefreshCcw } from 'lucide-react';
+import { Invoice, AppView } from '../types';
+import { FileText, Search, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, ArrowUp, ShoppingCart, RefreshCcw, Truck } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useInvoiceMutations } from '../hooks/useMutations';
-import { GenericListLayout } from './common/GenericListLayout';
 import { LinkedObjects } from './common/LinkedObjects';
 import { PaginationControls } from './common/PaginationControls';
-import { StatusFilterBar } from './common/StatusFilterBar';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInvoices, useCustomers, useProjects, useProducts, useShipments, useInvoiceLines, useUsers, usePayments, usePaymentInvoiceLinks } from '../hooks/dolibarr';
-
-// Direct Hook Imports
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { RichTextEditor } from './common/RichTextEditor';
 import { CustomerPaymentModal } from './Modals/CustomerPaymentModal';
+import { MasterDetailLayout } from './ui/MasterDetailLayout';
+import { PageHeader } from './ui/PageHeader';
+import { Card } from './ui/Card';
+import { Button } from './ui/Button';
+import { Input } from './ui/Input';
+import { Modal } from './ui/Modal';
+import { Tabs, Tab } from './ui/Tabs';
+import { EmptyState } from './ui/EmptyState';
+import { StatusBadge } from './ui/StatusBadge';
+
+const invoiceStatuses = {
+    'credit_note': { label: 'Nota de Crédito', variant: 'red' as const, icon: <RefreshCcw size={12} /> },
+    '0': { label: 'Rascunho', variant: 'slate' as const, icon: <FileEdit size={12} /> },
+    '1': { label: 'A Pagar', variant: 'orange' as const, icon: <Clock size={12} /> },
+    '2': { label: 'Pago', variant: 'emerald' as const, icon: <CheckCircle2 size={12} /> },
+};
+
+const getInvoiceStatusKey = (inv: Invoice) => inv.type === '2' ? 'credit_note' : inv.statut;
 
 interface InvoiceListProps {
     onNavigate?: (view: AppView, id: string) => void;
-    // Optional legacy props to prevent crashes if parent passes them, but ignored
     invoices?: any[];
     customers?: any[];
     projects?: any[];
@@ -30,7 +43,6 @@ interface InvoiceListProps {
 const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const { config, refreshData } = useDolibarr();
 
-    // Data Hooks
     const { data: invoices = [] } = useInvoices(config);
     const { data: customers = [] } = useCustomers(config);
     const { data: projects = [] } = useProjects(config);
@@ -47,17 +59,12 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
 
-    // --- Mutations ---
     const { createInvoice } = useInvoiceMutations(config);
 
-    // Pagination State
+    // Pagination
     const [page, setPage] = useState(0);
     const [limit, setLimit] = useState(20);
-
-    // Reset page on search
-    useEffect(() => {
-        setPage(0);
-    }, [searchTerm]);
+    useEffect(() => { setPage(0); }, [searchTerm]);
 
     // Creation State
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -83,7 +90,9 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const [isPayModalOpen, setIsPayModalOpen] = useState(false);
     const [selectedInvoiceForPay, setSelectedInvoiceForPay] = useState<Invoice | null>(null);
 
-    // Helper to find customer name
+    // =================================================================================================
+    // HELPERS
+    // =================================================================================================
     const getCustomerName = (socid: string) => {
         const customer = customers.find(c => c.id === socid);
         return customer ? customer.name : 'Cliente Desconhecido';
@@ -111,14 +120,10 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             if (filterStatus === 'paid') return matchesSearch && inv.statut === '2';
             if (filterStatus === 'unpaid') return matchesSearch && inv.statut === '1';
             if (filterStatus === 'draft') return matchesSearch && inv.statut === '0';
-
             return matchesSearch;
         });
 
-        // Client-side Sort
-        return result.sort((a, b) => {
-            return sortOrder === 'desc' ? b.date - a.date : a.date - b.date;
-        });
+        return result.sort((a, b) => sortOrder === 'desc' ? b.date - a.date : a.date - b.date);
     }, [invoices, customers, searchTerm, filterStatus, sortOrder]);
 
     const invoiceLines = useMemo(() => {
@@ -131,24 +136,12 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
         return shipments.filter(s => s.fk_commande && String(s.fk_commande) === String(selectedInvoice.order_id));
     }, [selectedInvoice, shipments]);
 
-    const getStatusBadge = (invoice: Invoice) => {
-        if (invoice.type === '2') {
-            return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800"><RefreshCcw size={12} /> Nota de Crédito</span>;
-        }
-        if (invoice.statut === '0') {
-            return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700"><FileEdit size={12} /> Rascunho</span>;
-        }
-        if (invoice.statut === '2') {
-            return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"><CheckCircle2 size={12} /> Pago</span>;
-        }
-        return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800"><Clock size={12} /> A Pagar</span>;
-    };
-
     const { openLink } = useDolibarrLink(config);
 
-    const openInDolibarr = (id: string) => {
-        openLink('invoice', id);
-    };
+    // =================================================================================================
+    // HANDLERS
+    // =================================================================================================
+    const openInDolibarr = (id: string) => openLink('invoice', id);
 
     const handleDownloadPdf = (e: React.MouseEvent, ref: string) => {
         e.stopPropagation();
@@ -184,13 +177,13 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             if (refreshData) refreshData();
         } catch (err: any) {
             console.error(err);
-            alert(`Falha ao criar Nota de Crédito: ${err.message} `);
+            alert(`Falha ao criar Nota de Crédito: ${err.message}`);
         } finally {
             setProcessingId(null);
         }
     };
 
-    // Creation Logic (Remains similar)
+    // Creation Logic
     const handleAddItem = () => {
         setNewInvoice({
             ...newInvoice,
@@ -212,21 +205,17 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     };
 
     const handleRemoveItem = (index: number) => {
-        const updatedItems = newInvoice.items.filter((_, i) => i !== index);
-        setNewInvoice({ ...newInvoice, items: updatedItems });
+        setNewInvoice({ ...newInvoice, items: newInvoice.items.filter((_, i) => i !== index) });
     };
 
-    const calculateTotal = () => {
-        return newInvoice.items.reduce((acc, item) => acc + (item.price * item.qty), 0);
-    };
+    const calculateTotal = () => newInvoice.items.reduce((acc, item) => acc + (item.price * item.qty), 0);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newInvoice.socid) return alert("Selecione um cliente");
-
         setIsSubmitting(true);
         try {
-            const apiPayload = {
+            await createInvoice.mutateAsync({
                 socid: newInvoice.socid,
                 date: new Date(newInvoice.date).getTime() / 1000,
                 type: "0",
@@ -237,25 +226,22 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                     subprice: item.price,
                     tva_tx: 0
                 }))
-            };
-
-            await createInvoice.mutateAsync(apiPayload);
+            });
             alert("Fatura Criada com Sucesso");
             setIsCreateModalOpen(false);
             setNewInvoice({ socid: '', date: new Date().toISOString().split('T')[0], items: [] });
         } catch (e: any) {
             console.error(e);
-            alert(`Falha ao criar fatura: ${e.message} `);
+            alert(`Falha ao criar fatura: ${e.message}`);
         } finally {
             setIsSubmitting(false);
         }
     };
 
-    // --- Edit Logic ---
+    // Edit Logic
     const handleEditClick = (e: React.MouseEvent, invoice: Invoice) => {
         e.stopPropagation();
         const lines = allInvoiceLines.filter(line => String(line.parent_id) === String(invoice.id));
-
         setEditingInvoiceData({
             id: invoice.id,
             ref: invoice.ref,
@@ -286,7 +272,6 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
         if (!editingInvoiceData) return;
         const updatedItems = [...editingInvoiceData.items];
         updatedItems[index] = { ...updatedItems[index], [field]: value };
-
         if (field === 'productId') {
             const prod = products.find(p => p.id === value);
             if (prod) {
@@ -300,17 +285,11 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const handleRemoveEditItem = (index: number) => {
         if (!editingInvoiceData) return;
         const itemToRemove = editingInvoiceData.items[index];
-        const updatedItems = editingInvoiceData.items.filter((_, i) => i !== index);
-
-        // Track deleted lines
         const newDeletedIds = [...editingInvoiceData.deletedLineIds];
-        if (itemToRemove.id) {
-            newDeletedIds.push(itemToRemove.id);
-        }
-
+        if (itemToRemove.id) newDeletedIds.push(itemToRemove.id);
         setEditingInvoiceData({
             ...editingInvoiceData,
-            items: updatedItems,
+            items: editingInvoiceData.items.filter((_, i) => i !== index),
             deletedLineIds: newDeletedIds
         });
     };
@@ -318,22 +297,16 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const handleSaveEdit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingInvoiceData || !config) return;
-
         setIsSubmitting(true);
         try {
-            // 1. Update Header
             await DolibarrService.updateInvoice(config, editingInvoiceData.id, {
                 date: new Date(editingInvoiceData.date).getTime() / 1000,
                 socid: editingInvoiceData.socid
             });
 
-            // 2. Handle Lines
-            // Delete removed lines
             for (const lineId of editingInvoiceData.deletedLineIds) {
                 await DolibarrService.deleteInvoiceLine(config, editingInvoiceData.id, lineId);
             }
-
-            // Update/Create lines
             for (const item of editingInvoiceData.items) {
                 const lineData = {
                     fk_product: item.productId || undefined,
@@ -342,7 +315,6 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                     subprice: item.price,
                     tva_tx: 0
                 };
-
                 if (item.id) {
                     await DolibarrService.updateInvoiceLine(config, editingInvoiceData.id, item.id, lineData);
                 } else {
@@ -370,105 +342,87 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
 
     const handleRegisterPayment = async (paymentData: any) => {
         if (!selectedInvoiceForPay || !config) return;
-
         try {
-            await DolibarrService.setPayment(config, selectedInvoiceForPay.id, paymentData); // Maps to commercial.ts setPayment
+            await DolibarrService.setPayment(config, selectedInvoiceForPay.id, paymentData);
             alert("Pagamento Registrado com Sucesso");
-
-            // Optimistic update
-            selectedInvoiceForPay.statut = '2'; // Paid
+            selectedInvoiceForPay.statut = '2';
             selectedInvoiceForPay.paye = '1';
-
             if (refreshData) refreshData();
-            // Close modal handled by component prop, but we reset state here
             setIsPayModalOpen(false);
             setSelectedInvoiceForPay(null);
         } catch (err) {
             console.error(err);
             alert("Falha ao registrar pagamento");
-            // Re-throw if needed by modal to not close? Our modal closes on success, so if we throw, maybe it stays open?
-            // Modal catches error? Current CustomerPaymentModal implementation catches error and logs, but continues?
-            // Actually my implementation of CustomerPaymentModal has try/catch inside handleSubmit. 
-            // If onConfirm throws, it catches and stops. So I should throw here to prevent close.
             throw err;
         }
     };
 
     if (!config) return null;
 
-    // --- Sub-Components (Render props for generic layout) ---
+    // =================================================================================================
+    // RENDER SECTIONS
+    // =================================================================================================
 
-    // 1. Header
     const renderHeader = (
-        <div className="p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800 dark:text-white">Faturas</h2>
-                    <p className="text-sm text-slate-500 dark:text-slate-400">Acompanhe pagamentos e receita</p>
-                </div>
-                <div className="flex items-center gap-2">
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                            type="text"
+        <div className={selectedInvoice ? 'hidden lg:block' : 'block'}>
+            <PageHeader
+                title="Faturas"
+                subtitle="Acompanhe pagamentos e receita"
+                actions={
+                    <div className="flex items-center gap-2">
+                        <Input
+                            icon={<Search size={18} />}
                             placeholder="Buscar ref ou cliente..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className={`pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-${config.themeColor}-500 focus:border-${config.themeColor}-500 outline-none w-full md:w-64 text-sm transition-all`}
+                            className="w-64"
                         />
+                        <Button
+                            variant="ghost"
+                            icon={sortOrder === 'desc' ? <ArrowDown size={18} /> : <ArrowUp size={18} />}
+                            onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
+                            title={sortOrder === 'desc' ? "Mais recentes" : "Mais antigos"}
+                        />
+                        <Button variant="primary" icon={<Plus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
+                            Novo
+                        </Button>
                     </div>
-                    <button
-                        onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
-                        className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1 text-sm font-medium"
-                        title={sortOrder === 'desc' ? "Mais recentes" : "Mais antigos"}
-                    >
-                        {sortOrder === 'desc' ? <ArrowDown size={18} /> : <ArrowUp size={18} />}
-                    </button>
-                    <button
-                        onClick={() => setIsCreateModalOpen(true)}
-                        className={`flex items-center gap-1.5 px-3 py-2 bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors`}
-                    >
-                        <Plus size={18} /> Novo
-                    </button>
-                </div>
-            </div>
-
-            <StatusFilterBar
-                filters={[
-                    { id: 'all', label: 'Todas' },
-                    { id: 'unpaid', label: 'A Pagar / Vencidas', color: 'orange' },
-                    { id: 'paid', label: 'Pagas', color: 'emerald' },
-                    { id: 'draft', label: 'Rascunhos', color: 'slate' }
-                ]}
-                activeFilter={filterStatus}
-                onFilterChange={(id) => setFilterStatus(id as any)}
-                themeColor={config.themeColor}
+                }
+                tabs={
+                    <Tabs value={filterStatus} onChange={(v) => setFilterStatus(v as any)}>
+                        <Tab value="all">Todas</Tab>
+                        <Tab value="unpaid">A Pagar</Tab>
+                        <Tab value="paid">Pagas</Tab>
+                        <Tab value="draft">Rascunhos</Tab>
+                    </Tabs>
+                }
             />
         </div>
     );
 
-    // 2. List Content
     const renderListContent = (
         <>
             {filteredInvoices.length === 0 ? (
-                <div className="text-center py-20 text-slate-400">
-                    <FileText size={48} className="mx-auto mb-4 opacity-50" />
-                    <p>Nenhuma fatura encontrada com estes critérios.</p>
-                </div>
+                <EmptyState
+                    icon={FileText}
+                    title="Nenhuma fatura encontrada"
+                    description="Nenhuma fatura encontrada com estes critérios."
+                />
             ) : (
-                <div className="grid grid-cols-1 gap-3">
+                <div className="grid grid-cols-1 gap-3 p-4">
                     {filteredInvoices.map((inv) => {
                         const projectName = getProjectName(inv.project_id);
                         return (
-                            <div
+                            <Card
                                 key={inv.id}
                                 onClick={() => setSelectedInvoice(inv)}
-                                className={`p-4 rounded-xl border transition-all cursor-pointer ${selectedInvoice?.id === inv.id ? `border-${config.themeColor}-500 ring-1 ring-${config.themeColor}-500 shadow-sm dark:bg-slate-800` : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-sm hover:border-slate-300 dark:hover:border-slate-700'} `}
+                                selected={selectedInvoice?.id === inv.id}
+                                hoverable
                             >
                                 <div className="flex justify-between items-start mb-2">
                                     <div className="flex items-center gap-2">
                                         <span className="font-mono text-xs text-slate-400">{inv.ref}</span>
-                                        {getStatusBadge(inv)}
+                                        <StatusBadge status={getInvoiceStatusKey(inv)} config={invoiceStatuses} />
                                     </div>
                                 </div>
                                 <h3
@@ -489,139 +443,152 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     <span className="text-xs text-slate-500">{formatDateOnly(inv.date)}</span>
                                     <span className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                                 </div>
-                            </div>
-                        )
+                            </Card>
+                        );
                     })}
                 </div>
             )}
+            <PaginationControls
+                page={page}
+                limit={limit}
+                onPageChange={setPage}
+                onLimitChange={setLimit}
+                hasNext={filteredInvoices.length >= limit}
+                hasPrev={page > 0}
+            />
         </>
     );
 
-    // 3. Detail Content
-    const renderDetailContent = selectedInvoice ? (
-        <>
-            <div className="flex-none bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 p-4 flex items-center justify-between z-10 w-full">
-                <div className="flex items-center gap-3">
-                    <button onClick={() => setSelectedInvoice(null)} className="lg:hidden p-2 -ml-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"><ArrowLeft size={20} /></button>
-                    <div>
-                        <h2 className="text-lg font-bold text-slate-900 dark:text-white leading-tight flex items-center gap-2">
-                            {selectedInvoice.ref}
-                            {getStatusBadge(selectedInvoice)}
-                        </h2>
-                        <span
-                            className="text-xs text-slate-400 cursor-pointer hover:underline hover:text-indigo-500"
-                            onClick={() => onNavigate && onNavigate('customers', selectedInvoice.socid)}
-                        >
-                            Cliente: {getCustomerName(selectedInvoice.socid)}
-                        </span>
+    const renderDetail = selectedInvoice ? (
+        <div className="flex flex-col h-full">
+            <PageHeader
+                onBack={() => setSelectedInvoice(null)}
+                title={
+                    <span className="flex items-center gap-2">
+                        {selectedInvoice.ref}
+                        <StatusBadge status={getInvoiceStatusKey(selectedInvoice)} config={invoiceStatuses} />
+                    </span>
+                }
+                subtitle={
+                    <span
+                        className="cursor-pointer hover:underline hover:text-indigo-500"
+                        onClick={() => onNavigate && onNavigate('customers', selectedInvoice.socid)}
+                    >
+                        Cliente: {getCustomerName(selectedInvoice.socid)}
+                    </span>
+                }
+                actions={
+                    <div className="flex items-center gap-2">
+                        {selectedInvoice.statut === '0' && (
+                            <>
+                                <Button
+                                    variant="primary"
+                                    size="sm"
+                                    icon={<CheckCircle size={16} />}
+                                    onClick={(e) => handleValidate(e, selectedInvoice.id)}
+                                    loading={processingId === selectedInvoice.id}
+                                    disabled={!!processingId}
+                                >
+                                    Validar
+                                </Button>
+                                <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    icon={<FileEdit size={16} />}
+                                    onClick={(e) => handleEditClick(e, selectedInvoice)}
+                                    disabled={!!processingId}
+                                >
+                                    Editar
+                                </Button>
+                            </>
+                        )}
+                        {selectedInvoice.statut === '1' && selectedInvoice.type !== '2' && (
+                            <>
+                                <Button
+                                    variant="primary"
+                                    size="sm"
+                                    icon={<CreditCard size={16} />}
+                                    onClick={(e) => handlePayClick(e, selectedInvoice)}
+                                    className="!bg-emerald-600 hover:!bg-emerald-700"
+                                >
+                                    Pagar
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    icon={processingId === selectedInvoice.id ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                    onClick={(e) => handleCreateCreditNote(e, selectedInvoice.id)}
+                                    disabled={!!processingId}
+                                    className="!text-red-600 !border-red-200"
+                                >
+                                    Nota Crédito
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    icon={<CheckCircle size={16} />}
+                                    onClick={async (e) => {
+                                        e.stopPropagation();
+                                        if (!confirm("Marcar como 'Classificada como Paga' (sem pagamento financeiro)?")) return;
+                                        setProcessingId(selectedInvoice.id);
+                                        try {
+                                            await DolibarrService.markInvoiceAsPaid(config, selectedInvoice.id);
+                                            if (refreshData) refreshData();
+                                            alert("Fatura classificada como paga.");
+                                        } catch (err) { console.error(err); alert("Erro ao classificar como paga."); }
+                                        finally { setProcessingId(null); }
+                                    }}
+                                    title="Classificar como Paga"
+                                />
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    icon={<Trash2 size={16} />}
+                                    onClick={async (e) => {
+                                        e.stopPropagation();
+                                        const reason = prompt("Motivo do abandono:");
+                                        if (reason === null) return;
+                                        setProcessingId(selectedInvoice.id);
+                                        try {
+                                            await DolibarrService.abandonInvoice(config, selectedInvoice.id, reason);
+                                            if (refreshData) refreshData();
+                                            alert("Fatura abandonada/cancelada.");
+                                        } catch (err) { console.error(err); alert("Erro ao abandonar fatura."); }
+                                        finally { setProcessingId(null); }
+                                    }}
+                                    className="!text-red-600"
+                                    title="Abandonar / Cancelar"
+                                />
+                            </>
+                        )}
+                        {(selectedInvoice.statut === '1' || selectedInvoice.statut === '2') && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (!confirm("Reabrir fatura (voltar para rascunho)?")) return;
+                                    setProcessingId(selectedInvoice.id);
+                                    try {
+                                        await DolibarrService.setInvoiceToDraft(config, selectedInvoice.id);
+                                        if (refreshData) refreshData();
+                                        alert("Fatura retornada para rascunho.");
+                                    } catch (err) { console.error(err); alert("Erro ao reabrir fatura."); }
+                                    finally { setProcessingId(null); }
+                                }}
+                            >
+                                Reabrir
+                            </Button>
+                        )}
+                        <Button variant="ghost" size="sm" icon={<Download size={16} />} onClick={(e) => handleDownloadPdf(e, selectedInvoice.ref)} title="Baixar PDF" />
+                        <Button variant="ghost" size="sm" icon={<ExternalLink size={16} />} onClick={() => openInDolibarr(selectedInvoice.id)} title="Abrir no Dolibarr" />
                     </div>
-                </div>
-                <div className="flex items-center gap-2">
-                    {selectedInvoice.statut === '0' && (
-                        <button
-                            onClick={(e) => handleValidate(e, selectedInvoice.id)}
-                            disabled={!!processingId}
-                            className="p-2 rounded-lg text-blue-600 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors text-sm font-medium flex items-center gap-1"
-                            title="Validar Fatura"
-                        >
-                            {processingId === selectedInvoice.id ? <Loader2 size={18} className="animate-spin" /> : <Lock size={18} />}
-                            <span className="hidden xl:inline">Validar</span>
-                        </button>
-                    )}
-                    {selectedInvoice.statut === '0' && (
-                        <button
-                            onClick={(e) => handleEditClick(e, selectedInvoice)}
-                            disabled={!!processingId}
-                            className="p-2 rounded-lg text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors text-sm font-medium flex items-center gap-1"
-                            title="Editar Fatura"
-                        >
-                            <FileEdit size={18} />
-                            <span className="hidden xl:inline">Editar</span>
-                        </button>
-                    )}
-                    {selectedInvoice.statut === '1' && selectedInvoice.type !== '2' && (
-                        <>
-                            <button
-                                onClick={(e) => handlePayClick(e, selectedInvoice)}
-                                className="p-2 rounded-lg text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors text-sm font-medium flex items-center gap-1"
-                                title="Pagar Fatura"
-                            >
-                                <CreditCard size={18} />
-                                <span className="hidden xl:inline">Pagar</span>
-                            </button>
-                            <button
-                                onClick={(e) => handleCreateCreditNote(e, selectedInvoice.id)}
-                                className="p-2 rounded-lg text-red-600 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors text-sm font-medium flex items-center gap-1"
-                                title="Criar Nota de Crédito (Correção)"
-                                disabled={!!processingId}
-                            >
-                                {processingId === selectedInvoice.id ? <Loader2 size={18} className="animate-spin" /> : <RefreshCcw size={18} />}
-                                <span className="hidden xl:inline">Nota Crédito</span>
-                            </button>
-                            <button
-                                onClick={async (e) => {
-                                    e.stopPropagation();
-                                    if (!confirm("Marcar como 'Classificada como Paga' (sem pagamento financeiro)?")) return;
-                                    setProcessingId(selectedInvoice.id);
-                                    try {
-                                        await DolibarrService.markInvoiceAsPaid(config, selectedInvoice.id);
-                                        if (refreshData) refreshData();
-                                        alert("Fatura classificada como paga.");
-                                    } catch (err) { console.error(err); alert("Erro ao classificar como paga."); }
-                                    finally { setProcessingId(null); }
-                                }}
-                                className="p-2 rounded-lg text-slate-600 bg-slate-100 hover:bg-slate-200"
-                                title="Classificar como Paga"
-                            >
-                                <CheckCircle size={18} />
-                            </button>
-                            <button
-                                onClick={async (e) => {
-                                    e.stopPropagation();
-                                    const reason = prompt("Motivo do abandono:");
-                                    if (reason === null) return;
-                                    setProcessingId(selectedInvoice.id);
-                                    try {
-                                        await DolibarrService.abandonInvoice(config, selectedInvoice.id, reason);
-                                        if (refreshData) refreshData();
-                                        alert("Fatura abandonada/cancelada.");
-                                    } catch (err) { console.error(err); alert("Erro ao abandonar fatura."); }
-                                    finally { setProcessingId(null); }
-                                }}
-                                className="p-2 rounded-lg text-red-600 bg-red-100 hover:bg-red-200"
-                                title="Abandonar / Cancelar"
-                            >
-                                <Trash2 size={18} />
-                            </button>
-                        </>
-                    )}
-                    {(selectedInvoice.statut === '1' || selectedInvoice.statut === '2') && (
-                        <button
-                            onClick={async (e) => {
-                                e.stopPropagation();
-                                if (!confirm("Reabrir fatura (voltar para rascunho)? Atenção: Isso pode remover numeração se não configurado.")) return;
-                                setProcessingId(selectedInvoice.id);
-                                try {
-                                    await DolibarrService.setInvoiceToDraft(config, selectedInvoice.id);
-                                    if (refreshData) refreshData();
-                                    alert("Fatura retornada para rascunho.");
-                                } catch (err) { console.error(err); alert("Erro ao reabrir fatura."); }
-                                finally { setProcessingId(null); }
-                            }}
-                            className="p-2 rounded-lg text-xs text-slate-500 hover:text-slate-800 underline"
-                        >
-                            Reabrir
-                        </button>
-                    )}
-                    <button onClick={(e) => handleDownloadPdf(e, selectedInvoice.ref)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><Download size={20} /></button>
-                    <button onClick={() => openInDolibarr(selectedInvoice.id)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><ExternalLink size={20} /></button>
-                    <button onClick={() => setSelectedInvoice(null)} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
-                </div>
-            </div>
+                }
+            />
 
-            {/* Content */}
             <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-50 dark:bg-slate-950/50 w-full">
                 <div className="max-w-3xl mx-auto space-y-6">
+                    {/* Summary Card */}
                     <div className="bg-white dark:bg-slate-900 rounded-xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
                         <div className="flex justify-between items-start mb-6">
                             <div>
@@ -650,7 +617,6 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     <span className="text-sm text-slate-400 italic">Nenhum vinculado</span>
                                 )}
                             </div>
-
                             <div>
                                 <p className="text-xs text-slate-500 uppercase font-bold mb-2">Pedido de Origem</p>
                                 {selectedInvoice.order_id ? (
@@ -669,10 +635,11 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                         </div>
                     </div>
 
+                    {/* Linked Shipments */}
                     {linkedShipments.length > 0 && (
-                        <div className="bg-white dark:bg-slate-900 rounded-xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm animate-in fade-in slide-in-from-bottom-2">
+                        <div className="bg-white dark:bg-slate-900 rounded-xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
                             <h4 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-                                <Truck size={18} className="text-indigo-500" /> Envios Vinculados (Comprovante)
+                                <Truck size={18} className="text-indigo-500" /> Envios Vinculados
                             </h4>
                             <div className="space-y-2">
                                 {linkedShipments.map(ship => (
@@ -699,6 +666,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                         </div>
                     )}
 
+                    {/* Invoice Lines */}
                     <div className="bg-white dark:bg-slate-900 rounded-xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
                         <h4 className="font-bold text-slate-800 dark:text-white mb-4">Itens da Fatura</h4>
                         {invoiceLines.length === 0 ? (
@@ -731,18 +699,10 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                                         />
                                                     )}
                                                 </td>
-                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">
-                                                    {line.qty}
-                                                </td>
-                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">
-                                                    ${line.subprice?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                </td>
-                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">
-                                                    {line.remise_percent ? `${line.remise_percent}%` : '-'}
-                                                </td>
-                                                <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white font-mono">
-                                                    ${line.total_ttc?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                                </td>
+                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">{line.qty}</td>
+                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">${line.subprice?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">{line.remise_percent ? `${line.remise_percent}%` : '-'}</td>
+                                                <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white font-mono">${line.total_ttc?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -760,14 +720,10 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                     </div>
 
                     {/* Linked Objects */}
-                    <LinkedObjects
-                        id={selectedInvoice.id}
-                        type="facture"
-                        onNavigate={onNavigate}
-                    />
+                    <LinkedObjects id={selectedInvoice.id} type="facture" onNavigate={onNavigate} />
 
-                    {/* Linked Payments Section */}
-                    <div className="bg-white dark:bg-slate-900 rounded-xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm mt-6">
+                    {/* Linked Payments */}
+                    <div className="bg-white dark:bg-slate-900 rounded-xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
                         <h4 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
                             <CreditCard size={18} className="text-emerald-500" /> Pagamentos Vinculados
                         </h4>
@@ -779,8 +735,6 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     const payment = payments.find(p => String(p.id) === String(link.fk_paiement));
                                     return { link, payment };
                                 });
-                            // Remove filter to see partial data (orphaned links)
-                            // .filter(item => item.payment);
 
                             const totalPaid = linkedPayments.reduce((acc, item) => acc + (item.link.amount || 0), 0);
                             const remaining = selectedInvoice.total_ttc - totalPaid;
@@ -850,271 +804,209 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 </div>
                             );
                         })()}
-
                     </div>
                 </div>
             </div>
-        </>
-    ) : (
-        <div className="text-center p-8 max-w-sm mx-auto">
-            <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300 dark:text-slate-600"><FileText size={32} /></div>
-            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-1">Selecione uma Fatura</h3>
-            <p className="text-slate-500 dark:text-slate-400 text-sm">Ver detalhes, validar ou registrar pagamentos.</p>
         </div>
-    );
+    ) : undefined;
 
+    // =================================================================================================
+    // MAIN RETURN
+    // =================================================================================================
     return (
         <>
-            {/* Main Generic Layout */}
-            <GenericListLayout
-                header={renderHeader}
-                content={renderListContent}
-                detail={renderDetailContent}
-                isDetailOpen={!!selectedInvoice}
-                pagination={
-                    <PaginationControls
-                        page={page}
-                        limit={limit}
-                        onPageChange={setPage}
-                        onLimitChange={setLimit}
-                        hasNext={filteredInvoices.length >= limit}
-                        hasPrev={page > 0}
-                    />
-                }
-            />
+            <div className="flex flex-col h-full">
+                {renderHeader}
+                <MasterDetailLayout
+                    list={renderListContent}
+                    detail={renderDetail}
+                    showDetail={!!selectedInvoice}
+                    onCloseDetail={() => setSelectedInvoice(null)}
+                />
+            </div>
 
             {/* Create Modal */}
-            {isCreateModalOpen && (
-                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200 dark:border-slate-800 overflow-y-auto animate-in zoom-in-95 flex flex-col max-h-[90vh]">
-                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                <FileText size={18} className="text-indigo-600" /> Nova Fatura (Rascunho)
-                            </h3>
-                            <button onClick={() => setIsCreateModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
+            <Modal
+                isOpen={isCreateModalOpen}
+                onClose={() => setIsCreateModalOpen(false)}
+                title="Nova Fatura (Rascunho)"
+                size="xl"
+            >
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cliente</label>
+                            <select
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={newInvoice.socid}
+                                onChange={e => setNewInvoice({ ...newInvoice, socid: e.target.value })}
+                                required
+                            >
+                                <option value="">Selecione o Cliente...</option>
+                                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
+                            <input
+                                type="date"
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={newInvoice.date}
+                                onChange={e => setNewInvoice({ ...newInvoice, date: e.target.value })}
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
+                        <div className="flex justify-between items-center mb-2">
+                            <h4 className="font-bold text-sm text-slate-700 dark:text-slate-300">Itens</h4>
+                            <Button type="button" variant="ghost" size="sm" icon={<Plus size={12} />} onClick={handleAddItem}>
+                                Adicionar Item
+                            </Button>
                         </div>
 
-                        <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
-                            <div className="p-6 space-y-4 overflow-y-auto">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cliente</label>
+                        <div className="space-y-2">
+                            {newInvoice.items.length === 0 && <p className="text-sm text-slate-400 italic text-center py-4">Nenhum item adicionado.</p>}
+                            {newInvoice.items.map((item, idx) => (
+                                <div key={idx} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
+                                    <div className="flex-1">
                                         <select
-                                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                            value={newInvoice.socid}
-                                            onChange={e => setNewInvoice({ ...newInvoice, socid: e.target.value })}
-                                            required
+                                            className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                            value={item.productId}
+                                            onChange={e => handleUpdateItem(idx, 'productId', e.target.value)}
                                         >
-                                            <option value="">Selecione o Cliente...</option>
-                                            {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                            <option value="">Item Personalizado</option>
+                                            {products.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
                                         </select>
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
-                                        <input
-                                            type="date"
-                                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                            value={newInvoice.date}
-                                            onChange={e => setNewInvoice({ ...newInvoice, date: e.target.value })}
-                                            required
+                                        <RichTextEditor
+                                            value={item.desc}
+                                            onChange={val => handleUpdateItem(idx, 'desc', val)}
+                                            placeholder="Descrição"
+                                            className="w-full"
                                         />
                                     </div>
+                                    <div className="w-20">
+                                        <input type="number" className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Qtd"
+                                            value={item.qty} onChange={e => handleUpdateItem(idx, 'qty', parseInt(e.target.value))} min="1" />
+                                    </div>
+                                    <div className="w-24">
+                                        <input type="number" className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Preço"
+                                            value={item.price} onChange={e => handleUpdateItem(idx, 'price', parseFloat(e.target.value))} />
+                                    </div>
+                                    <div className="w-20">
+                                        <input type="number" className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Desc%"
+                                            value={item.remise_percent || ''} onChange={e => handleUpdateItem(idx, 'remise_percent', parseFloat(e.target.value))} />
+                                    </div>
+                                    <button type="button" onClick={() => handleRemoveItem(idx)} className="p-1 text-red-400 hover:text-red-600">
+                                        <Trash2 size={16} />
+                                    </button>
                                 </div>
+                            ))}
+                        </div>
 
-                                <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
-                                    <div className="flex justify-between items-center mb-2">
-                                        <h4 className="font-bold text-sm text-slate-700 dark:text-slate-300">Itens</h4>
-                                        <button type="button" onClick={handleAddItem} className="text-xs flex items-center gap-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 px-2 py-1 rounded">
-                                            <Plus size={12} /> Adicionar Item
-                                        </button>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        {newInvoice.items.length === 0 && <p className="text-sm text-slate-400 italic text-center py-4">Nenhum item adicionado.</p>}
-                                        {newInvoice.items.map((item, idx) => (
-                                            <div key={idx} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
-                                                <div className="flex-1">
-                                                    <select
-                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                                        value={item.productId}
-                                                        onChange={e => handleUpdateItem(idx, 'productId', e.target.value)}
-                                                    >
-                                                        <option value="">Item Personalizado</option>
-                                                        {products.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-                                                    </select>
-                                                    <RichTextEditor
-                                                        value={item.desc}
-                                                        onChange={val => handleUpdateItem(idx, 'desc', val)}
-                                                        placeholder="Descrição"
-                                                        className="w-full"
-                                                    />
-                                                </div>
-                                                <div className="w-20">
-                                                    <input
-                                                        type="number"
-                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                                        placeholder="Qtd"
-                                                        value={item.qty}
-                                                        onChange={e => handleUpdateItem(idx, 'qty', parseInt(e.target.value))}
-                                                        min="1"
-                                                    />
-                                                </div>
-                                                <div className="w-24">
-                                                    <input
-                                                        type="number"
-                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                                        placeholder="Preço"
-                                                        value={item.price}
-                                                        onChange={e => handleUpdateItem(idx, 'price', parseFloat(e.target.value))}
-                                                    />
-                                                </div>
-                                                <div className="w-20">
-                                                    <input
-                                                        type="number"
-                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                                        placeholder="Desc%"
-                                                        value={item.remise_percent || ''}
-                                                        onChange={e => handleUpdateItem(idx, 'remise_percent', parseFloat(e.target.value))}
-                                                    />
-                                                </div>
-                                                <button type="button" onClick={() => handleRemoveItem(idx)} className="p-1 text-red-400 hover:text-red-600">
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-
-                                    <div className="flex justify-end mt-4 pt-2 border-t border-slate-100 dark:border-slate-800">
-                                        <div className="text-right">
-                                            <span className="text-xs text-slate-500 uppercase font-bold mr-2">Total (S/ Imposto)</span>
-                                            <span className="text-xl font-bold text-slate-800 dark:text-white">${calculateTotal().toFixed(2)}</span>
-                                        </div>
-                                    </div>
-                                </div>
+                        <div className="flex justify-end mt-4 pt-2 border-t border-slate-100 dark:border-slate-800">
+                            <div className="text-right">
+                                <span className="text-xs text-slate-500 uppercase font-bold mr-2">Total (S/ Imposto)</span>
+                                <span className="text-xl font-bold text-slate-800 dark:text-white">${calculateTotal().toFixed(2)}</span>
                             </div>
-
-                            <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-b-xl">
-                                <button type="button" onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
-                                <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
-                                    {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle size={16} />} Criar Fatura
-                                </button>
-                            </div>
-                        </form>
+                        </div>
                     </div>
-                </div>
-            )}
+
+                    <div className="flex justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+                        <Button type="button" variant="secondary" onClick={() => setIsCreateModalOpen(false)}>Cancelar</Button>
+                        <Button type="submit" variant="primary" loading={isSubmitting} icon={<CheckCircle size={16} />}>Criar Fatura</Button>
+                    </div>
+                </form>
+            </Modal>
 
             {/* Edit Modal */}
-            {isEditModalOpen && editingInvoiceData && (
-                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 flex flex-col max-h-[90vh]">
-                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-indigo-50 dark:bg-indigo-900/30 rounded-t-xl">
-                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                <FileEdit size={18} className="text-indigo-600" /> Editar Fatura {editingInvoiceData.ref}
-                            </h3>
-                            <button onClick={() => setIsEditModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
+            <Modal
+                isOpen={isEditModalOpen && !!editingInvoiceData}
+                onClose={() => setIsEditModalOpen(false)}
+                title={`Editar Fatura ${editingInvoiceData?.ref || ''}`}
+                size="xl"
+            >
+                {editingInvoiceData && (
+                    <form onSubmit={handleSaveEdit} className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cliente</label>
+                                <select
+                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white opacity-60 cursor-not-allowed"
+                                    value={editingInvoiceData.socid}
+                                    disabled
+                                >
+                                    {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
+                                <input
+                                    type="date"
+                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                    value={editingInvoiceData.date}
+                                    onChange={e => setEditingInvoiceData({ ...editingInvoiceData, date: e.target.value })}
+                                    required
+                                />
+                            </div>
                         </div>
 
-                        <form onSubmit={handleSaveEdit} className="flex-1 flex flex-col overflow-hidden">
-                            <div className="p-6 space-y-4 overflow-y-auto">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cliente</label>
-                                        <select
-                                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white opacity-60 cursor-not-allowed"
-                                            value={editingInvoiceData.socid}
-                                            disabled // Changing customer not typically allowed easily without side effects
-                                        >
-                                            {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
-                                        <input
-                                            type="date"
-                                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                            value={editingInvoiceData.date}
-                                            onChange={e => setEditingInvoiceData({ ...editingInvoiceData, date: e.target.value })}
-                                            required
-                                        />
-                                    </div>
-                                </div>
+                        <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
+                            <div className="flex justify-between items-center mb-2">
+                                <h4 className="font-bold text-sm text-slate-700 dark:text-slate-300">Itens</h4>
+                                <Button type="button" variant="ghost" size="sm" icon={<Plus size={12} />} onClick={handleEditAddItem}>
+                                    Adicionar Item
+                                </Button>
+                            </div>
 
-                                <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
-                                    <div className="flex justify-between items-center mb-2">
-                                        <h4 className="font-bold text-sm text-slate-700 dark:text-slate-300">Itens</h4>
-                                        <button type="button" onClick={handleEditAddItem} className="text-xs flex items-center gap-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 px-2 py-1 rounded">
-                                            <Plus size={12} /> Adicionar Item
+                            <div className="space-y-2">
+                                {editingInvoiceData.items.length === 0 && <p className="text-sm text-slate-400 italic text-center py-4">Nenhum item.</p>}
+                                {editingInvoiceData.items.map((item, idx) => (
+                                    <div key={idx} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
+                                        <div className="flex-1">
+                                            <select
+                                                className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                                value={item.productId}
+                                                onChange={e => handleUpdateEditItem(idx, 'productId', e.target.value)}
+                                            >
+                                                <option value="">Item Personalizado</option>
+                                                {products.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                                            </select>
+                                            <RichTextEditor
+                                                value={item.desc}
+                                                onChange={val => handleUpdateEditItem(idx, 'desc', val)}
+                                                placeholder="Descrição"
+                                                className="w-full"
+                                            />
+                                        </div>
+                                        <div className="w-20">
+                                            <input type="number" className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Qtd"
+                                                value={item.qty} onChange={e => handleUpdateEditItem(idx, 'qty', parseInt(e.target.value))} min="1" />
+                                        </div>
+                                        <div className="w-24">
+                                            <input type="number" className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Preço"
+                                                value={item.price} onChange={e => handleUpdateEditItem(idx, 'price', parseFloat(e.target.value))} />
+                                        </div>
+                                        <div className="w-20">
+                                            <input type="number" className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Desc%"
+                                                value={item.remise_percent || ''} onChange={e => handleUpdateEditItem(idx, 'remise_percent', parseFloat(e.target.value))} />
+                                        </div>
+                                        <button type="button" onClick={() => handleRemoveEditItem(idx)} className="p-1 text-red-400 hover:text-red-600">
+                                            <Trash2 size={16} />
                                         </button>
                                     </div>
-
-                                    <div className="space-y-2">
-                                        {editingInvoiceData.items.length === 0 && <p className="text-sm text-slate-400 italic text-center py-4">Nenhum item.</p>}
-                                        {editingInvoiceData.items.map((item, idx) => (
-                                            <div key={idx} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
-                                                <div className="flex-1">
-                                                    <select
-                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                                        value={item.productId}
-                                                        onChange={e => handleUpdateEditItem(idx, 'productId', e.target.value)}
-                                                    >
-                                                        <option value="">Item Personalizado</option>
-                                                        {products.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-                                                    </select>
-                                                    <RichTextEditor
-                                                        value={item.desc}
-                                                        onChange={val => handleUpdateEditItem(idx, 'desc', val)}
-                                                        placeholder="Descrição"
-                                                        className="w-full"
-                                                    />
-                                                </div>
-                                                <div className="w-20">
-                                                    <input
-                                                        type="number"
-                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                                        placeholder="Qtd"
-                                                        value={item.qty}
-                                                        onChange={e => handleUpdateEditItem(idx, 'qty', parseInt(e.target.value))}
-                                                        min="1"
-                                                    />
-                                                </div>
-                                                <div className="w-24">
-                                                    <input
-                                                        type="number"
-                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                                        placeholder="Preço"
-                                                        value={item.price}
-                                                        onChange={e => handleUpdateEditItem(idx, 'price', parseFloat(e.target.value))}
-                                                    />
-                                                </div>
-                                                <div className="w-20">
-                                                    <input
-                                                        type="number"
-                                                        className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                                        placeholder="Desc%"
-                                                        value={item.remise_percent || ''}
-                                                        onChange={e => handleUpdateEditItem(idx, 'remise_percent', parseFloat(e.target.value))}
-                                                    />
-                                                </div>
-                                                <button type="button" onClick={() => handleRemoveEditItem(idx)} className="p-1 text-red-400 hover:text-red-600">
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
+                                ))}
                             </div>
+                        </div>
 
-                            <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-b-xl">
-                                <button type="button" onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
-                                <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
-                                    {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle size={16} />} Salvar Alterações
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+                        <div className="flex justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+                            <Button type="button" variant="secondary" onClick={() => setIsEditModalOpen(false)}>Cancelar</Button>
+                            <Button type="submit" variant="primary" loading={isSubmitting} icon={<CheckCircle size={16} />}>Salvar Alterações</Button>
+                        </div>
+                    </form>
+                )}
+            </Modal>
 
             {/* Pay Modal */}
             {selectedInvoiceForPay && (
