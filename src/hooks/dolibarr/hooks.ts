@@ -14,6 +14,7 @@
 import { createDolibarrHook } from './createDolibarrHook';
 import { DolibarrService } from '../../services/dolibarrService';
 import * as mappers from './mappers';
+import type { RawDolibarrRecord } from './mappers';
 import {
     ThirdParty,
     Invoice,
@@ -79,7 +80,7 @@ import {
 /**
  * Hook for fetching and syncing document links
  */
-export const useLinks = createDolibarrHook<any, Link>({
+export const useLinks = createDolibarrHook<RawDolibarrRecord, Link>({
     queryKey: 'links',
     storeName: 'links',
     endpoint: 'links',
@@ -91,7 +92,7 @@ export const useLinks = createDolibarrHook<any, Link>({
 /**
  * Hook for fetching and syncing payment invoice links
  */
-export const usePaymentInvoiceLinks = createDolibarrHook<any, PaymentInvoiceLink>({
+export const usePaymentInvoiceLinks = createDolibarrHook<RawDolibarrRecord, PaymentInvoiceLink>({
     queryKey: 'payment_invoice_links',
     storeName: 'paymentInvoiceLinks',
     endpoint: 'payment_invoice_links',
@@ -102,7 +103,7 @@ export const usePaymentInvoiceLinks = createDolibarrHook<any, PaymentInvoiceLink
 /**
  * Hook for fetching and syncing supplier payment invoice links
  */
-export const useSupplierPaymentInvoiceLinks = createDolibarrHook<any, SupplierPaymentInvoiceLink>({
+export const useSupplierPaymentInvoiceLinks = createDolibarrHook<RawDolibarrRecord, SupplierPaymentInvoiceLink>({
     queryKey: 'supplier_payment_invoice_links',
     storeName: 'supplierPaymentInvoiceLinks',
     endpoint: 'supplier_payment_invoice_links',
@@ -113,7 +114,7 @@ export const useSupplierPaymentInvoiceLinks = createDolibarrHook<any, SupplierPa
 /**
  * Hook for fetching and syncing expense report payments
  */
-export const useExpenseReportPayments = createDolibarrHook<any, ExpenseReportPayment>({
+export const useExpenseReportPayments = createDolibarrHook<RawDolibarrRecord, ExpenseReportPayment>({
     queryKey: 'expense_report_payments',
     storeName: 'expenseReportPayments',
     endpoint: 'expense_report_payments',
@@ -124,7 +125,7 @@ export const useExpenseReportPayments = createDolibarrHook<any, ExpenseReportPay
 /**
  * Hook for fetching and syncing expense report payment links
  */
-export const useExpenseReportPaymentLinks = createDolibarrHook<any, ExpenseReportPaymentLink>({
+export const useExpenseReportPaymentLinks = createDolibarrHook<RawDolibarrRecord, ExpenseReportPaymentLink>({
     queryKey: 'expense_report_payment_links',
     storeName: 'expenseReportPaymentLinks',
     endpoint: 'expense_report_payment_links',
@@ -135,7 +136,7 @@ export const useExpenseReportPaymentLinks = createDolibarrHook<any, ExpenseRepor
 /**
  * Hook for fetching and syncing expense report lines
  */
-export const useExpenseReportLines = createDolibarrHook<any, ExpenseReportLine>({
+export const useExpenseReportLines = createDolibarrHook<RawDolibarrRecord, ExpenseReportLine>({
     queryKey: 'expense_report_lines',
     storeName: 'expenseReportLines',
     endpoint: 'expense_report_lines',
@@ -146,7 +147,7 @@ export const useExpenseReportLines = createDolibarrHook<any, ExpenseReportLine>(
 /**
  * Hook for fetching and syncing VAT payments
  */
-export const useVATPayments = createDolibarrHook<any, VATPayment>({
+export const useVATPayments = createDolibarrHook<RawDolibarrRecord, VATPayment>({
     queryKey: 'vat_payments',
     storeName: 'vatPayments',
     endpoint: 'vat_payments',
@@ -157,7 +158,7 @@ export const useVATPayments = createDolibarrHook<any, VATPayment>({
 /**
  * Hook for fetching and syncing Salary payments
  */
-export const useSalaryPayments = createDolibarrHook<any, SalaryPayment>({
+export const useSalaryPayments = createDolibarrHook<RawDolibarrRecord, SalaryPayment>({
     queryKey: 'salary_payments',
     storeName: 'salaryPayments',
     endpoint: 'salary_payments',
@@ -168,7 +169,7 @@ export const useSalaryPayments = createDolibarrHook<any, SalaryPayment>({
 /**
  * Hook for fetching and syncing Social Contribution payments
  */
-export const useSocialContributionPayments = createDolibarrHook<any, SocialContributionPayment>({
+export const useSocialContributionPayments = createDolibarrHook<RawDolibarrRecord, SocialContributionPayment>({
     queryKey: 'social_contribution_payments',
     storeName: 'socialContributionPayments',
     endpoint: 'social_contribution_payments',
@@ -179,7 +180,7 @@ export const useSocialContributionPayments = createDolibarrHook<any, SocialContr
 /**
  * Hook for fetching and syncing Loan payments
  */
-export const useLoanPayments = createDolibarrHook<any, LoanPayment>({
+export const useLoanPayments = createDolibarrHook<RawDolibarrRecord, LoanPayment>({
     queryKey: 'loan_payments',
     storeName: 'loanPayments',
     endpoint: 'loan_payments',
@@ -190,7 +191,7 @@ export const useLoanPayments = createDolibarrHook<any, LoanPayment>({
 /**
  * Hook for fetching and syncing Various payments
  */
-export const useVariousPayments = createDolibarrHook<any, VariousPayment>({
+export const useVariousPayments = createDolibarrHook<RawDolibarrRecord, VariousPayment>({
     queryKey: 'various_payments',
     storeName: 'variousPayments',
     endpoint: 'various_payments',
@@ -203,7 +204,7 @@ export const useVariousPayments = createDolibarrHook<any, VariousPayment>({
 /**
  * Hook for fetching and syncing customers
  */
-export const useCustomers = createDolibarrHook<any, ThirdParty>({
+export const useCustomers = createDolibarrHook<RawDolibarrRecord, ThirdParty>({
     queryKey: 'customers',
     storeName: 'customers',
     endpoint: 'thirdparties',
@@ -214,7 +215,7 @@ export const useCustomers = createDolibarrHook<any, ThirdParty>({
 /**
  * Hook for fetching and syncing suppliers
  */
-export const useSuppliers = createDolibarrHook<any, ThirdParty>({
+export const useSuppliers = createDolibarrHook<RawDolibarrRecord, ThirdParty>({
     queryKey: 'suppliers',
     storeName: 'suppliers',
     endpoint: 'suppliers',
@@ -225,7 +226,7 @@ export const useSuppliers = createDolibarrHook<any, ThirdParty>({
 /**
  * Hook for fetching and syncing contacts
  */
-export const useContacts = createDolibarrHook<any, Contact>({
+export const useContacts = createDolibarrHook<RawDolibarrRecord, Contact>({
     queryKey: 'contacts',
     storeName: 'contacts',
     endpoint: 'contacts',
@@ -238,7 +239,7 @@ export const useContacts = createDolibarrHook<any, Contact>({
 /**
  * Hook for fetching and syncing invoices
  */
-export const useInvoices = createDolibarrHook<any, Invoice>({
+export const useInvoices = createDolibarrHook<RawDolibarrRecord, Invoice>({
     queryKey: 'invoices',
     storeName: 'invoices',
     endpoint: 'invoices',
@@ -249,7 +250,7 @@ export const useInvoices = createDolibarrHook<any, Invoice>({
 /**
  * Hook for fetching and syncing orders
  */
-export const useOrders = createDolibarrHook<any, Order>({
+export const useOrders = createDolibarrHook<RawDolibarrRecord, Order>({
     queryKey: 'orders',
     storeName: 'orders',
     endpoint: 'orders',
@@ -260,7 +261,7 @@ export const useOrders = createDolibarrHook<any, Order>({
 /**
  * Hook for fetching and syncing proposals
  */
-export const useProposals = createDolibarrHook<any, Proposal>({
+export const useProposals = createDolibarrHook<RawDolibarrRecord, Proposal>({
     queryKey: 'proposals',
     storeName: 'proposals',
     endpoint: 'proposals',
@@ -271,7 +272,7 @@ export const useProposals = createDolibarrHook<any, Proposal>({
 /**
  * Hook for fetching and syncing proposal lines
  */
-export const useProposalLines = createDolibarrHook<any, ProposalLine>({
+export const useProposalLines = createDolibarrHook<RawDolibarrRecord, ProposalLine>({
     queryKey: 'proposal_lines',
     storeName: 'proposalLines',
     endpoint: 'proposal_lines',
@@ -282,7 +283,7 @@ export const useProposalLines = createDolibarrHook<any, ProposalLine>({
 /**
  * Hook for fetching and syncing order lines
  */
-export const useOrderLines = createDolibarrHook<any, OrderLine>({
+export const useOrderLines = createDolibarrHook<RawDolibarrRecord, OrderLine>({
     queryKey: 'order_lines',
     storeName: 'orderLines',
     endpoint: 'order_lines',
@@ -293,7 +294,7 @@ export const useOrderLines = createDolibarrHook<any, OrderLine>({
 /**
  * Hook for fetching and syncing invoice lines
  */
-export const useInvoiceLines = createDolibarrHook<any, InvoiceLine>({
+export const useInvoiceLines = createDolibarrHook<RawDolibarrRecord, InvoiceLine>({
     queryKey: 'invoice_lines',
     storeName: 'invoiceLines',
     endpoint: 'invoice_lines',
@@ -305,7 +306,7 @@ export const useInvoiceLines = createDolibarrHook<any, InvoiceLine>({
 /**
  * Hook for fetching and syncing payments
  */
-export const usePayments = createDolibarrHook<any, Payment>({
+export const usePayments = createDolibarrHook<RawDolibarrRecord, Payment>({
     queryKey: 'payments',
     storeName: 'payments',
     endpoint: 'payments',
@@ -316,7 +317,7 @@ export const usePayments = createDolibarrHook<any, Payment>({
 /**
  * Hook for fetching and syncing contracts
  */
-export const useContracts = createDolibarrHook<any, Contract>({
+export const useContracts = createDolibarrHook<RawDolibarrRecord, Contract>({
     queryKey: 'contracts',
     storeName: 'contracts',
     endpoint: 'contracts',
@@ -327,7 +328,7 @@ export const useContracts = createDolibarrHook<any, Contract>({
 /**
  * Hook for fetching and syncing shipments
  */
-export const useShipments = createDolibarrHook<any, Shipment>({
+export const useShipments = createDolibarrHook<RawDolibarrRecord, Shipment>({
     queryKey: 'shipments',
     storeName: 'shipments',
     endpoint: 'shipments',
@@ -338,7 +339,7 @@ export const useShipments = createDolibarrHook<any, Shipment>({
 /**
  * Hook for fetching and syncing shipment lines
  */
-export const useShipmentLines = createDolibarrHook<any, ShipmentLine>({
+export const useShipmentLines = createDolibarrHook<RawDolibarrRecord, ShipmentLine>({
     queryKey: 'shipment_lines',
     storeName: 'shipmentLines',
     endpoint: 'shipment_lines',
@@ -371,7 +372,7 @@ export const useShipmentLines = createDolibarrHook<any, ShipmentLine>({
 /**
  * Hook for fetching and syncing supplier invoices
  */
-export const useSupplierInvoices = createDolibarrHook<any, SupplierInvoice>({
+export const useSupplierInvoices = createDolibarrHook<RawDolibarrRecord, SupplierInvoice>({
     queryKey: 'supplier_invoices',
     storeName: 'supplierInvoices',
     endpoint: 'supplier_invoices',
@@ -382,7 +383,7 @@ export const useSupplierInvoices = createDolibarrHook<any, SupplierInvoice>({
 /**
  * Hook for fetching and syncing supplier invoice lines
  */
-export const useSupplierInvoiceLines = createDolibarrHook<any, SupplierInvoiceLine>({
+export const useSupplierInvoiceLines = createDolibarrHook<RawDolibarrRecord, SupplierInvoiceLine>({
     queryKey: 'supplier_invoice_lines',
     storeName: 'supplierInvoiceLines',
     endpoint: 'supplier_invoice_lines',
@@ -393,7 +394,7 @@ export const useSupplierInvoiceLines = createDolibarrHook<any, SupplierInvoiceLi
 /**
  * Hook for fetching and syncing supplier orders
  */
-export const useSupplierOrders = createDolibarrHook<any, SupplierOrder>({
+export const useSupplierOrders = createDolibarrHook<RawDolibarrRecord, SupplierOrder>({
     queryKey: 'supplier_orders',
     storeName: 'supplierOrders',
     endpoint: 'supplier_orders',
@@ -404,7 +405,7 @@ export const useSupplierOrders = createDolibarrHook<any, SupplierOrder>({
 /**
  * Hook for fetching and syncing supplier order lines
  */
-export const useSupplierOrderLines = createDolibarrHook<any, SupplierOrderLine>({
+export const useSupplierOrderLines = createDolibarrHook<RawDolibarrRecord, SupplierOrderLine>({
     queryKey: 'supplier_order_lines',
     storeName: 'supplierOrderLines',
     endpoint: 'supplier_order_lines',
@@ -415,7 +416,7 @@ export const useSupplierOrderLines = createDolibarrHook<any, SupplierOrderLine>(
 /**
  * Hook for fetching and syncing supplier payments
  */
-export const useSupplierPayments = createDolibarrHook<any, SupplierPayment>({
+export const useSupplierPayments = createDolibarrHook<RawDolibarrRecord, SupplierPayment>({
     queryKey: 'supplier_payments',
     storeName: 'supplierPayments',
     endpoint: 'supplier_payments',
@@ -426,7 +427,7 @@ export const useSupplierPayments = createDolibarrHook<any, SupplierPayment>({
 /**
  * Hook for fetching and syncing supplier proposals
  */
-export const useSupplierProposals = createDolibarrHook<any, SupplierProposal>({
+export const useSupplierProposals = createDolibarrHook<RawDolibarrRecord, SupplierProposal>({
     queryKey: 'supplier_proposals',
     storeName: 'supplierProposals',
     endpoint: 'supplier_proposals',
@@ -437,7 +438,7 @@ export const useSupplierProposals = createDolibarrHook<any, SupplierProposal>({
 /**
  * Hook for fetching and syncing supplier proposal lines
  */
-export const useSupplierProposalLines = createDolibarrHook<any, SupplierProposalLine>({
+export const useSupplierProposalLines = createDolibarrHook<RawDolibarrRecord, SupplierProposalLine>({
     queryKey: 'supplier_proposal_lines',
     storeName: 'supplierProposalLines',
     endpoint: 'supplier_proposal_lines',
@@ -450,7 +451,7 @@ export const useSupplierProposalLines = createDolibarrHook<any, SupplierProposal
 /**
  * Hook for fetching and syncing projects
  */
-export const useProjects = createDolibarrHook<any, Project>({
+export const useProjects = createDolibarrHook<RawDolibarrRecord, Project>({
     queryKey: 'projects',
     storeName: 'projects',
     endpoint: 'projects',
@@ -461,7 +462,7 @@ export const useProjects = createDolibarrHook<any, Project>({
 /**
  * Hook for fetching and syncing tasks
  */
-export const useTasks = createDolibarrHook<any, Task>({
+export const useTasks = createDolibarrHook<RawDolibarrRecord, Task>({
     queryKey: 'tasks',
     storeName: 'tasks',
     endpoint: 'tasks',
@@ -472,7 +473,7 @@ export const useTasks = createDolibarrHook<any, Task>({
 /**
  * Hook for fetching and syncing task time logs
  */
-export const useTaskTimeLogs = createDolibarrHook<any, TaskTimeLog>({
+export const useTaskTimeLogs = createDolibarrHook<RawDolibarrRecord, TaskTimeLog>({
     queryKey: 'task_time_logs',
     storeName: 'taskTimeLogs',
     endpoint: 'task_time_logs',
@@ -483,7 +484,7 @@ export const useTaskTimeLogs = createDolibarrHook<any, TaskTimeLog>({
 /**
  * Hook for fetching and syncing task contacts
  */
-export const useTaskContacts = createDolibarrHook<any, TaskContact>({
+export const useTaskContacts = createDolibarrHook<RawDolibarrRecord, TaskContact>({
     queryKey: 'task_contacts',
     storeName: 'taskContacts',
     endpoint: 'task_contacts',
@@ -494,7 +495,7 @@ export const useTaskContacts = createDolibarrHook<any, TaskContact>({
 /**
  * Hook for fetching and syncing project contacts
  */
-export const useProjectContacts = createDolibarrHook<any, ProjectContact>({
+export const useProjectContacts = createDolibarrHook<RawDolibarrRecord, ProjectContact>({
     queryKey: 'project_contacts',
     storeName: 'projectContacts',
     endpoint: 'project_contacts',
@@ -505,7 +506,7 @@ export const useProjectContacts = createDolibarrHook<any, ProjectContact>({
 /**
  * Hook for fetching and syncing tickets
  */
-export const useTickets = createDolibarrHook<any, Ticket>({
+export const useTickets = createDolibarrHook<RawDolibarrRecord, Ticket>({
     queryKey: 'tickets',
     storeName: 'tickets',
     endpoint: 'tickets',
@@ -516,7 +517,7 @@ export const useTickets = createDolibarrHook<any, Ticket>({
 /**
  * Hook for fetching and syncing interventions
  */
-export const useInterventions = createDolibarrHook<any, Intervention>({
+export const useInterventions = createDolibarrHook<RawDolibarrRecord, Intervention>({
     queryKey: 'interventions',
     storeName: 'interventions',
     endpoint: 'interventions',
@@ -527,7 +528,7 @@ export const useInterventions = createDolibarrHook<any, Intervention>({
 /**
  * Hook for fetching and syncing intervention lines
  */
-export const useInterventionLines = createDolibarrHook<any, InterventionLine>({
+export const useInterventionLines = createDolibarrHook<RawDolibarrRecord, InterventionLine>({
     queryKey: 'intervention_lines',
     storeName: 'interventionLines',
     endpoint: 'intervention_lines',
@@ -538,7 +539,7 @@ export const useInterventionLines = createDolibarrHook<any, InterventionLine>({
 /**
  * Hook for fetching and syncing agenda events
  */
-export const useEvents = createDolibarrHook<any, AgendaEvent>({
+export const useEvents = createDolibarrHook<RawDolibarrRecord, AgendaEvent>({
     queryKey: 'events',
     storeName: 'events',
     endpoint: 'events',
@@ -551,7 +552,7 @@ export const useEvents = createDolibarrHook<any, AgendaEvent>({
 /**
  * Hook for fetching and syncing products
  */
-export const useProducts = createDolibarrHook<any, Product>({
+export const useProducts = createDolibarrHook<RawDolibarrRecord, Product>({
     queryKey: 'products',
     storeName: 'products',
     endpoint: 'products',
@@ -562,7 +563,7 @@ export const useProducts = createDolibarrHook<any, Product>({
 /**
  * Hook for fetching and syncing categories
  */
-export const useCategories = createDolibarrHook<any, Category>({
+export const useCategories = createDolibarrHook<RawDolibarrRecord, Category>({
     queryKey: 'categories',
     storeName: 'categories',
     endpoint: 'categories',
@@ -573,7 +574,7 @@ export const useCategories = createDolibarrHook<any, Category>({
 /**
  * Hook for fetching and syncing warehouses
  */
-export const useWarehouses = createDolibarrHook<any, Warehouse>({
+export const useWarehouses = createDolibarrHook<RawDolibarrRecord, Warehouse>({
     queryKey: 'warehouses',
     storeName: 'warehouses',
     endpoint: 'warehouses',
@@ -584,7 +585,7 @@ export const useWarehouses = createDolibarrHook<any, Warehouse>({
 /**
  * Hook for fetching and syncing stock movements
  */
-export const useStockMovements = createDolibarrHook<any, StockMovement>({
+export const useStockMovements = createDolibarrHook<RawDolibarrRecord, StockMovement>({
     queryKey: 'stock_movements',
     storeName: 'stockMovements',
     endpoint: 'stock_movements',
@@ -597,7 +598,7 @@ export const useStockMovements = createDolibarrHook<any, StockMovement>({
 /**
  * Hook for fetching and syncing bank accounts
  */
-export const useBankAccounts = createDolibarrHook<any, BankAccount>({
+export const useBankAccounts = createDolibarrHook<RawDolibarrRecord, BankAccount>({
     queryKey: 'bank_accounts',
     storeName: 'bankAccounts',
     endpoint: 'bank_accounts',
@@ -608,7 +609,7 @@ export const useBankAccounts = createDolibarrHook<any, BankAccount>({
 /**
  * Hook for fetching and syncing bank lines
  */
-export const useBankLines = createDolibarrHook<any, BankLine>({
+export const useBankLines = createDolibarrHook<RawDolibarrRecord, BankLine>({
     queryKey: 'bank_lines',
     storeName: 'bankLines',
     endpoint: 'bank_lines',
@@ -621,7 +622,7 @@ export const useBankLines = createDolibarrHook<any, BankLine>({
 /**
  * Hook for fetching and syncing users
  */
-export const useUsers = createDolibarrHook<any, DolibarrUser>({
+export const useUsers = createDolibarrHook<RawDolibarrRecord, DolibarrUser>({
     queryKey: 'users',
     storeName: 'users',
     endpoint: 'users',
@@ -632,7 +633,7 @@ export const useUsers = createDolibarrHook<any, DolibarrUser>({
 /**
  * Hook for fetching and syncing expense reports
  */
-export const useExpenseReports = createDolibarrHook<any, ExpenseReport>({
+export const useExpenseReports = createDolibarrHook<RawDolibarrRecord, ExpenseReport>({
     queryKey: 'expense_reports',
     storeName: 'expenseReports',
     endpoint: 'expense_reports',
@@ -643,7 +644,7 @@ export const useExpenseReports = createDolibarrHook<any, ExpenseReport>({
 /**
  * Hook for fetching and syncing leave requests
  */
-export const useLeaveRequests = createDolibarrHook<any, LeaveRequest>({
+export const useLeaveRequests = createDolibarrHook<RawDolibarrRecord, LeaveRequest>({
     queryKey: 'leave_requests',
     storeName: 'leaveRequests',
     endpoint: 'leave_requests',
@@ -654,7 +655,7 @@ export const useLeaveRequests = createDolibarrHook<any, LeaveRequest>({
 /**
  * Hook for fetching and syncing candidates
  */
-export const useCandidates = createDolibarrHook<any, Candidate>({
+export const useCandidates = createDolibarrHook<RawDolibarrRecord, Candidate>({
     queryKey: 'candidates',
     storeName: 'candidates',
     endpoint: 'candidates',
@@ -665,7 +666,7 @@ export const useCandidates = createDolibarrHook<any, Candidate>({
 /**
  * Hook for fetching and syncing job positions
  */
-export const useJobPositions = createDolibarrHook<any, RecruitmentJobPosition>({
+export const useJobPositions = createDolibarrHook<RawDolibarrRecord, RecruitmentJobPosition>({
     queryKey: 'job_positions',
     storeName: 'jobPositions',
     endpoint: 'job_positions',
@@ -678,7 +679,7 @@ export const useJobPositions = createDolibarrHook<any, RecruitmentJobPosition>({
 /**
  * Hook for fetching and syncing manufacturing orders
  */
-export const useManufacturingOrders = createDolibarrHook<any, ManufacturingOrder>({
+export const useManufacturingOrders = createDolibarrHook<RawDolibarrRecord, ManufacturingOrder>({
     queryKey: 'manufacturing_orders',
     storeName: 'manufacturingOrders',
     endpoint: 'manufacturing_orders',
@@ -689,7 +690,7 @@ export const useManufacturingOrders = createDolibarrHook<any, ManufacturingOrder
 /**
  * Hook for fetching and syncing BOMs
  */
-export const useBOMs = createDolibarrHook<any, BOM>({
+export const useBOMs = createDolibarrHook<RawDolibarrRecord, BOM>({
     queryKey: 'boms',
     storeName: 'boms',
     endpoint: 'boms',
@@ -700,7 +701,7 @@ export const useBOMs = createDolibarrHook<any, BOM>({
 /**
  * Hook for fetching and syncing BOM lines
  */
-export const useBOMLines = createDolibarrHook<any, BOMLine>({
+export const useBOMLines = createDolibarrHook<RawDolibarrRecord, BOMLine>({
     queryKey: 'bom_lines',
     storeName: 'bomLines',
     endpoint: 'bom_lines',
@@ -713,7 +714,7 @@ export const useBOMLines = createDolibarrHook<any, BOMLine>({
 /**
  * Hook for fetching and syncing system logs (audit trail)
  */
-export const useSystemLogs = createDolibarrHook<any, SystemLog>({
+export const useSystemLogs = createDolibarrHook<RawDolibarrRecord, SystemLog>({
     queryKey: 'systemLogs',
     storeName: 'systemLogs',
     endpoint: 'system_logs',
@@ -727,7 +728,7 @@ export const useSystemLogs = createDolibarrHook<any, SystemLog>({
 /**
  * Hook for fetching and syncing user groups
  */
-export const useGroups = createDolibarrHook<any, UserGroup>({
+export const useGroups = createDolibarrHook<RawDolibarrRecord, UserGroup>({
     queryKey: 'groups',
     storeName: 'groups', // Check storeName collision? Should be fine if configured in context/DB
     endpoint: 'groups',
@@ -738,7 +739,7 @@ export const useGroups = createDolibarrHook<any, UserGroup>({
 /**
  * Hook for fetching and syncing group users
  */
-export const useGroupUsers = createDolibarrHook<any, GroupUser>({
+export const useGroupUsers = createDolibarrHook<RawDolibarrRecord, GroupUser>({
     queryKey: 'group_users',
     storeName: 'groupUsers',
     endpoint: 'group_users',
@@ -746,7 +747,7 @@ export const useGroupUsers = createDolibarrHook<any, GroupUser>({
     mapper: mappers.mapGroupUser
 });
 
-export const usePermissions = createDolibarrHook<any, PermissionDefinition>({
+export const usePermissions = createDolibarrHook<RawDolibarrRecord, PermissionDefinition>({
     queryKey: 'permissions',
     storeName: 'permissions',
     endpoint: 'permissions',
@@ -754,7 +755,7 @@ export const usePermissions = createDolibarrHook<any, PermissionDefinition>({
     mapper: mappers.mapPermission
 });
 
-export const useGroupRights = createDolibarrHook<any, { id: string, fk_usergroup: string, fk_id: string, date_modification?: number }>({
+export const useGroupRights = createDolibarrHook<RawDolibarrRecord, { id: string, fk_usergroup: string, fk_id: string, date_modification?: number }>({
     queryKey: 'group_rights',
     storeName: 'groupRights',
     endpoint: 'group_rights',
@@ -762,7 +763,7 @@ export const useGroupRights = createDolibarrHook<any, { id: string, fk_usergroup
     mapper: mappers.mapGroupRight
 });
 
-export const useUserRights = createDolibarrHook<any, { id: string, fk_user: string, fk_id: string, date_modification?: number }>({
+export const useUserRights = createDolibarrHook<RawDolibarrRecord, { id: string, fk_user: string, fk_id: string, date_modification?: number }>({
     queryKey: 'user_rights',
     storeName: 'userRights',
     endpoint: 'user_rights',
