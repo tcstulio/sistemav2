@@ -84,13 +84,13 @@ export class MessageService {
         let chat;
         try {
             chat = await client.getChatById(chatIdFormatted);
-        } catch (e) { }
+        } catch (e) { /* fallback to getContactById below */ }
 
         if (!chat) {
             try {
                 const contact = await client.getContactById(chatIdFormatted);
                 if (contact) chat = await contact.getChat();
-            } catch (e) { }
+            } catch (e) { /* contact lookup failed, will throw below */ }
         }
 
         if (!chat) return [];
@@ -117,7 +117,7 @@ export class MessageService {
         try {
             const contact = await msg.getContact();
             if (contact) return contact.name || contact.pushname || contact.shortName;
-        } catch (e) { }
+        } catch (e) { /* contact info unavailable, return empty */ }
         return '';
     }
 
