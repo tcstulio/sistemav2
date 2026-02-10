@@ -71,39 +71,52 @@ import {
     PermissionDefinition,
 } from '../../types';
 
+// ============ Types ============
+
+/**
+ * Raw record from Dolibarr API/IndexedDB.
+ * This is the single boundary type for untyped API data.
+ * All mappers convert from this type to strongly-typed entities.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type RawDolibarrRecord = Record<string, any>;
+
 // ============ Helper Functions ============
 
 /** Safely parse a date value to timestamp */
-export const toTimestamp = (value: any): number => {
+export const toTimestamp = (value: unknown): number => {
     if (!value) return 0;
 
     // Handle numeric strings (e.g. "1700000000" from PHP/MySQL drivers)
     if (typeof value === 'string' && !isNaN(Number(value)) && /^\d+$/.test(value)) {
-        value = Number(value);
+        const num = Number(value);
+        return num < 100000000000 ? num * 1000 : num;
     }
 
     if (typeof value === 'number') {
         // If value is small (< 100 billion), assume seconds and convert to ms
-        // 10,000,000,000 is year 2286 in seconds. 
-        // 1,000,000,000,000 is year 2001 in milliseconds.
-        // So checking < 100,000,000,000 is safe intersection.
         if (value < 100000000000) {
             return value * 1000;
         }
         return value;
     }
-    const date = new Date(value);
-    return isNaN(date.getTime()) ? 0 : date.getTime();
+
+    if (typeof value === 'string') {
+        const date = new Date(value);
+        return isNaN(date.getTime()) ? 0 : date.getTime();
+    }
+
+    return 0;
 };
 
 /** Safely convert to string */
-export const toString = (value: any): string => {
+export const toString = (value: unknown): string => {
     if (value === null || value === undefined) return '';
     return String(value);
 };
 
 /** Safely convert to number */
-export const toNumber = (value: any): number => {
+export const toNumber = (value: unknown): number => {
     const num = Number(value);
     return isNaN(num) ? 0 : num;
 };
@@ -113,7 +126,7 @@ export const toNumber = (value: any): number => {
 /**
  * Map raw supplier data (alias for mapThirdParty with supplier-specific handling)
  */
-export const mapSupplier = (raw: any): ThirdParty => ({
+export const mapSupplier = (raw: RawDolibarrRecord): ThirdParty => ({
     id: toString(raw.id),
     name: raw.name || '',
     name_alias: raw.name_alias,
@@ -133,7 +146,7 @@ export const mapSupplier = (raw: any): ThirdParty => ({
 /**
  * Map raw third party data to ThirdParty entity
  */
-export const mapThirdParty = (raw: any): ThirdParty => ({
+export const mapThirdParty = (raw: RawDolibarrRecord): ThirdParty => ({
     id: toString(raw.id),
     name: raw.name || '',
     name_alias: raw.name_alias,
@@ -153,7 +166,7 @@ export const mapThirdParty = (raw: any): ThirdParty => ({
 /**
  * Map raw invoice data to Invoice entity
  */
-export const mapInvoice = (raw: any): Invoice => ({
+export const mapInvoice = (raw: RawDolibarrRecord): Invoice => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     total_ttc: toNumber(raw.total_ttc),
@@ -169,7 +182,7 @@ export const mapInvoice = (raw: any): Invoice => ({
 /**
  * Map raw supplier invoice data to SupplierInvoice entity
  */
-export const mapSupplierInvoice = (raw: any): SupplierInvoice => ({
+export const mapSupplierInvoice = (raw: RawDolibarrRecord): SupplierInvoice => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     socid: raw.fk_soc ? toString(raw.fk_soc) : '',
@@ -187,7 +200,7 @@ export const mapSupplierInvoice = (raw: any): SupplierInvoice => ({
 /**
  * Map raw order data to Order entity
  */
-export const mapOrder = (raw: any): Order => ({
+export const mapOrder = (raw: RawDolibarrRecord): Order => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     total_ttc: toNumber(raw.total_ttc),
@@ -203,7 +216,7 @@ export const mapOrder = (raw: any): Order => ({
 /**
  * Map raw supplier order data to SupplierOrder entity
  */
-export const mapSupplierOrder = (raw: any): SupplierOrder => ({
+export const mapSupplierOrder = (raw: RawDolibarrRecord): SupplierOrder => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     socid: raw.fk_soc ? toString(raw.fk_soc) : '',
@@ -221,7 +234,7 @@ export const mapSupplierOrder = (raw: any): SupplierOrder => ({
 /**
  * Map raw project data to Project entity
  */
-export const mapProject = (raw: any): Project => ({
+export const mapProject = (raw: RawDolibarrRecord): Project => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     title: raw.title || '',
@@ -241,7 +254,7 @@ export const mapProject = (raw: any): Project => ({
 /**
  * Map raw task data to Task entity
  */
-export const mapTask = (raw: any): Task => ({
+export const mapTask = (raw: RawDolibarrRecord): Task => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     label: raw.label || '',
@@ -265,7 +278,7 @@ export const mapTask = (raw: any): Task => ({
 /**
  * Map raw proposal data to Proposal entity
  */
-export const mapProposal = (raw: any): Proposal => ({
+export const mapProposal = (raw: RawDolibarrRecord): Proposal => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     socid: raw.fk_soc ? toString(raw.fk_soc) : '',
@@ -283,7 +296,7 @@ export const mapProposal = (raw: any): Proposal => ({
 /**
  * Map raw supplier proposal data
  */
-export const mapSupplierProposal = (raw: any): SupplierProposal => ({
+export const mapSupplierProposal = (raw: RawDolibarrRecord): SupplierProposal => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     socid: raw.socid ? toString(raw.socid) : '',
@@ -303,7 +316,7 @@ export const mapSupplierProposal = (raw: any): SupplierProposal => ({
 /**
  * Map raw ticket data to Ticket entity
  */
-export const mapTicket = (raw: any): Ticket => ({
+export const mapTicket = (raw: RawDolibarrRecord): Ticket => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     track_id: raw.track_id || '',
@@ -367,7 +380,7 @@ export const mapSupplierPayment = (data: any): SupplierPayment => ({
 /**
  * Map raw contract data to Contract entity
  */
-export const mapContract = (raw: any): Contract => ({
+export const mapContract = (raw: RawDolibarrRecord): Contract => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     socid: raw.fk_soc ? toString(raw.fk_soc) : '',
@@ -382,7 +395,7 @@ export const mapContract = (raw: any): Contract => ({
 /**
  * Map raw intervention data to Intervention entity
  */
-export const mapIntervention = (raw: any): Intervention => {
+export const mapIntervention = (raw: RawDolibarrRecord): Intervention => {
     return {
         id: toString(raw.id),
         ref: raw.ref || '',
@@ -402,7 +415,7 @@ export const mapIntervention = (raw: any): Intervention => {
 /**
  * Map raw bank account data to BankAccount entity
  */
-export const mapBankAccount = (raw: any): BankAccount => ({
+export const mapBankAccount = (raw: RawDolibarrRecord): BankAccount => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     label: raw.label || '',
@@ -417,7 +430,7 @@ export const mapBankAccount = (raw: any): BankAccount => ({
 /**
  * Map raw bank line data to BankLine entity
  */
-export const mapBankLine = (raw: any): BankLine => ({
+export const mapBankLine = (raw: RawDolibarrRecord): BankLine => ({
     id: toString(raw.id),
     // Backend returns 'date_operation', legacy might use 'dateo'
     date_operation: toTimestamp(raw.date_operation || raw.dateo),
@@ -434,7 +447,7 @@ export const mapBankLine = (raw: any): BankLine => ({
 /**
  * Map raw product data to Product entity
  */
-export const mapProduct = (raw: any): Product => ({
+export const mapProduct = (raw: RawDolibarrRecord): Product => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     label: raw.label || '',
@@ -462,7 +475,7 @@ export const mapProduct = (raw: any): Product => ({
 /**
  * Map raw category data to Category entity
  */
-export const mapCategory = (raw: any): Category => ({
+export const mapCategory = (raw: RawDolibarrRecord): Category => ({
     id: toString(raw.id),
     label: raw.label || '',
     type: raw.type || '',
@@ -471,7 +484,7 @@ export const mapCategory = (raw: any): Category => ({
     parent_id: raw.parent_id ? toString(raw.parent_id) : undefined,
 });
 
-export const mapUserRight = (raw: any): { id: string, fk_user: string, fk_id: string, date_modification?: number } => {
+export const mapUserRight = (raw: RawDolibarrRecord): { id: string, fk_user: string, fk_id: string, date_modification?: number } => {
     return {
         id: String(raw.id || raw.rowid || ''),
         fk_user: String(raw.fk_user || raw.user_id || ''),
@@ -483,7 +496,7 @@ export const mapUserRight = (raw: any): { id: string, fk_user: string, fk_id: st
 /**
  * Map raw agenda event data to AgendaEvent entity
  */
-export const mapAgendaEvent = (raw: any): AgendaEvent => {
+export const mapAgendaEvent = (raw: RawDolibarrRecord): AgendaEvent => {
     const pct = toNumber(raw.percentage);
     return {
         id: toString(raw.id),
@@ -515,7 +528,7 @@ export const mapAgendaEvent = (raw: any): AgendaEvent => {
 /**
  * Map raw shipment data to Shipment entity
  */
-export const mapShipment = (raw: any): Shipment => ({
+export const mapShipment = (raw: RawDolibarrRecord): Shipment => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     socid: raw.fk_soc ? toString(raw.fk_soc) : '',
@@ -534,7 +547,7 @@ export const mapShipment = (raw: any): Shipment => ({
 /**
  * Map raw contact data to Contact entity
  */
-export const mapContact = (raw: any): Contact => ({
+export const mapContact = (raw: RawDolibarrRecord): Contact => ({
     id: toString(raw.id),
     firstname: raw.firstname || '',
     lastname: raw.lastname || '',
@@ -549,7 +562,7 @@ export const mapContact = (raw: any): Contact => ({
 /**
  * Map raw warehouse data to Warehouse entity
  */
-export const mapWarehouse = (raw: any): Warehouse => ({
+export const mapWarehouse = (raw: RawDolibarrRecord): Warehouse => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     label: raw.label || raw.lieu || '',
@@ -562,7 +575,7 @@ export const mapWarehouse = (raw: any): Warehouse => ({
 /**
  * Map raw stock movement data to StockMovement entity
  */
-export const mapStockMovement = (raw: any): StockMovement => ({
+export const mapStockMovement = (raw: RawDolibarrRecord): StockMovement => ({
     id: toString(raw.id),
     product_id: toString(raw.fk_product),
     warehouse_id: toString(raw.fk_entrepot),
@@ -577,7 +590,7 @@ export const mapStockMovement = (raw: any): StockMovement => ({
 /**
  * Map raw user data to DolibarrUser entity
  */
-export const mapUser = (raw: any): DolibarrUser => ({
+export const mapUser = (raw: RawDolibarrRecord): DolibarrUser => ({
     id: toString(raw.id),
     login: raw.login || '',
     firstname: raw.firstname,
@@ -596,7 +609,7 @@ export const mapUser = (raw: any): DolibarrUser => ({
 /**
  * Map raw expense report data to ExpenseReport entity
  */
-export const mapExpenseReport = (raw: any): ExpenseReport => ({
+export const mapExpenseReport = (raw: RawDolibarrRecord): ExpenseReport => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     fk_user_author: toString(raw.fk_user_author),
@@ -613,7 +626,7 @@ export const mapExpenseReport = (raw: any): ExpenseReport => ({
 /**
  * Map raw leave request data to LeaveRequest entity
  */
-export const mapLeaveRequest = (raw: any): LeaveRequest => ({
+export const mapLeaveRequest = (raw: RawDolibarrRecord): LeaveRequest => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     fk_user: toString(raw.fk_user),
@@ -629,7 +642,7 @@ export const mapLeaveRequest = (raw: any): LeaveRequest => ({
 /**
  * Map raw candidate data to Candidate entity
  */
-export const mapCandidate = (raw: any): Candidate => ({
+export const mapCandidate = (raw: RawDolibarrRecord): Candidate => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     email: raw.email || '',
@@ -646,7 +659,7 @@ export const mapCandidate = (raw: any): Candidate => ({
 /**
  * Map raw job position data to RecruitmentJobPosition entity
  */
-export const mapJobPosition = (raw: any): RecruitmentJobPosition => ({
+export const mapJobPosition = (raw: RawDolibarrRecord): RecruitmentJobPosition => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     label: raw.label || '',
@@ -660,7 +673,7 @@ export const mapJobPosition = (raw: any): RecruitmentJobPosition => ({
 /**
  * Map raw manufacturing order data to ManufacturingOrder entity
  */
-export const mapManufacturingOrder = (raw: any): ManufacturingOrder => ({
+export const mapManufacturingOrder = (raw: RawDolibarrRecord): ManufacturingOrder => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     label: raw.label || '',
@@ -676,7 +689,7 @@ export const mapManufacturingOrder = (raw: any): ManufacturingOrder => ({
 /**
  * Map raw BOM data to BOM entity
  */
-export const mapBOM = (raw: any): BOM => ({
+export const mapBOM = (raw: RawDolibarrRecord): BOM => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     label: raw.label || '',
@@ -688,7 +701,7 @@ export const mapBOM = (raw: any): BOM => ({
 /**
  * Map raw BOM line data
  */
-export const mapBOMLine = (raw: any): BOMLine => ({
+export const mapBOMLine = (raw: RawDolibarrRecord): BOMLine => ({
     id: toString(raw.id),
     parent_id: toString(raw.parent_id), // fk_bom retornado como parent_id
     fk_product: toString(raw.product_id), // Sync returns product_id, type expects fk_product
@@ -700,7 +713,7 @@ export const mapBOMLine = (raw: any): BOMLine => ({
 /**
  * Map raw system log data to SystemLog entity
  */
-export const mapSystemLog = (raw: any): SystemLog => ({
+export const mapSystemLog = (raw: RawDolibarrRecord): SystemLog => ({
     id: toString(raw.id),
     ref: raw.ref || undefined,
     label: raw.label || '',
@@ -719,7 +732,7 @@ export const mapSystemLog = (raw: any): SystemLog => ({
 /**
  * Map raw link data to Link entity
  */
-export const mapLink = (raw: any): Link => ({
+export const mapLink = (raw: RawDolibarrRecord): Link => ({
     id: toString(raw.id),
     sourcetype: raw.sourcetype || '',
     sourceid: toString(raw.sourceid),
@@ -731,7 +744,7 @@ export const mapLink = (raw: any): Link => ({
 /**
  * Map raw shipment line data
  */
-export const mapShipmentLine = (raw: any): ShipmentLine => ({
+export const mapShipmentLine = (raw: RawDolibarrRecord): ShipmentLine => ({
     id: toString(raw.id),
     parent_id: toString(raw.parent_id),
     product_id: toString(raw.product_id),
@@ -744,7 +757,7 @@ export const mapShipmentLine = (raw: any): ShipmentLine => ({
 /**
  * Map raw supplier invoice line data
  */
-export const mapSupplierInvoiceLine = (raw: any): SupplierInvoiceLine => ({
+export const mapSupplierInvoiceLine = (raw: RawDolibarrRecord): SupplierInvoiceLine => ({
     id: toString(raw.id),
     parent_id: toString(raw.parent_id),
     label: raw.label || '',
@@ -763,7 +776,7 @@ export const mapSupplierInvoiceLine = (raw: any): SupplierInvoiceLine => ({
 /**
  * Map raw supplier order line data
  */
-export const mapSupplierOrderLine = (raw: any): SupplierOrderLine => ({
+export const mapSupplierOrderLine = (raw: RawDolibarrRecord): SupplierOrderLine => ({
     id: toString(raw.id),
     parent_id: toString(raw.parent_id),
     label: raw.label || '',
@@ -780,7 +793,7 @@ export const mapSupplierOrderLine = (raw: any): SupplierOrderLine => ({
 /**
  * Map raw intervention line data
  */
-export const mapInterventionLine = (raw: any): InterventionLine => {
+export const mapInterventionLine = (raw: RawDolibarrRecord): InterventionLine => {
     return {
         id: toString(raw.id),
         parent_id: toString(raw.parent_id),
@@ -795,7 +808,7 @@ export const mapInterventionLine = (raw: any): InterventionLine => {
 /**
  * Map raw proposal line data
  */
-export const mapProposalLine = (raw: any): ProposalLine => ({
+export const mapProposalLine = (raw: RawDolibarrRecord): ProposalLine => ({
     id: toString(raw.id),
     parent_id: toString(raw.parent_id),
     label: raw.label || '',
@@ -815,7 +828,7 @@ export const mapProposalLine = (raw: any): ProposalLine => ({
 /**
  * Map raw User Group data
  */
-export const mapUserGroup = (raw: any): UserGroup => ({
+export const mapUserGroup = (raw: RawDolibarrRecord): UserGroup => ({
     id: toString(raw.id),
     name: raw.name || '',
     note: raw.note,
@@ -826,7 +839,7 @@ export const mapUserGroup = (raw: any): UserGroup => ({
 /**
  * Map raw Group User Link data
  */
-export const mapGroupUser = (raw: any): GroupUser => {
+export const mapGroupUser = (raw: RawDolibarrRecord): GroupUser => {
     return {
         id: String(raw.id || raw.rowid || ''),
         fk_user: String(raw.fk_user || raw.user_id || ''),
@@ -836,7 +849,7 @@ export const mapGroupUser = (raw: any): GroupUser => {
     };
 };
 
-export const mapPermission = (raw: any): PermissionDefinition => {
+export const mapPermission = (raw: RawDolibarrRecord): PermissionDefinition => {
     return {
         id: String(raw.id || raw.rowid || ''),
         libelle: raw.libelle || '',
@@ -851,7 +864,7 @@ export const mapPermission = (raw: any): PermissionDefinition => {
     };
 };
 
-export const mapGroupRight = (raw: any): { id: string, fk_usergroup: string, fk_id: string, date_modification?: number } => {
+export const mapGroupRight = (raw: RawDolibarrRecord): { id: string, fk_usergroup: string, fk_id: string, date_modification?: number } => {
     return {
         id: String(raw.id || raw.rowid || ''),
         fk_usergroup: String(raw.fk_usergroup || raw.group_id || ''),
@@ -863,7 +876,7 @@ export const mapGroupRight = (raw: any): { id: string, fk_usergroup: string, fk_
 /**
  * Map raw order line data
  */
-export const mapOrderLine = (raw: any): OrderLine => ({
+export const mapOrderLine = (raw: RawDolibarrRecord): OrderLine => ({
     id: toString(raw.id),
     parent_id: toString(raw.parent_id),
     label: raw.label || '',
@@ -883,7 +896,7 @@ export const mapOrderLine = (raw: any): OrderLine => ({
 /**
  * Map raw invoice line data
  */
-export const mapInvoiceLine = (raw: any): InvoiceLine => ({
+export const mapInvoiceLine = (raw: RawDolibarrRecord): InvoiceLine => ({
     id: toString(raw.id),
     parent_id: toString(raw.parent_id),
     label: raw.label || '',
@@ -904,7 +917,7 @@ export const mapInvoiceLine = (raw: any): InvoiceLine => ({
 /**
  * Map raw task time log data
  */
-export const mapTaskTimeLog = (raw: any): TaskTimeLog => ({
+export const mapTaskTimeLog = (raw: RawDolibarrRecord): TaskTimeLog => ({
     id: toString(raw.id),
     task_id: toString(raw.task_id),
     date: toTimestamp(raw.date),
@@ -918,7 +931,7 @@ export const mapTaskTimeLog = (raw: any): TaskTimeLog => ({
 /**
  * Map raw task contact data
  */
-export const mapTaskContact = (raw: any): TaskContact => ({
+export const mapTaskContact = (raw: RawDolibarrRecord): TaskContact => ({
     id: toString(raw.id),
     task_id: toString(raw.task_id),
     contact_id: raw.contact_id ? toString(raw.contact_id) : undefined,
@@ -930,7 +943,7 @@ export const mapTaskContact = (raw: any): TaskContact => ({
 /**
  * Map raw project contact data
  */
-export const mapProjectContact = (raw: any): ProjectContact => ({
+export const mapProjectContact = (raw: RawDolibarrRecord): ProjectContact => ({
     id: toString(raw.id),
     project_id: toString(raw.project_id),
     contact_id: raw.contact_id ? toString(raw.contact_id) : undefined,
@@ -941,7 +954,7 @@ export const mapProjectContact = (raw: any): ProjectContact => ({
 /**
  * Map raw payment invoice link data
  */
-export const mapPaymentInvoiceLink = (raw: any): PaymentInvoiceLink => ({
+export const mapPaymentInvoiceLink = (raw: RawDolibarrRecord): PaymentInvoiceLink => ({
     id: toString(raw.id),
     fk_paiement: toString(raw.fk_paiement),
     fk_facture: toString(raw.fk_facture),
@@ -952,7 +965,7 @@ export const mapPaymentInvoiceLink = (raw: any): PaymentInvoiceLink => ({
 /**
  * Map raw supplier payment invoice link data
  */
-export const mapSupplierPaymentInvoiceLink = (raw: any): SupplierPaymentInvoiceLink => ({
+export const mapSupplierPaymentInvoiceLink = (raw: RawDolibarrRecord): SupplierPaymentInvoiceLink => ({
     id: toString(raw.id),
     fk_paiementfourn: toString(raw.fk_paiementfourn),
     fk_facturefourn: toString(raw.fk_facturefourn),
@@ -965,7 +978,7 @@ export const mapSupplierPaymentInvoiceLink = (raw: any): SupplierPaymentInvoiceL
 /**
  * Map raw expense report line data
  */
-export const mapExpenseReportLine = (raw: any): ExpenseReportLine => ({
+export const mapExpenseReportLine = (raw: RawDolibarrRecord): ExpenseReportLine => ({
     id: toString(raw.id),
     parent_id: toString(raw.parent_id),
     type_id: toString(raw.type_id),
@@ -985,7 +998,7 @@ export const mapExpenseReportLine = (raw: any): ExpenseReportLine => ({
 /**
  * Map raw expense type data
  */
-export const mapExpenseType = (raw: any): ExpenseType => ({
+export const mapExpenseType = (raw: RawDolibarrRecord): ExpenseType => ({
     id: toString(raw.id),
     code: raw.code || '',
     label: raw.label || '',
@@ -996,7 +1009,7 @@ export const mapExpenseType = (raw: any): ExpenseType => ({
 /**
  * Map raw expense report payment data
  */
-export const mapExpenseReportPayment = (raw: any): ExpenseReportPayment => ({
+export const mapExpenseReportPayment = (raw: RawDolibarrRecord): ExpenseReportPayment => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     fk_expensereport: toString(raw.fk_expensereport),
@@ -1012,7 +1025,7 @@ export const mapExpenseReportPayment = (raw: any): ExpenseReportPayment => ({
 /**
  * Map raw expense report payment link data
  */
-export const mapExpenseReportPaymentLink = (raw: any): ExpenseReportPaymentLink => ({
+export const mapExpenseReportPaymentLink = (raw: RawDolibarrRecord): ExpenseReportPaymentLink => ({
     id: toString(raw.id),
     fk_payment: toString(raw.fk_payment),
     fk_expensereport: toString(raw.fk_expensereport),
@@ -1023,7 +1036,7 @@ export const mapExpenseReportPaymentLink = (raw: any): ExpenseReportPaymentLink 
 /**
  * Map raw VAT payment data
  */
-export const mapVATPayment = (raw: any): VATPayment => ({
+export const mapVATPayment = (raw: RawDolibarrRecord): VATPayment => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     fk_tva: toString(raw.fk_tva),
@@ -1036,7 +1049,7 @@ export const mapVATPayment = (raw: any): VATPayment => ({
 /**
  * Map raw Salary payment data
  */
-export const mapSalaryPayment = (raw: any): SalaryPayment => ({
+export const mapSalaryPayment = (raw: RawDolibarrRecord): SalaryPayment => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     num_payment: raw.num_payment || undefined,
@@ -1051,7 +1064,7 @@ export const mapSalaryPayment = (raw: any): SalaryPayment => ({
 /**
  * Map raw Social Contribution payment data
  */
-export const mapSocialContributionPayment = (raw: any): SocialContributionPayment => ({
+export const mapSocialContributionPayment = (raw: RawDolibarrRecord): SocialContributionPayment => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     fk_charge: toString(raw.fk_charge),
@@ -1064,7 +1077,7 @@ export const mapSocialContributionPayment = (raw: any): SocialContributionPaymen
 /**
  * Map raw Loan payment data
  */
-export const mapLoanPayment = (raw: any): LoanPayment => ({
+export const mapLoanPayment = (raw: RawDolibarrRecord): LoanPayment => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     fk_loan: toString(raw.fk_loan),
@@ -1079,7 +1092,7 @@ export const mapLoanPayment = (raw: any): LoanPayment => ({
 /**
  * Map raw Various payment data
  */
-export const mapVariousPayment = (raw: any): VariousPayment => ({
+export const mapVariousPayment = (raw: RawDolibarrRecord): VariousPayment => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     num_payment: raw.num_payment || undefined,
@@ -1093,7 +1106,7 @@ export const mapVariousPayment = (raw: any): VariousPayment => ({
 /**
  * Map raw supplier proposal line data
  */
-export const mapSupplierProposalLine = (raw: any): SupplierProposalLine => ({
+export const mapSupplierProposalLine = (raw: RawDolibarrRecord): SupplierProposalLine => ({
     id: toString(raw.id),
     parent_id: toString(raw.parent_id),
     description: raw.description || '',
