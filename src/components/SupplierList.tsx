@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { ThirdParty, DolibarrConfig, SupplierInvoice, Product, SupplierOrder, AppView, Warehouse } from '../types';
-import { Truck, Search, Plus, MapPin, Mail, Phone, ExternalLink, Package, ShoppingCart, Receipt, X, ArrowDownCircle, CheckCircle2, Loader2, ArrowLeft, Lock, CheckSquare, Clock, Pencil, Trash2, PlusCircle } from 'lucide-react';
+import { Truck, Search, MapPin, Mail, Phone, Package, ShoppingCart, Receipt, X, ArrowDownCircle, CheckCircle2, Loader2, CheckSquare, Clock, Pencil, Trash2, PlusCircle } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useSuppliers, useProducts, useSupplierInvoices, useSupplierOrders, useWarehouses, useUsers } from '../hooks/dolibarr';
@@ -11,7 +11,17 @@ import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { toast } from 'sonner';
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Input, Modal, Tabs, Tab, EmptyState } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Input, Modal, Tabs, Tab, EmptyState, ConfirmModal, StatusBadge } from './ui';
+import type { StatusConfig } from './ui';
+import { FixedSizeList as ListWindow } from 'react-window';
+import AutoSizer from 'react-virtualized-auto-sizer';
+
+const supplierOrderStatuses: Record<string, StatusConfig> = {
+    '0': { label: 'Rascunho', variant: 'slate', icon: <Clock size={12} /> },
+    '1': { label: 'Validado', variant: 'blue', icon: <CheckCircle2 size={12} /> },
+    '2': { label: 'Aprovado', variant: 'orange', icon: <CheckSquare size={12} /> },
+    '3': { label: 'Recebido', variant: 'emerald', icon: <ArrowDownCircle size={12} /> },
+};
 
 interface SupplierListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -245,17 +255,6 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
         }
     };
 
-    const getOrderStatusBadge = (status: string) => {
-        // 0=Draft, 1=Validated, 2=Approved, 3=Received/Closed (Approximate mapping)
-        switch (status) {
-            case '0': return <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-600 font-medium"><Clock size={12} /> Rascunho</span>;
-            case '1': return <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-700 font-medium"><CheckCircle2 size={12} /> Validado</span>;
-            case '2': return <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-orange-100 text-orange-700 font-medium"><CheckSquare size={12} /> Aprovado</span>;
-            case '3': return <span className="flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-emerald-100 text-emerald-700 font-medium"><ArrowDownCircle size={12} /> Recebido</span>;
-            default: return <span className="text-xs bg-slate-100 text-slate-500">Desconhecido</span>;
-        }
-    };
-
     return (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors relative">
 
@@ -315,27 +314,16 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
             </Modal>
 
             {/* Delete Modal */}
-            <Modal
+            <ConfirmModal
                 isOpen={isDeleteModalOpen}
                 onClose={() => setIsDeleteModalOpen(false)}
+                onConfirm={handleDeleteConfirm}
                 title="Remover Fornecedor?"
-                size="sm"
-                footer={
-                    <>
-                        <Button variant="secondary" onClick={() => setIsDeleteModalOpen(false)}>Cancelar</Button>
-                        <Button variant="danger" loading={isDeleting} onClick={handleDeleteConfirm}>Confirmar Remoção</Button>
-                    </>
-                }
-            >
-                <div className="text-center">
-                    <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <Trash2 size={24} />
-                    </div>
-                    <p className="text-slate-500 text-sm">
-                        Tem certeza que deseja remover <b>{selectedSupplier?.name}</b>? Esta ação não pode ser desfeita.
-                    </p>
-                </div>
-            </Modal>
+                message={`Tem certeza que deseja remover ${selectedSupplier?.name || ''}? Esta ação não pode ser desfeita.`}
+                confirmLabel="Confirmar Remoção"
+                isLoading={isDeleting}
+                variant="danger"
+            />
 
 
 
@@ -422,33 +410,58 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                 />
             </div>
 
-            <div className="flex-1 min-h-0 flex overflow-hidden">
-                {/* List */}
-                <div className={`flex-1 overflow-y-auto p-4 md:p-6 ${selectedSupplier ? 'hidden lg:block lg:w-1/3 xl:w-1/4 border-r border-slate-200 dark:border-slate-800' : 'w-full'}`}>
-                    {filteredSuppliers.length === 0 ? (
-                        <EmptyState
-                            icon={Truck}
-                            title="Nenhum fornecedor encontrado"
-                            description="Tente ajustar a busca ou adicione um novo fornecedor."
-                            action={<Button onClick={() => setIsCreateModalOpen(true)}>Novo Fornecedor</Button>}
-                        />
-                    ) : (
-                        <div className="space-y-3">
-                            {filteredSuppliers.map(sup => (
-                                <div key={sup.id} onClick={() => setSelectedSupplier(sup)} className={`p-4 border rounded-xl cursor-pointer transition-all ${selectedSupplier?.id === sup.id ? `border-${config.themeColor}-500 bg-${config.themeColor}-50 dark:bg-${config.themeColor}-900/20` : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md'}`}>
-                                    <h4 className="font-bold text-slate-800 dark:text-white">{sup.name}</h4>
-                                    <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">{sup.email}</div>
-                                    {sup.phone && <div className="text-xs text-slate-500 mt-1 flex items-center gap-1"><Phone size={12} /> {sup.phone}</div>}
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                {/* Detail */}
-                <div className={`flex-1 bg-white dark:bg-slate-900 flex flex-col ${selectedSupplier ? 'block absolute inset-0 z-20 lg:static lg:inset-auto' : 'hidden lg:flex lg:items-center lg:justify-center'}`}>
-                    {selectedSupplier ? (
-                        <>
+            {/* Master-Detail Layout */}
+            <MasterDetailLayout
+                showDetail={!!selectedSupplier}
+                onCloseDetail={() => setSelectedSupplier(null)}
+                listWidth="1/3"
+                list={
+                    <div className="p-4 md:p-6 h-full">
+                        {filteredSuppliers.length === 0 ? (
+                            <EmptyState
+                                icon={Truck}
+                                title="Nenhum fornecedor encontrado"
+                                description="Tente ajustar a busca ou adicione um novo fornecedor."
+                                action={<Button onClick={() => setIsCreateModalOpen(true)}>Novo Fornecedor</Button>}
+                            />
+                        ) : (
+                            <div className="h-full">
+                                <AutoSizer>
+                                    {({ height, width }: { height: number; width: number }) => (
+                                        <ListWindow
+                                            height={height}
+                                            width={width}
+                                            itemCount={filteredSuppliers.length}
+                                            itemSize={90}
+                                        >
+                                            {({ index, style }: { index: number; style: React.CSSProperties }) => {
+                                                const sup = filteredSuppliers[index];
+                                                return (
+                                                    <div style={{ ...style, paddingBottom: 8 }}>
+                                                        <Card
+                                                            onClick={() => setSelectedSupplier(sup)}
+                                                            selected={selectedSupplier?.id === sup.id}
+                                                            hoverable
+                                                            padding="md"
+                                                            className="mb-2"
+                                                        >
+                                                            <h4 className="font-bold text-slate-800 dark:text-white truncate text-sm">{sup.name}</h4>
+                                                            <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 truncate">{sup.email}</div>
+                                                            {sup.phone && <div className="text-xs text-slate-500 mt-1 flex items-center gap-1"><Phone size={12} /> {sup.phone}</div>}
+                                                        </Card>
+                                                    </div>
+                                                );
+                                            }}
+                                        </ListWindow>
+                                    )}
+                                </AutoSizer>
+                            </div>
+                        )}
+                    </div>
+                }
+                detail={
+                    selectedSupplier && (
+                        <div className="flex flex-col h-full">
                             <PageHeader
                                 title={selectedSupplier.name}
                                 subtitle="Detalhes do Fornecedor"
@@ -463,9 +476,9 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                 tabs={
                                     <Tabs value={activeTab} onChange={(v) => setActiveTab(v as any)}>
                                         <Tab value="overview">Visão Geral</Tab>
-                                        <Tab value="orders">Pedidos de Compra ({currentSupplierOrders.length})</Tab>
-                                        <Tab value="invoices">Faturas de Fornecedor ({currentSupplierInvoices.length})</Tab>
-                                        <Tab value="products">Produtos Fornecidos ({currentSupplierProducts.length})</Tab>
+                                        <Tab value="orders">Pedidos ({currentSupplierOrders.length})</Tab>
+                                        <Tab value="invoices">Faturas ({currentSupplierInvoices.length})</Tab>
+                                        <Tab value="products">Produtos ({currentSupplierProducts.length})</Tab>
                                     </Tabs>
                                 }
                             />
@@ -490,13 +503,11 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                     </div>
                                                 </div>
                                             </Card>
-                                            <div className="mt-6">
-                                                <LinkedObjects
-                                                    id={selectedSupplier.id}
-                                                    type="societe"
-                                                    onNavigate={onNavigate}
-                                                />
-                                            </div>
+                                            <LinkedObjects
+                                                id={selectedSupplier.id}
+                                                type="societe"
+                                                onNavigate={onNavigate}
+                                            />
                                         </>
                                     )}
 
@@ -506,10 +517,10 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                 <EmptyState icon={ShoppingCart} title="Nenhum pedido de compra" description="Não há pedidos de compra para este fornecedor." />
                                             ) : (
                                                 currentSupplierOrders.map(order => (
-                                                    <div key={order.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all">
+                                                    <Card key={order.id} padding="md">
                                                         <div className="flex justify-between items-start mb-2">
                                                             <h4 className="font-bold text-slate-800 dark:text-white text-sm">{order.ref}</h4>
-                                                            {getOrderStatusBadge(order.statut)}
+                                                            <StatusBadge status={order.statut} config={supplierOrderStatuses} />
                                                         </div>
                                                         <div className="flex justify-between items-end">
                                                             <div className="text-xs text-slate-500">{formatDateTime(order.date_creation)}</div>
@@ -531,33 +542,44 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
 
                                                         <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-end gap-2">
                                                             {order.statut === '0' && (
-                                                                <button
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="ghost"
                                                                     onClick={() => { setSelectedOrderId(order.id); handleValidateOrder(); }}
                                                                     disabled={isProcessingOrder}
-                                                                    className="text-xs px-3 py-1.5 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg flex items-center gap-1 font-medium"
+                                                                    loading={isProcessingOrder && selectedOrderId === order.id}
+                                                                    icon={<CheckCircle2 size={12} />}
+                                                                    className="!text-blue-700 hover:!bg-blue-100"
                                                                 >
-                                                                    {isProcessingOrder && selectedOrderId === order.id ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />} Validar
-                                                                </button>
+                                                                    Validar
+                                                                </Button>
                                                             )}
                                                             {order.statut === '1' && (
-                                                                <button
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="ghost"
                                                                     onClick={() => { setSelectedOrderId(order.id); handleApproveOrder(); }}
                                                                     disabled={isProcessingOrder}
-                                                                    className="text-xs px-3 py-1.5 bg-orange-100 text-orange-700 hover:bg-orange-200 rounded-lg flex items-center gap-1 font-medium"
+                                                                    loading={isProcessingOrder && selectedOrderId === order.id}
+                                                                    icon={<CheckSquare size={12} />}
+                                                                    className="!text-orange-700 hover:!bg-orange-100"
                                                                 >
-                                                                    {isProcessingOrder && selectedOrderId === order.id ? <Loader2 size={12} className="animate-spin" /> : <CheckSquare size={12} />} Aprovar
-                                                                </button>
+                                                                    Aprovar
+                                                                </Button>
                                                             )}
                                                             {order.statut === '2' && (
-                                                                <button
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="ghost"
                                                                     onClick={() => openReceptionModal(order.id, order.lines && order.lines.length > 0 ? order.lines[0].fk_product : undefined)}
-                                                                    className="text-xs px-3 py-1.5 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 rounded-lg flex items-center gap-1 font-medium"
+                                                                    icon={<ArrowDownCircle size={12} />}
+                                                                    className="!text-emerald-700 hover:!bg-emerald-100"
                                                                 >
-                                                                    <ArrowDownCircle size={12} /> Receber
-                                                                </button>
+                                                                    Receber
+                                                                </Button>
                                                             )}
                                                         </div>
-                                                    </div>
+                                                    </Card>
                                                 ))
                                             )}
                                         </div>
@@ -569,52 +591,55 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                 <EmptyState icon={Receipt} title="Nenhuma fatura encontrada" description="Não há faturas de fornecedor registradas." />
                                             ) : (
                                                 currentSupplierInvoices.map(inv => (
-                                                    <div key={inv.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex justify-between items-center">
-                                                        <div>
-                                                            <div className="font-bold text-slate-800 dark:text-white text-sm">{inv.ref}</div>
-                                                            <div className="text-xs text-slate-500 mt-1">{inv.label || 'Fatura'}</div>
+                                                    <Card key={inv.id} padding="md">
+                                                        <div className="flex justify-between items-center">
+                                                            <div>
+                                                                <div className="font-bold text-slate-800 dark:text-white text-sm">{inv.ref}</div>
+                                                                <div className="text-xs text-slate-500 mt-1">{inv.label || 'Fatura'}</div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <div className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString()}</div>
+                                                                <StatusBadge
+                                                                    status={inv.paye === '1' ? 'paid' : 'open'}
+                                                                    config={{
+                                                                        paid: { label: 'Pago', variant: 'emerald' },
+                                                                        open: { label: 'Aberto', variant: 'orange' },
+                                                                    }}
+                                                                    size="sm"
+                                                                />
+                                                            </div>
                                                         </div>
-                                                        <div className="text-right">
-                                                            <div className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString()}</div>
-                                                            <span className={`text-[10px] px-2 py-0.5 rounded ${inv.paye === '1' ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700'}`}>
-                                                                {inv.paye === '1' ? 'Pago' : 'Aberto'}
-                                                            </span>
-                                                        </div>
-                                                    </div>
+                                                    </Card>
                                                 ))
                                             )}
                                         </div>
                                     )}
 
                                     {activeTab === 'products' && (
-                                        <div className="grid grid-cols-1 gap-3">
+                                        <div className="space-y-3">
                                             {currentSupplierProducts.length === 0 ? (
                                                 <EmptyState icon={Package} title="Nenhum produto associado" description="Não há produtos no histórico de compras." />
                                             ) : (
                                                 currentSupplierProducts.map(p => (
-                                                    <div key={p.id} className="bg-white dark:bg-slate-900 p-3 rounded-lg border border-slate-200 dark:border-slate-800 flex justify-between items-center">
-                                                        <div>
-                                                            <div className="font-bold text-slate-800 dark:text-white text-sm">{p.label}</div>
-                                                            <div className="text-xs text-slate-500">{p.ref}</div>
+                                                    <Card key={p.id} padding="md">
+                                                        <div className="flex justify-between items-center">
+                                                            <div>
+                                                                <div className="font-bold text-slate-800 dark:text-white text-sm">{p.label}</div>
+                                                                <div className="text-xs text-slate-500">{p.ref}</div>
+                                                            </div>
+                                                            <div className="text-sm font-mono text-slate-600 dark:text-slate-400">${p.price.toLocaleString()}</div>
                                                         </div>
-                                                        <div className="text-sm font-mono text-slate-600 dark:text-slate-400">${p.price.toLocaleString()}</div>
-                                                    </div>
+                                                    </Card>
                                                 ))
                                             )}
                                         </div>
                                     )}
                                 </div>
                             </div>
-                        </>
-                    ) : (
-                        <EmptyState
-                            icon={Truck}
-                            title="Selecione um fornecedor"
-                            description="Escolha um fornecedor da lista para ver detalhes."
-                        />
-                    )}
-                </div>
-            </div>
+                        </div>
+                    )
+                }
+            />
         </div>
     );
 };

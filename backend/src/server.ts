@@ -173,6 +173,10 @@ app.use('/api/documents', documentRoutes);
 import emailRoutes from './routes/emailRoutes';
 app.use('/api/email', emailRoutes);
 
+// CentroVibe Routes (Event Management)
+import centrovibeRoutes from './routes/centrovibeRoutes';
+app.use('/api/centrovibe', requireDolibarrLogin, centrovibeRoutes);
+
 // Health Check
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', server: 'CoolGroove Backend' });
@@ -200,6 +204,11 @@ log.info('SessionService loaded');
 // Start Scheduler Worker (checks for pending messages every 30s)
 schedulerService.startWorker();
 log.info('SchedulerService worker started');
+
+// Start Event Scraper Worker (scrapes ticket platforms every 6h)
+import { eventScraperService } from './services/eventScraperService';
+eventScraperService.startWorker(6);
+log.info('EventScraperService worker started (6h interval)');
 
 // Initialize Banking Services
 import { interApiService } from './services/interApiService';

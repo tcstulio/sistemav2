@@ -300,7 +300,6 @@ export const fetchDelta = async (config: DolibarrConfig, entityType: string, las
                 last_modified: String(lastModified),
                 limit: String(limit),
                 offset: String(offset),
-                DOLAPIKEY: config.apiKey
             });
 
             const fullUrl = `${url}?${params.toString()}`;
@@ -314,7 +313,10 @@ export const fetchDelta = async (config: DolibarrConfig, entityType: string, las
             if (Array.isArray(response)) {
                 // Old format - single array response
                 allData.push(...response);
-                hasMore = false; // No pagination info, stop loop
+                hasMore = false;
+                if (response.length > 0) {
+                    console.log(`[CoolGrooveDelta] ${entityType}: Fetched ${response.length} records (legacy format)`);
+                }
             } else if (response && response.data && Array.isArray(response.data)) {
                 // New paginated format
                 allData.push(...response.data);
@@ -324,6 +326,9 @@ export const fetchDelta = async (config: DolibarrConfig, entityType: string, las
                 if (response.data.length > 0) {
                     console.log(`[CoolGrooveDelta] ${entityType}: Fetched ${allData.length} records (page ${safetyCounter + 1})`);
                 }
+            } else if (response === null || (response && !response.data)) {
+                // Empty or no-data response
+                hasMore = false;
             } else {
                 // Unknown format, stop
                 hasMore = false;

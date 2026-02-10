@@ -1,14 +1,25 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { SupplierProposal, DolibarrConfig, AppView, Product, SupplierProposalLine } from '../types';
-import { FileText, Search, Plus, Trash2, Save, X, Edit, Loader2, CheckCircle, XCircle, Send, Archive, Ban, FileSignature, FolderKanban, Sparkles, ChevronLeft } from 'lucide-react';
+import { FileText, Search, Plus, Trash2, Save, X, Edit, Loader2, CheckCircle, XCircle, Send, Archive, Ban, FileSignature, FolderKanban, Sparkles } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useNavigate } from 'react-router-dom';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useSupplierProposals, useSuppliers, useProducts, useProjects, useSupplierProposalLines, useUsers } from '../hooks/dolibarr';
 import { RichTextEditor } from './common/RichTextEditor';
-import { GenericListLayout } from './common/GenericListLayout';
 import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
+
+// Design System
+import { PageHeader, MasterDetailLayout, Card, Button, Input, Tabs, Tab, EmptyState, StatusBadge } from './ui';
+import type { StatusConfig } from './ui';
+
+const supplierProposalStatuses: Record<string, StatusConfig> = {
+    '0': { label: 'Rascunho', variant: 'slate' },
+    '1': { label: 'Aberta', variant: 'blue', icon: <Send size={12} /> },
+    '2': { label: 'Assinada', variant: 'emerald', icon: <CheckCircle size={12} /> },
+    '3': { label: 'Recusada', variant: 'red', icon: <XCircle size={12} /> },
+    '4': { label: 'Pedido', variant: 'indigo', icon: <Archive size={12} /> },
+};
 
 interface SupplierProposalListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -265,22 +276,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
         });
     }, [proposals, suppliers, searchTerm, filterStatus]);
 
-    const getStatusBadge = (status: string) => {
-        switch (status) {
-            case '0':
-                return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">Rascunho</span>;
-            case '1':
-                return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800"><Send size={12} /> Aberta</span>;
-            case '2':
-                return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"><CheckCircle size={12} /> Assinada</span>;
-            case '3':
-                return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800"><XCircle size={12} /> Recusada</span>;
-            case '4':
-                return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"><Archive size={12} /> Pedido</span>;
-            default:
-                return <span>{status}</span>;
-        }
-    };
+    const getStatusBadge = (status: string) => <StatusBadge status={status} config={supplierProposalStatuses} />;
 
     const handleCloseProposal = async (status: '2' | '3') => {
         if (!selectedProposal) return;
@@ -367,120 +363,93 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
     // --- RENDER SUB-COMPONENTS ---
 
     const renderHeader = (
-        <div className="flex flex-col gap-4 p-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <div className="p-2 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg">
-                        <FileText className="text-indigo-600 dark:text-indigo-400" size={24} />
-                    </div>
-                    <div>
-                        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Solicitações de Preço</h1>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">Demande de prix</p>
-                    </div>
-                </div>
-                <div className="flex items-center gap-3">
-                    <button
-                        onClick={() => navigate('/smart_quotation')}
-                        className="hidden md:flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-lg font-medium shadow-sm transition-all"
-                    >
-                        <Sparkles size={18} />
-                        Assistente IA
-                    </button>
-                    <button
-                        onClick={handleOpenCreate}
-                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm transition-all"
-                    >
-                        <Plus size={18} />
-                        <span className="hidden md:inline">Nova Solicitação</span>
-                        <span className="md:hidden">Nova</span>
-                    </button>
-                </div>
-            </div>
-
-            <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-                <div className="relative w-full md:w-64">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                    <input
-                        type="text"
-                        placeholder="Buscar..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none w-full text-sm"
-                    />
-                </div>
-                <div className="flex gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
-                    {['all', 'open', 'signed', 'draft', 'declined'].map((status) => (
-                        <button
-                            key={status}
-                            onClick={() => setFilterStatus(status as any)}
-                            className={`px-3 py-1.5 whitespace-nowrap rounded-md text-xs font-medium transition-colors border ${filterStatus === status
-                                    ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
-                                    : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800'
-                                }`}
+        <div className={selectedProposal ? 'hidden lg:block' : 'block'}>
+            <PageHeader
+                title="Solicitações de Preço"
+                subtitle="Demande de prix"
+                actions={
+                    <div className="flex items-center gap-2">
+                        <Input
+                            placeholder="Buscar..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            icon={<Search size={16} />}
+                            className="w-48"
+                            fullWidth={false}
+                        />
+                        <Button
+                            variant="secondary"
+                            icon={<Sparkles size={16} />}
+                            onClick={() => navigate('/smart_quotation')}
+                            className="hidden md:flex !bg-gradient-to-r !from-purple-600 !to-indigo-600 hover:!from-purple-700 hover:!to-indigo-700 !text-white"
                         >
-                            {status === 'all' && 'Todos'}
-                            {status === 'open' && 'Abertas'}
-                            {status === 'signed' && 'Assinadas'}
-                            {status === 'draft' && 'Rascunhos'}
-                            {status === 'declined' && 'Recusadas'}
-                        </button>
-                    ))}
-                </div>
-            </div>
+                            Assistente IA
+                        </Button>
+                        <Button icon={<Plus size={16} />} onClick={handleOpenCreate}>
+                            Nova Solicitação
+                        </Button>
+                    </div>
+                }
+                tabs={
+                    <Tabs value={filterStatus} onChange={(v) => setFilterStatus(v as any)}>
+                        <Tab value="all">Todos</Tab>
+                        <Tab value="open">Abertas</Tab>
+                        <Tab value="signed">Assinadas</Tab>
+                        <Tab value="draft">Rascunhos</Tab>
+                        <Tab value="declined">Recusadas</Tab>
+                    </Tabs>
+                }
+            />
         </div>
     );
 
     const Row = ({ index, style }: { index: number, style: React.CSSProperties }) => {
         const proposal = filteredProposals[index];
-        const itemStyle = {
-            ...style,
-            top: (parseFloat(style.top as string) + 8) + 'px',
-            height: (parseFloat(style.height as string) - 8) + 'px',
-            left: '8px',
-            width: 'calc(100% - 16px)'
-        };
 
         return (
-            <div
-                style={itemStyle}
-                onClick={() => setSelectedProposal(proposal)}
-                className={`p-4 rounded-xl border cursor-pointer transition-all hover:shadow-md group ${selectedProposal?.id === proposal.id
-                        ? 'bg-indigo-50 dark:bg-indigo-900/10 border-indigo-500 dark:border-indigo-500'
-                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-800'
-                    }`}
-            >
-                <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-3">
-                        <span className={`font-bold text-sm ${selectedProposal?.id === proposal.id ? 'text-indigo-700 dark:text-white' : 'text-slate-800 dark:text-slate-200'
-                            }`}>
-                            {proposal.ref}
-                        </span>
-                        {getStatusBadge(proposal.statut)}
-                    </div>
-                    <span className="text-sm font-bold text-slate-900 dark:text-white">
-                        ${proposal.total_ht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </span>
-                </div>
-                <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                    <div className="flex items-center gap-2 truncate">
-                        <span className="truncate max-w-[150px]">{getSupplierName(proposal.socid)}</span>
-                        {proposal.project_id && (
-                            <span className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">
-                                <FolderKanban size={10} />
-                                <span className="truncate max-w-[100px]">{getProjectName(proposal.project_id)}</span>
+            <div style={{ ...style, paddingLeft: 8, paddingRight: 8, paddingBottom: 8 }}>
+                <Card
+                    onClick={() => setSelectedProposal(proposal)}
+                    selected={selectedProposal?.id === proposal.id}
+                    hoverable
+                    padding="md"
+                >
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm text-slate-800 dark:text-white truncate">
+                                {proposal.ref}
                             </span>
-                        )}
+                            {getStatusBadge(proposal.statut)}
+                        </div>
+                        <span className="text-sm font-bold text-slate-900 dark:text-white shrink-0">
+                            ${proposal.total_ht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </span>
                     </div>
-                    <span>{new Date(proposal.datec * 1000).toLocaleDateString()}</span>
-                </div>
+                    <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                        <div className="flex items-center gap-2 truncate">
+                            <span className="truncate max-w-[150px]">{getSupplierName(proposal.socid)}</span>
+                            {proposal.project_id && (
+                                <span className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">
+                                    <FolderKanban size={10} />
+                                    <span className="truncate max-w-[100px]">{getProjectName(proposal.project_id)}</span>
+                                </span>
+                            )}
+                        </div>
+                        <span>{new Date(proposal.datec * 1000).toLocaleDateString()}</span>
+                    </div>
+                </Card>
             </div>
         );
     };
 
     const renderListContent = filteredProposals.length === 0 ? (
-        <div className="text-center py-20 text-slate-400">
-            <FileText size={48} className="mx-auto mb-4 opacity-50" />
-            <p>Nenhuma solicitação encontrada.</p>
+        <div className="p-6">
+            <EmptyState
+                icon={FileText}
+                title="Nenhuma solicitação encontrada"
+                description="Tente ajustar os filtros ou crie uma nova solicitação."
+                action={<Button onClick={handleOpenCreate} icon={<Plus size={16} />}>Nova Solicitação</Button>}
+            />
         </div>
     ) : (
         <AutoSizer>
@@ -500,21 +469,19 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
     const renderDetail = selectedProposal ? (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950/50">
             {/* Detail Header */}
-            <div className="flex-none bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 p-4 flex items-center justify-between z-10">
-                <div className="flex items-center gap-3">
-                    <button onClick={() => setSelectedProposal(null)} className="lg:hidden p-2 -ml-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"><ChevronLeft size={20} /></button>
-                    <div>
-                        <div className="flex items-center gap-2">
-                            <h2 className="text-lg font-bold dark:text-white leading-tight">{selectedProposal.ref}</h2>
-                            {getStatusBadge(selectedProposal.statut)}
-                        </div>
-                        <div className="text-xs text-slate-500 mt-1">
-                            {new Date(selectedProposal.datec * 1000).toLocaleDateString()}
-                        </div>
-                    </div>
-                </div>
-                <button onClick={() => setSelectedProposal(null)} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
-            </div>
+            <PageHeader
+                title={
+                    <span className="flex items-center gap-2">
+                        {selectedProposal.ref}
+                        {getStatusBadge(selectedProposal.statut)}
+                    </span>
+                }
+                subtitle={`${getSupplierName(selectedProposal.socid)} • ${new Date(selectedProposal.datec * 1000).toLocaleDateString()}`}
+                onBack={() => setSelectedProposal(null)}
+                actions={
+                    <button onClick={() => setSelectedProposal(null)} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
+                }
+            />
 
             <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
 
@@ -679,12 +646,16 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
 
     return (
         <>
-            <GenericListLayout
-                header={renderHeader}
-                content={renderListContent}
-                detail={renderDetail}
-                isDetailOpen={!!selectedProposal}
-            />
+            <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
+                {renderHeader}
+                <MasterDetailLayout
+                    showDetail={!!selectedProposal}
+                    onCloseDetail={() => setSelectedProposal(null)}
+                    listWidth="1/3"
+                    list={<div className="h-full">{renderListContent}</div>}
+                    detail={renderDetail}
+                />
+            </div>
 
             {/* CREATE / EDIT COMPLETION MODAL */}
             {isFormOpen && (

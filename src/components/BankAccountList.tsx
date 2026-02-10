@@ -1,11 +1,14 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { BankAccount, DolibarrConfig, BankLine, Invoice, SupplierInvoice, AppView } from '../types';
-import { Landmark, Wallet, CreditCard, ArrowUpRight, ArrowDownRight, TrendingUp, X, ArrowLeft, CheckCircle2, Split, Wand2, RefreshCcw, FileText, AlertCircle, Link, Plus, Loader2, ArrowRightLeft, ExternalLink, Upload, BarChart3, Sparkles, Building, Settings } from 'lucide-react';
+import { Landmark, Wallet, ArrowUpRight, ArrowDownRight, ArrowLeft, CheckCircle2, Split, Wand2, RefreshCcw, FileText, Link, Plus, Loader2, ArrowRightLeft, ExternalLink, Upload, BarChart3, Sparkles, Settings } from 'lucide-react';
 import { BankStatementImport, CashFlowChart, BankingInsightsPanel, InterBankDashboard, ItauBankDashboard, InterSettingsTab, ItauSettingsTab } from './Banking';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useBankAccounts, useBankLines, useInvoices, useSupplierInvoices } from '../hooks/dolibarr';
 import { formatDateOnly } from '../utils/dateUtils';
+
+// Design System
+import { PageHeader, Card, Button, Input, Modal, EmptyState } from './ui';
 
 interface BankAccountListProps {
     onRefresh?: () => void;
@@ -343,187 +346,171 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                 )}
 
                                 {/* Create Account Modal */}
-                                {isCreateModalOpen && (
-                                    <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                                        <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
-                                            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                                                <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                                    <Landmark size={18} className="text-indigo-600" /> Nova Conta Bancária
-                                                </h3>
-                                                <button onClick={() => setIsCreateModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
+                                <Modal
+                                    isOpen={isCreateModalOpen}
+                                    onClose={() => setIsCreateModalOpen(false)}
+                                    title={<span className="flex items-center gap-2"><Landmark size={18} className="text-indigo-600" /> Nova Conta Bancária</span>}
+                                    footer={
+                                        <>
+                                            <Button variant="secondary" onClick={() => setIsCreateModalOpen(false)}>Cancelar</Button>
+                                            <Button loading={isCreating} icon={<CheckCircle2 size={16} />} onClick={handleCreateAccount}>Criar</Button>
+                                        </>
+                                    }
+                                >
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Rótulo</label>
+                                            <Input required value={newAccountForm.label || ''} onChange={e => setNewAccountForm({ ...newAccountForm, label: e.target.value })} placeholder="Conta Principal" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome do Banco</label>
+                                            <Input required value={newAccountForm.bank || ''} onChange={e => setNewAccountForm({ ...newAccountForm, bank: e.target.value })} placeholder="Itaú, Bradesco, etc." />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Moeda</label>
+                                                <Input value={newAccountForm.currency_code} onChange={e => setNewAccountForm({ ...newAccountForm, currency_code: e.target.value })} />
                                             </div>
-                                            <form onSubmit={handleCreateAccount} className="p-6 space-y-4">
-                                                <div>
-                                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Rótulo</label>
-                                                    <input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" required value={newAccountForm.label || ''} onChange={e => setNewAccountForm({ ...newAccountForm, label: e.target.value })} placeholder="Conta Principal" />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome do Banco</label>
-                                                    <input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" required value={newAccountForm.bank || ''} onChange={e => setNewAccountForm({ ...newAccountForm, bank: e.target.value })} placeholder="Itaú, Bradesco, etc." />
-                                                </div>
-                                                <div className="grid grid-cols-2 gap-4">
-                                                    <div>
-                                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Moeda</label>
-                                                        <input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={newAccountForm.currency_code} onChange={e => setNewAccountForm({ ...newAccountForm, currency_code: e.target.value })} />
-                                                    </div>
-                                                    <div>
-                                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Saldo Inicial</label>
-                                                        <input type="number" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={newAccountForm.solde} onChange={e => setNewAccountForm({ ...newAccountForm, solde: parseFloat(e.target.value) })} />
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Número da Conta</label>
-                                                    <input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={newAccountForm.number || ''} onChange={e => setNewAccountForm({ ...newAccountForm, number: e.target.value })} />
-                                                </div>
-                                                <div className="flex justify-end gap-3 pt-4">
-                                                    <button type="button" onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
-                                                    <button type="submit" disabled={isCreating} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
-                                                        {isCreating ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} Criar
-                                                    </button>
-                                                </div>
-                                            </form>
+                                            <div>
+                                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Saldo Inicial</label>
+                                                <Input type="number" value={newAccountForm.solde} onChange={e => setNewAccountForm({ ...newAccountForm, solde: parseFloat(e.target.value) })} />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Número da Conta</label>
+                                            <Input value={newAccountForm.number || ''} onChange={e => setNewAccountForm({ ...newAccountForm, number: e.target.value })} />
                                         </div>
                                     </div>
-                                )}
+                                </Modal>
 
                                 {/* Transfer Modal */}
-                                {isTransferModalOpen && (
-                                    <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                                        <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
-                                            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                                                <h3 className="font-bold text-lg dark:text-white flex items-center gap-2"><ArrowRightLeft size={18} className="text-indigo-600" /> Nova Transferência</h3>
-                                                <button onClick={() => setIsTransferModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
+                                <Modal
+                                    isOpen={isTransferModalOpen}
+                                    onClose={() => setIsTransferModalOpen(false)}
+                                    title={<span className="flex items-center gap-2"><ArrowRightLeft size={18} className="text-indigo-600" /> Nova Transferência</span>}
+                                    footer={
+                                        <>
+                                            <Button variant="secondary" onClick={() => setIsTransferModalOpen(false)}>Cancelar</Button>
+                                            <Button loading={isSubmitting} icon={<CheckCircle2 size={16} />} onClick={handleTransfer}>Confirmar</Button>
+                                        </>
+                                    }
+                                >
+                                    <div className="space-y-4">
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">De</label>
+                                                <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={transferForm.fromId} onChange={e => setTransferForm({ ...transferForm, fromId: e.target.value })}>
+                                                    <option value="">Selecione...</option>
+                                                    {accounts.map(a => <option key={a.id} value={a.id} disabled={a.id === transferForm.toId}>{a.label}</option>)}
+                                                </select>
                                             </div>
-                                            <form onSubmit={handleTransfer} className="p-6 space-y-4">
-                                                <div className="grid grid-cols-2 gap-4">
-                                                    <div>
-                                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">De</label>
-                                                        <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={transferForm.fromId} onChange={e => setTransferForm({ ...transferForm, fromId: e.target.value })}>
-                                                            <option value="">Selecione...</option>
-                                                            {accounts.map(a => <option key={a.id} value={a.id} disabled={a.id === transferForm.toId}>{a.label}</option>)}
-                                                        </select>
-                                                    </div>
-                                                    <div>
-                                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Para</label>
-                                                        <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={transferForm.toId} onChange={e => setTransferForm({ ...transferForm, toId: e.target.value })}>
-                                                            <option value="">Selecione...</option>
-                                                            {accounts.map(a => <option key={a.id} value={a.id} disabled={a.id === transferForm.fromId}>{a.label}</option>)}
-                                                        </select>
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Valor</label>
-                                                    <input type="number" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={transferForm.amount} onChange={e => setTransferForm({ ...transferForm, amount: parseFloat(e.target.value) })} />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Rótulo</label>
-                                                    <input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={transferForm.label} onChange={e => setTransferForm({ ...transferForm, label: e.target.value })} />
-                                                </div>
-                                                <div className="flex justify-end gap-3 pt-4">
-                                                    <button type="button" onClick={() => setIsTransferModalOpen(false)} className="px-4 py-2 text-slate-500">Cancelar</button>
-                                                    <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-indigo-600 text-white rounded-lg flex items-center gap-2">{isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} Confirmar</button>
-                                                </div>
-                                            </form>
+                                            <div>
+                                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Para</label>
+                                                <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={transferForm.toId} onChange={e => setTransferForm({ ...transferForm, toId: e.target.value })}>
+                                                    <option value="">Selecione...</option>
+                                                    {accounts.map(a => <option key={a.id} value={a.id} disabled={a.id === transferForm.fromId}>{a.label}</option>)}
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Valor</label>
+                                            <Input type="number" value={transferForm.amount} onChange={e => setTransferForm({ ...transferForm, amount: parseFloat(e.target.value) })} />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Rótulo</label>
+                                            <Input value={transferForm.label} onChange={e => setTransferForm({ ...transferForm, label: e.target.value })} />
                                         </div>
                                     </div>
-                                )}
+                                </Modal>
 
                                 {/* Add Line Modal */}
-                                {isAddLineModalOpen && (
-                                    <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                                        <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
-                                            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                                                <h3 className="font-bold text-lg dark:text-white flex items-center gap-2"><Plus size={18} className="text-indigo-600" /> Nova Transação</h3>
-                                                <button onClick={() => setIsAddLineModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
+                                <Modal
+                                    isOpen={isAddLineModalOpen}
+                                    onClose={() => setIsAddLineModalOpen(false)}
+                                    title={<span className="flex items-center gap-2"><Plus size={18} className="text-indigo-600" /> Nova Transação</span>}
+                                    footer={
+                                        <>
+                                            <Button variant="secondary" onClick={() => setIsAddLineModalOpen(false)}>Cancelar</Button>
+                                            <Button loading={isSubmitting} icon={<Plus size={16} />} onClick={handleAddLine}>Adicionar</Button>
+                                        </>
+                                    }
+                                >
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
+                                            <Input type="date" value={addLineForm.date} onChange={e => setAddLineForm({ ...addLineForm, date: e.target.value })} />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
+                                                <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={addLineForm.type} onChange={e => setAddLineForm({ ...addLineForm, type: e.target.value })}>
+                                                    <option value="VIR">Transferência</option>
+                                                    <option value="CB">Cartão</option>
+                                                    <option value="CHQ">Cheque</option>
+                                                    <option value="LIQ">Dinheiro</option>
+                                                </select>
                                             </div>
-                                            <form onSubmit={handleAddLine} className="p-6 space-y-4">
-                                                <div>
-                                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
-                                                    <input type="date" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={addLineForm.date} onChange={e => setAddLineForm({ ...addLineForm, date: e.target.value })} />
-                                                </div>
-                                                <div className="grid grid-cols-2 gap-4">
-                                                    <div>
-                                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
-                                                        <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={addLineForm.type} onChange={e => setAddLineForm({ ...addLineForm, type: e.target.value })}>
-                                                            <option value="VIR">Transferência</option>
-                                                            <option value="CB">Cartão</option>
-                                                            <option value="CHQ">Cheque</option>
-                                                            <option value="LIQ">Dinheiro</option>
-                                                        </select>
-                                                    </div>
-                                                    <div>
-                                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Valor</label>
-                                                        <input type="number" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={addLineForm.amount} onChange={e => setAddLineForm({ ...addLineForm, amount: parseFloat(e.target.value) })} placeholder="+/-" />
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Rótulo</label>
-                                                    <input type="text" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={addLineForm.label} onChange={e => setAddLineForm({ ...addLineForm, label: e.target.value })} />
-                                                </div>
-                                                <div className="flex justify-end gap-3 pt-4">
-                                                    <button type="button" onClick={() => setIsAddLineModalOpen(false)} className="px-4 py-2 text-slate-500">Cancelar</button>
-                                                    <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-indigo-600 text-white rounded-lg flex items-center gap-2">{isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />} Adicionar</button>
-                                                </div>
-                                            </form>
+                                            <div>
+                                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Valor</label>
+                                                <Input type="number" value={addLineForm.amount} onChange={e => setAddLineForm({ ...addLineForm, amount: parseFloat(e.target.value) })} placeholder="+/-" />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Rótulo</label>
+                                            <Input value={addLineForm.label} onChange={e => setAddLineForm({ ...addLineForm, label: e.target.value })} />
                                         </div>
                                     </div>
-                                )}
+                                </Modal>
 
-                                {/* Manual Link Modal (Existing) */}
-                                {isLinkModalOpen && selectedTransactionForLink && (
-                                    <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                                        <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 flex flex-col max-h-[80vh]">
-                                            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                                                <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                                    <Link size={18} className="text-indigo-500" /> Vincular Transação
-                                                </h3>
-                                                <button onClick={() => setIsLinkModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
-                                            </div>
-
-                                            <div className="p-4 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
+                                {/* Manual Link Modal */}
+                                <Modal
+                                    isOpen={isLinkModalOpen && !!selectedTransactionForLink}
+                                    onClose={() => setIsLinkModalOpen(false)}
+                                    title={<span className="flex items-center gap-2"><Link size={18} className="text-indigo-500" /> Vincular Transação</span>}
+                                    size="md"
+                                >
+                                    {selectedTransactionForLink && (
+                                        <>
+                                            <div className="mb-4 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800">
                                                 <div className="flex justify-between font-medium text-sm mb-2">
                                                     <span className="text-slate-600 dark:text-slate-300">{selectedTransactionForLink.label}</span>
                                                     <span className={selectedTransactionForLink.amount > 0 ? 'text-emerald-600' : 'text-red-500'}>
                                                         ${Math.abs(selectedTransactionForLink.amount).toFixed(2)}
                                                     </span>
                                                 </div>
-                                                <input
-                                                    type="text"
+                                                <Input
                                                     placeholder="Buscar ref da fatura ou valor..."
-                                                    className="w-full p-2 text-sm border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                                                     value={linkSearchTerm}
                                                     onChange={(e) => setLinkSearchTerm(e.target.value)}
                                                     autoFocus
                                                 />
                                             </div>
 
-                                            <div className="flex-1 overflow-y-auto p-2">
-                                                {getLinkableItems.length === 0 ? (
-                                                    <p className="text-center text-slate-400 py-8 text-sm">Nenhuma fatura não paga correspondente encontrada.</p>
-                                                ) : (
-                                                    <div className="space-y-1">
-                                                        {getLinkableItems.map(item => (
-                                                            <button
-                                                                key={item.id}
-                                                                onClick={() => handleManualLink(item.id)}
-                                                                className="w-full text-left p-3 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/20 border border-transparent hover:border-indigo-100 dark:hover:border-indigo-800 transition-all flex justify-between items-center group"
-                                                            >
-                                                                <div>
-                                                                    <div className="font-bold text-slate-700 dark:text-slate-300 text-sm">{item.ref}</div>
-                                                                    <div className="text-xs text-slate-500">{formatDateOnly(item.date)}</div>
-                                                                </div>
-                                                                <div className="text-right">
-                                                                    <div className="font-bold text-slate-800 dark:text-white text-sm">${item.total_ttc}</div>
-                                                                    <span className="text-[10px] text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">Selecionar</span>
-                                                                </div>
-                                                            </button>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
+                                            {getLinkableItems.length === 0 ? (
+                                                <p className="text-center text-slate-400 py-8 text-sm">Nenhuma fatura não paga correspondente encontrada.</p>
+                                            ) : (
+                                                <div className="space-y-1">
+                                                    {getLinkableItems.map(item => (
+                                                        <button
+                                                            key={item.id}
+                                                            onClick={() => handleManualLink(item.id)}
+                                                            className="w-full text-left p-3 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/20 border border-transparent hover:border-indigo-100 dark:hover:border-indigo-800 transition-all flex justify-between items-center group"
+                                                        >
+                                                            <div>
+                                                                <div className="font-bold text-slate-700 dark:text-slate-300 text-sm">{item.ref}</div>
+                                                                <div className="text-xs text-slate-500">{formatDateOnly(item.date)}</div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <div className="font-bold text-slate-800 dark:text-white text-sm">${item.total_ttc}</div>
+                                                                <span className="text-[10px] text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">Selecionar</span>
+                                                            </div>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </Modal>
 
                                 {/* Header */}
                                 <div className={`p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none ${selectedAccount ? 'hidden lg:block' : 'block'}`}>
@@ -550,7 +537,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                             </button>
                                             <button
                                                 onClick={() => setIsCreateModalOpen(true)}
-                                                className={`flex items-center gap-1.5 px-3 py-2 bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors`}
+                                                className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors"
                                             >
                                                 <Plus size={18} /> Nova Conta
                                             </button>
@@ -562,10 +549,12 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                     {/* Account List */}
                                     <div className={`flex-1 overflow-y-auto p-4 md:p-6 ${selectedAccount ? 'hidden lg:block lg:w-1/3 xl:w-1/4 border-r border-slate-200 dark:border-slate-800' : 'w-full'}`}>
                                         {accounts.length === 0 ? (
-                                            <div className="text-center py-20 text-slate-400">
-                                                <Landmark size={48} className="mx-auto mb-4 opacity-50" />
-                                                <p>Nenhuma conta bancária encontrada.</p>
-                                            </div>
+                                            <EmptyState
+                                                icon={Landmark}
+                                                title="Nenhuma conta bancária encontrada"
+                                                description="Crie uma nova conta para começar."
+                                                action={<Button onClick={() => setIsCreateModalOpen(true)} icon={<Plus size={16} />}>Nova Conta</Button>}
+                                            />
                                         ) : (
                                             <div className={`grid gap-4 ${selectedAccount ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'}`}>
                                                 {accounts.map((account) => (
@@ -575,11 +564,11 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                             setSelectedAccount(account);
                                                             setActiveTab('transactions');
                                                         }}
-                                                        className={`bg-white dark:bg-slate-900 rounded-xl border p-0 overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer ${selectedAccount?.id === account.id ? `border-${config.themeColor}-500 ring-1 ring-${config.themeColor}-500` : 'border-slate-200 dark:border-slate-800'}`}
+                                                        className={`bg-white dark:bg-slate-900 rounded-xl border p-0 overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer ${selectedAccount?.id === account.id ? 'border-indigo-500 ring-1 ring-indigo-500' : 'border-slate-200 dark:border-slate-800'}`}
                                                     >
                                                         <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-start bg-slate-50/50 dark:bg-slate-800/50">
                                                             <div className="flex items-center gap-3">
-                                                                <div className={`p-2 rounded-lg bg-${config.themeColor}-100 dark:bg-${config.themeColor}-900/30 text-${config.themeColor}-600 dark:text-${config.themeColor}-400`}>
+                                                                <div className="p-2 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400">
                                                                     <Landmark size={20} />
                                                                 </div>
                                                                 <div className="min-w-0">
@@ -606,15 +595,11 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                             <div className="h-full flex flex-col animate-in slide-in-from-right-4 fade-in duration-300">
 
                                                 {/* Detail Header */}
-                                                <div className="sticky top-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 p-4 flex items-center justify-between z-10 flex-none">
-                                                    <div className="flex items-center gap-3">
-                                                        <button onClick={() => setSelectedAccount(null)} className="lg:hidden p-2 -ml-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white"><ArrowLeft size={20} /></button>
-                                                        <div>
-                                                            <h2 className="text-xl font-bold text-slate-900 dark:text-white leading-tight">{selectedAccount.label}</h2>
-                                                            <span className="text-xs text-slate-400">{selectedAccount.ref} • {selectedAccount.currency_code}</span>
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
+                                                <PageHeader
+                                                    onBack={() => setSelectedAccount(null)}
+                                                    title={selectedAccount.label}
+                                                    subtitle={`${selectedAccount.ref} • ${selectedAccount.currency_code}`}
+                                                    actions={
                                                         <div className="hidden md:flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
                                                             <button
                                                                 onClick={() => setActiveTab('transactions')}
@@ -641,9 +626,8 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                                 <Sparkles size={14} /> IA
                                                             </button>
                                                         </div>
-                                                        <button onClick={() => setSelectedAccount(null)} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
-                                                    </div>
-                                                </div>
+                                                    }
+                                                />
 
                                                 {/* Content */}
                                                 <div className="flex-1 overflow-hidden flex flex-col">
@@ -666,7 +650,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                                 </>
                                                             )}
                                                             {activeTab === 'reconcile' && (
-                                                                <button onClick={handleMagicMatch} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white text-xs font-bold shadow-sm transition-all active:scale-95`}>
+                                                                <button onClick={handleMagicMatch} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition-all active:scale-95">
                                                                     <Wand2 size={12} /> Conciliação Mágica
                                                                 </button>
                                                             )}

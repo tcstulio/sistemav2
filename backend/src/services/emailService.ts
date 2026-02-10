@@ -1,14 +1,17 @@
 import nodemailer from 'nodemailer';
 import imaps from 'imap-simple';
-import { simpleParser, ParsedMail } from 'mailparser';
+import { simpleParser } from 'mailparser';
 import sanitizeHtml from 'sanitize-html';
 import { emailStoreService, EmailAccountConfig } from './emailStoreService';
+import { logger } from '../utils/logger';
+
+const log = logger.child('EmailService');
 
 class EmailService {
 
     // --- SMTP (Sending) ---
 
-    async sendEmail(accountId: string, to: string, subject: string, htmlBody: string, attachments: any[] = []) {
+    async sendEmail(accountId: string, to: string, subject: string, htmlBody: string, attachments: any[] = [], cc?: string, bcc?: string) {
         const account = emailStoreService.getAccount(accountId);
         if (!account) throw new Error('Account not found');
 
@@ -25,12 +28,53 @@ class EmailService {
         const info = await transporter.sendMail({
             from: `"${account.name}" <${account.email}>`,
             to,
+            cc: cc || undefined,
+            bcc: bcc || undefined,
             subject,
             html: htmlBody,
             attachments
         });
 
         return info;
+    }
+
+    // --- Connection Testing ---
+
+    async testImapConnection(config: { imapHost: string; imapPort: number; imapUser: string; imapPassword: string; imapTls: boolean }): Promise<{ success: boolean; message: string }> {
+        try {
+            const connection = await imaps.connect({
+                imap: {
+                    user: config.imapUser,
+                    password: config.imapPassword,
+                    host: config.imapHost,
+                    port: config.imapPort,
+                    tls: config.imapTls,
+                    authTimeout: 10000,
+                    tlsOptions: { rejectUnauthorized: false }
+                }
+            });
+            connection.end();
+            return { success: true, message: 'IMAP conectado com sucesso' };
+        } catch (error: any) {
+            log.error('IMAP test failed', error.message);
+            return { success: false, message: error.message || 'Falha na conexão IMAP' };
+        }
+    }
+
+    async testSmtpConnection(config: { smtpHost: string; smtpPort: number; smtpUser: string; smtpPassword: string; smtpSecure: boolean }): Promise<{ success: boolean; message: string }> {
+        try {
+            const transporter = nodemailer.createTransport({
+                host: config.smtpHost,
+                port: config.smtpPort,
+                secure: config.smtpSecure,
+                auth: { user: config.smtpUser, pass: config.smtpPassword }
+            });
+            await transporter.verify();
+            return { success: true, message: 'SMTP conectado com sucesso' };
+        } catch (error: any) {
+            log.error('SMTP test failed', error.message);
+            return { success: false, message: error.message || 'Falha na conexão SMTP' };
+        }
     }
 
     // --- IMAP (Receiving) ---
@@ -44,7 +88,7 @@ class EmailService {
                 port: account.imapPort,
                 tls: account.imapTls,
                 authTimeout: 10000,
-                tlsOptions: { rejectUnauthorized: false } // Fix for self-signed or mismatched certs
+                tlsOptions: { rejectUnauthorized: false }
             }
         };
         return await imaps.connect(config);
@@ -71,10 +115,9 @@ class EmailService {
         try {
             await connection.openBox(folder);
 
-            // 1. Fetch UIDs and Date only first to sort and slice
             const searchCriteria = ['ALL'];
             const fetchOptions = {
-                bodies: ['HEADER.FIELDS (DATE)'], // Minimal fetch
+                bodies: ['HEADER.FIELDS (DATE)'],
                 markSeen: false,
                 struct: false
             };
@@ -83,27 +126,16 @@ class EmailService {
 
             if (messages.length === 0) return [];
 
-            // 2. Sort by date desc
             messages.sort((a, b) => {
                 const dateA = a.attributes.date ? new Date(a.attributes.date).getTime() : 0;
                 const dateB = b.attributes.date ? new Date(b.attributes.date).getTime() : 0;
                 return dateB - dateA;
             });
 
-            // 3. Slice to limit
             const recentMessages = messages.slice(0, limit);
-
             if (recentMessages.length === 0) return [];
 
-            // 4. Fetch details for these specific UIDs
-            // We need to fetch 'HEADER' to get Subject, From, etc.
-            // avoiding 'TEXT' to prevent full body download
             const uids = recentMessages.map(m => m.attributes.uid);
-
-            // imap-simple search doesn't support searching by specific UIDs list easily in one go with `search` 
-            // but we can use `fetch` if we had the lower level client access, but imap-simple wraps it.
-            // A workaround with imap-simple is to search for these UIDs.
-            // SEARCH UID <uid1>,<uid2>,...
 
             const searchCriteriaUIDs = [['UID', ...uids]];
             const fetchOptionsDetails = {
@@ -114,7 +146,6 @@ class EmailService {
 
             const detailedMessages = await connection.search(searchCriteriaUIDs, fetchOptionsDetails);
 
-            // Sort again because the second search might return in any order
             detailedMessages.sort((a, b) => {
                 const dateA = a.attributes.date ? new Date(a.attributes.date).getTime() : 0;
                 const dateB = b.attributes.date ? new Date(b.attributes.date).getTime() : 0;
@@ -123,7 +154,7 @@ class EmailService {
 
             const serialized = detailedMessages.map(msg => {
                 const headerPart = msg.parts.find(p => p.which === 'HEADER');
-                const header = headerPart ? headerPart.body : {};
+                const header: any = headerPart ? headerPart.body : {};
 
                 return {
                     id: msg.attributes.uid,
@@ -131,7 +162,10 @@ class EmailService {
                     from: header.from ? (header.from[0] as any) : 'Unknown',
                     subject: header.subject ? (header.subject[0] as string) : '(No Subject)',
                     date: msg.attributes.date,
-                    flags: msg.attributes.flags
+                    flags: msg.attributes.flags,
+                    messageId: header['message-id'] ? header['message-id'][0] : undefined,
+                    inReplyTo: header['in-reply-to'] ? header['in-reply-to'][0] : undefined,
+                    references: header.references ? header.references[0] : undefined
                 };
             });
 
@@ -149,9 +183,8 @@ class EmailService {
         const connection = await this.getImapConnection(account);
         try {
             await connection.openBox(folder);
-            // Fetch full body source
             const searchCriteria = [['UID', uid]];
-            const fetchOptions = { bodies: [''], markSeen: true }; // [''] fetches entire message
+            const fetchOptions = { bodies: [''], markSeen: true };
             const messages = await connection.search(searchCriteria, fetchOptions);
 
             if (messages.length === 0) throw new Error('Message not found');
@@ -159,14 +192,12 @@ class EmailService {
             const fullBody = messages[0].parts[0].body;
             const parsed = await simpleParser(fullBody);
 
-            // Sanitization
             const cleanHtml = parsed.html ? sanitizeHtml(parsed.html, {
                 allowedTags: sanitizeHtml.defaults.allowedTags.concat(['img', 'style']),
                 allowedAttributes: { ...sanitizeHtml.defaults.allowedAttributes, '*': ['style', 'class'], 'img': ['src'] },
                 allowedSchemes: ['http', 'https', 'data', 'mailto']
             }) : false;
 
-            // Attachments to Base64
             const attachments = parsed.attachments ? parsed.attachments.map(att => ({
                 filename: att.filename,
                 contentType: att.contentType,
@@ -175,7 +206,6 @@ class EmailService {
                 checksum: att.checksum
             })) : [];
 
-            // Helper to extract email text safely
             const getAddressText = (addr: any): string => {
                 if (!addr) return '';
                 if (Array.isArray(addr)) return getAddressText(addr[0]);
@@ -188,11 +218,135 @@ class EmailService {
                 subject: parsed.subject,
                 from: getAddressText(parsed.from),
                 to: getAddressText(parsed.to),
+                cc: getAddressText(parsed.cc),
                 html: cleanHtml,
                 text: parsed.text,
                 date: parsed.date,
-                attachments: attachments
+                messageId: parsed.messageId,
+                inReplyTo: parsed.inReplyTo,
+                references: parsed.references ? (Array.isArray(parsed.references) ? parsed.references.join(' ') : parsed.references) : undefined,
+                attachments
             };
+        } finally {
+            connection.end();
+        }
+    }
+
+    // --- Unread Count ---
+
+    async getUnreadCount(accountId: string, folder: string = 'INBOX'): Promise<number> {
+        const account = emailStoreService.getAccount(accountId);
+        if (!account) throw new Error('Account not found');
+
+        const connection = await this.getImapConnection(account);
+        try {
+            await connection.openBox(folder);
+            const messages = await connection.search(['UNSEEN'], { bodies: [], markSeen: false });
+            return messages.length;
+        } finally {
+            connection.end();
+        }
+    }
+
+    // --- Search ---
+
+    async searchMessages(accountId: string, folder: string = 'INBOX', query: string, searchIn: string = 'all', limit: number = 50) {
+        const account = emailStoreService.getAccount(accountId);
+        if (!account) throw new Error('Account not found');
+
+        const connection = await this.getImapConnection(account);
+        try {
+            await connection.openBox(folder);
+
+            let searchCriteria: any[];
+            switch (searchIn) {
+                case 'subject': searchCriteria = [['SUBJECT', query]]; break;
+                case 'from': searchCriteria = [['FROM', query]]; break;
+                case 'body': searchCriteria = [['BODY', query]]; break;
+                default: searchCriteria = [['TEXT', query]]; break;
+            }
+
+            const fetchOptions = { bodies: ['HEADER'], markSeen: false, struct: true };
+            const messages = await connection.search(searchCriteria, fetchOptions);
+
+            messages.sort((a, b) => {
+                const dateA = a.attributes.date ? new Date(a.attributes.date).getTime() : 0;
+                const dateB = b.attributes.date ? new Date(b.attributes.date).getTime() : 0;
+                return dateB - dateA;
+            });
+
+            return messages.slice(0, limit).map(msg => {
+                const headerPart = msg.parts.find(p => p.which === 'HEADER');
+                const header: any = headerPart ? headerPart.body : {};
+                return {
+                    id: msg.attributes.uid,
+                    seq: (msg as any).seq,
+                    from: header.from ? header.from[0] : 'Unknown',
+                    subject: header.subject ? header.subject[0] : '(No Subject)',
+                    date: msg.attributes.date,
+                    flags: msg.attributes.flags,
+                    messageId: header['message-id'] ? header['message-id'][0] : undefined,
+                    inReplyTo: header['in-reply-to'] ? header['in-reply-to'][0] : undefined,
+                    references: header.references ? header.references[0] : undefined
+                };
+            });
+        } finally {
+            connection.end();
+        }
+    }
+
+    // --- Flag Management ---
+
+    async addFlags(accountId: string, folder: string, uids: number[], flags: string[]): Promise<void> {
+        const account = emailStoreService.getAccount(accountId);
+        if (!account) throw new Error('Account not found');
+
+        const connection = await this.getImapConnection(account);
+        try {
+            await connection.openBox(folder);
+            await connection.addFlags(uids, flags);
+        } finally {
+            connection.end();
+        }
+    }
+
+    async delFlags(accountId: string, folder: string, uids: number[], flags: string[]): Promise<void> {
+        const account = emailStoreService.getAccount(accountId);
+        if (!account) throw new Error('Account not found');
+
+        const connection = await this.getImapConnection(account);
+        try {
+            await connection.openBox(folder);
+            await connection.delFlags(uids, flags);
+        } finally {
+            connection.end();
+        }
+    }
+
+    async deleteMessages(accountId: string, folder: string, uids: number[]): Promise<void> {
+        const account = emailStoreService.getAccount(accountId);
+        if (!account) throw new Error('Account not found');
+
+        const connection = await this.getImapConnection(account);
+        try {
+            await connection.openBox(folder);
+            await connection.addFlags(uids, ['\\Deleted']);
+            await (connection as any).closeBox(true); // expunge
+        } finally {
+            try { connection.end(); } catch {}
+        }
+    }
+
+    // --- Move Messages ---
+
+    async moveMessages(accountId: string, sourceFolder: string, uids: number[], destinationFolder: string): Promise<void> {
+        const account = emailStoreService.getAccount(accountId);
+        if (!account) throw new Error('Account not found');
+
+        const connection = await this.getImapConnection(account);
+        try {
+            await connection.openBox(sourceFolder);
+            await connection.moveMessage(uids.map(String), destinationFolder);
         } finally {
             connection.end();
         }

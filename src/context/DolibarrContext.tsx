@@ -387,6 +387,8 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
                 }
                 // Process notifications
                 processSyncChanges(result.changes);
+                // Invalidate React Query cache to refresh UI with synced data
+                refreshDataRef.current?.();
               }).catch(err => {
                 log.error('Background sync failed', err);
               });

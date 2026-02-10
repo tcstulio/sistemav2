@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, X, Paperclip, Trash2, Bot } from 'lucide-react';
-import { EmailAttachment } from '../../types/email';
+import { Send, X, Paperclip, ChevronDown, FileText } from 'lucide-react';
+import { EmailAttachment, EmailTemplate } from '../../types/email';
 import { AiService } from '../../services/aiService';
 import { EmailService } from '../../services/emailService';
+import { toast } from 'sonner';
 
 interface EmailComposerProps {
     onClose: () => void;
-    onSend: (to: string, subject: string, body: string, attachments: EmailAttachment[]) => Promise<void>;
+    onSend: (to: string, subject: string, body: string, attachments: EmailAttachment[], cc?: string, bcc?: string) => Promise<void>;
     initialTo?: string;
     initialSubject?: string;
     initialBody?: string;
@@ -20,22 +21,25 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
     initialBody = ''
 }) => {
     const [to, setTo] = useState(initialTo);
+    const [cc, setCc] = useState('');
+    const [bcc, setBcc] = useState('');
+    const [showCcBcc, setShowCcBcc] = useState(false);
     const [subject, setSubject] = useState(initialSubject);
     const [body, setBody] = useState(initialBody);
     const [isSending, setIsSending] = useState(false);
     const [attachments, setAttachments] = useState<EmailAttachment[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Focus To field on mount if empty, else Body
+    // Templates
+    const [templates, setTemplates] = useState<EmailTemplate[]>([]);
+    const [showTemplates, setShowTemplates] = useState(false);
+
     useEffect(() => {
         // Load Signature
         const loadSig = async () => {
             try {
                 const { userSettings } = await EmailService.getUserStore();
-                if (userSettings?.signatureName && !initialBody) { // Only append if new message/empty body
-                    // Very simple signature append.
-                    // In future can use HTML but textarea is plain text currently?
-                    // The component uses textarea for body, so plain text signature.
+                if (userSettings?.signatureName && !initialBody) {
                     setBody((prev) => prev ? prev : `\n\n--\n${userSettings.signatureName}`);
                 }
             } catch (e) {
@@ -43,7 +47,10 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
             }
         };
         loadSig();
-    }, []); // Run once
+
+        // Load Templates
+        EmailService.getTemplates().then(setTemplates).catch(() => {});
+    }, []);
 
     const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) {
@@ -63,7 +70,6 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
             }
             setAttachments(prev => [...prev, ...newAttachments]);
         }
-        // Reset input so same file can be selected again if needed
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
@@ -72,7 +78,6 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
             const reader = new FileReader();
             reader.onload = () => {
                 const result = reader.result as string;
-                // Remove data URL prefix (e.g., "data:image/png;base64,")
                 const base64 = result.split(',')[1];
                 resolve(base64);
             };
@@ -85,26 +90,44 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
         setAttachments(prev => prev.filter((_, i) => i !== index));
     };
 
+    const handleUseTemplate = (template: EmailTemplate) => {
+        setSubject(template.subject);
+        setBody(template.body);
+        setShowTemplates(false);
+        toast.success(`Template "${template.name}" aplicado`);
+    };
+
+    const handleSaveAsTemplate = async () => {
+        if (!subject && !body) {
+            toast.error('Escreva algo antes de salvar como template');
+            return;
+        }
+        const name = prompt('Nome do template:');
+        if (!name) return;
+        try {
+            await EmailService.addTemplate({ name, subject, body });
+            const updated = await EmailService.getTemplates();
+            setTemplates(updated);
+            toast.success('Template salvo');
+        } catch {
+            toast.error('Erro ao salvar template');
+        }
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        // [ANTIGRAVITY] AI Command Check
+        // AI Command Check
         if (body.trim().startsWith('/sys ')) {
             const query = body.trim().replace('/sys ', '');
             setIsSending(true);
             try {
                 const result = await AiService.analyzeSystem(query);
-                // Instead of alert, maybe replace body? Or just alert as requested in WhatsApp view.
-                // WhatsApp view alerts. User might want to paste it?
-                // Let's replace the /sys line with the result or append it.
-                // Alert is annoying for long text. Let's append to body.
-
-                // Remove the command line
                 const newBody = body.replace(/^\/sys .*/, '') + `\n\n--- ANÁLISE DO SISTEMA ---\n${result}`;
                 setBody(newBody);
-                alert("Análise concluída e adicionada ao corpo do email.");
+                toast.success("Análise concluída e adicionada ao corpo do email.");
             } catch (e) {
-                alert("Erro ao analisar sistema.");
+                toast.error("Erro ao analisar sistema.");
             } finally {
                 setIsSending(false);
             }
@@ -113,11 +136,11 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
 
         setIsSending(true);
         try {
-            await onSend(to, subject, body, attachments);
+            await onSend(to, subject, body, attachments, cc || undefined, bcc || undefined);
             onClose();
         } catch (error) {
             console.error(error);
-            alert('Erro ao enviar email');
+            toast.error('Erro ao enviar email');
         } finally {
             setIsSending(false);
         }
@@ -129,7 +152,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800">
                     <h2 className="text-lg font-semibold text-slate-800 dark:text-white">
-                        {initialSubject ? 'Responder Mensagem' : 'Nova Mensagem'}
+                        {initialSubject?.startsWith('Re:') ? 'Responder' : initialSubject?.startsWith('Fwd:') ? 'Encaminhar' : 'Nova Mensagem'}
                     </h2>
                     <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors">
                         <X size={20} />
@@ -138,27 +161,54 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
 
                 {/* Form */}
                 <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
-                    <div className="p-6 space-y-4 flex-none">
-                        <div>
+                    <div className="p-6 space-y-3 flex-none">
+                        <div className="flex items-center gap-2">
                             <input
-                                type="text" // changed from email to text to allow multiple emails if needed later, but validation expects email
+                                type="text"
                                 placeholder="Para"
-                                className="w-full px-4 py-3 bg-transparent border-b border-slate-200 dark:border-slate-700 outline-none text-slate-800 dark:text-white placeholder-slate-400 focus:border-blue-500 transition-colors"
+                                className="flex-1 px-4 py-3 bg-transparent border-b border-slate-200 dark:border-slate-700 outline-none text-slate-800 dark:text-white placeholder-slate-400 focus:border-blue-500 transition-colors"
                                 value={to}
                                 onChange={e => setTo(e.target.value)}
                                 required
                             />
+                            {!showCcBcc && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowCcBcc(true)}
+                                    className="text-xs text-blue-500 hover:text-blue-700 font-medium whitespace-nowrap"
+                                >
+                                    Cc/Bcc
+                                </button>
+                            )}
                         </div>
-                        <div>
-                            <input
-                                type="text"
-                                placeholder="Assunto"
-                                className="w-full px-4 py-3 bg-transparent border-b border-slate-200 dark:border-slate-700 outline-none text-slate-800 dark:text-white placeholder-slate-400 focus:border-blue-500 transition-colors font-medium"
-                                value={subject}
-                                onChange={e => setSubject(e.target.value)}
-                                required
-                            />
-                        </div>
+
+                        {showCcBcc && (
+                            <>
+                                <input
+                                    type="text"
+                                    placeholder="Cc (separar por vírgula)"
+                                    className="w-full px-4 py-2 bg-transparent border-b border-slate-200 dark:border-slate-700 outline-none text-slate-800 dark:text-white placeholder-slate-400 focus:border-blue-500 transition-colors text-sm"
+                                    value={cc}
+                                    onChange={e => setCc(e.target.value)}
+                                />
+                                <input
+                                    type="text"
+                                    placeholder="Bcc (separar por vírgula)"
+                                    className="w-full px-4 py-2 bg-transparent border-b border-slate-200 dark:border-slate-700 outline-none text-slate-800 dark:text-white placeholder-slate-400 focus:border-blue-500 transition-colors text-sm"
+                                    value={bcc}
+                                    onChange={e => setBcc(e.target.value)}
+                                />
+                            </>
+                        )}
+
+                        <input
+                            type="text"
+                            placeholder="Assunto"
+                            className="w-full px-4 py-3 bg-transparent border-b border-slate-200 dark:border-slate-700 outline-none text-slate-800 dark:text-white placeholder-slate-400 focus:border-blue-500 transition-colors font-medium"
+                            value={subject}
+                            onChange={e => setSubject(e.target.value)}
+                            required
+                        />
                     </div>
 
                     <div className="flex-1 p-6 pt-0 min-h-0 flex flex-col">
@@ -191,7 +241,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                     </div>
 
                     <div className="p-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center">
-                        <div>
+                        <div className="flex items-center gap-2">
                             <input
                                 type="file"
                                 ref={fileInputRef}
@@ -205,8 +255,50 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                                 className="flex items-center gap-2 px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
                             >
                                 <Paperclip size={18} />
-                                <span className="text-sm font-medium">Anexar</span>
+                                <span className="text-sm font-medium hidden sm:inline">Anexar</span>
                             </button>
+
+                            {/* Templates Dropdown */}
+                            <div className="relative">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowTemplates(!showTemplates)}
+                                    className="flex items-center gap-1.5 px-3 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                                >
+                                    <FileText size={16} />
+                                    <span className="text-sm font-medium hidden sm:inline">Templates</span>
+                                    <ChevronDown size={12} />
+                                </button>
+
+                                {showTemplates && (
+                                    <div className="absolute bottom-full left-0 mb-2 w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
+                                        <div className="p-1">
+                                            <button
+                                                type="button"
+                                                onClick={handleSaveAsTemplate}
+                                                className="w-full text-left px-3 py-2 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded font-medium border-b border-slate-100 dark:border-slate-700 mb-1"
+                                            >
+                                                + Salvar como Template
+                                            </button>
+                                            {templates.length === 0 ? (
+                                                <p className="px-3 py-2 text-xs text-slate-400">Nenhum template salvo</p>
+                                            ) : (
+                                                templates.map(t => (
+                                                    <button
+                                                        key={t.id}
+                                                        type="button"
+                                                        onClick={() => handleUseTemplate(t)}
+                                                        className="w-full text-left px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded"
+                                                    >
+                                                        <span className="font-medium">{t.name}</span>
+                                                        <span className="block text-xs text-slate-400 truncate">{t.subject}</span>
+                                                    </button>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         </div>
 
                         <button

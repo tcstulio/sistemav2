@@ -57,6 +57,7 @@ const MonthlyReport = React.lazy(() => import('../pages/Reports/MonthlyReport').
 const ChatPage = React.lazy(() => import('../pages/ChatPage').then(m => ({ default: m.ChatPage })));
 const ChatConversation = React.lazy(() => import('../pages/ChatPage').then(m => ({ default: m.ChatConversation })));
 const Simulator = React.lazy(() => import('../pages/Simulator'));
+const CentroVibeManager = React.lazy(() => import('./CentroVibe/CentroVibeManager'));
 
 interface ViewWrapperProps {
     Component: React.ComponentType<{
@@ -237,6 +238,7 @@ const App: React.FC = () => {
                         </Route>
 
                         <Route path="/simulator" element={<ViewWrapper Component={Simulator} viewId="simulator" />} />
+                        <Route path="/centrovibe" element={<ViewWrapper Component={CentroVibeManager} viewId="centrovibe" />} />
                         <Route path="*" element={<NotFound />} />
                     </Route>
                 </Routes>

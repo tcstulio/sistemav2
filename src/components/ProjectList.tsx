@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Project, AppView, DolibarrDocument } from '../types';
-import { Search, Plus, Loader2, CheckCircle2, ArrowRight, Settings, Pencil, Trash2, FolderKanban } from 'lucide-react';
+import { Search, Plus, Loader2, CheckCircle2, Settings, Pencil, Trash2, FolderKanban } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 
 // Direct Hook Imports
@@ -13,7 +13,8 @@ import {
 } from '../hooks/dolibarr';
 
 // Design System
-import { PageHeader, Button, Input, Tabs, Tab, EmptyState, MasterDetailLayout } from './ui';
+import { PageHeader, Card, Button, Input, Tabs, Tab, EmptyState, MasterDetailLayout, StatusBadge } from './ui';
+import type { StatusConfig } from './ui/StatusBadge';
 import { PaginationControls } from './common/PaginationControls';
 
 // Tabs Components
@@ -26,14 +27,11 @@ import {
 import { CreateProjectModal, EditProjectModal, TaskModal, TicketModal } from './Projects/modals';
 import { TaskWizard } from './Projects/TaskWizard';
 
-// Helper Functions
-const getStatusBadge = (status: string) => {
-    switch (status) {
-        case '0': return <span className="px-2 py-0.5 rounded text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">Rascunho</span>;
-        case '1': return <span className="px-2 py-0.5 rounded text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">Aberto</span>;
-        case '2': return <span className="px-2 py-0.5 rounded text-xs bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300">Fechado</span>;
-        default: return <span className="text-xs bg-slate-100">Desconhecido</span>;
-    }
+// Status Config
+const projectStatuses: Record<string, StatusConfig> = {
+    '0': { label: 'Rascunho', variant: 'slate' },
+    '1': { label: 'Aberto', variant: 'blue' },
+    '2': { label: 'Fechado', variant: 'purple' },
 };
 
 const formatDateForInput = (timestamp: number) => {
@@ -707,26 +705,27 @@ const ProjectList: React.FC<{
                             action={<Button onClick={() => setIsCreateModalOpen(true)}>Novo Projeto</Button>}
                         />
                     ) : (
-                        <div className="space-y-3 pb-8">
+                        <div className="space-y-3 p-4 pb-8">
                             {paginatedProjects.map(proj => (
-                                <div
+                                <Card
                                     key={proj.id}
                                     onClick={() => setSelectedProject(proj)}
-                                    className={`p-4 border rounded-xl cursor-pointer transition-all ${selectedProject?.id === proj.id ? `border-${config.themeColor}-500 bg-${config.themeColor}-50 dark:bg-${config.themeColor}-900/20` : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md'}`}
+                                    selected={selectedProject?.id === proj.id}
+                                    hoverable
                                 >
                                     <div className="flex justify-between items-start mb-2">
                                         <div className="flex items-center gap-2">
                                             <h4 className="font-bold text-slate-800 dark:text-white text-sm">{proj.ref}</h4>
-                                            {getStatusBadge(proj.statut)}
+                                            <StatusBadge status={proj.statut} config={projectStatuses} size="sm" />
                                         </div>
                                         <span className="text-xs text-slate-500 font-mono">{proj.progress}%</span>
                                     </div>
                                     <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-1 line-clamp-1">{proj.title}</h3>
                                     <div className="text-sm text-slate-600 dark:text-slate-300 font-medium mb-1 truncate">{getCustomerName(proj.socid)}</div>
                                     <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
-                                        <div className={`h-full bg-${config.themeColor}-500`} style={{ width: `${proj.progress}%` }}></div>
+                                        <div className="h-full bg-indigo-500" style={{ width: `${proj.progress}%` }}></div>
                                     </div>
-                                </div>
+                                </Card>
                             ))}
                             <PaginationControls
                                 page={page}

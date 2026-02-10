@@ -24,15 +24,22 @@ export interface EmailMessage {
     subject: string;
     date: string;
     flags: string[];
+    messageId?: string;
+    inReplyTo?: string;
+    references?: string;
 }
 
 export interface EmailBody {
     subject: string;
     from: string;
     to: string;
+    cc?: string;
     html: string | false;
     text: string | undefined;
     date: string;
+    messageId?: string;
+    inReplyTo?: string;
+    references?: string;
     attachments: any[];
 }
 
@@ -41,4 +48,14 @@ export interface EmailAttachment {
     content: string; // Base64
     contentType?: string;
     encoding?: 'base64';
+}
+
+export interface EmailTemplate {
+    id: string;
+    name: string;
+    subject: string;
+    body: string;
+    createdBy: string;
+    createdAt: string;
+    updatedAt: string;
 }

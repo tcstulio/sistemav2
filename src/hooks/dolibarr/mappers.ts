@@ -476,7 +476,7 @@ export const mapUserRight = (raw: any): { id: string, fk_user: string, fk_id: st
         id: String(raw.id || raw.rowid || ''),
         fk_user: String(raw.fk_user || raw.user_id || ''),
         fk_id: String(raw.fk_id || raw.right_id || ''),
-        date_modification: Number(raw.id) // Use ID as pseudo-modification marker
+        date_modification: toTimestamp(raw.tms)
     };
 };
 
@@ -725,7 +725,7 @@ export const mapLink = (raw: any): Link => ({
     sourceid: toString(raw.sourceid),
     targettype: raw.targettype || '',
     targetid: toString(raw.targetid),
-    date_modification: Number(raw.id), // Links não têm tms, usar ID para sync incremental
+    date_modification: toTimestamp(raw.tms),
 });
 
 /**
@@ -831,6 +831,7 @@ export const mapGroupUser = (raw: any): GroupUser => {
         id: String(raw.id || raw.rowid || ''),
         fk_user: String(raw.fk_user || raw.user_id || ''),
         fk_usergroup: String(raw.fk_usergroup || raw.group_id || ''),
+        date_modification: toTimestamp(raw.tms),
         raw: raw
     };
 };
@@ -845,6 +846,7 @@ export const mapPermission = (raw: any): PermissionDefinition => {
         type: raw.type || '',
         module_position: raw.module_position ? parseInt(raw.module_position) : undefined,
         family_position: raw.family_position ? parseInt(raw.family_position) : undefined,
+        date_modification: toTimestamp(raw.tms),
         raw: raw
     };
 };
@@ -854,7 +856,7 @@ export const mapGroupRight = (raw: any): { id: string, fk_usergroup: string, fk_
         id: String(raw.id || raw.rowid || ''),
         fk_usergroup: String(raw.fk_usergroup || raw.group_id || ''),
         fk_id: String(raw.fk_id || raw.right_id || ''),
-        date_modification: Number(raw.id) // Use ID as pseudo-modification marker
+        date_modification: toTimestamp(raw.tms)
     };
 };
 
@@ -944,7 +946,7 @@ export const mapPaymentInvoiceLink = (raw: any): PaymentInvoiceLink => ({
     fk_paiement: toString(raw.fk_paiement),
     fk_facture: toString(raw.fk_facture),
     amount: toNumber(raw.amount),
-    date_modification: Number(raw.id), // No TMS, use ID
+    date_modification: toTimestamp(raw.tms),
 });
 
 /**
@@ -955,7 +957,7 @@ export const mapSupplierPaymentInvoiceLink = (raw: any): SupplierPaymentInvoiceL
     fk_paiementfourn: toString(raw.fk_paiementfourn),
     fk_facturefourn: toString(raw.fk_facturefourn),
     amount: toNumber(raw.amount),
-    date_modification: Number(raw.id), // No TMS, use ID
+    date_modification: toTimestamp(raw.tms),
 });
 
 
@@ -988,7 +990,7 @@ export const mapExpenseType = (raw: any): ExpenseType => ({
     code: raw.code || '',
     label: raw.label || '',
     active: toString(raw.active) as '0' | '1',
-    date_modification: Number(raw.id), // No TMS, use ID logic
+    date_modification: toTimestamp(raw.tms),
 });
 
 /**
@@ -1015,7 +1017,7 @@ export const mapExpenseReportPaymentLink = (raw: any): ExpenseReportPaymentLink 
     fk_payment: toString(raw.fk_payment),
     fk_expensereport: toString(raw.fk_expensereport),
     amount: toNumber(raw.amount),
-    date_modification: Number(raw.id),
+    date_modification: toTimestamp(raw.tms),
 });
 
 /**
