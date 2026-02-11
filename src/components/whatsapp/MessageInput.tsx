@@ -3,6 +3,9 @@ import { Send, Loader2, Mic, Paperclip, Smile, Trash2, Sparkles } from 'lucide-r
 import { toast } from 'sonner';
 import { AiService } from '../../services/aiService';
 import { WhatsAppMessage } from '../../types';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('MessageInput');
 
 interface MessageInputProps {
     onSendMessage: (text: string) => Promise<void>;
@@ -50,7 +53,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
             await onSendMessage(inputText);
             setInputText('');
         } catch (error) {
-            console.error("Failed to send message from input:", error);
+            log.error("Failed to send message", error);
             // Don't clear input so user can retry
             toast.error("Erro ao enviar. Tente novamente.");
         }
@@ -82,7 +85,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
                 setRecordingSeconds(prev => prev + 1);
             }, 1000);
         } catch (err: any) {
-            console.error("Error accessing microphone", err);
+            log.error("Error accessing microphone", err);
             toast.error("Erro ao acessar microfone.");
         }
     };
@@ -152,7 +155,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
                 toast.error("Não foi possível gerar uma resposta inteligente. Verifique a configuração da IA.");
             }
         } catch (error) {
-            console.error("Smart Reply Error", error);
+            log.error("Smart reply failed", error);
             toast.error("Erro ao conectar com a Inteligência Artificial.");
         } finally {
             setIsGeneratingSmartReply(false);

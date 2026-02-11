@@ -5,6 +5,9 @@ import { useDolibarr } from '../../context/DolibarrContext';
 import { useBankAccounts } from '../../hooks/dolibarr';
 import { toast } from 'sonner';
 import { PaymentData } from './CustomerPaymentModal';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('SupplierPaymentModal');
 
 interface SupplierPaymentModalProps {
     invoice: SupplierInvoice;
@@ -85,7 +88,7 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({ invo
             await onConfirm(paymentData);
             onClose();
         } catch (error) {
-            console.error(error);
+            log.error(error);
             // Error handling should be done in parent or here? 
             // Parent onConfirm is async, so if it throws, we catch here.
         } finally {

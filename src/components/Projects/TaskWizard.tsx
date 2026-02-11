@@ -3,6 +3,9 @@ import { Project, DolibarrConfig, DolibarrUser, Task } from '../../types';
 import { X, Plus, Trash2, ArrowRight, Save, Wand2, Sparkles, Import, Users, Loader2, Search, Check, ChevronDown } from 'lucide-react';
 import { DolibarrService } from '../../services/dolibarrService';
 import { AiService } from '../../services/aiService';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('TaskWizard');
 
 interface TaskWizardProps {
     isOpen: boolean;
@@ -260,7 +263,7 @@ export const TaskWizard: React.FC<TaskWizardProps> = ({ isOpen, onClose, project
                 setShowAiInput(false);
             }
         } catch (e) {
-            console.error(e);
+            log.error("Failed to generate AI suggestions", e);
             alert('Erro ao gerar sugestões com IA.');
         } finally {
             setIsAiLoading(false);
@@ -327,7 +330,7 @@ export const TaskWizard: React.FC<TaskWizardProps> = ({ isOpen, onClose, project
                             // Let's assume standard 'internal_contact' logic
                             // For now, I'll use the new helper.
                             await DolibarrService.addTaskParticipant(config, createdTask.id, row.assigned_user_id);
-                        } catch (e) { console.warn('Failed to assign user', e); }
+                        } catch (e) { log.warn('Failed to assign user', e); }
                     }
 
                     // 3. Add Participants
@@ -336,7 +339,7 @@ export const TaskWizard: React.FC<TaskWizardProps> = ({ isOpen, onClose, project
                             if (uid === row.assigned_user_id) continue; // Skip if main responsible
                             try {
                                 await DolibarrService.addTaskParticipant(config, createdTask.id, uid);
-                            } catch (e) { console.warn('Failed to add participant', uid, e); }
+                            } catch (e) { log.warn('Failed to add participant', { uid, error: e }); }
                         }
                     }
                 }
@@ -344,7 +347,7 @@ export const TaskWizard: React.FC<TaskWizardProps> = ({ isOpen, onClose, project
             onSuccess();
             onClose();
         } catch (e) {
-            console.error(e);
+            log.error("Failed to create tasks", e);
             alert('Erro ao criar tarefas.');
         } finally {
             setIsSubmitting(false);

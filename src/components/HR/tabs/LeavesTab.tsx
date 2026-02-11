@@ -4,6 +4,9 @@ import { Plane, Thermometer, Sun, Calendar, User, Plus, CheckCircle2, Send, XCir
 import { useDolibarr } from '../../../context/DolibarrContext';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { formatDateOnly } from '../../../utils/dateUtils';
+import { logger } from '../../../utils/logger';
+
+const log = logger.child('LeavesTab');
 
 interface LeavesTabProps {
     leaveRequests: LeaveRequest[];
@@ -52,7 +55,7 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
         try {
             await DolibarrService.validateLeaveRequest(config, id);
             alert("Solicitação enviada!");
-        } catch (e) { console.error(e); alert("Erro ao enviar."); }
+        } catch (e) { log.error("Failed to validate leave request", e); alert("Erro ao enviar."); }
         finally { setProcessingId(null); }
     };
 
@@ -62,7 +65,7 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
         try {
             await DolibarrService.approveLeaveRequest(config, id);
             alert("Solicitação aprovada!");
-        } catch (e) { console.error(e); alert("Erro ao aprovar."); }
+        } catch (e) { log.error("Failed to approve leave request", e); alert("Erro ao aprovar."); }
         finally { setProcessingId(null); }
     };
 
@@ -72,7 +75,7 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
         try {
             await DolibarrService.refuseLeaveRequest(config, id);
             alert("Solicitação recusada!");
-        } catch (e) { console.error(e); alert("Erro ao recusar."); }
+        } catch (e) { log.error("Failed to refuse leave request", e); alert("Erro ao recusar."); }
         finally { setProcessingId(null); }
     };
 

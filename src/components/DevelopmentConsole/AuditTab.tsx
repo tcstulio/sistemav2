@@ -4,6 +4,9 @@ import { CheckCircle2, AlertOctagon, AlertTriangle, Info, RefreshCw } from 'luci
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useCustomers, useInvoices, useProjects, useTasks, useProducts } from '../../hooks/dolibarr';
 import { AiService } from '../../services/aiService';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('AuditTab');
 
 interface AuditIssue {
     type: 'error' | 'warning' | 'info';
@@ -130,11 +133,11 @@ export const AuditTab: React.FC<AuditTabProps> = () => {
                 try {
                     setAiAnalysisResult(JSON.parse(insights));
                 } catch (e) {
-                    console.error("Failed to parse AI result", e);
+                    log.error("Failed to parse AI result", e);
                 }
             }
         } catch (e) {
-            console.error("AI Audit failed", e);
+            log.error("AI Audit failed", e);
         } finally {
             setAiAnalyzing(false);
         }

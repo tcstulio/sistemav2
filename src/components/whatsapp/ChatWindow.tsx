@@ -6,6 +6,9 @@ import { formatTime } from '../../utils/dateUtils';
 import { useCustomerMutations } from '../../hooks/useMutations';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { toast } from 'sonner';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('ChatWindow');
 
 interface ChatWindowProps {
     messages: WhatsAppMessage[];
@@ -127,7 +130,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                 toast.error("Não foi possível extrair informações.");
             }
         } catch (e) {
-            console.error(e);
+            log.error(e);
             toast.error("Erro na extração IA.");
         } finally {
             setIsExtracting(false);

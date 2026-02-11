@@ -4,6 +4,9 @@ import { Invoice } from '../../types';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useBankAccounts } from '../../hooks/dolibarr';
 import { toast } from 'sonner';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('CustomerPaymentModal');
 
 export interface PaymentData {
     date: number;
@@ -90,7 +93,7 @@ export const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({ invo
             await onConfirm(paymentData);
             onClose();
         } catch (error) {
-            console.error(error);
+            log.error(error);
         } finally {
             setIsSubmitting(false);
         }

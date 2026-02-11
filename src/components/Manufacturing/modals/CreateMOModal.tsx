@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { DolibarrConfig, Project, Product } from '../../../types';
 import { Loader2, CheckCircle2, X } from 'lucide-react';
 import { DolibarrService } from '../../../services/dolibarrService';
+import { logger } from '../../../utils/logger';
+
+const log = logger.child('CreateMOModal');
 
 interface CreateMOModalProps {
     isOpen: boolean;
@@ -32,7 +35,7 @@ export const CreateMOModal: React.FC<CreateMOModalProps> = ({ isOpen, onClose, c
             onSuccess();
             onClose();
             setMoForm({ label: '', product_to_produce_id: '', qty: 1, project_id: '', date_start: new Date().toISOString().split('T')[0] });
-        } catch (e) { console.error(e); } finally { setIsSubmittingMo(false); }
+        } catch (e) { log.error(e); } finally { setIsSubmittingMo(false); }
     };
 
     if (!isOpen) return null;

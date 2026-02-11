@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { DolibarrConfig, DolibarrUser } from '../../../types';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { Plane, X, Loader2, CheckCircle2 } from 'lucide-react';
+import { logger } from '../../../utils/logger';
+
+const log = logger.child('LeaveModal');
 
 interface LeaveModalProps {
     isOpen: boolean;
@@ -30,7 +33,7 @@ export const LeaveModal: React.FC<LeaveModalProps> = ({ isOpen, onClose, config,
             setLeaveForm({ fk_user: '', date_debut: '', date_fin: '', type: 'Paid Vacation', description: '' });
             alert("Solicitação de Licença Criada com Sucesso");
             if (onRefresh) onRefresh();
-        } catch (e) { console.error(e); } finally { setIsSubmittingLeave(false); }
+        } catch (e) { log.error(e); } finally { setIsSubmittingLeave(false); }
     };
 
     if (!isOpen) return null;

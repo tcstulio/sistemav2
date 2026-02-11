@@ -5,6 +5,9 @@ import { DolibarrService } from '../../services/dolibarrService';
 import { toast } from 'sonner';
 import { useSuppliers, useProducts } from '../../hooks/dolibarr';
 import { useDolibarr } from '../../context/DolibarrContext';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('ReceiptWizard');
 
 interface ReceiptWizardProps {
     onClose: () => void;
@@ -111,7 +114,7 @@ export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoice
             }
 
         } catch (e) {
-            console.error("Match error details:", e);
+            log.error("Match error details", e);
         }
 
         return { best: null, candidates: [] };
@@ -139,7 +142,7 @@ export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoice
             };
             reader.readAsDataURL(file);
         } catch (err) {
-            console.error(err);
+            log.error("Failed to handle file change", err);
         }
     };
 
@@ -155,7 +158,7 @@ export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoice
                     const cleanJson = result.replace(/```json|```/g, '').trim();
                     data = JSON.parse(cleanJson);
                 } catch (e) {
-                    console.error("Error parsing AI JSON", e);
+                    log.error("Error parsing AI JSON", e);
                     data = { total: 0 };
                 }
             }
@@ -224,7 +227,7 @@ export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoice
             toast.success("Dados extraídos com sucesso!");
 
         } catch (error) {
-            console.error(error);
+            log.error("Failed to process image", error);
             toast.error("Erro ao processar imagem.");
             setStep('details');
         } finally {
@@ -277,7 +280,7 @@ export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoice
                         // toast.success("Recibo anexado!");
                     }
                 } catch (docErr) {
-                    console.error("Erro anexando imagem:", docErr);
+                    log.error("Failed to attach image", docErr);
                     // toast.error("Erro ao anexar imagem.");
                 }
             }
@@ -295,7 +298,7 @@ export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoice
             onInvoiceCreated();
             onClose();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to save invoice", e);
             toast.error("Erro ao salvar: " + e.message);
         } finally {
             setIsProcessing(false);
@@ -325,7 +328,7 @@ export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoice
             toast.success("Produto criado e vinculado!");
             // Refresh products? React Query should handle it eventually or we manually invalidate
         } catch (e) {
-            console.error(e);
+            log.error("Failed to create product", e);
             toast.error("Erro ao criar produto.");
         }
     };

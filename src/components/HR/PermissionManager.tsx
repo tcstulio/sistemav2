@@ -3,6 +3,9 @@ import { DolibarrConfig, PermissionDefinition } from '../../types';
 import { usePermissions, useGroupRights, useUserRights, useGroups, useGroupUsers } from '../../hooks/dolibarr';
 import * as HRAdmin from '../../services/api/hrAdmin';
 import { Lock, Check, Search, AlertCircle, Loader2, Users, CheckSquare, Square } from 'lucide-react';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('PermissionManager');
 
 interface PermissionManagerProps {
     targetId: string;
@@ -73,27 +76,25 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
 
         if (targetType === 'user' && allGroups && allGroupLinks && groupRightsData) {
             // Debug Logs
-            console.log('PermissionManager Debug:');
-            console.log('Target User ID:', targetId);
-            console.log('All Group Links:', allGroupLinks);
+            log.debug('Calculating inherited rights', { targetId, allGroupLinks });
 
             // 1. Find groups the user belongs to
             const userGroupIds = allGroupLinks
                 .filter(link => {
                     const match = String(link.fk_user) === String(targetId);
-                    if (match) console.log('Found Link match:', link);
+                    if (match) log.debug('Found link match', link);
                     return match;
                 })
                 .map(link => String(link.fk_usergroup));
 
-            console.log('User Group IDs:', userGroupIds);
+            log.debug('User group IDs', userGroupIds);
 
             // 2. For each group, find its rights
             userGroupIds.forEach(groupId => {
                 const groupName = allGroups.find(g => String(g.id) === groupId)?.name || 'Grupo Desconhecido';
 
                 const rights = groupRightsData.filter(gr => String(gr.fk_usergroup) === groupId);
-                console.log(`Rights for Group ${groupId} (${groupName}):`, rights);
+                log.debug(`Rights for group ${groupId} (${groupName})`, rights);
 
                 rights.forEach(r => {
                     const pid = String(r.fk_id);
@@ -103,7 +104,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
                     inherited.get(pid)?.push(groupName);
                 });
             });
-            console.log('Final Inherited Map:', inherited);
+            log.debug('Final inherited map', inherited);
         }
         return inherited;
     }, [targetType, targetId, allGroups, allGroupLinks, groupRightsData]);
@@ -131,7 +132,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
                 setTimeout(() => refetchUserRights(), 1000);
             }
         } catch (e) {
-            console.error("Failed to toggle permission", e);
+            log.error("Failed to toggle permission", e);
             alert("Erro ao alterar permissão via API.");
         } finally {
             setProcessingId(null);
@@ -170,7 +171,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
                 else refetchUserRights();
             }, 1000);
         } catch (e) {
-            console.error("Bulk action failed", e);
+            log.error("Bulk action failed", e);
             alert("Erro na atualização em massa.");
         } finally {
             setBulkProcessingModule(null);

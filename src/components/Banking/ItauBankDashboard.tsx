@@ -21,6 +21,9 @@ import {
 } from 'lucide-react';
 import { useItauBank, TransacaoItau, PixRecebidoItau, BoletoItau } from '../../hooks/useItauBank';
 import { formatDateOnly, formatDateTime } from '../../utils/dateUtils';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('ItauBankDashboard');
 
 interface ItauBankDashboardProps {
     onOpenSettings?: () => void;
@@ -95,7 +98,7 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
             setPixDialog(false);
             setPixForm({ valor: '', chave: '', descricao: '' });
         } catch (error) {
-            console.error('Erro ao criar Pix:', error);
+            log.error('Erro ao criar Pix:', error);
         }
     };
 
@@ -135,7 +138,7 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
             setBoletoForm({ valorTitulo: '', dataVencimento: '', pagadorNome: '', pagadorCpfCnpj: '' });
             boletosQuery.refetch();
         } catch (error) {
-            console.error('Erro ao emitir boleto:', error);
+            log.error('Erro ao emitir boleto:', error);
         }
     };
 

@@ -3,6 +3,9 @@ import { ApiLog } from '../../types';
 import { dbService } from '../../services/dbService';
 import { AiService } from '../../services/aiService';
 import { Loader2, Zap } from 'lucide-react';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('OptimizeTab');
 
 interface OptimizationSuggestion {
     title: string;
@@ -37,7 +40,7 @@ export const OptimizeTab: React.FC<OptimizeTabProps> = ({ logs }) => {
                 setOptimizations(JSON.parse(suggestionsStr));
             }
         } catch (e) {
-            console.error(e);
+            log.error(e);
         } finally {
             setIsOptimizing(false);
         }

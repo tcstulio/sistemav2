@@ -22,6 +22,9 @@ import {
     CreditCard,
     Zap
 } from 'lucide-react';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('ApprovalDashboard');
 
 // ===== Types =====
 
@@ -128,7 +131,7 @@ export function ApprovalDashboard() {
                 setStats(data.stats);
             }
         } catch (error) {
-            console.error('Erro ao carregar dados:', error);
+            log.error('Erro ao carregar dados:', error);
         } finally {
             setLoading(false);
         }

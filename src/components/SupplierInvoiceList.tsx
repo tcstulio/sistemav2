@@ -5,6 +5,9 @@ import { FileText, Search, CheckCircle2, Clock, FileEdit, ExternalLink, Download
 import { DolibarrService } from '../services/dolibarrService';
 import { LinkedObjects } from './common/LinkedObjects';
 import { PaginationControls } from './common/PaginationControls';
+import { logger } from '../utils/logger';
+
+const log = logger.child('SupplierInvoiceList');
 
 // Design System
 import { PageHeader, MasterDetailLayout, Card, Button, Input, Tabs, Tab, EmptyState, StatusBadge } from './ui';
@@ -82,7 +85,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
             const docs = await DolibarrService.fetchDocuments(config, 'supplier_invoice', selectedInvoice.id, selectedInvoice.ref);
             setDocuments(Array.isArray(docs) ? docs : []);
         } catch (e) {
-            console.error(e);
+            log.error("Failed to load documents", e);
         } finally {
             setIsLoadingDocs(false);
         }
@@ -97,7 +100,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
             toast.success("Arquivo enviado com sucesso");
             loadDocuments();
         } catch (e) {
-            console.error(e);
+            log.error("Failed to upload document", e);
             toast.error("Falha no envio");
         }
     };
@@ -108,7 +111,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
             await DolibarrService.deleteDocument(config, 'supplier_invoice', `${selectedInvoice.ref}/${filename}`);
             loadDocuments();
         } catch (e) {
-            console.error(e);
+            log.error("Failed to delete document", e);
             toast.error("Falha na exclusão");
         }
     };
@@ -305,7 +308,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
             setIsEditModalOpen(false);
             refreshData();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to save invoice", e);
             toast.error("Erro ao salvar: " + e.message);
         } finally {
             setIsSubmittingInvoice(false);
@@ -320,7 +323,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
             refreshData();
             setPaymentInvoice(null);
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to register payment", e);
             toast.error("Erro ao registrar pagamento: " + (e.message || "Erro desconhecido"));
             // Throw so modal stays open if needed, or handle here. 
             // Modal catches errors if we throw? No, modal handles verify logic. 
@@ -349,7 +352,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
             setSelectedInvoice(null);
             refreshData();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to delete invoice", e);
             toast.error("Erro ao excluir: " + e.message);
         }
     };
@@ -491,7 +494,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                     refreshData();
                                     setSelectedInvoice(null);
                                 } catch (e) {
-                                    console.error(e);
+                                    log.error("Failed to validate invoice", e);
                                     toast.error('Erro ao validar fatura. Verifique permissões.');
                                 }
                             }}>
@@ -515,7 +518,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                     setSelectedInvoice(null);
                                     toast.success("Fatura reaberta (Rascunho)");
                                 } catch (err: any) {
-                                    console.error(err);
+                                    log.error("Failed to reopen invoice", err);
                                     toast.error("Erro ao reabrir fatura: " + err.message);
                                 }
                             }}>
@@ -776,7 +779,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                                         try {
                                                             await DolibarrService.downloadDocument(config, 'supplier_invoice', `${selectedInvoice.ref}/${doc.name}`);
                                                         } catch (err) {
-                                                            console.error(err);
+                                                            log.error("Failed to download document", err);
                                                             alert("Erro ao baixar arquivo");
                                                         }
                                                     }}

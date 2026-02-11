@@ -8,6 +8,9 @@ import { RichTextEditor } from './common/RichTextEditor';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
 import { useProposals, useCustomers, useProducts, useProjects, useProposalLines, useUsers } from '../hooks/dolibarr';
+import { logger } from '../utils/logger';
+
+const log = logger.child('ProposalList');
 import { MasterDetailLayout } from './ui/MasterDetailLayout';
 import { PageHeader } from './ui/PageHeader';
 import { Card } from './ui/Card';
@@ -132,7 +135,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
             if (selectedProposal?.id === id) setSelectedProposal(null);
             refetchProposals();
         } catch (err: any) {
-            console.error(err);
+            log.error("Failed to delete proposal", err);
             alert("Erro ao excluir: " + (err.message || 'Erro desconhecido'));
         } finally {
             setProcessingId(null);
@@ -212,7 +215,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
             refetchLines();
             if (editingId && selectedProposal?.id === editingId) setSelectedProposal(null);
         } catch (err: any) {
-            console.error(err);
+            log.error("Failed to save proposal", err);
             alert("Erro ao salvar: " + (err.message || 'Erro desconhecido'));
         } finally {
             setIsSubmitting(false);
@@ -280,7 +283,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
             setAuditPayload(payload);
             const resultStr = await AiService.auditProposal(payload);
             if (resultStr) setAuditResult({ id: prop.id, result: JSON.parse(resultStr) });
-        } catch (err) { console.error(err); } finally { setProcessingId(null); }
+        } catch (err) { log.error("Failed to audit proposal", err); } finally { setProcessingId(null); }
     };
 
     const handleDownloadPdf = (e: React.MouseEvent | KeyboardEvent, ref: string) => {
@@ -298,7 +301,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
             if (onRefresh) onRefresh();
             refetchProposals();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to close proposal", e);
             alert("Ação falhou: " + e.message);
         } finally {
             setProcessingId(null);
@@ -315,7 +318,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
             if (onNavigate) onNavigate('orders', '');
             refetchProposals();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to create order from proposal", e);
             alert("Falha ao criar pedido: " + e.message);
         } finally {
             setProcessingId(null);

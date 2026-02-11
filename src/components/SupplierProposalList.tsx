@@ -8,6 +8,9 @@ import { useSupplierProposals, useSuppliers, useProducts, useProjects, useSuppli
 import { RichTextEditor } from './common/RichTextEditor';
 import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
+import { logger } from '../utils/logger';
+
+const log = logger.child('SupplierProposalList');
 
 // Design System
 import { PageHeader, MasterDetailLayout, Card, Button, Input, Tabs, Tab, EmptyState, StatusBadge } from './ui';
@@ -139,7 +142,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
             if (selectedProposal?.id === id) setSelectedProposal(null);
             refetchProposals();
         } catch (err: any) {
-            console.error(err);
+            log.error("Failed to delete supplier proposal", err);
             alert("Erro ao excluir: " + (err.message || 'Erro desconhecido'));
         } finally {
             setProcessingId(null);
@@ -236,7 +239,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
             }
 
         } catch (err: any) {
-            console.error(err);
+            log.error("Failed to save supplier proposal", err);
             alert("Erro ao salvar: " + (err.message || 'Erro desconhecido'));
         } finally {
             setIsSubmitting(false);
@@ -288,7 +291,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
             if (onRefresh) onRefresh();
             refetchProposals();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to close supplier proposal", e);
             alert("Ação falhou: " + e.message);
         } finally {
             setProcessingId(null);

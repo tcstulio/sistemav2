@@ -7,6 +7,9 @@ import { useCategories } from '../hooks/dolibarr';
 import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { toast } from 'sonner';
+import { logger } from '../utils/logger';
+
+const log = logger.child('CategoryList');
 
 // Design System
 import { PageHeader, MasterDetailLayout, Modal, Button, Input, Tabs, Tab, EmptyState, Card } from './ui';
@@ -112,7 +115,7 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
             setNewCat({ label: '', type: 'product', description: '' });
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            console.error(e);
+            log.error(e);
             toast.error(`Falha ao criar categoria: ${e.message}`);
         } finally {
             setIsSubmitting(false);
@@ -127,7 +130,7 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
             if (onRefresh) onRefresh();
             setSelectedCategory(null);
         } catch (e) {
-            console.error(e);
+            log.error(e);
             toast.error("Falha ao excluir categoria");
         }
     };

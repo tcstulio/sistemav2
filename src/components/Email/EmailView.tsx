@@ -15,6 +15,9 @@ import { ptBR } from 'date-fns/locale';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useUsers, useCustomers, useInvoices, useOrders, useTickets } from '../../hooks/dolibarr';
 import { toast } from 'sonner';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('EmailView');
 
 const POLL_OPTIONS = [
     { label: 'Off', value: 0 },
@@ -225,7 +228,7 @@ const EmailView: React.FC = () => {
                 const results = await EmailService.searchMessages(selectedAccountId, searchQuery, selectedFolder);
                 setSearchResults(results);
             } catch (error) {
-                console.error('Search failed', error);
+                log.error("Search failed", error);
                 setSearchResults([]);
             } finally {
                 setIsSearching(false);
@@ -252,7 +255,7 @@ const EmailView: React.FC = () => {
                 }).catch(() => {});
             }
         } catch (error) {
-            console.error(error);
+            log.error("Failed to load accounts", error);
         } finally {
             setIsLoadingAccounts(false);
         }
@@ -280,7 +283,7 @@ const EmailView: React.FC = () => {
             const folderNames = Object.keys(boxes);
             setFolders(folderNames);
         } catch (error) {
-            console.error("Failed to load folders", error);
+            log.error("Failed to load folders", error);
             setFolders(['INBOX', 'Sent', 'Trash', 'Drafts']);
         }
     };
@@ -316,7 +319,7 @@ const EmailView: React.FC = () => {
             prevMessageUidsRef.current = new Set(data.map(m => m.id));
             setMessages(data);
         } catch (error) {
-            console.error(error);
+            log.error("Failed to load messages", error);
             if (!isPolling) setMessages([]);
         } finally {
             if (!isPolling) setIsLoadingMessages(false);
@@ -329,7 +332,7 @@ const EmailView: React.FC = () => {
             const data = await EmailService.getMessageBody(accountId, uid, selectedFolder);
             setMessageBody(data);
         } catch (error) {
-            console.error(error);
+            log.error("Failed to load message body", error);
         } finally {
             setIsLoadingBody(false);
         }

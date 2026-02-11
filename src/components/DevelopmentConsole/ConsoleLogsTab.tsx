@@ -4,6 +4,9 @@ import { Terminal, RefreshCw, Trash2, AlertTriangle, X } from 'lucide-react';
 import { ApiLog } from '../../types';
 import { dbService } from '../../services/dbService';
 import { formatTime } from '../../utils/dateUtils';
+import { logger } from '../../utils/logger';
+
+const componentLog = logger.child('ConsoleLogsTab');
 
 interface ConsoleLogsTabProps { }
 
@@ -18,7 +21,7 @@ export const ConsoleLogsTab: React.FC<ConsoleLogsTabProps> = () => {
             const data = await dbService.getAll<ApiLog>('api_logs');
             setLogs(data.sort((a, b) => b.timestamp - a.timestamp));
         } catch (e) {
-            console.error("Failed to load logs", e);
+            componentLog.error("Failed to load logs", e);
         } finally {
             setIsLoadingLogs(false);
         }
@@ -30,7 +33,7 @@ export const ConsoleLogsTab: React.FC<ConsoleLogsTabProps> = () => {
             await dbService.clearAll();
             setLogs([]);
         } catch (e) {
-            console.error(e);
+            componentLog.error(e);
         }
     };
 

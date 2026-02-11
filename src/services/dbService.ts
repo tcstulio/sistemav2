@@ -1,4 +1,6 @@
+import { logger } from '../utils/logger';
 
+const log = logger.child('IndexedDB');
 
 export const DB_NAME = 'CoolGrooveDB';
 export const DB_VERSION = 29; // Bumped version to include User Rights
@@ -64,7 +66,7 @@ export const dbService = {
 
                 // Force re-sync of main objects that now have project_id
                 if (oldVersion < 15) {
-                    console.log("Upgrading to v15: Clearing stores to force re-sync of project links...");
+                    log.info("Upgrading to v15: Clearing stores to force re-sync of project links...");
                     const storesToClear = ['proposals', 'orders', 'invoices', 'contracts', 'tickets', 'events'];
                     storesToClear.forEach(store => {
                         if (db.objectStoreNames.contains(store)) {
@@ -75,7 +77,7 @@ export const dbService = {
 
                 // v16: Force re-sync of other objects that now have project_id (Shipments, Supplier Orders, etc.)
                 if (oldVersion < 16) {
-                    console.log("Upgrading to v16: Clearing stores to force re-sync of extended project links...");
+                    log.info("Upgrading to v16: Clearing stores to force re-sync of extended project links...");
                     const storesToClear = ['shipments', 'supplierOrders', 'supplierInvoices', 'expenseReports'];
                     storesToClear.forEach(store => {
                         if (db.objectStoreNames.contains(store)) {
@@ -86,7 +88,7 @@ export const dbService = {
 
                 // v18: Force re-sync of payments to fetch new fields (mode, note, num_paiement)
                 if (oldVersion < 18) {
-                    console.log("Upgrading to v18: Clearing payment stores to force re-sync of new fields...");
+                    log.info("Upgrading to v18: Clearing payment stores to force re-sync of new fields...");
                     const storesToClear = ['payments', 'supplierPayments'];
                     storesToClear.forEach(store => {
                         if (db.objectStoreNames.contains(store)) {
@@ -97,7 +99,7 @@ export const dbService = {
 
                 // v19 - Force re-sync of payments to fix bank account mapping (transaction_id vs bank_account_id)
                 if (oldVersion < 19) {
-                    console.log("Upgrading to v19 - Clearing payments for bank account ID fix");
+                    log.info("Upgrading to v19 - Clearing payments for bank account ID fix");
                     const storesToClear = ['payments', 'supplierPayments'];
                     storesToClear.forEach(storeName => {
                         if (db.objectStoreNames.contains(storeName)) {
@@ -108,14 +110,14 @@ export const dbService = {
 
                 // v20 - Ensure new payment stores exist (automatic via STORES loop below, but we can log or force clear if we wanted)
                 if (oldVersion < 20) {
-                    console.log("Upgrading to v20 - Creating detailed payment stores");
+                    log.info("Upgrading to v20 - Creating detailed payment stores");
                     // No need to delete/clear unless we want to force re-fetch.
                     // New stores will be created by the STORES loop.
                 }
 
                 // v23 - Force re-sync of users to fetch supervisor_id
                 if (oldVersion < 23) {
-                    console.log("Upgrading to v23 - Clearing users to fetch hierarchy...");
+                    log.info("Upgrading to v23 - Clearing users to fetch hierarchy...");
                     if (db.objectStoreNames.contains('users')) {
                         db.deleteObjectStore('users');
                     }
@@ -123,13 +125,13 @@ export const dbService = {
 
                 // v24 - Add projectContacts store
                 if (oldVersion < 24) {
-                    console.log("Upgrading to v24 - Adding projectContacts store...");
+                    log.info("Upgrading to v24 - Adding projectContacts store...");
                     // Store creation happens in the loop below
                 }
 
                 // v25 - Force re-sync of taskContacts to fix user_id mapping
                 if (oldVersion < 25) {
-                    console.log("Upgrading to v25 - Clearing taskContacts for re-sync...");
+                    log.info("Upgrading to v25 - Clearing taskContacts for re-sync...");
                     if (db.objectStoreNames.contains('taskContacts')) {
                         db.deleteObjectStore('taskContacts');
                     }
@@ -148,7 +150,7 @@ export const dbService = {
             };
 
             request.onerror = (event: any) => {
-                console.error("IndexedDB error:", event.target.error);
+                log.error("IndexedDB error:", event.target.error);
                 reject(event.target.error);
             };
         });
@@ -209,7 +211,7 @@ export const dbService = {
                 transaction.onerror = () => reject(transaction.error);
             });
         } catch (e) {
-            console.error(`Error upserting to ${storeName}`, e);
+            log.error(`Error upserting to ${storeName}`, e);
         }
     },
 
@@ -239,7 +241,7 @@ export const dbService = {
                 transaction.onerror = () => reject(transaction.error);
             });
         } catch (e) {
-            console.error(`Error saving to ${storeName}`, e);
+            log.error(`Error saving to ${storeName}`, e);
         }
     },
 
@@ -255,7 +257,7 @@ export const dbService = {
                 transaction.onerror = () => reject(transaction.error);
             });
         } catch (e) {
-            console.error(`Error adding to ${storeName}`, e);
+            log.error(`Error adding to ${storeName}`, e);
         }
     },
 
@@ -273,7 +275,7 @@ export const dbService = {
                 transaction.onerror = () => reject(transaction.error);
             });
         } catch (e) {
-            console.error("Failed to clear DB", e);
+            log.error("Failed to clear DB", e);
         }
     },
 
@@ -341,7 +343,7 @@ export const dbService = {
             await Promise.all(promises);
             return JSON.stringify(exportData);
         } catch (e) {
-            console.error("Export failed", e);
+            log.error("Export failed", e);
             throw new Error("Failed to export database");
         }
     },
@@ -377,7 +379,7 @@ export const dbService = {
                 transaction.onerror = () => reject(transaction.error);
             });
         } catch (e) {
-            console.error("Import failed", e);
+            log.error("Import failed", e);
             throw new Error("Failed to import database. Invalid file format.");
         }
     },
@@ -399,7 +401,7 @@ export const dbService = {
             });
             return maxTs;
         } catch (e) {
-            console.error(`Failed to get last modified for ${storeName}`, e);
+            log.error(`Failed to get last modified for ${storeName}`, e);
             return 0;
         }
     }

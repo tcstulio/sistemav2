@@ -13,6 +13,9 @@ import {
 import { fetchList } from '../services/api/core';
 import { AppView } from '../types';
 import { formatDateOnly } from '../utils/dateUtils';
+import { logger } from '../utils/logger';
+
+const log = logger.child('VenueList');
 
 // Design System
 import { PageHeader, MasterDetailLayout, Card, Button, Input, Tabs, Tab, EmptyState } from './ui';
@@ -44,7 +47,7 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue 
                 const transformed = (response || []).map((p: any) => transformPartnership(p));
                 setVenues(transformed);
             } catch (e: any) {
-                console.error('Erro ao buscar espaços:', e);
+                log.error('Erro ao buscar espaços:', e);
                 setError(e.message || 'Erro ao buscar espaços');
             } finally {
                 setIsLoading(false);

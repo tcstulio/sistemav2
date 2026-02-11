@@ -1,5 +1,8 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('ErrorBoundary');
 
 interface Props {
     children: ReactNode;
@@ -49,8 +52,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
         // Log error to console in development
         if (process.env.NODE_ENV !== 'production') {
-            console.error('[ErrorBoundary] Caught error:', error);
-            console.error('[ErrorBoundary] Component stack:', errorInfo.componentStack);
+            log.error('Caught error', { error: error.message, stack: errorInfo.componentStack });
         }
 
         // Call custom error handler if provided
@@ -161,7 +163,7 @@ export const AIErrorBoundary: React.FC<{ children: ReactNode; componentName?: st
     const handleAIError = (error: Error, errorInfo: ErrorInfo) => {
         // Could send to error tracking service like Sentry
         if (process.env.NODE_ENV !== 'production') {
-            console.error(`[AI Error] ${componentName}:`, error.message);
+            log.error(`AI Error in ${componentName}`, { message: error.message });
         }
     };
 

@@ -5,7 +5,10 @@ import { SystemLog } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useProjects, useInvoices, useTickets, useProposals } from '../hooks/dolibarr';
 import { AiService } from '../services/aiService';
+import { logger } from '../utils/logger';
 import { Modal, Button } from './ui';
+
+const log = logger.child('ActivityReportModal');
 
 interface ActivityReportModalProps {
     isOpen: boolean;
@@ -82,7 +85,7 @@ const ActivityReportModal: React.FC<ActivityReportModalProps> = ({ isOpen, onClo
             }
 
         } catch (error) {
-            console.error(error);
+            log.error(error);
             setReport('Erro ao processar solicitação.');
         } finally {
             setIsGenerating(false);

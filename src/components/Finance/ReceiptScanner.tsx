@@ -2,6 +2,9 @@ import React, { useState, useRef } from 'react';
 import { Camera, Upload, X, Loader2, Check, FileText } from 'lucide-react';
 import { AiService } from '../../services/aiService';
 import { toast } from 'sonner';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('ReceiptScanner');
 
 interface ReceiptScannerProps {
     onScanComplete: (data: any) => void;
@@ -39,7 +42,7 @@ export const ReceiptScanner: React.FC<ReceiptScannerProps> = ({ onScanComplete, 
                 setPreviewUrl(null);
             }
         } catch (error) {
-            console.error(error);
+            log.error(error);
             toast.error("Erro ao processar imagem.");
             setPreviewUrl(null);
         } finally {

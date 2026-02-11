@@ -7,6 +7,9 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useTickets, useCustomers, useUsers, useEvents, useProjects, useInterventions } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
+import { logger } from '../utils/logger';
+
+const log = logger.child('TicketList');
 
 // Design System
 import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState, MasterDetailLayout, StatusBadge } from './ui';
@@ -74,7 +77,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
             setIsLoadingMessages(true);
             DolibarrService.fetchTicketEvents(config, selectedTicket.id)
                 .then(evts => setRemoteEvents(evts))
-                .catch(e => console.error("Error loading ticket history", e))
+                .catch(e => log.error("Failed to load ticket history", e))
                 .finally(() => setIsLoadingMessages(false));
         } else {
             setRemoteEvents([]);
@@ -184,7 +187,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
             setLocalHistory([...localHistory, newMsg]);
             setReplyText('');
         } catch (e) {
-            console.error("Failed to send reply", e);
+            log.error("Failed to send reply", e);
             alert("Falha ao enviar mensagem. Verifique o console.");
         } finally {
             setIsSendingReply(false);
@@ -197,7 +200,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
         try {
             const draft = await AiService.generateTicketReply(selectedTicket.subject, selectedTicket.message, ticketMessages.map(m => m.text));
             if (draft) setReplyText(draft);
-        } catch (e) { console.error(e); } finally { setIsGeneratingReply(false); }
+        } catch (e) { log.error("Failed to generate smart reply", e); } finally { setIsGeneratingReply(false); }
     };
 
     const handleCreateTicket = async () => {
@@ -207,7 +210,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
             setIsNewTicketModalOpen(false);
             setNewTicketForm({ subject: '', message: '', socid: '', severity_code: 'NORMAL', type_code: 'ISSUE' });
             if (onRefresh) onRefresh();
-        } catch (e) { console.error(e); } finally { setIsSubmittingTicket(false); }
+        } catch (e) { log.error("Failed to create ticket", e); } finally { setIsSubmittingTicket(false); }
     };
 
     const handleEscalate = () => {
@@ -236,7 +239,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
 
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to escalate ticket", e);
             alert(`Falha na escalação: ${e.message}`);
         } finally {
             setIsEscalating(false);

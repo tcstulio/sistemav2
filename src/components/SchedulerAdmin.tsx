@@ -4,6 +4,9 @@ import { WhatsAppService } from '../services/whatsappService';
 import { EmailService } from '../services/emailService'; // New
 import { formatDateTime } from '../utils/dateUtils';
 import { Mail, MessageCircle, Send } from 'lucide-react'; // Icons
+import { logger } from '../utils/logger';
+
+const log = logger.child('SchedulerAdmin');
 
 interface ScheduledMessage {
     id: string;
@@ -178,7 +181,7 @@ export const SchedulerAdmin: React.FC = () => {
                     }
                 }
             } catch (e) {
-                console.warn('Failed to fetch WhatsApp sessions');
+                log.warn('Failed to fetch WhatsApp sessions');
             }
 
             // Fetch Email accounts
@@ -189,7 +192,7 @@ export const SchedulerAdmin: React.FC = () => {
                     setSelectedEmailAccountId(emailData[0].id);
                 }
             } catch (e) {
-                console.warn('Failed to fetch Email accounts');
+                log.warn('Failed to fetch Email accounts');
             }
 
             const [statsRes, pendingRes, templatesRes, flowsRes, rulesRes, logsRes] = await Promise.all([
@@ -238,7 +241,7 @@ export const SchedulerAdmin: React.FC = () => {
                 }
             } catch (e) { }
         } catch (e) {
-            console.error('Failed to fetch scheduler data:', e);
+            log.error('Failed to fetch scheduler data', e);
         }
         setIsLoading(false);
     }, []);

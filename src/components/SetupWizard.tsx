@@ -3,6 +3,9 @@ import React, { useState } from 'react';
 import { DolibarrConfig } from '../types';
 import { Server, ShieldCheck, PlayCircle, Loader2, AlertTriangle, CheckCircle2, Globe, Key, Settings2, Info, ArrowRight, User, Lock, ChevronDown, ChevronUp } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
+import { logger } from '../utils/logger';
+
+const log = logger.child('SetupWizard');
 
 interface SetupWizardProps {
     onComplete: (config: DolibarrConfig) => void;
@@ -52,7 +55,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
             });
 
         } catch (err: any) {
-            console.error(err);
+            log.error(err);
             setError(err.message || "Falha na conexão. Verifique suas credenciais.");
         } finally {
             setIsLoading(false);

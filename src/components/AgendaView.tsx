@@ -6,6 +6,9 @@ import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useEvents, useTasks, useInterventions, useProjects } from '../hooks/dolibarr';
 import AgendaEntryDetail from './AgendaEntryDetail';
+import { logger } from '../utils/logger';
+
+const log = logger.child('AgendaView');
 
 // Design System
 import {
@@ -358,7 +361,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
             setNewEventForm({ label: '', date_start: '', date_end: '', type_code: 'AC_RDV', description: '' });
             refreshData();
         } catch (e) {
-            console.error(e);
+            log.error(e);
         } finally {
             setIsSubmittingEvent(false);
         }

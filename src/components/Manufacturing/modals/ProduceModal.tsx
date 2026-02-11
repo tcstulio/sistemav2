@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { DolibarrConfig, Warehouse, AppView, ManufacturingOrder } from '../../../types';
 import { Loader2, ArrowUpCircle, X } from 'lucide-react';
 import { DolibarrService } from '../../../services/dolibarrService';
+import { logger } from '../../../utils/logger';
+
+const log = logger.child('ProduceModal');
 
 interface ProduceModalProps {
     isOpen: boolean;
@@ -65,7 +68,7 @@ export const ProduceModal: React.FC<ProduceModalProps> = ({
             }
 
         } catch (err: any) {
-            console.error(err);
+            log.error(err);
             alert(`Falha: ${err.message}`);
         } finally {
             setIsExecuting(false);

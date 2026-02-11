@@ -5,6 +5,9 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { DolibarrService } from '../services/dolibarrService';
 import { dbService } from '../services/dbService';
 import { PageLayout, PageHeader, Card, Button, Input, Modal } from './ui';
+import { logger } from '../utils/logger';
+
+const log = logger.child('Settings');
 
 interface SettingsProps {
     config: DolibarrConfig | null;
@@ -102,7 +105,7 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                 alert("Perfil atualizado com sucesso!");
             }
         } catch (e: any) {
-            console.error(e);
+            log.error(e);
             alert(`Falha ao atualizar perfil: ${e.message}`);
         } finally {
             setIsSavingProfile(false);

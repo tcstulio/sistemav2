@@ -5,6 +5,9 @@ import { useConversations } from '../hooks/whatsapp/useConversations';
 import { useMessages } from '../hooks/whatsapp/useMessages';
 import { WhatsAppService } from '../services/whatsappService'; // For settings
 import { useCRMContext } from '../hooks/useCRMContext';
+import { logger } from '../utils/logger';
+
+const log = logger.child('WhatsAppView');
 
 import { ConversationList } from './whatsapp/ConversationList';
 import { ChatWindow } from './whatsapp/ChatWindow';
@@ -141,7 +144,7 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
             const sessionToUse = selectedConversation.accountId || (selectedAccount !== 'all' ? selectedAccount : 'default');
             await WhatsAppService.sendAudioMessage(selectedConversation.id, blob, sessionToUse);
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to send audio", e);
             alert(`Erro ao enviar áudio: ${e.message}`);
         } finally {
             setIsSending(false);
@@ -155,7 +158,7 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
             const sessionToUse = selectedConversation.accountId || (selectedAccount !== 'all' ? selectedAccount : 'default');
             await WhatsAppService.sendFileMessage(selectedConversation.id, file, '', sessionToUse);
         } catch (e) {
-            console.error(e);
+            log.error("Failed to send file", e);
             alert("Erro ao enviar arquivo");
         } finally {
             setIsSending(false);
@@ -182,7 +185,7 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
         try {
             await sendMessage(text);
         } catch (e) {
-            console.error(e);
+            log.error("Failed to send message", e);
         }
     };
 

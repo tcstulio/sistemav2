@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { DolibarrConfig, Product } from '../../../types';
 import { Loader2, CheckCircle2, X } from 'lucide-react';
 import { DolibarrService } from '../../../services/dolibarrService';
+import { logger } from '../../../utils/logger';
+
+const log = logger.child('CreateBOMModal');
 
 interface CreateBOMModalProps {
     isOpen: boolean;
@@ -30,7 +33,7 @@ export const CreateBOMModal: React.FC<CreateBOMModalProps> = ({ isOpen, onClose,
             onSuccess();
             onClose();
             setBomForm({ label: '', product_id: '', qty: 1, duration: 3600 });
-        } catch (e) { console.error(e); } finally { setIsSubmittingBom(false); }
+        } catch (e) { log.error(e); } finally { setIsSubmittingBom(false); }
     };
 
     if (!isOpen) return null;
