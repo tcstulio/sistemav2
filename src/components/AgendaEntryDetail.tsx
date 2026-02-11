@@ -6,6 +6,9 @@ import { DolibarrService } from '../services/dolibarrService';
 import { mapAgendaEvent, mapTask, mapProject, mapIntervention } from '../hooks/dolibarr/mappers';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
 import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronLeft, Calendar as CalendarIcon, Link, User, Building, FileText, Ticket, ExternalLink, AlertCircle, Eye, EyeOff, Pencil, Trash2, Save, X, Loader2 } from 'lucide-react';
+import { logger } from '../utils/logger';
+
+const log = logger.child('AgendaEntryDetail');
 
 interface AgendaEntryDetailProps {
     config: DolibarrConfig;
@@ -82,7 +85,7 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
                 }
 
             } catch (err) {
-                console.error("Error fetching agenda details from IndexedDB:", err);
+                log.error("Failed to fetch agenda details from IndexedDB", err);
                 setError("Não foi possível carregar os detalhes do item.");
             } finally {
                 setLoading(false);
@@ -172,7 +175,7 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
             // The user might need to wait for next sync to see changes persist if they reload.
             // But immediate feedback is good.
         } catch (e) {
-            console.error(e);
+            log.error("Failed to save event", e);
             alert("Erro ao salvar evento. Verifique a conexão.");
         } finally {
             setIsSaving(false);
@@ -188,7 +191,7 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
             await DolibarrService.deleteEvent(config, data.id);
             onNavigate('agenda', '');
         } catch (e) {
-            console.error(e);
+            log.error("Failed to delete event", e);
             alert("Erro ao excluir evento. Tente novamente.");
             setIsDeleting(false);
         }

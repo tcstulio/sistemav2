@@ -3,6 +3,9 @@ import { X, Save, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { EmailAccount } from '../../types/email';
 import { EmailService } from '../../services/emailService';
 import { toast } from 'sonner';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('StoreConfigModal');
 
 interface StoreConfigModalProps {
     onClose: () => void;
@@ -118,7 +121,7 @@ export const StoreConfigModal: React.FC<StoreConfigModalProps> = ({ onClose, onS
             toast.success(isEdit ? 'Conta atualizada' : 'Conta adicionada');
             onClose();
         } catch (error) {
-            console.error(error);
+            log.error(error);
             toast.error('Erro ao salvar configuração');
         } finally {
             setLoading(false);

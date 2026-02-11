@@ -1,9 +1,12 @@
 import { DolibarrConfig, ThirdParty, Invoice, SupplierInvoice, Proposal, Order, Contract, Shipment, SupplierOrder, SupplierProposal } from '../../types';
 import { fetchList, fetchPage, request, getHeaders, sanitizeUrl } from './core';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('Commercial');
 
 export const fetchContracts = async (config: DolibarrConfig): Promise<Contract[]> => {
     const data = await fetchList(config, 'contracts', '&sortfield=t.date_contrat&sortorder=DESC');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         socid: String(d.socid),
@@ -13,7 +16,7 @@ export const fetchContracts = async (config: DolibarrConfig): Promise<Contract[]
         statut: String(d.statut) as any,
         note_public: d.note_public,
         array_options: d.array_options,
-        lines: d.lines ? d.lines.map((l: any) => ({
+        lines: d.lines ? d.lines.map((l: Record<string, any>) => ({
             id: String(l.id),
             desc: l.desc || l.description,
             qty: parseFloat(l.qty),
@@ -26,7 +29,7 @@ export const fetchContracts = async (config: DolibarrConfig): Promise<Contract[]
 
 export const fetchSupplierOrders = async (config: DolibarrConfig): Promise<SupplierOrder[]> => {
     const data = await fetchList(config, 'supplierorders');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         socid: String(d.socid),
@@ -54,7 +57,7 @@ export const fetchCustomers = async (config: DolibarrConfig, lastModified: numbe
         data = await fetchList(config, 'thirdparties', '&mode=1', lastModified);
     }
 
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         name: d.name,
         name_alias: d.name_alias,
@@ -77,7 +80,7 @@ export const fetchCustomers = async (config: DolibarrConfig, lastModified: numbe
 
 export const fetchSuppliers = async (config: DolibarrConfig): Promise<ThirdParty[]> => {
     const data = await fetchList(config, 'thirdparties', '&mode=4');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         name: d.name,
         address: d.address,
@@ -111,7 +114,7 @@ export const fetchInvoices = async (config: DolibarrConfig, options?: { page: nu
         data = await fetchList(config, 'invoices', '&sortfield=t.datec&sortorder=DESC');
     }
 
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         socid: String(d.socid),
@@ -124,7 +127,7 @@ export const fetchInvoices = async (config: DolibarrConfig, options?: { page: nu
         paye: Number(d.paye),
         statut: String(d.statut),
         brouillon: d.statut === "0",
-        lines: Array.isArray(d.lines) ? d.lines.map((l: any) => ({
+        lines: Array.isArray(d.lines) ? d.lines.map((l: Record<string, any>) => ({
             id: String(l.id),
             desc: l.desc,
             qty: Number(l.qty),
@@ -140,7 +143,7 @@ export const fetchInvoices = async (config: DolibarrConfig, options?: { page: nu
 
 export const fetchSupplierInvoices = async (config: DolibarrConfig): Promise<SupplierInvoice[]> => {
     const data = await fetchList(config, 'supplierinvoices', '&sortfield=t.datec&sortorder=DESC');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         socid: String(d.socid),
@@ -156,7 +159,7 @@ export const fetchSupplierInvoices = async (config: DolibarrConfig): Promise<Sup
 
 export const fetchProposals = async (config: DolibarrConfig): Promise<Proposal[]> => {
     const data = await fetchList(config, 'proposals', '&sortfield=t.datec&sortorder=DESC');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         socid: String(d.socid),
@@ -173,7 +176,7 @@ export const fetchProposals = async (config: DolibarrConfig): Promise<Proposal[]
 
 export const fetchOrders = async (config: DolibarrConfig): Promise<Order[]> => {
     const data = await fetchList(config, 'orders');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         socid: String(d.socid),
@@ -182,7 +185,7 @@ export const fetchOrders = async (config: DolibarrConfig): Promise<Order[]> => {
         total_ttc: parseFloat(d.total_ttc),
         statut: String(d.statut) as any,
         array_options: d.array_options,
-        lines: d.lines ? d.lines.map((l: any) => ({
+        lines: d.lines ? d.lines.map((l: Record<string, any>) => ({
             id: String(l.id || l.rowid),
             desc: l.desc || l.description || l.label,
             qty: parseFloat(l.qty),
@@ -202,7 +205,7 @@ export const getOutstandingInvoices = async (config: DolibarrConfig, thirdPartyI
     try {
         return await request(url, { headers: getHeaders(config.apiKey) });
     } catch (e) {
-        console.warn("Endpoint de faturas pendentes falhou, usando fallback.", e);
+        log.warn("Endpoint de faturas pendentes falhou, usando fallback.");
         const filter = `(t.socid:=:${thirdPartyId}) AND (t.paye:=:0)`;
         return fetchList(config, 'invoices', `&sqlfilters=${encodeURIComponent(filter)}`);
     }
@@ -262,7 +265,7 @@ export const deleteThirdParty = async (config: DolibarrConfig, id: string) => {
     });
 };
 
-export const createInvoice = async (config: DolibarrConfig, data: any) => {
+export const createInvoice = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/invoices`;
     return request(url, {
         method: 'POST',
@@ -298,7 +301,7 @@ export const createCreditNote = async (config: DolibarrConfig, id: string) => {
     });
 };
 
-export const setPayment = async (config: DolibarrConfig, invoiceId: string, paymentData: any) => {
+export const setPayment = async (config: DolibarrConfig, invoiceId: string, paymentData: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/invoices/${invoiceId}/payments`;
     return request(url, {
         method: 'POST',
@@ -308,7 +311,7 @@ export const setPayment = async (config: DolibarrConfig, invoiceId: string, paym
 };
 
 // -- Invoice CRUD --
-export const updateInvoice = async (config: DolibarrConfig, id: string, data: any) => {
+export const updateInvoice = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/invoices/${id}`;
     return request(url, {
         method: 'PUT',
@@ -317,7 +320,7 @@ export const updateInvoice = async (config: DolibarrConfig, id: string, data: an
     });
 };
 
-export const addInvoiceLine = async (config: DolibarrConfig, invoiceId: string, data: any) => {
+export const addInvoiceLine = async (config: DolibarrConfig, invoiceId: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/invoices/${invoiceId}/lines`;
     return request(url, {
         method: 'POST',
@@ -326,7 +329,7 @@ export const addInvoiceLine = async (config: DolibarrConfig, invoiceId: string, 
     });
 };
 
-export const updateInvoiceLine = async (config: DolibarrConfig, invoiceId: string, lineId: string, data: any) => {
+export const updateInvoiceLine = async (config: DolibarrConfig, invoiceId: string, lineId: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/invoices/${invoiceId}/lines/${lineId}`;
     return request(url, {
         method: 'PUT',
@@ -344,7 +347,7 @@ export const deleteInvoiceLine = async (config: DolibarrConfig, invoiceId: strin
 };
 
 // -- Proposals --
-export const createProposal = async (config: DolibarrConfig, data: any) => {
+export const createProposal = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/proposals`;
     return request(url, {
         method: 'POST',
@@ -362,7 +365,7 @@ export const validateProposal = async (config: DolibarrConfig, id: string) => {
     });
 };
 
-export const updateProposal = async (config: DolibarrConfig, id: string, data: any) => {
+export const updateProposal = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/proposals/${id}`;
     return request(url, {
         method: 'PUT',
@@ -371,7 +374,7 @@ export const updateProposal = async (config: DolibarrConfig, id: string, data: a
     });
 };
 
-export const addProposalLine = async (config: DolibarrConfig, proposalId: string, data: any) => {
+export const addProposalLine = async (config: DolibarrConfig, proposalId: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/proposals/${proposalId}/lines`;
     return request(url, {
         method: 'POST',
@@ -380,7 +383,7 @@ export const addProposalLine = async (config: DolibarrConfig, proposalId: string
     });
 };
 
-export const updateProposalLine = async (config: DolibarrConfig, proposalId: string, lineId: string, data: any) => {
+export const updateProposalLine = async (config: DolibarrConfig, proposalId: string, lineId: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/proposals/${proposalId}/lines/${lineId}`;
     return request(url, {
         method: 'PUT',
@@ -416,7 +419,7 @@ export const createOrderFromProposal = async (config: DolibarrConfig, proposalId
 };
 
 // -- Orders --
-export const createOrder = async (config: DolibarrConfig, data: any) => {
+export const createOrder = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/orders`;
     return request(url, {
         method: 'POST',
@@ -434,7 +437,7 @@ export const validateOrder = async (config: DolibarrConfig, id: string) => {
     });
 };
 
-export const shipOrder = async (config: DolibarrConfig, id: string, shipmentData: any) => {
+export const shipOrder = async (config: DolibarrConfig, id: string, shipmentData: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/shipments`;
     return request(url, {
         method: 'POST',
@@ -444,7 +447,7 @@ export const shipOrder = async (config: DolibarrConfig, id: string, shipmentData
 };
 
 // -- Supplier Orders --
-export const createSupplierOrder = async (config: DolibarrConfig, data: any) => {
+export const createSupplierOrder = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/supplierorders`;
     return request(url, {
         method: 'POST',
@@ -456,7 +459,7 @@ export const createSupplierOrder = async (config: DolibarrConfig, data: any) => 
 // -- Aliases for Backward Compatibility or Logic Naming --
 export const validateSupplierOrder = approveSupplierOrder;
 
-export const createSupplierInvoice = async (config: DolibarrConfig, data: any) => {
+export const createSupplierInvoice = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices`;
     return request(url, {
         method: 'POST',
@@ -466,7 +469,7 @@ export const createSupplierInvoice = async (config: DolibarrConfig, data: any) =
 };
 
 // -- Contracts --
-export const createContract = async (config: DolibarrConfig, data: any) => {
+export const createContract = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/contracts`;
     return request(url, {
         method: 'POST',
@@ -593,7 +596,7 @@ export const setInvoiceToDraft = async (config: DolibarrConfig, id: string) => {
 
 
 
-export const paySupplierInvoice = async (config: DolibarrConfig, id: string, paymentData: any) => {
+export const paySupplierInvoice = async (config: DolibarrConfig, id: string, paymentData: Record<string, unknown>) => {
     // Note: Dolibarr often manages supplier payments via a separate 'payment' object linked to the invoice
     // or a classify as paid endpoint. 
     // POST /supplierinvoices/{id}/payments creates a payment.
@@ -605,7 +608,7 @@ export const paySupplierInvoice = async (config: DolibarrConfig, id: string, pay
     });
 };
 
-export const updateSupplierInvoice = async (config: DolibarrConfig, id: string, data: any) => {
+export const updateSupplierInvoice = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices/${id}`;
     return request(url, {
         method: 'PUT',
@@ -622,7 +625,7 @@ export const deleteSupplierInvoice = async (config: DolibarrConfig, id: string) 
     });
 };
 
-export const addSupplierInvoiceLine = async (config: DolibarrConfig, invoiceId: string, lineData: any) => {
+export const addSupplierInvoiceLine = async (config: DolibarrConfig, invoiceId: string, lineData: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices/${invoiceId}/lines`;
     return request(url, {
         method: 'POST',
@@ -631,7 +634,7 @@ export const addSupplierInvoiceLine = async (config: DolibarrConfig, invoiceId: 
     });
 };
 
-export const updateSupplierInvoiceLine = async (config: DolibarrConfig, invoiceId: string, lineId: string, lineData: any) => {
+export const updateSupplierInvoiceLine = async (config: DolibarrConfig, invoiceId: string, lineId: string, lineData: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/supplierinvoices/${invoiceId}/lines/${lineId}`;
     return request(url, {
         method: 'PUT',
@@ -674,7 +677,7 @@ export const setSupplierInvoiceToDraft = async (config: DolibarrConfig, id: stri
 
 export const fetchSupplierProposals = async (config: DolibarrConfig): Promise<SupplierProposal[]> => {
     const data = await fetchList(config, 'supplierproposals', '&sortfield=t.datec&sortorder=DESC');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         socid: String(d.socid),
@@ -688,7 +691,7 @@ export const fetchSupplierProposals = async (config: DolibarrConfig): Promise<Su
         fk_user_author: d.fk_user_author ? String(d.fk_user_author) : undefined,
         fk_user_valid: d.fk_user_valid ? String(d.fk_user_valid) : undefined,
         array_options: d.array_options,
-        lines: d.lines ? d.lines.map((l: any) => ({
+        lines: d.lines ? d.lines.map((l: Record<string, any>) => ({
             id: String(l.id),
             parent_id: String(l.fk_supplier_proposal),
             description: l.description || l.desc || l.label,
@@ -707,7 +710,7 @@ export const getSupplierProposal = async (config: DolibarrConfig, id: string) =>
     return request(url, { headers: getHeaders(config.apiKey) });
 };
 
-export const createSupplierProposal = async (config: DolibarrConfig, data: any) => {
+export const createSupplierProposal = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals`;
     return request(url, {
         method: 'POST',
@@ -716,7 +719,7 @@ export const createSupplierProposal = async (config: DolibarrConfig, data: any) 
     });
 };
 
-export const updateSupplierProposal = async (config: DolibarrConfig, id: string, data: any) => {
+export const updateSupplierProposal = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals/${id}`;
     return request(url, {
         method: 'PUT',
@@ -752,7 +755,7 @@ export const closeSupplierProposal = async (config: DolibarrConfig, id: string, 
 };
 
 // Lines
-export const addSupplierProposalLine = async (config: DolibarrConfig, proposalId: string, data: any) => {
+export const addSupplierProposalLine = async (config: DolibarrConfig, proposalId: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals/${proposalId}/lines`;
     return request(url, {
         method: 'POST',
@@ -761,7 +764,7 @@ export const addSupplierProposalLine = async (config: DolibarrConfig, proposalId
     });
 };
 
-export const updateSupplierProposalLine = async (config: DolibarrConfig, proposalId: string, lineId: string, data: any) => {
+export const updateSupplierProposalLine = async (config: DolibarrConfig, proposalId: string, lineId: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/supplierproposals/${proposalId}/lines/${lineId}`;
     return request(url, {
         method: 'PUT',

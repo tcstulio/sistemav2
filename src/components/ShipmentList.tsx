@@ -7,6 +7,9 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useShipments, useCustomers, useOrders, useUsers } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
+import { logger } from '../utils/logger';
+
+const log = logger.child('ShipmentList');
 
 // Design System
 import { PageHeader, MasterDetailLayout, Card, Button, Input, Tabs, Tab, EmptyState, StatusBadge } from './ui';
@@ -86,7 +89,7 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
             alert("Fatura criada a partir do Envio (Ação Mock)!");
             if (onNavigate) onNavigate('orders', selectedShipment.fk_commande);
         } catch (e) {
-            console.error(e);
+            log.error(e);
             alert("Falha ao criar fatura");
         } finally {
             setIsProcessing(false);

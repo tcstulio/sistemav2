@@ -12,6 +12,9 @@ import { ConsumeModal } from './Manufacturing/modals/ConsumeModal';
 import { ProduceModal } from './Manufacturing/modals/ProduceModal';
 import { ManufacturingOrderDetail } from './Manufacturing/details/ManufacturingOrderDetail';
 import { BOMDetail } from './Manufacturing/details/BOMDetail';
+import { logger } from '../utils/logger';
+
+const log = logger.child('ManufacturingView');
 
 interface ManufacturingViewProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -57,7 +60,7 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
                         setSelectedBOM(fullBOM);
                     }
                 } catch (e) {
-                    console.error("Error fetching full BOM", e);
+                    log.error("Error fetching full BOM", e);
                 }
             }
         };

@@ -1,6 +1,9 @@
 import { config } from '../config';
 import { WhatsAppService } from './whatsappService';
+import { logger } from '../utils/logger';
 // import { EmailService } from './emailService'; // Assuming exists or will exist
+
+const log = logger.child('Automation');
 
 export interface AutomationRule {
     id: string;
@@ -25,7 +28,7 @@ export const AutomationService = {
             const data = await res.json();
             return data.data || [];
         } catch (e) {
-            console.error("Failed to fetch automation rules", e);
+            log.error("Failed to fetch automation rules", e);
             return [];
         }
     },
@@ -64,22 +67,22 @@ export const AutomationService = {
                 }
 
                 if (!target) {
-                    console.warn(`[Automation] No target found for rule ${rule.name}`, context);
+                    log.warn(`No target found for rule ${rule.name}`);
                     continue;
                 }
 
                 // 3. Send
                 if (rule.channel === 'email') {
                     // await EmailService.send(rule.sessionId, target, rule.subject || 'Notificação', messageText);
-                    console.log("Email automation not yet fully linked in this snippet");
+                    log.debug("Email automation not yet fully linked");
                 } else {
                     await WhatsAppService.sendMessage(target, messageText, rule.sessionId || 'default');
                 }
 
-                console.log(`[Automation] Triggered rule ${rule.name} for ${target}`);
+                log.debug(`Triggered rule ${rule.name} for ${target}`);
 
             } catch (e) {
-                console.error(`[Automation] Failed to execute rule ${rule.name}`, e);
+                log.error(`Failed to execute rule ${rule.name}`, e);
             }
         }
     }

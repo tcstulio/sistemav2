@@ -4,6 +4,9 @@ import { EmailAttachment, EmailTemplate } from '../../types/email';
 import { AiService } from '../../services/aiService';
 import { EmailService } from '../../services/emailService';
 import { toast } from 'sonner';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('EmailComposer');
 
 interface EmailComposerProps {
     onClose: () => void;
@@ -43,7 +46,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                     setBody((prev) => prev ? prev : `\n\n--\n${userSettings.signatureName}`);
                 }
             } catch (e) {
-                console.error("Failed to load signature", e);
+                log.error("Failed to load signature", e);
             }
         };
         loadSig();
@@ -65,7 +68,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                         contentType: file.type
                     });
                 } catch (err) {
-                    console.error("Error reading file", file.name, err);
+                    log.error("Error reading file", { filename: file.name, error: err });
                 }
             }
             setAttachments(prev => [...prev, ...newAttachments]);
@@ -139,7 +142,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
             await onSend(to, subject, body, attachments, cc || undefined, bcc || undefined);
             onClose();
         } catch (error) {
-            console.error(error);
+            log.error("Failed to send email", error);
             toast.error('Erro ao enviar email');
         } finally {
             setIsSending(false);

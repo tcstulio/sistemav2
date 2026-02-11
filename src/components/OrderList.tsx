@@ -7,6 +7,9 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useOrders, useCustomers, useShipments, useInvoices, useUsers } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
+import { logger } from '../utils/logger';
+
+const log = logger.child('OrderList');
 
 // Design System
 import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState, MasterDetailLayout, StatusBadge } from './ui';
@@ -376,7 +379,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
             }
             if (onRefresh) onRefresh();
         } catch (err) {
-            console.error(err);
+            log.error("Failed to validate order", err);
             alert("Falha ao validar pedido.");
         } finally {
             setProcessingId(null);
@@ -419,7 +422,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
             }
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to create shipment", e);
             alert(`Falha ao criar envio: ${e.message}`);
         } finally {
             setIsSubmittingShipment(false);
@@ -433,7 +436,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
             alert("Envio excluído");
             if (onRefresh) onRefresh();
         } catch (e) {
-            console.error(e);
+            log.error("Failed to delete shipment", e);
             alert("Falha ao excluir envio");
         }
     };

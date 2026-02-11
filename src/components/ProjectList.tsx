@@ -2,6 +2,9 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Project, AppView, DolibarrDocument } from '../types';
 import { Search, Plus, Loader2, CheckCircle2, Settings, Pencil, Trash2, FolderKanban } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
+import { logger } from '../utils/logger';
+
+const log = logger.child('ProjectList');
 
 // Direct Hook Imports
 import { useDolibarr } from '../context/DolibarrContext';
@@ -110,7 +113,7 @@ const ProjectDetail: React.FC<{
                 const docs = await DolibarrService.fetchDocuments(config, 'project', project.id, project.ref);
                 setDocuments(docs as DolibarrDocument[]);
             } catch (e) {
-                console.error(e);
+                log.error("Failed to load documents", e);
             } finally {
                 setIsLoadingDocs(false);
             }
@@ -131,7 +134,7 @@ const ProjectDetail: React.FC<{
                 alert("Arquivo enviado com sucesso");
                 loadDocuments();
             } catch (e) {
-                console.error(e);
+                log.error("Failed to upload document", e);
                 alert("Falha no envio");
             } finally {
                 setIsUploading(false);
@@ -144,7 +147,7 @@ const ProjectDetail: React.FC<{
                 await DolibarrService.deleteDocument(config, 'project', `${project.ref}/${filename}`);
                 loadDocuments();
             } catch (e) {
-                console.error(e);
+                log.error("Failed to delete document", e);
                 alert("Falha na exclusão");
             }
         };
@@ -477,7 +480,7 @@ const ProjectList: React.FC<{
             setIsCreateModalOpen(false);
             if (refreshData) refreshData();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to create project", e);
             alert(`Falha: ${e.message}`);
         } finally {
             setIsSubmitting(false);

@@ -3,7 +3,7 @@ import { fetchList, request, getHeaders, sanitizeUrl } from './core';
 
 export const fetchWarehouses = async (config: DolibarrConfig): Promise<Warehouse[]> => {
     const data = await fetchList(config, 'warehouses');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         label: d.label,
         description: d.description,
@@ -15,7 +15,7 @@ export const fetchWarehouses = async (config: DolibarrConfig): Promise<Warehouse
 
 export const fetchStockMovements = async (config: DolibarrConfig): Promise<StockMovement[]> => {
     const data = await fetchList(config, 'stockmovements');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         product_id: String(d.product_id),
         warehouse_id: String(d.warehouse_id),
@@ -28,7 +28,7 @@ export const fetchStockMovements = async (config: DolibarrConfig): Promise<Stock
 
 export const fetchBOMs = async (config: DolibarrConfig): Promise<BOM[]> => {
     const data = await fetchList(config, 'boms');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         label: d.label,
@@ -36,7 +36,7 @@ export const fetchBOMs = async (config: DolibarrConfig): Promise<BOM[]> => {
         duration: parseInt(d.duration || '0'),
         qty: parseFloat(d.qty),
         product_id: d.fk_product ? String(d.fk_product) : undefined,
-        lines: d.lines ? d.lines.map((l: any) => ({
+        lines: d.lines ? d.lines.map((l: Record<string, any>) => ({
             id: String(l.id),
             fk_product: String(l.fk_product),
             qty: parseFloat(l.qty),
@@ -53,7 +53,7 @@ export const fetchManufacturingOrders = async (config: DolibarrConfig): Promise<
     // Permissions said 'mrp'. Endpoint usually 'mrp/mo' or 'mos'.
     // Let's rely on standard patterns. 'mrp/mo' is common for v12+.
     // Wait, if fetchList returns [], mapping works.
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         label: d.label,
@@ -69,7 +69,7 @@ export const fetchManufacturingOrders = async (config: DolibarrConfig): Promise<
 
 export const fetchProducts = async (config: DolibarrConfig): Promise<Product[]> => {
     const data = await fetchList(config, 'products');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         label: d.label,
@@ -83,7 +83,7 @@ export const fetchProducts = async (config: DolibarrConfig): Promise<Product[]> 
 
 export const fetchShipments = async (config: DolibarrConfig): Promise<Shipment[]> => {
     const data = await fetchList(config, 'shipments');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         socid: String(d.socid),
@@ -114,7 +114,7 @@ export const getWarehouse = async (config: DolibarrConfig, id: string) => {
 
 // -- Write Operations --
 
-export const createProduct = async (config: DolibarrConfig, data: any) => {
+export const createProduct = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/products`;
     return request(url, {
         method: 'POST',
@@ -123,7 +123,7 @@ export const createProduct = async (config: DolibarrConfig, data: any) => {
     });
 };
 
-export const updateProduct = async (config: DolibarrConfig, id: string, data: any) => {
+export const updateProduct = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/products/${id}`;
     return request(url, {
         method: 'PUT',
@@ -132,7 +132,7 @@ export const updateProduct = async (config: DolibarrConfig, id: string, data: an
     });
 };
 
-export const createShipment = async (config: DolibarrConfig, data: any) => {
+export const createShipment = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/shipments`;
     return request(url, {
         method: 'POST',
@@ -150,7 +150,7 @@ export const validateShipment = async (config: DolibarrConfig, id: string) => {
     });
 };
 
-export const createStockMovement = async (config: DolibarrConfig, data: any) => {
+export const createStockMovement = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/stockmovements`;
     return request(url, {
         method: 'POST',
@@ -181,7 +181,7 @@ export const createStockCorrection = async (config: DolibarrConfig, data: any) =
     });
 };
 
-export const createWarehouse = async (config: DolibarrConfig, data: any) => {
+export const createWarehouse = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/warehouses`;
     return request(url, {
         method: 'POST',
@@ -190,7 +190,7 @@ export const createWarehouse = async (config: DolibarrConfig, data: any) => {
     });
 };
 
-export const updateWarehouse = async (config: DolibarrConfig, id: string, data: any) => {
+export const updateWarehouse = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/warehouses/${id}`;
     return request(url, {
         method: 'PUT',
@@ -237,7 +237,7 @@ export const getBOM = async (config: DolibarrConfig, id: string) => {
     return request(url, { headers: getHeaders(config.apiKey) });
 };
 
-export const createBOM = async (config: DolibarrConfig, data: any) => {
+export const createBOM = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/boms`;
     return request(url, {
         method: 'POST',

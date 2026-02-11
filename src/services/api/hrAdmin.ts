@@ -1,9 +1,12 @@
 import { DolibarrConfig, BankAccount, Contact, Invoice, SupplierInvoice, BankLine, Candidate, DolibarrUser, ExpenseReport, RecruitmentJobPosition, LeaveRequest } from '../../types';
 import { fetchList, fetchPage, request, getHeaders, sanitizeUrl } from './core';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('HRAdmin');
 
 export const fetchUsers = async (config: DolibarrConfig): Promise<DolibarrUser[]> => {
     const data = await fetchList(config, 'users');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         login: d.login,
         firstname: d.firstname,
@@ -21,7 +24,7 @@ export const fetchUsers = async (config: DolibarrConfig): Promise<DolibarrUser[]
 
 export const fetchExpenseReports = async (config: DolibarrConfig): Promise<ExpenseReport[]> => {
     const data = await fetchList(config, 'expensereports');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         fk_user_author: String(d.fk_user_author),
@@ -41,7 +44,7 @@ export const fetchJobPositions = async (config: DolibarrConfig): Promise<Recruit
     // Uses V2 API endpoint without 'date_modification' support, so we use fetchPage instead of fetchList (sync)
     // to avoid the incremental sync loop that fails when sort/filter by date is missing.
     const data = await fetchPage(config, 'recruitments/jobposition', 0, 100);
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         label: d.label,
@@ -61,7 +64,7 @@ export const fetchCandidates = async (config: DolibarrConfig): Promise<Candidate
 
 export const fetchLeaveRequests = async (config: DolibarrConfig): Promise<LeaveRequest[]> => {
     const data = await fetchList(config, 'holiday');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         fk_user: String(d.fk_user),
@@ -76,7 +79,7 @@ export const fetchLeaveRequests = async (config: DolibarrConfig): Promise<LeaveR
 
 export const fetchContacts = async (config: DolibarrConfig): Promise<Contact[]> => {
     const data = await fetchList(config, 'contacts');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         socid: String(d.socid),
         lastname: d.lastname,
@@ -90,7 +93,7 @@ export const fetchContacts = async (config: DolibarrConfig): Promise<Contact[]> 
 };
 
 // Helper function
-export const mapCandidate = (raw: any): Candidate => {
+export const mapCandidate = (raw: Record<string, any>): Candidate => {
     let jobId = raw.fk_recruitment_jobposition || raw.fk_job_position || raw.fk_job || '';
 
     if (typeof jobId === 'number') {
@@ -119,7 +122,7 @@ export const mapCandidate = (raw: any): Candidate => {
 
 export const fetchBankAccounts = async (config: DolibarrConfig): Promise<BankAccount[]> => {
     const data = await fetchList(config, 'bankaccounts');
-    return data.map((d: any) => ({
+    return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,
         label: d.label,
@@ -138,7 +141,7 @@ export const fetchBankLines = async (config: DolibarrConfig, accountIds: string[
         for (const id of accountIds) {
             const data = await fetchList(config, `bankaccounts/${id}/lines`);
             if (Array.isArray(data)) {
-                data.forEach((d: any) => {
+                data.forEach((d: Record<string, any>) => {
                     lines.push({
                         id: String(d.id),
                         date_operation: parseInt(d.date_operation),
@@ -153,7 +156,7 @@ export const fetchBankLines = async (config: DolibarrConfig, accountIds: string[
             }
         }
     } catch (e) {
-        console.warn("Falha ao buscar linhas bancárias (erro de permissão?)", e);
+        log.warn("Falha ao buscar linhas bancárias (erro de permissão?)");
     }
     return lines;
 };
@@ -165,7 +168,7 @@ export const getContact = async (config: DolibarrConfig, id: string) => {
 
 // -- Write Operations --
 
-export const createBankAccount = async (config: DolibarrConfig, data: any) => {
+export const createBankAccount = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/bankaccounts`;
     return request(url, {
         method: 'POST',
@@ -174,7 +177,7 @@ export const createBankAccount = async (config: DolibarrConfig, data: any) => {
     });
 };
 
-export const createExpenseReport = async (config: DolibarrConfig, data: any) => {
+export const createExpenseReport = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/expensereports`;
     return request(url, {
         method: 'POST',
@@ -230,7 +233,7 @@ export const refuseLeaveRequest = async (config: DolibarrConfig, id: string, rea
     });
 };
 
-export const createCandidate = async (config: DolibarrConfig, data: any) => {
+export const createCandidate = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/recruitmentcandidates`;
     return request(url, {
         method: 'POST',
@@ -239,7 +242,7 @@ export const createCandidate = async (config: DolibarrConfig, data: any) => {
     });
 };
 
-export const createJobPosition = async (config: DolibarrConfig, data: any) => {
+export const createJobPosition = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/recruitmentjobpositions`;
     return request(url, {
         method: 'POST',
@@ -249,7 +252,7 @@ export const createJobPosition = async (config: DolibarrConfig, data: any) => {
 };
 
 // -- Contacts --
-export const createContact = async (config: DolibarrConfig, data: any) => {
+export const createContact = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/contacts`;
     return request(url, {
         method: 'POST',
@@ -258,7 +261,7 @@ export const createContact = async (config: DolibarrConfig, data: any) => {
     });
 };
 
-export const updateContact = async (config: DolibarrConfig, id: string, data: any) => {
+export const updateContact = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/contacts/${id}`;
     return request(url, {
         method: 'PUT',
@@ -300,7 +303,7 @@ export const deleteBankAccount = async (config: DolibarrConfig, id: string) => {
     });
 };
 
-export const createPayment = async (config: DolibarrConfig, data: any) => {
+export const createPayment = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/payments`;
     return request(url, {
         method: 'POST',
@@ -368,7 +371,7 @@ export const createGroup = async (config: DolibarrConfig, data: any) => {
     });
 };
 
-export const updateGroup = async (config: DolibarrConfig, id: string, data: any) => {
+export const updateGroup = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${id}`;
     return request(url, {
         method: 'PUT',

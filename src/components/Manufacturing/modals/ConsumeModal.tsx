@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { DolibarrConfig, Product, Warehouse, AppView } from '../../../types';
 import { Loader2, ArrowDownCircle, X } from 'lucide-react';
 import { DolibarrService } from '../../../services/dolibarrService';
+import { logger } from '../../../utils/logger';
+
+const log = logger.child('ConsumeModal');
 
 interface ConsumeModalProps {
     isOpen: boolean;
@@ -67,7 +70,7 @@ export const ConsumeModal: React.FC<ConsumeModalProps> = ({
             }
 
         } catch (err: any) {
-            console.error(err);
+            log.error(err);
             alert(`Falha: ${err.message}`);
         } finally {
             setIsExecuting(false);

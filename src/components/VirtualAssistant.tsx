@@ -3,7 +3,10 @@ import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as Ima
 import { AiService, ChatMessage } from '../services/aiService';
 import { ThirdParty, Invoice, Project, Ticket } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
+import { logger } from '../utils/logger';
 // Hooks removidos: Backend processa dados via ferramentas IA
+
+const log = logger.child('VirtualAssistant');
 
 interface VirtualAssistantProps {
   // No props needed
@@ -124,7 +127,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
       setInput(prev => prev + (prev ? ' ' : '') + transcript);
     };
     recognition.onerror = (event: any) => {
-      console.error("Erro de fala", event);
+      log.error("Erro de fala", event);
       setIsListening(false);
     };
 

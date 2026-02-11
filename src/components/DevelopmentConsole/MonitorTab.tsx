@@ -4,6 +4,9 @@ import { Database, HardDrive, RefreshCw, Play, Pause, AlertCircle, Download, Tra
 import { useDolibarr } from '../../context/DolibarrContext';
 import { dbService } from '../../services/dbService';
 import { runBackgroundSync } from '../../services/backgroundSyncService';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('MonitorTab');
 
 export const MonitorTab: React.FC = () => {
     const { config, refreshData, isLoading: isSyncLoading, isSyncPaused, toggleSyncPause } = useDolibarr();
@@ -32,7 +35,7 @@ export const MonitorTab: React.FC = () => {
             setSyncResult(result);
             await loadMetrics(); // Refresh stats immediately
         } catch (e) {
-            console.error('[MonitorTab] Background sync failed:', e);
+            log.error('Background sync failed:', e);
         } finally {
             setIsBackgroundSyncing(false);
         }
@@ -60,7 +63,7 @@ export const MonitorTab: React.FC = () => {
             // Reload page to force IndexedDB recreation with all stores
             window.location.reload();
         } catch (e) {
-            console.error('[MonitorTab] Failed to delete local database:', e);
+            log.error('Failed to delete local database:', e);
             alert('Erro ao deletar banco de dados local. Verifique o console para mais detalhes.');
             setIsDeleting(false);
         }

@@ -7,6 +7,9 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('LlmSettingsTab');
 
 // --- Types ---
 
@@ -112,7 +115,7 @@ export const LlmSettingsTab: React.FC = () => {
             // Fetch models for whatever provider is configured
             fetchModels(response.data.configProvider || 'local');
         } catch (e) {
-            console.error("Failed to load config", e);
+            log.error("Failed to load config", e);
         } finally {
             setIsLoading(false);
         }
@@ -125,7 +128,7 @@ export const LlmSettingsTab: React.FC = () => {
             });
             setModuleConfigs(response.data);
         } catch (e) {
-            console.error("Failed to load modules", e);
+            log.error("Failed to load modules", e);
         }
     };
 
@@ -136,7 +139,7 @@ export const LlmSettingsTab: React.FC = () => {
             });
             setCustomPrompts(response.data);
         } catch (e) {
-            console.error("Failed to load prompts", e);
+            log.error("Failed to load prompts", e);
         }
     };
 
@@ -147,7 +150,7 @@ export const LlmSettingsTab: React.FC = () => {
             });
             setStats(response.data);
         } catch (e) {
-            console.error("Failed to load stats", e);
+            log.error("Failed to load stats", e);
         }
     };
 
@@ -169,7 +172,7 @@ export const LlmSettingsTab: React.FC = () => {
                 }
             }
         } catch (e) {
-            console.error("Failed to fetch models", e);
+            log.error("Failed to fetch models", e);
             // Fallback for Google if API fails
             if (targetProvider === 'google') {
                 const defaults = [

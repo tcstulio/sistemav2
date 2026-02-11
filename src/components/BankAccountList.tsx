@@ -6,6 +6,9 @@ import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useBankAccounts, useBankLines, useInvoices, useSupplierInvoices } from '../hooks/dolibarr';
 import { formatDateOnly } from '../utils/dateUtils';
+import { logger } from '../utils/logger';
+
+const log = logger.child('BankAccountList');
 
 // Design System
 import { PageHeader, Card, Button, Input, Modal, EmptyState } from './ui';
@@ -161,7 +164,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
             setNewAccountForm({ currency_code: 'BRL', solde: 0 });
             if (onRefresh) onRefresh();
         } catch (e) {
-            console.error(e);
+            log.error("Failed to create bank account", e);
         } finally {
             setIsCreating(false);
         }
@@ -177,7 +180,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
             alert("Transferência completada");
             setIsTransferModalOpen(false);
             if (onRefresh) onRefresh();
-        } catch (e) { console.error(e); alert("Falha na transferência"); } finally { setIsSubmitting(false); }
+        } catch (e) { log.error("Failed to transfer", e); alert("Falha na transferência"); } finally { setIsSubmitting(false); }
     };
 
     const handleAddLine = async (e: React.FormEvent) => {
@@ -190,7 +193,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
             alert("Transação adicionada");
             setIsAddLineModalOpen(false);
             if (onRefresh) onRefresh();
-        } catch (e) { console.error(e); alert("Falha ao adicionar linha"); } finally { setIsSubmitting(false); }
+        } catch (e) { log.error("Failed to add bank line", e); alert("Falha ao adicionar linha"); } finally { setIsSubmitting(false); }
     };
 
     // Compute cash flow data whenever account lines change

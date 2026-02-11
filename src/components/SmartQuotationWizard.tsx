@@ -19,6 +19,9 @@ import {
 import { toast } from 'sonner';
 import { useProducts, useSuppliers } from '../hooks/dolibarr';
 import * as CommercialService from '../services/api/commercial';
+import { logger } from '../utils/logger';
+
+const log = logger.child('SmartQuotationWizard');
 
 // --- Types ---
 
@@ -143,7 +146,7 @@ export const SmartQuotationWizard: React.FC = () => {
             }
 
         } catch (e) {
-            console.error(e);
+            log.error("Failed to process AI request", e);
             toast.error("Erro ao processar com IA.");
         } finally {
             setLoading(false);
@@ -204,7 +207,7 @@ export const SmartQuotationWizard: React.FC = () => {
             setCurrentStep(3);
 
         } catch (e) {
-            console.error(e);
+            log.error("Failed to search prices", e);
             toast.error("Erro na pesquisa de preços.");
         } finally {
             setLoading(false);
@@ -239,7 +242,7 @@ export const SmartQuotationWizard: React.FC = () => {
                 if (!supplierId && offers[0].isNewSupplier && offers[0].supplierDraft) {
                     // Need createThirdParty API
                     // For prototype, we'll skip real creation and log
-                    console.log("Creating Supplier:", supplierName);
+                    log.debug("Creating supplier", { supplierName });
                     // Simulate ID
                     supplierId = "NEW_" + Date.now();
                 }
@@ -268,7 +271,7 @@ export const SmartQuotationWizard: React.FC = () => {
             // navigate('/supplier_proposals');
 
         } catch (e) {
-            console.error(e);
+            log.error("Failed to generate proposals", e);
             toast.error("Erro ao gerar solicitações.", { id: toastId });
         } finally {
             setLoading(false);

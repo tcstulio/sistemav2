@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { DolibarrConfig, DolibarrUser } from '../../../types';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { Loader2 } from 'lucide-react';
+import { logger } from '../../../utils/logger';
+
+const log = logger.child('UserModal');
 
 interface UserModalProps {
     isOpen: boolean;
@@ -68,7 +71,7 @@ export const UserModal: React.FC<UserModalProps> = ({
             }
             onClose();
             if (onRefresh) onRefresh();
-        } catch (e) { console.error(e); } finally { setIsSubmittingUser(false); }
+        } catch (e) { log.error(e); } finally { setIsSubmittingUser(false); }
     };
 
     if (!isOpen) return null;

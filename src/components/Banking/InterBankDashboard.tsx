@@ -24,6 +24,9 @@ import {
 import { useInterBank, TransacaoInter, PixRecebido, BoletoResponse } from '../../hooks/useInterBank';
 import { io } from 'socket.io-client';
 import { formatDateOnly, formatDateTime } from '../../utils/dateUtils';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('InterBankDashboard');
 
 
 interface InterBankDashboardProps {
@@ -152,7 +155,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
             setReceberPixDialog(false);
             setReceberPixForm({ valor: '', chave: '', descricao: '' });
         } catch (error) {
-            console.error('Erro ao criar Cobrança Pix:', error);
+            log.error("Failed to create Pix charge", error);
         }
     };
 
@@ -170,7 +173,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
             setEnviarPixForm({ valor: '', chave: '', tipoChave: 'CHAVE', descricao: '' });
             refetchSaldo();
         } catch (error) {
-            console.error('Erro ao enviar Pix:', error);
+            log.error("Failed to send Pix", error);
             alert('Erro ao enviar Pix. Verifique os dados e tente novamente.');
         }
     };
@@ -185,7 +188,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
             setPagarBoletoForm({ codigoBarras: '', valor: '', descricao: '' });
             refetchSaldo();
         } catch (error) {
-            console.error('Erro ao pagar boleto:', error);
+            log.error("Failed to pay boleto", error);
             alert('Erro ao pagar boleto. Verifique o código de barras e saldo.');
         }
     };
@@ -215,7 +218,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
             });
             boletosQuery.refetch();
         } catch (error) {
-            console.error('Erro ao emitir boleto:', error);
+            log.error("Failed to issue boleto", error);
         }
     };
 

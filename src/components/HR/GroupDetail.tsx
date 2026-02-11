@@ -5,7 +5,9 @@ import { useGroupUsers, useGroups } from '../../hooks/dolibarr';
 import * as HRAdmin from '../../services/api/hrAdmin';
 import { UserAvatar } from './UserAvatar';
 import { PermissionManager } from './PermissionManager';
+import { logger } from '../../utils/logger';
 
+const log = logger.child('GroupDetail');
 
 interface GroupDetailProps {
     group: UserGroup;
@@ -58,7 +60,7 @@ export const GroupDetail: React.FC<GroupDetailProps> = ({
             setIsAddingMember(false);
             setSelectedUserIdToAdd('');
         } catch (e) {
-            console.error(e);
+            log.error(e);
             alert('Erro ao adicionar membro.');
         } finally {
             setIsSaving(false);
@@ -72,7 +74,7 @@ export const GroupDetail: React.FC<GroupDetailProps> = ({
             await HRAdmin.removeUserFromGroup(currentConfig, group.id, userId);
             onRefresh();
         } catch (e) {
-            console.error(e);
+            log.error(e);
             alert('Erro ao remover membro.');
         } finally {
             setIsSaving(false);

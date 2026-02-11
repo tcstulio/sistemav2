@@ -3,6 +3,9 @@ import { DolibarrConfig, DolibarrUser } from '../../../types';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { AiService } from '../../../services/aiService';
 import { Scan, Upload, Loader2, CheckCircle, Info, X, Save } from 'lucide-react';
+import { logger } from '../../../utils/logger';
+
+const log = logger.child('ExpenseScannerModal');
 
 interface ExpenseScannerModalProps {
     isOpen: boolean;
@@ -48,7 +51,7 @@ export const ExpenseScannerModal: React.FC<ExpenseScannerModalProps> = ({
                     setInitialScannedDataStr(JSON.stringify(data)); // Snapshot
                     setScannedLogId(result.logId); // Track log ID
                 }
-            } catch (err) { console.error(err); } finally { setIsScanning(false); }
+            } catch (err) { log.error(err); } finally { setIsScanning(false); }
         };
         reader.readAsDataURL(file);
     };
@@ -95,7 +98,7 @@ export const ExpenseScannerModal: React.FC<ExpenseScannerModalProps> = ({
             if (onRefresh) onRefresh();
 
         } catch (e) {
-            console.error("Failed to save expense", e);
+            log.error("Failed to save expense", e);
             alert("Falha ao salvar relatório de despesas.");
         } finally {
             setIsSavingExpense(false);

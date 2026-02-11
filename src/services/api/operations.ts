@@ -45,7 +45,7 @@ export const addTicketMessage = async (config: DolibarrConfig, ticketId: string,
     });
 };
 
-export const createIntervention = async (config: DolibarrConfig, data: any) => {
+export const createIntervention = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/interventions`;
     return request(url, {
         method: 'POST',
@@ -63,7 +63,7 @@ export const fetchTicketEvents = async (config: DolibarrConfig, ticketId: string
 
 
 // -- Projects --
-export const createProject = async (config: DolibarrConfig, data: any) => {
+export const createProject = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/projects`;
     return request(url, {
         method: 'POST',
@@ -72,7 +72,7 @@ export const createProject = async (config: DolibarrConfig, data: any) => {
     });
 };
 
-export const updateProject = async (config: DolibarrConfig, id: string, data: any) => {
+export const updateProject = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/projects/${id}`;
     return request(url, {
         method: 'PUT',
@@ -82,7 +82,7 @@ export const updateProject = async (config: DolibarrConfig, id: string, data: an
 };
 
 // -- Tasks --
-export const createTask = async (config: DolibarrConfig, data: any) => {
+export const createTask = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/tasks`;
     return request(url, {
         method: 'POST',
@@ -91,7 +91,7 @@ export const createTask = async (config: DolibarrConfig, data: any) => {
     });
 };
 
-export const updateTask = async (config: DolibarrConfig, id: string, data: any) => {
+export const updateTask = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/tasks/${id}`;
     return request(url, {
         method: 'PUT',
@@ -103,7 +103,7 @@ export const updateTask = async (config: DolibarrConfig, id: string, data: any) 
 export const addTaskTimeLog = async (config: DolibarrConfig, taskId: string, duration: number, date?: number, note?: string, user_id?: string) => {
     // Standard endpoint usually is /tasks/{id}/addtimespent
     const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/addtimespent`;
-    const payload: any = {
+    const payload: Record<string, unknown> = {
         duration: duration,
         date: date || Math.floor(Date.now() / 1000),
         note: note
@@ -118,7 +118,7 @@ export const addTaskTimeLog = async (config: DolibarrConfig, taskId: string, dur
 };
 
 // -- Events --
-export const createEvent = async (config: DolibarrConfig, data: any) => {
+export const createEvent = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/agendaevents`;
     return request(url, {
         method: 'POST',
@@ -127,7 +127,7 @@ export const createEvent = async (config: DolibarrConfig, data: any) => {
     });
 };
 
-export const updateEvent = async (config: DolibarrConfig, id: string, data: any) => {
+export const updateEvent = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/agendaevents/${id}`;
     return request(url, {
         method: 'PUT',

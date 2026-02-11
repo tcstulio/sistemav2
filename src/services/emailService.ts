@@ -1,19 +1,23 @@
 import axios from 'axios';
 import { EmailAccount, EmailMessage, EmailBody, EmailTemplate } from '../types/email';
 import { config } from '../config';
+import { logger } from '../utils/logger';
+import { safeStorage } from '../utils/safeStorage';
+
+const log = logger.child('EmailService');
 
 const API_URL = `${config.API_BASE_URL}/api/email`;
 
 // Helper to get Headers
 const getHeaders = () => {
-    const savedConfig = localStorage.getItem('coolgroove_config');
+    const savedConfig = safeStorage.getItem('coolgroove_config');
     let apiKey = '';
     if (savedConfig) {
         try {
             const parsed = JSON.parse(savedConfig);
             apiKey = parsed.apiKey || '';
         } catch (e) {
-            console.error("Failed to parse config for auth header");
+            log.error("Failed to parse config for auth header");
         }
     }
     return {

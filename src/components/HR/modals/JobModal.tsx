@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { DolibarrConfig } from '../../../types';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { Loader2, CheckCircle2 } from 'lucide-react';
+import { logger } from '../../../utils/logger';
+
+const log = logger.child('JobModal');
 
 interface JobModalProps {
     isOpen: boolean;
@@ -23,7 +26,7 @@ export const JobModal: React.FC<JobModalProps> = ({ isOpen, onClose, config, onR
             onClose();
             setJobForm({ label: '', qty: 1, description: '' });
             if (onRefresh) onRefresh();
-        } catch (e) { console.error(e); } finally { setIsSubmittingJob(false); }
+        } catch (e) { log.error(e); } finally { setIsSubmittingJob(false); }
     };
 
     if (!isOpen) return null;

@@ -4,6 +4,9 @@ import { useDolibarr } from '../../context/DolibarrContext';
 import { dbService } from '../../services/dbService'; // Import dbService
 import { X, Clock, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('TaskTimeDialog');
 
 interface TaskTimeDialogProps {
     task: Task;
@@ -62,7 +65,7 @@ export const TaskTimeDialog: React.FC<TaskTimeDialogProps> = ({ task, isOpen, on
             toast.success("Tempo registrado com sucesso!");
             onClose();
         } catch (error) {
-            console.error(error);
+            log.error(error);
             toast.error("Erro ao registrar tempo");
         } finally {
             setLoading(false);
