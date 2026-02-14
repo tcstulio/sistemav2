@@ -6,6 +6,9 @@ import { formatDateTime } from '../utils/dateUtils';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useWarehouses, useStockMovements, useProducts, useUsers } from '../hooks/dolibarr';
+import { logger } from '../utils/logger';
+
+const log = logger.child('InventoryView');
 
 interface InventoryViewProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -92,7 +95,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
             setIsWarehouseModalOpen(false);
             refreshData();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to save warehouse", e);
             alert(`Falha ao salvar armazém: ${e.message}`);
         } finally {
             setIsSubmittingWarehouse(false);
@@ -107,7 +110,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
             alert("Armazém excluído");
             refreshData();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to delete warehouse", e);
             alert(`Falha ao excluir armazém: ${e.message}`);
         }
     };
@@ -134,7 +137,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
             setTransferForm({ productId: '', sourceWarehouse: '', targetWarehouse: '', qty: 1 });
             refreshData();
         } catch (err: any) {
-            console.error(err);
+            log.error("Failed to transfer stock", err);
             alert(`Falha na transferência: ${err.message}`);
         } finally {
             setIsSubmitting(false);
@@ -163,7 +166,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
             setCorrectionForm({ productId: '', warehouseId: '', qty: 1, type: 'add', label: 'Correção de Inventário' });
             refreshData();
         } catch (err: any) {
-            console.error(err);
+            log.error("Failed to correct stock", err);
             alert(`Falha no ajuste: ${err.message}`);
         } finally {
             setIsSubmitting(false);

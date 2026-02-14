@@ -12,6 +12,9 @@ import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 
 import { formatDateOnly } from '../utils/dateUtils';
+import { logger } from '../utils/logger';
+
+const log = logger.child('CustomerList');
 
 // Common Components
 import { PaginationControls } from './common/PaginationControls';
@@ -218,13 +221,13 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                     setActiveResultTab(messageConfig.channels[0]); // Select first available
                     setIsConfigModalOpen(false);
                 } catch (e) {
-                    console.error("JSON Parse Error", e);
+                    log.error("JSON parse error for AI response", e);
                     // Fallback logic could go here
                     toast.error("Erro ao processar resposta da IA.");
                 }
             }
         } catch (e) {
-            console.error(e);
+            log.error("Failed to generate message", e);
             toast.error("Erro na geração da mensagem.");
         } finally {
             setIsGenerating(false);
@@ -246,7 +249,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                 setSentimentAnalysis({ ...parsed, logId: result.logId });
             }
         } catch (e) {
-            console.error(e);
+            log.error("Failed to analyze sentiment", e);
         } finally {
             setIsAnalyzing(false);
         }
@@ -275,7 +278,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
             toast.success("Cliente atualizado com sucesso");
             setIsEditModalOpen(false);
         } catch (err: any) {
-            console.error(err);
+            log.error("Failed to update customer", err);
             toast.error("Falha ao atualizar", { description: err.message });
         } finally {
             setIsSaving(false);
@@ -293,7 +296,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                 setShowMagicInput(false);
             }
         } catch (e) {
-            console.error(e);
+            log.error("Failed to extract customer data via AI", e);
             alert("Falha ao extrair dados.");
         } finally {
             setIsMagicFilling(false);
@@ -331,7 +334,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
             setCreateForm({ name: '', email: '', client: '1' });
             setAiDraftId(null);
         } catch (err: any) {
-            console.error(err);
+            log.error("Failed to create customer", err);
             toast.error("Falha ao criar cliente", { description: err.message || "Erro desconhecido" });
         } finally {
             setIsCreating(false);

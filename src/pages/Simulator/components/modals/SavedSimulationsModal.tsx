@@ -2,6 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, FolderOpen, Trash2, Clock, ArrowRight, Check, AlertCircle, Play, RefreshCcw, Lock } from 'lucide-react';
 import { money } from '../../utils';
+import { logger } from '../../../../utils/logger';
+
+const log = logger.child('SavedSimulations');
 
 export interface SimulationSnapshot {
     id: string;
@@ -43,7 +46,7 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
                 setSnapshots(allSnaps);
             }
         } catch (e) {
-            console.error("Failed to load snapshots", e);
+            log.error("Failed to load snapshots", e);
         }
     }, []);
 

@@ -6,6 +6,9 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useInterventions, useCustomers, useProjects, useInterventionLines } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
+import { logger } from '../utils/logger';
+
+const log = logger.child('InterventionList');
 
 // Design System
 import { PageHeader, MasterDetailLayout, Card, Button, Input, Modal, Tabs, Tab, EmptyState, StatusBadge } from './ui';
@@ -100,7 +103,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
             setNewIntervention({ socid: '', project_id: '', date: new Date().toISOString().split('T')[0], description: '' });
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to create intervention", e);
             alert(`Falha: ${e.message}`);
         } finally {
             setIsSubmitting(false);

@@ -2,6 +2,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCcw, FolderOpen } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('Simulator');
 import { SimulationState } from './types';
 import { STORAGE_KEY_DRAFT, DEFAULT_BAR_MIX, DEFAULT_BUFFET_SIM, DEFAULT_COSTS } from './constants';
 import { calculateDualSimulation } from './utils';
@@ -36,7 +39,7 @@ const Simulator = () => {
                 if (parsed.cmvBarPercent === undefined) parsed.cmvBarPercent = 0.3;
                 return parsed;
             } catch (e) {
-                console.error("Draft load failed", e);
+                log.error("Draft load failed", e);
             }
         }
 

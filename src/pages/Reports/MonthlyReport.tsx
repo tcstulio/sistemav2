@@ -11,6 +11,9 @@ import { getTeamHealth } from '../../utils/analytics/hr';
 import { getProjectActivity } from '../../utils/analytics/projects';
 import ReactMarkdown from 'react-markdown';
 import { Loader2, TrendingUp, DollarSign, Users, Briefcase, FileText, ChevronRight } from 'lucide-react';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('MonthlyReport');
 
 // Tabs
 import { FinanceTab } from '../../components/Reports/FinanceTab';
@@ -69,7 +72,7 @@ export const MonthlyReport: React.FC = () => {
             const report = await AiService.analyzeMonthlyReport(dataPayload);
             setSummary(report);
         } catch (error) {
-            console.error(error);
+            log.error('Failed to generate report', error);
             setSummary("**Erro ao gerar relatório.** Verifique os logs.");
         } finally {
             setLoadingAI(false);

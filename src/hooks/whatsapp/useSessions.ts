@@ -4,6 +4,9 @@ import { WhatsAppService } from '../../services/whatsappService';
 import { WhatsAppAccount } from '../../types';
 import { toast } from 'sonner';
 import { safeStorage } from '../../utils/safeStorage';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('Sessions');
 
 export const useSessions = () => {
     const { socket } = useWhatsAppContext();
@@ -24,7 +27,7 @@ export const useSessions = () => {
             const data = await WhatsAppService.getAccounts();
             setSessions(data || []);
         } catch (error) {
-            console.error('[useSessions] Failed to fetch sessions', error);
+            log.error('Failed to fetch sessions', error);
         } finally {
             setLoading(false);
         }
@@ -40,7 +43,6 @@ export const useSessions = () => {
         if (!socket) return;
 
         const handleStatus = (data: { sessionId: string, status: string }) => {
-            // console.log('[useSessions] Status Update:', data);
             setSessions(prev => {
                 const exists = prev.find(s => s.id === data.sessionId);
                 if (exists) {
@@ -90,7 +92,7 @@ export const useSessions = () => {
                     setQrCodes(prev => ({ ...prev, [data.sessionId]: url }));
                 }
             } catch (e) {
-                console.error('Failed to load QR image', e);
+                log.error('Failed to load QR image', e);
             }
         };
 

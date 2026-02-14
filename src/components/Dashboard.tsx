@@ -8,6 +8,9 @@ import { DollarSign, Users, FileText, TrendingUp, Sparkles, Loader2, Minus, Fold
 import { AiService } from '../services/aiService';
 import { FinancialHealthWidget } from './Finance/FinancialHealthWidget';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
+import { logger } from '../utils/logger';
+
+const log = logger.child('Dashboard');
 
 interface DashboardProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -273,7 +276,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 setForecast(JSON.parse(result));
             }
         } catch (e) {
-            console.error(e);
+            log.error("Failed to generate forecast", e);
         } finally {
             setLoadingForecast(false);
         }

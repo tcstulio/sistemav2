@@ -9,6 +9,9 @@ import { LinkedObjects } from './common/LinkedObjects';
 
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { toast } from 'sonner';
+import { logger } from '../utils/logger';
+
+const log = logger.child('SupplierList');
 
 // Design System
 import { PageHeader, MasterDetailLayout, Card, Button, Input, Modal, Tabs, Tab, EmptyState, ConfirmModal, StatusBadge } from './ui';
@@ -148,7 +151,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
             setIsReceptionModalOpen(false);
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to receive items", e);
             alert(`Falha ao receber itens: ${e.message}`);
         } finally {
             setIsSubmittingReception(false);

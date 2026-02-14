@@ -9,6 +9,9 @@ import { useDolibarrLink } from '../hooks/useDolibarrLink';
 import { useTaskTimeLogs, useUsers, useTaskContacts, useContacts } from '../hooks/dolibarr';
 import { DolibarrService } from '../services/dolibarrService';
 import { ChatInterface } from './Chat/ChatInterface';
+import { logger } from '../utils/logger';
+
+const log = logger.child('TaskDetail');
 
 interface TaskDetailProps {
     config: DolibarrConfig;
@@ -65,7 +68,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                     setError("Tarefa não encontrada. Aguarde a sincronização.");
                 }
             } catch (err) {
-                console.error("Error fetching task:", err);
+                log.error("Error fetching task", err);
                 setError("Erro ao carregar a tarefa.");
             } finally {
                 setLoading(false);
@@ -132,7 +135,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
             setTask(prev => prev ? { ...prev, description: descriptionContent } : null);
             setIsEditingDesc(false);
         } catch (error) {
-            console.error(error);
+            log.error("Failed to save description", error);
             alert('Erro ao salvar descrição');
         } finally {
             setIsSavingDesc(false);

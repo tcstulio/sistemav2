@@ -21,6 +21,9 @@ import { DolibarrService } from '../services/dolibarrService';
 import * as HRAdmin from '../services/api/hrAdmin';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useUsers, useExpenseReports, useLeaveRequests, useJobPositions, useCandidates, useTasks, useTickets, useProjects, useGroups, useExpenseReportLines, useExpenseReportPayments } from '../hooks/dolibarr';
+import { logger } from '../utils/logger';
+
+const log = logger.child('HRList');
 
 
 interface HRListProps {
@@ -181,7 +184,7 @@ const HRList: React.FC<HRListProps> = ({
                 // Not implemented in Service? Assuming it exists or mocking alert
                 // await DolibarrService.deleteUser(config, id); 
                 alert("Funcionalidade de exclusão pendente de implementação na API.");
-            } catch (e) { console.error(e); }
+            } catch (e) { log.error("Failed to delete user", e); }
         }
     };
 

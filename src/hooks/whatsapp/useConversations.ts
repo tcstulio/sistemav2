@@ -3,6 +3,9 @@ import { useWhatsAppContext } from '../../contexts/WhatsAppContext';
 import { WhatsAppService } from '../../services/whatsappService';
 import { WhatsAppConversation } from '../../types';
 import { toast } from 'sonner';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('Conversations');
 
 export const useConversations = (sessionId: string = 'default') => {
     const { socket } = useWhatsAppContext();
@@ -35,7 +38,7 @@ export const useConversations = (sessionId: string = 'default') => {
                 setConversations(data.sort((a, b) => b.lastMessageTimestamp - a.lastMessageTimestamp));
             }
         } catch (error) {
-            console.error('[useConversations] Failed to fetch', error);
+            log.error('Failed to fetch', error);
         } finally {
             setLoading(false);
         }
