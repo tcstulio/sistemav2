@@ -18,6 +18,9 @@ import { DolibarrService } from '../../services/dolibarrService';
 import { dbService } from '../../services/dbService';
 import { DolibarrConfig } from '../../types';
 import { useEffect, useState, useRef } from 'react';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('DolibarrHook');
 
 // ============ Types ============
 
@@ -120,7 +123,7 @@ export function createDolibarrHook<TRaw, TEntity extends { date_modification?: n
                         queryClient.setQueryData([queryKey], fromDb);
                     }
                 } catch (error) {
-                    console.error(`[${queryKey}] Failed to hydrate from IndexedDB:`, error);
+                    log.error(`Failed to hydrate ${queryKey} from IndexedDB`, error);
                 } finally {
                     setIsHydrated(true);
                 }
@@ -146,7 +149,7 @@ export function createDolibarrHook<TRaw, TEntity extends { date_modification?: n
                     const delta = await DolibarrService.fetchDelta(dolibarrConfig, endpoint, lastModified);
 
                     if (delta.length > 0) {
-                        console.log(`[${queryKey}] Found ${delta.length} new/updated items.`);
+                        log.debug(`Found ${delta.length} new/updated items for ${queryKey}`);
 
                         // Step 4: Map raw data to typed entities
                         const mappedDelta: TEntity[] = delta.map((raw: TRaw) => mapper(raw));
@@ -163,7 +166,7 @@ export function createDolibarrHook<TRaw, TEntity extends { date_modification?: n
                     return localData.sort(sortFn);
 
                 } catch (error) {
-                    console.error(`[${queryKey}] Sync error:`, error);
+                    log.error(`Sync error for ${queryKey}`, error);
 
                     // Fallback: try to return local data
                     const localData = await dbService.getAll<TEntity>(storeName);
@@ -174,7 +177,7 @@ export function createDolibarrHook<TRaw, TEntity extends { date_modification?: n
 
                     // Last resort: try full fetch if fallback is provided
                     if (fallbackFetch && dolibarrConfig) {
-                        console.log(`[${queryKey}] Attempting full fetch fallback...`);
+                        log.debug(`Attempting full fetch fallback for ${queryKey}`);
                         return fallbackFetch(dolibarrConfig);
                     }
 

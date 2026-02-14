@@ -1,5 +1,8 @@
 
 import { SimulationState, DualSimulationResult, FinancialResult, CostItem, EventModel, GlobalConfig, CalculationResult, ExtratoItem, Partner, ClientProposalState } from './types';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('SimulatorUtils');
 
 export const money = (val: number) => {
     return (val || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -12,7 +15,7 @@ export const generateShareableLink = (state: ClientProposalState): string => {
         const json = JSON.stringify(state);
         return btoa(encodeURIComponent(json));
     } catch (e) {
-        console.error("Error generating shareable link", e);
+        log.error("Error generating shareable link", e);
         return "";
     }
 };

@@ -4,6 +4,9 @@ import { WhatsAppService } from '../../services/whatsappService';
 import { WhatsAppMessage } from '../../types';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { toast } from 'sonner';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('Messages');
 
 export const useMessages = (sessionId: string, chatId: string | null) => {
     const { socket } = useWhatsAppContext();
@@ -22,7 +25,7 @@ export const useMessages = (sessionId: string, chatId: string | null) => {
             // Deduplication on fetch? Usually not needed if backend returns unique.
             setMessages(data || []);
         } catch (error) {
-            console.error('[useMessages] Failed to fetch', error);
+            log.error('Failed to fetch', error);
             toast.error('Erro ao carregar mensagens');
         } finally {
             setLoading(false);
@@ -150,7 +153,7 @@ export const useMessages = (sessionId: string, chatId: string | null) => {
             // Update immediately to link the ID.
             setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: result.id } : m));
         } catch (e) {
-            console.error(e);
+            log.error('Failed to send message', e);
             toast.error('Erro ao enviar mensagem');
             setMessages(prev => prev.filter(m => m.id !== tempId)); // Remove optimistic on fail
         }

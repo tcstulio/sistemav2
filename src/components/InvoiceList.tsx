@@ -20,6 +20,9 @@ import { Modal } from './ui/Modal';
 import { Tabs, Tab } from './ui/Tabs';
 import { EmptyState } from './ui/EmptyState';
 import { StatusBadge } from './ui/StatusBadge';
+import { logger } from '../utils/logger';
+
+const log = logger.child('InvoiceList');
 
 const invoiceStatuses = {
     'credit_note': { label: 'Nota de Crédito', variant: 'red' as const, icon: <RefreshCcw size={12} /> },
@@ -159,7 +162,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             alert("Fatura Validada!");
             if (refreshData) refreshData();
         } catch (err) {
-            console.error(err);
+            log.error("Failed to validate invoice", err);
             alert("Falha ao validar fatura.");
         } finally {
             setProcessingId(null);
@@ -176,7 +179,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             alert("Nota de Crédito criada com sucesso!");
             if (refreshData) refreshData();
         } catch (err: any) {
-            console.error(err);
+            log.error("Failed to create credit note", err);
             alert(`Falha ao criar Nota de Crédito: ${err.message}`);
         } finally {
             setProcessingId(null);
@@ -231,7 +234,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             setIsCreateModalOpen(false);
             setNewInvoice({ socid: '', date: new Date().toISOString().split('T')[0], items: [] });
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to create invoice", e);
             alert(`Falha ao criar fatura: ${e.message}`);
         } finally {
             setIsSubmitting(false);
@@ -326,7 +329,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             setIsEditModalOpen(false);
             if (refreshData) refreshData();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to update invoice", e);
             alert(`Falha ao atualizar fatura: ${e.message}`);
         } finally {
             setIsSubmitting(false);
@@ -351,7 +354,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             setIsPayModalOpen(false);
             setSelectedInvoiceForPay(null);
         } catch (err) {
-            console.error(err);
+            log.error("Failed to register payment", err);
             alert("Falha ao registrar pagamento");
             throw err;
         }
@@ -535,7 +538,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                             await DolibarrService.markInvoiceAsPaid(config, selectedInvoice.id);
                                             if (refreshData) refreshData();
                                             alert("Fatura classificada como paga.");
-                                        } catch (err) { console.error(err); alert("Erro ao classificar como paga."); }
+                                        } catch (err) { log.error("Failed to mark invoice as paid", err); alert("Erro ao classificar como paga."); }
                                         finally { setProcessingId(null); }
                                     }}
                                     title="Classificar como Paga"
@@ -553,7 +556,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                             await DolibarrService.abandonInvoice(config, selectedInvoice.id, reason);
                                             if (refreshData) refreshData();
                                             alert("Fatura abandonada/cancelada.");
-                                        } catch (err) { console.error(err); alert("Erro ao abandonar fatura."); }
+                                        } catch (err) { log.error("Failed to abandon invoice", err); alert("Erro ao abandonar fatura."); }
                                         finally { setProcessingId(null); }
                                     }}
                                     className="!text-red-600"
@@ -573,7 +576,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                         await DolibarrService.setInvoiceToDraft(config, selectedInvoice.id);
                                         if (refreshData) refreshData();
                                         alert("Fatura retornada para rascunho.");
-                                    } catch (err) { console.error(err); alert("Erro ao reabrir fatura."); }
+                                    } catch (err) { log.error("Failed to reopen invoice", err); alert("Erro ao reabrir fatura."); }
                                     finally { setProcessingId(null); }
                                 }}
                             >

@@ -9,6 +9,9 @@ import * as HRAdmin from '../../services/api/hrAdmin';
 
 import { PermissionManager } from './PermissionManager';
 import { ExpenseDetailModal } from './modals/ExpenseDetailModal';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('UserDetail');
 
 interface UserDetailProps {
     user: DolibarrUser;
@@ -80,7 +83,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
             setIsAddingGroup(false);
             setSelectedGroupToAdd('');
         } catch (e) {
-            console.error(e);
+            log.error("Failed to add user to group", e);
             alert("Erro ao adicionar ao grupo");
         }
     };
@@ -91,7 +94,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
             await HRAdmin.removeUserFromGroup(config, groupId, user.id);
             alert("Usuário removido do grupo (sync necessário para atualizar lista)");
         } catch (e) {
-            console.error(e);
+            log.error("Failed to remove user from group", e);
             alert("Erro ao remover do grupo");
         }
     };

@@ -2,6 +2,9 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { io, Socket } from 'socket.io-client';
 import { config } from '../config';
 import { useDolibarr } from '../context/DolibarrContext';
+import { logger } from '../utils/logger';
+
+const log = logger.child('WhatsAppCtx');
 
 interface WhatsAppContextType {
     socket: Socket | null;
@@ -34,7 +37,7 @@ export const WhatsAppProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             socketRef.current = null;
         }
 
-        console.log('[WhatsAppProvider] Connecting to Socket.IO...');
+        log.debug('Connecting to Socket.IO...');
         const newSocket = io(config.SOCKET_URL, {
             auth: { token: apiKey },
             transports: ['websocket', 'polling'],
@@ -44,17 +47,17 @@ export const WhatsAppProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         });
 
         newSocket.on('connect', () => {
-            console.log('[WhatsAppProvider] Connected: ', newSocket.id);
+            log.debug('Connected', { socketId: newSocket.id });
             setIsConnected(true);
         });
 
         newSocket.on('disconnect', (reason) => {
-            console.log('[WhatsAppProvider] Disconnected:', reason);
+            log.debug('Disconnected', { reason });
             setIsConnected(false);
         });
 
         newSocket.on('connect_error', (err) => {
-            console.error('[WhatsAppProvider] Connection Error:', err);
+            log.error('Connection Error', err);
             setIsConnected(false);
         });
 
@@ -63,7 +66,7 @@ export const WhatsAppProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         return () => {
             if (socketRef.current) {
-                console.log('[WhatsAppProvider] Disconnecting...');
+                log.debug('Disconnecting...');
                 socketRef.current.disconnect();
                 socketRef.current = null;
             }

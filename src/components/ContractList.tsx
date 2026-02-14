@@ -7,6 +7,9 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useContracts, useCustomers, useProjects, useInvoices } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
+import { logger } from '../utils/logger';
+
+const log = logger.child('ContractList');
 
 // Design System
 import { PageHeader, MasterDetailLayout, Card, Button, Input, Modal, Tabs, Tab, EmptyState, StatusBadge } from './ui';
@@ -102,7 +105,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
             setNewContractForm({ socid: '', date_contrat: new Date().toISOString().split('T')[0], date_fin_validite: '', note_public: '' });
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            console.error(e);
+            log.error("Failed to create contract", e);
             alert(`Falha: ${e.message}`);
         } finally {
             setIsSubmitting(false);

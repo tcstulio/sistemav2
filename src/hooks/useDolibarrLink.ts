@@ -1,5 +1,8 @@
 import { useCallback } from 'react';
 import { DolibarrConfig } from '../types';
+import { logger } from '../utils/logger';
+
+const log = logger.child('DolibarrLink');
 
 export const useDolibarrLink = (config: DolibarrConfig | null) => {
     const getLink = useCallback((module: string, id: string, ref?: string) => {
@@ -78,7 +81,7 @@ export const useDolibarrLink = (config: DolibarrConfig | null) => {
                 return `${baseUrl}/compta/deplacement/card.php?id=${id}`;
 
             default:
-                console.warn(`[useDolibarrLink] Unknown module: ${module}`);
+                log.warn(`Unknown module: ${module}`);
                 return '#';
         }
     }, [config]);

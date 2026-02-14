@@ -3,6 +3,9 @@ import { PushNotifications } from '@capacitor/push-notifications';
 import { Capacitor } from '@capacitor/core';
 import { useWhatsAppContext } from '../contexts/WhatsAppContext'; // Import context
 import { AppNotification, AppView } from '../types';
+import { logger } from '../utils/logger';
+
+const log = logger.child('Notifications');
 
 export const useNotifications = (
     setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>,
@@ -12,7 +15,7 @@ export const useNotifications = (
 
     useEffect(() => {
         if (!Capacitor.isNativePlatform()) {
-            console.log('Push Notifications not supported on web/electron');
+            log.debug('Push Notifications not supported on web/electron');
             return;
         }
 
@@ -24,7 +27,7 @@ export const useNotifications = (
             }
 
             if (permStatus.receive !== 'granted') {
-                console.error('User denied permissions!');
+                log.error('User denied permissions!');
                 return;
             }
 
@@ -35,18 +38,18 @@ export const useNotifications = (
 
         // Listener for registration success
         const registrationListener = PushNotifications.addListener('registration', token => {
-            console.log('Push registration success, token: ' + token.value);
+            log.debug('Push registration success', { token: token.value });
             // TODO: Send token to backend if needed
         });
 
         // Listener for registration error
         const registrationErrorListener = PushNotifications.addListener('registrationError', error => {
-            console.error('Error on registration: ' + JSON.stringify(error));
+            log.error('Error on registration', error);
         });
 
         // Listener for notification received (foreground)
         const receivedListener = PushNotifications.addListener('pushNotificationReceived', notification => {
-            console.log('Push received: ' + JSON.stringify(notification));
+            log.debug('Push received', notification);
 
             const data = notification.data || {};
 
@@ -67,7 +70,7 @@ export const useNotifications = (
 
         // Listener for notification action (background/tapped)
         const actionListener = PushNotifications.addListener('pushNotificationActionPerformed', notification => {
-            console.log('Push action performed: ' + JSON.stringify(notification));
+            log.debug('Push action performed', notification);
             const data = notification.notification.data;
             if (data && data.view) {
                 // Navigate to the screen

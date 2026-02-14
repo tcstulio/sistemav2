@@ -9,6 +9,9 @@ import { TaskWizard } from '../Projects/TaskWizard';
 import { useEvents, useProjects, useUsers } from '../../hooks/dolibarr';
 import { Project, DolibarrUser } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
+import { logger } from '../../utils/logger';
+
+const log = logger.child('ChatInterface');
 
 interface ChatInterfaceProps {
     elementId: string;
@@ -111,7 +114,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                 alert('Upload não suportado neste contexto (falta referência "Ref").');
             }
         } catch (err) {
-            console.error('Upload Error:', err);
+            log.error('Upload failed', err);
             alert('Falha no upload do arquivo.');
         } finally {
             setIsUploading(false);
@@ -158,7 +161,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
             setReplyingTo(null);
             await refreshData();
         } catch (error) {
-            console.error("Failed to send message", error);
+            log.error("Failed to send message", error);
         } finally {
             setIsSending(false);
         }
