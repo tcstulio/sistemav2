@@ -92,13 +92,17 @@ export class DolibarrHRService extends DolibarrServiceBase {
         }
     }
 
-    async listJobPositions(): Promise<any[]> {
+    async listJobPositions(onlyOpen: boolean = true): Promise<any[]> {
         try {
             const headers = this.getHeaders();
             const url = `${this.baseUrl}recruitments/jobposition`;
+            const params: any = { limit: 50 };
+            if (onlyOpen) {
+                params.sqlfilters = "(t.status:=:'1')";
+            }
             const response = await axios.get(url, {
                 headers,
-                params: { limit: 20 },
+                params,
                 httpsAgent: this.httpsAgent,
                 validateStatus: (s) => s === 200
             });
