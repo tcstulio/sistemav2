@@ -7,6 +7,8 @@ import { socketService } from '../services/socketService'; // Webhook needs this
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
+import { channelRouter } from '../services/channelRouter';
+import { FEATURES } from '../config/features';
 
 const log = logger.child('WhatsAppRoutes');
 const router = Router();
@@ -127,6 +129,8 @@ router.post('/send', async (req, res) => {
             sessionId: z.string().optional()
         }).parse(req.body);
 
+        log.info('Sending WhatsApp message', { chatId, sessionId });
+
         const targetSession = sessionId || getSessionId(req);
         const currentUser = (req as any).user;
 
@@ -136,15 +140,23 @@ router.post('/send', async (req, res) => {
             finalText = storeService.formatMessageWithSignature(text, currentUser);
         }
 
-        const result = await messageService.sendText(targetSession, chatId, finalText);
+        // Use channelRouter for unified message sending (supports Moltbot or legacy)
+        const result = await channelRouter.sendWhatsApp(chatId, finalText, targetSession);
 
         // [ANTIGRAVITY] Business Logic: Update Assignment (Last Responder)
         if (currentUser) {
             storeService.updateLastResponder(chatId, currentUser.id);
         }
 
-        res.json(result);
+        res.json({
+            success: result.success,
+            id: result.messageId,
+            timestamp: result.timestamp,
+            provider: result.provider,
+            error: result.error
+        });
     } catch (error: any) {
+        log.error('Failed to send WhatsApp message', { error: error.message, stack: error.stack });
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
         }
@@ -396,8 +408,16 @@ router.post('/send-file', async (req, res) => {
         }).parse(req.body);
 
         const targetSession = sessionId || getSessionId(req);
-        const result = await messageService.sendFile(targetSession, chatId, fileData, filename, caption);
-        res.json(result);
+
+        // Use channelRouter for unified file sending
+        const result = await channelRouter.sendWhatsAppFile(chatId, fileData, filename, caption, targetSession);
+
+        res.json({
+            success: result.success,
+            id: result.messageId,
+            provider: result.provider,
+            error: result.error
+        });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
@@ -416,8 +436,16 @@ router.post('/send-voice', async (req, res) => {
         }).parse(req.body);
 
         const targetSession = sessionId || getSessionId(req);
-        const result = await messageService.sendVoice(targetSession, chatId, fileData);
-        res.json(result);
+
+        // Use channelRouter for unified voice sending
+        const result = await channelRouter.sendWhatsAppVoice(chatId, fileData, targetSession);
+
+        res.json({
+            success: result.success,
+            id: result.messageId,
+            provider: result.provider,
+            error: result.error
+        });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
@@ -427,7 +455,7 @@ router.post('/send-voice', async (req, res) => {
     }
 });
 
-// Send Voice NATIVE (Test)
+// Send Voice NATIVE (Test) - Uses channelRouter
 router.post('/send-voice-native', async (req, res) => {
     try {
         const { chatId, fileData, sessionId } = z.object({
@@ -437,9 +465,14 @@ router.post('/send-voice-native', async (req, res) => {
         }).parse(req.body);
 
         const targetSession = sessionId || getSessionId(req);
-        // Uses the same service method, as it now encapsulates native logic
-        const result = await messageService.sendVoice(targetSession, chatId, fileData);
-        res.json(result);
+        const result = await channelRouter.sendWhatsAppVoice(chatId, fileData, targetSession);
+
+        res.json({
+            success: result.success,
+            id: result.messageId,
+            provider: result.provider,
+            error: result.error
+        });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
