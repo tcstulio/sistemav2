@@ -298,8 +298,10 @@ class GoogleProvider implements AIProvider {
                             toolResult = `Candidatos: ${JSON.stringify(candidates.map((c: any) => ({ id: c.id, name: c.lastname + ' ' + c.firstname, email: c.email })))}`;
                             break;
                         case 'list_job_positions':
-                            const jobs = await dolibarrService.listJobPositions();
-                            toolResult = `Vagas: ${JSON.stringify(jobs.map((j: any) => ({ ref: j.ref, label: j.label, status: j.status })))}`;
+                            const jobs = await dolibarrService.listJobPositions(true);
+                            toolResult = jobs.length > 0
+                                ? `Vagas ABERTAS: ${JSON.stringify(jobs.map((j: any) => ({ ref: j.ref, label: j.label, status: j.status, qty: j.qty })))}`
+                                : 'Nenhuma vaga aberta no momento.';
                             break;
                         case 'search_web':
                             const searchResults = await ScraperService.searchGoogle(toolCall.args.query);
