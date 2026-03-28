@@ -8,10 +8,14 @@ const log = logger.child('AdminRoutes');
 // import { dbService } from '../../../services/dbService'; // REMOVED to prevent crash
 // Correction: We cannot import client-side dbService here. Backend has no IndexedDB.
 // If backend needs logs, it should read from a file or its own DB.
-// Since the prompt asked for "server logs", we will return partial logs or mock for now, 
+// Since the prompt asked for "server logs", we will return partial logs or mock for now,
 // or if we implement file logging later.
 
 import { requireDolibarrAdmin } from '../middleware/authMiddleware';
+import { FEATURES, getAllFeatures, isUsingMoltbot, isTulipaActive, logFeatures } from '../config/features';
+import { channelRouter } from '../services/channelRouter';
+import { moltbotGateway } from '../services/moltbotGateway';
+import { tulipaService } from '../services/tulipaService';
 
 const router = express.Router();
 
@@ -390,6 +394,144 @@ router.post('/config/llm/playground', async (req, res) => {
         llmStats.errors++;
         llmStats.lastError = e.message;
         res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// ========================================
+// FEATURE FLAGS & INTEGRATION STATUS
+// ========================================
+
+/**
+ * GET /api/admin/config/features
+ * Get all feature flags
+ */
+router.get('/config/features', (req, res) => {
+    res.json({
+        features: getAllFeatures(),
+        computed: {
+            usingMoltbot: isUsingMoltbot(),
+            tulipaActive: isTulipaActive(),
+            currentWhatsAppProvider: channelRouter.getWhatsAppProvider()
+        }
+    });
+});
+
+/**
+ * POST /api/admin/config/features/provider
+ * Switch WhatsApp provider at runtime
+ */
+router.post('/config/features/provider', (req, res) => {
+    const { provider } = req.body;
+
+    if (provider !== 'legacy' && provider !== 'moltbot') {
+        return res.status(400).json({ error: "Invalid provider. Use 'legacy' or 'moltbot'." });
+    }
+
+    channelRouter.setWhatsAppProvider(provider);
+
+    res.json({
+        success: true,
+        provider: channelRouter.getWhatsAppProvider(),
+        note: 'Runtime change only. Set WHATSAPP_PROVIDER in .env to persist.'
+    });
+});
+
+/**
+ * GET /api/admin/integration/status
+ * Get integration status summary (Moltbot + Tulipa)
+ */
+router.get('/integration/status', async (req, res) => {
+    try {
+        const [moltbotStatus, tulipaStatus, channelStatuses] = await Promise.all([
+            moltbotGateway.getStatus(),
+            tulipaService.getQuickStatus(),
+            channelRouter.getAllChannelsStatus()
+        ]);
+
+        res.json({
+            features: {
+                moltbotEnabled: FEATURES.MOLTBOT_ENABLED,
+                tulipaEnabled: FEATURES.TULIPA_ENABLED,
+                whatsappProvider: FEATURES.WHATSAPP_PROVIDER,
+                usingMoltbot: isUsingMoltbot()
+            },
+            services: {
+                moltbot: moltbotStatus,
+                tulipa: tulipaStatus
+            },
+            channels: channelStatuses,
+            checkedAt: Date.now()
+        });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+/**
+ * POST /api/admin/integration/test
+ * Test integration connections
+ */
+router.post('/integration/test', async (req, res) => {
+    const results: any = {
+        moltbot: { tested: false },
+        tulipa: { tested: false }
+    };
+
+    // Test Moltbot
+    if (FEATURES.MOLTBOT_ENABLED) {
+        try {
+            const status = await moltbotGateway.getStatus();
+            results.moltbot = {
+                tested: true,
+                success: status.connected,
+                status: status.status,
+                latency: status.latency
+            };
+        } catch (e: any) {
+            results.moltbot = { tested: true, success: false, error: e.message };
+        }
+    }
+
+    // Test Tulipa
+    if (FEATURES.TULIPA_ENABLED) {
+        try {
+            const status = await tulipaService.getSystemStatus();
+            results.tulipa = {
+                tested: true,
+                success: status?.healthy || false,
+                uptime: status?.uptime,
+                stats: status?.stats
+            };
+        } catch (e: any) {
+            results.tulipa = { tested: true, success: false, error: e.message };
+        }
+    }
+
+    res.json(results);
+});
+
+/**
+ * GET /api/admin/integration/brain/stats
+ * Get Brain Hub statistics
+ */
+router.get('/integration/brain/stats', async (req, res) => {
+    if (!FEATURES.TULIPA_ENABLED) {
+        return res.status(400).json({ error: 'Tulipa integration not enabled' });
+    }
+
+    try {
+        const [eventsStats, summary] = await Promise.all([
+            tulipaService.getEventsStats(),
+            tulipaService.getBrainSummary()
+        ]);
+
+        res.json({
+            events: eventsStats,
+            summary,
+            checkedAt: Date.now()
+        });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
     }
 });
 

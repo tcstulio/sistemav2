@@ -177,6 +177,10 @@ app.use('/api/email', emailRoutes);
 import centrovibeRoutes from './routes/centrovibeRoutes';
 app.use('/api/centrovibe', requireDolibarrLogin, centrovibeRoutes);
 
+// Integration Routes (Moltbot Gateway, Tulipa Server, Brain Hub)
+import integrationRoutes from './routes/integrationRoutes';
+app.use('/api/integration', integrationRoutes);
+
 // Health Check
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', server: 'CoolGroove Backend' });
