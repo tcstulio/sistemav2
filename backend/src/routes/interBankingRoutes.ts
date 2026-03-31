@@ -80,7 +80,8 @@ router.get('/status', async (req: Request, res: Response) => {
         const status = await interApiService.getStatus();
         res.json(status);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -132,7 +133,8 @@ router.post('/certificates', certUpload.array('files', 2), async (req: Request, 
             message: `Uploaded ${uploaded.length} certificate file(s)`,
         });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -147,7 +149,8 @@ router.get('/saldo', async (req: Request, res: Response) => {
         const saldo = await interApiService.getSaldo();
         res.json(saldo);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -173,7 +176,8 @@ router.get('/extrato', async (req: Request, res: Response) => {
 
         res.json({ transacoes });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -187,7 +191,8 @@ router.post('/pagamento/boleto', validateBody(PagamentoBoletoSchema), async (req
         const resultado = await interApiService.pagarBoleto(dados);
         res.json(resultado);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -204,7 +209,8 @@ router.get('/pagamento/:id/comprovante', async (req: Request, res: Response) => 
         res.setHeader('Content-Disposition', `attachment; filename="comprovante_${id}.pdf"`);
         res.send(pdf);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -238,7 +244,8 @@ router.post('/pix/cobranca', async (req: Request, res: Response) => {
 
         res.json({ ...cobranca, qrcode: qrcode?.qrcode });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -257,7 +264,8 @@ router.post('/pix/cobranca-vencimento', async (req: Request, res: Response) => {
         const cobranca = await interApiService.criarPixCobrancaVencimento(txid, dados);
         res.json(cobranca);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -271,7 +279,8 @@ router.get('/pix/cobranca/:txid', async (req: Request, res: Response) => {
         const cobranca = await interApiService.consultarPixCobranca(txid);
         res.json(cobranca);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -285,7 +294,8 @@ router.post('/pix/enviar', validateBody(PixPagamentoSchema), async (req: Request
         const resultado = await interApiService.enviarPix(dados);
         res.json(resultado);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -307,7 +317,8 @@ router.get('/pix/recebidos', async (req: Request, res: Response) => {
         const pix = await interApiService.listarPixRecebidos(inicio as string, fim as string);
         res.json({ pix });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -321,7 +332,8 @@ router.get('/pix/:e2eid', async (req: Request, res: Response) => {
         const pix = await interApiService.consultarPix(e2eid);
         res.json(pix);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -344,7 +356,8 @@ router.post('/boleto', async (req: Request, res: Response) => {
         const boleto = await interApiService.emitirBoleto(dados);
         res.json(boleto);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -367,7 +380,8 @@ router.get('/boleto', async (req: Request, res: Response) => {
 
         res.json(resultado);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -381,7 +395,8 @@ router.get('/boleto/:nossoNumero', async (req: Request, res: Response) => {
         const boleto = await interApiService.consultarBoleto(nossoNumero);
         res.json(boleto);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -398,7 +413,8 @@ router.get('/boleto/:nossoNumero/pdf', async (req: Request, res: Response) => {
         res.setHeader('Content-Disposition', `attachment; filename="boleto_${nossoNumero}.pdf"`);
         res.send(pdf);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -414,7 +430,8 @@ router.post('/boleto/:nossoNumero/cancelar', async (req: Request, res: Response)
         await interApiService.cancelarBoleto(nossoNumero, motivo || 'Cancelado pelo usuário');
         res.json({ success: true, message: 'Boleto cancelado com sucesso' });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -448,7 +465,7 @@ function verifyWebhookSignature(payload: string, signature: string | undefined, 
  */
 router.post('/webhook/pix', async (req: Request, res: Response) => {
     try {
-        // Validate webhook signature if secret is configured
+        // Validate webhook signature - mandatory in production
         if (config.interWebhookSecret) {
             const signature = req.headers['x-webhook-signature'] as string;
             const payload = JSON.stringify(req.body);
@@ -457,6 +474,11 @@ router.post('/webhook/pix', async (req: Request, res: Response) => {
                 log.warn('Invalid signature for Pix webhook');
                 return res.status(401).json({ error: 'Invalid webhook signature' });
             }
+        } else if (process.env.NODE_ENV === 'production') {
+            log.warn('Pix webhook rejected: interWebhookSecret is not configured in production');
+            return res.status(401).json({ error: 'Webhook signature verification not configured' });
+        } else {
+            log.warn('Pix webhook signature verification skipped: interWebhookSecret not configured (non-production)');
         }
 
         const webhookPayload: PixWebhookPayload = req.body;
@@ -485,7 +507,7 @@ router.post('/webhook/pix', async (req: Request, res: Response) => {
  */
 router.post('/webhook/boleto', async (req: Request, res: Response) => {
     try {
-        // Validate webhook signature if secret is configured
+        // Validate webhook signature - mandatory in production
         if (config.interWebhookSecret) {
             const signature = req.headers['x-webhook-signature'] as string;
             const payload = JSON.stringify(req.body);
@@ -494,6 +516,11 @@ router.post('/webhook/boleto', async (req: Request, res: Response) => {
                 log.warn('Invalid signature for Boleto webhook');
                 return res.status(401).json({ error: 'Invalid webhook signature' });
             }
+        } else if (process.env.NODE_ENV === 'production') {
+            log.warn('Boleto webhook rejected: interWebhookSecret is not configured in production');
+            return res.status(401).json({ error: 'Webhook signature verification not configured' });
+        } else {
+            log.warn('Boleto webhook signature verification skipped: interWebhookSecret not configured (non-production)');
         }
 
         const webhookPayload: BoletoWebhookPayload = req.body;
@@ -535,7 +562,8 @@ router.put('/webhook/pix/config', async (req: Request, res: Response) => {
         await interApiService.configurarWebhookPix(chave, webhookUrl);
         res.json({ success: true, message: 'Webhook configured successfully' });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -549,7 +577,8 @@ router.get('/webhook/pix/config/:chave', async (req: Request, res: Response) => 
         const config = await interApiService.consultarWebhookPix(chave);
         res.json(config);
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -563,7 +592,8 @@ router.delete('/webhook/pix/config/:chave', async (req: Request, res: Response) 
         await interApiService.deletarWebhookPix(chave);
         res.json({ success: true, message: 'Webhook deleted successfully' });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        log.error('Operation failed', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 

@@ -455,30 +455,4 @@ router.post('/send-voice', async (req, res) => {
     }
 });
 
-// Send Voice NATIVE (Test) - Uses channelRouter
-router.post('/send-voice-native', async (req, res) => {
-    try {
-        const { chatId, fileData, sessionId } = z.object({
-            chatId: z.string().min(1),
-            fileData: z.string().min(1),
-            sessionId: z.string().optional()
-        }).parse(req.body);
-
-        const targetSession = sessionId || getSessionId(req);
-        const result = await channelRouter.sendWhatsAppVoice(chatId, fileData, targetSession);
-
-        res.json({
-            success: result.success,
-            id: result.messageId,
-            provider: result.provider,
-            error: result.error
-        });
-    } catch (error: any) {
-        if (error instanceof z.ZodError) {
-            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
-        }
-        res.status(500).json({ error: error.message || 'Failed to send voice native' });
-    }
-});
-
 export default router;

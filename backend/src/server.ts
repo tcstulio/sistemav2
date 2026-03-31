@@ -147,7 +147,7 @@ app.use('/api/scheduler', schedulerRoutes);
 
 // Webhook Routes (External Triggers, Dolibarr Integration)
 import webhookRoutes from './routes/webhookRoutes';
-app.use('/api/webhook', webhookRoutes);
+app.use('/api/webhook', requireDolibarrLogin, webhookRoutes);
 
 // Banking Routes (Import, Analysis, Reconciliation)
 import bankingRoutes from './routes/bankingRoutes';

@@ -4,13 +4,27 @@ import { logger } from '../utils/logger';
 
 const log = logger.child('SocketService');
 
+const allowedOrigins = [
+    'https://app.coolgroove.com.br',
+    'https://sistema.coolgroove.com.br',
+    ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000', 'http://localhost:5173'] : [])
+];
+
 let io: SocketIOServer | null = null;
 
 export const socketService = {
     init: (httpServer: HttpServer) => {
         io = new SocketIOServer(httpServer, {
             cors: {
-                origin: "*", // Allow all origins for now (dev mode)
+                origin: (origin, callback) => {
+                    if (!origin) return callback(null, true);
+                    if (allowedOrigins.includes(origin)) {
+                        callback(null, true);
+                    } else {
+                        log.warn(`Socket.io CORS blocked request from origin: ${origin}`);
+                        callback(new Error('Not allowed by CORS'));
+                    }
+                },
                 methods: ["GET", "POST"]
             }
         });

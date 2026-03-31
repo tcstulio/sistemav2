@@ -25,6 +25,22 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction) 
 const validKeysCache = new Map<string, number | { expiry: number, user: any }>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 Minutes
 
+// Periodic cleanup of expired cache entries to prevent memory leaks
+setInterval(() => {
+    const now = Date.now();
+    let cleaned = 0;
+    for (const [key, value] of validKeysCache) {
+        const expiry = typeof value === 'number' ? value : value?.expiry;
+        if (expiry && now >= expiry) {
+            validKeysCache.delete(key);
+            cleaned++;
+        }
+    }
+    if (cleaned > 0) {
+        log.debug(`Auth cache cleanup: removed ${cleaned} expired entries`);
+    }
+}, 10 * 60 * 1000).unref(); // Every 10 minutes, .unref() so it doesn't block shutdown
+
 // Check for Dolibarr User Login (Presence AND Validity of API Key)
 export const requireDolibarrLogin = async (req: Request, res: Response, next: NextFunction) => {
     // Frontend sends 'DOLAPIKEY' or 'dolapikey' in Headers only (query params removed for security - keys leak in logs/URLs)

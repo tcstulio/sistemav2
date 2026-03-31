@@ -159,13 +159,24 @@ router.get('/custom_sync.php', async (req, res) => {
 
 // --- Wildcard Proxy for Everything Else (Reads & Untyped Writes) ---
 // Forwards all requests from /api/dolibarr/* to the actual Dolibarr URL
+
+// Whitelist of allowed Dolibarr path prefixes
+const allowedPathPrefixes = [
+    '/thirdparties', '/invoices', '/products', '/orders', '/contacts',
+    '/categories', '/proposals', '/contracts', '/shipments', '/projects',
+    '/tasks', '/agenda', '/users', '/documents', '/setup', '/bankaccounts',
+    '/supplierinvoices',
+];
+
 router.all('/*', async (req, res) => {
     try {
-        // req.path will be something like "/thirdparties/123" or "/invoices"
-        // Note: The specific routes above will be matched FIRST by Express if they match exactly.
-        // However, "all /*" matches everything. We need to ensure specific routes are defined BEFORE this wildcard.
-        // Express executes in order. So the above definitions capture the specific POSTs.
-        // For existing GETs or other POSTs not defined above, this wildcard catches them.
+        // Validate the request path against the whitelist
+        const pathLower = req.path.toLowerCase();
+        const isAllowed = allowedPathPrefixes.some(prefix => pathLower.startsWith(prefix));
+        if (!isAllowed) {
+            log.warn(`Blocked proxy request to unauthorized path: ${req.method} ${req.path}`);
+            return res.status(403).json({ error: 'Path not allowed by proxy whitelist' });
+        }
 
         const response = await dolibarrService.proxyRequest(
             req.method,
