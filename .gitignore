@@ -59,6 +59,9 @@ screenshots/
 cline_mcp_settings.json
 
 # Temporary / debug files
+debug_*
+*.dump
+latest_tasks_dump*
 nul
 patch-chrome.cjs
 test-automation.js

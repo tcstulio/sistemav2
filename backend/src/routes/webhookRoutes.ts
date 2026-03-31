@@ -60,228 +60,42 @@ router.post('/trigger', async (req: Request, res: Response) => {
 
 // --- Dolibarr Specific Webhooks ---
 
-router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
+async function handleEntityWebhook(
+    entityType: string,
+    req: Request,
+    res: Response,
+    fetchEntity: (id: string) => Promise<any>,
+    getVariables: (entity: any) => Record<string, string>
+) {
     try {
-        const { invoiceId, action, sessionId } = req.body;
+        const idField = `${entityType}Id`;
+        const entityId = req.body[idField];
+        const { action, sessionId } = req.body;
 
-        if (!invoiceId) {
-            return res.status(400).json({ error: 'Missing invoiceId' });
+        if (!entityId) {
+            return res.status(400).json({ error: `Missing ${idField}` });
         }
 
-        const invoice = await dolibarrService.getInvoice(invoiceId);
-        if (!invoice) {
-            return res.status(404).json({ error: 'Invoice not found' });
+        const entity = await fetchEntity(entityId);
+        if (!entity) {
+            return res.status(404).json({ error: `${entityType.charAt(0).toUpperCase() + entityType.slice(1)} not found` });
         }
 
-        const customer = await dolibarrService.getThirdParty(invoice.socid);
-        const phone = customer?.phone || customer?.phone_mobile;
-        const email = customer?.email;
-
-        const customerName = customer?.name || 'Cliente';
-        const invoiceRef = invoice.ref || invoiceId;
-        const total = invoice.total_ttc ? `R$ ${parseFloat(invoice.total_ttc).toFixed(2)}` : '';
-
-        // Fetch active rules for this event
-        const eventBefore = `invoice_${action}`;
-        const activeRules = schedulerService.getRules().filter(r => r.event === eventBefore && r.enabled);
-
-        if (activeRules.length === 0) {
-            log.info(`No active rules for ${eventBefore}`);
-            return res.json({ success: true, action, message: 'No active rules' });
-        }
-
-        const variables = {
-            customerName,
-            ref: invoiceRef,
-            total
-        };
-
-        const messages: string[] = [];
-
-        for (const rule of activeRules) {
-            // Determine destination based on channel
-            let destinationId = '';
-            if (rule.channel === 'email') {
-                if (!email) {
-                    log.info(`Skipping email rule ${rule.name}: No email for customer ${invoice.socid}`);
-                    continue;
-                }
-                destinationId = email;
-            } else {
-                if (!phone) {
-                    log.info(`Skipping whatsapp rule ${rule.name}: No phone for customer ${invoice.socid}`);
-                    continue;
-                }
-                destinationId = phone.replace(/\D/g, '') + '@c.us';
-            }
-            let finalText = rule.message || '';
-
-            // Re-use scheduler template logic if we had a public method, but for now simple replace
-            if (rule.templateId) {
-                const rendered = schedulerService.renderTemplate(rule.templateId, variables);
-                if (rendered) finalText = rendered;
-            } else {
-                // Simple interpolation
-                for (const [key, val] of Object.entries(variables)) {
-                    finalText = finalText.replace(new RegExp(`{{${key}}}`, 'g'), val);
-                }
-            }
-
-            if (!finalText) continue;
-
-            const msgSessionId = rule.sessionId || sessionId || 'default';
-            const msg = schedulerService.scheduleMessage({
-                chatId: destinationId,
-                sessionId: msgSessionId,
-                channel: rule.channel, // Pass channel
-                subject: rule.subject, // Pass subject
-                message: finalText,
-                scheduledAt: Date.now() + (rule.delay ? rule.delay * 60 * 1000 : 0)
-            });
-            messages.push(msg.id);
-
-            // Log the webhook trigger
-            schedulerService.addLog({
-                messageId: msg.id,
-                chatId: destinationId,
-                sessionId: msgSessionId,
-                type: 'webhook',
-                status: 'pending',
-                message: finalText,
-                metadata: { event: eventBefore, ruleId: rule.id, ruleName: rule.name, invoiceRef }
-            });
-        }
-
-        res.json({ success: true, action, invoiceRef, messageIds: messages });
-
-    } catch (error: any) {
-        log.error('Dolibarr invoice error', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
-    try {
-        const { ticketId, action, sessionId } = req.body;
-
-        if (!ticketId) {
-            return res.status(400).json({ error: 'Missing ticketId' });
-        }
-
-        const ticket = await dolibarrService.getTicket(ticketId);
-        if (!ticket) {
-            return res.status(404).json({ error: 'Ticket not found' });
-        }
-
-        let phone = null;
-        let email = null;
-        if (ticket.fk_soc) {
-            const customer = await dolibarrService.getThirdParty(ticket.fk_soc);
+        // Resolve customer contact info
+        const socId = entity.socid || entity.fk_soc;
+        let phone: string | null = null;
+        let email: string | null = null;
+        if (socId) {
+            const customer = await dolibarrService.getThirdParty(socId);
             phone = customer?.phone || customer?.phone_mobile;
             email = customer?.email;
         }
 
-        const ticketRef = ticket.ref || ticketId;
+        const variables = getVariables(entity);
+        const entityRef = entity.ref || entityId;
 
         // Fetch active rules for this event
-        const eventBefore = `ticket_${action}`;
-        const activeRules = schedulerService.getRules().filter(r => r.event === eventBefore && r.enabled);
-
-        if (activeRules.length === 0) {
-            log.info(`No active rules for ${eventBefore}`);
-            return res.json({ success: true, action, message: 'No active rules' });
-        }
-
-        const variables = {
-            ref: ticketRef,
-            subject: ticket.subject || ''
-        };
-
-        const messages: string[] = [];
-
-        for (const rule of activeRules) {
-            // Determine destination based on channel
-            let destinationId = '';
-            if (rule.channel === 'email') {
-                if (!email) {
-                    log.info(`Skipping email rule ${rule.name}: No email for ticket customer`);
-                    continue;
-                }
-                destinationId = email;
-            } else {
-                if (!phone) {
-                    log.info(`Skipping whatsapp rule ${rule.name}: No phone for ticket customer`);
-                    continue;
-                }
-                destinationId = phone.replace(/\D/g, '') + '@c.us';
-            }
-            let finalText = rule.message || '';
-
-            if (rule.templateId) {
-                const rendered = schedulerService.renderTemplate(rule.templateId, variables);
-                if (rendered) finalText = rendered;
-            } else {
-                for (const [key, val] of Object.entries(variables)) {
-                    finalText = finalText.replace(new RegExp(`{{${key}}}`, 'g'), val);
-                }
-            }
-
-            if (!finalText) continue;
-
-            const msgSessionId = rule.sessionId || sessionId || 'default';
-            const msg = schedulerService.scheduleMessage({
-                chatId: destinationId,
-                sessionId: msgSessionId,
-                channel: rule.channel,
-                subject: rule.subject,
-                message: finalText,
-                scheduledAt: Date.now() + (rule.delay ? rule.delay * 60 * 1000 : 0)
-            });
-            messages.push(msg.id);
-
-            // Log the webhook trigger
-            schedulerService.addLog({
-                messageId: msg.id,
-                chatId: destinationId,
-                sessionId: msgSessionId,
-                type: 'webhook',
-                status: 'pending',
-                message: finalText,
-                metadata: { event: eventBefore, ruleId: rule.id, ruleName: rule.name, ticketRef }
-            });
-        }
-
-        res.json({ success: true, action, ticketRef, messageIds: messages });
-
-    } catch (error: any) {
-        log.error('Dolibarr ticket error', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-router.post('/dolibarr/order', async (req: Request, res: Response) => {
-    try {
-        const { orderId, action, sessionId } = req.body;
-
-        if (!orderId) {
-            return res.status(400).json({ error: 'Missing orderId' });
-        }
-
-        const order = await dolibarrService.getOrder(orderId);
-        if (!order) {
-            return res.status(404).json({ error: 'Order not found' });
-        }
-
-        const customer = await dolibarrService.getThirdParty(order.socid);
-        const phone = customer?.phone || customer?.phone_mobile;
-        const email = customer?.email;
-
-        const customerName = customer?.name || 'Cliente';
-        const orderRef = order.ref || orderId;
-        const total = order.total_ttc ? `R$ ${parseFloat(order.total_ttc).toFixed(2)}` : '';
-
-        // Fetch active rules for this event
-        const eventName = `order_${action}`;
+        const eventName = `${entityType}_${action}`;
         const activeRules = schedulerService.getRules().filter(r => r.event === eventName && r.enabled);
 
         if (activeRules.length === 0) {
@@ -289,12 +103,6 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
             return res.json({ success: true, action, message: 'No active rules' });
         }
 
-        const variables = {
-            customerName,
-            ref: orderRef,
-            total
-        };
-
         const messages: string[] = [];
 
         for (const rule of activeRules) {
@@ -302,17 +110,18 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
             let destinationId = '';
             if (rule.channel === 'email') {
                 if (!email) {
-                    log.info(`Skipping email rule ${rule.name}: No email for customer ${order.socid}`);
+                    log.info(`Skipping email rule ${rule.name}: No email for ${entityType} customer`);
                     continue;
                 }
                 destinationId = email;
             } else {
                 if (!phone) {
-                    log.info(`Skipping whatsapp rule ${rule.name}: No phone for customer ${order.socid}`);
+                    log.info(`Skipping whatsapp rule ${rule.name}: No phone for ${entityType} customer`);
                     continue;
                 }
                 destinationId = phone.replace(/\D/g, '') + '@c.us';
             }
+
             let finalText = rule.message || '';
 
             if (rule.templateId) {
@@ -328,7 +137,7 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
 
             const msgSessionId = rule.sessionId || sessionId || 'default';
             const msg = schedulerService.scheduleMessage({
-                chatId: destinationId, // Use resolved destination
+                chatId: destinationId,
                 sessionId: msgSessionId,
                 channel: rule.channel,
                 subject: rule.subject,
@@ -337,7 +146,6 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
             });
             messages.push(msg.id);
 
-            // Log the webhook trigger
             schedulerService.addLog({
                 messageId: msg.id,
                 chatId: destinationId,
@@ -345,16 +153,48 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
                 type: 'webhook',
                 status: 'pending',
                 message: finalText,
-                metadata: { event: eventName, ruleId: rule.id, ruleName: rule.name, orderRef }
+                metadata: { event: eventName, ruleId: rule.id, ruleName: rule.name, [`${entityType}Ref`]: entityRef }
             });
         }
 
-        res.json({ success: true, action, orderRef, messageIds: messages });
+        res.json({ success: true, action, [`${entityType}Ref`]: entityRef, messageIds: messages });
 
     } catch (error: any) {
-        log.error('Dolibarr order error', error);
+        log.error(`Dolibarr ${entityType} error`, error);
         res.status(500).json({ error: error.message });
     }
+}
+
+router.post('/dolibarr/invoice', (req: Request, res: Response) => {
+    return handleEntityWebhook('invoice', req, res,
+        (id) => dolibarrService.getInvoice(id),
+        (invoice) => ({
+            customerName: 'Cliente', // Will be overridden if customer found
+            ref: invoice.ref || req.body.invoiceId,
+            total: invoice.total_ttc ? `R$ ${parseFloat(invoice.total_ttc).toFixed(2)}` : ''
+        })
+    );
+});
+
+router.post('/dolibarr/ticket', (req: Request, res: Response) => {
+    return handleEntityWebhook('ticket', req, res,
+        (id) => dolibarrService.getTicket(id),
+        (ticket) => ({
+            ref: ticket.ref || req.body.ticketId,
+            subject: ticket.subject || ''
+        })
+    );
+});
+
+router.post('/dolibarr/order', (req: Request, res: Response) => {
+    return handleEntityWebhook('order', req, res,
+        (id) => dolibarrService.getOrder(id),
+        (order) => ({
+            customerName: 'Cliente', // Will be overridden if customer found
+            ref: order.ref || req.body.orderId,
+            total: order.total_ttc ? `R$ ${parseFloat(order.total_ttc).toFixed(2)}` : ''
+        })
+    );
 });
 
 // --- Automation Rules (persisted) ---

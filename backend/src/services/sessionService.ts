@@ -99,6 +99,12 @@ export class SessionService {
             return { status: 'STARTING' };
         }
 
+        const MAX_SESSIONS = parseInt(process.env.MAX_WHATSAPP_SESSIONS || '5', 10);
+        if (!this.clients.has(sessionId) && this.clients.size >= MAX_SESSIONS) {
+            log.error(`Max sessions (${MAX_SESSIONS}) reached. Cannot start session ${sessionId}`);
+            throw new Error(`Maximum concurrent WhatsApp sessions (${MAX_SESSIONS}) reached`);
+        }
+
         const currentStatus = this.getStatus(sessionId);
         if (this.clients.has(sessionId)) {
             // Stuck check logic

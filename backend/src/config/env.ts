@@ -9,7 +9,7 @@ export const config = {
     adminKey: process.env.ADMIN_KEY || '',
     googleApiKey: process.env.GOOGLE_API_KEY || '',
     chromeBin: process.env.CHROME_BIN,
-    dolibarrBypassCookie: process.env.DOLIBARR_BYPASS_COOKIE || 'humans_21909=1', // Default to known working cookie
+    dolibarrBypassCookie: process.env.DOLIBARR_BYPASS_COOKIE || '',
     geminiModel: process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp', // Default Gemini model
     llmProvider: process.env.LLM_PROVIDER || 'local', // 'google' | 'local'
     localLlmUrl: process.env.LOCAL_LLM_URL || 'http://localhost:11434/v1', // Standard Ollama/LocalAI endpoint

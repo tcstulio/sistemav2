@@ -37,6 +37,8 @@ export class DolibarrServiceBase {
     protected baseUrl: string;
     protected apiKey: string;
     protected httpsAgent: https.Agent;
+    private proxyCache = new Map<string, { data: any; status: number; timestamp: number }>();
+    private readonly PROXY_CACHE_TTL = 30 * 1000; // 30 seconds
 
     constructor() {
         this.baseUrl = config.dolibarrUrl.endsWith('/') ? config.dolibarrUrl : `${config.dolibarrUrl}/`;
@@ -66,16 +68,29 @@ export class DolibarrServiceBase {
                 rejectUnauthorized: false
             });
         }
+
+        // Cleanup expired proxy cache entries every 60 seconds
+        setInterval(() => {
+            const now = Date.now();
+            for (const [key, entry] of this.proxyCache.entries()) {
+                if (now - entry.timestamp > this.PROXY_CACHE_TTL) {
+                    this.proxyCache.delete(key);
+                }
+            }
+        }, 60 * 1000).unref();
     }
 
     protected getHeaders(userKey?: string) {
-        return {
+        const headers: Record<string, string> = {
             'DOLAPIKEY': userKey || this.apiKey,
             'Content-Type': 'application/json',
             'Accept': 'application/json',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Cookie': config.dolibarrBypassCookie || 'humans_21909=1'
         };
+        if (config.dolibarrBypassCookie) {
+            headers['Cookie'] = config.dolibarrBypassCookie;
+        }
+        return headers;
     }
 
     protected sanitizePath(path: string): string {
@@ -165,11 +180,13 @@ export class DolibarrServiceBase {
         log.debug(`Attempting login for user: ${login}`);
 
         try {
-            const headers = {
+            const headers: Record<string, string> = {
                 'Accept': 'application/json',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Cookie': config.dolibarrBypassCookie || 'humans_21909=1'
             };
+            if (config.dolibarrBypassCookie) {
+                headers['Cookie'] = config.dolibarrBypassCookie;
+            }
 
             const response = await axios.get(url, { headers, httpsAgent: this.httpsAgent });
 
@@ -276,6 +293,16 @@ export class DolibarrServiceBase {
         const cleanPath = path.replace(/^\//, '');
         const targetUrl = `${this.baseUrl}${cleanPath}`;
 
+        // Check cache for GET requests
+        if (method.toUpperCase() === 'GET') {
+            const cacheKey = `${cleanPath}?${JSON.stringify(query || {})}`;
+            const cached = this.proxyCache.get(cacheKey);
+            if (cached && Date.now() - cached.timestamp < this.PROXY_CACHE_TTL) {
+                log.debug(`Proxy cache HIT: ${cleanPath}`);
+                return { status: cached.status, data: cached.data, headers: {} };
+            }
+        }
+
         const finalHeaders: any = {
             'Accept': 'application/json',
             'Content-Type': 'application/json'
@@ -299,6 +326,12 @@ export class DolibarrServiceBase {
                 httpsAgent: this.httpsAgent,
                 validateStatus: (status) => status < 500
             });
+
+            // Cache successful GET responses
+            if (method.toUpperCase() === 'GET' && response.status === 200) {
+                const cacheKey = `${cleanPath}?${JSON.stringify(query || {})}`;
+                this.proxyCache.set(cacheKey, { data: response.data, status: response.status, timestamp: Date.now() });
+            }
 
             return {
                 status: response.status,
@@ -335,8 +368,10 @@ export class DolibarrServiceBase {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Cookie': config.dolibarrBypassCookie || 'humans_21909=1'
         };
+        if (config.dolibarrBypassCookie) {
+            finalHeaders['Cookie'] = config.dolibarrBypassCookie;
+        }
 
         const incomingKey = Object.keys(headers).find(k => k.toLowerCase() === 'dolapikey');
         if (incomingKey) {
