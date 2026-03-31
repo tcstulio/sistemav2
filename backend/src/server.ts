@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -127,7 +127,7 @@ import authRoutes from './routes/authRoutes';
 import { authMiddleware, requireDolibarrLogin } from './middleware/authMiddleware';
 
 // Middleware that skips auth for webhook paths (incoming bank notifications must be public)
-const bankingAuthMiddleware = (req: any, res: any, next: any) => {
+const bankingAuthMiddleware = (req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith('/webhook/')) return next();
     return requireDolibarrLogin(req, res, next);
 };

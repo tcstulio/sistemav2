@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config/env';
 import { logger } from '../utils/logger';
+import { AuthenticatedRequest } from '../types/express';
 
 const log = logger.child('Auth');
 
@@ -26,8 +27,8 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 Minutes
 
 // Check for Dolibarr User Login (Presence AND Validity of API Key)
 export const requireDolibarrLogin = async (req: Request, res: Response, next: NextFunction) => {
-    // Frontend sends 'DOLAPIKEY' or 'dolapikey' in Headers OR Query (for media/images)
-    let userKey = (req.headers['dolapikey'] || req.headers['DOLAPIKEY'] || req.query.DOLAPIKEY || req.query.dolapikey || req.query.apiKey) as string;
+    // Frontend sends 'DOLAPIKEY' or 'dolapikey' in Headers only (query params removed for security - keys leak in logs/URLs)
+    let userKey = (req.headers['dolapikey'] || req.headers['DOLAPIKEY']) as string;
 
     // Support Bearer Token (Consistency with Admin Middleware)
     const authHeader = req.headers['authorization'];
@@ -53,7 +54,7 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
                 // Fallthrough to fetch.
             }
         } else if (cached && cached.expiry && now < cached.expiry) {
-            (req as any).user = cached.user;
+            (req as AuthenticatedRequest).user = cached.user;
             return next(); // Valid and cached with user
         }
     }
@@ -68,7 +69,7 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
         if (user) {
             // Cache the user object
             validKeysCache.set(userKey, { expiry: now + CACHE_TTL_MS, user: user } as any);
-            (req as any).user = user;
+            (req as AuthenticatedRequest).user = user;
             return next();
         } else {
             // Fallback: Check if valid but no user returned (e.g. sqlfilters broken)
@@ -90,8 +91,8 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
 };
 
 export const requireDolibarrAdmin = async (req: Request, res: Response, next: NextFunction) => {
-    // 1. Extract Key (Support Bearer, Header, Query)
-    let userKey = (req.headers['dolapikey'] || req.headers['DOLAPIKEY'] || req.query.DOLAPIKEY || req.query.dolapikey || req.headers['x-admin-key']) as string;
+    // 1. Extract Key (Support Bearer, Header only - query params removed for security)
+    let userKey = (req.headers['dolapikey'] || req.headers['DOLAPIKEY'] || req.headers['x-admin-key']) as string;
 
     // Support Bearer Token
     const authHeader = req.headers['authorization'];

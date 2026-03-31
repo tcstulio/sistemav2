@@ -28,6 +28,7 @@ import {
     validateBody,
     PagamentoBoletoSchema,
     PixCobrancaSchema,
+    PixPagamentoSchema,
     BoletoEmissaoSchema,
 } from '../middleware/validation';
 
@@ -278,16 +279,9 @@ router.get('/pix/cobranca/:txid', async (req: Request, res: Response) => {
  * POST /api/inter/pix/enviar
  * Send Pix payment
  */
-router.post('/pix/enviar', async (req: Request, res: Response) => {
+router.post('/pix/enviar', validateBody(PixPagamentoSchema), async (req: Request, res: Response) => {
     try {
         const dados: PixPagamentoRequest = req.body;
-
-        if (!dados.valor || !dados.destinatario) {
-            return res.status(400).json({
-                error: 'Missing parameters: valor and destinatario are required',
-            });
-        }
-
         const resultado = await interApiService.enviarPix(dados);
         res.json(resultado);
     } catch (error: any) {
