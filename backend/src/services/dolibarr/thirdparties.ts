@@ -5,7 +5,7 @@
  */
 
 import axios from 'axios';
-import { DolibarrServiceBase, CreateThirdPartyModel } from './core';
+import { DolibarrServiceBase, CreateThirdPartyModel, buildSqlFilter, buildLikeFilter } from './core';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('DolibarrThirdParties');
@@ -24,7 +24,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
 
             const headers = this.getHeaders();
             const url = `${this.baseUrl}thirdparties`;
-            const sqlfilters = `(t.phone:like:'%${search}%') or (t.phone_mobile:like:'%${search}%')`;
+            const sqlfilters = `(${buildLikeFilter('t.phone', search)}) or (${buildLikeFilter('t.phone_mobile', search)})`;
 
             const response = await axios.get(url, {
                 headers,
@@ -70,7 +70,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
         try {
             const headers = this.getHeaders();
             const url = `${this.baseUrl}thirdparties`;
-            const sqlfilters = `(t.nom:like:'%${query}%') or (t.name_alias:like:'%${query}%') or (t.email:like:'%${query}%')`;
+            const sqlfilters = `(${buildLikeFilter('t.nom', query)}) or (${buildLikeFilter('t.name_alias', query)}) or (${buildLikeFilter('t.email', query)})`;
 
             const response = await axios.get(url, {
                 headers,
@@ -96,7 +96,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
             const invPromise = axios.get(invoicesUrl, {
                 headers,
                 params: {
-                    sqlfilters: `(t.fk_soc:=:${thirdPartyId}) and (t.paye:=:0) and (t.fk_statut:>:0)`,
+                    sqlfilters: `${buildSqlFilter('t.fk_soc', ':=', thirdPartyId)} and ${buildSqlFilter('t.paye', ':=', '0')} and (t.fk_statut:>:0)`,
                     limit: 5,
                     sortfield: 't.datef',
                     sortorder: 'DESC'
@@ -109,7 +109,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
             const projPromise = axios.get(projectsUrl, {
                 headers,
                 params: {
-                    sqlfilters: `(t.fk_soc:=:${thirdPartyId})`,
+                    sqlfilters: buildSqlFilter('t.fk_soc', ':=', thirdPartyId),
                     limit: 3,
                     sortfield: 't.datec',
                     sortorder: 'DESC'
@@ -122,7 +122,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
             const agendaPromise = axios.get(agendaUrl, {
                 headers,
                 params: {
-                    sqlfilters: `(t.fk_soc:=:${thirdPartyId})`,
+                    sqlfilters: buildSqlFilter('t.fk_soc', ':=', thirdPartyId),
                     limit: 3,
                     sortfield: 't.datep',
                     sortorder: 'DESC'
@@ -176,7 +176,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
             const url = `${this.baseUrl}thirdparties`;
             let sqlfilters = `(t.fournisseur:=:1)`;
             if (search) {
-                sqlfilters += ` and ((t.nom:like:'%${search}%') or (t.name_alias:like:'%${search}%'))`;
+                sqlfilters += ` and ((${buildLikeFilter('t.nom', search)}) or (${buildLikeFilter('t.name_alias', search)}))`;
             }
             const response = await axios.get(url, {
                 headers,
@@ -197,7 +197,7 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
             const url = `${this.baseUrl}contacts`;
             let sqlfilters = undefined;
             if (search) {
-                sqlfilters = `(t.firstname:like:'%${search}%') or (t.lastname:like:'%${search}%') or (t.email:like:'%${search}%')`;
+                sqlfilters = `(${buildLikeFilter('t.firstname', search)}) or (${buildLikeFilter('t.lastname', search)}) or (${buildLikeFilter('t.email', search)})`;
             }
             const response = await axios.get(url, {
                 headers,

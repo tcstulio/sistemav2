@@ -8,7 +8,7 @@ const log = logger.child('Server');
 import { config } from './config/env';
 import whatsappRoutes from './routes/whatsappRoutes';
 import schedulerRoutes from './routes/schedulerRoutes';
-import { sessionService } from './services/sessionService';
+import { sessionService } from './services/legacy/sessionService';
 import { schedulerService } from './services/schedulerService';
 
 const app = express();
@@ -182,8 +182,67 @@ import integrationRoutes from './routes/integrationRoutes';
 app.use('/api/integration', integrationRoutes);
 
 // Health Check
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', server: 'CoolGroove Backend' });
+app.get('/health', async (req, res) => {
+    const health: Record<string, any> = {
+        status: 'ok',
+        server: 'CoolGroove Backend',
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString(),
+        memory: {
+            used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+            total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+            rss: Math.round(process.memoryUsage().rss / 1024 / 1024)
+        },
+        dependencies: {}
+    };
+
+    const checks: Promise<void>[] = [];
+
+    checks.push((async () => {
+        try {
+            const { dolibarrService } = require('./services/dolibarrService');
+            const isValid = await dolibarrService.validateApiKey(config.dolibarrKey);
+            health.dependencies.dolibarr = isValid ? 'ok' : 'error';
+        } catch {
+            health.dependencies.dolibarr = 'unavailable';
+        }
+    })());
+
+    checks.push((async () => {
+        try {
+            const { schedulerService } = require('./services/schedulerService');
+            health.dependencies.scheduler = schedulerService.isRunning ? 'ok' : 'stopped';
+        } catch {
+            health.dependencies.scheduler = 'unavailable';
+        }
+    })());
+
+    checks.push((async () => {
+        try {
+            const { interApiService } = require('./services/interApiService');
+            health.dependencies.banco_inter = interApiService.isReady() ? 'ok' : 'not_configured';
+        } catch {
+            health.dependencies.banco_inter = 'unavailable';
+        }
+    })());
+
+    checks.push((async () => {
+        try {
+            const { itauApiService } = require('./services/itauApiService');
+            health.dependencies.banco_itau = itauApiService.isReady() ? 'ok' : 'not_configured';
+        } catch {
+            health.dependencies.banco_itau = 'unavailable';
+        }
+    })());
+
+    await Promise.allSettled(checks);
+
+    const hasErrors = Object.values(health.dependencies).some((v: any) => v === 'error');
+    if (hasErrors) {
+        health.status = 'degraded';
+    }
+
+    res.json(health);
 });
 
 // ===========================================

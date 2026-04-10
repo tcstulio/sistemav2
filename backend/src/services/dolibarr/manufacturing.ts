@@ -5,7 +5,7 @@
  */
 
 import axios from 'axios';
-import { DolibarrServiceBase } from './core';
+import { DolibarrServiceBase, buildLikeFilter } from './core';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('DolibarrManufacturing');
@@ -18,7 +18,7 @@ export class DolibarrManufacturingService extends DolibarrServiceBase {
             const url = `${this.baseUrl}boms`;
             let sqlfilters = undefined;
             if (search) {
-                sqlfilters = `(t.ref:like:'%${search}%')`;
+                sqlfilters = `(${buildLikeFilter('t.ref', search)})`;
             }
             const response = await axios.get(url, {
                 headers,

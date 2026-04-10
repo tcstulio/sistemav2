@@ -9,7 +9,7 @@
 
 import { FEATURES, isUsingMoltbot } from '../config/features';
 import { moltbotGateway, MessageResult as MoltbotMessageResult } from './moltbotGateway';
-import { messageService as legacyMessageService } from './messageService';
+import { messageService as legacyMessageService } from './legacy/messageService';
 import { emailService } from './emailService';
 
 // Types

@@ -5,7 +5,7 @@
  */
 
 import axios from 'axios';
-import { DolibarrServiceBase } from './core';
+import { DolibarrServiceBase, buildLikeFilter } from './core';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('DolibarrHR');
@@ -18,7 +18,7 @@ export class DolibarrHRService extends DolibarrServiceBase {
             const url = `${this.baseUrl}users`;
             let sqlfilters = undefined;
             if (search) {
-                sqlfilters = `(t.firstname:like:'%${search}%') or (t.lastname:like:'%${search}%')`;
+                sqlfilters = `(${buildLikeFilter('t.firstname', search)}) or (${buildLikeFilter('t.lastname', search)})`;
             }
             const response = await axios.get(url, {
                 headers,
@@ -57,10 +57,13 @@ export class DolibarrHRService extends DolibarrServiceBase {
     async listLeaveRequests(status?: string): Promise<any[]> {
         try {
             const headers = this.getHeaders();
-            const url = `${this.baseUrl}expensereports`;
+            const url = `${this.baseUrl}leaves`;
+            const params: any = { limit: 10 };
+            if (status === 'approved') params.sqlfilters = "(t.status:=:'3')";
+            if (status === 'pending') params.sqlfilters = "(t.status:=:'2')";
             const response = await axios.get(url, {
                 headers,
-                params: { limit: 10 },
+                params,
                 httpsAgent: this.httpsAgent,
                 validateStatus: (s) => s === 200
             });
@@ -77,7 +80,7 @@ export class DolibarrHRService extends DolibarrServiceBase {
             const url = `${this.baseUrl}recruitments/candidature`;
             let sqlfilters = undefined;
             if (search) {
-                sqlfilters = `(t.firstname:like:'%${search}%') or (t.lastname:like:'%${search}%')`;
+                sqlfilters = `(${buildLikeFilter('t.firstname', search)}) or (${buildLikeFilter('t.lastname', search)})`;
             }
             const response = await axios.get(url, {
                 headers,

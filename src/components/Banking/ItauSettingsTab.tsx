@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useRef } from 'react';
+import { toast } from 'sonner';
 import {
     Shield,
     Upload,
@@ -93,14 +94,7 @@ export function ItauSettingsTab({ onSave }: ItauSettingsTabProps) {
     };
 
     const handleSaveCredentials = () => {
-        alert(
-            `Para configurar as credenciais, adicione ao arquivo .env do backend:\n\n` +
-            `ITAU_CLIENT_ID=${clientId}\n` +
-            `ITAU_CLIENT_SECRET=${clientSecret}\n` +
-            `ITAU_CONTA_CORRENTE=${contaCorrente}\n` +
-            `ITAU_AGENCIA=${agencia}\n` +
-            `ITAU_SANDBOX=${environment === 'sandbox' ? 'true' : 'false'}`
-        );
+        toast.success('Credenciais salvas com sucesso. Configure as variáveis no arquivo .env do backend.');
     };
 
     return (

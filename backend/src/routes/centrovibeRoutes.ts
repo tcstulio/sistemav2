@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { centrovibeStoreService } from '../services/centrovibeStoreService';
 import { eventScraperService } from '../services/eventScraperService';
 import { aiService } from '../services/aiService';
@@ -6,6 +7,8 @@ import { logger } from '../utils/logger';
 
 const log = logger.child('CentroVibeRoutes');
 const router = Router();
+
+router.use(requireDolibarrLogin);
 
 const CENTROVIBE_SYSTEM_PROMPT = `
 You are the "CentroVibe Advisor", an expert event planner, marketing manager, and cultural curator for a large venue in Downtown São Paulo (Centro).

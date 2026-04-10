@@ -5,6 +5,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import multer from 'multer';
 import crypto from 'crypto';
 import path from 'path';
@@ -67,6 +68,104 @@ const certUpload = multer({
         }
     },
 });
+
+// ===== PUBLIC Webhook Receiver Endpoints (no auth - bank callbacks) =====
+
+/**
+ * Verify webhook signature using HMAC-SHA256
+ */
+function verifyWebhookSignature(payload: string, signature: string | undefined, secret: string): boolean {
+    if (!signature) return false;
+
+    const expectedSignature = crypto
+        .createHmac('sha256', secret)
+        .update(payload)
+        .digest('hex');
+
+    try {
+        return crypto.timingSafeEqual(
+            Buffer.from(signature),
+            Buffer.from(expectedSignature)
+        );
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * POST /api/inter/webhook/pix
+ * Receive Pix webhooks from Inter
+ */
+router.post('/webhook/pix', async (req: Request, res: Response) => {
+    try {
+        if (config.interWebhookSecret) {
+            const signature = req.headers['x-webhook-signature'] as string;
+            const payload = JSON.stringify(req.body);
+
+            if (!verifyWebhookSignature(payload, signature, config.interWebhookSecret)) {
+                log.warn('Invalid signature for Pix webhook');
+                return res.status(401).json({ error: 'Invalid webhook signature' });
+            }
+        }
+
+        const webhookPayload: PixWebhookPayload = req.body;
+
+        log.debug('Received Pix webhook', webhookPayload);
+
+        if (webhookPayload.pix && Array.isArray(webhookPayload.pix)) {
+            for (const pix of webhookPayload.pix) {
+                log.info(`Pix received: ${pix.endToEndId} - R$ ${pix.valor}`);
+            }
+        }
+
+        await bankingService.processInterWebhook(webhookPayload, 'pix');
+
+        res.status(200).json({ success: true });
+    } catch (error: any) {
+        log.error(`Pix webhook error: ${error.message}`);
+        res.status(500).json({ error: 'Webhook processing failed' });
+    }
+});
+
+/**
+ * POST /api/inter/webhook/boleto
+ * Receive Boleto webhooks from Inter
+ */
+router.post('/webhook/boleto', async (req: Request, res: Response) => {
+    try {
+        if (config.interWebhookSecret) {
+            const signature = req.headers['x-webhook-signature'] as string;
+            const payload = JSON.stringify(req.body);
+
+            if (!verifyWebhookSignature(payload, signature, config.interWebhookSecret)) {
+                log.warn('Invalid signature for Boleto webhook');
+                return res.status(401).json({ error: 'Invalid webhook signature' });
+            }
+        }
+
+        const webhookPayload: BoletoWebhookPayload = req.body;
+
+        log.debug('Received Boleto webhook', webhookPayload);
+
+        if (webhookPayload.nossoNumero) {
+            log.info(`Boleto ${webhookPayload.nossoNumero} - Status: ${webhookPayload.situacao}`);
+
+            if (webhookPayload.situacao === 'PAGO') {
+                log.info(`Boleto paid: R$ ${webhookPayload.valorPago} on ${webhookPayload.dataPagamento}`);
+            }
+        }
+
+        await bankingService.processInterWebhook(webhookPayload, 'boleto');
+
+        res.status(200).json({ success: true });
+    } catch (error: any) {
+        log.error(`Boleto webhook error: ${error.message}`);
+        res.status(500).json({ error: 'Webhook processing failed' });
+    }
+});
+
+// ===== All routes below require authentication =====
+router.use(requireDolibarrLogin);
 
 // ===== Status Endpoints =====
 
@@ -424,105 +523,7 @@ router.post('/boleto/:nossoNumero/cancelar', async (req: Request, res: Response)
     }
 });
 
-// ===== Webhook Endpoints =====
-
-/**
- * Verify webhook signature using HMAC-SHA256
- */
-function verifyWebhookSignature(payload: string, signature: string | undefined, secret: string): boolean {
-    if (!signature) return false;
-
-    const expectedSignature = crypto
-        .createHmac('sha256', secret)
-        .update(payload)
-        .digest('hex');
-
-    // Use timing-safe comparison to prevent timing attacks
-    try {
-        return crypto.timingSafeEqual(
-            Buffer.from(signature),
-            Buffer.from(expectedSignature)
-        );
-    } catch {
-        return false;
-    }
-}
-
-/**
- * POST /api/inter/webhook/pix
- * Receive Pix webhooks from Inter
- */
-router.post('/webhook/pix', async (req: Request, res: Response) => {
-    try {
-        // Validate webhook signature if secret is configured
-        if (config.interWebhookSecret) {
-            const signature = req.headers['x-webhook-signature'] as string;
-            const payload = JSON.stringify(req.body);
-
-            if (!verifyWebhookSignature(payload, signature, config.interWebhookSecret)) {
-                log.warn('Invalid signature for Pix webhook');
-                return res.status(401).json({ error: 'Invalid webhook signature' });
-            }
-        }
-
-        const webhookPayload: PixWebhookPayload = req.body;
-
-        log.debug('Received Pix webhook', webhookPayload);
-
-        if (webhookPayload.pix && Array.isArray(webhookPayload.pix)) {
-            for (const pix of webhookPayload.pix) {
-                log.info(`Pix received: ${pix.endToEndId} - R$ ${pix.valor}`);
-            }
-        }
-
-        // Process via Banking Service (Socket Emit)
-        await bankingService.processInterWebhook(webhookPayload, 'pix');
-
-        res.status(200).json({ success: true });
-    } catch (error: any) {
-        log.error(`Pix webhook error: ${error.message}`);
-        res.status(500).json({ error: 'Webhook processing failed' });
-    }
-});
-
-/**
- * POST /api/inter/webhook/boleto
- * Receive Boleto webhooks from Inter
- */
-router.post('/webhook/boleto', async (req: Request, res: Response) => {
-    try {
-        // Validate webhook signature if secret is configured
-        if (config.interWebhookSecret) {
-            const signature = req.headers['x-webhook-signature'] as string;
-            const payload = JSON.stringify(req.body);
-
-            if (!verifyWebhookSignature(payload, signature, config.interWebhookSecret)) {
-                log.warn('Invalid signature for Boleto webhook');
-                return res.status(401).json({ error: 'Invalid webhook signature' });
-            }
-        }
-
-        const webhookPayload: BoletoWebhookPayload = req.body;
-
-        log.debug('Received Boleto webhook', webhookPayload);
-
-        if (webhookPayload.nossoNumero) {
-            log.info(`Boleto ${webhookPayload.nossoNumero} - Status: ${webhookPayload.situacao}`);
-
-            if (webhookPayload.situacao === 'PAGO') {
-                log.info(`Boleto paid: R$ ${webhookPayload.valorPago} on ${webhookPayload.dataPagamento}`);
-            }
-        }
-
-        // Process via Banking Service (Socket Emit)
-        await bankingService.processInterWebhook(webhookPayload, 'boleto');
-
-        res.status(200).json({ success: true });
-    } catch (error: any) {
-        log.error(`Boleto webhook error: ${error.message}`);
-        res.status(500).json({ error: 'Webhook processing failed' });
-    }
-});
+// ===== Webhook Config Endpoints =====
 
 /**
  * PUT /api/inter/webhook/pix/config

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { toast } from 'sonner';
 import { AgendaEvent, AppView } from '../types';
 import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronRight, CheckCircle2, Circle, Bot, List, Calendar as CalendarIcon, ChevronLeft, Plus, Loader2, X, Phone, Mail, Users, ShoppingCart, FileSignature, Ticket as TicketIcon, ArrowUp, ArrowDown } from 'lucide-react';
 import { formatDateOnly, formatDateTime, formatDateLong } from '../utils/dateUtils';
@@ -356,7 +357,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                 description: newEventForm.description,
                 percentage: 0
             });
-            alert("Evento criado com sucesso (Mock)");
+            toast.success("Evento criado com sucesso");
             setIsEventModalOpen(false);
             setNewEventForm({ label: '', date_start: '', date_end: '', type_code: 'AC_RDV', description: '' });
             refreshData();

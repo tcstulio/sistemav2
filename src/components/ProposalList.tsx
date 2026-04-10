@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Proposal, AppView } from '../types';
 import { FileText, Search, PenTool, CheckCircle, XCircle, Send, Archive, Kanban, List, ShoppingCart, Download, Loader2, FileSignature, Scale, Plus, Trash2, FolderKanban, Ban, Save, Edit } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
@@ -127,16 +128,16 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
 
     const handleDelete = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
-        if (!confirm("Tem certeza que deseja EXCLUIR esta proposta? Esta ação é irreversível.")) return;
+        if (!window.confirm("Tem certeza que deseja EXCLUIR esta proposta? Esta ação é irreversível.")) return;
         setProcessingId(id);
         try {
             await DolibarrService.deleteProposal(config, id);
-            alert("Proposta excluída com sucesso!");
+            toast.success("Proposta excluída com sucesso!");
             if (selectedProposal?.id === id) setSelectedProposal(null);
             refetchProposals();
         } catch (err: any) {
             log.error("Failed to delete proposal", err);
-            alert("Erro ao excluir: " + (err.message || 'Erro desconhecido'));
+            toast.error("Erro ao excluir: " + (err.message || 'Erro desconhecido'));
         } finally {
             setProcessingId(null);
         }
@@ -151,7 +152,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
 
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!formData.socid) return alert("Selecione um cliente.");
+        if (!formData.socid) return toast.error("Selecione um cliente.");
         setIsSubmitting(true);
         try {
             if (!editingId) {
@@ -169,7 +170,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                         product_type: 0
                     }))
                 });
-                alert("Proposta Criada!");
+                toast.success("Proposta Criada!");
             } else {
                 await DolibarrService.updateProposal(config, editingId, {
                     socid: formData.socid,
@@ -206,7 +207,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                         product_type: 0
                     });
                 }
-                alert("Proposta Atualizada!");
+                toast.success("Proposta Atualizada!");
             }
 
             setIsFormOpen(false);
@@ -216,7 +217,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
             if (editingId && selectedProposal?.id === editingId) setSelectedProposal(null);
         } catch (err: any) {
             log.error("Failed to save proposal", err);
-            alert("Erro ao salvar: " + (err.message || 'Erro desconhecido'));
+            toast.error("Erro ao salvar: " + (err.message || 'Erro desconhecido'));
         } finally {
             setIsSubmitting(false);
         }
@@ -296,13 +297,13 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
         setProcessingId(selectedProposal.id);
         try {
             await DolibarrService.closeProposal(config, selectedProposal.id, parseInt(status) as 2 | 3);
-            alert(status === '2' ? "Proposta Assinada!" : "Proposta Recusada.");
+            toast.success(status === '2' ? "Proposta Assinada!" : "Proposta Recusada.");
             setSelectedProposal(null);
             if (onRefresh) onRefresh();
             refetchProposals();
         } catch (e: any) {
             log.error("Failed to close proposal", e);
-            alert("Ação falhou: " + e.message);
+            toast.error("Ação falhou: " + e.message);
         } finally {
             setProcessingId(null);
         }
@@ -313,13 +314,13 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
         setProcessingId(selectedProposal.id);
         try {
             await DolibarrService.createOrderFromProposal(config, selectedProposal.id);
-            alert("Pedido de Venda Criado!");
+            toast.success("Pedido de Venda Criado!");
             setSelectedProposal(null);
             if (onNavigate) onNavigate('orders', '');
             refetchProposals();
         } catch (e: any) {
             log.error("Failed to create order from proposal", e);
-            alert("Falha ao criar pedido: " + e.message);
+            toast.error("Falha ao criar pedido: " + e.message);
         } finally {
             setProcessingId(null);
         }

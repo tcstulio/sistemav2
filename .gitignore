@@ -58,8 +58,55 @@ screenshots/
 .mcp.json
 cline_mcp_settings.json
 
-# Temporary / debug files
+# Cloudflare tunnel config (contains tunnel IDs and user paths)
+cloudflared.config.yaml
+
+# Debug and temporary files
+debug_*
 nul
 patch-chrome.cjs
 test-automation.js
 centrovibe-manager.zip
+*.zip
+
+# Backend data (contains encrypted email credentials, scheduler data)
+backend/data/
+
+# Generated API docs
+openapi_3.json
+
+# Diagnostic output files
+debug_output_full.json
+debug_user.json
+latest_tasks_dump.txt
+
+# Dump directory
+dump/
+
+# Sensitive data directories
+Dados Inter/
+
+# Root temporary/diagnostic PHP scripts
+check_task_data.php
+analyze_product_usage.php
+create_test_task.php
+custom_sync.php
+custom_sync_updated.php
+test_sync.php
+inspect_*.php
+
+# Root temporary scripts
+generate_dictionary.cjs
+sync_to_sqlite.cjs
+verify_db.cjs
+
+# Root temporary docs
+BUGS_ENCONTRADOS_COMPLETO.md
+PLANO_TESTES_COMPLETO.md
+QA_CHECKLIST.md
+PLAYWRIGHT_GUIDE.md
+CHANGELOG_*.md
+metadata.json
+
+# Agent tooling
+.agent/

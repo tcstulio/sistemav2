@@ -2,7 +2,7 @@ import express from 'express';
 import os from 'os';
 import { logger } from '../utils/logger';
 // import { wahaService } from '../services/wahaService'; // DEPRECATED
-import { sessionService } from '../services/sessionService'; // ADDED
+import { sessionService } from '../services/legacy/sessionService'; // UPDATED to legacy path
 
 const log = logger.child('AdminRoutes');
 // import { dbService } from '../../../services/dbService'; // REMOVED to prevent crash
@@ -132,16 +132,18 @@ router.post('/config/llm/test', async (req, res) => {
             }
 
             const { GoogleGenAI } = require('@google/genai');
-            const genAI = new GoogleGenAI({ apiKey: testKey });
-            const testModel = genAI.getGenerativeModel({ model: model || 'gemini-1.5-flash' });
-
-            const result = await testModel.generateContent("Respond with 'OK'");
-            const responseString = result.response.text();
+            const ai = new GoogleGenAI({ apiKey: testKey });
+            
+            const result = await ai.models.generateContent({
+                model: model || 'gemini-1.5-flash',
+                contents: "Respond with 'OK'"
+            });
+            const responseString = result.text || "";
 
             // Fetch models
             const modelList: string[] = [];
             try {
-                const responseList = await genAI.models.list();
+                const responseList = await ai.models.list();
                 for await (const m of responseList) {
                     if (m.name?.startsWith('models/gemini')) {
                         modelList.push(m.name.replace('models/', ''));
@@ -483,9 +485,9 @@ router.post('/integration/test', async (req, res) => {
             const status = await moltbotGateway.getStatus();
             results.moltbot = {
                 tested: true,
-                success: status.connected,
-                status: status.status,
-                latency: status.latency
+                success: status.healthy,
+                status: status.channels?.whatsapp?.status || 'unknown',
+                uptime: status.uptime
             };
         } catch (e: any) {
             results.moltbot = { tested: true, success: false, error: e.message };

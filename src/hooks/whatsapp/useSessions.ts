@@ -64,9 +64,10 @@ export const useSessions = () => {
             // If new session appeared or something changed drastically, maybe refetch?
             // For now, optimistic update is fine for status.
 
-            // Clear QR if working
             if (data.status === 'WORKING' || data.status === 'connected') {
                 setQrCodes(prev => {
+                    const oldUrl = prev[data.sessionId];
+                    if (oldUrl) URL.revokeObjectURL(oldUrl);
                     const next = { ...prev };
                     delete next[data.sessionId];
                     return next;
@@ -89,7 +90,11 @@ export const useSessions = () => {
                 const blob = await WhatsAppService.getQrCode(data.sessionId);
                 if (blob) {
                     const url = URL.createObjectURL(blob);
-                    setQrCodes(prev => ({ ...prev, [data.sessionId]: url }));
+                    setQrCodes(prev => {
+                        const oldUrl = prev[data.sessionId];
+                        if (oldUrl) URL.revokeObjectURL(oldUrl);
+                        return { ...prev, [data.sessionId]: url };
+                    });
                 }
             } catch (e) {
                 log.error('Failed to load QR image', e);
@@ -102,6 +107,10 @@ export const useSessions = () => {
         return () => {
             socket.off('session_status', handleStatus);
             socket.off('session_qr', handleQr);
+            setQrCodes(prev => {
+                Object.values(prev).forEach(u => URL.revokeObjectURL(u));
+                return {};
+            });
         };
     }, [socket]);
 

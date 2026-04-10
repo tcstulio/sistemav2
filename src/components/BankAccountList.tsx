@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { BankAccount, DolibarrConfig, BankLine, Invoice, SupplierInvoice, AppView } from '../types';
 import { Landmark, Wallet, ArrowUpRight, ArrowDownRight, ArrowLeft, CheckCircle2, Split, Wand2, RefreshCcw, FileText, Link, Plus, Loader2, ArrowRightLeft, ExternalLink, Upload, BarChart3, Sparkles, Settings } from 'lucide-react';
 import { BankStatementImport, CashFlowChart, BankingInsightsPanel, InterBankDashboard, ItauBankDashboard, InterSettingsTab, ItauSettingsTab } from './Banking';
@@ -126,7 +127,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
             }
         });
         setReconciledLines(newMatches);
-        alert(`Auto-conciliadas ${newMatches.size - reconciledLines.size} transações!`);
+        toast.success(`Auto-conciliadas ${newMatches.size - reconciledLines.size} transações!`);
     };
 
     const toggleReconcile = (lineId: string) => {
@@ -159,7 +160,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
         setIsCreating(true);
         try {
             await DolibarrService.createBankAccount(config, newAccountForm);
-            alert("Conta criada com sucesso (Mock)");
+            toast.success("Conta criada com sucesso (Mock)");
             setIsCreateModalOpen(false);
             setNewAccountForm({ currency_code: 'BRL', solde: 0 });
             if (onRefresh) onRefresh();
@@ -177,10 +178,10 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
         try {
             const dateTs = transferForm.date ? new Date(transferForm.date).getTime() / 1000 : Date.now() / 1000;
             await DolibarrService.createBankTransfer(config, transferForm.fromId, transferForm.toId, transferForm.amount, dateTs, transferForm.label);
-            alert("Transferência completada");
+            toast.success("Transferência completada");
             setIsTransferModalOpen(false);
             if (onRefresh) onRefresh();
-        } catch (e) { log.error("Failed to transfer", e); alert("Falha na transferência"); } finally { setIsSubmitting(false); }
+        } catch (e) { log.error("Failed to transfer", e); toast.error("Falha na transferência"); } finally { setIsSubmitting(false); }
     };
 
     const handleAddLine = async (e: React.FormEvent) => {
@@ -190,10 +191,10 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
         try {
             const dateTs = addLineForm.date ? new Date(addLineForm.date).getTime() / 1000 : Date.now() / 1000;
             await DolibarrService.addBankLine(config, selectedAccount.id, dateTs, addLineForm.type, addLineForm.label, addLineForm.amount);
-            alert("Transação adicionada");
+            toast.success("Transação adicionada");
             setIsAddLineModalOpen(false);
             if (onRefresh) onRefresh();
-        } catch (e) { log.error("Failed to add bank line", e); alert("Falha ao adicionar linha"); } finally { setIsSubmitting(false); }
+        } catch (e) { log.error("Failed to add bank line", e); toast.error("Falha ao adicionar linha"); } finally { setIsSubmitting(false); }
     };
 
     // Compute cash flow data whenever account lines change
@@ -238,7 +239,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
     const handleImport = (transactions: any[], accountNumber?: string) => {
 
         // TODO: Add transactions to local state or sync with Dolibarr
-        alert(`${transactions.length} transações importadas com sucesso!`);
+        toast.success(`${transactions.length} transações importadas com sucesso!`);
         setIsImportModalOpen(false);
         if (onRefresh) onRefresh();
     };

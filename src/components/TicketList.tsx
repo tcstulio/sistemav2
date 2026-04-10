@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { Ticket, ThirdParty, DolibarrUser, DolibarrConfig, AppView, AgendaEvent, Project } from '../types';
 import { Ticket as TicketIcon, Search, AlertCircle, Clock, Calendar, CheckCircle2, User, ExternalLink, MessageSquare, Send, UserCircle, Sparkles, Loader2, List, Kanban, Plus, ArrowDown, ArrowUp, DollarSign, Users, Info, Phone, Bot, FileText, FolderKanban, ClipboardList, Wrench } from 'lucide-react';
 import { AiService } from '../services/aiService';
@@ -188,7 +189,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
             setReplyText('');
         } catch (e) {
             log.error("Failed to send reply", e);
-            alert("Falha ao enviar mensagem. Verifique o console.");
+            toast.error("Falha ao enviar mensagem. Verifique o console.");
         } finally {
             setIsSendingReply(false);
         }
@@ -232,7 +233,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
                 date: new Date(escalateForm.date).getTime() / 1000,
                 description: escalateForm.description
             });
-            alert("Intervenção Criada com Sucesso");
+            toast.success("Intervenção Criada com Sucesso");
             setIsEscalateModalOpen(false);
 
             await DolibarrService.addTicketMessage(config, selectedTicket.track_id || selectedTicket.id, "Chamado escalado para Intervenção de Serviço de Campo.");
@@ -240,7 +241,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
             if (onRefresh) onRefresh();
         } catch (e: any) {
             log.error("Failed to escalate ticket", e);
-            alert(`Falha na escalação: ${e.message}`);
+            toast.error(`Falha na escalação: ${e.message}`);
         } finally {
             setIsEscalating(false);
         }

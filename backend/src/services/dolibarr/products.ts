@@ -5,7 +5,7 @@
  */
 
 import axios from 'axios';
-import { DolibarrServiceBase } from './core';
+import { DolibarrServiceBase, buildLikeFilter, buildSqlFilter } from './core';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('DolibarrProducts');
@@ -19,7 +19,7 @@ export class DolibarrProductsService extends DolibarrServiceBase {
             let sqlfilters = undefined;
 
             if (search) {
-                sqlfilters = `((t.ref:like:'%${search}%') or (t.label:like:'%${search}%'))`;
+                sqlfilters = `((${buildLikeFilter('t.ref', search)}) or (${buildLikeFilter('t.label', search)}))`;
             }
 
             const response = await axios.get(url, {
@@ -64,7 +64,7 @@ export class DolibarrProductsService extends DolibarrServiceBase {
             const url = `${this.baseUrl}stockmovements`;
             let sqlfilters = undefined;
             if (productId) {
-                sqlfilters = `(t.fk_product:=:${productId})`;
+                sqlfilters = `(${buildSqlFilter('t.fk_product', ':=', productId)})`;
             }
             const response = await axios.get(url, {
                 headers,

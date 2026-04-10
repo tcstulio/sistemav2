@@ -6,6 +6,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { ScraperService } from './scraperService';
 import { logger } from '../utils/logger';
+import { isValidExternalUrl } from '../utils/urlValidation';
 
 const log = logger.child('AiService');
 
@@ -47,7 +48,7 @@ class GoogleProvider implements AIProvider {
         if (apiKey) {
             try {
                 this.ai = new GoogleGenAI({ apiKey });
-                this.modelName = modelName;
+                this.modelName = modelName || config.geminiModel || 'gemini-1.5-flash';
             } catch (e: any) {
                 log.error('Error initializing GoogleGenAI', e);
             }
@@ -308,6 +309,10 @@ class GoogleProvider implements AIProvider {
                             toolResult = `[WEB SEARCH RESULTS]:\n${JSON.stringify(searchResults)}`;
                             break;
                         case 'extract_from_url':
+                            if (!isValidExternalUrl(toolCall.args?.url)) {
+                                toolResult = 'Erro: URL inválida ou bloqueada (IPs privados/internos não são permitidos).';
+                                break;
+                            }
                             const pageContent = await ScraperService.fetchPageContent(toolCall.args.url);
                             toolResult = `[PAGE CONTENT for ${toolCall.args.url}]:\n${pageContent ? pageContent.substring(0, 10000) : 'Falha ao acessar página or conteúdo vazio'}`;
                             break;
@@ -610,7 +615,7 @@ class GoogleProvider implements AIProvider {
 
         try {
             const response = await this.ai.models.generateContent({
-                model: config.geminiModel,
+                model: this.modelName || 'gemini-1.5-flash',
                 contents: prompt
             });
             return response.text || "Não foi possível gerar o relatório.";
@@ -994,6 +999,10 @@ class LocalProvider implements AIProvider {
                                 toolResult = `Search Results: ${JSON.stringify(searchRes)}`;
                                 break;
                             case 'extract_from_url':
+                                if (!isValidExternalUrl(toolCall.args?.url)) {
+                                    toolResult = 'Erro: URL inválida ou bloqueada (IPs privados/internos não são permitidos).';
+                                    break;
+                                }
                                 const pageContent = await ScraperService.fetchPageContent(toolCall.args?.url || '');
                                 toolResult = `Page Content: ${pageContent ? pageContent.substring(0, 5000) : 'Failed'}`;
                                 break;

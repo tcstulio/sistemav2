@@ -172,7 +172,7 @@ class SyncService {
                 note_private: `Criado automaticamente via Brain Hub.\nID Brain: ${person.id}\nPrimeiro contato: ${person.firstSeen}\nCanais: ${person.channels?.join(', ') || 'whatsapp'}`,
             };
 
-            const result = await dolibarrService.createThirdParty(customerData);
+            const result = await dolibarrService.createThirdParty({ request_data: [customerData] } as any) as any;
 
             if (result && result.id) {
                 // Link the new customer to the Brain person

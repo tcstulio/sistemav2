@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { MessageMedia } from 'whatsapp-web.js';
-import { sessionService } from '../services/sessionService';
-import { messageService } from '../services/messageService';
+import { sessionService } from '../services/legacy/sessionService';
+import { messageService } from '../services/legacy/messageService';
 import { storeService } from '../services/storeService';
 import { socketService } from '../services/socketService'; // Webhook needs this
 import { requireDolibarrLogin } from '../middleware/authMiddleware';

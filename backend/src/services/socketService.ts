@@ -8,10 +8,17 @@ let io: SocketIOServer | null = null;
 
 export const socketService = {
     init: (httpServer: HttpServer) => {
+        const allowedOrigins = [
+            'https://app.coolgroove.com.br',
+            'https://sistema.coolgroove.com.br',
+            ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:3003'] : [])
+        ];
+
         io = new SocketIOServer(httpServer, {
             cors: {
-                origin: "*", // Allow all origins for now (dev mode)
-                methods: ["GET", "POST"]
+                origin: allowedOrigins,
+                methods: ["GET", "POST"],
+                credentials: true
             }
         });
 
