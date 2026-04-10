@@ -81,7 +81,7 @@ export class DolibarrService extends DolibarrServiceBase {
     listExpenseReports = (status?: string) => this.hr.listExpenseReports(status);
     listLeaveRequests = (status?: string) => this.hr.listLeaveRequests(status);
     listCandidates = (search?: string) => this.hr.listCandidates(search);
-    listJobPositions = () => this.hr.listJobPositions();
+    listJobPositions = (onlyOpen: boolean = true) => this.hr.listJobPositions(onlyOpen);
 
     // === Manufacturing ===
     listBOMs = (search?: string) => this.manufacturing.listBOMs(search);

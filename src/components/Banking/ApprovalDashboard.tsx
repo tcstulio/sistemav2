@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { toast } from 'sonner';
 import {
     CheckCircle,
     XCircle,
@@ -154,10 +155,10 @@ export function ApprovalDashboard() {
             if (data.success) {
                 fetchData();
             } else {
-                alert(`Erro: ${data.error}`);
+                toast.error(`Erro: ${data.error}`);
             }
         } catch (error: any) {
-            alert(`Erro: ${error.message}`);
+            toast.error(`Erro: ${error.message}`);
         } finally {
             setActionLoading(null);
         }
@@ -179,10 +180,10 @@ export function ApprovalDashboard() {
                 setExpandedAction(null);
                 fetchData();
             } else {
-                alert(`Erro: ${data.error}`);
+                toast.error(`Erro: ${data.error}`);
             }
         } catch (error: any) {
-            alert(`Erro: ${error.message}`);
+            toast.error(`Erro: ${error.message}`);
         } finally {
             setActionLoading(null);
         }

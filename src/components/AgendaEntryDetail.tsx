@@ -7,6 +7,7 @@ import { mapAgendaEvent, mapTask, mapProject, mapIntervention } from '../hooks/d
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
 import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronLeft, Calendar as CalendarIcon, Link, User, Building, FileText, Ticket, ExternalLink, AlertCircle, Eye, EyeOff, Pencil, Trash2, Save, X, Loader2 } from 'lucide-react';
 import { logger } from '../utils/logger';
+import { SafeHtml } from '../utils/sanitizeHtml';
 
 const log = logger.child('AgendaEntryDetail');
 
@@ -323,9 +324,9 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
                         <>
                             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
                                 <h2 className="text-lg font-semibold text-slate-800 dark:text-white mb-4 flex items-center gap-2"><FileText size={18} className="text-indigo-500" /> Descrição</h2>
-                                <div
+                                <SafeHtml
+                                    html={event.description || "Sem descrição."}
                                     className="prose dark:prose-invert max-w-none text-slate-600 dark:text-slate-300"
-                                    dangerouslySetInnerHTML={{ __html: event.description || "Sem descrição." }}
                                 />
                             </div>
 

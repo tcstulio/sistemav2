@@ -28,9 +28,19 @@ function isValidApiKey(key: string): boolean {
     return API_KEY_PATTERN.test(key);
 }
 
-function sanitizeForSqlFilter(value: string): string {
-    // Escape special SQL characters
-    return value.replace(/['";\\]/g, '');
+export function sanitizeForSqlFilter(value: string): string {
+    if (typeof value !== 'string') return '';
+    return value.replace(/['";\\%_\r\n\t]/g, '');
+}
+
+export function buildSqlFilter(field: string, operator: string, value: string): string {
+    const sanitized = sanitizeForSqlFilter(value);
+    return `${field}:${operator}:'${sanitized}'`;
+}
+
+export function buildLikeFilter(field: string, value: string): string {
+    const sanitized = sanitizeForSqlFilter(value);
+    return `${field}:like:'%${sanitized}%'`;
 }
 
 export class DolibarrServiceBase {
@@ -247,10 +257,9 @@ export class DolibarrServiceBase {
             // Fallback: SQL filter with sanitized input
             const url = `${this.baseUrl}users`;
             try {
-                const sanitizedKey = sanitizeForSqlFilter(apiKey);
                 const response = await axios.get(url, {
                     headers,
-                    params: { sqlfilters: `(t.api_key:=:'${sanitizedKey}')` },
+                    params: { sqlfilters: `(${buildSqlFilter('t.api_key', ':=', apiKey)})` },
                     httpsAgent: this.httpsAgent
                 });
 

@@ -545,7 +545,9 @@ export const downloadDocument = async (config: DolibarrConfig, modulePart: strin
     a.href = downloadUrl;
     a.download = originalRef.split('/').pop() || 'document.pdf';
     document.body.appendChild(a);
+    a.click();
     a.remove();
+    setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 100);
 };
 
 export const fetchDocuments = async (config: DolibarrConfig, modulePart: string, id: string, ref: string) => {

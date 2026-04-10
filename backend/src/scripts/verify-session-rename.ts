@@ -13,7 +13,7 @@ const API_KEY = '123456'; // Allow setting if needed, but usually dev env has la
 // This is more robust for unit testing logic.
 
 import { storeService } from '../services/storeService';
-import { wahaService } from '../services/wahaService';
+import { wahaService } from '../services/legacy/wahaService';
 
 async function testSessionRename() {
     console.log("--- Testing Session Rename Logic ---");

@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
+import { toast } from 'sonner';
 import {
     Landmark,
     TrendingUp,
@@ -174,7 +175,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
             refetchSaldo();
         } catch (error) {
             log.error("Failed to send Pix", error);
-            alert('Erro ao enviar Pix. Verifique os dados e tente novamente.');
+            toast.error('Erro ao enviar Pix. Verifique os dados e tente novamente.');
         }
     };
 
@@ -189,7 +190,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
             refetchSaldo();
         } catch (error) {
             log.error("Failed to pay boleto", error);
-            alert('Erro ao pagar boleto. Verifique o código de barras e saldo.');
+            toast.error('Erro ao pagar boleto. Verifique o código de barras e saldo.');
         }
     };
 

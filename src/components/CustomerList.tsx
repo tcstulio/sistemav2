@@ -297,7 +297,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
             }
         } catch (e) {
             log.error("Failed to extract customer data via AI", e);
-            alert("Falha ao extrair dados.");
+            toast.error("Falha ao extrair dados.");
         } finally {
             setIsMagicFilling(false);
         }

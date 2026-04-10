@@ -2,6 +2,7 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { config } from '../config/env';
 import { logger } from '../utils/logger';
+import { isValidExternalUrl } from '../utils/urlValidation';
 
 const log = logger.child('ScraperService');
 
@@ -64,7 +65,11 @@ export const ScraperService = {
      */
     fetchPageContent: async (url: string): Promise<string | null> => {
         try {
-            // Basic fetch with headers to mimic browser
+            if (!isValidExternalUrl(url)) {
+                log.warn(`Blocked fetch to non-external URL: ${url}`);
+                return null;
+            }
+
             const response = await axios.get(url, {
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',

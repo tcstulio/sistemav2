@@ -5,6 +5,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -56,6 +57,59 @@ const certUpload = multer({
         }
     },
 });
+
+// ===== PUBLIC Webhook Receiver Endpoints (no auth - bank callbacks) =====
+
+/**
+ * POST /api/itau/webhook/pix
+ * Receive PIX webhooks from Itaú
+ */
+router.post('/webhook/pix', async (req: Request, res: Response) => {
+    try {
+        log.info('Received PIX webhook', req.body);
+
+        const payload: PixWebhookItauPayload = req.body;
+
+        if (payload.pix && Array.isArray(payload.pix)) {
+            for (const pix of payload.pix) {
+                log.info(`PIX received: ${pix.endToEndId} - R$ ${pix.valor}`);
+            }
+        }
+
+        res.status(200).json({ success: true });
+    } catch (error: any) {
+        log.error('PIX webhook error', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/itau/webhook/boleto
+ * Receive Boleto webhooks from Itaú
+ */
+router.post('/webhook/boleto', async (req: Request, res: Response) => {
+    try {
+        log.info('Received Boleto webhook', req.body);
+
+        const payload: BoletoWebhookItauPayload = req.body;
+
+        if (payload.nossoNumero) {
+            log.info(`Boleto ${payload.nossoNumero} - Event: ${payload.evento}`);
+
+            if (payload.evento === 'LIQUIDACAO') {
+                log.info(`Boleto paid: R$ ${payload.valor} on ${payload.dataPagamento}`);
+            }
+        }
+
+        res.status(200).json({ success: true });
+    } catch (error: any) {
+        log.error('Boleto webhook error', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ===== All routes below require authentication =====
+router.use(requireDolibarrLogin);
 
 // ===== Status Endpoints =====
 
@@ -420,60 +474,7 @@ router.post('/boleto/:nossoNumero/baixar', async (req: Request, res: Response) =
     }
 });
 
-// ===== Webhook Endpoints =====
-
-/**
- * POST /api/itau/webhook/pix
- * Receive PIX webhooks from Itaú
- */
-router.post('/webhook/pix', async (req: Request, res: Response) => {
-    try {
-        log.info('Received PIX webhook', req.body);
-
-        const payload: PixWebhookItauPayload = req.body;
-
-        if (payload.pix && Array.isArray(payload.pix)) {
-            for (const pix of payload.pix) {
-                log.info(`PIX received: ${pix.endToEndId} - R$ ${pix.valor}`);
-                // TODO: Emit event via socket for real-time notification
-                // TODO: Update local database/cache
-            }
-        }
-
-        res.status(200).json({ success: true });
-    } catch (error: any) {
-        log.error('PIX webhook error', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-/**
- * POST /api/itau/webhook/boleto
- * Receive Boleto webhooks from Itaú
- */
-router.post('/webhook/boleto', async (req: Request, res: Response) => {
-    try {
-        log.info('Received Boleto webhook', req.body);
-
-        const payload: BoletoWebhookItauPayload = req.body;
-
-        if (payload.nossoNumero) {
-            log.info(`Boleto ${payload.nossoNumero} - Event: ${payload.evento}`);
-
-            if (payload.evento === 'LIQUIDACAO') {
-                log.info(`Boleto paid: R$ ${payload.valor} on ${payload.dataPagamento}`);
-            }
-
-            // TODO: Emit event via socket
-            // TODO: Update Dolibarr invoice status
-        }
-
-        res.status(200).json({ success: true });
-    } catch (error: any) {
-        log.error('Boleto webhook error', error);
-        res.status(500).json({ error: error.message });
-    }
-});
+// ===== Webhook Config Endpoints =====
 
 /**
  * PUT /api/itau/webhook/pix/config

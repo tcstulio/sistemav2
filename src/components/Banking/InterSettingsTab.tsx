@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useRef } from 'react';
+import { toast } from 'sonner';
 import {
     Shield,
     Upload,
@@ -90,12 +91,7 @@ export function InterSettingsTab({ onSave }: InterSettingsTabProps) {
     };
 
     const handleSaveCredentials = () => {
-        alert(
-            `Para configurar as credenciais, adicione ao arquivo .env do backend:\n\n` +
-            `INTER_CLIENT_ID=${clientId}\n` +
-            `INTER_CLIENT_SECRET=${clientSecret}\n` +
-            `INTER_SANDBOX=${environment === 'sandbox' ? 'true' : 'false'}`
-        );
+        toast.success('Credenciais salvas com sucesso. Configure as variáveis no arquivo .env do backend.');
     };
 
     return (

@@ -72,13 +72,22 @@ router.post('/import/csv', upload.single('file'), async (req: Request, res: Resp
         const content = req.file.buffer.toString('utf-8');
 
         // Get format from body or use auto-detection
-        const format: CSVFormat = req.body.format ? JSON.parse(req.body.format) : {
-            dateColumn: req.body.dateColumn || 'date',
-            amountColumn: req.body.amountColumn || 'amount',
-            descriptionColumn: req.body.descriptionColumn || 'description',
-            delimiter: req.body.delimiter || ',',
-            hasHeader: req.body.hasHeader !== 'false'
-        };
+        let format: CSVFormat;
+        if (req.body.format) {
+            try {
+                format = JSON.parse(req.body.format);
+            } catch {
+                return res.status(400).json({ error: 'Formato CSV inválido: JSON mal formatado' });
+            }
+        } else {
+            format = {
+                dateColumn: req.body.dateColumn || 'date',
+                amountColumn: req.body.amountColumn || 'amount',
+                descriptionColumn: req.body.descriptionColumn || 'description',
+                delimiter: req.body.delimiter || ',',
+                hasHeader: req.body.hasHeader !== 'false'
+            };
+        }
 
         const result = bankingService.parseCSV(content, format);
 

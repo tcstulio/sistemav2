@@ -1,8 +1,8 @@
-import { messageService } from './messageService';
+import { messageService } from './legacy/messageService';
 import { aiService } from './aiService';
 import { storeService } from './storeService';
 import { dolibarrService } from './dolibarrService';
-import { sessionService } from './sessionService';
+import { sessionService } from './legacy/sessionService';
 import { schedulerService } from './schedulerService';
 import { approvalService } from './approvalService';
 import { interApiService } from './interApiService';

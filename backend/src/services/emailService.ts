@@ -50,7 +50,7 @@ class EmailService {
                     port: config.imapPort,
                     tls: config.imapTls,
                     authTimeout: 10000,
-                    tlsOptions: { rejectUnauthorized: false }
+                    tlsOptions: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : { rejectUnauthorized: false }
                 }
             });
             connection.end();

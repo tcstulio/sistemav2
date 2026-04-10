@@ -10,6 +10,7 @@ import { useEvents, useProjects, useUsers } from '../../hooks/dolibarr';
 import { Project, DolibarrUser } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
 import { logger } from '../../utils/logger';
+import { SafeHtml, stripHtml, sanitizeHtml } from '../../utils/sanitizeHtml';
 
 const log = logger.child('ChatInterface');
 
@@ -106,8 +107,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                 // Using document.php wrapper from Dolibarr to handle auth if logged in, or token based if supported.
                 // Alternatively, we can use the download endpoint via API but that requires headers.
                 // For HTML display, we use a link to the standard interface document handler.
-                const fileUrl = `${baseApiUrl}/document.php?modulepart=${modulePart}&file=${ref}/${encodeURIComponent(file.name)}`;
-                const fileLink = `<br/><div class="file-attachment mt-2"><a href="${fileUrl}" target="_blank" class="text-blue-600 dark:text-blue-400 underline flex items-center gap-1 bg-gray-50 dark:bg-gray-700/50 p-1 rounded w-fit"><span style="font-size: 1.2em">📎</span> ${file.name}</a></div><br/>`;
+                const safeFileName = file.name.replace(/[^a-zA-Z0-9.\-_ ]/g, '');
+                const fileUrl = `${baseApiUrl}/document.php?modulepart=${modulePart}&file=${ref}/${encodeURIComponent(safeFileName)}`;
+                const fileLink = `<br/><div class="file-attachment mt-2"><a href="${fileUrl}" target="_blank" class="text-blue-600 dark:text-blue-400 underline flex items-center gap-1 bg-gray-50 dark:bg-gray-700/50 p-1 rounded w-fit"><span style="font-size: 1.2em">📎</span> ${safeFileName}</a></div><br/>`;
 
                 setNewMessage(prev => prev + fileLink);
             } else {
@@ -247,9 +249,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                                             {authorName}
                                         </div>
                                     )}
-                                    <div
+                                    <SafeHtml
+                                        html={msg.description || msg.label || '(Sem conteúdo)'}
                                         className="text-sm message-content"
-                                        dangerouslySetInnerHTML={{ __html: msg.description || msg.label || '(Sem conteúdo)' }}
                                     />
 
                                     {/* Action Bar */}
@@ -304,7 +306,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                     <div className="flex items-center justify-between text-xs bg-gray-100 dark:bg-gray-700 p-2 rounded border-l-4 border-blue-500 mb-1">
                         <div className="truncate max-w-[90%]">
                             <span className="font-bold">Respondendo a {replyingTo.user_author_name}: </span>
-                            <span className="text-gray-500 dark:text-gray-400" dangerouslySetInnerHTML={{ __html: (replyingTo.description || '').substring(0, 50) + '...' }}></span>
+                            <span className="text-gray-500 dark:text-gray-400">{stripHtml(replyingTo.description || '').substring(0, 50) + '...'}</span>
                         </div>
                         <button onClick={() => setReplyingTo(null)} className="text-gray-500 hover:text-red-500">
                             &times;

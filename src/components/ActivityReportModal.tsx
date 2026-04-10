@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Sparkles, Download, Copy, RefreshCw } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { SystemLog } from '../types';
@@ -130,7 +131,7 @@ const ActivityReportModal: React.FC<ActivityReportModalProps> = ({ isOpen, onClo
                             Copiar
                         </Button>
                         <Button
-                            onClick={() => alert("Exportação para PDF será implementada em breve.")}
+                            onClick={() => toast.info("Exportação para PDF será implementada em breve.")}
                             icon={<Download size={16} />}
                         >
                             Exportar PDF

@@ -7,7 +7,7 @@
 
 import { interApiService } from './interApiService';
 import { itauApiService } from './itauApiService';
-import { messageService } from './messageService';
+import { messageService } from './legacy/messageService';
 import { approvalService } from './approvalService';
 import { dolibarrService } from './dolibarrService';
 import { logger } from '../utils/logger';

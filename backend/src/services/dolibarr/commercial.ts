@@ -5,7 +5,7 @@
  */
 
 import axios from 'axios';
-import { DolibarrServiceBase, CreateInvoiceModel, CloseProposalModel } from './core';
+import { DolibarrServiceBase, CreateInvoiceModel, CloseProposalModel, buildLikeFilter } from './core';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('DolibarrCommercial');
@@ -104,7 +104,7 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
             if (params.status === 'processed') sqlfiltersParts.push('(t.fk_statut:>=:2)');
 
             if (params.search) {
-                sqlfiltersParts.push(`((t.ref:like:'%${params.search}%') or (t.ref_client:like:'%${params.search}%'))`);
+                sqlfiltersParts.push(`((${buildLikeFilter('t.ref', params.search)}) or (${buildLikeFilter('t.ref_client', params.search)}))`);
             }
 
             const response = await axios.get(url, {
@@ -137,7 +137,7 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
             if (params.status === 'signed') sqlfilters = '(t.fk_statut:=:2)';
 
             if (params.search) {
-                const searchFilter = `((t.ref:like:'%${params.search}%') or (t.ref_client:like:'%${params.search}%'))`;
+                const searchFilter = `((${buildLikeFilter('t.ref', params.search)}) or (${buildLikeFilter('t.ref_client', params.search)}))`;
                 sqlfilters = sqlfilters ? `(${sqlfilters}) and ${searchFilter}` : searchFilter;
             }
 
@@ -166,7 +166,7 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
             const url = `${this.baseUrl}contracts`;
             let sqlfilters = undefined;
             if (search) {
-                sqlfilters = `(t.ref:like:'%${search}%')`;
+                sqlfilters = `(${buildLikeFilter('t.ref', search)})`;
             }
 
             const response = await axios.get(url, {

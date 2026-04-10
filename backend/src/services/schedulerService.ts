@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { atomicWriteSync } from '../utils/atomicWrite';
-import { messageService } from './messageService';
+import { messageService } from './legacy/messageService';
 import { emailService } from './emailService'; // New
 import { socketService } from './socketService';
 import { logger } from '../utils/logger';

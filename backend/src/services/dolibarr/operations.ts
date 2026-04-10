@@ -5,7 +5,7 @@
  */
 
 import axios from 'axios';
-import { DolibarrServiceBase, AddTimeSpentModel } from './core';
+import { DolibarrServiceBase, AddTimeSpentModel, buildLikeFilter, buildSqlFilter } from './core';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('DolibarrOperations');
@@ -44,7 +44,7 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
             const url = `${this.baseUrl}projects`;
             let sqlfilters = undefined;
             if (search) {
-                sqlfilters = `(t.title:like:'%${search}%') or (t.ref:like:'%${search}%')`;
+                sqlfilters = `(${buildLikeFilter('t.title', search)}) or (${buildLikeFilter('t.ref', search)})`;
             }
 
             const response = await axios.get(url, {
@@ -72,7 +72,7 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
             const url = `${this.baseUrl}tasks`;
             let sqlfilters = undefined;
             if (projectId) {
-                sqlfilters = `(t.fk_projet:=:${projectId})`;
+                sqlfilters = `(${buildSqlFilter('t.fk_projet', ':=', projectId)})`;
             }
             const response = await axios.get(url, {
                 headers,
@@ -94,7 +94,7 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
             let sqlfilters = undefined;
 
             if (params.search) {
-                sqlfilters = `((t.track_id:like:'%${params.search}%') or (t.subject:like:'%${params.search}%') or (t.message:like:'%${params.search}%'))`;
+                sqlfilters = `((${buildLikeFilter('t.track_id', params.search)}) or (${buildLikeFilter('t.subject', params.search)}) or (${buildLikeFilter('t.message', params.search)}))`;
             }
 
             const response = await axios.get(url, {
@@ -122,7 +122,7 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
             const url = `${this.baseUrl}shipments`;
             let sqlfilters = undefined;
             if (search) {
-                sqlfilters = `(t.ref:like:'%${search}%')`;
+                sqlfilters = `(${buildLikeFilter('t.ref', search)})`;
             }
             const response = await axios.get(url, {
                 headers,
@@ -160,7 +160,7 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
             const url = `${this.baseUrl}interventions`;
             let sqlfilters = undefined;
             if (search) {
-                sqlfilters = `(t.ref:like:'%${search}%')`;
+                sqlfilters = `(${buildLikeFilter('t.ref', search)})`;
             }
             const response = await axios.get(url, {
                 headers,

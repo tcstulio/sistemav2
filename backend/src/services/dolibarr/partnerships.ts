@@ -5,7 +5,7 @@
  */
 
 import axios from 'axios';
-import { DolibarrServiceBase } from './core';
+import { DolibarrServiceBase, buildSqlFilter } from './core';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('DolibarrPartnerships');
@@ -207,7 +207,7 @@ export class DolibarrPartnershipsService extends DolibarrServiceBase {
 
             let sqlfilters: string | undefined;
             if (params.status) {
-                sqlfilters = `(t.status:=:${params.status})`;
+                sqlfilters = `(${buildSqlFilter('t.status', ':=', params.status)})`;
             }
 
             const response = await axios.get(url, {

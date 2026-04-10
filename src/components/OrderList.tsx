@@ -1,5 +1,5 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Order, AppView } from '../types';
 import { ShoppingCart, Search, ExternalLink, Package, CheckCircle, Truck, Clock, FilePlus, Download, Receipt, ArrowDown, ArrowUp, Lock, CheckSquare, Trash2 } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
@@ -364,23 +364,23 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
         setProcessingId(id);
         setTimeout(() => {
             setProcessingId(null);
-            alert(`Fatura criada com sucesso a partir do Pedido ${id}!`);
+            toast.success(`Fatura criada com sucesso a partir do Pedido ${id}!`);
         }, 1500);
     };
 
     const handleValidateOrder = async (id: string) => {
-        if (!confirm("Validar este pedido?")) return;
+        if (!window.confirm("Validar este pedido?")) return;
         setProcessingId(id);
         try {
             await DolibarrService.validateOrder(config, id);
-            alert("Pedido Validado!");
+            toast.success("Pedido Validado!");
             if (selectedOrder && selectedOrder.id === id) {
                 setSelectedOrder({ ...selectedOrder, statut: '1' });
             }
             if (onRefresh) onRefresh();
         } catch (err) {
             log.error("Failed to validate order", err);
-            alert("Falha ao validar pedido.");
+            toast.error("Falha ao validar pedido.");
         } finally {
             setProcessingId(null);
         }
@@ -409,12 +409,12 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
             const linesToShip = shipmentLines.filter(l => l.qty > 0).map(l => ({ order_line_id: l.id, qty: l.qty }));
 
             if (linesToShip.length === 0) {
-                alert("Por favor, selecione pelo menos um item para enviar.");
+                toast.error("Por favor, selecione pelo menos um item para enviar.");
                 return;
             }
 
             await DolibarrService.shipOrder(config, selectedOrder.id, { lines: linesToShip });
-            alert("Envio criado com sucesso!");
+            toast.success("Envio criado com sucesso!");
             setIsShipmentModalOpen(false);
             // Optimistic status update
             if (selectedOrder.statut === '1') {
@@ -423,35 +423,35 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
             if (onRefresh) onRefresh();
         } catch (e: any) {
             log.error("Failed to create shipment", e);
-            alert(`Falha ao criar envio: ${e.message}`);
+            toast.error(`Falha ao criar envio: ${e.message}`);
         } finally {
             setIsSubmittingShipment(false);
         }
     };
 
     const handleDeleteShipment = async (id: string) => {
-        if (!confirm("Tem certeza que deseja excluir este envio?")) return;
+        if (!window.confirm("Tem certeza que deseja excluir este envio?")) return;
         try {
             await DolibarrService.deleteShipment(config, id);
-            alert("Envio excluído");
+            toast.success("Envio excluído");
             if (onRefresh) onRefresh();
         } catch (e) {
             log.error("Failed to delete shipment", e);
-            alert("Falha ao excluir envio");
+            toast.error("Falha ao excluir envio");
         }
     };
 
     const handleClassifyDelivered = async () => {
         if (!selectedOrder) return;
-        if (!confirm("Marcar este pedido como completamente entregue?")) return;
+        if (!window.confirm("Marcar este pedido como completamente entregue?")) return;
         setProcessingId(selectedOrder.id);
         try {
             await DolibarrService.classifyOrderDelivered(config, selectedOrder.id);
             setSelectedOrder({ ...selectedOrder, statut: '3' });
-            alert("Pedido classificado como Entregue.");
+            toast.success("Pedido classificado como Entregue.");
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            toast.error(`Erro: ${e.message}`);
         } finally {
             setProcessingId(null);
         }
@@ -533,7 +533,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                                 onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
                                 title={sortOrder === 'desc' ? "Mais recentes" : "Mais antigos"}
                             />
-                            <Button icon={<FilePlus size={18} />} onClick={() => alert("Não implementado nesta demo.")}>
+                            <Button icon={<FilePlus size={18} />} onClick={() => toast.info("Não implementado nesta demo.")}>
                                 Novo
                             </Button>
                         </div>

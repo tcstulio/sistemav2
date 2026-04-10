@@ -12,7 +12,7 @@ export const config = {
             // Dolibarr URL: https://sistema.coolgroove.com.br/api/index.php
             // Node Backend: https://sistema.coolgroove.com.br
             // [USER REQUEST] Use local IP for testing
-            return 'http://192.168.191.210:3004';
+            return import.meta.env.VITE_CAPACITOR_API_URL || 'http://192.168.191.210:3004';
         }
 
         // On Web, relative paths are fine (and preferred for proxying)

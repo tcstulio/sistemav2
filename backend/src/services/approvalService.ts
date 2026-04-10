@@ -9,7 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { socketService } from './socketService';
 import { interApiService } from './interApiService';
 import { itauApiService } from './itauApiService';
-import { messageService } from './messageService';
+import { messageService } from './legacy/messageService';
 import { dolibarrService } from './dolibarrService';
 import { logger } from '../utils/logger';
 

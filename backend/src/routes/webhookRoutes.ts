@@ -1,8 +1,9 @@
 import { Router, Request, Response } from 'express';
+import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { schedulerService } from '../services/schedulerService';
 import { dolibarrService } from '../services/dolibarrService';
 import { emailService } from '../services/emailService';
-import { messageService } from '../services/messageService';
+import { messageService } from '../services/legacy/messageService';
 import { logger } from '../utils/logger';
 
 const log = logger.child('WebhookRoutes');
@@ -356,6 +357,9 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+// --- Protected routes (require authentication) ---
+router.use(requireDolibarrLogin);
 
 // --- Automation Rules (persisted) ---
 

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { dolibarrService } from '../services/dolibarrService';
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
@@ -17,6 +18,7 @@ const limiter = rateLimit({
 });
 
 router.use(limiter);
+router.use(requireDolibarrLogin);
 
 
 // --- Zod Schemas for Validation ---
