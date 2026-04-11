@@ -8,7 +8,9 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { documentService } from '../services/documentService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { createLogger } from '../utils/logger';
 
+const log = createLogger('Document');
 const router = Router();
 
 // Proteger todas as rotas

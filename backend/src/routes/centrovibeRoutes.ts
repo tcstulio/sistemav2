@@ -3,9 +3,9 @@ import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { centrovibeStoreService } from '../services/centrovibeStoreService';
 import { eventScraperService } from '../services/eventScraperService';
 import { aiService } from '../services/aiService';
-import { logger } from '../utils/logger';
+import { createLogger } from '../utils/logger';
 
-const log = logger.child('CentroVibeRoutes');
+const log = createLogger('CentroVibe');
 const router = Router();
 
 router.use(requireDolibarrLogin);
@@ -45,7 +45,7 @@ router.get('/data', (req, res) => {
         const data = centrovibeStoreService.getData();
         res.json(data);
     } catch (error: any) {
-        log.error('Get data error', error);
+        log.error('Get data error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -55,7 +55,7 @@ router.put('/data', (req, res) => {
         centrovibeStoreService.saveData(req.body);
         res.json({ success: true });
     } catch (error: any) {
-        log.error('Save data error', error);
+        log.error('Save data error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -68,7 +68,7 @@ router.get('/schedule', (req, res) => {
     try {
         res.json(centrovibeStoreService.getSchedule());
     } catch (error: any) {
-        log.error('Get schedule error', error);
+        log.error('Get schedule error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -78,7 +78,7 @@ router.put('/schedule', (req, res) => {
         centrovibeStoreService.saveSchedule(req.body.schedule || req.body);
         res.json({ success: true });
     } catch (error: any) {
-        log.error('Save schedule error', error);
+        log.error('Save schedule error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -91,7 +91,7 @@ router.get('/artists', (req, res) => {
     try {
         res.json(centrovibeStoreService.getArtists());
     } catch (error: any) {
-        log.error('Get artists error', error);
+        log.error('Get artists error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -101,7 +101,7 @@ router.post('/artists', (req, res) => {
         const artist = centrovibeStoreService.addArtist(req.body);
         res.status(201).json(artist);
     } catch (error: any) {
-        log.error('Add artist error', error);
+        log.error('Add artist error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -112,7 +112,7 @@ router.put('/artists/:id', (req, res) => {
         if (!result) return res.status(404).json({ error: 'Artist not found' });
         res.json(result);
     } catch (error: any) {
-        log.error('Update artist error', error);
+        log.error('Update artist error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -123,7 +123,7 @@ router.delete('/artists/:id', (req, res) => {
         if (!deleted) return res.status(404).json({ error: 'Artist not found' });
         res.json({ success: true });
     } catch (error: any) {
-        log.error('Delete artist error', error);
+        log.error('Delete artist error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -136,7 +136,7 @@ router.get('/competitors', (req, res) => {
     try {
         res.json(centrovibeStoreService.getCompetitors());
     } catch (error: any) {
-        log.error('Get competitors error', error);
+        log.error('Get competitors error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -146,7 +146,7 @@ router.post('/competitors', (req, res) => {
         const comp = centrovibeStoreService.addCompetitor(req.body);
         res.status(201).json(comp);
     } catch (error: any) {
-        log.error('Add competitor error', error);
+        log.error('Add competitor error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -157,7 +157,7 @@ router.put('/competitors/:id', (req, res) => {
         if (!result) return res.status(404).json({ error: 'Competitor not found' });
         res.json(result);
     } catch (error: any) {
-        log.error('Update competitor error', error);
+        log.error('Update competitor error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -168,7 +168,7 @@ router.delete('/competitors/:id', (req, res) => {
         if (!deleted) return res.status(404).json({ error: 'Competitor not found' });
         res.json({ success: true });
     } catch (error: any) {
-        log.error('Delete competitor error', error);
+        log.error('Delete competitor error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -181,7 +181,7 @@ router.get('/external-events', (req, res) => {
     try {
         res.json(centrovibeStoreService.getExternalEvents());
     } catch (error: any) {
-        log.error('Get external events error', error);
+        log.error('Get external events error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -191,7 +191,7 @@ router.post('/external-events', (req, res) => {
         const evt = centrovibeStoreService.addExternalEvent(req.body);
         res.status(201).json(evt);
     } catch (error: any) {
-        log.error('Add external event error', error);
+        log.error('Add external event error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -202,7 +202,7 @@ router.put('/external-events/:id', (req, res) => {
         if (!result) return res.status(404).json({ error: 'External event not found' });
         res.json(result);
     } catch (error: any) {
-        log.error('Update external event error', error);
+        log.error('Update external event error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -213,7 +213,7 @@ router.delete('/external-events/:id', (req, res) => {
         if (!deleted) return res.status(404).json({ error: 'External event not found' });
         res.json({ success: true });
     } catch (error: any) {
-        log.error('Delete external event error', error);
+        log.error('Delete external event error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -264,7 +264,7 @@ Return ONLY the JSON object, no other text.`;
             suggestion: 'Tente novamente.'
         });
     } catch (error: any) {
-        log.error('Vibe check error', error);
+        log.error('Vibe check error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -288,7 +288,7 @@ router.post('/ai/advisor', async (req, res) => {
         const reply = await aiService.generateReply(history, '', undefined, 'centrovibe');
         res.json({ reply });
     } catch (error: any) {
-        log.error('Advisor chat error', error);
+        log.error('Advisor chat error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -323,7 +323,7 @@ Return ONLY the JSON, no other text.`;
 
         res.json({ title: '', genre: '', description: reply, cluster: 'eclectic' });
     } catch (error: any) {
-        log.error('Suggest error', error);
+        log.error('Suggest error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -344,10 +344,10 @@ router.post('/scraper/run', async (req, res) => {
 
         // Execute in background
         eventScraperService.runScrape().catch(err => {
-            log.error('Background scrape error', err);
+            log.error('Background scrape error', { error: err.message, stack: err.stack });
         });
     } catch (error: any) {
-        log.error('Scraper run error', error);
+        log.error('Scraper run error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -356,7 +356,7 @@ router.get('/scraper/status', (req, res) => {
     try {
         res.json(eventScraperService.getStatus());
     } catch (error: any) {
-        log.error('Scraper status error', error);
+        log.error('Scraper status error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });

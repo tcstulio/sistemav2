@@ -15,7 +15,9 @@ import { tulipaService } from '../services/tulipaService';
 import { channelRouter } from '../services/channelRouter';
 import { syncService } from '../services/syncService';
 import { FEATURES, getAllFeatures, isUsingMoltbot } from '../config/features';
+import { createLogger } from '../utils/logger';
 
+const log = createLogger('Integration');
 const router = Router();
 
 // All routes require authentication

@@ -1,9 +1,9 @@
 import { Router } from 'express';
 import { aiService } from '../services/aiService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
-import { logger } from '../utils/logger';
+import { createLogger } from '../utils/logger';
 
-const log = logger.child('AIRoutes');
+const log = createLogger('AI');
 const router = Router();
 
 // Protect AI Routes
@@ -32,7 +32,7 @@ router.post('/generate-reply', async (req, res) => {
         const reply = await aiService.generateReply(history as any || [], context || '', image, module);
         res.json({ reply });
     } catch (error: any) {
-        log.error('Generate Reply Error', error);
+        log.error('Generate Reply Error', { error: error.message, stack: error.stack });
 
         // Handle Validation Errors
         if (error instanceof z.ZodError) {

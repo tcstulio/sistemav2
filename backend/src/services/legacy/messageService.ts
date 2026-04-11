@@ -2,9 +2,9 @@ import { sessionService } from './sessionService';
 import { AudioTranscoder } from '../../utils/audioTranscoder';
 import { MessageMedia } from 'whatsapp-web.js';
 import * as path from 'path';
-import { logger } from '../../utils/logger';
+import { createLogger } from '../../utils/logger';
 
-const log = logger.child('MessageService');
+const log = createLogger('MessageService');
 
 /**
  * @deprecated Use channelRouter or moltbotGateway instead.

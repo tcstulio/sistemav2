@@ -12,9 +12,9 @@ import path from 'path';
 import fs from 'fs';
 import { interApiService } from '../services/interApiService';
 import { bankingService } from '../services/bankingService';
-import { logger } from '../utils/logger';
+import { createLogger } from '../utils/logger';
 
-const log = logger.child('InterBanking');
+const log = createLogger('InterBanking');
 
 import {
     PixCobrancaRequest,
@@ -122,7 +122,7 @@ router.post('/webhook/pix', async (req: Request, res: Response) => {
 
         res.status(200).json({ success: true });
     } catch (error: any) {
-        log.error(`Pix webhook error: ${error.message}`);
+        log.error('Pix webhook error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: 'Webhook processing failed' });
     }
 });
@@ -159,7 +159,7 @@ router.post('/webhook/boleto', async (req: Request, res: Response) => {
 
         res.status(200).json({ success: true });
     } catch (error: any) {
-        log.error(`Boleto webhook error: ${error.message}`);
+        log.error('Boleto webhook error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: 'Webhook processing failed' });
     }
 });
@@ -330,7 +330,7 @@ router.post('/pix/cobranca', async (req: Request, res: Response) => {
             try {
                 qrcode = await interApiService.getPixQRCode(cobranca.loc.id);
             } catch (e) {
-                log.warn('Could not get QR code', e);
+                log.warn('Could not get QR code', { error: e instanceof Error ? e.message : String(e) });
             }
         }
 

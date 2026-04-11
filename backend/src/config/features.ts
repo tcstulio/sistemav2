@@ -1,3 +1,7 @@
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('Features');
+
 /**
  * Feature Flags
  *
@@ -142,14 +146,15 @@ export function getAllFeatures(): typeof FEATURES {
  * Log current feature configuration
  */
 export function logFeatures(): void {
-    console.log('[Features] Current configuration:');
-    console.log(`  WhatsApp Provider: ${FEATURES.WHATSAPP_PROVIDER}`);
-    console.log(`  Moltbot Enabled: ${FEATURES.MOLTBOT_ENABLED}`);
-    console.log(`  Tulipa Enabled: ${FEATURES.TULIPA_ENABLED}`);
-    console.log(`  Brain Sync: ${FEATURES.SYNC_BRAIN_ENABLED}`);
-    console.log(`  Auto-Reply: ${FEATURES.AUTO_REPLY_ENABLED}`);
-    console.log(`  CRM Context: ${FEATURES.CRM_CONTEXT_INJECTION}`);
-    console.log(`  Debug Mode: ${FEATURES.DEBUG_MODE}`);
+    log.info('Current configuration', {
+        whatsappProvider: FEATURES.WHATSAPP_PROVIDER,
+        moltbotEnabled: FEATURES.MOLTBOT_ENABLED,
+        tulipaEnabled: FEATURES.TULIPA_ENABLED,
+        brainSync: FEATURES.SYNC_BRAIN_ENABLED,
+        autoReply: FEATURES.AUTO_REPLY_ENABLED,
+        crmContext: FEATURES.CRM_CONTEXT_INJECTION,
+        debugMode: FEATURES.DEBUG_MODE,
+    });
 }
 
 export default FEATURES;

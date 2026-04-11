@@ -8,9 +8,9 @@ import axios, { AxiosError } from 'axios';
 import https from 'https';
 import fs from 'fs';
 import { config } from '../../config/env';
-import { logger } from '../../utils/logger';
+import { createLogger } from '../../utils/logger';
 
-const log = logger.child('DolibarrService');
+const log = createLogger('DolibarrService');
 import { components } from '../../types/dolibarr.actions';
 
 // Extract strict types from the schema

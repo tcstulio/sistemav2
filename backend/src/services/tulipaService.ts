@@ -7,6 +7,9 @@
  */
 
 import http from 'http';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('Tulipa');
 
 // Configuration
 interface TulipaConfig {
@@ -188,7 +191,7 @@ class TulipaService {
         try {
             return await this.callAPI<SystemStatus>('/status');
         } catch (error) {
-            console.error('[TulipaService] Failed to get system status:', error);
+            log.error('Failed to get system status', error);
             return null;
         }
     }
@@ -234,7 +237,7 @@ class TulipaService {
             const result = await this.callAPI<any>('/brain/people');
             return result.data || result.people || result || [];
         } catch (error) {
-            console.error('[TulipaService] Failed to get people:', error);
+            log.error('Failed to get people', error);
             return [];
         }
     }
@@ -259,7 +262,7 @@ class TulipaService {
             await this.callAPI<any>(`/brain/people/${encodeURIComponent(id)}`, 'PUT', data);
             return true;
         } catch (error) {
-            console.error('[TulipaService] Failed to update person:', error);
+            log.error('Failed to update person', error);
             return false;
         }
     }
@@ -274,7 +277,7 @@ class TulipaService {
             });
             return true;
         } catch (error) {
-            console.error('[TulipaService] Failed to link person to customer:', error);
+            log.error('Failed to link person to customer', error);
             return false;
         }
     }
@@ -292,7 +295,7 @@ class TulipaService {
             const result = await this.callAPI<any>(`/brain/events${query}`);
             return result.data || result.events || result || [];
         } catch (error) {
-            console.error('[TulipaService] Failed to get events:', error);
+            log.error('Failed to get events', error);
             return [];
         }
     }
@@ -305,7 +308,7 @@ class TulipaService {
             const result = await this.callAPI<any>(`/brain/events?sender=${encodeURIComponent(personId)}&limit=${limit}`);
             return result.data || result.events || result || [];
         } catch (error) {
-            console.error('[TulipaService] Failed to get events by person:', error);
+            log.error('Failed to get events by person', error);
             return [];
         }
     }
@@ -317,7 +320,7 @@ class TulipaService {
         try {
             return await this.callAPI<EventStats>('/brain/events/stats');
         } catch (error) {
-            console.error('[TulipaService] Failed to get events stats:', error);
+            log.error('Failed to get events stats', error);
             return null;
         }
     }
@@ -329,7 +332,7 @@ class TulipaService {
         try {
             return await this.callAPI<any>('/brain/summary');
         } catch (error) {
-            console.error('[TulipaService] Failed to get brain summary:', error);
+            log.error('Failed to get brain summary', error);
             return null;
         }
     }
@@ -347,7 +350,7 @@ class TulipaService {
             const result = await this.callAPI<any>(`/tasks${query}`);
             return result.data || result.tasks || result || [];
         } catch (error) {
-            console.error('[TulipaService] Failed to get tasks:', error);
+            log.error('Failed to get tasks', error);
             return [];
         }
     }
@@ -360,7 +363,7 @@ class TulipaService {
             const result = await this.callAPI<any>('/tasks/available');
             return result.data || result.tasks || result || [];
         } catch (error) {
-            console.error('[TulipaService] Failed to get available tasks:', error);
+            log.error('Failed to get available tasks', error);
             return [];
         }
     }
@@ -385,7 +388,7 @@ class TulipaService {
             const result = await this.callAPI<any>('/tasks', 'POST', task);
             return result.data || result;
         } catch (error) {
-            console.error('[TulipaService] Failed to create task:', error);
+            log.error('Failed to create task', error);
             return null;
         }
     }
@@ -398,7 +401,7 @@ class TulipaService {
             await this.callAPI<any>(`/tasks/${taskId}/claim`, 'POST', { sessionId: agentId });
             return true;
         } catch (error) {
-            console.error('[TulipaService] Failed to claim task:', error);
+            log.error('Failed to claim task', error);
             return false;
         }
     }
@@ -411,7 +414,7 @@ class TulipaService {
             await this.callAPI<any>(`/tasks/${taskId}/complete`, 'POST', { output });
             return true;
         } catch (error) {
-            console.error('[TulipaService] Failed to complete task:', error);
+            log.error('Failed to complete task', error);
             return false;
         }
     }
@@ -424,7 +427,7 @@ class TulipaService {
             await this.callAPI<any>(`/tasks/${taskId}/fail`, 'POST', { error });
             return true;
         } catch (error) {
-            console.error('[TulipaService] Failed to fail task:', error);
+            log.error('Failed to fail task', error);
             return false;
         }
     }
@@ -441,7 +444,7 @@ class TulipaService {
             const result = await this.callAPI<any>('/projects');
             return result.data || result.projects || result || [];
         } catch (error) {
-            console.error('[TulipaService] Failed to get projects:', error);
+            log.error('Failed to get projects', error);
             return [];
         }
     }
@@ -454,7 +457,7 @@ class TulipaService {
             const result = await this.callAPI<any>('/projects', 'POST', project);
             return result.data || result;
         } catch (error) {
-            console.error('[TulipaService] Failed to create project:', error);
+            log.error('Failed to create project', error);
             return null;
         }
     }
@@ -476,7 +479,7 @@ class TulipaService {
             await this.callAPI<any>('/agents/register', 'POST', agentData);
             return true;
         } catch (error) {
-            console.error('[TulipaService] Failed to register agent:', error);
+            log.error('Failed to register agent', error);
             return false;
         }
     }
@@ -501,7 +504,7 @@ class TulipaService {
             const result = await this.callAPI<any>('/agents/active');
             return result.data || result.agents || result || [];
         } catch (error) {
-            console.error('[TulipaService] Failed to get active agents:', error);
+            log.error('Failed to get active agents', error);
             return [];
         }
     }
@@ -518,7 +521,7 @@ class TulipaService {
             await this.callAPI<any>('/brain/sync', 'POST');
             return true;
         } catch (error) {
-            console.error('[TulipaService] Failed to trigger brain sync:', error);
+            log.error('Failed to trigger brain sync', error);
             return false;
         }
     }

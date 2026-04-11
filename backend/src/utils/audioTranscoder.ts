@@ -1,10 +1,10 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import ffmpeg from 'fluent-ffmpeg';
-import { logger } from './logger';
+import { createLogger } from './logger';
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 
-const log = logger.child('AudioTranscoder');
+const log = createLogger('AudioTranscoder');
 
 const ffmpegExecutablePath = ffmpegInstaller.path;
 
