@@ -741,7 +741,7 @@ class SchedulerService {
 
         let content = template.content;
         for (const [key, value] of Object.entries(variables)) {
-            content = content.replace(new RegExp(`{{${key}}}`, 'g'), value);
+            content = content.replaceAll(`{{${key}}}`, value);
         }
 
         return content;

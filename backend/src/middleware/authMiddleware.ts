@@ -24,15 +24,27 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction) 
 const validKeysCache = new Map<string, number | { expiry: number, user: any }>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 Minutes
 
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, value] of validKeysCache.entries()) {
+        const expiry = typeof value === 'number' ? value : value?.expiry;
+        if (!expiry || now >= expiry) {
+            validKeysCache.delete(key);
+        }
+    }
+}, CACHE_TTL_MS);
+
 // Check for Dolibarr User Login (Presence AND Validity of API Key)
 export const requireDolibarrLogin = async (req: Request, res: Response, next: NextFunction) => {
-    // Frontend sends 'DOLAPIKEY' or 'dolapikey' in Headers OR Query (for media/images)
     let userKey = (req.headers['dolapikey'] || req.headers['DOLAPIKEY'] || req.query.DOLAPIKEY || req.query.dolapikey || req.query.apiKey) as string;
 
-    // Support Bearer Token (Consistency with Admin Middleware)
     const authHeader = req.headers['authorization'];
     if (!userKey && authHeader && authHeader.startsWith('Bearer ')) {
         userKey = authHeader.substring(7);
+    }
+
+    if (!userKey && req.cookies?.dolapikey) {
+        userKey = req.cookies.dolapikey;
     }
 
     if (!userKey) {

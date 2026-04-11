@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import cookieParser from 'cookie-parser';
 import { logger } from './utils/logger';
 
 const log = logger.child('Server');
@@ -111,6 +112,7 @@ app.use(globalLimiter);
 // ===========================================
 // Body Parsing
 // ===========================================
+app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
