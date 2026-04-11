@@ -9,7 +9,6 @@ import rateLimit from 'express-rate-limit';
 const log = logger.child('AuthRoutes');
 const router = Router();
 
-// Login Rate Limiter (100 attempts per 15 min for Dev)
 const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 10,
@@ -21,14 +20,20 @@ const LoginSchema = z.object({
     password: z.string().min(1)
 });
 
-// Login Route
 router.post('/login', loginLimiter, async (req, res) => {
     try {
         const { login, password } = LoginSchema.parse(req.body);
 
         const result = await dolibarrService.login(login, password);
 
-        // Return only what the frontend needs
+        res.cookie('dolapikey', result.token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            path: '/api',
+        });
+
         res.json({
             success: true,
             apiKey: result.token,
@@ -44,6 +49,11 @@ router.post('/login', loginLimiter, async (req, res) => {
             error: error.message || 'Authentication failed'
         });
     }
+});
+
+router.post('/logout', (req, res) => {
+    res.clearCookie('dolapikey', { path: '/api' });
+    res.json({ success: true, message: 'Logged out' });
 });
 
 export default router;

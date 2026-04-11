@@ -223,45 +223,13 @@ router.post('/config/llm', async (req, res) => {
         // Update Runtime
         aiService.setConfig(provider, url, key, modelName);
 
-        // Update Config Object (In-Memory only)
-        // Note: This won't persist across restarts unless we write to .env
+        // Update Config Object (In-Memory)
         config.llmProvider = provider;
         if (url) config.localLlmUrl = url;
         if (key) config.googleApiKey = key;
         if (modelName) config.localModelName = modelName;
 
-        // Persist to .env
-        try {
-            const fs = require('fs');
-            const path = require('path');
-            const envPath = path.resolve(__dirname, '../../.env');
-
-            if (fs.existsSync(envPath)) {
-                let envContent = fs.readFileSync(envPath, 'utf8');
-
-                const updateOrAdd = (key: string, value: string) => {
-                    const regex = new RegExp(`^${key}=.*`, 'm');
-                    if (regex.test(envContent)) {
-                        envContent = envContent.replace(regex, `${key}=${value}`);
-                    } else {
-                        envContent += `\n${key}=${value}`;
-                    }
-                };
-
-                updateOrAdd('LLM_PROVIDER', provider);
-                if (url) updateOrAdd('LOCAL_LLM_URL', url);
-                if (key) updateOrAdd('GOOGLE_API_KEY', key);
-                if (modelName) updateOrAdd('LOCAL_LLM_MODEL', modelName);
-
-                fs.writeFileSync(envPath, envContent);
-                log.info('Saved config to .env');
-            }
-        } catch (err) {
-            log.error('Failed to save .env file', err);
-            // Non-blocking error for client, but logged
-        }
-
-        res.json({ status: 'success', message: `LLM Provider switched to ${provider} (Model: ${modelName || 'default'})` });
+        res.json({ status: 'success', message: `LLM Provider switched to ${provider} (Model: ${modelName || 'default'}). Note: restart server to persist via .env.` });
     } catch (e: any) {
         res.status(500).json({ status: 'error', message: e.message });
     }

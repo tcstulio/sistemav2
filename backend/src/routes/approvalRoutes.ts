@@ -7,12 +7,13 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { approvalService, ActionType, ActionStatus } from '../services/approvalService';
-import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
 
 const router = Router();
 
-// Proteger todas as rotas de aprovação
-router.use(requireDolibarrLogin);
+// Proteger todas as rotas de aprovação (leitura requer login, escrita requer admin)
+router.get('/*', requireDolibarrLogin);
+router.post('/', requireDolibarrLogin);
 
 // ===== Schemas de Validação =====
 
@@ -148,7 +149,7 @@ router.post('/', async (req: Request, res: Response) => {
  * POST /api/approvals/:id/approve
  * Aprova uma ação e executa automaticamente
  */
-router.post('/:id/approve', async (req: Request, res: Response) => {
+router.post('/:id/approve', requireDolibarrAdmin, async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const user = (req as any).user;
@@ -176,7 +177,7 @@ router.post('/:id/approve', async (req: Request, res: Response) => {
  * POST /api/approvals/:id/reject
  * Rejeita uma ação
  */
-router.post('/:id/reject', async (req: Request, res: Response) => {
+router.post('/:id/reject', requireDolibarrAdmin, async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const { reason } = RejectActionSchema.parse(req.body);

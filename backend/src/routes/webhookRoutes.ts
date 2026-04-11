@@ -122,9 +122,8 @@ router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
                 const rendered = schedulerService.renderTemplate(rule.templateId, variables);
                 if (rendered) finalText = rendered;
             } else {
-                // Simple interpolation
                 for (const [key, val] of Object.entries(variables)) {
-                    finalText = finalText.replace(new RegExp(`{{${key}}}`, 'g'), val);
+                    finalText = finalText.replaceAll(`{{${key}}}`, val);
                 }
             }
 
@@ -134,8 +133,8 @@ router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
             const msg = schedulerService.scheduleMessage({
                 chatId: destinationId,
                 sessionId: msgSessionId,
-                channel: rule.channel, // Pass channel
-                subject: rule.subject, // Pass subject
+                channel: rule.channel,
+                subject: rule.subject,
                 message: finalText,
                 scheduledAt: Date.now() + (rule.delay ? rule.delay * 60 * 1000 : 0)
             });
@@ -223,7 +222,7 @@ router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
                 if (rendered) finalText = rendered;
             } else {
                 for (const [key, val] of Object.entries(variables)) {
-                    finalText = finalText.replace(new RegExp(`{{${key}}}`, 'g'), val);
+                    finalText = finalText.replaceAll(`{{${key}}}`, val);
                 }
             }
 
@@ -240,7 +239,6 @@ router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
             });
             messages.push(msg.id);
 
-            // Log the webhook trigger
             schedulerService.addLog({
                 messageId: msg.id,
                 chatId: destinationId,
@@ -321,7 +319,7 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
                 if (rendered) finalText = rendered;
             } else {
                 for (const [key, val] of Object.entries(variables)) {
-                    finalText = finalText.replace(new RegExp(`{{${key}}}`, 'g'), val);
+                    finalText = finalText.replaceAll(`{{${key}}}`, val);
                 }
             }
 
@@ -481,17 +479,16 @@ router.post('/rules/:id/test', async (req: Request, res: Response) => {
         let renderedMessage = rule.message || '';
 
         // Use template if available
-        if (rule.templateId) {
-            const rendered = schedulerService.renderTemplate(rule.templateId, variables);
-            if (rendered) renderedMessage = rendered;
-        } else {
-            // Simple interpolation
-            for (const [key, val] of Object.entries(variables)) {
-                renderedMessage = renderedMessage.replace(new RegExp(`{{${key}}}`, 'g'), val);
+            if (rule.templateId) {
+                const rendered = schedulerService.renderTemplate(rule.templateId, variables);
+                if (rendered) renderedMessage = rendered;
+            } else {
+                for (const [key, val] of Object.entries(variables)) {
+                    renderedMessage = renderedMessage.replaceAll(`{{${key}}}`, val);
+                }
             }
-        }
 
-        let sentResult = null;
+            let sentResult = null;
         if (target) {
             log.info(`Sending real message for rule ${rule.name} to ${target}`);
             if (rule.channel === 'email') {
@@ -566,7 +563,7 @@ router.post('/simulate', async (req: Request, res: Response) => {
                 if (rendered) finalText = rendered;
             } else {
                 for (const [key, val] of Object.entries(variables)) {
-                    finalText = finalText.replace(new RegExp(`{{${key}}}`, 'g'), val);
+                    finalText = finalText.replaceAll(`{{${key}}}`, val);
                 }
             }
 
@@ -574,7 +571,6 @@ router.post('/simulate', async (req: Request, res: Response) => {
 
             const msgSessionId = rule.sessionId || sessionId || 'default';
 
-            // Actually schedule the message if a real phone is provided
             if (mockPhone) {
                 const msg = schedulerService.scheduleMessage({
                     chatId,
