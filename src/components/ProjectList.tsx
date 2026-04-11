@@ -3,6 +3,7 @@ import { Project, AppView, DolibarrDocument } from '../types';
 import { Search, Plus, Loader2, CheckCircle2, Settings, Pencil, Trash2, FolderKanban } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { logger } from '../utils/logger';
+import { toast } from 'sonner';
 
 const log = logger.child('ProjectList');
 
@@ -131,24 +132,24 @@ const ProjectDetail: React.FC<{
             setIsUploading(true);
             try {
                 await DolibarrService.uploadDocument(config, file, 'project', project.ref);
-                alert("Arquivo enviado com sucesso");
+                toast.success("Arquivo enviado com sucesso");
                 loadDocuments();
             } catch (e) {
                 log.error("Failed to upload document", e);
-                alert("Falha no envio");
+                toast.error("Falha no envio");
             } finally {
                 setIsUploading(false);
             }
         };
 
         const handleDeleteDocument = async (filename: string) => {
-            if (!project || !config || !confirm(`Excluir ${filename}?`)) return;
+            if (!project || !config) return;
             try {
                 await DolibarrService.deleteDocument(config, 'project', `${project.ref}/${filename}`);
                 loadDocuments();
             } catch (e) {
                 log.error("Failed to delete document", e);
-                alert("Falha na exclusão");
+                toast.error("Falha na exclusão");
             }
         };
 
@@ -476,12 +477,12 @@ const ProjectList: React.FC<{
         setIsSubmitting(true);
         try {
             await DolibarrService.createProject(config, form);
-            alert("Projeto Criado");
+            toast.success("Projeto Criado");
             setIsCreateModalOpen(false);
             if (refreshData) refreshData();
         } catch (e: any) {
             log.error("Failed to create project", e);
-            alert(`Falha: ${e.message}`);
+            toast.error(`Falha: ${e.message}`);
         } finally {
             setIsSubmitting(false);
         }
@@ -489,29 +490,28 @@ const ProjectList: React.FC<{
 
     const handleValidate = async () => {
         if (!selectedProject || !config) return;
-        if (!confirm("Validar este projeto?")) return;
         setProcessingId(selectedProject.id);
         try {
             await DolibarrService.updateProject(config, selectedProject.id, { statut: 1 });
-            alert("Validado");
+            toast.success("Validado");
             if (refreshData) refreshData();
             setSelectedProject(prev => prev ? ({ ...prev, statut: '1' }) : null);
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            toast.error(`Erro: ${e.message}`);
         } finally {
             setProcessingId(null);
         }
     };
 
     const handleDeleteProject = async () => {
-        if (!selectedProject || !config || !confirm(`Excluir projeto "${selectedProject.title}"?`)) return;
+        if (!selectedProject || !config) return;
         try {
             await DolibarrService.deleteProject(config, selectedProject.id);
-            alert("Excluído");
+            toast.success("Excluído");
             setSelectedProject(null);
             if (refreshData) refreshData();
         } catch (e: any) {
-            alert(`Falha: ${e.message}`);
+            toast.error(`Falha: ${e.message}`);
         }
     };
 
@@ -540,7 +540,7 @@ const ProjectList: React.FC<{
             if (editProjectForm.date_end) payload.datee = Math.floor(new Date(editProjectForm.date_end).getTime() / 1000);
 
             await DolibarrService.updateProject(config, selectedProject.id, payload);
-            alert("Atualizado");
+            toast.success("Atualizado");
             setIsEditModalOpen(false);
             if (refreshData) refreshData();
 
@@ -554,7 +554,7 @@ const ProjectList: React.FC<{
             setSelectedProject(updated as Project);
 
         } catch (e: any) {
-            alert(`Falha: ${e.message}`);
+            toast.error(`Falha: ${e.message}`);
         } finally {
             setIsSubmitting(false);
         }
@@ -594,22 +594,22 @@ const ProjectList: React.FC<{
 
             if (editingTaskId) {
                 await DolibarrService.updateTask(config, editingTaskId, payload);
-                alert("Tarefa atualizada");
+                toast.success("Tarefa atualizada");
             } else {
                 await DolibarrService.createTask(config, payload);
-                alert("Tarefa criada");
+                toast.success("Tarefa criada");
             }
             setIsTaskModalOpen(false);
             if (refreshData) refreshData();
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            toast.error(`Erro: ${e.message}`);
         } finally {
             setIsSubmitting(false);
         }
     };
 
     const handleDeleteTask = async (taskId: string) => {
-        if (!config || !confirm("Excluir tarefa?")) return;
+        if (!config) return;
         await DolibarrService.deleteTask(config, taskId);
         if (refreshData) refreshData();
     };
@@ -645,22 +645,22 @@ const ProjectList: React.FC<{
             };
             if (editingTicketId) {
                 await DolibarrService.updateTicket(config, editingTicketId, payload);
-                alert("Chamado atualizado");
+                toast.success("Chamado atualizado");
             } else {
                 await DolibarrService.createTicket(config, payload);
-                alert("Chamado criado");
+                toast.success("Chamado criado");
             }
             setIsTicketModalOpen(false);
             if (refreshData) refreshData();
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            toast.error(`Erro: ${e.message}`);
         } finally {
             setIsSubmitting(false);
         }
     };
 
     const handleDeleteTicket = async (ticketId: string) => {
-        if (!config || !confirm("Excluir chamado?")) return;
+        if (!config) return;
         await DolibarrService.deleteTicket(config, ticketId);
         if (refreshData) refreshData();
     };

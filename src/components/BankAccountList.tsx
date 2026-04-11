@@ -55,7 +55,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
 
     // Create Account Modal
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-    const [newAccountForm, setNewAccountForm] = useState<Partial<BankAccount>>({ currency_code: 'USD', solde: 0 });
+    const [newAccountForm, setNewAccountForm] = useState<Partial<BankAccount>>({ currency_code: 'BRL', solde: 0 });
     const [isCreating, setIsCreating] = useState(false);
 
     // Transfer Modal State

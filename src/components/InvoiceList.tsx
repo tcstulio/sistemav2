@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Invoice, AppView } from '../types';
 import { FileText, Search, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, ArrowUp, ShoppingCart, RefreshCcw, Truck } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
@@ -92,6 +93,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     // Payment State
     const [isPayModalOpen, setIsPayModalOpen] = useState(false);
     const [selectedInvoiceForPay, setSelectedInvoiceForPay] = useState<Invoice | null>(null);
+    const [abandonReason, setAbandonReason] = useState('');
+    const [abandoningInvoiceId, setAbandoningInvoiceId] = useState<string | null>(null);
 
     // =================================================================================================
     // HELPERS
@@ -155,15 +158,14 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const handleValidate = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
         if (!config) return;
-        if (!confirm("Tem certeza que deseja validar esta fatura?")) return;
         setProcessingId(id);
         try {
             await DolibarrService.validateInvoice(config, id);
-            alert("Fatura Validada!");
+            toast.success("Fatura Validada!");
             if (refreshData) refreshData();
         } catch (err) {
             log.error("Failed to validate invoice", err);
-            alert("Falha ao validar fatura.");
+            toast.error("Falha ao validar fatura.");
         } finally {
             setProcessingId(null);
         }
@@ -172,15 +174,14 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const handleCreateCreditNote = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
         if (!config) return;
-        if (!confirm("Criar uma Nota de Crédito (Correção) para esta fatura?")) return;
         setProcessingId(id);
         try {
             await DolibarrService.createCreditNote(config, id);
-            alert("Nota de Crédito criada com sucesso!");
+            toast.success("Nota de Crédito criada com sucesso!");
             if (refreshData) refreshData();
         } catch (err: any) {
             log.error("Failed to create credit note", err);
-            alert(`Falha ao criar Nota de Crédito: ${err.message}`);
+            toast.error(`Falha ao criar Nota de Crédito: ${err.message}`);
         } finally {
             setProcessingId(null);
         }
@@ -215,7 +216,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newInvoice.socid) return alert("Selecione um cliente");
+        if (!newInvoice.socid) return toast.error("Selecione um cliente");
         setIsSubmitting(true);
         try {
             await createInvoice.mutateAsync({
@@ -230,12 +231,12 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                     tva_tx: 0
                 }))
             });
-            alert("Fatura Criada com Sucesso");
+            toast.success("Fatura Criada com Sucesso");
             setIsCreateModalOpen(false);
             setNewInvoice({ socid: '', date: new Date().toISOString().split('T')[0], items: [] });
         } catch (e: any) {
             log.error("Failed to create invoice", e);
-            alert(`Falha ao criar fatura: ${e.message}`);
+            toast.error(`Falha ao criar fatura: ${e.message}`);
         } finally {
             setIsSubmitting(false);
         }
@@ -325,12 +326,12 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                 }
             }
 
-            alert("Fatura Atualizada com Sucesso");
+            toast.success("Fatura Atualizada com Sucesso");
             setIsEditModalOpen(false);
             if (refreshData) refreshData();
         } catch (e: any) {
             log.error("Failed to update invoice", e);
-            alert(`Falha ao atualizar fatura: ${e.message}`);
+            toast.error(`Falha ao atualizar fatura: ${e.message}`);
         } finally {
             setIsSubmitting(false);
         }
@@ -347,7 +348,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
         if (!selectedInvoiceForPay || !config) return;
         try {
             await DolibarrService.setPayment(config, selectedInvoiceForPay.id, paymentData);
-            alert("Pagamento Registrado com Sucesso");
+            toast.success("Pagamento Registrado com Sucesso");
             selectedInvoiceForPay.statut = '2';
             selectedInvoiceForPay.paye = '1';
             if (refreshData) refreshData();
@@ -355,7 +356,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             setSelectedInvoiceForPay(null);
         } catch (err) {
             log.error("Failed to register payment", err);
-            alert("Falha ao registrar pagamento");
+            toast.error("Falha ao registrar pagamento");
             throw err;
         }
     };
@@ -532,13 +533,12 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     icon={<CheckCircle size={16} />}
                                     onClick={async (e) => {
                                         e.stopPropagation();
-                                        if (!confirm("Marcar como 'Classificada como Paga' (sem pagamento financeiro)?")) return;
                                         setProcessingId(selectedInvoice.id);
                                         try {
                                             await DolibarrService.markInvoiceAsPaid(config, selectedInvoice.id);
                                             if (refreshData) refreshData();
-                                            alert("Fatura classificada como paga.");
-                                        } catch (err) { log.error("Failed to mark invoice as paid", err); alert("Erro ao classificar como paga."); }
+                                            toast.success("Fatura classificada como paga.");
+                                        } catch (err) { log.error("Failed to mark invoice as paid", err); toast.error("Erro ao classificar como paga."); }
                                         finally { setProcessingId(null); }
                                     }}
                                     title="Classificar como Paga"
@@ -549,15 +549,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     icon={<Trash2 size={16} />}
                                     onClick={async (e) => {
                                         e.stopPropagation();
-                                        const reason = prompt("Motivo do abandono:");
-                                        if (reason === null) return;
-                                        setProcessingId(selectedInvoice.id);
-                                        try {
-                                            await DolibarrService.abandonInvoice(config, selectedInvoice.id, reason);
-                                            if (refreshData) refreshData();
-                                            alert("Fatura abandonada/cancelada.");
-                                        } catch (err) { log.error("Failed to abandon invoice", err); alert("Erro ao abandonar fatura."); }
-                                        finally { setProcessingId(null); }
+                                        setAbandoningInvoiceId(selectedInvoice.id);
                                     }}
                                     className="!text-red-600"
                                     title="Abandonar / Cancelar"
@@ -570,13 +562,12 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 size="sm"
                                 onClick={async (e) => {
                                     e.stopPropagation();
-                                    if (!confirm("Reabrir fatura (voltar para rascunho)?")) return;
                                     setProcessingId(selectedInvoice.id);
                                     try {
                                         await DolibarrService.setInvoiceToDraft(config, selectedInvoice.id);
                                         if (refreshData) refreshData();
-                                        alert("Fatura retornada para rascunho.");
-                                    } catch (err) { log.error("Failed to reopen invoice", err); alert("Erro ao reabrir fatura."); }
+                                        toast.success("Fatura retornada para rascunho.");
+                                    } catch (err) { log.error("Failed to reopen invoice", err); toast.error("Erro ao reabrir fatura."); }
                                     finally { setProcessingId(null); }
                                 }}
                             >
@@ -1023,6 +1014,50 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                     onConfirm={handleRegisterPayment}
                 />
             )}
+
+            <Modal
+                isOpen={!!abandoningInvoiceId}
+                onClose={() => { setAbandoningInvoiceId(null); setAbandonReason(''); }}
+                title="Abandonar / Cancelar Fatura"
+                size="sm"
+            >
+                <div className="space-y-4">
+                    <p className="text-sm text-slate-600 dark:text-slate-400">Informe o motivo do abandono:</p>
+                    <textarea
+                        className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                        rows={3}
+                        value={abandonReason}
+                        onChange={e => setAbandonReason(e.target.value)}
+                        placeholder="Motivo..."
+                    />
+                    <div className="flex justify-end gap-3">
+                        <Button variant="secondary" onClick={() => { setAbandoningInvoiceId(null); setAbandonReason(''); }}>Cancelar</Button>
+                        <Button
+                            variant="primary"
+                            className="!bg-red-600 hover:!bg-red-700"
+                            loading={!!processingId}
+                            onClick={async () => {
+                                if (!abandoningInvoiceId || !config) return;
+                                setProcessingId(abandoningInvoiceId);
+                                try {
+                                    await DolibarrService.abandonInvoice(config, abandoningInvoiceId, abandonReason || 'Sem motivo informado');
+                                    if (refreshData) refreshData();
+                                    toast.success("Fatura abandonada/cancelada.");
+                                } catch (err) {
+                                    log.error("Failed to abandon invoice", err);
+                                    toast.error("Erro ao abandonar fatura.");
+                                } finally {
+                                    setProcessingId(null);
+                                    setAbandoningInvoiceId(null);
+                                    setAbandonReason('');
+                                }
+                            }}
+                        >
+                            Abandonar
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
         </>
     );
 };

@@ -8,8 +8,22 @@ import { ConsoleLogsTab } from './DevelopmentConsole/ConsoleLogsTab';
 import { PermissionsTab } from './DevelopmentConsole/PermissionsTab';
 import { LlmSettingsTab } from './DevelopmentConsole/LlmSettingsTab';
 
+const isDevMode = () => {
+    return import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEV_CONSOLE === 'true';
+};
+
 const DevelopmentView: React.FC = () => {
     const { config } = useDolibarr();
+
+    if (!isDevMode()) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full p-8 text-slate-400">
+                <Terminal size={48} className="mb-4 opacity-30" />
+                <p className="text-lg font-medium">Console indisponível</p>
+                <p className="text-sm">Disponível apenas em ambiente de desenvolvimento.</p>
+            </div>
+        );
+    }
 
     const [activeTab, setActiveTab] = useState<'audit' | 'console' | 'monitor' | 'permissions' | 'llm'>('monitor');
 

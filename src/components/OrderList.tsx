@@ -369,7 +369,6 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     };
 
     const handleValidateOrder = async (id: string) => {
-        if (!window.confirm("Validar este pedido?")) return;
         setProcessingId(id);
         try {
             await DolibarrService.validateOrder(config, id);
@@ -430,7 +429,6 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     };
 
     const handleDeleteShipment = async (id: string) => {
-        if (!window.confirm("Tem certeza que deseja excluir este envio?")) return;
         try {
             await DolibarrService.deleteShipment(config, id);
             toast.success("Envio excluído");
@@ -443,7 +441,6 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
 
     const handleClassifyDelivered = async () => {
         if (!selectedOrder) return;
-        if (!window.confirm("Marcar este pedido como completamente entregue?")) return;
         setProcessingId(selectedOrder.id);
         try {
             await DolibarrService.classifyOrderDelivered(config, selectedOrder.id);

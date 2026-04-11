@@ -128,7 +128,6 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
 
     const handleDelete = async (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
-        if (!window.confirm("Tem certeza que deseja EXCLUIR esta proposta? Esta ação é irreversível.")) return;
         setProcessingId(id);
         try {
             await DolibarrService.deleteProposal(config, id);

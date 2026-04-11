@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useUsers, useProjects, useEvents } from '../../hooks/dolibarr';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { Search, Briefcase, MessageSquare, Clock } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 
 interface ChatSidebarProps {
     onSelect: (type: 'user' | 'project' | 'topic', id: string, name: string) => void;
@@ -11,7 +11,8 @@ interface ChatSidebarProps {
 export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
     const { currentUser, config } = useDolibarr();
     const navigate = useNavigate();
-    const { id: activeId } = useParams(); // URL params if we use /chat/user/:id
+    const { id: activeId } = useParams();
+    const location = useLocation();
     const [searchTerm, setSearchTerm] = useState('');
 
     // Fetch data
@@ -124,7 +125,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
                             <button
                                 key={user.id}
                                 onClick={() => handleItemClick('user', user)}
-                                className={`w-full text-left flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${window.location.pathname.includes(`/chat/user/${user.id}`)
+                                className={`w-full text-left flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${location.pathname.includes(`/chat/user/${user.id}`)
                                     ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300'
                                     : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
                                     }`}
@@ -161,7 +162,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
                             <button
                                 key={project.id}
                                 onClick={() => handleItemClick('project', project)}
-                                className={`w-full text-left flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${window.location.pathname.includes(`/chat/project/${project.id}`)
+                                className={`w-full text-left flex items-center gap-3 px-4 py-3 rounded-md transition-colors ${location.pathname.includes(`/chat/project/${project.id}`)
                                     ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
                                     : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
                                     }`}

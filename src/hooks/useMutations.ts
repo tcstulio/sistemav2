@@ -132,15 +132,12 @@ export const useInvoiceMutations = (config: DolibarrConfig | null) => {
     const updateInvoice = useMutation({
         mutationFn: async ({ id, data }: { id: string; data: any }) => {
             if (!config) throw new Error("No Configuration");
-            // Assuming updateInvoice doesn't exist on DolibarrService, checking... 
-            // Wait, standard Update for Invoice might be specific (validate, etc).
-            // Let's check DolibarrService methods.
-            // For now, let's assume generic update or skip.
-            // Actually, Invoices are usually "Validated", "Paid", etc. Not just "Updated".
-            // Let's stick to Create first.
-            return Promise.resolve();
-        }
+            return DolibarrService.updateInvoice(config, id, data);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['invoices'] });
+        },
     });
 
-    return { createInvoice };
+    return { createInvoice, updateInvoice };
 };
