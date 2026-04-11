@@ -3,9 +3,10 @@ import { MessageMedia } from 'whatsapp-web.js';
 import { sessionService } from '../services/legacy/sessionService';
 import { messageService } from '../services/legacy/messageService';
 import { storeService } from '../services/storeService';
-import { socketService } from '../services/socketService'; // Webhook needs this
+import { socketService } from '../services/socketService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { z } from 'zod';
+import rateLimit from 'express-rate-limit';
 import { logger } from '../utils/logger';
 import { channelRouter } from '../services/channelRouter';
 import { FEATURES } from '../config/features';
@@ -13,6 +14,14 @@ import { FEATURES } from '../config/features';
 const log = logger.child('WhatsAppRoutes');
 const router = Router();
 const DEFAULT_SESSION = 'default';
+
+const checkNumberLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    message: { error: 'Too many number checks. Please wait.' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
 
 // 1. PUBLIC ROUTES (Webhooks)
 // Webhook Receiver (Legacy / External) - Must be before Auth Middleware
@@ -88,7 +97,7 @@ router.delete('/sessions/:sessionId', async (req, res) => {
 });
 
 // Check if number is registered on WhatsApp
-router.get('/check-number/:number', async (req, res) => {
+router.get('/check-number/:number', checkNumberLimiter, async (req, res) => {
     const sessionId = getSessionId(req);
     const { number } = req.params;
     try {

@@ -106,6 +106,24 @@ const bankingLimiter = rateLimit({
     legacyHeaders: false
 });
 
+// Scheduler limiter (message scheduling)
+const schedulerLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    message: { error: 'Scheduler rate limit exceeded. Please wait.' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
+// Strict limiter for auth (login attempts)
+const authLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    message: { error: 'Too many requests to auth endpoints.' },
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
 // Apply global limiter
 app.use(globalLimiter);
 
@@ -135,51 +153,39 @@ const bankingAuthMiddleware = (req: any, res: any, next: any) => {
 };
 
 app.use('/api/whatsapp', whatsappRoutes);
-app.use('/api/ai', aiLimiter, aiRoutes); // AI endpoints have strict rate limiting
-// Protect Admin Routes
+app.use('/api/ai', aiLimiter, aiRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
 
-// Dolibarr Proxy
 import dolibarrRoutes from './routes/dolibarrRoutes';
 app.use('/api/dolibarr', dolibarrRoutes);
 
-// Scheduler Routes (Messages, Broadcasts, Reminders)
-app.use('/api/scheduler', schedulerRoutes);
+app.use('/api/scheduler', schedulerLimiter, schedulerRoutes);
 
-// Webhook Routes (External Triggers, Dolibarr Integration)
 import webhookRoutes from './routes/webhookRoutes';
 app.use('/api/webhook', webhookRoutes);
 
-// Banking Routes (Import, Analysis, Reconciliation)
 import bankingRoutes from './routes/bankingRoutes';
 app.use('/api/banking', bankingLimiter, bankingRoutes);
 
-// Banco Inter API Routes (Banking, Pix, Boletos, Webhooks)
 import interBankingRoutes from './routes/interBankingRoutes';
 app.use('/api/inter', bankingLimiter, bankingAuthMiddleware, interBankingRoutes);
 
-// Banco Itaú API Routes (Banking, Pix, Boletos, Webhooks)
 import itauBankingRoutes from './routes/itauBankingRoutes';
 app.use('/api/itau', bankingLimiter, bankingAuthMiddleware, itauBankingRoutes);
 
-// Approval Routes (Fila de aprovação para automações bancárias)
 import approvalRoutes from './routes/approvalRoutes';
 app.use('/api/approvals', approvalRoutes);
 
-// Document Routes (Envio de documentos via WhatsApp)
 import documentRoutes from './routes/documentRoutes';
 app.use('/api/documents', documentRoutes);
 
-// Email Routes
 import emailRoutes from './routes/emailRoutes';
 app.use('/api/email', emailRoutes);
 
-// CentroVibe Routes (Event Management)
 import centrovibeRoutes from './routes/centrovibeRoutes';
 app.use('/api/centrovibe', requireDolibarrLogin, centrovibeRoutes);
 
-// Integration Routes (Moltbot Gateway, Tulipa Server, Brain Hub)
 import integrationRoutes from './routes/integrationRoutes';
 app.use('/api/integration', integrationRoutes);
 

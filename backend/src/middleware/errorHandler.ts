@@ -6,6 +6,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
 import { logger } from '../utils/logger';
 
 const log = logger.child('ErrorHandler');
@@ -159,7 +160,20 @@ export function errorHandler(
 ): void {
     const isProduction = process.env.NODE_ENV === 'production';
 
-    // Log the full error internally
+    if (err instanceof ZodError) {
+        res.status(400).json({
+            error: {
+                code: 'VALIDATION_ERROR',
+                message: 'Validation failed',
+                details: err.issues.map(issue => ({
+                    field: issue.path.join('.'),
+                    message: issue.message
+                }))
+            }
+        });
+        return;
+    }
+
     log.error(`${req.method} ${req.path} - ${err.message}`, {
         stack: err.stack,
         code: err.code,
@@ -244,6 +258,12 @@ export class RateLimitError extends Error {
         super(message);
         this.name = 'RateLimitError';
     }
+}
+
+export function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => Promise<any>) {
+    return (req: Request, res: Response, next: NextFunction) => {
+        Promise.resolve(fn(req, res, next)).catch(next);
+    };
 }
 
 export default errorHandler;
