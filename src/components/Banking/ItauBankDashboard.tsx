@@ -72,6 +72,11 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
         dataVencimento: '',
         pagadorNome: '',
         pagadorCpfCnpj: '',
+        pagadorLogradouro: '',
+        pagadorBairro: '',
+        pagadorCidade: '',
+        pagadorUf: '',
+        pagadorCep: '',
     });
 
     // Stats
@@ -121,11 +126,11 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                             cnpj: boletoForm.pagadorCpfCnpj.replace(/\D/g, '').length > 11 ? boletoForm.pagadorCpfCnpj.replace(/\D/g, '') : undefined,
                         },
                         endereco: {
-                            nome_logradouro: 'Não informado',
-                            nome_bairro: 'Não informado',
-                            nome_cidade: 'Não informado',
-                            sigla_UF: 'SP',
-                            numero_CEP: '00000000',
+                            nome_logradouro: boletoForm.pagadorLogradouro || 'Não informado',
+                            nome_bairro: boletoForm.pagadorBairro || 'Não informado',
+                            nome_cidade: boletoForm.pagadorCidade || 'Não informado',
+                            sigla_UF: boletoForm.pagadorUf || 'SP',
+                            numero_CEP: boletoForm.pagadorCep.replace(/\D/g, '') || '00000000',
                         },
                     },
                     dados_individuais_boleto: [{
@@ -135,7 +140,7 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                 },
             });
             setBoletoDialog(false);
-            setBoletoForm({ valorTitulo: '', dataVencimento: '', pagadorNome: '', pagadorCpfCnpj: '' });
+            setBoletoForm({ valorTitulo: '', dataVencimento: '', pagadorNome: '', pagadorCpfCnpj: '', pagadorLogradouro: '', pagadorBairro: '', pagadorCidade: '', pagadorUf: '', pagadorCep: '' });
             boletosQuery.refetch();
         } catch (error) {
             log.error('Erro ao emitir boleto:', error);
@@ -531,6 +536,30 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">CPF/CNPJ</label>
                                 <input type="text" value={boletoForm.pagadorCpfCnpj} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorCpfCnpj: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 mt-3">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Logradouro</label>
+                                <input type="text" value={boletoForm.pagadorLogradouro} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorLogradouro: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" placeholder="Rua, número" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Bairro</label>
+                                <input type="text" value={boletoForm.pagadorBairro} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorBairro: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cidade</label>
+                                <input type="text" value={boletoForm.pagadorCidade} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorCidade: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">UF</label>
+                                    <input type="text" maxLength={2} value={boletoForm.pagadorUf} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorUf: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" placeholder="SP" />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">CEP</label>
+                                    <input type="text" value={boletoForm.pagadorCep} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorCep: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" placeholder="00000000" />
+                                </div>
                             </div>
                         </div>
                         <div className="flex justify-end gap-2 mt-6">

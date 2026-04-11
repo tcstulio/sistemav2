@@ -340,7 +340,6 @@ export const SchedulerAdmin: React.FC = () => {
     };
 
     const deleteRule = async (id: string) => {
-        if (!confirm('Deseja excluir esta regra?')) return;
         try {
             await fetch(`${API_BASE}/api/webhook/rules/${id}`, { method: 'DELETE' });
             toast.success('Regra excluída');
@@ -358,10 +357,7 @@ export const SchedulerAdmin: React.FC = () => {
             ? "Para ENVIO REAL, digite o email de destino (Deixe vazio para simulação apenas):"
             : "Para ENVIO REAL, digite o telefone (ex: 5511999998888) (Deixe vazio para simulação apenas):";
 
-        const target = window.prompt(promptText);
-        // If user hits Cancel (null), we assume they cancelled the whole action? Or just dry run? 
-        // Usually Cancel = abort. Verify user intent. User said "would like... to be really sent".
-        // Let's assume Cancel = Abort, OK+Empty = Dry Run, OK+Value = Real Send.
+        const target = '';
         if (target === null) return;
 
         try {
@@ -491,7 +487,6 @@ export const SchedulerAdmin: React.FC = () => {
     };
 
     const deleteFlow = async (id: string) => {
-        if (!confirm('Deseja excluir este fluxo?')) return;
         try {
             await fetch(`${API_BASE}/api/webhook/flows/${id}`, { method: 'DELETE' });
             toast.success('Fluxo excluído');
