@@ -6,9 +6,9 @@
 
 import axios from 'axios';
 import { DolibarrServiceBase, AddPaymentModel } from './core';
-import { logger } from '../../utils/logger';
+import { createLogger } from '../../utils/logger';
 
-const log = logger.child('DolibarrPayments');
+const log = createLogger('DolibarrPayments');
 
 export class DolibarrPaymentsService extends DolibarrServiceBase {
 

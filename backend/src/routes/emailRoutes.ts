@@ -3,7 +3,9 @@ import { emailService } from '../services/emailService';
 import { emailStoreService } from '../services/emailStoreService';
 import { z } from 'zod';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { createLogger } from '../utils/logger';
 
+const log = createLogger('Email');
 const router = Router();
 
 // Protect all routes

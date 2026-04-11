@@ -117,7 +117,7 @@ class ContextLogger {
 export const logger = new FrontendLogger();
 
 // Expose to window for debugging in production
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && !import.meta.env.PROD) {
     (window as any).__logger = logger;
 }
 

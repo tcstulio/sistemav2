@@ -1,9 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { schedulerService } from '../services/schedulerService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
-import { logger } from '../utils/logger';
+import { createLogger } from '../utils/logger';
 
-const log = logger.child('SchedulerRoutes');
+const log = createLogger('Scheduler');
 const router = Router();
 
 // Protect all scheduler routes
@@ -59,7 +59,7 @@ router.post('/schedule', async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        log.error('Schedule error', error);
+        log.error('Schedule error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -97,7 +97,7 @@ router.post('/broadcast', async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        log.error('Broadcast error', error);
+        log.error('Broadcast error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -128,7 +128,7 @@ router.post('/confirmation', async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        log.error('Confirmation error', error);
+        log.error('Confirmation error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -169,7 +169,7 @@ router.post('/reminder', async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        log.error('Reminder error', error);
+        log.error('Reminder error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -363,7 +363,7 @@ router.post('/import-csv', async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        log.error('CSV Import error', error);
+        log.error('CSV Import error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });

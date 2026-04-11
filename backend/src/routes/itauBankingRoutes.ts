@@ -19,9 +19,9 @@ import {
     BoletoWebhookItauPayload,
 } from '../types/itau.types';
 import { config } from '../config/env';
-import { logger } from '../utils/logger';
+import { createLogger } from '../utils/logger';
 
-const log = logger.child('ItauBankingRoutes');
+const log = createLogger('ItauBanking');
 const router = Router();
 
 // Configure multer for certificate uploads
@@ -78,7 +78,7 @@ router.post('/webhook/pix', async (req: Request, res: Response) => {
 
         res.status(200).json({ success: true });
     } catch (error: any) {
-        log.error('PIX webhook error', error);
+        log.error('PIX webhook error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -103,7 +103,7 @@ router.post('/webhook/boleto', async (req: Request, res: Response) => {
 
         res.status(200).json({ success: true });
     } catch (error: any) {
-        log.error('Boleto webhook error', error);
+        log.error('Boleto webhook error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -281,7 +281,7 @@ router.post('/pix/cobranca', async (req: Request, res: Response) => {
             try {
                 qrcode = await itauApiService.getPixQRCode(cobranca.loc.id);
             } catch (e) {
-                log.warn('Could not get QR code', e);
+                log.warn('Could not get QR code', { error: e instanceof Error ? e.message : String(e) });
             }
         }
 

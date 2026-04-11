@@ -6,9 +6,9 @@
 
 import axios from 'axios';
 import { DolibarrServiceBase, ValidateSupplierOrderModel } from './core';
-import { logger } from '../../utils/logger';
+import { createLogger } from '../../utils/logger';
 
-const log = logger.child('DolibarrSuppliers');
+const log = createLogger('DolibarrSuppliers');
 
 export class DolibarrSuppliersService extends DolibarrServiceBase {
 

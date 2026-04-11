@@ -7,11 +7,11 @@ import { socketService } from '../services/socketService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
-import { logger } from '../utils/logger';
+import { createLogger } from '../utils/logger';
 import { channelRouter } from '../services/channelRouter';
 import { FEATURES } from '../config/features';
 
-const log = logger.child('WhatsAppRoutes');
+const log = createLogger('WhatsApp');
 const router = Router();
 const DEFAULT_SESSION = 'default';
 
@@ -382,7 +382,7 @@ router.get('/messages/:chatId', async (req, res) => {
         const messages = await messageService.getMessages(sessionId, chatId, limit);
         res.json(messages);
     } catch (error: any) {
-        log.error(`Error fetching messages for ${req.params.chatId}`, error);
+        log.error('Error fetching messages', { chatId: req.params.chatId, error: error.message, stack: error.stack });
         res.status(500).json({ error: 'Failed to fetch messages' });
     }
 });
@@ -459,7 +459,7 @@ router.post('/send-voice', async (req, res) => {
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
         }
-        log.error('Send Voice Error', error);
+        log.error('Send Voice Error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message || 'Failed to send voice' });
     }
 });

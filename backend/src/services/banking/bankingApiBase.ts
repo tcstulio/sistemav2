@@ -15,9 +15,9 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import { logger } from '../../utils/logger';
+import { createLogger } from '../../utils/logger';
 
-const log = logger.child('BankingApiBase');
+const log = createLogger('BankingApiBase');
 
 // ============ Common Types ============
 

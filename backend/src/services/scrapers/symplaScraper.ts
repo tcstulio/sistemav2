@@ -1,8 +1,8 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { logger } from '../../utils/logger';
+import { createLogger } from '../../utils/logger';
 
-const log = logger.child('SymplaScraper');
+const log = createLogger('SymplaScraper');
 
 export interface RawScrapedEvent {
     sourceId: string;

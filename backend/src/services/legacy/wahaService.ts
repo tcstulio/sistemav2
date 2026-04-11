@@ -1,8 +1,8 @@
 import { sessionService } from './sessionService';
 import { messageService } from './messageService';
-import { logger } from '../../utils/logger';
+import { createLogger } from '../../utils/logger';
 
-const log = logger.child('WahaService');
+const log = createLogger('WahaService');
 
 /*
  * [ANTIGRAVITY] Legacy Support Layer

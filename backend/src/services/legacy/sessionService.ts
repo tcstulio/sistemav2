@@ -5,9 +5,9 @@ import * as path from 'path';
 import { socketService } from '../socketService';
 import { config } from '../../config/env';
 import { botService } from '../botService';
-import { logger } from '../../utils/logger';
+import { createLogger } from '../../utils/logger';
 
-const log = logger.child('SessionService');
+const log = createLogger('SessionService');
 
 // Helper to find local browser
 const getBrowserPath = () => {

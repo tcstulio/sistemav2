@@ -7,9 +7,9 @@
 
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
-import { logger } from '../utils/logger';
+import { createLogger } from '../utils/logger';
 
-const log = logger.child('ErrorHandler');
+const log = createLogger('ErrorHandler');
 
 // Error codes that are safe to show to users
 const SAFE_ERROR_CODES = [

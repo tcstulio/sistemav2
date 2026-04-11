@@ -4,9 +4,9 @@ import { schedulerService } from '../services/schedulerService';
 import { dolibarrService } from '../services/dolibarrService';
 import { emailService } from '../services/emailService';
 import { messageService } from '../services/legacy/messageService';
-import { logger } from '../utils/logger';
+import { createLogger } from '../utils/logger';
 
-const log = logger.child('WebhookRoutes');
+const log = createLogger('Webhook');
 const router = Router();
 
 // --- Webhook Receiver (Generic) ---
@@ -54,7 +54,7 @@ router.post('/trigger', async (req: Request, res: Response) => {
         });
 
     } catch (error: any) {
-        log.error('Trigger error', error);
+        log.error('Trigger error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -155,7 +155,7 @@ router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
         res.json({ success: true, action, invoiceRef, messageIds: messages });
 
     } catch (error: any) {
-        log.error('Dolibarr invoice error', error);
+        log.error('Dolibarr invoice error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -253,7 +253,7 @@ router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
         res.json({ success: true, action, ticketRef, messageIds: messages });
 
     } catch (error: any) {
-        log.error('Dolibarr ticket error', error);
+        log.error('Dolibarr ticket error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -351,7 +351,7 @@ router.post('/dolibarr/order', async (req: Request, res: Response) => {
         res.json({ success: true, action, orderRef, messageIds: messages });
 
     } catch (error: any) {
-        log.error('Dolibarr order error', error);
+        log.error('Dolibarr order error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });
@@ -518,7 +518,7 @@ router.post('/rules/:id/test', async (req: Request, res: Response) => {
             realSend: sentResult
         });
     } catch (error: any) {
-        log.error('Test error', error);
+        log.error('Test error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
     }
 });

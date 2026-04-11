@@ -10,6 +10,9 @@
 import { FEATURES } from '../config/features';
 import { tulipaService, BrainPerson } from './tulipaService';
 import { dolibarrService } from './dolibarr';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('Sync');
 
 // Types
 export interface SyncResult {
@@ -152,7 +155,7 @@ class SyncService {
         const success = await tulipaService.linkPersonToCustomer(brainPersonId, dolibarrCustomerId);
 
         if (success) {
-            console.log(`[SyncService] Linked Brain person ${brainPersonId} to Dolibarr customer ${dolibarrCustomerId}`);
+            log.info(`Linked Brain person ${brainPersonId} to Dolibarr customer ${dolibarrCustomerId}`);
         }
 
         return success;
@@ -177,13 +180,13 @@ class SyncService {
             if (result && result.id) {
                 // Link the new customer to the Brain person
                 await this.linkPersonToCustomer(person.id, result.id.toString());
-                console.log(`[SyncService] Created Dolibarr customer ${result.id} for Brain person ${person.id}`);
+                log.info(`Created Dolibarr customer ${result.id} for Brain person ${person.id}`);
                 return result.id.toString();
             }
 
             return null;
         } catch (error: any) {
-            console.error(`[SyncService] Failed to create customer:`, error.message);
+            log.error('Failed to create customer', { error: error.message });
             return null;
         }
     }
@@ -216,7 +219,7 @@ class SyncService {
 
         try {
             const people = await tulipaService.getPeople();
-            console.log(`[SyncService] Starting sync for ${people.length} people`);
+            log.info(`Starting sync for ${people.length} people`);
 
             for (const person of people) {
                 const detail: SyncDetail = {
@@ -272,7 +275,7 @@ class SyncService {
                 result.details.push(detail);
             }
 
-            console.log(`[SyncService] Sync completed: matched=${result.matched}, created=${result.created}, failed=${result.failed}`);
+            log.info(`Sync completed: matched=${result.matched}, created=${result.created}, failed=${result.failed}`);
         } catch (error: any) {
             result.success = false;
             result.errors.push(`Sync failed: ${error.message}`);

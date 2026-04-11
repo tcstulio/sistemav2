@@ -8,6 +8,9 @@
  */
 
 import http from 'http';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('MoltbotGateway');
 
 // Configuration
 interface MoltbotConfig {
@@ -307,7 +310,7 @@ class MoltbotGateway {
             const result = await this.callAPI<any>(`/whatsapp/chats${sessionId ? `?sessionId=${sessionId}` : ''}`);
             return result.chats || result || [];
         } catch (error) {
-            console.error('[MoltbotGateway] Failed to get chats:', error);
+            log.error('Failed to get chats', error);
             return [];
         }
     }
@@ -320,7 +323,7 @@ class MoltbotGateway {
             const result = await this.callAPI<any>(`/whatsapp/messages/${encodeURIComponent(chatId)}?limit=${limit}`);
             return result.messages || result || [];
         } catch (error) {
-            console.error('[MoltbotGateway] Failed to get messages:', error);
+            log.error('Failed to get messages', error);
             return [];
         }
     }

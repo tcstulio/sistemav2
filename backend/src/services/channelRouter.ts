@@ -11,6 +11,9 @@ import { FEATURES, isUsingMoltbot } from '../config/features';
 import { moltbotGateway, MessageResult as MoltbotMessageResult } from './moltbotGateway';
 import { messageService as legacyMessageService } from './legacy/messageService';
 import { emailService } from './emailService';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('ChannelRouter');
 
 // Types
 export type Channel = 'whatsapp' | 'email' | 'sms';
@@ -54,7 +57,7 @@ class ChannelRouter {
 
     constructor() {
         this.whatsAppProvider = FEATURES.WHATSAPP_PROVIDER;
-        console.log(`[ChannelRouter] Initialized with WhatsApp provider: ${this.whatsAppProvider}`);
+        log.info(`Initialized with WhatsApp provider: ${this.whatsAppProvider}`);
     }
 
     // ========================================
@@ -66,7 +69,7 @@ class ChannelRouter {
      */
     setWhatsAppProvider(provider: WhatsAppProvider): void {
         this.whatsAppProvider = provider;
-        console.log(`[ChannelRouter] WhatsApp provider changed to: ${provider}`);
+        log.info(`WhatsApp provider changed to: ${provider}`);
     }
 
     /**
@@ -138,7 +141,7 @@ class ChannelRouter {
 
         // Dry-run mode
         if (FEATURES.DRY_RUN_MODE) {
-            console.log(`[ChannelRouter] DRY RUN - WhatsApp to ${recipient}: ${content.substring(0, 50)}...`);
+            log.info(`DRY RUN - WhatsApp to ${recipient}: ${content.substring(0, 50)}...`);
             return {
                 success: true,
                 messageId: `dry-run-${Date.now()}`,
@@ -174,7 +177,7 @@ class ChannelRouter {
                 };
             }
         } catch (error: any) {
-            console.error('[ChannelRouter] WhatsApp send failed:', error);
+            log.error('WhatsApp send failed', { error: error.message });
             return {
                 success: false,
                 error: error.message,
@@ -196,7 +199,7 @@ class ChannelRouter {
         const session = sessionId || this.defaultSessionId;
 
         if (FEATURES.DRY_RUN_MODE) {
-            console.log(`[ChannelRouter] DRY RUN - WhatsApp file to ${recipient}: ${filename}`);
+            log.info(`DRY RUN - WhatsApp file to ${recipient}: ${filename}`);
             return { success: true, messageId: `dry-run-${Date.now()}`, provider: 'dry-run' };
         }
 
@@ -249,7 +252,7 @@ class ChannelRouter {
         const session = sessionId || this.defaultSessionId;
 
         if (FEATURES.DRY_RUN_MODE) {
-            console.log(`[ChannelRouter] DRY RUN - WhatsApp voice to ${recipient}`);
+            log.info(`DRY RUN - WhatsApp voice to ${recipient}`);
             return { success: true, messageId: `dry-run-${Date.now()}`, provider: 'dry-run' };
         }
 
@@ -289,7 +292,7 @@ class ChannelRouter {
         accountId?: string
     ): Promise<SendResult> {
         if (FEATURES.DRY_RUN_MODE) {
-            console.log(`[ChannelRouter] DRY RUN - Email to ${recipient}: ${subject}`);
+            log.info(`DRY RUN - Email to ${recipient}: ${subject}`);
             return { success: true, messageId: `dry-run-${Date.now()}`, provider: 'dry-run' };
         }
 

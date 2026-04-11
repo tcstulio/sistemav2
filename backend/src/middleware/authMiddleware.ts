@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config/env';
-import { logger } from '../utils/logger';
+import { createLogger } from '../utils/logger';
 
-const log = logger.child('Auth');
+const log = createLogger('Auth');
 
 // Basic API Key check
 // In production, use a more robust auth system (JWT, etc)

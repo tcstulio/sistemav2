@@ -6,9 +6,9 @@
 
 import axios from 'axios';
 import { DolibarrServiceBase, buildSqlFilter } from './core';
-import { logger } from '../../utils/logger';
+import { createLogger } from '../../utils/logger';
 
-const log = logger.child('DolibarrPartnerships');
+const log = createLogger('DolibarrPartnerships');
 
 /**
  * Venue Partnership extra fields structure

@@ -8,7 +8,9 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { approvalService, ActionType, ActionStatus } from '../services/approvalService';
 import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
+import { createLogger } from '../utils/logger';
 
+const log = createLogger('Approval');
 const router = Router();
 
 // Proteger todas as rotas de aprovação (leitura requer login, escrita requer admin)

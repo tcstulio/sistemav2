@@ -3,9 +3,12 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
-import { logger } from './utils/logger';
+import { createLogger } from './utils/logger';
+import { initSentry } from './utils/sentry';
 
-const log = logger.child('Server');
+initSentry();
+
+const log = createLogger('Server');
 import { config } from './config/env';
 import whatsappRoutes from './routes/whatsappRoutes';
 import schedulerRoutes from './routes/schedulerRoutes';
@@ -258,6 +261,12 @@ app.get('/health', async (req, res) => {
 // ===========================================
 import { errorHandler } from './middleware/errorHandler';
 app.use(errorHandler);
+
+import { getSentryRequestHandler } from './utils/sentry';
+const sentryErrorHandler = getSentryRequestHandler();
+if (sentryErrorHandler) {
+    sentryErrorHandler(app);
+}
 
 // Socket.io initialization
 import { socketService } from './services/socketService';

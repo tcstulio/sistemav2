@@ -1,11 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { bankingService, CSVFormat } from '../services/bankingService';
 import multer from 'multer';
-import { logger } from '../utils/logger';
+import { createLogger } from '../utils/logger';
 import { createFileFilter, validateFileUpload, containsExecutableCode, sanitizeFilename } from '../utils/fileValidation';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 
-const log = logger.child('BankingRoutes');
+const log = createLogger('Banking');
 const router = Router();
 
 // Protect all banking routes
@@ -57,7 +57,7 @@ router.post('/import/ofx', upload.single('file'), async (req: Request, res: Resp
             }
         });
     } catch (error: any) {
-        log.error('OFX import error', error);
+        log.error('OFX import error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message || 'Falha ao importar arquivo OFX' });
     }
 });
@@ -100,7 +100,7 @@ router.post('/import/csv', upload.single('file'), async (req: Request, res: Resp
             }
         });
     } catch (error: any) {
-        log.error('CSV import error', error);
+        log.error('CSV import error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message || 'Falha ao importar arquivo CSV' });
     }
 });
@@ -126,7 +126,7 @@ router.post('/import/auto', upload.single('file'), async (req: Request, res: Res
             }
         });
     } catch (error: any) {
-        log.error('Auto import error', error);
+        log.error('Auto import error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message || 'Falha ao importar arquivo' });
     }
 });
@@ -155,7 +155,7 @@ router.post('/analyze/categorize', async (req: Request, res: Response) => {
             data: categorized
         });
     } catch (error: any) {
-        log.error('Categorization error', error);
+        log.error('Categorization error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message || 'Falha ao categorizar transações' });
     }
 });
@@ -182,7 +182,7 @@ router.post('/analyze/anomalies', async (req: Request, res: Response) => {
             data: anomalies
         });
     } catch (error: any) {
-        log.error('Anomaly detection error', error);
+        log.error('Anomaly detection error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message || 'Falha ao detectar anomalias' });
     }
 });
@@ -214,7 +214,7 @@ router.post('/insights/cash-flow', async (req: Request, res: Response) => {
             data: insights
         });
     } catch (error: any) {
-        log.error('Cash flow insights error', error);
+        log.error('Cash flow insights error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message || 'Falha ao gerar insights' });
     }
 });
@@ -240,7 +240,7 @@ router.post('/insights/chart-data', async (req: Request, res: Response) => {
             data: chartData
         });
     } catch (error: any) {
-        log.error('Chart data error', error);
+        log.error('Chart data error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message || 'Falha ao gerar dados do gráfico' });
     }
 });
@@ -264,7 +264,7 @@ router.post('/reconcile/suggest', async (req: Request, res: Response) => {
             data: suggestions
         });
     } catch (error: any) {
-        log.error('Reconciliation suggestion error', error);
+        log.error('Reconciliation suggestion error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message || 'Falha ao sugerir conciliação' });
     }
 });
@@ -286,7 +286,7 @@ router.post('/reconcile/save', async (req: Request, res: Response) => {
             message: success ? 'Conciliação salva com sucesso' : 'Falha ao salvar conciliação'
         });
     } catch (error: any) {
-        log.error('Save reconciliation error', error);
+        log.error('Save reconciliation error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message || 'Falha ao salvar conciliação' });
     }
 });
@@ -312,7 +312,7 @@ router.post('/balance/calculate', async (req: Request, res: Response) => {
             data: result
         });
     } catch (error: any) {
-        log.error('Balance calculation error', error);
+        log.error('Balance calculation error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message || 'Falha ao calcular saldo' });
     }
 });

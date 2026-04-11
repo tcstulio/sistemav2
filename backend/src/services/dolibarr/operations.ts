@@ -6,9 +6,9 @@
 
 import axios from 'axios';
 import { DolibarrServiceBase, AddTimeSpentModel, buildLikeFilter, buildSqlFilter } from './core';
-import { logger } from '../../utils/logger';
+import { createLogger } from '../../utils/logger';
 
-const log = logger.child('DolibarrOperations');
+const log = createLogger('DolibarrOperations');
 
 export class DolibarrOperationsService extends DolibarrServiceBase {
 
