@@ -347,7 +347,7 @@ class ItauApiService extends BankingApiBase {
         const token = await this.getAccessToken();
         const baseUrl = this.getApiUrl('boleto');
 
-        const response = await this['axiosInstance']!({
+        const response = await this['axiosInstance']!.request({
             method: 'GET',
             url: `${baseUrl}/boletos/${nossoNumero}/pdf`,
             headers: {
@@ -388,7 +388,7 @@ class ItauApiService extends BankingApiBase {
         const token = await this.getAccessToken();
         const baseUrl = this.getApiUrl('banking');
 
-        const response = await this['axiosInstance']!({
+        const response = await this['axiosInstance']!.request({
             method: 'GET',
             url: `${baseUrl}/pagamentos/${idTransacao}/comprovante`,
             headers: {

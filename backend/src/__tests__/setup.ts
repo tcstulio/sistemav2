@@ -20,14 +20,25 @@ vi.mock('../utils/logger', () => ({
         warn: vi.fn(),
         error: vi.fn(),
         fatal: vi.fn(),
-        child: vi.fn(),
+        child: vi.fn(() => ({
+            debug: vi.fn(),
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+            fatal: vi.fn(),
+        })),
     },
     default: {
         debug: vi.fn(),
         info: vi.fn(),
         warn: vi.fn(),
         error: vi.fn(),
-        child: vi.fn(),
+        child: vi.fn(() => ({
+            debug: vi.fn(),
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+        })),
     },
 }));
 
@@ -56,7 +67,30 @@ vi.mock('axios', () => ({
             put: vi.fn(),
             delete: vi.fn(),
             patch: vi.fn(),
+            request: vi.fn(),
             interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
         })),
     },
+}));
+
+vi.mock('fs', () => ({
+    default: {
+        existsSync: vi.fn(() => true),
+        readFileSync: vi.fn(() => Buffer.from('test')),
+        writeFileSync: vi.fn(),
+        unlinkSync: vi.fn(),
+        readdirSync: vi.fn(() => []),
+        mkdirSync: vi.fn(),
+    },
+    existsSync: vi.fn(() => true),
+    readFileSync: vi.fn(() => Buffer.from('test')),
+    writeFileSync: vi.fn(),
+    unlinkSync: vi.fn(),
+    readdirSync: vi.fn(() => []),
+    mkdirSync: vi.fn(),
+}));
+
+vi.mock('https', () => ({
+    default: { Agent: vi.fn(() => ({})) },
+    Agent: vi.fn(() => ({})),
 }));
