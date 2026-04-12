@@ -1,0 +1,169 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import request from 'supertest';
+import express from 'express';
+
+const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
+
+const mockSchedulerService = vi.hoisted(() => ({
+    scheduleMessage: vi.fn(() => ({ id: 'msg-1', chatId: '123', message: 'test', scheduledAt: Date.now() })),
+    renderTemplate: vi.fn(() => 'Rendered message'),
+    getRules: vi.fn(() => []),
+    createRule: vi.fn(() => ({ id: 'rule-1' })),
+    deleteRule: vi.fn(() => true),
+    updateRule: vi.fn(() => ({ id: 'rule-1' })),
+    toggleRule: vi.fn(() => true),
+    getLogs: vi.fn(() => []),
+    addLog: vi.fn(),
+    getFlows: vi.fn(() => []),
+    createFlow: vi.fn(() => ({ id: 'flow-1' })),
+    deleteFlow: vi.fn(() => true),
+    toggleFlow: vi.fn(() => true),
+    getFlow: vi.fn(() => ({ id: 'flow-1' })),
+}));
+
+const mockDolibarrService = vi.hoisted(() => ({
+    getInvoice: vi.fn(() => ({})),
+    getThirdParty: vi.fn(() => ({ name: 'Test', phone: '5511999999999' })),
+    getTicket: vi.fn(() => ({})),
+    getOrder: vi.fn(() => ({})),
+}));
+
+const mockEmailService = vi.hoisted(() => ({
+    sendEmail: vi.fn(),
+}));
+
+const mockMessageService = vi.hoisted(() => ({
+    sendText: vi.fn(),
+}));
+
+vi.mock('../../middleware/authMiddleware', () => ({
+    requireDolibarrLogin: mockRequireDolibarrLogin,
+}));
+
+vi.mock('../../services/schedulerService', () => ({
+    schedulerService: mockSchedulerService,
+}));
+
+vi.mock('../../services/dolibarrService', () => ({
+    dolibarrService: mockDolibarrService,
+}));
+
+vi.mock('../../services/emailService', () => ({
+    emailService: mockEmailService,
+}));
+
+vi.mock('../../services/legacy/messageService', () => ({
+    messageService: mockMessageService,
+}));
+
+vi.mock('../../utils/logger', () => ({
+    createLogger: () => ({
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        fatal: vi.fn(),
+    }),
+}));
+
+import webhookRoutes from '../../routes/webhookRoutes';
+
+function createApp() {
+    const app = express();
+    app.use(express.json());
+    app.use('/api/webhooks', webhookRoutes);
+    return app;
+}
+
+describe('webhookRoutes', () => {
+    let app: express.Application;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        app = createApp();
+    });
+
+    describe('POST /api/webhooks/trigger', () => {
+        it('returns 200 with valid trigger request', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/trigger')
+                .send({ sessionId: 'default', chatId: '123', message: 'Hello' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+        });
+
+        it('returns 400 when missing sessionId or chatId', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/trigger')
+                .send({ message: 'Hello' });
+
+            expect(res.status).toBe(400);
+        });
+    });
+
+    describe('POST /api/webhooks/dolibarr/invoice', () => {
+        it('returns 200 when invoice found', async () => {
+            mockDolibarrService.getInvoice.mockResolvedValue({ id: '1', ref: 'FAC-001', socid: '1' });
+            mockDolibarrService.getThirdParty.mockResolvedValue({ name: 'Test', phone: '5511999999999' });
+
+            const res = await request(app)
+                .post('/api/webhooks/dolibarr/invoice')
+                .send({ invoiceId: '1', action: 'created', sessionId: 'default' });
+
+            expect(res.status).toBe(200);
+        });
+
+        it('returns 400 when missing invoiceId', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/dolibarr/invoice')
+                .send({});
+
+            expect(res.status).toBe(400);
+        });
+    });
+
+    describe('POST /api/webhooks/rules', () => {
+        it('returns 200 when rule created', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test Rule', event: 'invoice_created', sessionId: 'default' });
+
+            expect(res.status).toBe(200);
+        });
+
+        it('returns 400 when missing required fields', async () => {
+            const res = await request(app)
+                .post('/api/webhooks/rules')
+                .send({ name: 'Test Rule' });
+
+            expect(res.status).toBe(400);
+        });
+    });
+
+    describe('GET /api/webhooks/rules', () => {
+        it('returns 200', async () => {
+            const res = await request(app).get('/api/webhooks/rules');
+
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveProperty('data');
+        });
+    });
+
+    describe('DELETE /api/webhooks/rules/:id', () => {
+        it('returns 200 when rule deleted', async () => {
+            const res = await request(app).delete('/api/webhooks/rules/rule-1');
+
+            expect(res.status).toBe(200);
+        });
+    });
+
+    describe('GET /api/webhooks/variables', () => {
+        it('returns 200', async () => {
+            const res = await request(app).get('/api/webhooks/variables');
+
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveProperty('invoice_created');
+        });
+    });
+});
