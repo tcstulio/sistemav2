@@ -213,7 +213,8 @@ class MoltbotGateway {
                 status: wa.status || 'unknown',
                 phone: wa.phone || null,
                 uptime: status.uptime,
-                checkedAt: Date.now()
+                checkedAt: Date.now(),
+                error: wa.error
             };
         } catch (error: any) {
             return {
