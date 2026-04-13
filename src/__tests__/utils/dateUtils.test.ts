@@ -171,6 +171,25 @@ describe('dateUtils', () => {
             const result = formatDateLong(timestamp);
             expect(result).toMatch(/domingo|segunda|terça|quarta|quinta|sexta|sábado/i);
         });
+
+        it('returns dash for invalid string', () => {
+            expect(formatDateLong('not-a-valid-date')).toBe('-');
+        });
+
+        it('returns dash for empty string', () => {
+            expect(formatDateLong('')).toBe('-');
+        });
+
+        it('handles valid ISO date string', () => {
+            const result = formatDateLong('2024-01-01T12:00:00Z');
+            expect(result).not.toBe('-');
+        });
+
+        it('handles unix timestamp in seconds', () => {
+            const timestamp = 1704067200;
+            const result = formatDateLong(timestamp);
+            expect(result).not.toBe('-');
+        });
     });
 
     describe('formatRelativeTime', () => {
@@ -219,6 +238,25 @@ describe('dateUtils', () => {
             const tenDaysAgo = Date.now() - (10 * 24 * 60 * 60 * 1000);
             const result = formatRelativeTime(tenDaysAgo);
             expect(result).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+        });
+
+        it('returns dash for invalid string', () => {
+            expect(formatRelativeTime('not-a-valid-date')).toBe('-');
+        });
+
+        it('returns dash for empty string', () => {
+            expect(formatRelativeTime('')).toBe('-');
+        });
+
+        it('handles valid ISO date string', () => {
+            const result = formatRelativeTime('2024-01-10T12:00:00Z');
+            expect(result).not.toBe('-');
+        });
+
+        it('handles unix timestamp in seconds', () => {
+            const timestamp = 1705276800;
+            const result = formatRelativeTime(timestamp);
+            expect(result).not.toBe('-');
         });
     });
 
