@@ -1,67 +1,58 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { RestrictedAccess } from '../../components/RestrictedAccess';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { RestrictedAccess } from '../../components/RestrictedAccess';
+
+const mockNavigate = vi.fn();
+
+vi.mock('react-router-dom', async () => {
+    const actual = await vi.importActual('react-router-dom');
+    return {
+        ...actual,
+        useNavigate: () => mockNavigate,
+    };
+});
 
 describe('RestrictedAccess', () => {
-    it('renders with MemoryRouter', () => {
-        render(
-            <MemoryRouter>
-                <RestrictedAccess view="customers" />
-            </MemoryRouter>
-        );
-        expect(document.body.textContent).toBeTruthy();
+    beforeEach(() => {
+        vi.clearAllMocks();
     });
 
-    it('renders lock icon', () => {
+    it('renders access denied message with view name', () => {
         render(
             <MemoryRouter>
-                <RestrictedAccess view="customers" />
+                <RestrictedAccess view="Projects" />
             </MemoryRouter>
         );
-        expect(document.querySelector('.text-red-500')).toBeTruthy();
+        expect(screen.getByText('Acesso Restrito')).toBeInTheDocument();
+        expect(screen.getByText(/Projects/)).toBeInTheDocument();
     });
 
-    it('renders access denied title', () => {
+    it('renders with error message about the restricted view', () => {
         render(
             <MemoryRouter>
-                <RestrictedAccess view="customers" />
+                <RestrictedAccess view="Sales" />
             </MemoryRouter>
         );
-        expect(screen.getByText('Acesso Restrito')).toBeTruthy();
+        expect(screen.getByText(/módulo/i)).toBeInTheDocument();
     });
 
-    it('renders custom view name in message', () => {
+    it('renders Voltar ao Painel button', () => {
         render(
             <MemoryRouter>
-                <RestrictedAccess view="billing" />
+                <RestrictedAccess view="HR" />
             </MemoryRouter>
         );
-        expect(screen.getByText(/billing/)).toBeTruthy();
+        expect(screen.getByText('Voltar ao Painel')).toBeInTheDocument();
     });
 
-    it('renders back button', () => {
+    it('navigates to home when button is clicked', () => {
         render(
             <MemoryRouter>
-                <RestrictedAccess view="settings" />
+                <RestrictedAccess view="Finance" />
             </MemoryRouter>
         );
-        expect(screen.getByText('Voltar ao Painel')).toBeTruthy();
-    });
-
-    it('renders different view names correctly', () => {
-        const { rerender } = render(
-            <MemoryRouter>
-                <RestrictedAccess view="billing" />
-            </MemoryRouter>
-        );
-        expect(screen.getByText(/billing/)).toBeTruthy();
-
-        rerender(
-            <MemoryRouter>
-                <RestrictedAccess view="reports" />
-            </MemoryRouter>
-        );
-        expect(screen.getByText(/reports/)).toBeTruthy();
+        fireEvent.click(screen.getByText('Voltar ao Painel'));
+        expect(mockNavigate).toHaveBeenCalledWith('/');
     });
 });
