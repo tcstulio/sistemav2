@@ -315,5 +315,29 @@ describe('EmailService', () => {
 
             expect(result).toEqual(accounts);
         });
+
+        it('handles config without apiKey property', async () => {
+            const { safeStorage } = await import('../../utils/safeStorage');
+            vi.mocked(safeStorage.getItem).mockReturnValueOnce('{"other": "value"}');
+            
+            const accounts = [{ id: '1', email: 'test@example.com' }];
+            mockAxios.get.mockResolvedValue({ data: accounts });
+
+            const result = await EmailService.getAccounts();
+
+            expect(result).toEqual(accounts);
+        });
+
+        it('handles missing config', async () => {
+            const { safeStorage } = await import('../../utils/safeStorage');
+            vi.mocked(safeStorage.getItem).mockReturnValueOnce(null);
+            
+            const accounts = [{ id: '1', email: 'test@example.com' }];
+            mockAxios.get.mockResolvedValue({ data: accounts });
+
+            const result = await EmailService.getAccounts();
+
+            expect(result).toEqual(accounts);
+        });
     });
 });

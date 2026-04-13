@@ -1,52 +1,41 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { NotFound } from '../../components/NotFound';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { NotFound } from '../../components/NotFound';
+
+const mockNavigate = vi.fn();
+
+vi.mock('react-router-dom', async () => {
+    const actual = await vi.importActual('react-router-dom');
+    return {
+        ...actual,
+        useNavigate: () => mockNavigate,
+    };
+});
 
 describe('NotFound', () => {
-    it('renders with MemoryRouter', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('renders default title and message', () => {
         render(
             <MemoryRouter>
                 <NotFound />
             </MemoryRouter>
         );
-        expect(document.body.textContent).toBeTruthy();
+        expect(screen.getByText('Página não encontrada')).toBeInTheDocument();
+        expect(screen.getByText('A página que você está procurando não existe ou foi movida.')).toBeInTheDocument();
     });
 
-    it('renders default title', () => {
+    it('renders custom title and message', () => {
         render(
             <MemoryRouter>
-                <NotFound />
+                <NotFound title="Custom Title" message="Custom Message" />
             </MemoryRouter>
         );
-        expect(screen.getByText('Página não encontrada')).toBeTruthy();
-    });
-
-    it('renders default message', () => {
-        render(
-            <MemoryRouter>
-                <NotFound />
-            </MemoryRouter>
-        );
-        expect(screen.getByText(/A página que você está procurando/)).toBeTruthy();
-    });
-
-    it('renders custom title', () => {
-        render(
-            <MemoryRouter>
-                <NotFound title="Custom Not Found" />
-            </MemoryRouter>
-        );
-        expect(screen.getByText('Custom Not Found')).toBeTruthy();
-    });
-
-    it('renders custom message', () => {
-        render(
-            <MemoryRouter>
-                <NotFound message="Custom message" />
-            </MemoryRouter>
-        );
-        expect(screen.getByText('Custom message')).toBeTruthy();
+        expect(screen.getByText('Custom Title')).toBeInTheDocument();
+        expect(screen.getByText('Custom Message')).toBeInTheDocument();
     });
 
     it('renders 404 text', () => {
@@ -55,35 +44,56 @@ describe('NotFound', () => {
                 <NotFound />
             </MemoryRouter>
         );
-        expect(screen.getByText('404')).toBeTruthy();
+        expect(screen.getByText('404')).toBeInTheDocument();
     });
 
-    it('renders navigation buttons', () => {
+    it('renders Voltar button', () => {
         render(
             <MemoryRouter>
                 <NotFound />
             </MemoryRouter>
         );
-        expect(screen.getByText('Voltar')).toBeTruthy();
-        expect(screen.getByText('Ir para o início')).toBeTruthy();
+        expect(screen.getByText('Voltar')).toBeInTheDocument();
     });
 
-    it('renders popular pages links', () => {
+    it('renders Ir para o início button', () => {
         render(
             <MemoryRouter>
                 <NotFound />
             </MemoryRouter>
         );
-        expect(screen.getByText('Dashboard')).toBeTruthy();
-        expect(screen.getByText('Clientes')).toBeTruthy();
+        expect(screen.getByText('Ir para o início')).toBeInTheDocument();
     });
 
-    it('renders popular pages even when showSearch is false (showSearch prop is unused)', () => {
+    it('navigates to home when Ir para o início is clicked', () => {
         render(
             <MemoryRouter>
-                <NotFound showSearch={false} />
+                <NotFound />
             </MemoryRouter>
         );
-        expect(screen.getByText('Dashboard')).toBeTruthy();
+        fireEvent.click(screen.getByText('Ir para o início'));
+        expect(mockNavigate).toHaveBeenCalledWith('/');
+    });
+
+    it('renders popular pages section', () => {
+        render(
+            <MemoryRouter>
+                <NotFound />
+            </MemoryRouter>
+        );
+        expect(screen.getByText('Páginas populares:')).toBeInTheDocument();
+        expect(screen.getByText('Dashboard')).toBeInTheDocument();
+        expect(screen.getByText('Clientes')).toBeInTheDocument();
+    });
+
+    it('renders popular pages buttons that navigate', () => {
+        render(
+            <MemoryRouter>
+                <NotFound />
+            </MemoryRouter>
+        );
+        const dashboardButton = screen.getByText('Dashboard');
+        fireEvent.click(dashboardButton);
+        expect(mockNavigate).toHaveBeenCalledWith('/');
     });
 });
