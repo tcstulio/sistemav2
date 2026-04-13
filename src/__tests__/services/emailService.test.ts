@@ -302,4 +302,18 @@ describe('EmailService', () => {
             expect(result).toEqual(store);
         });
     });
+
+    describe('getHeaders error handling', () => {
+        it('handles corrupted config gracefully', async () => {
+            const { safeStorage } = await import('../../utils/safeStorage');
+            vi.mocked(safeStorage.getItem).mockReturnValueOnce('invalid-json{');
+            
+            const accounts = [{ id: '1', email: 'test@example.com' }];
+            mockAxios.get.mockResolvedValue({ data: accounts });
+
+            const result = await EmailService.getAccounts();
+
+            expect(result).toEqual(accounts);
+        });
+    });
 });
