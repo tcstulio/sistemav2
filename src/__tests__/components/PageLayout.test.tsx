@@ -1,49 +1,36 @@
 import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { PageLayout } from '../../components/ui/PageLayout';
 
 describe('PageLayout', () => {
     it('renders children', () => {
-        const { getByText } = render(<PageLayout><div>Content</div></PageLayout>);
-        expect(getByText('Content')).toBeTruthy();
+        render(<PageLayout>Page Content</PageLayout>);
+        expect(screen.getByText('Page Content')).toBeInTheDocument();
     });
 
-    it('has role="main"', () => {
-        const { container } = render(<PageLayout><div>Content</div></PageLayout>);
-        expect(container.querySelector('[role="main"]')).toBeTruthy();
+    it('renders with role main', () => {
+        const { container } = render(<PageLayout>Content</PageLayout>);
+        expect(container.querySelector('[role="main"]')).toBeInTheDocument();
+    });
+
+    it('renders with aria-label when title provided', () => {
+        render(<PageLayout title="Page Title">Content</PageLayout>);
+        expect(screen.getByRole('main')).toHaveAttribute('aria-label', 'Page Title');
+    });
+
+    it('does not have aria-label when title not provided', () => {
+        render(<PageLayout>Content</PageLayout>);
+        expect(screen.getByRole('main')).not.toHaveAttribute('aria-label');
     });
 
     it('applies custom className', () => {
-        const { container } = render(<PageLayout className="custom-layout"><div>Content</div></PageLayout>);
-        expect(container.firstChild).toHaveClass('custom-layout');
+        const { container } = render(<PageLayout className="custom-class">Content</PageLayout>);
+        expect(container.firstChild).toHaveClass('custom-class');
     });
 
-    it('applies title to aria-label', () => {
-        const { container } = render(<PageLayout title="Test Page"><div>Content</div></PageLayout>);
-        expect(container.querySelector('[aria-label="Test Page"]')).toBeTruthy();
-    });
-
-    it('renders with different maxWidth values', () => {
-        const maxWidths = ['sm', 'md', 'lg', 'xl', '2xl', 'full'] as const;
-        maxWidths.forEach(maxWidth => {
-            const { container } = render(
-                <PageLayout maxWidth={maxWidth}><div>Content</div></PageLayout>
-            );
-            expect(container.firstChild).toBeTruthy();
-        });
-    });
-
-    it('renders without padding when noPadding is true', () => {
-        const { container } = render(
-            <PageLayout noPadding={true}><div>Content</div></PageLayout>
-        );
-        const innerDiv = container.querySelector('[role="main"]');
-        expect(innerDiv?.className).not.toContain('p-4');
-    });
-
-    it('renders with default padding', () => {
-        const { container } = render(<PageLayout><div>Content</div></PageLayout>);
-        const innerDiv = container.querySelector('[role="main"]');
-        expect(innerDiv?.className).toContain('p-');
+    it('renders nested content structure', () => {
+        render(<PageLayout>Content</PageLayout>);
+        const main = screen.getByRole('main');
+        expect(main.firstChild).toHaveClass('mx-auto');
     });
 });

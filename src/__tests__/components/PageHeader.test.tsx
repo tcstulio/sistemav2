@@ -1,63 +1,63 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { PageHeader } from '../../components/ui/PageHeader';
-import { Button } from '../../components/ui/Button';
 
 describe('PageHeader', () => {
     it('renders title', () => {
         render(<PageHeader title="Page Title" />);
-        expect(screen.getByText('Page Title')).toBeTruthy();
+        expect(screen.getByText('Page Title')).toBeInTheDocument();
     });
 
     it('renders subtitle when provided', () => {
-        render(<PageHeader title="Title" subtitle="Page subtitle" />);
-        expect(screen.getByText('Page subtitle')).toBeTruthy();
+        render(<PageHeader title="Title" subtitle="Page Subtitle" />);
+        expect(screen.getByText('Page Subtitle')).toBeInTheDocument();
+    });
+
+    it('does not render subtitle when not provided', () => {
+        const { container } = render(<PageHeader title="Title" />);
+        expect(container.querySelector('p')).not.toBeInTheDocument();
     });
 
     it('renders actions when provided', () => {
         render(
             <PageHeader
                 title="Title"
-                actions={<Button>Action</Button>}
+                actions={<button>Action</button>}
             />
         );
-        expect(screen.getByText('Action')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Action' })).toBeInTheDocument();
     });
 
-    it('shows back button when onBack is provided', () => {
-        render(<PageHeader title="Title" onBack={vi.fn()} />);
-        const backButton = document.querySelector('button');
-        expect(backButton).toBeTruthy();
-    });
-
-    it('does not show back button when onBack is not provided', () => {
-        render(<PageHeader title="Title" />);
-        const buttons = document.querySelectorAll('button');
-        expect(buttons.length).toBe(0);
-    });
-
-    it('calls onBack when back button is clicked', () => {
+    it('renders back button when onBack is provided', () => {
         const handleBack = vi.fn();
         render(<PageHeader title="Title" onBack={handleBack} />);
-        const backButton = document.querySelector('button');
-        backButton?.click();
+        const backButton = screen.getByRole('button');
+        fireEvent.click(backButton);
         expect(handleBack).toHaveBeenCalled();
     });
 
-    it('renders with custom className', () => {
-        const { container } = render(
-            <PageHeader title="Title" className="custom-header" />
-        );
-        expect(container.firstChild).toHaveClass('custom-header');
+    it('does not render back button when onBack is not provided', () => {
+        render(<PageHeader title="Title" />);
+        expect(screen.queryByRole('button')).not.toBeInTheDocument();
     });
 
     it('renders tabs when provided', () => {
         render(
             <PageHeader
                 title="Title"
-                tabs={<div data-testid="tabs">Tab Content</div>}
+                tabs={<div>Tab Content</div>}
             />
         );
-        expect(screen.getByTestId('tabs')).toBeTruthy();
+        expect(screen.getByText('Tab Content')).toBeInTheDocument();
+    });
+
+    it('applies custom className', () => {
+        const { container } = render(<PageHeader title="Title" className="custom-class" />);
+        expect(container.firstChild).toHaveClass('custom-class');
+    });
+
+    it('renders with ReactNode title', () => {
+        render(<PageHeader title={<span>React Title</span>} />);
+        expect(screen.getByText('React Title')).toBeInTheDocument();
     });
 });

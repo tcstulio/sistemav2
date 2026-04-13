@@ -6,75 +6,76 @@ describe('MasterDetailLayout', () => {
     it('renders list content', () => {
         render(
             <MasterDetailLayout
-                list={<div data-testid="list">List Content</div>}
+                list={<div>List Content</div>}
+                detail={<div>Detail Content</div>}
+                showDetail={false}
             />
         );
-        expect(screen.getByTestId('list')).toBeTruthy();
+        expect(screen.getByText('List Content')).toBeInTheDocument();
     });
 
-    it('renders detail content when showDetail is true', () => {
+    it('renders detail when showDetail is true', () => {
         render(
             <MasterDetailLayout
-                list={<div data-testid="list">List</div>}
-                detail={<div data-testid="detail">Detail Content</div>}
+                list={<div>List Content</div>}
+                detail={<div>Detail Content</div>}
                 showDetail={true}
             />
         );
-        expect(screen.getByTestId('detail')).toBeTruthy();
+        expect(screen.getByText('Detail Content')).toBeInTheDocument();
     });
 
     it('does not render detail when showDetail is false', () => {
         render(
             <MasterDetailLayout
-                list={<div data-testid="list">List</div>}
-                detail={<div data-testid="detail">Detail</div>}
+                list={<div>List Content</div>}
+                detail={<div>Detail Content</div>}
                 showDetail={false}
             />
         );
-        expect(screen.queryByTestId('detail')).toBeNull();
+        expect(screen.queryByText('Detail Content')).not.toBeInTheDocument();
     });
 
-    it('shows empty state when no detail selected on desktop', () => {
+    it('does not render detail when detail is undefined', () => {
         render(
             <MasterDetailLayout
-                list={<div data-testid="list">List</div>}
+                list={<div>List Content</div>}
+                showDetail={true}
+            />
+        );
+        expect(screen.queryByText('Selecione um item para ver detalhes')).toBeInTheDocument();
+    });
+
+    it('shows empty state when no detail on desktop', () => {
+        render(
+            <MasterDetailLayout
+                list={<div>List Content</div>}
                 showDetail={false}
             />
         );
-        expect(screen.getByText(/Selecione um item/)).toBeTruthy();
+        expect(screen.getByText('Selecione um item para ver detalhes')).toBeInTheDocument();
     });
 
-    it('accepts listWidth prop', () => {
+    it('applies custom className', () => {
         const { container } = render(
             <MasterDetailLayout
-                list={<div data-testid="list">List</div>}
-                detail={<div data-testid="detail">Detail</div>}
+                list={<div>List</div>}
+                className="custom-class"
+            />
+        );
+        expect(container.firstChild).toHaveClass('custom-class');
+    });
+
+    it('renders with listWidth prop', () => {
+        const { container } = render(
+            <MasterDetailLayout
+                list={<div>List</div>}
+                detail={<div>Detail</div>}
                 showDetail={true}
                 listWidth="1/2"
             />
         );
-        expect(container.firstChild).toBeTruthy();
+        expect(container.firstChild).toBeInTheDocument();
     });
 
-    it('accepts custom className', () => {
-        const { container } = render(
-            <MasterDetailLayout
-                list={<div data-testid="list">List</div>}
-                className="custom-layout"
-            />
-        );
-        expect(container.firstChild).toHaveClass('custom-layout');
-    });
-
-    it('accepts hideListOnDetail prop', () => {
-        const { container } = render(
-            <MasterDetailLayout
-                list={<div data-testid="list">List</div>}
-                detail={<div data-testid="detail">Detail</div>}
-                showDetail={true}
-                hideListOnDetail={true}
-            />
-        );
-        expect(container.firstChild).toBeTruthy();
-    });
 });
