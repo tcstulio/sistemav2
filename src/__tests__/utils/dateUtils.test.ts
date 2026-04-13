@@ -128,6 +128,16 @@ describe('dateUtils', () => {
             const result = formatDateOnly('2024-01-01');
             expect(result).not.toBe('-');
         });
+
+        it('returns dash for invalid string', () => {
+            expect(formatDateOnly('not-a-valid-date')).toBe('-');
+        });
+
+        it('handles timestamp in milliseconds', () => {
+            const timestamp = 1704067200000;
+            const result = formatDateOnly(timestamp);
+            expect(result).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+        });
     });
 
     describe('formatDateLocal', () => {
@@ -147,6 +157,16 @@ describe('dateUtils', () => {
 
         it('handles string input', () => {
             const result = formatDateLocal('2024-01-01');
+            expect(result).not.toBe('-');
+        });
+
+        it('returns dash for invalid string', () => {
+            expect(formatDateLocal('not-a-valid-date')).toBe('-');
+        });
+
+        it('handles timestamp in milliseconds', () => {
+            const timestamp = 1704067200000;
+            const result = formatDateLocal(timestamp);
             expect(result).not.toBe('-');
         });
     });
@@ -187,6 +207,12 @@ describe('dateUtils', () => {
 
         it('handles unix timestamp in seconds', () => {
             const timestamp = 1704067200;
+            const result = formatDateLong(timestamp);
+            expect(result).not.toBe('-');
+        });
+
+        it('handles timestamp in milliseconds', () => {
+            const timestamp = 1704067200000;
             const result = formatDateLong(timestamp);
             expect(result).not.toBe('-');
         });
@@ -278,6 +304,16 @@ describe('dateUtils', () => {
         it('handles string input', () => {
             const result = formatTime('2024-01-01T15:30:00Z');
             expect(result).not.toBe('-');
+        });
+
+        it('returns dash for invalid string', () => {
+            expect(formatTime('not-a-valid-date')).toBe('-');
+        });
+
+        it('handles timestamp in milliseconds', () => {
+            const timestamp = 1704067200000;
+            const result = formatTime(timestamp);
+            expect(result).toMatch(/^\d{2}:\d{2}$/);
         });
     });
 });
