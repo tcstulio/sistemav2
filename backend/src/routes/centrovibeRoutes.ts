@@ -343,8 +343,8 @@ router.post('/scraper/run', async (req, res) => {
         res.status(202).json({ message: 'Scrape started', status: { ...status, isRunning: true } });
 
         // Execute in background
-        eventScraperService.runScrape().catch(err => {
-            log.error('Background scrape error', { error: err.message, stack: err.stack });
+        eventScraperService.runScrape().catch((err: any) => {
+            log.error('Background scrape error', { error: err?.message, stack: err?.stack });
         });
     } catch (error: any) {
         log.error('Scraper run error', { error: error.message, stack: error.stack });

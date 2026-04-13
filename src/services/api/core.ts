@@ -76,32 +76,34 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
     try {
         const response = await fetch(proxyUrl, options);
 
-        if (!response.ok) {
-            let errorMsg = `Erro Proxy HTTP ${response.status}`;
-            try {
-                const errorData = await response.json();
-                errorMsg = typeof errorData === 'object' ? JSON.stringify(errorData) : errorData;
-            } catch (e) {
-                errorMsg = await response.text();
-            }
+            if (!response.ok) {
+                let errorMsg = `Erro Proxy HTTP ${response.status}`;
+                try {
+                    const errorData = await response.json();
+                    errorMsg = typeof errorData === 'object' ? JSON.stringify(errorData) : errorData;
+                } catch (e) {
+                    const text = await response.text();
+                    if (text && text.trim() && !text.trim().toLowerCase().includes('not found') && !text.trim().toLowerCase().includes('unauthorized') && !text.trim().toLowerCase().includes('forbidden')) {
+                        errorMsg = text;
+                    }
+                }
 
-            log.error(`Proxy error: ${errorMsg}`);
+                log.error(`Proxy error: ${errorMsg}`);
 
-            // Log error
-            dbService.add('api_logs', {
-                id: generateUUID(),
-                timestamp: Date.now(),
-                type: 'DOLIBARR_API',
-                endpoint_or_task: `${method} ${path}`,
-                input_context: proxyUrl,
-                request_method: method,
-                request_body: requestBody,
-                output_data: errorMsg,
-                status: 'error',
-                duration_ms: Date.now() - startTime
-            }).catch(() => { });
+                dbService.add('api_logs', {
+                    id: generateUUID(),
+                    timestamp: Date.now(),
+                    type: 'DOLIBARR_API',
+                    endpoint_or_task: `${method} ${path}`,
+                    input_context: proxyUrl,
+                    request_method: method,
+                    request_body: requestBody,
+                    output_data: errorMsg,
+                    status: 'error',
+                    duration_ms: Date.now() - startTime
+                }).catch(() => { });
 
-            throw new Error(errorMsg);
+                throw new Error(errorMsg);
         }
 
         if (response.status === 204) return null;
