@@ -246,6 +246,7 @@ export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoice
             toast.error("Selecione um fornecedor.");
             return;
         }
+        if (!config) return;
 
         setIsProcessing(true);
         try {
@@ -310,6 +311,7 @@ export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoice
         const item = items[idx];
         const confirm = window.confirm(`Deseja criar o produto "${item.desc}" automaticamente?`);
         if (!confirm) return;
+        if (!config) return;
 
         try {
             const newId = await DolibarrService.createProduct(config, {

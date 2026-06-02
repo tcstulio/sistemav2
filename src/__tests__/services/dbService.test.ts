@@ -12,6 +12,11 @@ import { dbService, DB_NAME, DB_VERSION } from '../../services/dbService';
 // that conflict with the global test setup. Skipped pending proper fix.
 // All functionality is exercised via integration tests.
 describe.skip('dbService', () => {
+    const mockIndexedDB = {
+        open: vi.fn(),
+        deleteDatabase: vi.fn()
+    };
+
     beforeEach(() => {
         vi.clearAllMocks();
         dbService.dbPromise = null;
@@ -20,7 +25,7 @@ describe.skip('dbService', () => {
     describe('open', () => {
         it('creates a new database connection', async () => {
             const mockDB = { objectStoreNames: { contains: () => false } };
-            const mockRequest = {
+            const mockRequest: any = {
                 onupgradeneeded: null,
                 onsuccess: null,
                 onerror: null,
@@ -254,12 +259,12 @@ describe.skip('dbService', () => {
 
     describe('deleteDatabase', () => {
         it('deletes the database', async () => {
-            const mockRequest = {
+            const mockRequest: any = {
                 onsuccess: null,
                 onerror: null
             };
             mockIndexedDB.deleteDatabase.mockReturnValue(mockRequest);
-            
+
             const promise = dbService.deleteDatabase();
             mockRequest.onsuccess();
             

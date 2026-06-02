@@ -36,7 +36,7 @@ describe('API Core', () => {
 
         it('uses crypto.randomUUID when available', () => {
             const crypto = global.crypto;
-            if (crypto && crypto.randomUUID) {
+            if (crypto && typeof crypto.randomUUID === 'function') {
                 const uuid = core.generateUUID();
                 expect(uuid).toBeDefined();
             }

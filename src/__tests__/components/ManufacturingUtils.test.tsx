@@ -8,29 +8,21 @@ describe('Manufacturing utils', () => {
         id,
         label,
         price,
-        description: null,
+        description: undefined,
         ref: `PROD-${id}`,
-        price_variazione: 0,
-        barsize: null,
-        barcode: null,
-        fk_product_type: 0,
-        price_min: 0,
-        price_min_ttc: 0,
-        status: 1
+        type: '0',
+        price_ttc: price,
+        stock_reel: 0
     });
 
     const createMockProject = (id: string, title: string): Project => ({
         id,
         ref: `PRJ-${id}`,
         title,
-        description: null,
-        statu: '1',
-        date_c: Date.now(),
-        date_end: null,
-        socid: null,
-        public: '0',
-        contact_id: null,
-        assigned_users: []
+        socid: '1',
+        statut: '1',
+        progress: 0,
+        date_creation: Date.now()
     });
 
     describe('getProductName', () => {
