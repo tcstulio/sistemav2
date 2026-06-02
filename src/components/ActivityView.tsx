@@ -125,14 +125,15 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
     const actionTypes = useMemo(() => {
         const types = new Set<string>();
         systemLogs.forEach(log => {
-            if (log.type_code) types.add(log.type_code);
+            if (log.type_code && log.type_code.toUpperCase() !== 'AC_CHAT') types.add(log.type_code);
         });
         return Array.from(types).sort();
     }, [systemLogs]);
 
     // Filter and sort logs
     const filteredLogs = useMemo(() => {
-        let logs = systemLogs;
+        // Chat messages (AC_CHAT) are conversations, not system activity — keep them out of the activity feed.
+        let logs = systemLogs.filter(log => log.type_code?.toUpperCase() !== 'AC_CHAT');
 
         // 1. User Filter
         if (filterUser !== 'all') {
