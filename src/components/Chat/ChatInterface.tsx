@@ -148,7 +148,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                 duration: 0,
                 description: finalMessage,
                 note: finalMessage,
-                type_code: 'AC_OTH',
+                type_code: 'AC_CHAT',
                 elementtype: elementType,
                 fk_element: elementId,
                 socid: 0,
