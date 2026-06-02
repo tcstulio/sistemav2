@@ -156,6 +156,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
 
     const handleCreateAccount = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!config) return;
         if (!newAccountForm.label || !newAccountForm.bank) return;
         setIsCreating(true);
         try {
@@ -173,6 +174,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
 
     const handleTransfer = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!config) return;
         if (!transferForm.fromId || !transferForm.toId || !transferForm.amount) return;
         setIsSubmitting(true);
         try {
@@ -186,6 +188,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
 
     const handleAddLine = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!config) return;
         if (!selectedAccount || !addLineForm.amount) return;
         setIsSubmitting(true);
         try {

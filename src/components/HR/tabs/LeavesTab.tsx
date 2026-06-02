@@ -128,7 +128,7 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
                         <div key={leave.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
                             <div className="flex items-start gap-3">
                                 <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg">
-                                    {getLeaveIcon(leave.type)}
+                                    {getLeaveIcon(leave.type || '')}
                                 </div>
                                 <div>
                                     <div className="flex items-center gap-2">

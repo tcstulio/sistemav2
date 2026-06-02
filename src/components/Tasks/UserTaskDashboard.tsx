@@ -722,7 +722,7 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                                 projects={projects || []}
                                 tasks={tasks || []}
                                 users={allUsers || []}
-                                currentUser={user}
+                                currentUser={user || undefined}
                             />
                         </div>
                     ) : (

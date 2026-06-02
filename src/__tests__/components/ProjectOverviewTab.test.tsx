@@ -22,15 +22,11 @@ describe('ProjectOverviewTab', () => {
         id: '1',
         ref: 'PRJ-001',
         title: 'Projeto Teste',
-        description: null,
-        statu: '1',
-        date_c: Date.now(),
+        statut: '1',
+        date_creation: Date.now(),
         date_start: Date.now(),
-        date_end: null,
+        date_end: undefined,
         socid: '1',
-        public: '0',
-        contact_id: null,
-        assigned_users: [],
         progress: 50,
         ...overrides
     });

@@ -15,12 +15,16 @@ describe('ProjectTicketsTab', () => {
     const createMockTicket = (id: string, overrides: Partial<Ticket> = {}): Ticket => ({
         id,
         ref: `TKT-${id}`,
+        track_id: `track-${id}`,
         subject: `Ticket ${id}`,
         message: 'This is a test message for the ticket',
         type_code: 'ISSUE',
+        category_code: 'GENERAL',
         severity_code: 'HIGH',
         statut: '1',
-        date: Date.now(),
+        progress: '0',
+        datec: Date.now(),
+        tms: Date.now(),
         ...overrides
     });
 

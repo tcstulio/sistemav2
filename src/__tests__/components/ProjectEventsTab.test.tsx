@@ -12,9 +12,11 @@ describe('ProjectEventsTab', () => {
 
     const createMockEvent = (id: string, overrides: Partial<AgendaEvent> = {}): AgendaEvent => ({
         id,
+        ref: `EVT-${id}`,
         label: `Event ${id}`,
-        date_start: '2024-01-15',
-        date_end: '2024-01-16',
+        type_code: 'AC_OTH',
+        date_start: new Date('2024-01-15').getTime() / 1000,
+        date_end: new Date('2024-01-16').getTime() / 1000,
         percentage: 0,
         location: '',
         description: '',

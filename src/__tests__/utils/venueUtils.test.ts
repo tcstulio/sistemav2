@@ -12,8 +12,14 @@ describe('venue utils', () => {
         pricing: { weekday: 1000, weekend: 2000, corporate: 1500, party: null, cultural: 800, partnership: null, package: null },
         status: '1',
         description: null,
-        date_create: Date.now(),
-        date_modification: null,
+        typeCode: 'tipo_chique',
+        typeLabel: 'Alto Padrão',
+        fkSoc: '1',
+        startDate: Date.now(),
+        notes: null,
+        includedServices: [],
+        createdAt: Date.now(),
+        updatedAt: new Date().toISOString(),
         ...overrides
     });
 

@@ -14,10 +14,12 @@ describe('CreateProjectModal', () => {
     const createMockCustomer = (id: string, name: string): ThirdParty => ({
         id,
         name,
-        status: 1,
-        email: null,
-        phone: null,
-        phone_mobile: null
+        status: '1',
+        client: '1',
+        fournisseur: '0',
+        email: undefined,
+        phone: undefined,
+        phone_mobile: undefined
     });
 
     it('renders nothing when isOpen is false', () => {
