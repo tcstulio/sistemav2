@@ -28,9 +28,10 @@ const ticketStatuses: Record<string, StatusConfig> = {
 interface TicketListProps {
     onNavigate?: (view: AppView, id: string) => void;
     onRefresh?: () => void;
+    initialItemId?: string;
 }
 
-const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
+const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialItemId }) => {
     const { config } = useDolibarr();
     const { data: ticketsData } = useTickets(config);
     const tickets = ticketsData || [];
@@ -89,6 +90,14 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [selectedTicket, localHistory, remoteEvents]);
 
+    // Open ticket detail when navigated via route (e.g. global search → /tickets/:id)
+    useEffect(() => {
+        if (initialItemId && tickets.length > 0) {
+            const target = tickets.find(t => String(t.id) === String(initialItemId));
+            if (target) setSelectedTicket(target);
+        }
+    }, [initialItemId, tickets]);
+
     // Robust Customer Name Resolution
     const getCustomerName = (ticket: Ticket) => {
         const c = customers.find(cust => String(cust.id) === String(ticket.socid));
@@ -134,7 +143,9 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
         });
 
         return result.sort((a, b) => {
-            return sortOrder === 'desc' ? b.date_c - a.date_c : a.date_c - b.date_c;
+            const da = a.date_c || 0;
+            const db = b.date_c || 0;
+            return sortOrder === 'desc' ? db - da : da - db;
         });
     }, [tickets, searchTerm, filterStatus, viewMode, sortOrder, config]);
 
@@ -300,7 +311,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
                                 className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    if (onNavigate) onNavigate('customers', t.socid);
+                                    if (onNavigate) onNavigate('customers', t.socid || '');
                                 }}
                             >
                                 {getCustomerName(t)}
@@ -345,7 +356,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh }) => {
                     <span className="flex flex-col sm:flex-row sm:items-center gap-3">
                         <span
                             className="text-xs text-slate-500 flex items-center gap-1 cursor-pointer hover:underline hover:text-indigo-600 dark:hover:text-indigo-400"
-                            onClick={() => onNavigate && onNavigate('customers', selectedTicket.socid)}
+                            onClick={() => onNavigate && onNavigate('customers', selectedTicket.socid || '')}
                         >
                             <User size={10} /> {getCustomerName(selectedTicket)}
                         </span>
