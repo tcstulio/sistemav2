@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('virtual:vitest/module', () => ({
     'import.meta.env': { PROD: false },
-}), { virtual: true });
+}));
 
-import { logger, FrontendLogger } from '../../utils/logger';
+import { logger } from '../../utils/logger';
 
 describe('logger', () => {
     let consoleDebugSpy: ReturnType<typeof vi.spyOn>;

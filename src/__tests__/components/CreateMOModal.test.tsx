@@ -19,8 +19,8 @@ const mockConfig: DolibarrConfig = {
 };
 
 const mockProducts: Product[] = [
-    { id: '1', label: 'Produto A', price: 100, type: '0' as any },
-    { id: '2', label: 'Produto B', price: 200, type: '0' as any },
+    { id: '1', ref: 'PROD-1', label: 'Produto A', price: 100, type: '0' as any },
+    { id: '2', ref: 'PROD-2', label: 'Produto B', price: 200, type: '0' as any },
 ];
 
 const mockProjects: Project[] = [

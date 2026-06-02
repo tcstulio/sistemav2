@@ -61,7 +61,7 @@ const CentroVibeManager = React.lazy(() => import('./CentroVibe/CentroVibeManage
 
 interface ViewWrapperProps {
     Component: React.ComponentType<{
-        config: DolibarrConfig | null;
+        config: DolibarrConfig;
         onNavigate: (view: string, id?: string) => void;
         initialItemId?: string;
         onRefresh: (options?: { forceFull?: boolean; limit?: number; page?: number; query?: string }) => Promise<void>;
@@ -85,6 +85,8 @@ const ViewWrapper: React.FC<ViewWrapperProps> = ({ Component, viewId, passProps 
         if (itemId) navigate(`/${view}/${itemId}`);
         else navigate(`/${view}`);
     };
+
+    if (!config) return null;
 
     return (
         <Component

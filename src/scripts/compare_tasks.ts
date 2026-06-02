@@ -40,7 +40,7 @@ async function compareTaskData() {
                 const res2 = await axiosInstance.get(`${API_URL}/tasks/${TASK_ID}`);
                 standardTask = res2.data;
             } catch (innerE) {
-                console.error("   Failed to fetch from Standard API:", innerE.message);
+                console.error("   Failed to fetch from Standard API:", (innerE as Error).message);
             }
         }
 
@@ -66,7 +66,7 @@ async function compareTaskData() {
             if (resCustom.data && Array.isArray(resCustom.data.data)) {
                 const allTasks = resCustom.data.data;
                 // Find the task with the matching ID
-                customTask = allTasks.find(t => String(t.id) === String(TASK_ID));
+                customTask = allTasks.find((t: any) => String(t.id) === String(TASK_ID));
 
                 if (customTask) {
                     console.log("   ✅ Custom Sync Data Received (Found in list)");
@@ -78,7 +78,7 @@ async function compareTaskData() {
             }
 
         } catch (e) {
-            console.error("   Failed to fetch from Custom Sync:", e.message);
+            console.error("   Failed to fetch from Custom Sync:", (e as Error).message);
         }
 
         console.log('--------------------------------------------------');
@@ -103,7 +103,7 @@ async function compareTaskData() {
                 if (valStandard === null) valStandard = "(null)";
 
                 // Truncate long strings
-                const format = (v) => String(v).replace(/\n/g, ' ').substring(0, 30).padEnd(35);
+                const format = (v: any) => String(v).replace(/\n/g, ' ').substring(0, 30).padEnd(35);
 
                 console.log(`${field.padEnd(14)} | ${format(valCustom)}| ${format(valStandard)}`);
             });

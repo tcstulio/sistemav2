@@ -19,8 +19,8 @@ const mockConfig: DolibarrConfig = {
 };
 
 const mockUsers: DolibarrUser[] = [
-    { id: '1', login: 'jose.silva', lastname: 'Silva', firstname: 'José', email: 'jose@test.com', entity: 1, active: 1 },
-    { id: '2', login: 'maria.santos', lastname: 'Santos', firstname: 'Maria', email: 'maria@test.com', entity: 1, active: 1 },
+    { id: '1', login: 'jose.silva', lastname: 'Silva', firstname: 'José', email: 'jose@test.com', statut: '1' },
+    { id: '2', login: 'maria.santos', lastname: 'Santos', firstname: 'Maria', email: 'maria@test.com', statut: '1' },
 ];
 
 describe('LeaveModal', () => {
@@ -125,7 +125,7 @@ describe('LeaveModal', () => {
                 onRefresh={mockOnRefresh}
             />
         );
-        const selects = screen.getAllByRole('combobox');
+        const selects = screen.getAllByRole('combobox') as HTMLSelectElement[];
         fireEvent.change(selects[0], { target: { value: '1' } });
         expect(selects[0].value).toBe('1');
     });

@@ -18,13 +18,15 @@ describe('EmailContextPanel', () => {
     const createMockCustomer = (name: string, email?: string): ThirdParty => ({
         id: '1',
         name,
-        email: email || null,
-        phone: null,
-        phone_mobile: null,
-        address: null,
-        zip: null,
-        town: null,
-        status: 1
+        email: email || undefined,
+        phone: undefined,
+        phone_mobile: undefined,
+        address: undefined,
+        zip: undefined,
+        town: undefined,
+        status: '1',
+        client: '1',
+        fournisseur: '0'
     });
 
     const createMockInvoice = (ref: string, socid: string): Invoice => ({
@@ -50,8 +52,16 @@ describe('EmailContextPanel', () => {
         id: ref,
         ref,
         socid,
-        date: Date.now() / 1000,
-        label: 'Test Ticket'
+        track_id: 'TRK-' + ref,
+        subject: 'Test Ticket',
+        message: 'Test ticket message',
+        type_code: 'COMMERCIAL',
+        category_code: 'OTHER',
+        severity_code: 'NORMAL',
+        statut: '0',
+        progress: '0',
+        datec: Date.now() / 1000,
+        tms: Date.now() / 1000
     });
 
     it('renders panel header even when closed (CSS-based visibility)', () => {

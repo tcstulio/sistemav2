@@ -44,8 +44,7 @@ describe('TeamTab', () => {
         job,
         email: `${login}@test.com`,
         photo: undefined,
-        entity: 1,
-        active: 1
+        statut: '1'
     });
 
     it('renders empty state when no users', () => {
