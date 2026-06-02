@@ -20,8 +20,8 @@ const mockConfig: DolibarrConfig = {
 };
 
 const mockUsers: DolibarrUser[] = [
-    { id: '1', login: 'jose.silva', lastname: 'Silva', firstname: 'José', email: 'jose@test.com', entity: 1, active: 1 },
-    { id: '2', login: 'maria.santos', lastname: 'Santos', firstname: 'Maria', email: 'maria@test.com', entity: 1, active: 1 },
+    { id: '1', login: 'jose.silva', lastname: 'Silva', firstname: 'José', email: 'jose@test.com', statut: '1' },
+    { id: '2', login: 'maria.santos', lastname: 'Santos', firstname: 'Maria', email: 'maria@test.com', statut: '1' },
 ];
 
 const mockUserToEdit: DolibarrUser = {
@@ -31,8 +31,7 @@ const mockUserToEdit: DolibarrUser = {
     firstname: 'José',
     email: 'jose@test.com',
     job: 'Developer',
-    entity: 1,
-    active: 1
+    statut: '1'
 };
 
 describe('UserModal', () => {

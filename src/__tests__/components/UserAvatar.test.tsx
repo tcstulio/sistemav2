@@ -30,8 +30,7 @@ describe('UserAvatar', () => {
         firstname: 'José',
         email: 'jose@coolgroove.com.br',
         photo: 'photo.jpg',
-        entity: 1,
-        active: 1
+        statut: '1'
     };
 
     it('renders initials when no photo is provided', () => {
@@ -79,8 +78,7 @@ describe('UserAvatar', () => {
             firstname: '',
             email: 'admin@test.com',
             photo: undefined,
-            entity: 1,
-            active: 1
+            statut: '1'
         };
         render(<UserAvatar user={userWithOnlyLogin} config={mockConfig} />);
         expect(screen.getByText('A')).toBeInTheDocument();

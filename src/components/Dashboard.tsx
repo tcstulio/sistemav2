@@ -157,7 +157,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     }, [invoices]);
 
     const lowStockItems = useMemo(() => {
-        return products.filter(p => p.stock_reel < (5)).slice(0, 5);
+        return products.filter(p => (p.stock_reel || 0) < (5)).slice(0, 5);
     }, [products]);
 
     const lateTasks = useMemo(() => {

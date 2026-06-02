@@ -8,15 +8,12 @@ describe('ProjectTeamTab', () => {
         id: '1',
         ref: 'PRJ-001',
         title: 'Projeto Teste',
-        description: null,
-        statu: '1',
-        date_c: Date.now(),
-        date_start: null,
-        date_end: null,
-        socid: null,
-        public: '0',
-        contact_id: null,
-        assigned_users: []
+        statut: '1',
+        date_creation: Date.now(),
+        date_start: undefined,
+        date_end: undefined,
+        socid: '0',
+        progress: 0
     });
 
     const createMockUser = (id: string, firstname: string, lastname: string): DolibarrUser => ({
@@ -26,8 +23,7 @@ describe('ProjectTeamTab', () => {
         firstname,
         email: '',
         photo: undefined,
-        entity: 1,
-        active: 1
+        statut: '1'
     });
 
     const createMockContact = (id: string, firstname: string, lastname: string) => ({

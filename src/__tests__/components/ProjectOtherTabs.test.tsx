@@ -19,7 +19,8 @@ describe('ProjectShipmentsTab', () => {
     const createMockShipment = (id: string, overrides: Partial<Shipment> = {}): Shipment => ({
         id,
         ref: `SHIP-${id}`,
-        date_creation: '2024-01-15',
+        socid: '1',
+        date_creation: new Date('2024-01-15').getTime() / 1000,
         tracking_number: '',
         status: '0',
         ...overrides
@@ -68,7 +69,8 @@ describe('ProjectPurchasesTab', () => {
     const createMockSupplierOrder = (id: string, overrides: Partial<SupplierOrder> = {}): SupplierOrder => ({
         id,
         ref: `PO-${id}`,
-        date_creation: '2024-01-15',
+        socid: '1',
+        date_creation: new Date('2024-01-15').getTime() / 1000,
         total_ttc: 1000,
         statut: 'Pending',
         ...overrides
@@ -104,6 +106,8 @@ describe('ProjectManufacturingTab', () => {
         id,
         ref: `MO-${id}`,
         label: `Ordem ${id}`,
+        status: '1',
+        product_to_produce_id: '100',
         qty: 10,
         ...overrides
     });
@@ -134,7 +138,9 @@ describe('ProjectContractsTab', () => {
     const createMockContract = (id: string, overrides: Partial<Contract> = {}): Contract => ({
         id,
         ref: `CTR-${id}`,
-        date_contrat: '2024-01-15',
+        socid: '1',
+        date_contrat: new Date('2024-01-15').getTime() / 1000,
+        statut: '1',
         ...overrides
     });
 
@@ -164,8 +170,11 @@ describe('ProjectInterventionsTab', () => {
     const createMockIntervention = (id: string, overrides: Partial<Intervention> = {}): Intervention => ({
         id,
         ref: `INT-${id}`,
+        socid: '1',
         description: `Intervenção ${id}`,
-        date: '2024-01-15',
+        date: new Date('2024-01-15').getTime() / 1000,
+        date_creation: new Date('2024-01-15').getTime() / 1000,
+        statut: '1',
         ...overrides
     });
 

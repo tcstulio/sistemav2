@@ -53,7 +53,7 @@ class FrontendLogger {
         }
     }
 
-    warn(message: string, context?: string, data?: unknown): void {
+    warn(message: unknown, context?: string, data?: unknown): void {
         if (!this.shouldLog('warn')) return;
         if (data !== undefined) {
             console.warn(this.formatPrefix('warn', context), message, data);
@@ -62,7 +62,7 @@ class FrontendLogger {
         }
     }
 
-    error(message: string, context?: string, data?: unknown): void {
+    error(message: unknown, context?: string, data?: unknown): void {
         if (!this.shouldLog('error')) return;
         if (data !== undefined) {
             console.error(this.formatPrefix('error', context), message, data);
@@ -104,11 +104,11 @@ class ContextLogger {
         this.parent.info(message, this.context, data);
     }
 
-    warn(message: string, data?: unknown): void {
+    warn(message: unknown, data?: unknown): void {
         this.parent.warn(message, this.context, data);
     }
 
-    error(message: string, data?: unknown): void {
+    error(message: unknown, data?: unknown): void {
         this.parent.error(message, this.context, data);
     }
 }

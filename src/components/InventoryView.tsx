@@ -17,10 +17,10 @@ interface InventoryViewProps {
 export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
     const { config, refreshData } = useDolibarr();
 
-    const { data: warehouses = [], isLoading: isLoadingWarehouses } = useWarehouses(config || undefined, !!config);
-    const { data: stockMovements = [], isLoading: isLoadingMovements } = useStockMovements(config || undefined, !!config);
-    const { data: products = [], isLoading: isLoadingProducts } = useProducts(config || undefined, !!config);
-    const { data: users = [], isLoading: isLoadingUsers } = useUsers(config || undefined, !!config);
+    const { data: warehouses = [], isLoading: isLoadingWarehouses } = useWarehouses(config || null, !!config);
+    const { data: stockMovements = [], isLoading: isLoadingMovements } = useStockMovements(config || null, !!config);
+    const { data: products = [], isLoading: isLoadingProducts } = useProducts(config || null, !!config);
+    const { data: users = [], isLoading: isLoadingUsers } = useUsers(config || null, !!config);
 
     const isLoading = isLoadingWarehouses || isLoadingMovements || isLoadingProducts || isLoadingUsers;
 

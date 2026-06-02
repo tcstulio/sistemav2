@@ -6,26 +6,30 @@ import { WhatsAppConversation, WhatsAppAccount } from '../../types';
 const mockConversations: WhatsAppConversation[] = [
     {
         id: '1',
+        accountId: '1',
         customerName: 'John Doe',
         customerNumber: '1199999999',
         lastMessage: 'Hello there!',
-        lastMessageTime: Date.now() - 60000,
+        lastMessageTimestamp: Date.now() - 60000,
         unreadCount: 2,
+        status: 'open',
         assignedUserId: '1',
     },
     {
         id: '2',
+        accountId: '2',
         customerName: 'Jane Smith',
         customerNumber: '1188888888',
         lastMessage: 'Hi!',
-        lastMessageTime: Date.now() - 120000,
+        lastMessageTimestamp: Date.now() - 120000,
         unreadCount: 0,
+        status: 'open',
     },
 ];
 
 const mockAccounts: WhatsAppAccount[] = [
-    { id: '1', name: 'Session 1', status: 'connected', phoneNumber: '1199999999' },
-    { id: '2', name: 'Session 2', status: 'disconnected', phoneNumber: '1188888888' },
+    { id: '1', name: 'Session 1', status: 'connected', phoneNumber: '1199999999', platform: 'WAHA' },
+    { id: '2', name: 'Session 2', status: 'disconnected', phoneNumber: '1188888888', platform: 'WAHA' },
 ];
 
 const defaultProps = {
