@@ -113,7 +113,7 @@ describe('documentRoutes', () => {
     describe('GET /api/documents/boleto/:banco/:nossoNumero/preview', () => {
         it('returns 200 with valid banco', async () => {
             const res = await request(app)
-                .get('/api/documents/boleto/inter/123456')
+                .get('/api/documents/boleto/inter/123456/preview')
                 .set('Accept', 'application/pdf');
 
             expect(res.status).toBe(200);
@@ -121,7 +121,7 @@ describe('documentRoutes', () => {
 
         it('returns 400 with invalid banco', async () => {
             const res = await request(app)
-                .get('/api/documents/boleto/invalid/123456');
+                .get('/api/documents/boleto/invalid/123456/preview');
 
             expect(res.status).toBe(400);
         });
@@ -130,7 +130,7 @@ describe('documentRoutes', () => {
     describe('GET /api/documents/invoice/:invoiceId/preview', () => {
         it('returns 200', async () => {
             const res = await request(app)
-                .get('/api/documents/invoice/1')
+                .get('/api/documents/invoice/1/preview')
                 .set('Accept', 'application/pdf');
 
             expect(res.status).toBe(200);

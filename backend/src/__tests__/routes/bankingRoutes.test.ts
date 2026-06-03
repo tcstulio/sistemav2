@@ -36,12 +36,16 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 vi.mock('multer', () => {
-    return {
-        default: {
-            memoryStorage: () => ({}),
-            diskStorage: () => ({}),
-        },
-    };
+    // multer é chamado como função (multer({...})) e tem .memoryStorage/.diskStorage estáticos.
+    const multerMock: any = (_options?: any) => ({
+        array: () => (_req: any, _res: any, next: any) => next(),
+        single: () => (_req: any, _res: any, next: any) => next(),
+        fields: () => (_req: any, _res: any, next: any) => next(),
+        none: () => (_req: any, _res: any, next: any) => next(),
+    });
+    multerMock.memoryStorage = () => ({});
+    multerMock.diskStorage = () => ({});
+    return { default: multerMock };
 });
 
 import bankingRoutes from '../../routes/bankingRoutes';

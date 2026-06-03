@@ -1,6 +1,8 @@
 import { Server as SocketIOServer } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import { logger } from '../utils/logger';
+import { getProtoSession } from './protoSession';
+import { dolibarrService } from './dolibarrService';
 
 const log = logger.child('SocketService');
 
@@ -37,7 +39,6 @@ export const socketService = {
             }
 
             // PROTÓTIPO (Desenho B): aceita o token de sessão do nosso /login (proto-session).
-            const { getProtoSession } = require('./protoSession');
             if (getProtoSession(token)) {
                 return next();
             }
@@ -46,7 +47,6 @@ export const socketService = {
             // For sockets, we might want to accept if it was valid recently? 
             // Let's use the service directly.
             try {
-                const { dolibarrService } = require('./dolibarrService'); // Lazy load
                 // We should ideally use the same cache as the HTTP middleware to avoid double hits
                 // But accessing that local Map is hard. 
                 // Let's just validate. Socket connections are infrequent (once per session).

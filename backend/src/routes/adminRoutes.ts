@@ -3,6 +3,7 @@ import os from 'os';
 import { createLogger } from '../utils/logger';
 // import { wahaService } from '../services/wahaService'; // DEPRECATED
 import { sessionService } from '../services/legacy/sessionService'; // UPDATED to legacy path
+import { configService } from '../services/configService';
 
 const log = createLogger('Admin');
 // import { dbService } from '../../../services/dbService'; // REMOVED to prevent crash
@@ -358,7 +359,6 @@ router.get('/logs', (req, res) => {
 });
 
 // --- Advanced LLM Configuration Endpoints ---
-const { configService } = require('../services/configService');
 
 // Simple usage stats tracking
 let llmStats = {
