@@ -134,6 +134,12 @@ class GoogleProvider implements AIProvider {
 
                     const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
+                    // Ações HITL (prepare_*) são TERMINAIS: o resultado já é a mensagem com o
+                    // deeplink para o usuário. Retorna direto (sem re-raciocinar / evita loop).
+                    if (String(toolCall.tool).startsWith('prepare_')) {
+                        return toolResult;
+                    }
+
                     // Add tool result to history (simulated as System or User input with data)
                     // We append it to the context for the next turn
                     currentContext += `\n\n[DADOS OBTIDOS VIA ${toolCall.tool}]:\n${toolResult}\n`;
@@ -793,6 +799,12 @@ class LocalProvider implements AIProvider {
 
                         // Unificado: todas as ferramentas vêm de agentTools.executeTool (mesmo conjunto do Gemini)
                         const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
+
+                        // Ações HITL (prepare_*) são TERMINAIS: devolve o link direto ao usuário
+                        // (evita o GLM re-chamar a tool a cada iteração -> "Max iterations reached").
+                        if (String(toolCall.tool).startsWith('prepare_')) {
+                            return toolResult;
+                        }
 
                         // Update Context & History for next turn
                         currentContext += `\n\n[TOOL RESULT]: ${toolResult}`;
