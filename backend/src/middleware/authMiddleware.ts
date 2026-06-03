@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config/env';
+import { getProtoSession } from '../services/protoSession';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('Auth');
@@ -52,6 +53,17 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
             status: 'error',
             message: 'Authentication Required: You must be logged in to Dolibarr.'
         });
+    }
+
+    // PROTÓTIPO (Desenho B): se o userKey é um token de sessão do nosso /login,
+    // troca pela CHAVE DE SERVIÇO (admin/Marciano) SERVER-SIDE. A chave nunca vai
+    // pro navegador; o browser só carrega o token de sessão inofensivo.
+    const protoSession = getProtoSession(userKey);
+    if (protoSession) {
+        req.headers['dolapikey'] = config.dolibarrKey;
+        if (req.query) { (req.query as any).DOLAPIKEY = config.dolibarrKey; }
+        (req as any).user = { login: protoSession.login };
+        return next();
     }
 
     // 1. Check Cache
@@ -124,6 +136,21 @@ export const requireDolibarrAdmin = async (req: Request, res: Response, next: Ne
         return res.status(401).json({
             status: 'error',
             message: 'Authentication Required: Admin Access Only.'
+        });
+    }
+
+    // PROTÓTIPO (Desenho B): se o userKey é um token de sessão do nosso /login,
+    // resolve a DOLAPIKEY real do usuário (guardada server-side) e verifica se ELE
+    // é admin no Dolibarr (acesso a /setup/company).
+    const protoSession = getProtoSession(userKey);
+    if (protoSession) {
+        const { dolibarrService } = require('../services/dolibarrService');
+        const isAdmin = await dolibarrService.verifyAdminStatus(protoSession.dolapikey);
+        if (isAdmin) return next();
+        log.warn(`Admin access denied (session: ${protoSession.login}) for ${req.method} ${req.path}`);
+        return res.status(403).json({
+            status: 'error',
+            message: 'Access Denied: You must be an Administrator to perform this action.'
         });
     }
 
