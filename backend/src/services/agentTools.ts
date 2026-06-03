@@ -116,8 +116,7 @@ function tryPrepareDeeplink(tool: string, args: any): string | null {
         const prefill = pickFields(args, ent.createFields || []);
         const token = signDeeplink(`create_${create[1]}`, prefill, 1800); // 30 min
         const deeplink = `${ent.newRoute}?prefill=${token}`;
-        return `RASCUNHO de ${ent.label} preparado. Para criar de fato é preciso REVISAR E CONFIRMAR na tela. `
-            + `Responda ao usuário com uma frase curta e inclua, EXATAMENTE como está, este link: ${deeplink}`;
+        return `Preparei o rascunho do ${ent.label}. Clique para revisar e confirmar a criação na tela: ${deeplink}`;
     }
 
     const edit = tool.match(/^prepare_edit_(.+)$/);
@@ -130,8 +129,7 @@ function tryPrepareDeeplink(tool: string, args: any): string | null {
         const data = { id: String(args.id), ...changes };
         const token = signDeeplink(`edit_${edit[1]}`, data, 1800);
         const deeplink = `${ent.editRoute.replace(':id', String(args.id))}?prefill=${token}`;
-        return `MUDANÇAS no ${ent.label} #${args.id} preparadas. Para aplicar é preciso REVISAR E CONFIRMAR na tela. `
-            + `Responda ao usuário com uma frase curta e inclua, EXATAMENTE como está, este link: ${deeplink}`;
+        return `Preparei as mudanças no ${ent.label} #${args.id}. Clique para revisar e salvar na tela: ${deeplink}`;
     }
 
     return null;
