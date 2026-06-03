@@ -11,10 +11,16 @@ export const config = {
     chromeBin: process.env.CHROME_BIN,
     dolibarrBypassCookie: process.env.DOLIBARR_BYPASS_COOKIE || 'humans_21909=1', // Default to known working cookie
     geminiModel: process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp', // Default Gemini model
-    llmProvider: process.env.LLM_PROVIDER || 'local', // 'google' | 'local'
-    localLlmUrl: process.env.LOCAL_LLM_URL || 'http://localhost:11434/v1', // Standard Ollama/LocalAI endpoint
-    localModelName: process.env.LOCAL_LLM_MODEL || 'llama3', // Default model
-    serperApiKey: process.env.SERPER_API_KEY || '', // Added
+    llmProvider: process.env.LLM_PROVIDER || 'local', // 'google' | 'local' | 'glm' | 'minimax'
+    localLlmUrl: process.env.LOCAL_LLM_URL || 'http://localhost:11434/v1',
+    localModelName: process.env.LOCAL_LLM_MODEL || 'llama3',
+    zaiApiKey: process.env.ZAI_API_KEY || '',
+    zaiBaseUrl: process.env.ZAI_BASE_URL || 'https://api.z.ai/api/coding/paas/v4/',
+    zaiModel: process.env.ZAI_MODEL || 'glm-5.1',
+    minimaxApiKey: process.env.MINIMAX_API_KEY || '',
+    minimaxBaseUrl: process.env.MINIMAX_BASE_URL || 'https://api.minimax.io/v1/',
+    minimaxModel: process.env.MINIMAX_MODEL || 'MiniMax-M3',
+    serperApiKey: process.env.SERPER_API_KEY || '',
 
 
     // Banco Inter

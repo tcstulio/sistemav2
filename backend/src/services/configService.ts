@@ -6,17 +6,29 @@ interface ModuleConfig {
     model: string;
 }
 
+// Resolve o modelo padrão de acordo com o provider ativo — evita mandar o modelo
+// do Ollama (localModelName) para Z.AI/MiniMax/Google e vice-versa.
+function modelForProvider(provider: string): string {
+    switch (provider) {
+        case 'glm': return config.zaiModel;
+        case 'minimax': return config.minimaxModel;
+        case 'google': return config.geminiModel || 'gemini-2.0-flash';
+        default: return config.localModelName;
+    }
+}
+
 class ConfigService {
     private moduleConfigs: Record<string, ModuleConfig>;
     private customPrompts: Record<string, string>;
 
     constructor() {
         // Initialize with defaults from env/global config
+        const defaultModel = modelForProvider(config.llmProvider);
         this.moduleConfigs = {
-            chat: { provider: config.llmProvider, model: config.localModelName },
-            banking: { provider: config.llmProvider, model: config.googleApiKey ? 'gemini-2.0-flash' : config.localModelName },
-            system_analysis: { provider: config.llmProvider, model: config.localModelName },
-            proposals: { provider: config.llmProvider, model: config.localModelName }
+            chat: { provider: config.llmProvider, model: defaultModel },
+            banking: { provider: config.llmProvider, model: config.googleApiKey ? 'gemini-2.0-flash' : defaultModel },
+            system_analysis: { provider: config.llmProvider, model: defaultModel },
+            proposals: { provider: config.llmProvider, model: defaultModel }
         };
 
         this.customPrompts = {
@@ -28,7 +40,7 @@ class ConfigService {
     }
 
     getModuleConfig(moduleName: string): ModuleConfig {
-        return this.moduleConfigs[moduleName] || { provider: config.llmProvider, model: config.localModelName };
+        return this.moduleConfigs[moduleName] || { provider: config.llmProvider, model: modelForProvider(config.llmProvider) };
     }
 
     getAllModuleConfigs(): Record<string, ModuleConfig> {
