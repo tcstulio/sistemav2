@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User } from 'lucide-react';
 import { AiService, ChatMessage } from '../services/aiService';
 import { ThirdParty, Invoice, Project, Ticket } from '../types';
@@ -8,12 +9,66 @@ import { logger } from '../utils/logger';
 
 const log = logger.child('VirtualAssistant');
 
+// Deeplinks internos do agente (ex.: /tickets/new?prefill=<token>) e URLs http(s).
+const INTERNAL_DEEPLINK = /\/[A-Za-z0-9_\-/]+\?prefill=[A-Za-z0-9._-]+/g;
+const ABSOLUTE_URL = /https?:\/\/[^\s)]+/g;
+
+// Torna links clicáveis na resposta do agente: deeplink interno navega in-app (React Router);
+// URL http(s) abre em nova aba. Caso contrário, renderiza texto puro.
+const renderMessageContent = (text: string, navigate: (to: string) => void): React.ReactNode => {
+    if (!text) return text;
+    type Match = { start: number; end: number; value: string; kind: 'internal' | 'url' };
+    const matches: Match[] = [];
+    let m: RegExpExecArray | null;
+
+    const internal = new RegExp(INTERNAL_DEEPLINK);
+    while ((m = internal.exec(text)) !== null) {
+        matches.push({ start: m.index, end: m.index + m[0].length, value: m[0], kind: 'internal' });
+    }
+    const url = new RegExp(ABSOLUTE_URL);
+    while ((m = url.exec(text)) !== null) {
+        const hit = m;
+        const overlap = matches.some(x => hit.index < x.end && (hit.index + hit[0].length) > x.start);
+        if (!overlap) matches.push({ start: hit.index, end: hit.index + hit[0].length, value: hit[0], kind: 'url' });
+    }
+    if (matches.length === 0) return text;
+    matches.sort((a, b) => a.start - b.start);
+
+    const nodes: React.ReactNode[] = [];
+    let cursor = 0;
+    matches.forEach((mt, i) => {
+        if (mt.start > cursor) nodes.push(text.slice(cursor, mt.start));
+        if (mt.kind === 'internal') {
+            nodes.push(
+                <button
+                    key={`l${i}`}
+                    type="button"
+                    onClick={() => navigate(mt.value)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 my-0.5 rounded-md bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors"
+                >
+                    Revisar e criar ↗
+                </button>
+            );
+        } else {
+            nodes.push(
+                <a key={`l${i}`} href={mt.value} target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 underline break-all">
+                    {mt.value}
+                </a>
+            );
+        }
+        cursor = mt.end;
+    });
+    if (cursor < text.length) nodes.push(text.slice(cursor));
+    return nodes;
+};
+
 interface VirtualAssistantProps {
   // No props needed
 }
 
 const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const { config } = useDolibarr();
+  const navigate = useNavigate();
 
   // Data fetching removed - Backend now handles this via ReAct tools
 
@@ -163,7 +218,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
                     ? 'bg-indigo-600 text-white rounded-br-none'
                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-none'
                     }`}>
-                    {msg.text}
+                    {msg.role === 'model' ? renderMessageContent(msg.text, navigate) : msg.text}
                   </div>
                 </div>
               </div>
