@@ -348,7 +348,10 @@ router.post('/scraper/run', async (req, res) => {
         });
     } catch (error: any) {
         log.error('Scraper run error', { error: error.message, stack: error.stack });
-        res.status(500).json({ error: error.message });
+        // o 202 pode já ter sido enviado (resposta antecipada) -> não responder 2x.
+        if (!res.headersSent) {
+            res.status(500).json({ error: error.message });
+        }
     }
 });
 
