@@ -110,3 +110,12 @@ metadata.json
 
 # Agent tooling
 .agent/
+
+# Test coverage (gerado)
+coverage/
+backend/coverage/
+
+# Dumps de debug (saída redirecionada de testes)
+ai_fail*.txt
+bot_fail.txt
+bot_output.txt
