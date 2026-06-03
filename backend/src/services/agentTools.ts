@@ -6,6 +6,7 @@ import { dolibarrService } from './dolibarrService';
 import { ScraperService } from './scraperService';
 import { isValidExternalUrl } from '../utils/urlValidation';
 import { logger } from '../utils/logger';
+import { signDeeplink } from '../utils/deeplinkToken';
 
 const log = logger.child('AgentTools');
 
@@ -47,6 +48,12 @@ export const TOOLS_PROMPT = `
         30. list_job_positions() - Lista vagas de emprego abertas.
         31. search_web(query: string) - Pesquisa preços e fornecedores na internet (Google via Serper).
         32. extract_from_url(url: string) - Acessa um link e extrai o conteúdo da página.
+
+        FERRAMENTAS DE AÇÃO (escrita com confirmação na tela):
+        33. prepare_create_ticket(subject: string, message: string, type_code?: string, severity_code?: string, socid?: string) - Prepara um RASCUNHO de ticket de suporte e gera um link para o usuário REVISAR e CRIAR na tela. NÃO cria o ticket sozinho — o usuário confirma. Se souber o cliente, busque o id antes com search_customer e passe em socid.
+
+        REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK. Ao responder ao usuário,
+        inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
 
         EXEMPLO:
         User: "Detalhes do cliente 123"
@@ -193,6 +200,26 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             const pageContent = await ScraperService.fetchPageContent(args.url);
             return `[PAGE CONTENT for ${args.url}]:\n${pageContent ? pageContent.substring(0, 10000) : 'Falha ao acessar página ou conteúdo vazio'}`;
         }
+
+        // --- AÇÕES (escrita HITL via deeplink) --- #57 Peça 2
+        case 'prepare_create_ticket': {
+            if (!args?.subject) throw new Error("Parâmetro 'subject' ausente.");
+            if (!args?.message) throw new Error("Parâmetro 'message' ausente.");
+            // Whitelist dos campos que vão pré-preencher a tela de novo ticket.
+            const prefill = {
+                subject: String(args.subject),
+                message: String(args.message),
+                type_code: args.type_code ? String(args.type_code) : 'ISSUE',
+                severity_code: args.severity_code ? String(args.severity_code) : 'NORMAL',
+                socid: args.socid ? String(args.socid) : '',
+            };
+            const token = signDeeplink('create_ticket', prefill, 1800); // 30 min
+            const deeplink = `/tickets/new?prefill=${token}`;
+            return `RASCUNHO de ticket preparado (assunto: "${prefill.subject}"). `
+                + `Para criar de fato é preciso REVISAR E CONFIRMAR na tela. `
+                + `Responda ao usuário com uma frase curta e inclua, EXATAMENTE como está, este link para ele clicar: ${deeplink}`;
+        }
+
         default:
             return `Ferramenta desconhecida: ${tool}`;
     }

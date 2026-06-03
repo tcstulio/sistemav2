@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { aiService } from '../services/aiService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { createLogger } from '../utils/logger';
+import { verifyDeeplink } from '../utils/deeplinkToken';
 
 const log = createLogger('AI');
 const router = Router();
@@ -50,6 +51,17 @@ router.post('/generate-reply', async (req, res) => {
 
         res.status(500).json({ error: error.message });
     }
+});
+
+// Resolve um deeplink de prefill (HITL #57 Peça 2): o frontend manda o token,
+// o backend verifica HMAC + expiração e devolve só os dados para pré-preencher a tela.
+router.get('/ticket-prefill', (req, res) => {
+    const token = String(req.query.token || '');
+    const payload = verifyDeeplink<Record<string, string>>(token, 'create_ticket');
+    if (!payload) {
+        return res.status(400).json({ error: 'Link inválido ou expirado. Peça ao agente para gerar um novo.' });
+    }
+    res.json({ data: payload.data, expiresAt: payload.exp });
 });
 
 router.post('/analyze-system', async (req, res) => {
