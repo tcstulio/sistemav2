@@ -63,7 +63,8 @@ app.use(cors({
         // Allow requests with no origin (mobile apps, Postman, etc.)
         if (!origin) return callback(null, true);
 
-        if (allowedOrigins.includes(origin)) {
+        // PROTÓTIPO: libera o túnel do cloudflared (URL muda a cada restart).
+        if (allowedOrigins.includes(origin) || origin.endsWith('.trycloudflare.com')) {
             callback(null, true);
         } else {
             log.warn(`CORS blocked request from origin: ${origin}`);
@@ -159,6 +160,10 @@ app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/ai', aiLimiter, aiRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/auth', authLimiter, authRoutes);
+
+// Endereço público do túnel cloudflared (sem auth — a URL não é segredo)
+import { tunnelService } from './services/tunnelService';
+app.get('/api/tunnel/url', (_req, res) => res.json(tunnelService.getStatus()));
 
 import dolibarrRoutes from './routes/dolibarrRoutes';
 app.use('/api/dolibarr', dolibarrRoutes);
@@ -277,6 +282,9 @@ const server = app.listen(Number(config.port), '0.0.0.0', () => {
 
 // Initialize Socket.io with the HTTP server
 socketService.init(server);
+
+// Cloudflare tunnel automático (se CLOUDFLARE_TUNNEL_ENABLED=true) — URL pública dinâmica
+tunnelService.start();
 
 // Initialize WhatsApp Service
 log.info('SessionService loaded');
