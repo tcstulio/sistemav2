@@ -14,9 +14,11 @@ const log = logger.child('LlmSettingsTab');
 // --- Types ---
 
 interface LlmConfig {
-    provider: 'local' | 'google';
+    provider: 'local' | 'google' | 'glm' | 'minimax';
     localUrl?: string;
     googleKey?: string;
+    zaiKey?: string;
+    minimaxKey?: string;
     modelName?: string;
 }
 
@@ -62,6 +64,8 @@ export const LlmSettingsTab: React.FC = () => {
     const [availableModels, setAvailableModels] = useState<string[]>([]); // Global active provider models
     const [localModels, setLocalModels] = useState<string[]>([]);
     const [googleModels, setGoogleModels] = useState<string[]>([]);
+    const [glmModels, setGlmModels] = useState<string[]>([]);
+    const [minimaxModels, setMinimaxModels] = useState<string[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [isFetchingModels, setIsFetchingModels] = useState(false);
@@ -110,7 +114,9 @@ export const LlmSettingsTab: React.FC = () => {
                 provider: response.data.configProvider || 'local',
                 localUrl: response.data.localUrl || 'http://localhost:11434/v1',
                 googleKey: '',
-                modelName: response.data.localModelName || (response.data.configProvider === 'google' ? 'gemini-2.0-flash' : 'llama3')
+                zaiKey: '',
+                minimaxKey: '',
+                modelName: response.data.localModelName || (response.data.configProvider === 'google' ? 'gemini-2.0-flash' : response.data.configProvider === 'glm' ? 'glm-5.1' : response.data.configProvider === 'minimax' ? 'MiniMax-M3' : 'llama3')
             });
             // Fetch models for whatever provider is configured
             fetchModels(response.data.configProvider || 'local');
@@ -165,15 +171,15 @@ export const LlmSettingsTab: React.FC = () => {
             if (response.data?.models) {
                 if (targetProvider === 'local') setLocalModels(response.data.models);
                 if (targetProvider === 'google') setGoogleModels(response.data.models);
+                if (targetProvider === 'glm') setGlmModels(response.data.models);
+                if (targetProvider === 'minimax') setMinimaxModels(response.data.models);
 
-                // If fetching for current global provider, update main list too
                 if (targetProvider === config.provider) {
                     setAvailableModels(response.data.models);
                 }
             }
         } catch (e) {
             log.error("Failed to fetch models", e);
-            // Fallback for Google if API fails
             if (targetProvider === 'google') {
                 const defaults = [
                     'gemini-2.0-flash',
@@ -186,6 +192,16 @@ export const LlmSettingsTab: React.FC = () => {
                 setGoogleModels(defaults);
                 if (config.provider === 'google') setAvailableModels(defaults);
             }
+            if (targetProvider === 'glm') {
+                const defaults = ['glm-5.1', 'glm-4.7', 'glm-4.6', 'glm-4.5', 'glm-4.5-air', 'glm-4.5-flash'];
+                setGlmModels(defaults);
+                if (config.provider === 'glm') setAvailableModels(defaults);
+            }
+            if (targetProvider === 'minimax') {
+                const defaults = ['MiniMax-M3', 'MiniMax-M2.5', 'MiniMax-M2', 'MiniMax-Text-01'];
+                setMinimaxModels(defaults);
+                if (config.provider === 'minimax') setAvailableModels(defaults);
+            }
         } finally {
             setIsFetchingModels(false);
         }
@@ -196,10 +212,16 @@ export const LlmSettingsTab: React.FC = () => {
     const handleSaveConfig = async () => {
         setIsSaving(true);
         try {
+            const keyMap: Record<string, string | undefined> = {
+                google: config.googleKey,
+                glm: config.zaiKey,
+                minimax: config.minimaxKey,
+                local: undefined
+            };
             await axios.post('/api/admin/config/llm', {
                 provider: config.provider,
                 url: config.localUrl,
-                key: config.googleKey,
+                key: keyMap[config.provider],
                 modelName: config.modelName
             }, {
                 headers: { 'Authorization': 'Bearer ' + getToken() }
@@ -244,11 +266,17 @@ export const LlmSettingsTab: React.FC = () => {
         setIsTesting(true);
         setTestResult(null);
         try {
+            const apiKeyMap: Record<string, string | undefined> = {
+                google: config.googleKey,
+                glm: config.zaiKey,
+                minimax: config.minimaxKey,
+                local: undefined
+            };
             const response = await axios.post('/api/admin/config/llm/test', {
                 provider: config.provider,
                 url: config.localUrl,
                 model: config.modelName,
-                apiKey: config.googleKey
+                apiKey: apiKeyMap[config.provider]
             }, {
                 headers: { 'Authorization': 'Bearer ' + getToken() }
             });
@@ -344,7 +372,7 @@ export const LlmSettingsTab: React.FC = () => {
                     <div className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
                         <div className={`w-2 h-2 rounded-full ${testResult?.success ? 'bg-emerald-500' : 'bg-slate-300'} animate-pulse`} />
                         <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
-                            {config.provider === 'local' ? 'Local LLM' : 'Google Gemini'}
+                            {config.provider === 'local' ? 'Local LLM' : config.provider === 'google' ? 'Google Gemini' : config.provider === 'glm' ? 'Z.AI (GLM)' : 'MiniMax'}
                         </span>
                         <ChevronRight size={14} className="text-slate-400" />
                         <span className="text-xs font-mono text-slate-500">{config.modelName}</span>
@@ -382,7 +410,7 @@ export const LlmSettingsTab: React.FC = () => {
                                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">
                                     Provedor LLM
                                 </label>
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                     <button
                                         onClick={() => {
                                             setConfig({ ...config, provider: 'local', modelName: 'llama3' });
@@ -414,6 +442,38 @@ export const LlmSettingsTab: React.FC = () => {
                                             <span className="font-bold text-slate-800 dark:text-white">Google Gemini</span>
                                         </div>
                                         <p className="text-xs text-slate-500">gemini-2.0-flash, gemini-pro</p>
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setConfig({ ...config, provider: 'glm', modelName: 'glm-5.1' });
+                                            fetchModels('glm');
+                                        }}
+                                        className={`p-4 rounded-xl border-2 text-left transition-all ${config.provider === 'glm'
+                                            ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+                                            : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300'
+                                            }`}
+                                    >
+                                        <div className="flex items-center gap-3 mb-2">
+                                            <Sparkles className={config.provider === 'glm' ? 'text-indigo-600' : 'text-slate-400'} />
+                                            <span className="font-bold text-slate-800 dark:text-white">Z.AI (GLM)</span>
+                                        </div>
+                                        <p className="text-xs text-slate-500">glm-5.1, glm-4.7</p>
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setConfig({ ...config, provider: 'minimax', modelName: 'MiniMax-M3' });
+                                            fetchModels('minimax');
+                                        }}
+                                        className={`p-4 rounded-xl border-2 text-left transition-all ${config.provider === 'minimax'
+                                            ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+                                            : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300'
+                                            }`}
+                                    >
+                                        <div className="flex items-center gap-3 mb-2">
+                                            <Zap className={config.provider === 'minimax' ? 'text-indigo-600' : 'text-slate-400'} />
+                                            <span className="font-bold text-slate-800 dark:text-white">MiniMax</span>
+                                        </div>
+                                        <p className="text-xs text-slate-500">MiniMax-M3, M2.5</p>
                                     </button>
                                 </div>
                             </div>
@@ -466,7 +526,7 @@ export const LlmSettingsTab: React.FC = () => {
                                         </div>
                                     </div>
                                 </div>
-                            ) : (
+                            ) : config.provider === 'google' ? (
                                 <div className="space-y-4">
                                     <div>
                                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -515,6 +575,102 @@ export const LlmSettingsTab: React.FC = () => {
                                         <p className="text-xs text-slate-500 mt-1">
                                             Clique no botão para buscar modelos disponíveis na sua conta
                                         </p>
+                                    </div>
+                                </div>
+                            ) : config.provider === 'glm' ? (
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                            Z.AI API Key
+                                        </label>
+                                        <input
+                                            type="password"
+                                            value={config.zaiKey || ''}
+                                            onChange={(e) => setConfig({ ...config, zaiKey: e.target.value })}
+                                            className="w-full p-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 dark:text-white font-mono text-sm"
+                                            placeholder="Sua API key do Z.AI"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                            Modelo GLM
+                                        </label>
+                                        <div className="flex gap-2">
+                                            {glmModels.length > 0 ? (
+                                                <select
+                                                    value={config.modelName || 'glm-5.1'}
+                                                    onChange={(e) => setConfig({ ...config, modelName: e.target.value })}
+                                                    className="flex-1 p-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 dark:text-white"
+                                                >
+                                                    {glmModels.map(m => (
+                                                        <option key={m} value={m}>{m}</option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <input
+                                                    type="text"
+                                                    value={config.modelName || 'glm-5.1'}
+                                                    onChange={(e) => setConfig({ ...config, modelName: e.target.value })}
+                                                    className="flex-1 p-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 dark:text-white font-mono text-sm"
+                                                    placeholder="glm-5.1"
+                                                />
+                                            )}
+                                            <button
+                                                onClick={() => fetchModels('glm')}
+                                                className="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg"
+                                                title="Buscar modelos disponíveis"
+                                            >
+                                                <List size={18} className={isFetchingModels ? "animate-spin" : ""} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                            MiniMax API Key
+                                        </label>
+                                        <input
+                                            type="password"
+                                            value={config.minimaxKey || ''}
+                                            onChange={(e) => setConfig({ ...config, minimaxKey: e.target.value })}
+                                            className="w-full p-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 dark:text-white font-mono text-sm"
+                                            placeholder="Sua API key do MiniMax"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                            Modelo MiniMax
+                                        </label>
+                                        <div className="flex gap-2">
+                                            {minimaxModels.length > 0 ? (
+                                                <select
+                                                    value={config.modelName || 'MiniMax-M3'}
+                                                    onChange={(e) => setConfig({ ...config, modelName: e.target.value })}
+                                                    className="flex-1 p-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 dark:text-white"
+                                                >
+                                                    {minimaxModels.map(m => (
+                                                        <option key={m} value={m}>{m}</option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <input
+                                                    type="text"
+                                                    value={config.modelName || 'MiniMax-M3'}
+                                                    onChange={(e) => setConfig({ ...config, modelName: e.target.value })}
+                                                    className="flex-1 p-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 dark:text-white font-mono text-sm"
+                                                    placeholder="MiniMax-M3"
+                                                />
+                                            )}
+                                            <button
+                                                onClick={() => fetchModels('minimax')}
+                                                className="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg"
+                                                title="Buscar modelos disponíveis"
+                                            >
+                                                <List size={18} className={isFetchingModels ? "animate-spin" : ""} />
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -598,18 +754,27 @@ export const LlmSettingsTab: React.FC = () => {
                                                             ...moduleConfigs,
                                                             [key]: { ...value, provider: newProvider }
                                                         });
-                                                        // Auto-fetch models if list empty for this provider
                                                         if (newProvider === 'local' && localModels.length === 0) fetchModels('local');
                                                         if (newProvider === 'google' && googleModels.length === 0) fetchModels('google');
+                                                        if (newProvider === 'glm' && glmModels.length === 0) fetchModels('glm');
+                                                        if (newProvider === 'minimax' && minimaxModels.length === 0) fetchModels('minimax');
                                                     }}
                                                     className="p-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm"
                                                 >
                                                     <option value="local">Local LLM</option>
                                                     <option value="google">Google Gemini</option>
+                                                    <option value="glm">Z.AI (GLM)</option>
+                                                    <option value="minimax">MiniMax</option>
                                                 </select>
 
                                                 <div className="flex gap-2">
-                                                    {(value.provider === 'local' ? localModels : googleModels).length > 0 ? (
+                                                    {(() => {
+                                                        const providerModels = value.provider === 'local' ? localModels
+                                                            : value.provider === 'google' ? googleModels
+                                                            : value.provider === 'glm' ? glmModels
+                                                            : value.provider === 'minimax' ? minimaxModels
+                                                            : [];
+                                                        return providerModels.length > 0 ? (
                                                         <select
                                                             value={value.model}
                                                             onChange={(e) => setModuleConfigs({
@@ -618,11 +783,11 @@ export const LlmSettingsTab: React.FC = () => {
                                                             })}
                                                             className="flex-1 p-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm"
                                                         >
-                                                            {(value.provider === 'local' ? localModels : googleModels).map(m => (
+                                                            {providerModels.map(m => (
                                                                 <option key={m} value={m}>{m}</option>
                                                             ))}
                                                         </select>
-                                                    ) : (
+                                                        ) : (
                                                         <input
                                                             type="text"
                                                             value={value.model}
@@ -633,7 +798,8 @@ export const LlmSettingsTab: React.FC = () => {
                                                             className="flex-1 p-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-mono"
                                                             placeholder="Nome do modelo"
                                                         />
-                                                    )}
+                                                    );
+                                                    })()}
                                                     <button
                                                         onClick={() => fetchModels(value.provider)}
                                                         className="px-3 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 rounded-lg"

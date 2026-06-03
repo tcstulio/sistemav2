@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { createLogger } from '../../utils/logger';
+import { RawScrapedEvent } from './symplaScraper';
 
 const log = createLogger('BlacktagScraper');
 
