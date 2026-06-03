@@ -1,9 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
-import Module from 'module';
-
-vi.useFakeTimers();
 
 const mockConfigService = vi.hoisted(() => ({
     getAllModuleConfigs: vi.fn(() => ({})),
@@ -27,6 +24,8 @@ const mockGetAllFeatures = vi.hoisted(() => vi.fn(() => ({})));
 const mockIsUsingMoltbot = vi.hoisted(() => vi.fn(() => false));
 const mockIsTulipaActive = vi.hoisted(() => vi.fn(() => false));
 const mockLogFeatures = vi.hoisted(() => vi.fn());
+// objeto mutável: o handler /integration/brain/stats checa FEATURES.TULIPA_ENABLED diretamente.
+const mockFeatures = vi.hoisted(() => ({ MOLTBOT_ENABLED: false, TULIPA_ENABLED: false, WHATSAPP_PROVIDER: 'legacy' }));
 
 const mockChannelRouter = vi.hoisted(() => ({
     getWhatsAppProvider: vi.fn(() => 'legacy'),
@@ -56,7 +55,7 @@ vi.mock('../../middleware/authMiddleware', () => ({
 }));
 
 vi.mock('../../config/features', () => ({
-    FEATURES: { MOLTBOT_ENABLED: false, TULIPA_ENABLED: false, WHATSAPP_PROVIDER: 'legacy' },
+    FEATURES: mockFeatures,
     getAllFeatures: mockGetAllFeatures,
     isUsingMoltbot: mockIsUsingMoltbot,
     isTulipaActive: mockIsTulipaActive,
@@ -93,32 +92,33 @@ vi.mock('../../utils/logger', () => ({
     }),
 }));
 
-vi.mock('os', () => ({
-    platform: vi.fn(() => 'linux'),
-    release: vi.fn(() => '5.15.0'),
-    totalmem: vi.fn(() => 16000000000),
-    freemem: vi.fn(() => 8000000000),
-}));
+// importActual preserva as demais funções de os (hostname, cpus, etc.) que o Node/Express
+// usam internamente ao montar a resposta; sobrescreve só as 4 que o handler /status usa.
+vi.mock('os', async (importActual) => {
+    const actual = await importActual<typeof import('os')>();
+    const overrides = {
+        platform: () => 'linux',
+        release: () => '5.15.0',
+        totalmem: () => 16000000000,
+        freemem: () => 8000000000,
+    };
+    return { ...actual, ...overrides, default: { ...actual, ...overrides } };
+});
 
-vi.mock('../config/env', () => ({
+// path correto (relativo ao teste) + campos completos p/ modelForProvider. vi.mock cobre
+// tambem o require() dinamico de configService/env feito dentro do adminRoutes.
+vi.mock('../../config/env', () => ({
     config: {
         llmProvider: 'google',
         localLlmUrl: 'http://localhost:11434',
         googleApiKey: 'test-key',
         localModelName: 'llama3',
+        geminiModel: 'gemini-2.0-flash',
+        zaiApiKey: 'test-zai', zaiBaseUrl: 'https://api.z.ai/', zaiModel: 'glm-5.1',
+        minimaxApiKey: 'test-mm', minimaxBaseUrl: 'https://api.minimax.io/', minimaxModel: 'MiniMax-M3',
+        adminKey: 'test-admin', deeplinkSecret: 'test-admin',
     },
 }));
-
-let originalLoad = Module._load;
-Module._load = function (request: string, parent: any, isMain: boolean) {
-    if (typeof request === 'string' && request.endsWith('configService')) {
-        return { configService: mockConfigService };
-    }
-    if (typeof request === 'string' && request.endsWith('env')) {
-        return { config: { llmProvider: 'google', localLlmUrl: 'http://localhost:11434', googleApiKey: 'test-key', localModelName: 'llama3' } };
-    }
-    return originalLoad.call(this, request, parent, isMain);
-};
 
 import adminRoutes from '../../routes/adminRoutes';
 
@@ -138,8 +138,7 @@ describe('adminRoutes', () => {
     });
 
     afterAll(() => {
-        Module._load = originalLoad;
-        vi.useRealTimers();
+        vi.restoreAllMocks();
     });
 
     describe('GET /api/admin/status', () => {
@@ -408,11 +407,12 @@ describe('adminRoutes', () => {
 
     describe('GET /api/admin/integration/brain/stats', () => {
         it('returns 200 when tulipa is enabled', async () => {
-            mockIsTulipaActive.mockReturnValue(true);
+            mockFeatures.TULIPA_ENABLED = true;
 
             const res = await request(app).get('/api/admin/integration/brain/stats');
 
             expect(res.status).toBe(200);
+            mockFeatures.TULIPA_ENABLED = false;
         });
 
         it('returns 400 when tulipa is disabled', async () => {

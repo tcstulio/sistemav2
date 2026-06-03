@@ -54,7 +54,8 @@ describe('authRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            expect(res.body.apiKey).toBe('test-token-123');
+            // login agora devolve uma proto-session opaca ('sess_' + 48 hex), não o token cru.
+            expect(res.body.apiKey).toMatch(/^sess_[a-f0-9]{48}$/);
             expect(res.headers['set-cookie']).toBeDefined();
         });
 

@@ -82,7 +82,9 @@ vi.mock('../../utils/logger', () => ({
     }),
 }));
 
-vi.mock('express-rate-limit', () => defaultFn => defaultFn);
+vi.mock('express-rate-limit', () => ({
+    default: (_config?: any) => (_req: any, _res: any, next: any) => next(),
+}));
 
 import whatsappRoutes from '../../routes/whatsappRoutes';
 

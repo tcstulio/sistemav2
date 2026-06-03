@@ -16,6 +16,11 @@ vi.mock('../../services/dolibarrService', () => ({
     dolibarrService: { validateApiKey: vi.fn() },
 }));
 
+// auth do socket aceita proto-session; sem sessão (null) cai no fallback validateApiKey.
+vi.mock('../../services/protoSession', () => ({
+    getProtoSession: vi.fn(() => null),
+}));
+
 const mockOn = vi.fn();
 const mockUse = vi.fn();
 const mockEmit = vi.fn();

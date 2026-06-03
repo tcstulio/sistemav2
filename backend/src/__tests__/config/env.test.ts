@@ -1,4 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// Sem isto, ao re-importar env.ts o dotenv.config() relê o .env e repõe PORT/DOLIBARR_API_KEY/
+// LLM_PROVIDER, anulando os delete do teste. Mockar torna o teste determinístico (só o que o teste setar).
+vi.mock('dotenv', () => ({ default: { config: vi.fn() }, config: vi.fn() }));
 
 describe('env config', () => {
     const originalEnv = { ...process.env };

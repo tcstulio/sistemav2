@@ -202,6 +202,9 @@ router.post('/settings/session', async (req, res) => {
         storeService.updateSessionSettings(sessionId, { autoReply, autoReplyContext, signatureName, name });
         res.json({ success: true, settings: storeService.getSessionSettings(sessionId) });
     } catch (e: any) {
+        if (e instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: e.issues });
+        }
         res.status(500).json({ error: e.message });
     }
 });
@@ -229,6 +232,9 @@ router.post('/settings/chat', async (req, res) => {
         storeService.updateChatSettings(chatId, { autoReplyEnabled, groupSettings });
         res.json({ success: true, settings: storeService.getChatSettings(chatId) });
     } catch (e: any) {
+        if (e instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: e.issues });
+        }
         res.status(500).json({ error: e.message });
     }
 });
