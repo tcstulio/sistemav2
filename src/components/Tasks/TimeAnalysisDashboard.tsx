@@ -394,7 +394,7 @@ export const TimeAnalysisDashboard: React.FC<TimeAnalysisDashboardProps> = ({
                     projects={projects}
                     users={users}
                     timeLogs={logs} // Pass ALL logs to the wizard
-                    currentUser={currentUser}
+                    currentUser={currentUser || null}
                     onClose={() => setShowAiAssistant(false)}
                 />
             )}

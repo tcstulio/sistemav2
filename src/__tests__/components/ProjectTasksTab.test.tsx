@@ -18,6 +18,7 @@ describe('ProjectTasksTab', () => {
         id,
         ref: `TASK-${id}`,
         label: `Task ${id}`,
+        project_id: '1',
         progress: 0,
         planned_workload: 3600,
         duration_effective: 0,

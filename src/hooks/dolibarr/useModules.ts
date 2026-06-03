@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { DolibarrService } from '../../services/dolibarrService';
-import { DolibarrConfig } from '../../types';
+import { DolibarrConfig, DolibarrModule } from '../../types';
 
 export const useModules = (config: DolibarrConfig | null) => {
     return useQuery({
         queryKey: ['setupModules'],
-        queryFn: async () => {
+        queryFn: async (): Promise<DolibarrModule[]> => {
             if (!config) return [];
             return DolibarrService.fetchSetupModules(config);
         },

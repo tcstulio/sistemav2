@@ -99,7 +99,7 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
 
                 const updatedConfig = { ...localConfig, currentUser: updatedUser };
                 setLocalConfig(updatedConfig);
-                onSave(updatedConfig); // Persist to storage
+                onSave?.(updatedConfig); // Persist to storage
 
                 setIsEditModalOpen(false);
                 alert("Perfil atualizado com sucesso!");
@@ -114,7 +114,7 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        onSave(localConfig);
+        onSave?.(localConfig);
         setIsSaved(true);
         setTimeout(() => setIsSaved(false), 3000);
     };

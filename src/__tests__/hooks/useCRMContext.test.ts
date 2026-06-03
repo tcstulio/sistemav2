@@ -6,23 +6,27 @@ import { WhatsAppConversation, ThirdParty, Invoice, Order, Ticket } from '../../
 describe('useCRMContext', () => {
     const createMockConversation = (customerName: string, customerNumber: string): WhatsAppConversation => ({
         id: 'conv-1',
+        accountId: 'acc-1',
         customerName,
         customerNumber,
         lastMessage: 'Hello',
-        lastMessageTime: Date.now(),
-        unreadCount: 0
+        lastMessageTimestamp: Date.now(),
+        unreadCount: 0,
+        status: 'open'
     });
 
     const createMockCustomer = (id: string, name: string, phone?: string): ThirdParty => ({
         id,
         name,
-        phone: phone || null,
-        phone_mobile: null,
-        email: null,
-        address: null,
-        zip: null,
-        town: null,
-        status: 1
+        phone: phone || undefined,
+        phone_mobile: undefined,
+        email: undefined,
+        address: undefined,
+        zip: undefined,
+        town: undefined,
+        status: '1',
+        client: '1',
+        fournisseur: '0'
     });
 
     it('returns null when no conversation selected', () => {
@@ -81,8 +85,8 @@ describe('useCRMContext', () => {
         const conversation = createMockConversation('John Doe', '5511999999999');
         const customers = [createMockCustomer('1', 'John Doe')];
         const tickets = [
-            { id: '1', socid: '1', ref: 'TKT-001', date: 0, label: 'Issue 1' } as Ticket,
-            { id: '2', socid: '2', ref: 'TKT-002', date: 0, label: 'Issue 2' } as Ticket
+            { id: '1', socid: '1', ref: 'TKT-001', datec: 0, subject: 'Issue 1' } as Ticket,
+            { id: '2', socid: '2', ref: 'TKT-002', datec: 0, subject: 'Issue 2' } as Ticket
         ];
         const { result } = renderHook(() => useCRMContext(conversation, customers, [], [], tickets));
         expect(result.current?.tickets).toHaveLength(1);

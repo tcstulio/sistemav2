@@ -285,7 +285,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                             <div className="text-xs text-slate-500">{formatDateOnly(line.date)}</div>
                                         </div>
                                         <div className="text-right">
-                                            <div className="font-bold text-slate-800 dark:text-white">{formatDuration(line.duration)}</div>
+                                            <div className="font-bold text-slate-800 dark:text-white">{formatDuration(line.duration || 0)}</div>
                                         </div>
                                     </div>
                                 ))

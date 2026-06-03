@@ -17,19 +17,9 @@ describe('RecruitmentCandidatesList', () => {
         lastname,
         firstname,
         email: `${firstname.toLowerCase()}@test.com`,
-        phone: null,
-        phone_mobile: null,
-        job: 'Developer',
-        skype: null,
-        photo: null,
-        date_birth: null,
-        address: null,
-        zip: null,
-        town: null,
-        fk_department: null,
-        fk_country: null,
-        entity: 1,
-        active: 1,
+        phone: undefined,
+        date_birth: undefined,
+        date_c: Date.now(),
         status
     });
 
@@ -40,10 +30,7 @@ describe('RecruitmentCandidatesList', () => {
         qty: 1,
         status: '1',
         ref: `JOB-${id}`,
-        date_start: Date.now(),
-        date_end: null,
-        candidateList: [],
-        notes: null
+        date_creation: Date.now()
     });
 
     it('renders empty state when no candidates', () => {

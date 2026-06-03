@@ -19,7 +19,7 @@ vi.mock('sonner', () => ({
 }));
 
 import { useCustomerMutations, useSupplierMutations, useInvoiceMutations } from '../../hooks/useMutations';
-import { renderHook, WrapperComponent } from '@testing-library/react';
+import { renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DolibarrConfig } from '../../types';
 

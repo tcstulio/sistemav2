@@ -7,10 +7,10 @@ import { FileBarChart, Download, TrendingUp, Users, Package, DollarSign, Loader2
 const ReportsView: React.FC = () => {
     const { config } = useDolibarr();
 
-    const { data: invoices = [], isLoading: isLoadingInvoices } = useInvoices(config || undefined, !!config);
-    const { data: supplierInvoices = [], isLoading: isLoadingSupplierInvoices } = useSupplierInvoices(config || undefined, !!config);
-    const { data: customers = [], isLoading: isLoadingCustomers } = useCustomers(config || undefined, !!config);
-    const { data: products = [], isLoading: isLoadingProducts } = useProducts(config || undefined, !!config);
+    const { data: invoices = [], isLoading: isLoadingInvoices } = useInvoices(config || null, !!config);
+    const { data: supplierInvoices = [], isLoading: isLoadingSupplierInvoices } = useSupplierInvoices(config || null, !!config);
+    const { data: customers = [], isLoading: isLoadingCustomers } = useCustomers(config || null, !!config);
+    const { data: products = [], isLoading: isLoadingProducts } = useProducts(config || null, !!config);
 
     const isLoading = isLoadingInvoices || isLoadingSupplierInvoices || isLoadingCustomers || isLoadingProducts;
 
@@ -213,7 +213,7 @@ const ReportsView: React.FC = () => {
                                         cy="50%"
                                         outerRadius={60}
                                         dataKey="value"
-                                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                                        label={({ name, percent }) => `${name} ${((percent || 0) * 100).toFixed(0)}%`}
                                     >
                                         <Cell fill="#8b5cf6" />
                                         <Cell fill="#f59e0b" />

@@ -136,8 +136,8 @@ export const fetchInvoices = async (config: DolibarrConfig, options?: { page: nu
         total_ht: Number(d.total_ht),
         total_tva: Number(d.total_tva),
         total_ttc: Number(d.total_ttc),
-        paye: Number(d.paye),
-        statut: String(d.statut),
+        paye: String(d.paye) as '0' | '1',
+        statut: String(d.statut) as '0' | '1' | '2',
         brouillon: d.statut === "0",
         lines: Array.isArray(d.lines) ? d.lines.map((l: Record<string, any>) => ({
             id: String(l.id),
