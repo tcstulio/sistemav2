@@ -34,14 +34,17 @@ const API_URL = '/api/ai';
 
 export const AiService = {
 
-    // Resolve um deeplink de prefill gerado pelo agente (#57 Peça 2): troca o token assinado
-    // pelos dados (verificados via HMAC no backend) que pré-preenchem a tela de novo ticket.
-    resolveTicketPrefill: async (token: string): Promise<Record<string, string> | null> => {
+    // Resolve um deeplink de prefill gerado pelo agente (#57 Peça 2/3): troca o token assinado
+    // pelos dados (verificados via HMAC no backend). Genérico: devolve { kind, data } —
+    // kind = create_ticket | create_customer | edit_customer | ... e data = campos a pré-preencher.
+    resolvePrefill: async (token: string): Promise<{ kind: string; data: Record<string, string> } | null> => {
         try {
-            const response = await axios.get(`${API_URL}/ticket-prefill`, { params: { token }, ...getAuthHeaders() });
-            return response.data?.data ?? null;
+            const response = await axios.get(`${API_URL}/prefill`, { params: { token }, ...getAuthHeaders() });
+            const d = response.data;
+            if (!d?.data) return null;
+            return { kind: d.kind || 'unknown', data: d.data };
         } catch (error: any) {
-            handleAiError('Resolver rascunho de ticket', error);
+            handleAiError('Resolver rascunho', error);
             return null;
         }
     },
