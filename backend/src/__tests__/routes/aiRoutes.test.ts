@@ -58,6 +58,22 @@ describe('aiRoutes', () => {
         app = createApp();
     });
 
+    describe('GET /api/prefill (deeplink HITL #57)', () => {
+        it('resolve um token válido devolvendo { kind, data }', async () => {
+            const { signDeeplink } = await import('../../utils/deeplinkToken');
+            const token = signDeeplink('create_customer', { name: 'Fulano' }, 600);
+            const res = await request(app).get('/api/prefill').query({ token });
+            expect(res.status).toBe(200);
+            expect(res.body.kind).toBe('create_customer');
+            expect(res.body.data.name).toBe('Fulano');
+        });
+
+        it('rejeita token inválido/expirado com 400', async () => {
+            const res = await request(app).get('/api/prefill').query({ token: 'garbage' });
+            expect(res.status).toBe(400);
+        });
+    });
+
     describe('POST /api/generate-reply', () => {
         it('returns 200 with reply', async () => {
             const res = await request(app)

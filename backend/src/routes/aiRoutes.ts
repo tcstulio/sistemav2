@@ -53,15 +53,16 @@ router.post('/generate-reply', async (req, res) => {
     }
 });
 
-// Resolve um deeplink de prefill (HITL #57 Peça 2): o frontend manda o token,
-// o backend verifica HMAC + expiração e devolve só os dados para pré-preencher a tela.
-router.get('/ticket-prefill', (req, res) => {
+// Resolve um deeplink de prefill (HITL #57 Peça 2/3): o frontend manda o token, o backend
+// verifica HMAC + expiração e devolve { kind, data }. Genérico por 'kind' (create_ticket,
+// create_customer, edit_customer, ...) — a HMAC já garante que o token foi emitido por nós.
+router.get('/prefill', (req, res) => {
     const token = String(req.query.token || '');
-    const payload = verifyDeeplink<Record<string, string>>(token, 'create_ticket');
+    const payload = verifyDeeplink<Record<string, string>>(token);
     if (!payload) {
         return res.status(400).json({ error: 'Link inválido ou expirado. Peça ao agente para gerar um novo.' });
     }
-    res.json({ data: payload.data, expiresAt: payload.exp });
+    res.json({ kind: payload.kind, data: payload.data, expiresAt: payload.exp });
 });
 
 router.post('/analyze-system', async (req, res) => {
