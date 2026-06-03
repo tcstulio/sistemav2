@@ -72,12 +72,16 @@ import { aiService } from '../services/aiService';
 
 router.get('/config/llm', (req, res) => {
     res.json({
-        provider: config.llmProvider, // Reflect in-memory state
-        // We might need to track the *current* runtime state if we want to reflect dynamic changes accurately
-        // For MVP, we'll return what's in config object
+        provider: config.llmProvider,
         configProvider: config.llmProvider,
         localUrl: config.localLlmUrl,
-        localModelName: config.localModelName
+        localModelName: config.localModelName,
+        zaiBaseUrl: config.zaiBaseUrl,
+        zaiModel: config.zaiModel,
+        zaiApiKeyConfigured: !!config.zaiApiKey,
+        minimaxBaseUrl: config.minimaxBaseUrl,
+        minimaxModel: config.minimaxModel,
+        minimaxApiKeyConfigured: !!config.minimaxApiKey
     });
 });
 
@@ -87,14 +91,12 @@ router.get('/config/llm/models', async (req, res) => {
 
         let models: string[] = [];
 
-        if (providerName && (providerName === 'local' || providerName === 'google')) {
-            // Create a temporary provider instance to fetch models
+        if (providerName && (providerName === 'local' || providerName === 'google' || providerName === 'glm' || providerName === 'minimax')) {
             const { GoogleGenAI } = require('@google/genai');
-            const axios = require('axios'); // Ensure axios is available
+            const axios = require('axios');
 
             if (providerName === 'google') {
                 if (!config.googleApiKey) return res.json({ models: [] });
-                // Reuse GoogleProvider logic or just minimal fetch
                 const ai = new GoogleGenAI({ apiKey: config.googleApiKey });
                 const response = await ai.models.list();
                 for await (const model of response) {
@@ -102,8 +104,23 @@ router.get('/config/llm/models', async (req, res) => {
                         models.push(model.name.replace('models/', ''));
                     }
                 }
+            } else if (providerName === 'glm') {
+                if (!config.zaiApiKey) return res.json({ models: [] });
+                try {
+                    const response = await axios.get(`${config.zaiBaseUrl}models`, {
+                        headers: { 'Authorization': `Bearer ${config.zaiApiKey}` }
+                    });
+                    if (response.data?.data) models = response.data.data.map((m: any) => m.id);
+                } catch (e) { log.warn('GLM model fetch failed', { error: e instanceof Error ? e.message : String(e) }); }
+            } else if (providerName === 'minimax') {
+                if (!config.minimaxApiKey) return res.json({ models: [] });
+                try {
+                    const response = await axios.get(`${config.minimaxBaseUrl}models`, {
+                        headers: { 'Authorization': `Bearer ${config.minimaxApiKey}` }
+                    });
+                    if (response.data?.data) models = response.data.data.map((m: any) => m.id);
+                } catch (e) { log.warn('MiniMax model fetch failed', { error: e instanceof Error ? e.message : String(e) }); }
             } else {
-                // Local
                 if (!config.localLlmUrl) return res.json({ models: [] });
                 try {
                     const response = await axios.get(`${config.localLlmUrl}/models`);
@@ -140,7 +157,6 @@ router.post('/config/llm/test', async (req, res) => {
             });
             const responseString = result.text || "";
 
-            // Fetch models
             const modelList: string[] = [];
             try {
                 const responseList = await ai.models.list();
@@ -149,13 +165,99 @@ router.post('/config/llm/test', async (req, res) => {
                         modelList.push(m.name.replace('models/', ''));
                     }
                 }
-            } catch (e) { /* model listing failed, return empty list */ }
+            } catch (e) { /* model listing failed */ }
 
             return res.json({
                 success: true,
                 provider: 'google',
                 testResponse: responseString,
                 availableModels: modelList
+            });
+        } else if (provider === 'glm') {
+            const testKey = apiKey || config.zaiApiKey;
+            const testUrl = url || config.zaiBaseUrl;
+            const testModel = model || config.zaiModel;
+
+            if (!testKey) {
+                return res.json({ success: false, error: "API Key ausente para o Z.AI (GLM)." });
+            }
+
+            const axios = require('axios');
+            const startTime = Date.now();
+
+            let modelList: string[] = [];
+            try {
+                const modelsResponse = await axios.get(`${testUrl}models`, {
+                    headers: { 'Authorization': `Bearer ${testKey}` },
+                    timeout: 10000
+                });
+                if (modelsResponse.data?.data) modelList = modelsResponse.data.data.map((m: any) => m.id);
+            } catch (e) { /* model listing failed */ }
+
+            let testResponse = "Conectado ao Z.AI (GLM).";
+            try {
+                const chatResponse = await axios.post(`${testUrl}chat/completions`, {
+                    model: testModel,
+                    messages: [{ role: 'user', content: 'Respond with "OK"' }],
+                    max_tokens: 256
+                }, {
+                    headers: { 'Authorization': `Bearer ${testKey}`, 'Content-Type': 'application/json' },
+                    timeout: 30000
+                });
+                testResponse = chatResponse.data.choices[0].message?.content || testResponse;
+            } catch (e: any) {
+                testResponse = e.response
+                    ? `Erro HTTP ${e.response.status}: ${JSON.stringify(e.response.data)?.slice(0, 400)}`
+                    : `Erro: ${e.message || String(e)}`;
+            }
+
+            return res.json({
+                success: true,
+                provider: 'glm',
+                testResponse: testResponse.trim(),
+                availableModels: modelList,
+                latencyMs: Date.now() - startTime
+            });
+        } else if (provider === 'minimax') {
+            const testKey = apiKey || config.minimaxApiKey;
+            const testUrl = url || config.minimaxBaseUrl;
+            const testModel = model || config.minimaxModel;
+
+            if (!testKey) {
+                return res.json({ success: false, error: "API Key ausente para o MiniMax." });
+            }
+
+            const axios = require('axios');
+            const startTime = Date.now();
+
+            let modelList: string[] = [];
+            try {
+                const modelsResponse = await axios.get(`${testUrl}models`, {
+                    headers: { 'Authorization': `Bearer ${testKey}` },
+                    timeout: 10000
+                });
+                if (modelsResponse.data?.data) modelList = modelsResponse.data.data.map((m: any) => m.id);
+            } catch (e) { /* model listing failed */ }
+
+            let testResponse = "Conectado ao MiniMax.";
+            try {
+                const chatResponse = await axios.post(`${testUrl}chat/completions`, {
+                    model: testModel,
+                    messages: [{ role: 'user', content: 'Respond with "OK"' }],
+                    max_tokens: 256
+                }, {
+                    headers: { 'Authorization': `Bearer ${testKey}`, 'Content-Type': 'application/json' },
+                    timeout: 30000
+                });
+                testResponse = chatResponse.data.choices[0].message?.content || testResponse;
+            } catch (e: any) { testResponse = `Erro: ${e.message}`; }
+
+            return res.json({
+                success: true,
+                provider: 'minimax',
+                testResponse: testResponse.trim(),
+                availableModels: modelList,
+                latencyMs: Date.now() - startTime
             });
         } else if (provider === 'local') {
             const testUrl = url || config.localLlmUrl;
@@ -216,18 +318,28 @@ router.post('/config/llm', async (req, res) => {
     try {
         const { provider, url, key, modelName } = req.body;
 
-        if (provider !== 'local' && provider !== 'google') {
-            return res.status(400).json({ error: "Invalid provider. Use 'local' or 'google'." });
+        if (provider !== 'local' && provider !== 'google' && provider !== 'glm' && provider !== 'minimax') {
+            return res.status(400).json({ error: "Invalid provider. Use 'local', 'google', 'glm' or 'minimax'." });
         }
 
-        // Update Runtime
         aiService.setConfig(provider, url, key, modelName);
 
-        // Update Config Object (In-Memory)
         config.llmProvider = provider;
-        if (url) config.localLlmUrl = url;
-        if (key) config.googleApiKey = key;
-        if (modelName) config.localModelName = modelName;
+        if (url) {
+            if (provider === 'glm') config.zaiBaseUrl = url;
+            else if (provider === 'minimax') config.minimaxBaseUrl = url;
+            else config.localLlmUrl = url;
+        }
+        if (key) {
+            if (provider === 'glm') config.zaiApiKey = key;
+            else if (provider === 'minimax') config.minimaxApiKey = key;
+            else config.googleApiKey = key;
+        }
+        if (modelName) {
+            if (provider === 'glm') config.zaiModel = modelName;
+            else if (provider === 'minimax') config.minimaxModel = modelName;
+            else config.localModelName = modelName;
+        }
 
         res.json({ status: 'success', message: `LLM Provider switched to ${provider} (Model: ${modelName || 'default'}). Note: restart server to persist via .env.` });
     } catch (e: any) {
@@ -332,17 +444,15 @@ router.post('/config/llm/playground', async (req, res) => {
     try {
         const startTime = Date.now();
 
-        // Temporarily switch provider if specified
         const originalProvider = config.llmProvider;
         if (provider && provider !== originalProvider) {
-            aiService.setConfig(provider, config.localLlmUrl, config.googleApiKey, model);
+            aiService.setConfig(provider as 'local' | 'google' | 'glm' | 'minimax', config.localLlmUrl, config.googleApiKey, model);
         }
 
         const response = await aiService.analyzeSystem(prompt, '');
 
-        // Restore original provider
         if (provider && provider !== originalProvider) {
-            aiService.setConfig(originalProvider as 'local' | 'google', config.localLlmUrl, config.googleApiKey, config.localModelName);
+            aiService.setConfig(originalProvider as 'local' | 'google' | 'glm' | 'minimax', config.localLlmUrl, config.googleApiKey, config.localModelName);
         }
 
         const latency = Date.now() - startTime;

@@ -881,16 +881,26 @@ class GoogleProvider implements AIProvider {
 class LocalProvider implements AIProvider {
     private baseUrl: string;
     private modelName: string;
+    private apiKey?: string;
 
-    constructor(baseUrl: string, modelName: string = 'llama3') {
-        this.baseUrl = baseUrl;
+    constructor(baseUrl: string, modelName: string = 'llama3', apiKey?: string) {
+        this.baseUrl = (baseUrl || '').replace(/\/+$/, ''); // remove barra final -> evita //chat/completions
         this.modelName = modelName;
+        this.apiKey = apiKey;
+    }
+
+    private getHeaders(): Record<string, string> {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (this.apiKey) {
+            headers['Authorization'] = `Bearer ${this.apiKey}`;
+        }
+        return headers;
     }
 
     async getModels(): Promise<string[]> {
         try {
             // Ollama/OpenAI Compatible /v1/models endpoint
-            const response = await axios.get(`${this.baseUrl}/models`);
+            const response = await axios.get(`${this.baseUrl}/models`, { headers: this.getHeaders() });
             // Standard OpenAI format: { data: [{ id: 'model-name', ... }, ...] }
             if (response.data && Array.isArray(response.data.data)) {
                 return response.data.data.map((m: any) => m.id);
@@ -961,9 +971,10 @@ class LocalProvider implements AIProvider {
                 const response = await axios.post(`${this.baseUrl}/chat/completions`, {
                     model: options?.model || this.modelName,
                     messages: messages,
-                    temperature: 0.5 // Lower temperature for tool precision
+                    temperature: 0.5
                 }, {
-                    timeout: 120000 // 120 seconds timeout for slow local models
+                    headers: this.getHeaders(),
+                    timeout: 120000
                 });
 
                 const reply = response.data.choices[0].message.content;
@@ -1025,8 +1036,11 @@ class LocalProvider implements AIProvider {
                 return reply;
 
             } catch (error: any) {
-                log.error(`Local LLM Error: ${error.message}`);
-                return `Erro LLM Local: ${error.message}`;
+                const detail = error?.response
+                    ? `HTTP ${error.response.status} ${JSON.stringify(error.response.data)?.slice(0, 300)}`
+                    : (error?.code || error?.message || String(error));
+                log.error(`Local LLM Error [url=${this.baseUrl}/chat/completions model=${this.modelName}]: ${detail}`);
+                return `Erro LLM Local: ${detail}`;
             }
         }
         return "Max iterations reached.";
@@ -1054,7 +1068,7 @@ class LocalProvider implements AIProvider {
                     { role: 'user', content: prompt }
                 ],
                 temperature: 0.2
-            });
+            }, { headers: this.getHeaders() });
             return response.data.choices[0].message.content;
         } catch (error: any) {
             log.error(`Local LLM Error: ${error.message}`);
@@ -1080,7 +1094,7 @@ class LocalProvider implements AIProvider {
                     { role: 'user', content: prompt }
                 ],
                 temperature: 0.1
-            });
+            }, { headers: this.getHeaders() });
             const content = response.data.choices[0].message.content;
             const jsonStr = content.match(/\{[\s\S]*\}/)?.[0] || "{}";
             return JSON.parse(jsonStr);
@@ -1107,7 +1121,7 @@ class LocalProvider implements AIProvider {
                     { role: 'user', content: prompt }
                 ],
                 temperature: 0.1
-            });
+            }, { headers: this.getHeaders() });
             const content = response.data.choices[0].message.content;
             const jsonStr = content.match(/\{[\s\S]*\}/)?.[0] || "{}";
             return JSON.parse(jsonStr);
@@ -1138,7 +1152,7 @@ class LocalProvider implements AIProvider {
                     { role: 'user', content: prompt }
                 ],
                 temperature: 0.3
-            });
+            }, { headers: this.getHeaders() });
             return response.data.choices[0].message.content;
         } catch (error: any) {
             log.error(`Local LLM Error: ${error.message}`);
@@ -1168,7 +1182,7 @@ class LocalProvider implements AIProvider {
                     { role: 'user', content: prompt }
                 ],
                 temperature: 0.2
-            });
+            }, { headers: this.getHeaders() });
             return response.data.choices[0].message.content;
         } catch (error: any) {
             log.error("Local LLM fixApiCall Error", error);
@@ -1196,7 +1210,7 @@ class LocalProvider implements AIProvider {
                     { role: 'user', content: prompt }
                 ],
                 temperature: 0.1
-            });
+            }, { headers: this.getHeaders() });
             return response.data.choices[0].message.content;
         } catch (error: any) {
             return "// Local Gen Failed";
@@ -1216,21 +1230,26 @@ class LocalProvider implements AIProvider {
 let currentProvider: AIProvider | null = null;
 
 const getProvider = (specificProviderName?: string): AIProvider => {
-    // If specific provider requested, return a new temporary instance or cached one
-    // Ideally we should cache these instances too.
     if (specificProviderName) {
         if (specificProviderName === 'google') {
             return new GoogleProvider(config.googleApiKey);
         } else if (specificProviderName === 'local') {
-            return new LocalProvider(config.localLlmUrl, config.localModelName); // Model name might be overridden later by options
+            return new LocalProvider(config.localLlmUrl, config.localModelName);
+        } else if (specificProviderName === 'glm') {
+            return new LocalProvider(config.zaiBaseUrl, config.zaiModel, config.zaiApiKey);
+        } else if (specificProviderName === 'minimax') {
+            return new LocalProvider(config.minimaxBaseUrl, config.minimaxModel, config.minimaxApiKey);
         }
     }
 
     if (currentProvider) return currentProvider;
 
-    // Initialize default
     if (config.llmProvider === 'local') {
         currentProvider = new LocalProvider(config.localLlmUrl, config.localModelName);
+    } else if (config.llmProvider === 'glm') {
+        currentProvider = new LocalProvider(config.zaiBaseUrl, config.zaiModel, config.zaiApiKey);
+    } else if (config.llmProvider === 'minimax') {
+        currentProvider = new LocalProvider(config.minimaxBaseUrl, config.minimaxModel, config.minimaxApiKey);
     } else {
         currentProvider = new GoogleProvider(config.googleApiKey);
     }
@@ -1238,9 +1257,13 @@ const getProvider = (specificProviderName?: string): AIProvider => {
 };
 
 export const aiService = {
-    setConfig: (providerName: 'local' | 'google', url?: string, key?: string, modelName?: string) => {
+    setConfig: (providerName: 'local' | 'google' | 'glm' | 'minimax', url?: string, key?: string, modelName?: string) => {
         if (providerName === 'google') {
             currentProvider = new GoogleProvider(key || config.googleApiKey, modelName);
+        } else if (providerName === 'glm') {
+            currentProvider = new LocalProvider(url || config.zaiBaseUrl, modelName || config.zaiModel, key || config.zaiApiKey);
+        } else if (providerName === 'minimax') {
+            currentProvider = new LocalProvider(url || config.minimaxBaseUrl, modelName || config.minimaxModel, key || config.minimaxApiKey);
         } else {
             currentProvider = new LocalProvider(url || config.localLlmUrl, modelName || config.localModelName);
         }
@@ -1256,6 +1279,12 @@ export const aiService = {
     },
 
     generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string, moduleName: string = 'chat') => {
+        // Injeta o endereço público (cloudflared) no contexto -> o agente sabe responder "qual o endereço de acesso?".
+        try {
+            const tunnelUrl = require('./tunnelService').tunnelService.getUrl();
+            if (tunnelUrl) context = `${context}\n[INFRA] Endereço de acesso público atual (cloudflared): ${tunnelUrl}`;
+        } catch { /* ignore */ }
+
         // Dynamic Config Lookup
         // We might want to import configService dynamically if needed, or assume it's available.
         // But since this is inside a function, we can use the imported instance.
