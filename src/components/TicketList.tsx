@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { usePrefill } from '../hooks/usePrefill';
 import { toast } from 'sonner';
 import { Ticket, ThirdParty, DolibarrUser, DolibarrConfig, AppView, AgendaEvent, Project } from '../types';
 import { Ticket as TicketIcon, Search, AlertCircle, Clock, Calendar, CheckCircle2, User, ExternalLink, MessageSquare, Send, UserCircle, Sparkles, Loader2, List, Kanban, Plus, ArrowDown, ArrowUp, DollarSign, Users, Info, Phone, Bot, FileText, FolderKanban, ClipboardList, Wrench } from 'lucide-react';
@@ -65,7 +65,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
     const [isNewTicketModalOpen, setIsNewTicketModalOpen] = useState(false);
     const [newTicketForm, setNewTicketForm] = useState({ subject: '', message: '', socid: '', severity_code: 'NORMAL', type_code: 'ISSUE' });
     const [isSubmittingTicket, setIsSubmittingTicket] = useState(false);
-    const [searchParams, setSearchParams] = useSearchParams();
+    const prefill = usePrefill();
 
     // Escalation State
     const [isEscalateModalOpen, setIsEscalateModalOpen] = useState(false);
@@ -100,32 +100,22 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
         }
     }, [initialItemId, tickets]);
 
-    // Deeplink HITL do agente (#57 Peça 2): /tickets/new?prefill=<token> → resolve no backend
-    // (verifica HMAC + expiração) e abre o modal de novo ticket JÁ pré-preenchido para revisão.
+    // Deeplink HITL do agente (#57 Peça 2/3): a tela é aberta via /tickets/new?prefill=<token>;
+    // o hook usePrefill resolve o token (HMAC) e aqui pré-preenchemos o modal de novo ticket.
     useEffect(() => {
-        const token = searchParams.get('prefill');
-        if (!token) return;
-        let cancelled = false;
-        (async () => {
-            const data = await AiService.resolveTicketPrefill(token);
-            if (cancelled || !data) return;
-            setNewTicketForm(prev => ({
-                ...prev,
-                subject: data.subject || '',
-                message: data.message || '',
-                socid: data.socid || '',
-                type_code: data.type_code || 'ISSUE',
-                severity_code: data.severity_code || 'NORMAL',
-            }));
-            setIsNewTicketModalOpen(true);
-            toast.info('Revise os dados e confirme a criação do ticket.');
-            // Remove o token da URL para não reabrir ao atualizar/navegar.
-            searchParams.delete('prefill');
-            setSearchParams(searchParams, { replace: true });
-        })();
-        return () => { cancelled = true; };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [searchParams]);
+        if (prefill?.kind !== 'create_ticket') return;
+        const data = prefill.data;
+        setNewTicketForm(prev => ({
+            ...prev,
+            subject: data.subject || '',
+            message: data.message || '',
+            socid: data.socid || '',
+            type_code: data.type_code || 'ISSUE',
+            severity_code: data.severity_code || 'NORMAL',
+        }));
+        setIsNewTicketModalOpen(true);
+        toast.info('Revise os dados e confirme a criação do ticket.');
+    }, [prefill]);
 
     // Robust Customer Name Resolution
     const getCustomerName = (ticket: Ticket) => {

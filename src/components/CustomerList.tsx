@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { ThirdParty, AppView } from '../types';
@@ -8,6 +8,7 @@ import { Mail, MapPin, Building2, Phone, Sparkles, Loader2, X, ArrowLeft, Search
 import { AiService } from '../services/aiService';
 import { DolibarrService } from '../services/dolibarrService';
 import { useCustomerMutations } from '../hooks/useMutations';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 
@@ -147,6 +148,10 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
     // Mutations
     const { createCustomer, updateCustomer } = useCustomerMutations(config);
 
+    // Deeplink HITL do agente (#57 Peça 2/3) — aplica o prefill UMA vez por token.
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+
     // Reset page on search change
     useEffect(() => {
         setPage(0);
@@ -161,6 +166,32 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
             }
         }
     }, [initialItemId, customers]);
+
+    // Deeplink HITL do agente (#57 Peça 2/3):
+    //  - create_customer → abre o modal de cadastro pré-preenchido.
+    //  - edit_customer → carrega os valores ATUAIS (do hook) e sobrepõe as mudanças no modal de edição.
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_customer') {
+            appliedPrefillRef.current = prefill;
+            setCreateForm(prev => ({ ...prev, ...prefill.data }));
+            setIsCreateModalOpen(true);
+            toast.info('Revise os dados e confirme o cadastro do cliente.');
+        } else if (prefill.kind === 'edit_customer') {
+            if (customers.length === 0) return; // aguarda os clientes carregarem
+            appliedPrefillRef.current = prefill;
+            const { id, ...changes } = prefill.data;
+            const current = customers.find(c => String(c.id) === String(id));
+            if (!current) {
+                toast.error('Cliente não encontrado para edição.');
+                return;
+            }
+            setSelectedCustomer(current);
+            setEditForm({ ...current, ...changes });
+            setIsEditModalOpen(true);
+            toast.info('Revise as mudanças sugeridas e salve.');
+        }
+    }, [prefill, customers]);
 
     // Derived Data
     const filteredCustomers = useMemo(() => {

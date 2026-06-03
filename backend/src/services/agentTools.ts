@@ -49,11 +49,13 @@ export const TOOLS_PROMPT = `
         31. search_web(query: string) - Pesquisa preços e fornecedores na internet (Google via Serper).
         32. extract_from_url(url: string) - Acessa um link e extrai o conteúdo da página.
 
-        FERRAMENTAS DE AÇÃO (escrita com confirmação na tela):
-        33. prepare_create_ticket(subject: string, message: string, type_code?: string, severity_code?: string, socid?: string) - Prepara um RASCUNHO de ticket de suporte e gera um link para o usuário REVISAR e CRIAR na tela. NÃO cria o ticket sozinho — o usuário confirma. Se souber o cliente, busque o id antes com search_customer e passe em socid.
+        FERRAMENTAS DE AÇÃO (escrita com confirmação na tela; devolvem um LINK):
+        33. prepare_create_ticket(subject, message, type_code?, severity_code?, socid?) - Rascunho de ticket de suporte. Se souber o cliente, ache o id antes com search_customer e passe em socid.
+        34. prepare_create_customer(name, email?, phone?, address?, town?, zip?, client?) - Rascunho de novo cliente/prospect (client: '1'=cliente, '0' ou '2'=prospect).
+        35. prepare_edit_customer(id, name?, email?, phone?, address?, town?, zip?, client?) - Prepara EDIÇÃO de um cliente existente. Ache o id antes com search_customer e informe APENAS os campos a mudar.
 
-        REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK. Ao responder ao usuário,
-        inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
+        REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
+        Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
 
         EXEMPLO:
         User: "Detalhes do cliente 123"
@@ -61,6 +63,79 @@ export const TOOLS_PROMPT = `
         User: (Sistema retorna detalhes)
         Assistant: "O Cliente X tem 3 faturas em aberto..."
         `;
+
+// --- AÇÕES HITL via deeplink (#57 Peça 2/3) ---
+// Registro de entidades que o agente pode propor criar/editar. Adicionar uma entidade =
+// uma entrada aqui + (no frontend) ler o prefill na tela correspondente. O agente NUNCA
+// escreve direto: gera um deeplink assinado; o usuário revisa e confirma na tela (com a auth dele).
+interface DeeplinkEntity {
+    label: string;            // nome amigável p/ a mensagem
+    createFields?: string[];  // whitelist de campos na criação
+    editFields?: string[];    // whitelist de campos na edição
+    required?: string[];      // obrigatórios na criação
+    newRoute?: string;        // rota de criação (ex.: '/tickets/new')
+    editRoute?: string;       // rota de edição com :id (ex.: '/customers/:id/edit')
+}
+
+const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
+    ticket: {
+        label: 'ticket',
+        createFields: ['subject', 'message', 'type_code', 'severity_code', 'socid'],
+        required: ['subject', 'message'],
+        newRoute: '/tickets/new',
+    },
+    customer: {
+        label: 'cliente',
+        createFields: ['name', 'email', 'phone', 'address', 'town', 'zip', 'client'],
+        editFields: ['name', 'email', 'phone', 'address', 'town', 'zip', 'client'],
+        required: ['name'],
+        newRoute: '/customers/new',
+        editRoute: '/customers/:id/edit',
+    },
+};
+
+function pickFields(args: any, fields: string[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const f of fields) {
+        const v = args?.[f];
+        if (v !== undefined && v !== null && v !== '') out[f] = String(v);
+    }
+    return out;
+}
+
+// Trata prepare_create_<entity> e prepare_edit_<entity>. Retorna a msg com o deeplink,
+// ou null se 'tool' não for uma ferramenta de ação (aí o switch segue p/ "desconhecida").
+function tryPrepareDeeplink(tool: string, args: any): string | null {
+    const create = tool.match(/^prepare_create_(.+)$/);
+    if (create) {
+        const ent = DEEPLINK_ENTITIES[create[1]];
+        if (!ent?.newRoute) return `Entidade '${create[1]}' não suporta criação via deeplink.`;
+        for (const r of ent.required || []) {
+            if (!args?.[r]) throw new Error(`Parâmetro '${r}' ausente.`);
+        }
+        const prefill = pickFields(args, ent.createFields || []);
+        const token = signDeeplink(`create_${create[1]}`, prefill, 1800); // 30 min
+        const deeplink = `${ent.newRoute}?prefill=${token}`;
+        return `RASCUNHO de ${ent.label} preparado. Para criar de fato é preciso REVISAR E CONFIRMAR na tela. `
+            + `Responda ao usuário com uma frase curta e inclua, EXATAMENTE como está, este link: ${deeplink}`;
+    }
+
+    const edit = tool.match(/^prepare_edit_(.+)$/);
+    if (edit) {
+        const ent = DEEPLINK_ENTITIES[edit[1]];
+        if (!ent?.editRoute) return `Entidade '${edit[1]}' não suporta edição via deeplink.`;
+        if (!args?.id) throw new Error("Parâmetro 'id' ausente (id do registro a editar).");
+        const changes = pickFields(args, ent.editFields || []);
+        if (Object.keys(changes).length === 0) throw new Error('Nenhum campo para alterar foi informado.');
+        const data = { id: String(args.id), ...changes };
+        const token = signDeeplink(`edit_${edit[1]}`, data, 1800);
+        const deeplink = `${ent.editRoute.replace(':id', String(args.id))}?prefill=${token}`;
+        return `MUDANÇAS no ${ent.label} #${args.id} preparadas. Para aplicar é preciso REVISAR E CONFIRMAR na tela. `
+            + `Responda ao usuário com uma frase curta e inclua, EXATAMENTE como está, este link: ${deeplink}`;
+    }
+
+    return null;
+}
 
 /** Executa uma ferramenta do agente e retorna o resultado já formatado como string. */
 export async function executeTool(tool: string, args: any = {}): Promise<string> {
@@ -201,26 +276,11 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             return `[PAGE CONTENT for ${args.url}]:\n${pageContent ? pageContent.substring(0, 10000) : 'Falha ao acessar página ou conteúdo vazio'}`;
         }
 
-        // --- AÇÕES (escrita HITL via deeplink) --- #57 Peça 2
-        case 'prepare_create_ticket': {
-            if (!args?.subject) throw new Error("Parâmetro 'subject' ausente.");
-            if (!args?.message) throw new Error("Parâmetro 'message' ausente.");
-            // Whitelist dos campos que vão pré-preencher a tela de novo ticket.
-            const prefill = {
-                subject: String(args.subject),
-                message: String(args.message),
-                type_code: args.type_code ? String(args.type_code) : 'ISSUE',
-                severity_code: args.severity_code ? String(args.severity_code) : 'NORMAL',
-                socid: args.socid ? String(args.socid) : '',
-            };
-            const token = signDeeplink('create_ticket', prefill, 1800); // 30 min
-            const deeplink = `/tickets/new?prefill=${token}`;
-            return `RASCUNHO de ticket preparado (assunto: "${prefill.subject}"). `
-                + `Para criar de fato é preciso REVISAR E CONFIRMAR na tela. `
-                + `Responda ao usuário com uma frase curta e inclua, EXATAMENTE como está, este link para ele clicar: ${deeplink}`;
-        }
-
-        default:
+        // AÇÕES HITL (prepare_create_*/prepare_edit_*) caem no dispatch genérico abaixo.
+        default: {
+            const deeplinkMsg = tryPrepareDeeplink(tool, args);
+            if (deeplinkMsg !== null) return deeplinkMsg;
             return `Ferramenta desconhecida: ${tool}`;
+        }
     }
 }
