@@ -1029,6 +1029,20 @@ const getProvider = (specificProviderName?: string): AIProvider => {
     return currentProvider!;
 };
 
+// --- Roteamento por capacidade (#57 Peça 3) ---
+// GLM/MiniMax/local (LocalProvider) são text-only neste código: visão e áudio
+// só funcionam no GoogleProvider. Quando a ENTRADA exige uma capacidade que o
+// provider de texto configurado não tem, roteamos APENAS essa chamada para um
+// provider multimodal (Google), mantendo o GLM/local para texto.
+const providerSupportsVision = (p: AIProvider): boolean => p instanceof GoogleProvider;
+const providerSupportsAudio = (p: AIProvider): boolean => p instanceof GoogleProvider;
+
+// Provider multimodal de fallback (hoje só o Google). null se não houver chave.
+const getMultimodalProvider = (): AIProvider | null => {
+    if (config.googleApiKey) return new GoogleProvider(config.googleApiKey);
+    return null;
+};
+
 export const aiService = {
     setConfig: (providerName: 'local' | 'google' | 'glm' | 'minimax', url?: string, key?: string, modelName?: string) => {
         if (providerName === 'google') {
@@ -1077,6 +1091,17 @@ export const aiService = {
             specificProvider = getProvider();
         }
 
+        // Roteamento por capacidade: se há IMAGEM e o provider de texto (GLM/local)
+        // não tem visão, atende ESTA resposta com o Google (mesmo conjunto de tools).
+        if (imageBase64 && !providerSupportsVision(specificProvider)) {
+            const mm = getMultimodalProvider();
+            if (mm) {
+                log.info(`generateReply: imagem presente e provider '${providerName}' sem visão -> roteando para Google.`);
+                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel });
+            }
+            log.warn(`generateReply: imagem presente mas nenhum provider com visão disponível (sem googleApiKey) -> seguindo com '${providerName}'.`);
+        }
+
         return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName });
     },
 
@@ -1095,7 +1120,16 @@ export const aiService = {
     },
 
     extractReceiptData: async (imageBase64: string) => {
-        return getProvider().extractReceiptData(imageBase64);
+        // Visão (OCR de recibo): se o provider de texto não tem visão, roteia p/ Google.
+        let provider = getProvider();
+        if (!providerSupportsVision(provider)) {
+            const mm = getMultimodalProvider();
+            if (mm) {
+                log.info("extractReceiptData: provider de texto sem visão -> roteando para Google.");
+                provider = mm;
+            }
+        }
+        return provider.extractReceiptData(imageBase64);
     },
 
     extractCustomerInfo: async (text: string) => {
@@ -1126,7 +1160,15 @@ export const aiService = {
     },
 
     transcribeAudio: async (audioBase64: string, mimeType: string = 'audio/ogg') => {
-        const provider = getProvider();
+        // Áudio: se o provider de texto (GLM/local) não transcreve, roteia p/ Google.
+        let provider = getProvider();
+        if (!providerSupportsAudio(provider)) {
+            const mm = getMultimodalProvider();
+            if (mm) {
+                log.info("transcribeAudio: provider de texto sem áudio -> roteando para Google.");
+                provider = mm;
+            }
+        }
         if ('transcribeAudio' in provider) {
             return (provider as any).transcribeAudio(audioBase64, mimeType);
         }

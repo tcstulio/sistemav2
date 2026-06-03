@@ -423,9 +423,16 @@ describe('AiService', () => {
             expect(result).toEqual({});
         });
 
-        it('extractReceiptData returns null', async () => {
+        it('extractReceiptData roteia para Google quando provider de texto é local', async () => {
+            // #57 Peça 3: LocalProvider não tem visão -> a chamada vai para o Google.
+            (GoogleGenAI as any).mockImplementation(function (this: any) {
+                this.models = {
+                    generateContent: vi.fn().mockResolvedValue({ text: '{"vendor":"Loja","total":50,"items":[]}' }),
+                    list: vi.fn(),
+                };
+            });
             const result = await aiService.extractReceiptData('base64');
-            expect(result).toBeNull();
+            expect(result.vendor).toBe('Loja');
         });
 
         it('analyzeFinancialHealth returns result', async () => {
@@ -464,9 +471,29 @@ describe('AiService', () => {
             expect(result).toBe('// Local Gen Failed');
         });
 
-        it('transcribeAudio returns unavailable message', async () => {
+        it('transcribeAudio roteia para Google quando provider de texto é local', async () => {
+            // #57 Peça 3: LocalProvider não transcreve áudio -> roteia para o Google.
+            (GoogleGenAI as any).mockImplementation(function (this: any) {
+                this.models = {
+                    generateContent: vi.fn().mockResolvedValue({ text: 'Roteado para Google' }),
+                    list: vi.fn(),
+                };
+            });
             const result = await aiService.transcribeAudio('base64audio');
-            expect(result).toContain('dispon');
+            expect(result).toBe('Roteado para Google');
+        });
+
+        it('transcribeAudio cai para mensagem indisponível sem provider multimodal', async () => {
+            // Sem googleApiKey não há fallback multimodal -> mantém o LocalProvider (degradação graciosa).
+            const { config } = await import('../../config/env');
+            const original = (config as any).googleApiKey;
+            (config as any).googleApiKey = '';
+            try {
+                const result = await aiService.transcribeAudio('base64audio');
+                expect(result).toContain('dispon');
+            } finally {
+                (config as any).googleApiKey = original;
+            }
         });
 
         it('draftCollectionEmail falls back for local provider', async () => {
