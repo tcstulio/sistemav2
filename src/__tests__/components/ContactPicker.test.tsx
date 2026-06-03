@@ -5,30 +5,30 @@ import { ThirdParty, Contact } from '../../types/crm';
 
 const mockCustomers: ThirdParty[] = [
     {
-        id: '1', name: 'Customer One', status: '1', phone: '1199999999', phone_mobile: '',
-        ref: '', email: '', ref_ext: '', address: '', zip: '', town: '', fk_pays: '',
+        id: '1', name: 'Customer One', status: '1', client: '1', fournisseur: '0', phone: '1199999999', phone_mobile: '',
+        email: '', address: '', zip: '', town: '',
     },
     {
-        id: '2', name: 'Customer Two', status: '0', phone: '', phone_mobile: '1196666666',
-        ref: '', email: '', ref_ext: '', address: '', zip: '', town: '', fk_pays: '',
+        id: '2', name: 'Customer Two', status: '0', client: '1', fournisseur: '0', phone: '', phone_mobile: '1196666666',
+        email: '', address: '', zip: '', town: '',
     },
 ];
 
 const mockContacts: Contact[] = [
     {
-        id: '1', statut: '1', phone_mobile: '1195555555', firstname: 'John', lastname: 'Doe',
-        email: '', ref: '', fk_soc: '', address: '', zip: '', town: '', fk_pays: '',
+        id: '1', socid: '1', statut: '1', phone_mobile: '1195555555', firstname: 'John', lastname: 'Doe',
+        email: '',
     },
     {
-        id: '2', statut: '0', phone_mobile: '1194444444', firstname: 'Jane', lastname: 'Smith',
-        email: '', ref: '', fk_soc: '', address: '', zip: '', town: '', fk_pays: '',
+        id: '2', socid: '1', statut: '0', phone_mobile: '1194444444', firstname: 'Jane', lastname: 'Smith',
+        email: '',
     },
 ];
 
 const mockSuppliers: ThirdParty[] = [
     {
-        id: '1', name: 'Supplier One', status: '1', phone: '1193333333', phone_mobile: '',
-        ref: '', email: '', ref_ext: '', address: '', zip: '', town: '', fk_pays: '',
+        id: '1', name: 'Supplier One', status: '1', client: '0', fournisseur: '1', phone: '1193333333', phone_mobile: '',
+        email: '', address: '', zip: '', town: '',
     },
 ];
 
@@ -122,7 +122,7 @@ describe('ContactPicker', () => {
         );
         screen.getByText('John Doe').click();
         expect(selectedEntry).toBeTruthy();
-        expect(selectedEntry?.name).toBe('John Doe');
+        expect((selectedEntry as CRMContactEntry | null)?.name).toBe('John Doe');
     });
 
     it('filters by search term', () => {

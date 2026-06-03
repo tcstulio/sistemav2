@@ -5,21 +5,21 @@ import { WhatsAppAccount } from '../../types';
 import { ThirdParty, Contact } from '../../types/crm';
 
 const mockSessions: WhatsAppAccount[] = [
-    { id: '1', name: 'Session 1', status: 'connected', phoneNumber: '1199999999' },
-    { id: '2', name: 'Session 2', status: 'disconnected', phoneNumber: '1188888888' },
+    { id: '1', name: 'Session 1', status: 'connected', phoneNumber: '1199999999', platform: 'WAHA' },
+    { id: '2', name: 'Session 2', status: 'disconnected', phoneNumber: '1188888888', platform: 'WAHA' },
 ];
 
 const mockCustomers: ThirdParty[] = [
     {
-        id: '1', name: 'Customer One', status: '1', phone: '1199999999', phone_mobile: '',
-        ref: '', email: '', ref_ext: '', address: '', zip: '', town: '', fk_pays: '',
+        id: '1', name: 'Customer One', status: '1', client: '1', fournisseur: '0', phone: '1199999999', phone_mobile: '',
+        email: '', address: '', zip: '', town: '',
     },
 ];
 
 const mockContacts: Contact[] = [
     {
-        id: '1', statut: '1', phone_mobile: '1195555555', firstname: 'John', lastname: 'Doe',
-        email: '', ref: '', fk_soc: '', address: '', zip: '', town: '', fk_pays: '',
+        id: '1', socid: '1', statut: '1', phone_mobile: '1195555555', firstname: 'John', lastname: 'Doe',
+        email: '',
     },
 ];
 

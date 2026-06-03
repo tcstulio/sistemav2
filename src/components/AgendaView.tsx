@@ -120,6 +120,9 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
 
         // 1. Events
         events.forEach(e => {
+            // Chat messages are stored as agendaevents (type AC_CHAT) but are conversations,
+            // not calendar items — never surface them in the agenda.
+            if (e.type_code?.toUpperCase() === 'AC_CHAT') return;
             const isLog = isSystemLog(e);
             if (isLog && !showSystemEvents) return;
             const context = getContextLink(e);

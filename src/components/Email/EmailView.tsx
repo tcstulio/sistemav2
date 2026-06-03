@@ -98,7 +98,7 @@ const EmailView: React.FC = () => {
         if (!messageBody?.from) return null;
 
         const emailMatch = messageBody.from.match(/<(.+)>/) || [null, messageBody.from];
-        const email = (emailMatch[1] || emailMatch[0]).trim();
+        const email = (emailMatch[1] || emailMatch[0] || '').trim();
 
         const customer = customers.find(c => {
             if (c.email && c.email.toLowerCase() === email.toLowerCase()) return true;

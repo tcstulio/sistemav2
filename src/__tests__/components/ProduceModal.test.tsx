@@ -19,8 +19,8 @@ const mockConfig: DolibarrConfig = {
 };
 
 const mockWarehouses: Warehouse[] = [
-    { id: '1', label: 'Armazém Principal', description: '' },
-    { id: '2', label: 'Armazém Secundário', description: '' },
+    { id: '1', label: 'Armazém Principal', description: '', statut: '1' },
+    { id: '2', label: 'Armazém Secundário', description: '', statut: '1' },
 ];
 
 const mockMO: ManufacturingOrder = {

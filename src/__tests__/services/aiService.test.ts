@@ -22,6 +22,7 @@ vi.mock('../../utils/safeStorage', () => ({
 import axios from 'axios';
 import { toast } from 'sonner';
 import { AiService } from '../../services/aiService';
+import { ThirdParty, Invoice, Project } from '../../types';
 
 describe('AiService', () => {
     const mockAxios = axios as unknown as {
@@ -145,7 +146,7 @@ describe('AiService', () => {
             mockAxios.post.mockResolvedValue(response);
 
             const customer = { id: '1', name: 'Test', email: 'test@example.com' };
-            const result = await AiService.draftCollectionEmail(customer, 1000);
+            const result = await AiService.draftCollectionEmail(customer as unknown as ThirdParty, 1000);
 
             expect(result).toEqual(draft);
         });
@@ -154,7 +155,7 @@ describe('AiService', () => {
             mockAxios.post.mockRejectedValue(new Error('Failed'));
 
             const customer = { id: '1', name: 'Test', email: 'test@example.com' };
-            const result = await AiService.draftCollectionEmail(customer, 1000);
+            const result = await AiService.draftCollectionEmail(customer as unknown as ThirdParty, 1000);
 
             expect(result).toContain('Erro');
         });
@@ -169,7 +170,7 @@ describe('AiService', () => {
             const invoices = [
                 { id: '1', ref: 'INV-001', total_ttc: 1000, status: 'paid', date: '2024-01-15' }
             ];
-            const result = await AiService.generateSalesForecast(invoices);
+            const result = await AiService.generateSalesForecast(invoices as unknown as Invoice[]);
 
             expect(result).toEqual(forecast);
         });
@@ -201,7 +202,7 @@ describe('AiService', () => {
             mockAxios.post.mockResolvedValue(response);
 
             const customer = { id: '1', name: 'Test', status: 'active', date_creation: '2024-01-01' };
-            const result = await AiService.analyzeCustomerSentiment(customer, []);
+            const result = await AiService.analyzeCustomerSentiment(customer as unknown as ThirdParty, []);
 
             expect(result).toEqual({ text: sentiment, logId: expect.any(String) });
         });
@@ -210,7 +211,7 @@ describe('AiService', () => {
             mockAxios.post.mockRejectedValue(new Error('Analysis failed'));
 
             const customer = { id: '1', name: 'Test', status: 'active', date_creation: '2024-01-01' };
-            const result = await AiService.analyzeCustomerSentiment(customer, []);
+            const result = await AiService.analyzeCustomerSentiment(customer as unknown as ThirdParty, []);
 
             expect(result).toBeNull();
         });
@@ -263,7 +264,7 @@ describe('AiService', () => {
             mockAxios.post.mockResolvedValue(response);
 
             const project = { ref: 'PROJ-001', title: 'Test', status: 'active' };
-            const result = await AiService.auditProject(project, [], []);
+            const result = await AiService.auditProject(project as unknown as Project, [], []);
 
             expect(result).toEqual(audit);
         });
@@ -276,7 +277,7 @@ describe('AiService', () => {
             const tasks = Array(30).fill({}).map((_, i) => ({ id: i }));
             const invoices = Array(15).fill({}).map((_, i) => ({ id: i }));
 
-            await AiService.auditProject(project, tasks, invoices);
+            await AiService.auditProject(project as unknown as Project, tasks, invoices);
 
             expect(mockAxios.post).toHaveBeenCalledWith(expect.stringContaining('/audit/project'), expect.objectContaining({
                 tasks: expect.any(Array),
@@ -560,7 +561,7 @@ describe('AiService', () => {
             mockAxios.post.mockResolvedValue(response);
 
             const customer = { id: '1', name: 'Test', email: 'test@example.com' };
-            const result = await AiService.draftMessage(customer, 'collection', ['email']);
+            const result = await AiService.draftMessage(customer as unknown as ThirdParty, 'collection', ['email']);
 
             expect(result).toBe(draft);
         });
@@ -572,7 +573,7 @@ describe('AiService', () => {
             const customer = { id: '1', name: 'Test', email: 'test@example.com' };
             const additionalData = { invoiceId: 'INV-001', amount: 1000 };
 
-            await AiService.draftMessage(customer, 'update', ['whatsapp'], additionalData);
+            await AiService.draftMessage(customer as unknown as ThirdParty, 'update', ['whatsapp'], additionalData);
 
             expect(mockAxios.post).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
                 history: expect.any(Array)
@@ -583,7 +584,7 @@ describe('AiService', () => {
             mockAxios.post.mockRejectedValue(new Error('Draft failed'));
 
             const customer = { id: '1', name: 'Test', email: 'test@example.com' };
-            const result = await AiService.draftMessage(customer, 'context', ['email']);
+            const result = await AiService.draftMessage(customer as unknown as ThirdParty, 'context', ['email']);
 
             expect(result).toBeNull();
         });

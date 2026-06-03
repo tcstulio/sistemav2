@@ -362,7 +362,7 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
                                                 onNavigate(view, event.fk_element!);
                                             } else {
                                                 // Fallback to External Link
-                                                openLink(event.elementtype, event.fk_element!);
+                                                openLink(event.elementtype || '', event.fk_element!);
                                             }
                                         }}
                                         className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-purple-300 dark:hover:border-purple-700 cursor-pointer transition-all hover:shadow-md group"

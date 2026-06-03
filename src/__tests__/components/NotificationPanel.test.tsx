@@ -18,7 +18,7 @@ const mockNotifications: AppNotification[] = [
         message: 'Você recebeu uma nova mensagem de contato@empresa.com',
         date: Date.now() - 10000,
         read: false,
-        priority: 'normal',
+        priority: 'medium',
         linkTo: { view: 'email' as AppView, id: '100' }
     },
     {
@@ -38,7 +38,7 @@ const mockNotifications: AppNotification[] = [
         message: 'Fatura #1234 está vencida há 5 dias',
         date: Date.now() - 100000,
         read: true,
-        priority: 'normal'
+        priority: 'medium'
     }
 ];
 
