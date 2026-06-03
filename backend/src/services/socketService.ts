@@ -16,7 +16,14 @@ export const socketService = {
 
         io = new SocketIOServer(httpServer, {
             cors: {
-                origin: allowedOrigins,
+                // PROTÓTIPO: libera o túnel do cloudflared (espelha o CORS do Express).
+                origin: (origin, callback) => {
+                    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.trycloudflare.com')) {
+                        callback(null, true);
+                    } else {
+                        callback(new Error('Not allowed by CORS'));
+                    }
+                },
                 methods: ["GET", "POST"],
                 credentials: true
             }
@@ -27,6 +34,12 @@ export const socketService = {
             const token = socket.handshake.auth.token || socket.handshake.headers['dolapikey'];
             if (!token) {
                 return next(new Error("Authentication error: No API Key provided"));
+            }
+
+            // PROTÓTIPO (Desenho B): aceita o token de sessão do nosso /login (proto-session).
+            const { getProtoSession } = require('./protoSession');
+            if (getProtoSession(token)) {
+                return next();
             }
 
             // We can reuse the cache logic or just validate
