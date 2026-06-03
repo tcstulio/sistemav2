@@ -7,6 +7,7 @@ import path from 'path';
 import { ScraperService } from './scraperService';
 import { logger } from '../utils/logger';
 import { isValidExternalUrl } from '../utils/urlValidation';
+import { TOOLS_PROMPT, executeTool } from './agentTools';
 
 const log = logger.child('AiService');
 
@@ -934,19 +935,8 @@ class LocalProvider implements AIProvider {
         ... (outras ferramentas omitidas para brevidade, assumindo que o modelo conhece o contexto)
         `;
 
-        // Simplify for Local LLM context window
-        const toolsLite = `
-        TOOLS:
-        - search_customer(query)
-        - get_customer_details(id)
-        - list_invoices(status)
-        - list_projects(search)
-        - search_web(query)
-        - extract_from_url(url)
-        
-        To use a tool, REPLY ONLY JSON: { "tool": "name", "args": {} }
-        Example: { "tool": "search_customer", "args": { "query": "Cliente" } }
-        `;
+        // Conjunto completo de ferramentas (mesmo do Gemini), via registro unificado
+        const toolsLite = TOOLS_PROMPT;
 
         let currentHistory = [...conversationHistory];
         let currentContext = context;
@@ -988,38 +978,8 @@ class LocalProvider implements AIProvider {
                         const toolCall = JSON.parse(jsonBlock);
                         log.info(`Local LLM Tool Call: ${toolCall.tool}`, toolCall.args);
 
-                        let toolResult = "";
-
-                        // Execute Tool (Shared logic - simplified copy)
-                        // In a real refactor, we would move the switch case to a shared helper function
-                        switch (toolCall.tool) {
-                            case 'search_customer':
-                                const customers = await dolibarrService.searchThirdParty(toolCall.args?.query || '');
-                                toolResult = `Result: ${JSON.stringify(customers.slice(0, 5).map((c: any) => ({ id: c.id, name: c.name })))}`;
-                                break;
-                            case 'get_customer_details':
-                                toolResult = await dolibarrService.getCustomerContext(toolCall.args?.id || '');
-                                break;
-                            case 'list_invoices':
-                                const invs = await dolibarrService.listInvoices(toolCall.args || {});
-                                toolResult = `Faturas: ${JSON.stringify(invs.map((i: any) => ({ ref: i.ref, total: i.total_ttc, status: i.statut })))}`;
-                                break;
-
-                            case 'search_web':
-                                const searchRes = await ScraperService.searchGoogle(toolCall.args?.query || '');
-                                toolResult = `Search Results: ${JSON.stringify(searchRes)}`;
-                                break;
-                            case 'extract_from_url':
-                                if (!isValidExternalUrl(toolCall.args?.url)) {
-                                    toolResult = 'Erro: URL inválida ou bloqueada (IPs privados/internos não são permitidos).';
-                                    break;
-                                }
-                                const pageContent = await ScraperService.fetchPageContent(toolCall.args?.url || '');
-                                toolResult = `Page Content: ${pageContent ? pageContent.substring(0, 5000) : 'Failed'}`;
-                                break;
-                            default:
-                                toolResult = "Tool not found or not supported in Lite mode.";
-                        }
+                        // Unificado: todas as ferramentas vêm de agentTools.executeTool (mesmo conjunto do Gemini)
+                        const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
                         // Update Context & History for next turn
                         currentContext += `\n\n[TOOL RESULT]: ${toolResult}`;
