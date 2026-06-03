@@ -7,6 +7,8 @@ export const config = {
     dolibarrUrl: process.env.DOLIBARR_URL || 'https://sistema.coolgroove.com.br/api/index.php',
     dolibarrKey: process.env.DOLIBARR_API_KEY || '',
     adminKey: process.env.ADMIN_KEY || '',
+    // Segredo p/ assinar deeplinks HITL do agente (#57 Peça 2). Cai p/ ADMIN_KEY se não definido.
+    deeplinkSecret: process.env.DEEPLINK_TOKEN_SECRET || process.env.ADMIN_KEY || '',
     googleApiKey: process.env.GOOGLE_API_KEY || '',
     chromeBin: process.env.CHROME_BIN,
     dolibarrBypassCookie: process.env.DOLIBARR_BYPASS_COOKIE || 'humans_21909=1', // Default to known working cookie
