@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { ThirdParty } from '../../../types/crm';
 
@@ -8,6 +8,7 @@ interface CreateProjectModalProps {
     onSubmit: (form: { ref: string; title: string; socid: string }) => Promise<void>;
     customers: ThirdParty[];
     isSubmitting: boolean;
+    initialForm?: Partial<{ ref: string; title: string; socid: string }>; // prefill do agente (#57)
 }
 
 export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
@@ -15,9 +16,18 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     onClose,
     onSubmit,
     customers,
-    isSubmitting
+    isSubmitting,
+    initialForm
 }) => {
     const [form, setForm] = useState({ ref: '', title: '', socid: '' });
+
+    // ao abrir, sincroniza com o prefill (vazio se não houver) — deeplink HITL do agente.
+    useEffect(() => {
+        if (isOpen) {
+            setForm({ ref: initialForm?.ref || '', title: initialForm?.title || '', socid: initialForm?.socid || '' });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
 
     if (!isOpen) return null;
 

@@ -48,6 +48,24 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(out).toMatch(/\/tickets\/new\?prefill=/);
     });
 
+    it('prepare_create_project gera /projects/new com kind create_project', async () => {
+        const out = await executeTool('prepare_create_project', { title: 'Projeto X', socid: '5' });
+        const m = out.match(/\/projects\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_project');
+        expect(payload!.data.title).toBe('Projeto X');
+        expect(payload!.data.socid).toBe('5');
+    });
+
+    it('prepare_edit_project gera /projects/:id/edit com kind edit_project', async () => {
+        const out = await executeTool('prepare_edit_project', { id: '9', title: 'Novo Nome' });
+        const m = out.match(/\/projects\/9\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_project');
+        expect(payload!.data.id).toBe('9');
+        expect(payload!.data.title).toBe('Novo Nome');
+    });
+
     it('entidade sem suporte a edição retorna aviso (ticket não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_ticket', { id: '1', subject: 'x' });
         expect(out).toContain('não suporta edição');

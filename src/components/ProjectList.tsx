@@ -1,5 +1,6 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Project, AppView, DolibarrDocument } from '../types';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Search, Plus, Loader2, CheckCircle2, Settings, Pencil, Trash2, FolderKanban } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { logger } from '../utils/logger';
@@ -429,6 +430,11 @@ const ProjectList: React.FC<{
     // Check original EditProjectModal form
     const [editProjectForm, setEditProjectForm] = useState({ title: '', status: '0', date_start: '', date_end: '', description: '' });
 
+    // Deeplink HITL do agente (#57): aplica o prefill UMA vez por token.
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    const [createPrefill, setCreatePrefill] = useState<Record<string, string> | undefined>(undefined);
+
     const [taskForm, setTaskForm] = useState({ label: '', description: '', planned_workload: 0, date_start: '', date_end: '' });
     const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
@@ -442,6 +448,34 @@ const ProjectList: React.FC<{
             if (match) setSelectedProject(match);
         }
     }, [initialItemId, projects]);
+
+    // Deeplink HITL do agente (#57): create_project abre o modal de novo projeto pré-preenchido;
+    // edit_project carrega os valores atuais e sobrepõe as mudanças no modal de edição.
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_project') {
+            appliedPrefillRef.current = prefill;
+            setCreatePrefill(prefill.data);
+            setIsCreateModalOpen(true);
+            toast.info('Revise os dados e confirme a criação do projeto.');
+        } else if (prefill.kind === 'edit_project') {
+            if (projects.length === 0) return; // aguarda os projetos carregarem
+            appliedPrefillRef.current = prefill;
+            const { id, ...changes } = prefill.data;
+            const current = projects.find(p => String(p.id) === String(id));
+            if (!current) { toast.error('Projeto não encontrado para edição.'); return; }
+            setSelectedProject(current);
+            setEditProjectForm({
+                title: changes.title ?? current.title,
+                status: current.statut,
+                date_start: current.date_start ? formatDateForInput(current.date_start) : '',
+                date_end: current.date_end ? formatDateForInput(current.date_end) : '',
+                description: '',
+            });
+            setIsEditModalOpen(true);
+            toast.info('Revise as mudanças sugeridas e salve.');
+        }
+    }, [prefill, projects]);
 
     useEffect(() => { setPage(0); }, [searchTerm, filterStatus]);
 
@@ -787,10 +821,11 @@ const ProjectList: React.FC<{
 
             <CreateProjectModal
                 isOpen={isCreateModalOpen}
-                onClose={() => setIsCreateModalOpen(false)}
+                onClose={() => { setIsCreateModalOpen(false); setCreatePrefill(undefined); }}
                 onSubmit={handleCreateProject}
                 customers={customers}
                 isSubmitting={isSubmitting}
+                initialForm={createPrefill}
             />
 
             <EditProjectModal
