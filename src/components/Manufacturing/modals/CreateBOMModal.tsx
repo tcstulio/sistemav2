@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DolibarrConfig, Product } from '../../../types';
 import { Loader2, CheckCircle2, X } from 'lucide-react';
 import { DolibarrService } from '../../../services/dolibarrService';
@@ -12,9 +12,10 @@ interface CreateBOMModalProps {
     config: DolibarrConfig;
     products: Product[];
     onSuccess: () => void;
+    initialForm?: Partial<{ label: string; product_id: string; qty: string; duration: string }>; // prefill (#57)
 }
 
-export const CreateBOMModal: React.FC<CreateBOMModalProps> = ({ isOpen, onClose, config, products, onSuccess }) => {
+export const CreateBOMModal: React.FC<CreateBOMModalProps> = ({ isOpen, onClose, config, products, onSuccess, initialForm }) => {
     const [bomForm, setBomForm] = useState({
         label: '',
         product_id: '',
@@ -22,6 +23,19 @@ export const CreateBOMModal: React.FC<CreateBOMModalProps> = ({ isOpen, onClose,
         duration: 3600
     });
     const [isSubmittingBom, setIsSubmittingBom] = useState(false);
+
+    // ao abrir, sincroniza com o prefill (vazio se não houver) — deeplink HITL.
+    useEffect(() => {
+        if (isOpen) {
+            setBomForm({
+                label: initialForm?.label || '',
+                product_id: initialForm?.product_id || '',
+                qty: initialForm?.qty ? (parseInt(initialForm.qty) || 1) : 1,
+                duration: initialForm?.duration ? (parseInt(initialForm.duration) || 3600) : 3600,
+            });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
 
     const handleCreateBom = async (e: React.FormEvent) => {
         e.preventDefault();
