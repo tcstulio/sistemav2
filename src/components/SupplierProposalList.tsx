@@ -1,4 +1,6 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { SupplierProposal, DolibarrConfig, AppView, Product, SupplierProposalLine } from '../types';
 import { FileText, Search, Plus, Trash2, Save, X, Edit, Loader2, CheckCircle, XCircle, Send, Archive, Ban, FileSignature, FolderKanban, Sparkles } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
@@ -106,6 +108,33 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
         });
         setIsFormOpen(true);
     };
+
+    // Deeplink HITL do agente (#57/#78): create_supplier_proposal abre o formulário
+    // pré-preenchido (incl. linhas) p/ o usuário revisar e confirmar.
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_supplier_proposal') {
+            appliedPrefillRef.current = prefill;
+            const lines = Array.isArray(prefill.data.lines) ? prefill.data.lines : [];
+            setEditingId(null);
+            setFormData({
+                socid: prefill.data.socid || '',
+                date: prefill.data.date || new Date().toISOString().split('T')[0],
+                project_id: prefill.data.project_id || '',
+                note_public: '',
+                lines: lines.map((l: any) => {
+                    const qty = Number(l.qty) || 1;
+                    const price = Number(l.subprice) || 0;
+                    const distrib = Number(l.remise_percent) || 0;
+                    return { productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty, price, distrib, total: calculateLineTotal(qty, price, distrib) };
+                }),
+            });
+            setIsFormOpen(true);
+            toast.info('Revise os itens e confirme a criação da solicitação de preço.');
+        }
+    }, [prefill]);
 
     // Open Edit Modal
     const handleOpenEdit = (prop: SupplierProposal) => {

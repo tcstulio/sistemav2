@@ -74,6 +74,9 @@ export const TOOLS_PROMPT = `
         54. prepare_create_candidate(firstname, lastname, email, phone?, fk_job_position?, note_public?) - Rascunho de novo candidato (RH/Recrutamento). fk_job_position = id da vaga (ache com list_job_positions); omita para candidato espontâneo.
         55. prepare_edit_candidate(id, firstname?, lastname?, email?, phone?, fk_job_position?, note_public?) - Prepara EDIÇÃO de um candidato. Ache o id antes com list_candidates.
         56. prepare_create_invoice(socid, date?, lines?) - Rascunho de fatura de venda. socid = id do cliente (ache com search_customer). date em YYYY-MM-DD. lines = array de itens [{fk_product?, desc, qty, subprice, remise_percent?}] — fk_product = id do produto (opcional; ache com list_products), desc = descrição, qty = quantidade, subprice = preço unitário, remise_percent = % de desconto.
+        57. prepare_create_proposal(socid, date?, project_id?, note_public?, lines?) - Rascunho de proposta comercial. socid = id do cliente. lines = mesma estrutura da fatura [{fk_product?, desc, qty, subprice, remise_percent?}].
+        58. prepare_create_supplier_invoice(socid, date?, lines?) - Rascunho de fatura de fornecedor. socid = id do fornecedor (ache com list_suppliers). lines = [{desc, qty, subprice, remise_percent?}] (sem produto).
+        59. prepare_create_supplier_proposal(socid, date?, project_id?, lines?) - Rascunho de solicitação de preço a fornecedor. socid = id do fornecedor. lines = [{fk_product?, desc, qty, subprice, remise_percent?}].
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -204,6 +207,30 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         required: ['socid'],
         newRoute: '/invoices/new',
         // entidade com linhas de produto (o modal exibe os itens p/ revisão):
+        linesField: 'lines',
+        lineFields: ['fk_product', 'desc', 'qty', 'subprice', 'remise_percent'],
+    },
+    proposal: {
+        label: 'proposta comercial',
+        createFields: ['socid', 'date', 'project_id', 'note_public'],
+        required: ['socid'],
+        newRoute: '/proposals/new',
+        linesField: 'lines',
+        lineFields: ['fk_product', 'desc', 'qty', 'subprice', 'remise_percent'],
+    },
+    supplier_invoice: {
+        label: 'fatura de fornecedor',
+        createFields: ['socid', 'date'],
+        required: ['socid'],
+        newRoute: '/supplier_invoices/new',
+        linesField: 'lines',
+        lineFields: ['desc', 'qty', 'subprice', 'remise_percent'], // sem produto (linhas livres)
+    },
+    supplier_proposal: {
+        label: 'solicitação de preço',
+        createFields: ['socid', 'date', 'project_id'],
+        required: ['socid'],
+        newRoute: '/supplier_proposals/new',
         linesField: 'lines',
         lineFields: ['fk_product', 'desc', 'qty', 'subprice', 'remise_percent'],
     },
