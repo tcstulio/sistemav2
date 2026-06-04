@@ -342,6 +342,25 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.lines[0].subprice).toBe(25);
     });
 
+    it('prepare_create_mo gera /manufacturing/mo/new e exige product_to_produce_id', async () => {
+        await expect(executeTool('prepare_create_mo', { qty: '5' })).rejects.toThrow();
+        const out = await executeTool('prepare_create_mo', { product_to_produce_id: '88', qty: '5', label: 'Lote 1' });
+        const m = out.match(/\/manufacturing\/mo\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_mo');
+        expect(payload!.data.product_to_produce_id).toBe('88');
+        expect(payload!.data.qty).toBe('5');
+    });
+
+    it('prepare_create_bom gera /manufacturing/bom/new e exige product_id', async () => {
+        await expect(executeTool('prepare_create_bom', { qty: '2' })).rejects.toThrow();
+        const out = await executeTool('prepare_create_bom', { product_id: '88', qty: '10' });
+        const m = out.match(/\/manufacturing\/bom\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_bom');
+        expect(payload!.data.product_id).toBe('88');
+    });
+
     it('entidade sem suporte a edição retorna aviso (intervenção não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_intervention', { id: '1', description: 'x' });
         expect(out).toContain('não suporta edição');
