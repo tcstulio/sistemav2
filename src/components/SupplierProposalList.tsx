@@ -133,8 +133,27 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
             });
             setIsFormOpen(true);
             toast.info('Revise os itens e confirme a criação da solicitação de preço.');
+        } else if (prefill.kind === 'edit_supplier_proposal') {
+            const prop = proposals.find(p => String(p.id) === String(prefill.data.id));
+            if (!prop) return; // aguarda os dados
+            appliedPrefillRef.current = prefill;
+            handleOpenEdit(prop); // carrega dados + linhas + abre o formulário
+            const extra = Array.isArray(prefill.data.lines) ? prefill.data.lines : [];
+            setFormData(prev => ({
+                ...prev,
+                date: prefill.data.date || prev.date,
+                project_id: prefill.data.project_id ?? prev.project_id,
+                lines: [...prev.lines, ...extra.map((l: any) => {
+                    const qty = Number(l.qty) || 1;
+                    const price = Number(l.subprice) || 0;
+                    const distrib = Number(l.remise_percent) || 0;
+                    return { productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty, price, distrib, total: calculateLineTotal(qty, price, distrib) };
+                })],
+            }));
+            toast.info('Revise as mudanças e salve a solicitação de preço.');
         }
-    }, [prefill]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [prefill, proposals, proposalLines]);
 
     // Open Edit Modal
     const handleOpenEdit = (prop: SupplierProposal) => {

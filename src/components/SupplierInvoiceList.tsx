@@ -352,8 +352,21 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
             });
             setIsEditModalOpen(true);
             toast.info('Revise os itens e confirme a criação da fatura de fornecedor.');
+        } else if (prefill.kind === 'edit_supplier_invoice') {
+            const inv = invoices.find((i: any) => String(i.id) === String(prefill.data.id));
+            if (!inv) return; // aguarda os dados
+            appliedPrefillRef.current = prefill;
+            handleEditClick({ stopPropagation: () => { } } as any, inv); // carrega dados + linhas + abre modal
+            const extra = Array.isArray(prefill.data.lines) ? prefill.data.lines : [];
+            setEditingInvoiceData(prev => prev ? {
+                ...prev,
+                date: prefill.data.date || prev.date,
+                items: [...prev.items, ...extra.map((l: any) => ({ desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0, remise_percent: Number(l.remise_percent) || 0 }))],
+            } : prev);
+            toast.info('Revise as mudanças e salve a fatura de fornecedor.');
         }
-    }, [prefill]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [prefill, invoices, allInvoiceLines]);
 
     const handleCreateClick = () => {
         setEditingInvoiceData({
