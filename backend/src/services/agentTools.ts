@@ -80,6 +80,10 @@ export const TOOLS_PROMPT = `
         60. prepare_create_order(socid, date?, lines?) - Rascunho de pedido de venda. socid = id do cliente (ache com search_customer). lines = [{fk_product?, desc, qty, subprice}].
         61. prepare_create_mo(product_to_produce_id, qty?, label?, project_id?, date_start?) - Rascunho de ordem de produção (MRP). product_to_produce_id = id do produto a produzir (ache com list_products). date_start em YYYY-MM-DD.
         62. prepare_create_bom(product_id, qty?, label?, duration?) - Rascunho de lista de materiais (BOM). product_id = id do produto final (ache com list_products). duration em segundos.
+        63. prepare_edit_invoice(id, date?, lines?) - Prepara EDIÇÃO de uma fatura. Ache o id antes com list_invoices. date em YYYY-MM-DD. lines = itens a ACRESCENTAR [{fk_product?, desc, qty, subprice, remise_percent?}].
+        64. prepare_edit_proposal(id, date?, note_public?, project_id?, lines?) - Prepara EDIÇÃO de uma proposta. Ache o id antes com list_proposals. lines = itens a ACRESCENTAR.
+        65. prepare_edit_supplier_invoice(id, date?, lines?) - Prepara EDIÇÃO de uma fatura de fornecedor. lines = itens a ACRESCENTAR [{desc, qty, subprice, remise_percent?}].
+        66. prepare_edit_supplier_proposal(id, date?, project_id?, lines?) - Prepara EDIÇÃO de uma solicitação de preço. lines = itens a ACRESCENTAR.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -207,8 +211,11 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
     invoice: {
         label: 'fatura',
         createFields: ['socid', 'date'],
+        // edição: campos escalares + linhas extras a ACRESCENTAR (o modal já faz o diff).
+        editFields: ['date'],
         required: ['socid'],
         newRoute: '/invoices/new',
+        editRoute: '/invoices/:id/edit',
         // entidade com linhas de produto (o modal exibe os itens p/ revisão):
         linesField: 'lines',
         lineFields: ['fk_product', 'desc', 'qty', 'subprice', 'remise_percent'],
@@ -216,24 +223,30 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
     proposal: {
         label: 'proposta comercial',
         createFields: ['socid', 'date', 'project_id', 'note_public'],
+        editFields: ['date', 'note_public', 'project_id'],
         required: ['socid'],
         newRoute: '/proposals/new',
+        editRoute: '/proposals/:id/edit',
         linesField: 'lines',
         lineFields: ['fk_product', 'desc', 'qty', 'subprice', 'remise_percent'],
     },
     supplier_invoice: {
         label: 'fatura de fornecedor',
         createFields: ['socid', 'date'],
+        editFields: ['date'],
         required: ['socid'],
         newRoute: '/supplier_invoices/new',
+        editRoute: '/supplier_invoices/:id/edit',
         linesField: 'lines',
         lineFields: ['desc', 'qty', 'subprice', 'remise_percent'], // sem produto (linhas livres)
     },
     supplier_proposal: {
         label: 'solicitação de preço',
         createFields: ['socid', 'date', 'project_id'],
+        editFields: ['date', 'project_id'],
         required: ['socid'],
         newRoute: '/supplier_proposals/new',
+        editRoute: '/supplier_proposals/:id/edit',
         linesField: 'lines',
         lineFields: ['fk_product', 'desc', 'qty', 'subprice', 'remise_percent'],
     },
@@ -311,7 +324,9 @@ function tryPrepareDeeplink(tool: string, args: any): string | null {
         const ent = DEEPLINK_ENTITIES[edit[1]];
         if (!ent?.editRoute) return `Entidade '${edit[1]}' não suporta edição via deeplink.`;
         if (!args?.id) throw new Error("Parâmetro 'id' ausente (id do registro a editar).");
-        const changes = pickFields(args, ent.editFields || []);
+        const changes: Record<string, any> = pickFields(args, ent.editFields || []);
+        const lines = pickLines(args, ent); // entidades com itens: linhas extras a ACRESCENTAR
+        if (lines && lines.length > 0 && ent.linesField) changes[ent.linesField] = lines;
         if (Object.keys(changes).length === 0) throw new Error('Nenhum campo para alterar foi informado.');
         const data = { id: String(args.id), ...changes };
         const token = signDeeplink(`edit_${edit[1]}`, data, 1800);
