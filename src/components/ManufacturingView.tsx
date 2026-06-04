@@ -52,6 +52,7 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
     const prefill = usePrefill();
     const appliedPrefillRef = useRef<PrefillResult | null>(null);
     const [moPrefill, setMoPrefill] = useState<Record<string, string> | undefined>(undefined);
+    const [moEditId, setMoEditId] = useState<string | undefined>(undefined);
     const [bomPrefill, setBomPrefill] = useState<Record<string, string> | undefined>(undefined);
     const [bomEditId, setBomEditId] = useState<string | undefined>(undefined);
     useEffect(() => {
@@ -68,6 +69,20 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
             setActiveTab('bom');
             setIsBomModalOpen(true);
             toast.info('Revise os dados e confirme a criação da BOM.');
+        } else if (prefill.kind === 'edit_mo') {
+            const mo = orders.find(o => String(o.id) === String(prefill.data.id));
+            if (!mo) return; // aguarda os dados carregarem
+            appliedPrefillRef.current = prefill;
+            // pré-preenche com os valores atuais + as mudanças propostas pelo agente.
+            setMoPrefill({
+                label: prefill.data.label ?? mo.label ?? '',
+                product_to_produce_id: String(mo.product_to_produce_id ?? ''),
+                qty: String(prefill.data.qty ?? mo.qty ?? ''),
+            });
+            setMoEditId(String(prefill.data.id));
+            setActiveTab('mo');
+            setIsMoModalOpen(true);
+            toast.info('Revise as mudanças e salve a ordem de produção.');
         } else if (prefill.kind === 'edit_bom') {
             const bom = boms.find(b => String(b.id) === String(prefill.data.id));
             if (!bom) return; // aguarda os dados carregarem
@@ -84,9 +99,20 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
             setIsBomModalOpen(true);
             toast.info('Revise as mudanças e salve a BOM.');
         }
-    }, [prefill, boms]);
+    }, [prefill, boms, orders]);
 
     // Edição manual (botão no detalhe) — abre o mesmo modal em modo edição.
+    const openMoEditor = (mo: ManufacturingOrder) => {
+        setMoPrefill({
+            label: mo.label ?? '',
+            product_to_produce_id: String(mo.product_to_produce_id ?? ''),
+            qty: String(mo.qty ?? ''),
+        });
+        setMoEditId(String(mo.id));
+        setActiveTab('mo');
+        setIsMoModalOpen(true);
+    };
+
     const openBomEditor = (bom: BOM) => {
         setBomPrefill({
             label: bom.label ?? '',
@@ -146,12 +172,13 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
             {/* Modals */}
             <CreateMOModal
                 isOpen={isMoModalOpen}
-                onClose={() => { setIsMoModalOpen(false); setMoPrefill(undefined); }}
+                onClose={() => { setIsMoModalOpen(false); setMoPrefill(undefined); setMoEditId(undefined); }}
                 config={config}
                 products={products}
                 projects={projects}
                 onSuccess={handleRefresh}
                 initialForm={moPrefill}
+                editId={moEditId}
             />
             <CreateBOMModal
                 isOpen={isBomModalOpen}
@@ -261,6 +288,7 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
                             stockMovements={stockMovements}
                             config={config}
                             onClose={() => setSelectedMO(null)}
+                            onEdit={() => openMoEditor(selectedMO)}
                             onOpenConsume={() => setIsConsumeModalOpen(true)}
                             onOpenProduce={() => setIsProduceModalOpen(true)}
                         />
