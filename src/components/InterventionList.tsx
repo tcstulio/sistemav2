@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { Intervention, AppView } from '../types';
-import { ClipboardList, Search, Plus, Loader2, CheckCircle2, Calendar, FolderKanban, User } from 'lucide-react';
+import { ClipboardList, Search, Plus, Loader2, CheckCircle2, Calendar, FolderKanban, User, Pencil } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInterventions, useCustomers, useProjects, useInterventionLines } from '../hooks/dolibarr';
@@ -51,6 +51,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
     const [processingId, setProcessingId] = useState<string | null>(null);
 
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [editInterventionId, setEditInterventionId] = useState<string | undefined>(undefined);
     const [newIntervention, setNewIntervention] = useState({
         socid: '',
         project_id: '',
@@ -58,6 +59,20 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
         description: ''
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const isEditIntervention = !!editInterventionId;
+
+    const tsToInput = (ts?: number) => (ts ? new Date(ts < 1e11 ? ts * 1000 : ts).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+
+    const openEditIntervention = (i: Intervention) => {
+        setEditInterventionId(String(i.id));
+        setNewIntervention({
+            socid: String(i.socid),
+            project_id: i.project_id ? String(i.project_id) : '',
+            date: tsToInput(i.date),
+            description: i.description || '',
+        });
+        setIsCreateModalOpen(true);
+    };
 
     // Deeplink HITL do agente (#57): create_intervention abre o modal pré-preenchido.
     const prefill = usePrefill();
@@ -72,10 +87,25 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                 date: prefill.data.date || new Date().toISOString().split('T')[0],
                 description: prefill.data.description || '',
             });
+            setEditInterventionId(undefined);
             setIsCreateModalOpen(true);
             toast.info('Revise os dados e confirme a criação da intervenção.');
+        } else if (prefill.kind === 'edit_intervention') {
+            const i = interventions.find(it => String(it.id) === String(prefill.data.id));
+            if (!i) return; // aguarda os dados
+            appliedPrefillRef.current = prefill;
+            setEditInterventionId(String(i.id));
+            setNewIntervention({
+                socid: String(i.socid),
+                project_id: prefill.data.project_id ?? (i.project_id ? String(i.project_id) : ''),
+                date: prefill.data.date || tsToInput(i.date),
+                description: prefill.data.description ?? i.description ?? '',
+            });
+            setIsCreateModalOpen(true);
+            toast.info('Revise as mudanças e salve a intervenção.');
         }
-    }, [prefill]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [prefill, interventions]);
 
     const getCustomerName = (socid: string) => {
         const customer = customers.find(c => String(c.id) === String(socid));
@@ -106,7 +136,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
         });
     }, [interventions, customers, searchTerm, filterStatus, config]);
 
-    const handleCreateIntervention = async (e: React.FormEvent) => {
+    const handleSubmitIntervention = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newIntervention.socid) return;
         setIsSubmitting(true);
@@ -117,13 +147,20 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                 date: new Date(newIntervention.date).getTime() / 1000,
                 description: newIntervention.description
             };
-            await DolibarrService.createIntervention(config, payload);
-            alert("Intervenção Criada com Sucesso");
+            if (editInterventionId) {
+                // requer o endpoint custom PUT /interventions/{id} (api_interventions.class.php) implantado no Dolibarr.
+                await DolibarrService.updateObject(config, 'interventions', editInterventionId, payload);
+                toast.success("Intervenção atualizada");
+            } else {
+                await DolibarrService.createIntervention(config, payload);
+                toast.success("Intervenção criada com sucesso");
+            }
             setIsCreateModalOpen(false);
+            setEditInterventionId(undefined);
             setNewIntervention({ socid: '', project_id: '', date: new Date().toISOString().split('T')[0], description: '' });
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            log.error("Failed to create intervention", e);
+            log.error("Failed to save intervention", e);
             alert(`Falha: ${e.message}`);
         } finally {
             setIsSubmitting(false);
@@ -235,11 +272,16 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                 }
                 subtitle="Relatório de Serviço de Campo"
                 actions={
-                    selectedIntervention.statut === '0' ? (
-                        <Button size="sm" icon={processingId ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} onClick={handleValidate} disabled={!!processingId}>
-                            Validar
+                    <div className="flex items-center gap-2">
+                        <Button variant="secondary" size="sm" icon={<Pencil size={14} />} onClick={() => openEditIntervention(selectedIntervention)}>
+                            Editar
                         </Button>
-                    ) : undefined
+                        {selectedIntervention.statut === '0' && (
+                            <Button size="sm" icon={processingId ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} onClick={handleValidate} disabled={!!processingId}>
+                                Validar
+                            </Button>
+                        )}
+                    </div>
                 }
             />
 
@@ -333,16 +375,16 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
 
             <Modal
                 isOpen={isCreateModalOpen}
-                onClose={() => setIsCreateModalOpen(false)}
+                onClose={() => { setIsCreateModalOpen(false); setEditInterventionId(undefined); }}
                 title={
                     <span className="flex items-center gap-2">
-                        <ClipboardList size={18} className="text-indigo-600" /> Nova Intervenção
+                        <ClipboardList size={18} className="text-indigo-600" /> {isEditIntervention ? 'Editar Intervenção' : 'Nova Intervenção'}
                     </span>
                 }
                 footer={
                     <>
-                        <Button variant="secondary" onClick={() => setIsCreateModalOpen(false)}>Cancelar</Button>
-                        <Button onClick={(e: any) => handleCreateIntervention(e)} loading={isSubmitting} icon={<CheckCircle2 size={16} />}>Criar</Button>
+                        <Button variant="secondary" onClick={() => { setIsCreateModalOpen(false); setEditInterventionId(undefined); }}>Cancelar</Button>
+                        <Button onClick={(e: any) => handleSubmitIntervention(e)} loading={isSubmitting} icon={<CheckCircle2 size={16} />}>{isEditIntervention ? 'Salvar' : 'Criar'}</Button>
                     </>
                 }
             >
