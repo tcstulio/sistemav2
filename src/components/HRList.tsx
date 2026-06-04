@@ -17,6 +17,7 @@ import { UserModal } from './HR/modals/UserModal';
 import { JobModal } from './HR/modals/JobModal';
 import { LeaveModal } from './HR/modals/LeaveModal';
 import { CandidateModal } from './HR/modals/CandidateModal';
+import { ExpenseModal } from './HR/modals/ExpenseModal';
 import { ExpenseScannerModal } from './HR/modals/ExpenseScannerModal';
 import { ExpenseDetailModal } from './HR/modals/ExpenseDetailModal';
 import { GroupModal } from './HR/modals/GroupModal';
@@ -86,6 +87,23 @@ const HRList: React.FC<HRListProps> = ({
     const [isJobModalOpen, setIsJobModalOpen] = useState(false);
     const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
     const [isCandidateModalOpen, setIsCandidateModalOpen] = useState(false);
+    const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+    const [expensePrefill, setExpensePrefill] = useState<Record<string, string> | undefined>(undefined);
+    const [expenseEditId, setExpenseEditId] = useState<string | undefined>(undefined);
+
+    const openCreateExpense = () => { setExpensePrefill(undefined); setExpenseEditId(undefined); setIsExpenseModalOpen(true); };
+    const openEditExpense = (ex: ExpenseReport) => {
+        const toDate = (ts?: number) => (ts ? new Date(ts < 1e11 ? ts * 1000 : ts).toISOString().split('T')[0] : '');
+        setExpensePrefill({
+            fk_user_author: String(ex.fk_user_author),
+            date_debut: toDate(ex.date_debut),
+            date_fin: toDate(ex.date_fin),
+            total_ttc: ex.total_ttc != null ? String(ex.total_ttc) : '',
+            note_public: ex.note_public || '',
+        });
+        setExpenseEditId(String(ex.id));
+        setIsExpenseModalOpen(true);
+    };
     const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [isGroupModalOpen, setIsGroupModalOpen] = useState(false); // NEW Group Modal State
 
@@ -206,8 +224,32 @@ const HRList: React.FC<HRListProps> = ({
             setActiveTab('groups');
             setIsGroupModalOpen(true);
             toast.info('Revise as mudanças e salve o grupo.');
+        } else if (prefill.kind === 'create_expense') {
+            appliedPrefillRef.current = prefill;
+            setExpensePrefill(prefill.data);
+            setExpenseEditId(undefined);
+            setActiveTab('expenses');
+            setIsExpenseModalOpen(true);
+            toast.info('Revise os dados e confirme a criação da despesa.');
+        } else if (prefill.kind === 'edit_expense') {
+            if (expenseReports.length === 0) return; // aguarda os dados
+            const current = expenseReports.find(e => String(e.id) === String(prefill.data.id));
+            if (!current) return;
+            appliedPrefillRef.current = prefill;
+            const toDate = (ts?: number) => (ts ? new Date(ts < 1e11 ? ts * 1000 : ts).toISOString().split('T')[0] : '');
+            setExpensePrefill({
+                fk_user_author: String(current.fk_user_author),
+                date_debut: prefill.data.date_debut ?? toDate(current.date_debut),
+                date_fin: prefill.data.date_fin ?? toDate(current.date_fin),
+                total_ttc: prefill.data.total_ttc ?? (current.total_ttc != null ? String(current.total_ttc) : ''),
+                note_public: prefill.data.note_public ?? current.note_public ?? '',
+            });
+            setExpenseEditId(String(prefill.data.id));
+            setActiveTab('expenses');
+            setIsExpenseModalOpen(true);
+            toast.info('Revise as mudanças e salve a despesa.');
         }
-    }, [prefill, jobPositions, leaveRequests, candidates, users, userGroups]);
+    }, [prefill, jobPositions, leaveRequests, candidates, users, userGroups, expenseReports]);
 
     // Derived Data for UserDetail
     const userTasks = useMemo(() => selectedUser ? tasks.filter(t => (t.fk_user_assign && String(t.fk_user_assign) === String(selectedUser.id)) || (t.fk_user_creat && String(t.fk_user_creat) === String(selectedUser.id))) : [], [selectedUser, tasks]);
@@ -354,6 +396,7 @@ const HRList: React.FC<HRListProps> = ({
             <JobModal isOpen={isJobModalOpen} onClose={() => { setIsJobModalOpen(false); setJobPrefill(undefined); setJobEditId(undefined); }} config={config} onRefresh={onRefresh} initialForm={jobPrefill} editId={jobEditId} />
             <LeaveModal isOpen={isLeaveModalOpen} onClose={() => { setIsLeaveModalOpen(false); setLeavePrefill(undefined); setLeaveEditId(undefined); }} config={config} users={users} onRefresh={onRefresh} initialForm={leavePrefill} editId={leaveEditId} />
             <CandidateModal isOpen={isCandidateModalOpen} onClose={() => { setIsCandidateModalOpen(false); setCandidatePrefill(undefined); setCandidateEditId(undefined); }} config={config} jobPositions={jobPositions} onRefresh={onRefresh} initialForm={candidatePrefill} editId={candidateEditId} />
+            <ExpenseModal isOpen={isExpenseModalOpen} onClose={() => { setIsExpenseModalOpen(false); setExpensePrefill(undefined); setExpenseEditId(undefined); }} config={config} users={users} onRefresh={onRefresh} initialForm={expensePrefill} editId={expenseEditId} />
             <ExpenseScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} config={config} currentUser={currentUser} users={users} onRefresh={onRefresh} />
             <ExpenseScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} config={config} currentUser={currentUser} users={users} onRefresh={onRefresh} />
 
@@ -431,7 +474,10 @@ const HRList: React.FC<HRListProps> = ({
                             }} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white text-xs font-bold shadow-sm transition-all`}><Plus size={14} /> Novo Grupo</button>
                         )}
                         {activeTab === 'expenses' && (
-                            <button onClick={() => setIsScannerOpen(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white text-xs font-bold shadow-sm transition-all`}><Scan size={14} /> Escanear Recibo</button>
+                            <>
+                                <button onClick={openCreateExpense} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all"><Plus size={14} /> Nova Despesa</button>
+                                <button onClick={() => setIsScannerOpen(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white text-xs font-bold shadow-sm transition-all`}><Scan size={14} /> Escanear Recibo</button>
+                            </>
                         )}
                         {activeTab === 'leaves' && (
                             <button onClick={() => setIsLeaveModalOpen(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white text-xs font-bold shadow-sm transition-all`}><Plus size={14} /> Solicitar Licença</button>

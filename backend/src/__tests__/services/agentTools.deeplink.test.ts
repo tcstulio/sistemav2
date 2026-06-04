@@ -475,6 +475,25 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.description).toBe('Trabalho revisado');
     });
 
+    it('prepare_create_expense gera /hr/expenses/new e exige fk_user_author/datas', async () => {
+        await expect(executeTool('prepare_create_expense', { fk_user_author: '1' })).rejects.toThrow();
+        const out = await executeTool('prepare_create_expense', { fk_user_author: '1', date_debut: '2025-03-01', date_fin: '2025-03-01', total_ttc: '150.5' });
+        const m = out.match(/\/hr\/expenses\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_expense');
+        expect(payload!.data.fk_user_author).toBe('1');
+        expect(payload!.data.total_ttc).toBe('150.5');
+    });
+
+    it('prepare_edit_expense não inclui fk_user_author (imutável)', async () => {
+        const out = await executeTool('prepare_edit_expense', { id: '8', fk_user_author: '9', total_ttc: '200' });
+        const m = out.match(/\/hr\/expenses\/8\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_expense');
+        expect(payload!.data.fk_user_author).toBeUndefined();
+        expect(payload!.data.total_ttc).toBe('200');
+    });
+
     it('entidade sem suporte a edição retorna aviso (pedido só tem criação)', async () => {
         const out = await executeTool('prepare_edit_order', { id: '1', date: '2025-01-01' });
         expect(out).toContain('não suporta edição');
