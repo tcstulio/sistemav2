@@ -9,12 +9,13 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Product, AppView } from '../types';
-import { Package, Search, Box, Briefcase, AlertCircle, CheckCircle2, Warehouse, Plus, Loader2, Tag, Truck, ShoppingCart, Pencil, Trash2 } from 'lucide-react';
+import { Package, Box, Briefcase, AlertCircle, CheckCircle2, Warehouse, Plus, Loader2, Tag, Truck, ShoppingCart, Pencil } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useProducts, useCategories, useBOMs, useSuppliers } from '../hooks/dolibarr';
+import { useListControls } from '../hooks/useListControls';
 
 // Design System Components
 import {
@@ -28,7 +29,9 @@ import {
     Tabs,
     Tab,
     EmptyState,
-    RichTextEditor
+    RichTextEditor,
+    ListToolbar,
+    ConfirmDeleteButton
 } from './ui';
 import { SafeHtml } from '../utils/sanitizeHtml';
 
@@ -99,7 +102,7 @@ const ProductDetail: React.FC<{
     product: Product;
     onClose: () => void;
     onEdit: () => void;
-    onDelete: () => void;
+    onDelete: () => Promise<any>;
     boms: any[];
     suppliers: any[];
     onRestock: (supplierId: string) => void;
@@ -118,7 +121,13 @@ const ProductDetail: React.FC<{
                 actions={
                     <div className="flex items-center gap-2">
                         <Button variant="ghost" icon={<Pencil size={18} />} onClick={onEdit} />
-                        <Button variant="ghost" icon={<Trash2 size={18} />} onClick={onDelete} />
+                        <ConfirmDeleteButton
+                            onDelete={onDelete}
+                            itemLabel={product.label}
+                            iconSize={18}
+                            className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"
+                            stopPropagation={false}
+                        />
                     </div>
                 }
                 tabs={
@@ -264,7 +273,6 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
     const suppliers = suppliersData || [];
 
     // State
-    const [searchTerm, setSearchTerm] = useState('');
     const [filterType, setFilterType] = useState<'all' | 'product' | 'service'>(initialFilter || 'all');
     const [selectedCategory, setSelectedCategory] = useState<string>('all');
     const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -317,13 +325,9 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
         }
     }, [prefill, products]);
 
-    // Filtered products
-    const filteredProducts = useMemo(() => {
+    // Pré-filtro por tipo (tabs) e categoria (select); busca + ordenação ficam no useListControls (#121).
+    const baseProducts = useMemo(() => {
         return products.filter(p => {
-            const matchesSearch =
-                p.ref.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                p.label.toLowerCase().includes(searchTerm.toLowerCase());
-
             let matchesType = true;
             if (filterType === 'product') matchesType = p.type === '0';
             if (filterType === 'service') matchesType = p.type === '1';
@@ -333,9 +337,21 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                 matchesCategory = p.array_options.category === selectedCategory;
             }
 
-            return matchesSearch && matchesType && matchesCategory;
+            return matchesType && matchesCategory;
         });
-    }, [products, searchTerm, filterType, selectedCategory]);
+    }, [products, filterType, selectedCategory]);
+
+    const controls = useListControls(baseProducts, {
+        searchText: (p) => `${p.ref || ''} ${p.label || ''}`,
+        sorts: [
+            { key: 'label', label: 'Nome', get: (p) => p.label },
+            { key: 'ref', label: 'Ref', get: (p) => p.ref },
+            { key: 'price', label: 'Preço', get: (p) => Number(p.price) || 0 },
+            { key: 'stock', label: 'Estoque', get: (p) => Number(p.stock_reel) || 0 },
+        ],
+        initialSortKey: 'label',
+    });
+    const filteredProducts = controls.result;
 
     // Handlers
     const handleCreate = async () => {
@@ -368,16 +384,12 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
         }
     };
 
+    // Exclusão tratada pelo <ConfirmDeleteButton> (confirmação + toast); aqui só a chamada.
     const handleDelete = async () => {
         if (!selectedProduct) return;
-        if (!confirm("Tem certeza que deseja excluir?")) return;
-        try {
-            await DolibarrService.deleteProduct(config!, selectedProduct.id);
-            setSelectedProduct(null);
-            onRefresh?.();
-        } catch (e: any) {
-            alert(`Erro: ${e.message}`);
-        }
+        await DolibarrService.deleteProduct(config!, selectedProduct.id);
+        setSelectedProduct(null);
+        onRefresh?.();
     };
 
     const openEditModal = () => {
@@ -435,14 +447,7 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                     subtitle="Gerencie seu catálogo e estoque"
                     actions={
                         <div className="flex items-center gap-2">
-                            <Input
-                                placeholder="Buscar..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                icon={<Search size={16} />}
-                                className="w-48"
-                                fullWidth={false}
-                            />
+                            <ListToolbar controls={controls} searchPlaceholder="Buscar..." />
 
                             {categories.length > 0 && (
                                 <select
