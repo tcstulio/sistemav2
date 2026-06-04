@@ -65,6 +65,8 @@ export const TOOLS_PROMPT = `
         45. prepare_create_intervention(socid, date?, description?, project_id?) - Rascunho de intervenção (serviço de campo). socid = id do cliente (ache com search_customer). date em YYYY-MM-DD.
         46. prepare_create_job(label, qty?, description?) - Rascunho de nova vaga de emprego (label = cargo; qty = quantidade).
         47. prepare_create_leave(fk_user, date_debut, date_fin, type?, description?) - Rascunho de solicitação de licença/férias. fk_user = id do funcionário (ache com list_users). Datas em YYYY-MM-DD. type: 'Paid Vacation', 'Sick Leave', 'Unpaid', 'Other'.
+        48. prepare_create_contact(firstname, lastname, socid, email?, phone_mobile?, poste?) - Rascunho de novo contato. socid = id do cliente (ache com search_customer).
+        49. prepare_edit_contact(id, firstname?, lastname?, email?, phone_mobile?, poste?) - Prepara EDIÇÃO de um contato. Ache o id antes com list_contacts.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -162,6 +164,14 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         createFields: ['fk_user', 'date_debut', 'date_fin', 'type', 'description'],
         required: ['fk_user', 'date_debut', 'date_fin'],
         newRoute: '/hr/leaves/new',
+    },
+    contact: {
+        label: 'contato',
+        createFields: ['firstname', 'lastname', 'email', 'phone_mobile', 'poste', 'socid'],
+        editFields: ['firstname', 'lastname', 'email', 'phone_mobile', 'poste'],
+        required: ['firstname', 'lastname', 'socid'],
+        newRoute: '/contacts/new',
+        editRoute: '/contacts/:id/edit',
     },
 };
 
