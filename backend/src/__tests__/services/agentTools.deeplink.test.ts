@@ -361,6 +361,43 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.product_id).toBe('88');
     });
 
+    it('prepare_edit_invoice gera /invoices/:id/edit e carrega linhas a acrescentar', async () => {
+        const out = await executeTool('prepare_edit_invoice', { id: '50', date: '2025-09-01', lines: [{ desc: 'Item extra', qty: 1, subprice: 99 }] });
+        const m = out.match(/\/invoices\/50\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, any>>(m![1], 'edit_invoice');
+        expect(payload!.data.id).toBe('50');
+        expect(payload!.data.date).toBe('2025-09-01');
+        expect(payload!.data.lines[0].subprice).toBe(99);
+    });
+
+    it('prepare_edit_invoice aceita só linhas (sem campo escalar)', async () => {
+        const out = await executeTool('prepare_edit_invoice', { id: '50', lines: [{ desc: 'X', qty: 2, subprice: 10 }] });
+        const m = out.match(/\/invoices\/50\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, any>>(m![1], 'edit_invoice');
+        expect(payload!.data.lines).toHaveLength(1);
+    });
+
+    it('prepare_edit_invoice exige id', async () => {
+        await expect(executeTool('prepare_edit_invoice', { date: '2025-09-01' })).rejects.toThrow();
+    });
+
+    it('prepare_edit_proposal gera /proposals/:id/edit com escalares', async () => {
+        const out = await executeTool('prepare_edit_proposal', { id: '7', note_public: 'Atualizado' });
+        const m = out.match(/\/proposals\/7\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, any>>(m![1], 'edit_proposal');
+        expect(payload!.data.note_public).toBe('Atualizado');
+    });
+
+    it('prepare_edit_supplier_invoice e prepare_edit_supplier_proposal geram as rotas corretas', async () => {
+        const a = await executeTool('prepare_edit_supplier_invoice', { id: '3', date: '2025-09-01' });
+        expect(a).toMatch(/\/supplier_invoices\/3\/edit\?prefill=/);
+        const b = await executeTool('prepare_edit_supplier_proposal', { id: '4', project_id: '2' });
+        expect(b).toMatch(/\/supplier_proposals\/4\/edit\?prefill=/);
+    });
+
     it('entidade sem suporte a edição retorna aviso (intervenção não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_intervention', { id: '1', description: 'x' });
         expect(out).toContain('não suporta edição');
