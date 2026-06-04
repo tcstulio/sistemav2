@@ -87,6 +87,24 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
         }
     }
 
+    async listUserTasks(userId: string): Promise<any[]> {
+        try {
+            const headers = this.getHeaders();
+            // Endpoint nativo do Dolibarr: tarefas atribuídas a um usuário.
+            const url = `${this.baseUrl}users/${userId}/tasks`;
+            const response = await axios.get(url, {
+                headers,
+                params: { limit: 25 },
+                httpsAgent: this.httpsAgent,
+                validateStatus: (s) => s === 200
+            });
+            return Array.isArray(response.data) ? response.data : [];
+        } catch (error: any) {
+            log.error(`listUserTasks Error for ${userId}`, error?.message || error);
+            return [];
+        }
+    }
+
     async listTickets(params: { search?: string, limit?: number } = {}): Promise<any[]> {
         try {
             const headers = this.getHeaders();

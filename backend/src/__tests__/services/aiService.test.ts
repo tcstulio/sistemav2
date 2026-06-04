@@ -45,6 +45,7 @@ vi.mock('../../services/dolibarrService', () => ({
         listUsers: vi.fn(),
         listWarehouses: vi.fn(),
         listTasks: vi.fn(),
+        listUserTasks: vi.fn(),
         listEvents: vi.fn(),
         listContacts: vi.fn(),
         listCategories: vi.fn(),
