@@ -301,6 +301,36 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.lines[0].desc).toBe('X');
     });
 
+    it('prepare_create_proposal gera /proposals/new com linhas', async () => {
+        const out = await executeTool('prepare_create_proposal', { socid: '3', project_id: '9', lines: [{ fk_product: '1', desc: 'A', qty: 2, subprice: 30 }] });
+        const m = out.match(/\/proposals\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, any>>(m![1], 'create_proposal');
+        expect(payload!.data.socid).toBe('3');
+        expect(payload!.data.project_id).toBe('9');
+        expect(payload!.data.lines[0].qty).toBe(2);
+    });
+
+    it('prepare_create_supplier_invoice gera /supplier_invoices/new e exige socid', async () => {
+        await expect(executeTool('prepare_create_supplier_invoice', { date: '2025-01-01' })).rejects.toThrow();
+        const out = await executeTool('prepare_create_supplier_invoice', { socid: '4', lines: [{ desc: 'Serviço', qty: 1, subprice: 200 }] });
+        const m = out.match(/\/supplier_invoices\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, any>>(m![1], 'create_supplier_invoice');
+        expect(payload!.data.socid).toBe('4');
+        expect(payload!.data.lines[0].subprice).toBe(200);
+    });
+
+    it('prepare_create_supplier_proposal gera /supplier_proposals/new com linhas', async () => {
+        const out = await executeTool('prepare_create_supplier_proposal', { socid: '5', lines: [{ fk_product: '8', desc: 'Peça', qty: 10, subprice: 5, remise_percent: 15 }] });
+        const m = out.match(/\/supplier_proposals\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, any>>(m![1], 'create_supplier_proposal');
+        expect(payload!.data.socid).toBe('5');
+        expect(payload!.data.lines[0].fk_product).toBe('8');
+        expect(payload!.data.lines[0].remise_percent).toBe(15);
+    });
+
     it('entidade sem suporte a edição retorna aviso (intervenção não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_intervention', { id: '1', description: 'x' });
         expect(out).toContain('não suporta edição');

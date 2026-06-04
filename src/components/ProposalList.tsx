@@ -1,5 +1,6 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Proposal, AppView } from '../types';
 import { FileText, Search, PenTool, CheckCircle, XCircle, Send, Archive, Kanban, List, ShoppingCart, Download, Loader2, FileSignature, Scale, Plus, Trash2, FolderKanban, Ban, Save, Edit } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
@@ -104,6 +105,33 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
         setFormData({ socid: '', date: new Date().toISOString().split('T')[0], project_id: '', note_public: '', lines: [] });
         setIsFormOpen(true);
     };
+
+    // Deeplink HITL do agente (#57/#78): create_proposal abre o formulário pré-preenchido,
+    // incluindo as LINHAS de itens, p/ o usuário revisar e confirmar.
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_proposal') {
+            appliedPrefillRef.current = prefill;
+            const lines = Array.isArray(prefill.data.lines) ? prefill.data.lines : [];
+            setEditingId(null);
+            setFormData({
+                socid: prefill.data.socid || '',
+                date: prefill.data.date || new Date().toISOString().split('T')[0],
+                project_id: prefill.data.project_id || '',
+                note_public: prefill.data.note_public || '',
+                lines: lines.map((l: any) => {
+                    const qty = Number(l.qty) || 1;
+                    const price = Number(l.subprice) || 0;
+                    const discount = Number(l.remise_percent) || 0;
+                    return { productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty, price, discount, total: calculateLineTotal(qty, price, discount) };
+                }),
+            });
+            setIsFormOpen(true);
+            toast.info('Revise os itens e confirme a criação da proposta.');
+        }
+    }, [prefill]);
 
     const handleOpenEdit = (prop: Proposal) => {
         const existingLines = proposalLines.filter(l => String(l.parent_id) === String(prop.id));
