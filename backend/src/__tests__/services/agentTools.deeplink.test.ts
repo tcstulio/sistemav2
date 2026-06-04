@@ -398,6 +398,26 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(b).toMatch(/\/supplier_proposals\/4\/edit\?prefill=/);
     });
 
+    it('prepare_create_product gera /products/new e exige ref/label', async () => {
+        await expect(executeTool('prepare_create_product', { ref: 'P-1' })).rejects.toThrow();
+        const out = await executeTool('prepare_create_product', { ref: 'P-1', label: 'Camiseta', type: '0', price: '49.9' });
+        const m = out.match(/\/products\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_product');
+        expect(payload!.data.ref).toBe('P-1');
+        expect(payload!.data.label).toBe('Camiseta');
+        expect(payload!.data.price).toBe('49.9');
+    });
+
+    it('prepare_edit_product gera /products/:id/edit com kind edit_product', async () => {
+        const out = await executeTool('prepare_edit_product', { id: '12', price: '59.9' });
+        const m = out.match(/\/products\/12\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_product');
+        expect(payload!.data.id).toBe('12');
+        expect(payload!.data.price).toBe('59.9');
+    });
+
     it('entidade sem suporte a edição retorna aviso (intervenção não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_intervention', { id: '1', description: 'x' });
         expect(out).toContain('não suporta edição');

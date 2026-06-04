@@ -84,6 +84,8 @@ export const TOOLS_PROMPT = `
         64. prepare_edit_proposal(id, date?, note_public?, project_id?, lines?) - Prepara EDIÇÃO de uma proposta. Ache o id antes com list_proposals. lines = itens a ACRESCENTAR.
         65. prepare_edit_supplier_invoice(id, date?, lines?) - Prepara EDIÇÃO de uma fatura de fornecedor. lines = itens a ACRESCENTAR [{desc, qty, subprice, remise_percent?}].
         66. prepare_edit_supplier_proposal(id, date?, project_id?, lines?) - Prepara EDIÇÃO de uma solicitação de preço. lines = itens a ACRESCENTAR.
+        67. prepare_create_product(ref, label, type?, price?, description?) - Rascunho de novo produto/serviço. ref = referência única; type: '0'=produto, '1'=serviço; price = preço unitário.
+        68. prepare_edit_product(id, ref?, label?, type?, price?, description?) - Prepara EDIÇÃO de um produto/serviço. Ache o id antes com list_products.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -269,6 +271,14 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         createFields: ['label', 'product_id', 'qty', 'duration'],
         required: ['product_id'],
         newRoute: '/manufacturing/bom/new',
+    },
+    product: {
+        label: 'produto/serviço',
+        createFields: ['ref', 'label', 'type', 'price', 'description'],
+        editFields: ['ref', 'label', 'type', 'price', 'description'],
+        required: ['ref', 'label'],
+        newRoute: '/products/new',
+        editRoute: '/products/:id/edit',
     },
 };
 
