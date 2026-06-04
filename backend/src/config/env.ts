@@ -26,6 +26,13 @@ export const config = {
     minimaxApiKey: process.env.MINIMAX_API_KEY || '',
     minimaxBaseUrl: process.env.MINIMAX_BASE_URL || 'https://api.minimax.io/v1/',
     minimaxModel: process.env.MINIMAX_MODEL || 'MiniMax-M3',
+    // GroupId é exigido por algumas regiões/endpoints da MiniMax (mídia). Opcional: se vazio, não é enviado.
+    minimaxGroupId: process.env.MINIMAX_GROUP_ID || '',
+    // Geração de mídia (tools do agente). Modelos e voz default — todos configuráveis.
+    minimaxTtsModel: process.env.MINIMAX_TTS_MODEL || 'speech-2.6-hd',
+    minimaxVoiceId: process.env.MINIMAX_VOICE_ID || 'male-qn-qingse',
+    minimaxImageModel: process.env.MINIMAX_IMAGE_MODEL || 'image-01',
+    minimaxVideoModel: process.env.MINIMAX_VIDEO_MODEL || 'MiniMax-Hailuo-2.3',
     serperApiKey: process.env.SERPER_API_KEY || '',
 
 
