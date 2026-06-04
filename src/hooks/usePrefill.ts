@@ -4,7 +4,7 @@ import { AiService } from '../services/aiService';
 
 export interface PrefillResult {
     kind: string;                       // ex.: 'create_ticket', 'create_customer', 'edit_customer'
-    data: Record<string, string>;       // campos a pré-preencher (edit inclui 'id')
+    data: Record<string, any>;          // campos a pré-preencher (edit inclui 'id'; entidades com itens incluem 'lines')
 }
 
 /**
