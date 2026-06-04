@@ -435,6 +435,29 @@ describe('AiService', () => {
             expect(result.vendor).toBe('Loja');
         });
 
+        it('extractReceiptData usa GLM-4.6V (axios) quando provider glm tem visão', async () => {
+            // Fase 1 (#55/#57): com provider glm + chave, o OCR vai pro GLM-4.6V (sem Google).
+            aiService.setConfig('glm', 'https://api.z.ai/api/coding/paas/v4', 'zkey', 'glm-5.1');
+            (axios.post as any).mockResolvedValue({
+                data: { choices: [{ message: { content: '{"vendor":"Loja GLM","total":42,"items":[]}' } }] },
+            });
+            const result = await aiService.extractReceiptData('base64img');
+            expect(result.vendor).toBe('Loja GLM');
+            // chamou o endpoint de visão (chat/completions), não o SDK Google
+            expect((axios.post as any).mock.calls[0][0]).toContain('/chat/completions');
+            // restaura provider local p/ não vazar estado pros próximos testes
+            aiService.setConfig('local', 'http://localhost:11434/v1', undefined, 'llama3');
+        });
+
+        it('extractReceiptData do glm cai p/ Google se a visão falhar (retorno null não force)', async () => {
+            // se o GLM retornar erro, o método devolve null (degradação graciosa, sem quebrar o fluxo).
+            aiService.setConfig('glm', 'https://api.z.ai/api/coding/paas/v4', 'zkey', 'glm-5.1');
+            (axios.post as any).mockRejectedValue(new Error('vision down'));
+            const result = await aiService.extractReceiptData('base64img');
+            expect(result).toBeNull();
+            aiService.setConfig('local', 'http://localhost:11434/v1', undefined, 'llama3');
+        });
+
         it('analyzeFinancialHealth returns result', async () => {
             (axios.post as any).mockResolvedValue({ data: { choices: [{ message: { content: 'Finance report' } }] } });
             const result = await aiService.analyzeFinancialHealth({ data: 1 });
