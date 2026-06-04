@@ -161,6 +161,24 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.fk_user).toBe('1');
     });
 
+    it('prepare_create_contact gera /contacts/new e exige firstname/lastname/socid', async () => {
+        await expect(executeTool('prepare_create_contact', { firstname: 'João' })).rejects.toThrow();
+        const out = await executeTool('prepare_create_contact', { firstname: 'João', lastname: 'Silva', socid: '5' });
+        const m = out.match(/\/contacts\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_contact');
+        expect(payload!.data.firstname).toBe('João');
+        expect(payload!.data.socid).toBe('5');
+    });
+
+    it('prepare_edit_contact gera /contacts/:id/edit com kind edit_contact', async () => {
+        const out = await executeTool('prepare_edit_contact', { id: '8', email: 'novo@x.com' });
+        const m = out.match(/\/contacts\/8\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_contact');
+        expect(payload!.data.id).toBe('8');
+    });
+
     it('entidade sem suporte a edição retorna aviso (ticket não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_ticket', { id: '1', subject: 'x' });
         expect(out).toContain('não suporta edição');
