@@ -5,7 +5,9 @@
  * Uses: PageLayout, PageHeader, MasterDetailLayout, Card, Button, Input, Modal, Tabs, EmptyState
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Product, AppView } from '../types';
 import { Package, Search, Box, Briefcase, AlertCircle, CheckCircle2, Warehouse, Plus, Loader2, Tag, Truck, ShoppingCart, Pencil, Trash2 } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
@@ -280,6 +282,36 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
             if (found) setSelectedProduct(found);
         }
     }, [initialItemId, products]);
+
+    // Deeplink HITL do agente (#57/#78): create_product / edit_product abrem o modal pré-preenchido.
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        const mapForm = (d: any): Partial<Product> => {
+            const f: Partial<Product> = {};
+            if (d.ref !== undefined) f.ref = d.ref;
+            if (d.label !== undefined) f.label = d.label;
+            if (d.type !== undefined) f.type = d.type;
+            if (d.price !== undefined) f.price = Number(d.price);
+            if (d.description !== undefined) f.description = d.description;
+            return f;
+        };
+        if (prefill.kind === 'create_product') {
+            appliedPrefillRef.current = prefill;
+            setProductForm({ type: '0', price: 0, ...mapForm(prefill.data) });
+            setIsCreateModalOpen(true);
+            toast.info('Revise os dados e confirme a criação do produto.');
+        } else if (prefill.kind === 'edit_product') {
+            const prod = products.find(p => String(p.id) === String(prefill.data.id));
+            if (!prod) return; // aguarda os dados
+            appliedPrefillRef.current = prefill;
+            setSelectedProduct(prod);
+            setProductForm({ ...prod, ...mapForm(prefill.data) });
+            setIsEditModalOpen(true);
+            toast.info('Revise as mudanças e salve o produto.');
+        }
+    }, [prefill, products]);
 
     // Filtered products
     const filteredProducts = useMemo(() => {
