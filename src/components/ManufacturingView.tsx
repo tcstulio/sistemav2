@@ -53,6 +53,7 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
     const appliedPrefillRef = useRef<PrefillResult | null>(null);
     const [moPrefill, setMoPrefill] = useState<Record<string, string> | undefined>(undefined);
     const [bomPrefill, setBomPrefill] = useState<Record<string, string> | undefined>(undefined);
+    const [bomEditId, setBomEditId] = useState<string | undefined>(undefined);
     useEffect(() => {
         if (!prefill || appliedPrefillRef.current === prefill) return;
         if (prefill.kind === 'create_mo') {
@@ -67,8 +68,36 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
             setActiveTab('bom');
             setIsBomModalOpen(true);
             toast.info('Revise os dados e confirme a criação da BOM.');
+        } else if (prefill.kind === 'edit_bom') {
+            const bom = boms.find(b => String(b.id) === String(prefill.data.id));
+            if (!bom) return; // aguarda os dados carregarem
+            appliedPrefillRef.current = prefill;
+            // pré-preenche com os valores atuais + as mudanças propostas pelo agente.
+            setBomPrefill({
+                label: prefill.data.label ?? bom.label ?? '',
+                product_id: String(bom.product_id ?? ''),
+                qty: String(prefill.data.qty ?? bom.qty ?? ''),
+                duration: String(prefill.data.duration ?? bom.duration ?? ''),
+            });
+            setBomEditId(String(prefill.data.id));
+            setActiveTab('bom');
+            setIsBomModalOpen(true);
+            toast.info('Revise as mudanças e salve a BOM.');
         }
-    }, [prefill]);
+    }, [prefill, boms]);
+
+    // Edição manual (botão no detalhe) — abre o mesmo modal em modo edição.
+    const openBomEditor = (bom: BOM) => {
+        setBomPrefill({
+            label: bom.label ?? '',
+            product_id: String(bom.product_id ?? ''),
+            qty: String(bom.qty ?? ''),
+            duration: String(bom.duration ?? ''),
+        });
+        setBomEditId(String(bom.id));
+        setActiveTab('bom');
+        setIsBomModalOpen(true);
+    };
 
     // Execution State (Consumption/Production)
     const [isConsumeModalOpen, setIsConsumeModalOpen] = useState(false);
@@ -126,11 +155,12 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
             />
             <CreateBOMModal
                 isOpen={isBomModalOpen}
-                onClose={() => { setIsBomModalOpen(false); setBomPrefill(undefined); }}
+                onClose={() => { setIsBomModalOpen(false); setBomPrefill(undefined); setBomEditId(undefined); }}
                 config={config}
                 products={products}
                 onSuccess={handleRefresh}
                 initialForm={bomPrefill}
+                editId={bomEditId}
             />
             <ConsumeModal
                 isOpen={isConsumeModalOpen}
@@ -240,6 +270,7 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
                             products={products}
                             config={config}
                             onClose={() => setSelectedBOM(null)}
+                            onEdit={() => openBomEditor(selectedBOM)}
                         />
                     ) : (
                         <div className="flex flex-col items-center justify-center h-full text-slate-400">
