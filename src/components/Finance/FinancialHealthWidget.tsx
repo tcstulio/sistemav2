@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AiService } from '../../services/aiService';
 import { Sparkles, Loader2, TrendingUp, AlertTriangle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { getDashboardArtifacts, saveFinancialAnalysis } from '../../services/dashboardArtifacts';
 
 interface FinancialHealthWidgetProps {
     data: any;
@@ -11,12 +12,25 @@ interface FinancialHealthWidgetProps {
 export const FinancialHealthWidget: React.FC<FinancialHealthWidgetProps> = ({ data, title = "Análise Financeira IA" }) => {
     const [analysis, setAnalysis] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [meta, setMeta] = useState<{ by: string; at: number } | null>(null); // quem/quando gerou (org-wide, #124)
+
+    // Carrega a última análise gerada (org-wide) — fica disponível pra todos até alguém regerar.
+    useEffect(() => {
+        getDashboardArtifacts().then((a) => {
+            if (a?.financialAnalysis) {
+                setAnalysis(String(a.financialAnalysis.value || ''));
+                setMeta({ by: a.financialAnalysis.generatedBy, at: a.financialAnalysis.generatedAt });
+            }
+        });
+    }, []);
 
     const handleAnalyze = async () => {
         setIsLoading(true);
         try {
             const result = await AiService.analyzeFinancialHealth(data);
             setAnalysis(result);
+            const saved = await saveFinancialAnalysis(result); // persiste pra todos
+            setMeta(saved ? { by: saved.generatedBy, at: saved.generatedAt } : { by: 'você', at: Date.now() });
         } catch (e) {
             setAnalysis("Erro ao gerar análise.");
         } finally {
@@ -57,9 +71,13 @@ export const FinancialHealthWidget: React.FC<FinancialHealthWidgetProps> = ({ da
                 ) : analysis ? (
                     <div className="prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-strong:text-indigo-600 dark:prose-strong:text-indigo-400">
                         <ReactMarkdown>{analysis}</ReactMarkdown>
-                        <div className="mt-4 flex justify-end">
+                        <div className="mt-4 flex justify-between items-center">
+                            <span className="text-[11px] text-slate-400 not-prose">
+                                {meta ? `Gerado por ${meta.by} em ${new Date(meta.at).toLocaleString('pt-BR')}` : ''}
+                            </span>
                             <button
                                 onClick={handleAnalyze}
+                                disabled={isLoading}
                                 className="text-xs text-slate-400 hover:text-indigo-500 flex items-center gap-1 transition-colors"
                             >
                                 <Sparkles size={12} /> Regenerar
