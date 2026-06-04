@@ -210,8 +210,26 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.type).toBe('Unpaid');
     });
 
-    it('entidade sem suporte a edição retorna aviso (ticket não tem editRoute)', async () => {
-        const out = await executeTool('prepare_edit_ticket', { id: '1', subject: 'x' });
+    it('prepare_edit_ticket gera /tickets/:id/edit com kind edit_ticket', async () => {
+        const out = await executeTool('prepare_edit_ticket', { id: '123', subject: 'Novo assunto', severity_code: 'HIGH' });
+        const m = out.match(/\/tickets\/123\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_ticket');
+        expect(payload!.data.id).toBe('123');
+        expect(payload!.data.subject).toBe('Novo assunto');
+        expect(payload!.data.severity_code).toBe('HIGH');
+    });
+
+    it('prepare_edit_ticket exige id', async () => {
+        await expect(executeTool('prepare_edit_ticket', { subject: 'x' })).rejects.toThrow();
+    });
+
+    it('prepare_edit_ticket exige ao menos um campo para alterar', async () => {
+        await expect(executeTool('prepare_edit_ticket', { id: '1' })).rejects.toThrow();
+    });
+
+    it('entidade sem suporte a edição retorna aviso (intervenção não tem editRoute)', async () => {
+        const out = await executeTool('prepare_edit_intervention', { id: '1', description: 'x' });
         expect(out).toContain('não suporta edição');
     });
 });
