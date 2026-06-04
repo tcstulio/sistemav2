@@ -179,6 +179,37 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.id).toBe('8');
     });
 
+    it('prepare_edit_job gera /hr/jobs/:id/edit com kind edit_job', async () => {
+        const out = await executeTool('prepare_edit_job', { id: '5', label: 'Dev Sênior' });
+        const m = out.match(/\/hr\/jobs\/5\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_job');
+        expect(payload!.data.id).toBe('5');
+        expect(payload!.data.label).toBe('Dev Sênior');
+    });
+
+    it('prepare_edit_job exige id', async () => {
+        await expect(executeTool('prepare_edit_job', { label: 'x' })).rejects.toThrow();
+    });
+
+    it('prepare_edit_leave gera /hr/leaves/:id/edit com kind edit_leave', async () => {
+        const out = await executeTool('prepare_edit_leave', { id: '9', date_debut: '2025-08-01', type: 'Sick Leave' });
+        const m = out.match(/\/hr\/leaves\/9\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_leave');
+        expect(payload!.data.id).toBe('9');
+        expect(payload!.data.date_debut).toBe('2025-08-01');
+        expect(payload!.data.type).toBe('Sick Leave');
+    });
+
+    it('prepare_edit_leave não inclui fk_user (funcionário é imutável)', async () => {
+        const out = await executeTool('prepare_edit_leave', { id: '9', fk_user: '3', type: 'Unpaid' });
+        const m = out.match(/\/hr\/leaves\/9\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_leave');
+        expect(payload!.data.fk_user).toBeUndefined();
+        expect(payload!.data.type).toBe('Unpaid');
+    });
+
     it('entidade sem suporte a edição retorna aviso (ticket não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_ticket', { id: '1', subject: 'x' });
         expect(out).toContain('não suporta edição');

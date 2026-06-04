@@ -206,6 +206,15 @@ export const createLeaveRequest = async (config: DolibarrConfig, data: any) => {
     });
 };
 
+export const updateLeaveRequest = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/holiday/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
 export const approveLeaveRequest = async (config: DolibarrConfig, id: string) => {
     const url = `${sanitizeUrl(config.apiUrl)}/holiday/${id}/approve`;
     return request(url, {
