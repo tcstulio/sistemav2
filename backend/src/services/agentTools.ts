@@ -33,6 +33,7 @@ export const TOOLS_PROMPT = `
         14. list_users(search: string) - Lista usuários/funcionários.
         15. list_warehouses() - Lista estoques/armazéns.
         16. list_tasks(projectId: string) - Lista tarefas de um projeto.
+        86. list_user_tasks(userId: string) - Lista as tarefas atribuídas a um usuário/pessoa. Ache o userId antes com list_users.
         17. list_events(limit: number) - Lista eventos da agenda.
         18. list_contacts(search: string) - Lista contatos (pessoas de contato).
         19. list_categories(type: string) - Lista categorias (customer, product, etc).
@@ -515,6 +516,11 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
         case 'list_tasks': {
             const tasks = await dolibarrService.listTasks(args?.projectId);
             return `Tarefas: ${JSON.stringify(tasks.map((t: any) => ({ ref: t.ref, label: t.label, progress: t.progress, dateo: t.dateo })))}`;
+        }
+        case 'list_user_tasks': {
+            if (!args?.userId) throw new Error("Parâmetro 'userId' ausente.");
+            const userTasks = await dolibarrService.listUserTasks(args.userId);
+            return `Tarefas do usuário: ${JSON.stringify(userTasks.map((t: any) => ({ ref: t.ref, label: t.label, progress: t.progress, dateo: t.dateo })))}`;
         }
         case 'list_events': {
             const events = await dolibarrService.listEvents(args?.limit);

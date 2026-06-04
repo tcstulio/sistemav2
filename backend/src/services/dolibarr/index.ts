@@ -71,6 +71,7 @@ export class DolibarrService extends DolibarrServiceBase {
     getTicket = (id: string) => this.operations.getTicket(id);
     listProjects = (search?: string) => this.operations.listProjects(search);
     listTasks = (projectId?: string) => this.operations.listTasks(projectId);
+    listUserTasks = (userId: string) => this.operations.listUserTasks(userId);
     listTickets = (params?: { search?: string, limit?: number }) => this.operations.listTickets(params);
     listShipments = (search?: string) => this.operations.listShipments(search);
     listEvents = (limit?: number) => this.operations.listEvents(limit);
