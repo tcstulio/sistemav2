@@ -16,6 +16,7 @@ import { DolibarrConfig } from '../types';
 
 // Lazy imports - Route components loaded on demand
 const CustomerList = React.lazy(() => import('./CustomerList').then(m => ({ default: m.CustomerList })));
+const ContactList = React.lazy(() => import('./ContactList'));
 const InvoiceList = React.lazy(() => import('./InvoiceList'));
 const ProductList = React.lazy(() => import('./ProductList'));
 const ProposalList = React.lazy(() => import('./ProposalList'));
@@ -156,6 +157,11 @@ const App: React.FC = () => {
                         <Route path="/customers/new" element={<ViewWrapper Component={CustomerList} viewId="customers" />} />
                         <Route path="/customers/:id" element={<ViewWrapper Component={CustomerList} viewId="customers" />} />
                         <Route path="/customers/:id/edit" element={<ViewWrapper Component={CustomerList} viewId="customers" />} />
+
+                        <Route path="/contacts" element={<ViewWrapper Component={ContactList} viewId="customers" />} />
+                        <Route path="/contacts/new" element={<ViewWrapper Component={ContactList} viewId="customers" />} />
+                        <Route path="/contacts/:id" element={<ViewWrapper Component={ContactList} viewId="customers" />} />
+                        <Route path="/contacts/:id/edit" element={<ViewWrapper Component={ContactList} viewId="customers" />} />
 
                         <Route path="/suppliers" element={<ViewWrapper Component={SupplierList} viewId="suppliers" />} />
                         <Route path="/suppliers/new" element={<ViewWrapper Component={SupplierList} viewId="suppliers" />} />
