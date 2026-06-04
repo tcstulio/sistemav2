@@ -35,6 +35,7 @@ const InventoryView = React.lazy(() => import('./InventoryView').then(m => ({ de
 const ReportsView = React.lazy(() => import('./ReportsView'));
 const DevelopmentView = React.lazy(() => import('./DevelopmentView'));
 const ManufacturingView = React.lazy(() => import('./ManufacturingView'));
+const WarehouseList = React.lazy(() => import('./WarehouseList'));
 const BatchCreateView = React.lazy(() => import('./BatchCreateView'));
 const InterventionList = React.lazy(() => import('./InterventionList'));
 const ContractList = React.lazy(() => import('./ContractList'));
@@ -233,6 +234,7 @@ const App: React.FC = () => {
                         <Route path="/categories/:id/edit" element={<ViewWrapper Component={CategoryList} viewId="categories" />} />
 
                         <Route path="/inventory" element={<ViewWrapper Component={InventoryView} viewId="inventory" />} />
+                        <Route path="/warehouses" element={<ViewWrapper Component={WarehouseList} viewId="inventory" />} />
 
                         <Route path="/batch/new" element={<ViewWrapper Component={BatchCreateView} viewId="dashboard" />} />
                         <Route path="/manufacturing" element={<ViewWrapper Component={ManufacturingView} viewId="manufacturing" />} />
