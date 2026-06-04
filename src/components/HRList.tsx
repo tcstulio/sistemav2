@@ -92,25 +92,60 @@ const HRList: React.FC<HRListProps> = ({
     const [groupToEdit, setGroupToEdit] = useState<UserGroup | null>(null);
     const [prefillUserData, setPrefillUserData] = useState<Partial<DolibarrUser> | null>(null);
 
-    // Deeplink HITL do agente (#57): create_job / create_leave (aplica 1x por token).
+    // Deeplink HITL do agente (#57): create/edit de vaga e licença (aplica 1x por token).
     const prefill = usePrefill();
     const appliedPrefillRef = useRef<PrefillResult | null>(null);
     const [jobPrefill, setJobPrefill] = useState<Record<string, string> | undefined>(undefined);
     const [leavePrefill, setLeavePrefill] = useState<Record<string, string> | undefined>(undefined);
+    const [jobEditId, setJobEditId] = useState<string | undefined>(undefined);
+    const [leaveEditId, setLeaveEditId] = useState<string | undefined>(undefined);
     useEffect(() => {
         if (!prefill || appliedPrefillRef.current === prefill) return;
         if (prefill.kind === 'create_job') {
             appliedPrefillRef.current = prefill;
             setJobPrefill(prefill.data);
+            setJobEditId(undefined);
+            setActiveTab('recruitment');
             setIsJobModalOpen(true);
             toast.info('Revise os dados e confirme a criação da vaga.');
+        } else if (prefill.kind === 'edit_job') {
+            if (jobPositions.length === 0) return; // aguarda os dados p/ carregar o registro atual
+            appliedPrefillRef.current = prefill;
+            const current = jobPositions.find(j => String(j.id) === String(prefill.data.id));
+            setJobPrefill({
+                label: prefill.data.label ?? current?.label ?? '',
+                qty: prefill.data.qty ?? (current?.qty != null ? String(current.qty) : ''),
+                description: prefill.data.description ?? current?.description ?? '',
+            });
+            setJobEditId(String(prefill.data.id));
+            setActiveTab('recruitment');
+            setIsJobModalOpen(true);
+            toast.info('Revise as mudanças e salve a vaga.');
         } else if (prefill.kind === 'create_leave') {
             appliedPrefillRef.current = prefill;
             setLeavePrefill(prefill.data);
+            setLeaveEditId(undefined);
+            setActiveTab('leaves');
             setIsLeaveModalOpen(true);
             toast.info('Revise os dados e confirme a solicitação de licença.');
+        } else if (prefill.kind === 'edit_leave') {
+            if (leaveRequests.length === 0) return; // aguarda os dados p/ carregar o registro atual
+            appliedPrefillRef.current = prefill;
+            const current = leaveRequests.find(l => String(l.id) === String(prefill.data.id));
+            const toDate = (ts?: number) => (ts ? new Date(ts * 1000).toISOString().split('T')[0] : '');
+            setLeavePrefill({
+                fk_user: current?.fk_user ?? '',
+                date_debut: prefill.data.date_debut ?? toDate(current?.date_debut),
+                date_fin: prefill.data.date_fin ?? toDate(current?.date_fin),
+                type: prefill.data.type ?? current?.type ?? 'Paid Vacation',
+                description: prefill.data.description ?? current?.description ?? '',
+            });
+            setLeaveEditId(String(prefill.data.id));
+            setActiveTab('leaves');
+            setIsLeaveModalOpen(true);
+            toast.info('Revise as mudanças e salve a licença.');
         }
-    }, [prefill]);
+    }, [prefill, jobPositions, leaveRequests]);
 
     // Derived Data for UserDetail
     const userTasks = useMemo(() => selectedUser ? tasks.filter(t => (t.fk_user_assign && String(t.fk_user_assign) === String(selectedUser.id)) || (t.fk_user_creat && String(t.fk_user_creat) === String(selectedUser.id))) : [], [selectedUser, tasks]);
@@ -135,16 +170,18 @@ const HRList: React.FC<HRListProps> = ({
         return getAllSubordinates(selectedUser.id);
     }, [selectedUser, users]);
 
-    // Handle deep linking or initial item
+    // Handle deep linking or initial item.
+    // Ignora quando há prefill: rotas como /hr/jobs/:id/edit reaproveitam o initialItemId,
+    // mas a edição é dirigida pelo prefill (não deve selecionar um usuário homônimo).
     useEffect(() => {
-        if (initialItemId && users.length > 0 && !selectedUser) {
+        if (initialItemId && users.length > 0 && !selectedUser && !prefill) {
             const u = users.find(user => user.id === initialItemId);
             if (u) {
                 setActiveTab('team');
                 setSelectedUser(u);
             }
         }
-    }, [initialItemId, users]);
+    }, [initialItemId, users, prefill]);
 
     const handleTabChange = (tab: typeof activeTab) => {
         setActiveTab(tab);
@@ -233,8 +270,8 @@ const HRList: React.FC<HRListProps> = ({
                 prefillData={prefillUserData}
                 onRefresh={onRefresh}
             />
-            <JobModal isOpen={isJobModalOpen} onClose={() => { setIsJobModalOpen(false); setJobPrefill(undefined); }} config={config} onRefresh={onRefresh} initialForm={jobPrefill} />
-            <LeaveModal isOpen={isLeaveModalOpen} onClose={() => { setIsLeaveModalOpen(false); setLeavePrefill(undefined); }} config={config} users={users} onRefresh={onRefresh} initialForm={leavePrefill} />
+            <JobModal isOpen={isJobModalOpen} onClose={() => { setIsJobModalOpen(false); setJobPrefill(undefined); setJobEditId(undefined); }} config={config} onRefresh={onRefresh} initialForm={jobPrefill} editId={jobEditId} />
+            <LeaveModal isOpen={isLeaveModalOpen} onClose={() => { setIsLeaveModalOpen(false); setLeavePrefill(undefined); setLeaveEditId(undefined); }} config={config} users={users} onRefresh={onRefresh} initialForm={leavePrefill} editId={leaveEditId} />
             <ExpenseScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} config={config} currentUser={currentUser} users={users} onRefresh={onRefresh} />
             <ExpenseScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} config={config} currentUser={currentUser} users={users} onRefresh={onRefresh} />
 
