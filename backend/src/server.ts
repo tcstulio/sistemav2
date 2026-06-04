@@ -197,6 +197,9 @@ app.use('/api/centrovibe', requireDolibarrLogin, centrovibeRoutes);
 import integrationRoutes from './routes/integrationRoutes';
 app.use('/api/integration', integrationRoutes);
 
+import uiConfigRoutes from './routes/uiConfigRoutes';
+app.use('/api/ui-config', uiConfigRoutes);
+
 // Health Check
 app.get('/health', async (req, res) => {
     const health: Record<string, any> = {
