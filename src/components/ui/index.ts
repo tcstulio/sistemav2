@@ -13,6 +13,7 @@ export { EmptyState } from './EmptyState';
 // Form Components
 export { Button } from './Button';
 export { Input } from './Input';
+export { RichTextEditor } from './RichTextEditor';
 
 // Navigation Components
 export { Tabs, Tab } from './Tabs';
