@@ -702,11 +702,23 @@ class LocalProvider implements AIProvider {
     private baseUrl: string;
     private modelName: string;
     private apiKey?: string;
+    // Config opcional de VISÃO (ex.: GLM-4.6V). Quando presente, o provider passa a
+    // suportar OCR/análise de imagem direto (sem fallback p/ Google). Usa uma base
+    // própria pois o modelo multimodal vive em endpoint diferente do de texto.
+    private visionConfig?: { baseUrl: string; model: string };
 
-    constructor(baseUrl: string, modelName: string = 'llama3', apiKey?: string) {
+    constructor(baseUrl: string, modelName: string = 'llama3', apiKey?: string, visionConfig?: { baseUrl: string; model: string }) {
         this.baseUrl = (baseUrl || '').replace(/\/+$/, ''); // remove barra final -> evita //chat/completions
         this.modelName = modelName;
         this.apiKey = apiKey;
+        this.visionConfig = visionConfig && visionConfig.baseUrl
+            ? { baseUrl: visionConfig.baseUrl.replace(/\/+$/, ''), model: visionConfig.model }
+            : undefined;
+    }
+
+    // true quando o provider tem um modelo de visão configurado + chave (ex.: GLM-4.6V).
+    supportsVision(): boolean {
+        return !!this.visionConfig && !!this.apiKey;
     }
 
     private getHeaders(): Record<string, string> {
@@ -917,8 +929,56 @@ class LocalProvider implements AIProvider {
     }
 
     async extractReceiptData(imageBase64: string): Promise<any> {
-        log.warn("LocalProvider does not support extractReceiptData directly.");
-        return null;
+        // Sem modelo de visão configurado (ex.: Ollama/llama3) -> não suporta; o serviço
+        // faz o fallback p/ um provider multimodal (Google).
+        if (!this.visionConfig || !this.apiKey) {
+            log.warn("LocalProvider sem visão configurada — extractReceiptData indisponível.");
+            return null;
+        }
+        try {
+            // Aceita data URL ou base64 puro; normaliza p/ data URL (formato esperado por image_url).
+            const clean = imageBase64.replace(/^data:image\/[^;]+;base64,/, "");
+            const dataUrl = `data:image/jpeg;base64,${clean}`;
+
+            const prompt = `
+            Analyze this receipt image and extract the following JSON data:
+            - date (YYYY-MM-DD)
+            - vendor (string)
+            - total (number)
+            - currency (string, e.g. BRL, USD)
+            - items: array of objects with:
+                - description (full product name/text)
+                - quantity (count, default to 1 if not specified)
+                - unit_price (price per unit)
+                - total_price (line total)
+            - category: string (suggested expense category based on items)
+
+            Return ONLY raw JSON.`;
+
+            const response = await axios.post(`${this.visionConfig.baseUrl}/chat/completions`, {
+                model: this.visionConfig.model,
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: prompt },
+                            { type: 'image_url', image_url: { url: dataUrl } },
+                        ],
+                    },
+                ],
+                temperature: 0.1,
+            }, { headers: this.getHeaders(), timeout: 120000 });
+
+            const raw = response.data?.choices?.[0]?.message?.content || "{}";
+            const cleanJson = raw.replace(/```json|```/g, '').trim();
+            return JSON.parse(cleanJson);
+        } catch (error: any) {
+            const detail = error?.response
+                ? `HTTP ${error.response.status} ${JSON.stringify(error.response.data)?.slice(0, 300)}`
+                : (error?.message || String(error));
+            log.error(`GLM Vision (extractReceiptData) Error: ${detail}`);
+            return null;
+        }
     }
 
     async analyzeFinancialHealth(data: any): Promise<string> {
@@ -1014,6 +1074,11 @@ class LocalProvider implements AIProvider {
 
 let currentProvider: AIProvider | null = null;
 
+// Config de visão (GLM-4.6V) p/ o provider GLM — só quando há chave Z.AI.
+const glmVisionConfig = (apiKey?: string) => apiKey
+    ? { baseUrl: (config as any).zaiVisionBaseUrl || 'https://api.z.ai/api/paas/v4', model: (config as any).zaiVisionModel || 'glm-4.6v' }
+    : undefined;
+
 const getProvider = (specificProviderName?: string): AIProvider => {
     if (specificProviderName) {
         if (specificProviderName === 'google') {
@@ -1021,7 +1086,7 @@ const getProvider = (specificProviderName?: string): AIProvider => {
         } else if (specificProviderName === 'local') {
             return new LocalProvider(config.localLlmUrl, config.localModelName);
         } else if (specificProviderName === 'glm') {
-            return new LocalProvider(config.zaiBaseUrl, config.zaiModel, config.zaiApiKey);
+            return new LocalProvider(config.zaiBaseUrl, config.zaiModel, config.zaiApiKey, glmVisionConfig(config.zaiApiKey));
         } else if (specificProviderName === 'minimax') {
             return new LocalProvider(config.minimaxBaseUrl, config.minimaxModel, config.minimaxApiKey);
         }
@@ -1032,7 +1097,7 @@ const getProvider = (specificProviderName?: string): AIProvider => {
     if (config.llmProvider === 'local') {
         currentProvider = new LocalProvider(config.localLlmUrl, config.localModelName);
     } else if (config.llmProvider === 'glm') {
-        currentProvider = new LocalProvider(config.zaiBaseUrl, config.zaiModel, config.zaiApiKey);
+        currentProvider = new LocalProvider(config.zaiBaseUrl, config.zaiModel, config.zaiApiKey, glmVisionConfig(config.zaiApiKey));
     } else if (config.llmProvider === 'minimax') {
         currentProvider = new LocalProvider(config.minimaxBaseUrl, config.minimaxModel, config.minimaxApiKey);
     } else {
@@ -1060,7 +1125,7 @@ export const aiService = {
         if (providerName === 'google') {
             currentProvider = new GoogleProvider(key || config.googleApiKey, modelName);
         } else if (providerName === 'glm') {
-            currentProvider = new LocalProvider(url || config.zaiBaseUrl, modelName || config.zaiModel, key || config.zaiApiKey);
+            currentProvider = new LocalProvider(url || config.zaiBaseUrl, modelName || config.zaiModel, key || config.zaiApiKey, glmVisionConfig(key || config.zaiApiKey));
         } else if (providerName === 'minimax') {
             currentProvider = new LocalProvider(url || config.minimaxBaseUrl, modelName || config.minimaxModel, key || config.minimaxApiKey);
         } else {
@@ -1132,9 +1197,14 @@ export const aiService = {
     },
 
     extractReceiptData: async (imageBase64: string) => {
-        // Visão (OCR de recibo): se o provider de texto não tem visão, roteia p/ Google.
+        // Visão (OCR de recibo): o GLM-4.6V (LocalProvider com visão) atende direto;
+        // se o provider de texto não tem visão, roteia p/ Google (fallback multimodal).
+        // NB: só o caminho de OCR usa a visão do GLM; o chat-com-imagem (generateReply)
+        // continua no Google, pois o LocalProvider.generateReply não envia a imagem.
         let provider = getProvider();
-        if (!providerSupportsVision(provider)) {
+        const canVision = providerSupportsVision(provider)
+            || (typeof (provider as any).supportsVision === 'function' && (provider as any).supportsVision());
+        if (!canVision) {
             const mm = getMultimodalProvider();
             if (mm) {
                 log.info("extractReceiptData: provider de texto sem visão -> roteando para Google.");
