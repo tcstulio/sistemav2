@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Category, AppView } from '../types';
-import { Tag, Plus, Trash2, Loader2, CheckCircle2, Folder, Box, User, ArrowUpRight, StickyNote, Search, Pencil } from 'lucide-react';
+import { Tag, Plus, Loader2, CheckCircle2, Folder, Box, User, ArrowUpRight, StickyNote, Pencil } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useCategories } from '../hooks/dolibarr';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
+import { useListControls } from '../hooks/useListControls';
 import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { toast } from 'sonner';
@@ -13,7 +14,7 @@ import { logger } from '../utils/logger';
 const log = logger.child('CategoryList');
 
 // Design System
-import { PageHeader, MasterDetailLayout, Modal, Button, Input, Tabs, Tab, EmptyState, Card } from './ui';
+import { PageHeader, MasterDetailLayout, Modal, Button, Input, Tabs, Tab, EmptyState, Card, ListToolbar, ConfirmDeleteButton } from './ui';
 
 interface CategoryListProps {
     onRefresh?: () => void;
@@ -79,7 +80,6 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
     const { data: categoriesData, isLoading } = useCategories(config);
     const categories = categoriesData || [];
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [filterType, setFilterType] = useState<'all' | 'product' | 'customer' | 'supplier'>('all');
     const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
 
@@ -97,19 +97,27 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
     const prefill = usePrefill();
     const appliedPrefillRef = useRef<PrefillResult | null>(null);
 
-    const filteredCategories = useMemo(() => {
+    // Pré-filtro por tipo (tabs); busca + ordenação ficam no useListControls (#121).
+    const baseCategories = useMemo(() => {
         return categories.filter(c => {
-            const matchesSearch = c.label.toLowerCase().includes(searchTerm.toLowerCase());
-
             // Dolibarr Type Mapping: 0=Product, 1=Supplier, 2=Customer, 3=Member, 4=Contact, 5=Account, 6=Project
             let matchesType = true;
             if (filterType === 'product') matchesType = String(c.type) === '0' || String(c.type) === 'product';
             if (filterType === 'customer') matchesType = String(c.type) === '2' || String(c.type) === 'customer';
             if (filterType === 'supplier') matchesType = String(c.type) === '1' || String(c.type) === 'supplier';
 
-            return matchesSearch && matchesType;
+            return matchesType;
         });
-    }, [categories, searchTerm, filterType]);
+    }, [categories, filterType]);
+
+    const controls = useListControls(baseCategories, {
+        searchText: (c) => `${c.label || ''} ${c.description || ''}`,
+        sorts: [
+            { key: 'label', label: 'Nome', get: (c) => c.label },
+        ],
+        initialSortKey: 'label',
+    });
+    const filteredCategories = controls.result;
 
     const handleCreate = async () => {
         if (!newCat.label) return;
@@ -132,17 +140,11 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
         }
     };
 
+    // Exclusão tratada pelo <ConfirmDeleteButton> (confirmação + toast); aqui só a chamada.
     const handleDelete = async (id: string) => {
-        if (!confirm("Excluir esta categoria? Objetos vinculados não serão excluídos, apenas a categoria.")) return;
-        try {
-            await DolibarrService.deleteCategory(config!, id);
-            toast.success("Categoria excluída.");
-            if (onRefresh) onRefresh();
-            setSelectedCategory(null);
-        } catch (e) {
-            log.error(e);
-            toast.error("Falha ao excluir categoria");
-        }
+        await DolibarrService.deleteCategory(config!, id);
+        if (onRefresh) onRefresh();
+        setSelectedCategory(null);
     };
 
     // mapeia o código de tipo do Dolibarr (0/1/2) para o valor do <select> do form
@@ -339,14 +341,7 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                     subtitle="Organize seus dados com etiquetas"
                     actions={
                         <div className="flex items-center gap-2">
-                            <Input
-                                placeholder="Buscar..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                icon={<Search size={16} />}
-                                className="w-48"
-                                fullWidth={false}
-                            />
+                            <ListToolbar controls={controls} searchPlaceholder="Buscar..." />
                             <Button icon={<Plus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                                 Nova
                             </Button>
@@ -409,12 +404,13 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                                             }}
                                             title="Editar"
                                         />
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            icon={<Trash2 size={18} />}
-                                            onClick={() => handleDelete(selectedCategory.id)}
-                                            className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+                                        <ConfirmDeleteButton
+                                            onDelete={() => handleDelete(selectedCategory.id)}
+                                            itemLabel={selectedCategory.label}
+                                            message="Excluir esta categoria? Objetos vinculados não serão excluídos, apenas a categoria."
+                                            iconSize={18}
+                                            className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"
+                                            stopPropagation={false}
                                         />
                                     </>
                                 }
