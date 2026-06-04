@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DolibarrConfig } from '../../../types';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { Loader2, CheckCircle2 } from 'lucide-react';
@@ -11,11 +11,24 @@ interface JobModalProps {
     onClose: () => void;
     config: DolibarrConfig;
     onRefresh?: () => void;
+    initialForm?: Partial<{ label: string; qty: string; description: string }>; // prefill do agente (#57)
 }
 
-export const JobModal: React.FC<JobModalProps> = ({ isOpen, onClose, config, onRefresh }) => {
+export const JobModal: React.FC<JobModalProps> = ({ isOpen, onClose, config, onRefresh, initialForm }) => {
     const [jobForm, setJobForm] = useState({ label: '', qty: 1, description: '' });
     const [isSubmittingJob, setIsSubmittingJob] = useState(false);
+
+    // ao abrir, sincroniza com o prefill (vazio se não houver) — deeplink HITL.
+    useEffect(() => {
+        if (isOpen) {
+            setJobForm({
+                label: initialForm?.label || '',
+                qty: initialForm?.qty ? (parseInt(initialForm.qty) || 1) : 1,
+                description: initialForm?.description || '',
+            });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
 
     const handleCreateJob = async (e: React.FormEvent) => {
         e.preventDefault();

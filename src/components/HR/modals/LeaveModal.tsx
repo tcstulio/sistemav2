@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DolibarrConfig, DolibarrUser } from '../../../types';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { Plane, X, Loader2, CheckCircle2 } from 'lucide-react';
@@ -12,11 +12,26 @@ interface LeaveModalProps {
     config: DolibarrConfig;
     users: DolibarrUser[];
     onRefresh?: () => void;
+    initialForm?: Partial<{ fk_user: string; date_debut: string; date_fin: string; type: string; description: string }>; // prefill (#57)
 }
 
-export const LeaveModal: React.FC<LeaveModalProps> = ({ isOpen, onClose, config, users, onRefresh }) => {
+export const LeaveModal: React.FC<LeaveModalProps> = ({ isOpen, onClose, config, users, onRefresh, initialForm }) => {
     const [leaveForm, setLeaveForm] = useState({ fk_user: '', date_debut: '', date_fin: '', type: 'Paid Vacation', description: '' });
     const [isSubmittingLeave, setIsSubmittingLeave] = useState(false);
+
+    // ao abrir, sincroniza com o prefill (vazio se não houver) — deeplink HITL.
+    useEffect(() => {
+        if (isOpen) {
+            setLeaveForm({
+                fk_user: initialForm?.fk_user || '',
+                date_debut: initialForm?.date_debut || '',
+                date_fin: initialForm?.date_fin || '',
+                type: initialForm?.type || 'Paid Vacation',
+                description: initialForm?.description || '',
+            });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
 
     const handleCreateLeave = async (e: React.FormEvent) => {
         e.preventDefault();
