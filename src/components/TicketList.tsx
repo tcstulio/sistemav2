@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { usePrefill } from '../hooks/usePrefill';
+import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { toast } from 'sonner';
 import { Ticket, ThirdParty, DolibarrUser, DolibarrConfig, AppView, AgendaEvent, Project } from '../types';
 import { Ticket as TicketIcon, Search, AlertCircle, Clock, Calendar, CheckCircle2, User, ExternalLink, MessageSquare, Send, UserCircle, Sparkles, Loader2, List, Kanban, Plus, ArrowDown, ArrowUp, DollarSign, Users, Info, Phone, Bot, FileText, FolderKanban, ClipboardList, Wrench, Pencil } from 'lucide-react';
@@ -325,7 +326,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
         if (!text) return <span className="italic text-slate-400">Sem conteúdo</span>;
 
         if (text.includes('<') && text.includes('>')) {
-            return <div className="prose prose-sm dark:prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: text }} />;
+            return <div className="prose prose-sm dark:prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: sanitizeHtml(text) }} />;
         }
         return <p className="whitespace-pre-wrap leading-relaxed">{text}</p>;
     };

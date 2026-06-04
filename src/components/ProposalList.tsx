@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Proposal, AppView } from '../types';
 import { FileText, Search, PenTool, CheckCircle, XCircle, Send, Archive, Kanban, List, ShoppingCart, Download, Loader2, FileSignature, Scale, Plus, Trash2, FolderKanban, Ban, Save, Edit } from 'lucide-react';
@@ -784,7 +785,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                                                 <tr key={idx}>
                                                     <td className="px-4 py-3 text-slate-700 dark:text-slate-300">
                                                         <div className="font-medium">{line.label}</div>
-                                                        <div className="text-xs text-slate-500 mt-0.5" dangerouslySetInnerHTML={{ __html: line.description }} />
+                                                        <div className="text-xs text-slate-500 mt-0.5" dangerouslySetInnerHTML={{ __html: sanitizeHtml(line.description) }} />
                                                     </td>
                                                     <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">{line.qty}</td>
                                                     <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">${line.subprice?.toLocaleString()}</td>
