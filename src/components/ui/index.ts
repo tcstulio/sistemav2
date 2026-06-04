@@ -25,6 +25,10 @@ export { Spinner, LoadingOverlay, LoadingCard, LoadingButton, Skeleton, Skeleton
 // Overlay Components
 export { Modal } from './Modal';
 export { ConfirmModal } from './ConfirmModal';
+export { ConfirmDeleteButton } from './ConfirmDeleteButton';
+
+// List Controls (busca + ordenação + filtro padronizados)
+export { ListToolbar } from './ListToolbar';
 
 // Data Display
 export { StatusBadge } from './StatusBadge';
