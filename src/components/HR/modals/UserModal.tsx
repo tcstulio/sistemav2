@@ -37,7 +37,8 @@ export const UserModal: React.FC<UserModalProps> = ({
                     lastname: userToEdit.lastname || '',
                     email: userToEdit.email || '',
                     job: userToEdit.job || '',
-                    supervisor_id: userToEdit.supervisor_id || ''
+                    supervisor_id: userToEdit.supervisor_id || '',
+                    ...(prefillData || {}), // deeplink: sobrepõe as mudanças sugeridas pelo agente
                 });
             } else if (prefillData) {
                 setUserForm({ ...prefillData, supervisor_id: '' });
