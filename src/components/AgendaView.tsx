@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { AgendaEvent, AppView } from '../types';
 import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronRight, CheckCircle2, Circle, Bot, List, Calendar as CalendarIcon, ChevronLeft, Plus, Loader2, X, Phone, Mail, Users, ShoppingCart, FileSignature, Ticket as TicketIcon, ArrowUp, ArrowDown } from 'lucide-react';
@@ -8,6 +8,7 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useEvents, useTasks, useInterventions, useProjects } from '../hooks/dolibarr';
 import AgendaEntryDetail from './AgendaEntryDetail';
 import { logger } from '../utils/logger';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 
 const log = logger.child('AgendaView');
 
@@ -84,6 +85,25 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
         description: ''
     });
     const [isSubmittingEvent, setIsSubmittingEvent] = useState(false);
+
+    // Deeplink HITL do agente (#57): create_event abre o modal de novo evento pré-preenchido.
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_event') {
+            appliedPrefillRef.current = prefill;
+            setNewEventForm({
+                label: prefill.data.label || '',
+                date_start: prefill.data.date_start || '',
+                date_end: prefill.data.date_end || '',
+                type_code: prefill.data.type_code || 'AC_RDV',
+                description: prefill.data.description || '',
+            });
+            setIsEventModalOpen(true);
+            toast.info('Revise os dados e confirme a criação do evento.');
+        }
+    }, [prefill]);
 
     // Helper to detect if an event is a system log
     const isSystemLog = (event: AgendaEvent): boolean => {
