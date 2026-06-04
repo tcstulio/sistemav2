@@ -21,6 +21,11 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
+        '/api/dashboard': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
         '/api/dolibarr': {
           target: 'http://localhost:3004',
           changeOrigin: true,
