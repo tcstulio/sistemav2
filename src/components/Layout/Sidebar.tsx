@@ -9,7 +9,7 @@ import {
     BarChart3, X, LogOut, FileSignature, TrendingUp, PenTool, Factory,
     FolderKanban, ClipboardList, Landmark, CalendarDays, Tag, MessageSquare,
     Activity, Bug, UserCircle, Mail, Bot, Clock, Receipt, Banknote,
-    Calculator, Building2, ChevronDown, ChevronRight, Music, Warehouse
+    Calculator, Building2, ChevronDown, ChevronRight, Music, ShieldCheck, Warehouse
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -126,6 +126,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
             title: 'SISTEMA',
             items: [
                 { id: 'activity', path: '/activity', label: 'Atividades', icon: Activity },
+                { id: 'groups', path: '/admin/groups', label: 'Grupos', icon: ShieldCheck },
                 { id: 'development', path: '/development', label: 'Console Dev', icon: Bug },
                 { id: 'settings', path: '/settings', label: 'Configurações', icon: Settings },
             ]
