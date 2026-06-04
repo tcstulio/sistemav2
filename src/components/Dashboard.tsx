@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { AppView } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInvoices, useSupplierInvoices, useTasks, useProducts, useBankAccounts, useInterventions, useTickets, useBankLines } from '../hooks/dolibarr';
@@ -7,6 +7,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { DollarSign, Users, FileText, TrendingUp, Sparkles, Loader2, Minus, FolderKanban, Pencil, Save, X, AlertOctagon, Clock, Package, Landmark, MessageSquare, ClipboardList, Wrench, Ticket as TicketIcon, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { AiService } from '../services/aiService';
 import { FinancialHealthWidget } from './Finance/FinancialHealthWidget';
+import { getDashboardArtifacts, saveSalesForecast } from '../services/dashboardArtifacts';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
 
@@ -268,12 +269,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         };
     }, [metrics, cashFlowData, recentActivityData]);
 
+    // Carrega a previsão de vendas já gerada (org-wide) — fica pra todos até alguém regerar (#124).
+    useEffect(() => {
+        getDashboardArtifacts().then((a) => {
+            if (a?.salesForecast?.value) setForecast(a.salesForecast.value);
+        });
+    }, []);
+
     const handleGenerateForecast = async () => {
         setLoadingForecast(true);
         try {
             const result = await AiService.generateSalesForecast(invoices);
             if (result) {
-                setForecast(JSON.parse(result));
+                const parsed = JSON.parse(result);
+                setForecast(parsed);
+                void saveSalesForecast(parsed); // persiste pra todos (org-wide)
             }
         } catch (e) {
             log.error("Failed to generate forecast", e);
@@ -288,13 +298,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 <div>
                     <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Visão Geral</h1>
                     <p className="text-slate-500 dark:text-slate-400 text-sm">O que está acontecendo com seu negócio hoje.</p>
-                </div>
-
-                {/* Gemini Insight Widget */}
-                <div className="w-full xl:max-w-2xl">
-                    {(canAccess('invoices') || canAccess('bank_accounts')) && (
-                        <FinancialHealthWidget data={financialContext} />
-                    )}
                 </div>
             </div>
 
@@ -409,6 +412,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                 </ResponsiveContainer>
                             </div>
                         </div>
+                    )}
+
+                    {/* Análise Financeira IA — reposicionada para depois da Projeção de Fluxo (#124) */}
+                    {(canAccess('invoices') || canAccess('bank_accounts')) && (
+                        <FinancialHealthWidget data={financialContext} />
                     )}
                 </div>
 
