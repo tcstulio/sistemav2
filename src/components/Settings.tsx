@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { DolibarrConfig } from '../types';
-import { Save, CheckCircle, Palette, Moon, Sun, User, ShieldCheck, LogOut, RefreshCw, Smartphone, Key, Mail } from 'lucide-react';
+import { Save, CheckCircle, Palette, Moon, Sun, User, ShieldCheck, LogOut, RefreshCw, Smartphone, Key, Mail, Building2 } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
 import { DolibarrService } from '../services/dolibarrService';
 import { dbService } from '../services/dbService';
+import { getUiConfig, updateUiConfig } from '../services/uiConfigService';
+import { setOrgBranding } from '../hooks/useOrgBranding';
 import { PageLayout, PageHeader, Card, Button, Input, Modal } from './ui';
 import { logger } from '../utils/logger';
 
@@ -33,6 +36,27 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
         );
     }
     const [isSaved, setIsSaved] = useState(false);
+
+    // --- Identidade da empresa (org-wide, só admin) ---
+    const isAdmin = localConfig.currentUser?.admin === 1 || localConfig.currentUser?.admin === '1' || localConfig.currentUser?.admin === true;
+    const [orgForm, setOrgForm] = useState({ companyName: '', logoText: '' });
+    const [savingOrg, setSavingOrg] = useState(false);
+    useEffect(() => {
+        if (!isAdmin) return;
+        getUiConfig().then((c) => { if (c) setOrgForm({ companyName: c.companyName, logoText: c.logoText }); });
+    }, [isAdmin]);
+    const handleSaveOrg = async () => {
+        setSavingOrg(true);
+        try {
+            const updated = await updateUiConfig({ companyName: orgForm.companyName, logoText: orgForm.logoText });
+            setOrgBranding(updated); // atualiza o branding (ex.: Sidebar) na hora, p/ todos os consumidores
+            toast.success('Identidade da empresa atualizada para todos os usuários.');
+        } catch (e: any) {
+            toast.error('Falha ao salvar (requer permissão de admin).');
+        } finally {
+            setSavingOrg(false);
+        }
+    };
 
     const colors = [
         { name: 'Índigo', value: 'indigo', hex: '#4f46e5' },
@@ -237,6 +261,26 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                         </div>
                     </div>
                 </Card>
+
+                {/* Identidade da Empresa (org-wide, só admin) */}
+                {isAdmin && (
+                    <Card header={<h3 className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider"><Building2 size={16} /> Identidade da Empresa (Admin)</h3>}>
+                        <p className="text-sm text-slate-500 mb-4">Define o nome e o logo exibidos para <strong>todos</strong> os usuários do sistema.</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome da empresa</label>
+                                <Input value={orgForm.companyName} onChange={(e) => setOrgForm({ ...orgForm, companyName: e.target.value })} placeholder="CoolGroove" />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Logo (texto/inicial, até 8 chars)</label>
+                                <Input value={orgForm.logoText} onChange={(e) => setOrgForm({ ...orgForm, logoText: e.target.value.slice(0, 8) })} placeholder="D" />
+                            </div>
+                        </div>
+                        <div className="flex justify-end mt-4">
+                            <Button type="button" variant="primary" loading={savingOrg} icon={<Save size={16} />} onClick={handleSaveOrg}>Salvar identidade</Button>
+                        </div>
+                    </Card>
+                )}
 
                 {/* Maintenance Section */}
                 <Card header={<h3 className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider"><ShieldCheck size={16} /> Manutenção</h3>}>

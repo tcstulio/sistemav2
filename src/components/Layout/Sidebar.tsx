@@ -2,6 +2,7 @@ import React, { useMemo, useState, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useModules } from '../../hooks/dolibarr';
+import { useOrgBranding } from '../../hooks/useOrgBranding';
 import { safeStorage } from '../../utils/safeStorage';
 import {
     Layout, Users, FileText, Package, ShoppingCart, Truck, Settings, LifeBuoy,
@@ -203,14 +204,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
         setIsOpen(false);
     };
 
+    const branding = useOrgBranding();
+    const companyName = branding?.companyName || 'CoolGroove';
+    const logoText = branding?.logoText || 'D';
+
     if (!config) return null;
 
     return (
         <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 lg:static lg:inset-auto flex flex-col`}>
             {/* Header / Logo */}
             <div className="p-4 flex items-center gap-3 border-b border-slate-800 shrink-0">
-                <div className={`w-8 h-8 rounded-lg bg-gradient-to-br from-${config.themeColor}-500 to-${config.themeColor}-700 flex items-center justify-center font-bold text-lg shadow-lg`}>D</div>
-                <span className="font-bold text-lg tracking-tight">CoolGroove</span>
+                <div className={`w-8 h-8 rounded-lg bg-gradient-to-br from-${config.themeColor}-500 to-${config.themeColor}-700 flex items-center justify-center font-bold text-lg shadow-lg`}>{logoText}</div>
+                <span className="font-bold text-lg tracking-tight">{companyName}</span>
                 <button onClick={() => setIsOpen(false)} className="lg:hidden ml-auto text-slate-400 hover:text-white transition-colors"><X size={20} /></button>
             </div>
 
