@@ -78,6 +78,8 @@ export const TOOLS_PROMPT = `
         58. prepare_create_supplier_invoice(socid, date?, lines?) - Rascunho de fatura de fornecedor. socid = id do fornecedor (ache com list_suppliers). lines = [{desc, qty, subprice, remise_percent?}] (sem produto).
         59. prepare_create_supplier_proposal(socid, date?, project_id?, lines?) - Rascunho de solicitação de preço a fornecedor. socid = id do fornecedor. lines = [{fk_product?, desc, qty, subprice, remise_percent?}].
         60. prepare_create_order(socid, date?, lines?) - Rascunho de pedido de venda. socid = id do cliente (ache com search_customer). lines = [{fk_product?, desc, qty, subprice}].
+        61. prepare_create_mo(product_to_produce_id, qty?, label?, project_id?, date_start?) - Rascunho de ordem de produção (MRP). product_to_produce_id = id do produto a produzir (ache com list_products). date_start em YYYY-MM-DD.
+        62. prepare_create_bom(product_id, qty?, label?, duration?) - Rascunho de lista de materiais (BOM). product_id = id do produto final (ache com list_products). duration em segundos.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -242,6 +244,18 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         newRoute: '/orders/new',
         linesField: 'lines',
         lineFields: ['fk_product', 'desc', 'qty', 'subprice'],
+    },
+    mo: {
+        label: 'ordem de produção',
+        createFields: ['label', 'product_to_produce_id', 'qty', 'project_id', 'date_start'],
+        required: ['product_to_produce_id'],
+        newRoute: '/manufacturing/mo/new',
+    },
+    bom: {
+        label: 'lista de materiais (BOM)',
+        createFields: ['label', 'product_id', 'qty', 'duration'],
+        required: ['product_id'],
+        newRoute: '/manufacturing/bom/new',
     },
 };
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DolibarrConfig, Project, Product } from '../../../types';
 import { Loader2, CheckCircle2, X } from 'lucide-react';
 import { DolibarrService } from '../../../services/dolibarrService';
@@ -13,9 +13,10 @@ interface CreateMOModalProps {
     products: Product[];
     projects: Project[];
     onSuccess: () => void;
+    initialForm?: Partial<{ label: string; product_to_produce_id: string; qty: string; project_id: string; date_start: string }>; // prefill (#57)
 }
 
-export const CreateMOModal: React.FC<CreateMOModalProps> = ({ isOpen, onClose, config, products, projects, onSuccess }) => {
+export const CreateMOModal: React.FC<CreateMOModalProps> = ({ isOpen, onClose, config, products, projects, onSuccess, initialForm }) => {
     const [moForm, setMoForm] = useState({
         label: '',
         product_to_produce_id: '',
@@ -24,6 +25,20 @@ export const CreateMOModal: React.FC<CreateMOModalProps> = ({ isOpen, onClose, c
         date_start: new Date().toISOString().split('T')[0]
     });
     const [isSubmittingMo, setIsSubmittingMo] = useState(false);
+
+    // ao abrir, sincroniza com o prefill (vazio se não houver) — deeplink HITL.
+    useEffect(() => {
+        if (isOpen) {
+            setMoForm({
+                label: initialForm?.label || '',
+                product_to_produce_id: initialForm?.product_to_produce_id || '',
+                qty: initialForm?.qty ? (parseInt(initialForm.qty) || 1) : 1,
+                project_id: initialForm?.project_id || '',
+                date_start: initialForm?.date_start || new Date().toISOString().split('T')[0],
+            });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
 
     const handleCreateMo = async (e: React.FormEvent) => {
         e.preventDefault();
