@@ -9,6 +9,7 @@ import { AiService } from '../services/aiService';
 import { DolibarrService } from '../services/dolibarrService';
 import { useCustomerMutations } from '../hooks/useMutations';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
+import { useListControls } from '../hooks/useListControls';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 
@@ -30,7 +31,9 @@ const CustomerRow: React.FC<{
     customer: ThirdParty;
     isSelected: boolean;
     onSelect: () => void;
-}> = ({ customer, isSelected, onSelect }) => {
+    onDelete: () => Promise<any>;
+    onDeleted: () => void;
+}> = ({ customer, isSelected, onSelect, onDelete, onDeleted }) => {
     return (
         <Card
             onClick={onSelect}
@@ -44,9 +47,12 @@ const CustomerRow: React.FC<{
                     <UserCircle size={16} className="text-indigo-400 shrink-0" />
                     <h4 className="font-bold text-slate-800 dark:text-white truncate text-sm">{customer.name}</h4>
                 </div>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${customer.client === '1' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
-                    {customer.client === '1' ? 'Cliente' : 'Prospect'}
-                </span>
+                <div className="flex items-center gap-1 shrink-0">
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${customer.client === '1' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                        {customer.client === '1' ? 'Cliente' : 'Prospect'}
+                    </span>
+                    <ConfirmDeleteButton onDelete={onDelete} onDeleted={onDeleted} itemLabel={customer.name} />
+                </div>
             </div>
             <div className="text-xs text-slate-600 dark:text-slate-400 flex items-center gap-2 mb-1 ml-6">
                 <Mail size={12} className="opacity-50" /> {customer.email || 'Sem email'}
@@ -61,7 +67,7 @@ const CustomerRow: React.FC<{
 };
 
 // Design System
-import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState, MasterDetailLayout } from './ui';
+import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState, MasterDetailLayout, ListToolbar, ConfirmDeleteButton } from './ui';
 
 interface CustomerListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -72,7 +78,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
     const { config, refreshData } = useDolibarr();
 
     // Data Fetching
-    const { data: customers = [] } = useCustomers(config);
+    const { data: customers = [], refetch: refetchCustomers } = useCustomers(config);
     const { data: invoices = [] } = useInvoices(config);
     const { data: proposals = [] } = useProposals(config, !!config);
     const { data: orders = [] } = useOrders(config, !!config);
@@ -90,8 +96,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
     // Selection
     const [selectedCustomer, setSelectedCustomer] = useState<ThirdParty | null>(null);
 
-    // Search & Filter
-    const [searchTerm, setSearchTerm] = useState('');
+    // Status filter via Tabs (cliente "3" = ambos, mantido fora do toolbar)
     const [filterType, setFilterType] = useState<'all' | 'customer' | 'prospect'>('all');
 
     // Tab State
@@ -152,11 +157,6 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
     const prefill = usePrefill();
     const appliedPrefillRef = useRef<PrefillResult | null>(null);
 
-    // Reset page on search change
-    useEffect(() => {
-        setPage(0);
-    }, [searchTerm]);
-
     useEffect(() => {
         if (initialItemId && customers.length > 0) {
             const target = customers.find(c => String(c.id) === String(initialItemId));
@@ -193,20 +193,34 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
         }
     }, [prefill, customers]);
 
-    // Derived Data
-    const filteredCustomers = useMemo(() => {
+    // Filtro de status (cliente "3" = ambos) aplicado antes de busca/ordenação.
+    const statusFilteredCustomers = useMemo(() => {
         return customers.filter(c => {
-            const matchesSearch = c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                c.email?.toLowerCase().includes(searchTerm.toLowerCase());
-
             const isProspect = c.client === '2' || c.client === '3';
             const isCustomer = c.client === '1' || c.client === '3';
-
-            if (filterType === 'customer') return matchesSearch && isCustomer;
-            if (filterType === 'prospect') return matchesSearch && isProspect;
-            return matchesSearch;
+            if (filterType === 'customer') return isCustomer;
+            if (filterType === 'prospect') return isProspect;
+            return true;
         });
-    }, [customers, searchTerm, filterType]);
+    }, [customers, filterType]);
+
+    // Busca + ordenação padronizadas (#121).
+    const controls = useListControls(statusFilteredCustomers, {
+        searchText: (c) => `${c.name || ''} ${c.email || ''} ${c.town || ''}`,
+        sorts: [
+            { key: 'name', label: 'Nome', get: (c) => c.name },
+            { key: 'town', label: 'Cidade', get: (c) => c.town },
+            { key: 'date', label: 'Atualizado', get: (c) => c.date_modification ?? 0 },
+        ],
+        initialSortKey: 'name',
+    });
+    const filteredCustomers = controls.result;
+    const searchTerm = controls.search;
+
+    // Reset page on search change
+    useEffect(() => {
+        setPage(0);
+    }, [searchTerm]);
 
     const customerInvoices = useMemo(() => selectedCustomer ? invoices.filter(i => String(i.socid) === String(selectedCustomer.id)) : [], [selectedCustomer, invoices]);
     const customerProjects = useMemo(() => selectedCustomer ? projects.filter(p => String(p.socid) === String(selectedCustomer.id)) : [], [selectedCustomer, projects]);
@@ -389,6 +403,11 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                     customer={customer}
                     isSelected={selectedCustomer?.id === customer.id}
                     onSelect={() => setSelectedCustomer(customer)}
+                    onDelete={() => DolibarrService.deleteThirdParty(config!, customer.id)}
+                    onDeleted={() => {
+                        if (selectedCustomer?.id === customer.id) setSelectedCustomer(null);
+                        refetchCustomers();
+                    }}
                 />
             </div>
         );
@@ -402,14 +421,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
             subtitle="Gerencie seu relacionamento comercial"
             actions={
                 <div className="flex items-center gap-2">
-                    <Input
-                        placeholder="Buscar..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        icon={<Search size={16} />}
-                        className="w-48"
-                        fullWidth={false}
-                    />
+                    <ListToolbar controls={controls} searchPlaceholder="Buscar cliente..." />
                     <Button icon={<UserPlus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                         Novo
                     </Button>
