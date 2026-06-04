@@ -466,8 +466,17 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.note_public).toBe('Renovado');
     });
 
-    it('entidade sem suporte a edição retorna aviso (intervenção não tem editRoute)', async () => {
-        const out = await executeTool('prepare_edit_intervention', { id: '1', description: 'x' });
+    it('prepare_edit_intervention gera /interventions/:id/edit com kind edit_intervention', async () => {
+        const out = await executeTool('prepare_edit_intervention', { id: '15', description: 'Trabalho revisado', date: '2025-07-01' });
+        const m = out.match(/\/interventions\/15\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_intervention');
+        expect(payload!.data.id).toBe('15');
+        expect(payload!.data.description).toBe('Trabalho revisado');
+    });
+
+    it('entidade sem suporte a edição retorna aviso (pedido só tem criação)', async () => {
+        const out = await executeTool('prepare_edit_order', { id: '1', date: '2025-01-01' });
         expect(out).toContain('não suporta edição');
     });
 });

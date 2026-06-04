@@ -92,6 +92,7 @@ export const TOOLS_PROMPT = `
         72. prepare_edit_group(id, name?, note?) - Prepara EDIÇÃO de um grupo. Ache o id antes com a lista de grupos.
         73. prepare_create_contract(socid, date_contrat?, date_fin_validite?, note_public?) - Rascunho de novo contrato. socid = id do cliente. Datas em YYYY-MM-DD.
         74. prepare_edit_contract(id, date_contrat?, date_fin_validite?, note_public?) - Prepara EDIÇÃO de um contrato. Ache o id antes com list_contracts. Datas em YYYY-MM-DD.
+        75. prepare_edit_intervention(id, description?, date?, project_id?) - Prepara EDIÇÃO de uma intervenção. Ache o id antes com list_interventions. date em YYYY-MM-DD.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -178,10 +179,12 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
     },
     intervention: {
         label: 'intervenção',
-        // modal de edição ainda não existe — por ora só criação.
         createFields: ['socid', 'project_id', 'date', 'description'],
+        // edição requer o endpoint custom PUT /interventions/{id} (api_interventions.class.php no Dolibarr).
+        editFields: ['project_id', 'date', 'description'],
         required: ['socid'],
         newRoute: '/interventions/new',
+        editRoute: '/interventions/:id/edit',
     },
     job: {
         label: 'vaga',
