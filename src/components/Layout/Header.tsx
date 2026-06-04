@@ -98,7 +98,7 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
                             </div>
 
                             <button
-                                onClick={() => { navigate('/perfil'); setIsUserMenuOpen(false); }}
+                                onClick={() => { navigate('/settings'); setIsUserMenuOpen(false); }}
                                 className="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2"
                             >
                                 <User size={16} /> Meu Perfil
