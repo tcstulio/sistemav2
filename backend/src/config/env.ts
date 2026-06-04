@@ -50,6 +50,9 @@ export const config = {
     itauCertPath: process.env.ITAU_CERT_PATH || './certs/itau.crt',
     itauKeyPath: process.env.ITAU_KEY_PATH || './certs/itau.key',
     itauSandbox: process.env.ITAU_SANDBOX === 'true',
+    // Segredo p/ verificar assinatura HMAC-SHA256 dos webhooks Itaú. Se vazio, a verificação
+    // é pulada (compat). Defina em produção para rejeitar webhooks forjados.
+    itauWebhookSecret: process.env.ITAU_WEBHOOK_SECRET || '',
     itauContaCorrente: process.env.ITAU_CONTA_CORRENTE || '',
     itauAgencia: process.env.ITAU_AGENCIA || '',
 };
