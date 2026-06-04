@@ -209,6 +209,8 @@ const App: React.FC = () => {
                         <Route path="/services/:id" element={<ViewWrapper Component={ProductList} viewId="products" passProps={{ initialFilter: 'service' }} />} />
 
                         <Route path="/categories" element={<ViewWrapper Component={CategoryList} viewId="categories" />} />
+                        <Route path="/categories/new" element={<ViewWrapper Component={CategoryList} viewId="categories" />} />
+                        <Route path="/categories/:id/edit" element={<ViewWrapper Component={CategoryList} viewId="categories" />} />
 
                         <Route path="/inventory" element={<ViewWrapper Component={InventoryView} viewId="inventory" />} />
 
