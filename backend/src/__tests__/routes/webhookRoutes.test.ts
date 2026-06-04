@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
@@ -99,6 +99,45 @@ describe('webhookRoutes', () => {
                 .send({ message: 'Hello' });
 
             expect(res.status).toBe(400);
+        });
+    });
+
+    describe('WEBHOOK_SECRET (proteção opcional dos endpoints públicos)', () => {
+        const SECRET = 'wh-secret';
+        let restore: any;
+        beforeEach(async () => {
+            const { config } = await import('../../config/env');
+            restore = (config as any).webhookSecret;
+            (config as any).webhookSecret = SECRET;
+        });
+        afterEach(async () => {
+            const { config } = await import('../../config/env');
+            (config as any).webhookSecret = restore;
+        });
+
+        it('bloqueia /trigger sem header quando o segredo está setado', async () => {
+            const res = await request(app).post('/api/webhooks/trigger')
+                .send({ sessionId: 'default', chatId: '123', message: 'Hi' });
+            expect(res.status).toBe(401);
+        });
+
+        it('bloqueia com segredo errado', async () => {
+            const res = await request(app).post('/api/webhooks/trigger')
+                .set('x-webhook-secret', 'errado')
+                .send({ sessionId: 'default', chatId: '123', message: 'Hi' });
+            expect(res.status).toBe(401);
+        });
+
+        it('aceita /trigger com o segredo correto', async () => {
+            const res = await request(app).post('/api/webhooks/trigger')
+                .set('x-webhook-secret', SECRET)
+                .send({ sessionId: 'default', chatId: '123', message: 'Hi' });
+            expect(res.status).toBe(200);
+        });
+
+        it('também protege /dolibarr/invoice', async () => {
+            const res = await request(app).post('/api/webhooks/dolibarr/invoice').send({ invoiceId: '1' });
+            expect(res.status).toBe(401);
         });
     });
 

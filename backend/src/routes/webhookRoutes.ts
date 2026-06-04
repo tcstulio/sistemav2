@@ -1,17 +1,43 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { schedulerService } from '../services/schedulerService';
 import { dolibarrService } from '../services/dolibarrService';
 import { emailService } from '../services/emailService';
 import { messageService } from '../services/legacy/messageService';
+import { config } from '../config/env';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('Webhook');
 const router = Router();
 
+// Comparação em tempo constante (evita timing attack).
+function safeEqual(a: string, b: string): boolean {
+    const ab = Buffer.from(a);
+    const bb = Buffer.from(b);
+    if (ab.length !== bb.length) return false;
+    try { return crypto.timingSafeEqual(ab, bb); } catch { return false; }
+}
+
+/**
+ * Protege os endpoints públicos de webhook (/trigger e /dolibarr/*) com um segredo
+ * compartilhado OPCIONAL (header x-webhook-secret). Se WEBHOOK_SECRET não estiver
+ * configurado, passa direto (compat — zero regressão). Quando configurado, bloqueia
+ * chamadas anônimas (qualquer um podia disparar WhatsApp via /trigger).
+ */
+function requireWebhookSecret(req: Request, res: Response, next: NextFunction) {
+    if (!config.webhookSecret) return next();
+    const provided = (req.headers['x-webhook-secret'] as string) || '';
+    if (!safeEqual(provided, config.webhookSecret)) {
+        log.warn('Webhook bloqueado: x-webhook-secret ausente/inválido');
+        return res.status(401).json({ error: 'Unauthorized webhook' });
+    }
+    next();
+}
+
 // --- Webhook Receiver (Generic) ---
 
-router.post('/trigger', async (req: Request, res: Response) => {
+router.post('/trigger', requireWebhookSecret, async (req: Request, res: Response) => {
     try {
         const { event, sessionId, chatId, message, templateId, variables, delay } = req.body;
 
@@ -61,7 +87,7 @@ router.post('/trigger', async (req: Request, res: Response) => {
 
 // --- Dolibarr Specific Webhooks ---
 
-router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
+router.post('/dolibarr/invoice', requireWebhookSecret, async (req: Request, res: Response) => {
     try {
         const { invoiceId, action, sessionId } = req.body;
 
@@ -160,7 +186,7 @@ router.post('/dolibarr/invoice', async (req: Request, res: Response) => {
     }
 });
 
-router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
+router.post('/dolibarr/ticket', requireWebhookSecret, async (req: Request, res: Response) => {
     try {
         const { ticketId, action, sessionId } = req.body;
 
@@ -258,7 +284,7 @@ router.post('/dolibarr/ticket', async (req: Request, res: Response) => {
     }
 });
 
-router.post('/dolibarr/order', async (req: Request, res: Response) => {
+router.post('/dolibarr/order', requireWebhookSecret, async (req: Request, res: Response) => {
     try {
         const { orderId, action, sessionId } = req.body;
 
