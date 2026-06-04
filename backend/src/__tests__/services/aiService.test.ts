@@ -519,44 +519,47 @@ describe('AiService', () => {
             }
         });
 
-        it('draftCollectionEmail falls back for local provider', async () => {
-            const result = await aiService.draftCollectionEmail({ name: 'John' }, 100);
-            const parsed = JSON.parse(result);
-            expect(parsed.subject).toBe('N/A');
+        // #123: o LocalProvider (GLM/local) AGORA implementa esses métodos (antes caía no fallback).
+        it('draftCollectionEmail (local) parseia o JSON do modelo', async () => {
+            (axios.post as any).mockResolvedValue({ data: { choices: [{ message: { content: '{"subject":"Cobrança","body":"Olá"}' } }] } });
+            const parsed = JSON.parse(await aiService.draftCollectionEmail({ name: 'John' }, 100));
+            expect(parsed.subject).toBe('Cobrança');
         });
 
-        it('generateSalesForecast falls back for local provider', async () => {
-            const result = await aiService.generateSalesForecast([]);
-            const parsed = JSON.parse(result);
-            expect(parsed.summary).toContain('dispon');
+        it('generateSalesForecast (local) retorna o forecast do modelo', async () => {
+            (axios.post as any).mockResolvedValue({ data: { choices: [{ message: { content: '{"forecast":[],"summary":"ok","trend":"up"}' } }] } });
+            const parsed = JSON.parse(await aiService.generateSalesForecast([]));
+            expect(parsed.trend).toBe('up');
         });
 
-        it('analyzeCustomerSentiment falls back for local provider', async () => {
-            const result = await aiService.analyzeCustomerSentiment({}, []);
-            const parsed = JSON.parse(result);
-            expect(parsed.label).toBe('N/A');
+        it('analyzeCustomerSentiment (local) parseia JSON', async () => {
+            (axios.post as any).mockResolvedValue({ data: { choices: [{ message: { content: '{"score":80,"label":"Positive"}' } }] } });
+            const parsed = JSON.parse(await aiService.analyzeCustomerSentiment({}, []));
+            expect(parsed.label).toBe('Positive');
         });
 
-        it('auditProposal falls back for local provider', async () => {
-            const result = await aiService.auditProposal({});
-            const parsed = JSON.parse(result);
-            expect(parsed.score).toBe(0);
+        it('auditProposal (local) parseia JSON', async () => {
+            (axios.post as any).mockResolvedValue({ data: { choices: [{ message: { content: '{"score":85,"status":"Aprovada"}' } }] } });
+            const parsed = JSON.parse(await aiService.auditProposal({}));
+            expect(parsed.score).toBe(85);
         });
 
-        it('auditProject falls back for local provider', async () => {
-            const result = await aiService.auditProject({});
-            const parsed = JSON.parse(result);
-            expect(parsed.health).toBe('unknown');
+        it('auditProject (local) parseia JSON', async () => {
+            (axios.post as any).mockResolvedValue({ data: { choices: [{ message: { content: '{"health":"Saudável","score":90}' } }] } });
+            const parsed = JSON.parse(await aiService.auditProject({}));
+            expect(parsed.health).toBe('Saudável');
         });
 
-        it('analyzeSystemLogs falls back for local provider', async () => {
+        it('analyzeSystemLogs (local) retorna o array do modelo', async () => {
+            (axios.post as any).mockResolvedValue({ data: { choices: [{ message: { content: '[{"type":"error","title":"x"}]' } }] } });
             const result = await aiService.analyzeSystemLogs([]);
-            expect(result).toBe('[]');
+            expect(result).toContain('error');
         });
 
-        it('analyzeMonthlyReport falls back for local provider', async () => {
+        it('analyzeMonthlyReport (local) retorna o markdown do modelo', async () => {
+            (axios.post as any).mockResolvedValue({ data: { choices: [{ message: { content: '## Resumo Executivo\nTudo certo.' } }] } });
             const result = await aiService.analyzeMonthlyReport({});
-            expect(result).toContain('dispon');
+            expect(result).toContain('Resumo Executivo');
         });
 
         it('generateReply: loop sem progresso vira resposta final (não "Max iterations reached")', async () => {
