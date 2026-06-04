@@ -563,4 +563,59 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         const out = await executeTool('prepare_edit_inexistente', { id: '1', foo: 'bar' });
         expect(out).toContain('não suporta edição');
     });
+
+    describe('prepare_batch_create (lote — Opção B)', () => {
+        it('gera /batch/new com kind batch_create e os itens (simples)', async () => {
+            const out = await executeTool('prepare_batch_create', {
+                entity: 'customer',
+                items: [
+                    { name: 'Cliente A', email: 'a@x.com' },
+                    { name: 'Cliente B', email: 'b@x.com', client: '1' },
+                ],
+            });
+            const m = out.match(/\/batch\/new\?prefill=([A-Za-z0-9._-]+)/);
+            expect(m).not.toBeNull();
+            const payload = verifyDeeplink<Record<string, any>>(m![1], 'batch_create');
+            expect(payload!.data.entity).toBe('customer');
+            expect(payload!.data.items).toHaveLength(2);
+            expect(payload!.data.items[0].name).toBe('Cliente A');
+            expect(payload!.data.items[1].client).toBe('1');
+        });
+
+        it('carrega linhas por item (entidade com itens, ex.: fatura)', async () => {
+            const out = await executeTool('prepare_batch_create', {
+                entity: 'invoice',
+                items: [
+                    { socid: '7', lines: [{ desc: 'Serviço', qty: 2, subprice: 100 }] },
+                    { socid: '9', lines: [{ desc: 'Item', qty: 1, subprice: 50 }] },
+                ],
+            });
+            const m = out.match(/\/batch\/new\?prefill=([A-Za-z0-9._-]+)/);
+            const payload = verifyDeeplink<Record<string, any>>(m![1], 'batch_create');
+            expect(payload!.data.items[0].lines[0].qty).toBe(2);
+            expect(payload!.data.items[1].socid).toBe('9');
+        });
+
+        it('descarta campos fora da whitelist da entidade', async () => {
+            const out = await executeTool('prepare_batch_create', {
+                entity: 'customer',
+                items: [{ name: 'X', hack: 'drop-me' }],
+            });
+            const m = out.match(/\/batch\/new\?prefill=([A-Za-z0-9._-]+)/);
+            const payload = verifyDeeplink<Record<string, any>>(m![1], 'batch_create');
+            expect(payload!.data.items[0].hack).toBeUndefined();
+            expect(payload!.data.items[0].name).toBe('X');
+        });
+
+        it('exige items não-vazio e rejeita lote grande (>50)', async () => {
+            await expect(executeTool('prepare_batch_create', { entity: 'customer', items: [] })).rejects.toThrow();
+            const big = Array.from({ length: 51 }, (_, i) => ({ name: `C${i}` }));
+            await expect(executeTool('prepare_batch_create', { entity: 'customer', items: big })).rejects.toThrow();
+        });
+
+        it('entidade inexistente retorna aviso', async () => {
+            const out = await executeTool('prepare_batch_create', { entity: 'inexistente', items: [{ name: 'X' }] });
+            expect(out).toContain('não suporta criação');
+        });
+    });
 });
