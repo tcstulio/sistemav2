@@ -86,9 +86,11 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     });
     const [isSubmittingEvent, setIsSubmittingEvent] = useState(false);
 
-    // Deeplink HITL do agente (#57): create_event abre o modal de novo evento pré-preenchido.
+    // Deeplink HITL do agente (#57): create_event abre o modal de novo evento; edit_event
+    // abre o evento no AgendaEntryDetail em modo edição com as mudanças sugeridas.
     const prefill = usePrefill();
     const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    const [editEventPrefill, setEditEventPrefill] = useState<Record<string, string> | undefined>(undefined);
     useEffect(() => {
         if (!prefill || appliedPrefillRef.current === prefill) return;
         if (prefill.kind === 'create_event') {
@@ -102,6 +104,12 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
             });
             setIsEventModalOpen(true);
             toast.info('Revise os dados e confirme a criação do evento.');
+        } else if (prefill.kind === 'edit_event') {
+            appliedPrefillRef.current = prefill;
+            setEditEventPrefill(prefill.data);
+            setViewMode('list'); // garante o MasterDetailLayout (detalhe só aparece em lista)
+            setSelectedItemId(`evt-${prefill.data.id}`); // prefixo evt- p/ o AgendaEntryDetail
+            toast.info('Revise as mudanças e salve o evento.');
         }
     }, [prefill]);
 
@@ -359,6 +367,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     };
 
     const handleItemClick = (item: AgendaItem) => {
+        setEditEventPrefill(undefined); // seleção manual não carrega o prefill de edição do agente
         if (viewMode === 'list') {
             setSelectedItemId(item.id);
         } else {
@@ -637,13 +646,14 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                 <div className="flex-1 overflow-hidden">
                     <MasterDetailLayout
                         showDetail={!!selectedItemId}
-                        onCloseDetail={() => setSelectedItemId(null)}
+                        onCloseDetail={() => { setSelectedItemId(null); setEditEventPrefill(undefined); }}
                         list={renderListContent()}
                         detail={
                             selectedItemId ? (
                                 <AgendaEntryDetail
                                     config={config}
                                     initialItemId={selectedItemId}
+                                    editPrefill={editEventPrefill}
                                     onNavigate={onNavigate || (() => { })}
                                 />
                             ) : undefined
