@@ -97,6 +97,7 @@ export const TOOLS_PROMPT = `
         77. prepare_edit_expense(id, date_debut?, date_fin?, total_ttc?, note_public?) - Prepara EDIÇÃO de um relatório de despesa. Ache o id antes com list_expense_reports. Não troca o funcionário.
         78. prepare_edit_bom(id, label?, qty?, duration?) - Prepara EDIÇÃO de uma lista de materiais (BOM). Ache o id antes com list_boms. duration em segundos. Não troca o produto final.
         79. prepare_edit_mo(id, label?, qty?) - Prepara EDIÇÃO de uma ordem de produção (MRP). Ache o id antes com list_manufacturing_orders. Não troca o produto a produzir.
+        80. prepare_edit_order(id, date?) - Prepara EDIÇÃO do cabeçalho de um pedido de venda. Ache o id antes com list_orders. date em YYYY-MM-DD. Não troca o cliente nem os itens (só o cabeçalho).
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -121,6 +122,7 @@ interface DeeplinkEntity {
     editRoute?: string;       // rota de edição com :id (ex.: '/customers/:id/edit')
     linesField?: string;      // nome do campo de LINHAS no prefill (ex.: 'lines') p/ entidades com itens
     lineFields?: string[];    // whitelist dos campos de cada linha (ex.: ['fk_product','desc','qty','subprice'])
+    editAddsLines?: boolean;  // default true p/ entidades com linesField; false = edição é header-only (não acrescenta linhas, ex.: pedido)
 }
 
 const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
@@ -268,10 +270,14 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
     order: {
         label: 'pedido de venda',
         createFields: ['socid', 'date'],
+        // edição cobre só o cabeçalho (data); cliente e itens são imutáveis na tela de edição.
+        editFields: ['date'],
         required: ['socid'],
         newRoute: '/orders/new',
+        editRoute: '/orders/:id/edit',
         linesField: 'lines',
         lineFields: ['fk_product', 'desc', 'qty', 'subprice'],
+        editAddsLines: false, // edição do pedido é header-only (não acrescenta itens)
     },
     mo: {
         label: 'ordem de produção',
@@ -388,8 +394,11 @@ function tryPrepareDeeplink(tool: string, args: any): string | null {
         if (!ent?.editRoute) return `Entidade '${edit[1]}' não suporta edição via deeplink.`;
         if (!args?.id) throw new Error("Parâmetro 'id' ausente (id do registro a editar).");
         const changes: Record<string, any> = pickFields(args, ent.editFields || []);
-        const lines = pickLines(args, ent); // entidades com itens: linhas extras a ACRESCENTAR
-        if (lines && lines.length > 0 && ent.linesField) changes[ent.linesField] = lines;
+        // entidades com itens acrescentam linhas na edição — exceto as header-only (editAddsLines === false).
+        if (ent.editAddsLines !== false) {
+            const lines = pickLines(args, ent); // linhas extras a ACRESCENTAR
+            if (lines && lines.length > 0 && ent.linesField) changes[ent.linesField] = lines;
+        }
         if (Object.keys(changes).length === 0) throw new Error('Nenhum campo para alterar foi informado.');
         const data = { id: String(args.id), ...changes };
         const token = signDeeplink(`edit_${edit[1]}`, data, 1800);
