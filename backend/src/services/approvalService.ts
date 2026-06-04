@@ -1,16 +1,23 @@
 /**
  * Approval Service
- * 
- * Gerencia fila de aprovação para automações bancárias
- * Todas as ações de alto risco passam por conferência antes de execução
+ *
+ * Gerencia fila de aprovação para automações bancárias.
+ * Todas as ações de alto risco passam por conferência antes de execução.
+ *
+ * Persistência: arquivo JSON (mesmo padrão do storeService — atomicWriteSync), então
+ * a fila SOBREVIVE a restart (antes era 100% em memória — #36). Inclui TTL para ações
+ * pendentes (expiram se não revisadas) e retenção/cap do histórico.
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import fs from 'fs';
+import path from 'path';
 import { socketService } from './socketService';
 import { interApiService } from './interApiService';
 import { itauApiService } from './itauApiService';
 import { messageService } from './legacy/messageService';
 import { dolibarrService } from './dolibarrService';
+import { atomicWriteSync } from '../utils/atomicWrite';
 import { logger } from '../utils/logger';
 
 const log = logger.child('ApprovalService');
@@ -50,15 +57,100 @@ export interface PendingAction {
     };
 }
 
-// ===== In-Memory Storage =====
-// TODO: Migrar para banco de dados em produção
+const TERMINAL: ActionStatus[] = ['rejected', 'executed', 'failed'];
 
-const pendingActions: Map<string, PendingAction> = new Map();
-const actionHistory: PendingAction[] = [];
+// TTL/retention — configuráveis por env.
+const PENDING_TTL_MS = (Number(process.env.APPROVAL_PENDING_TTL_HOURS) || 24) * 3600 * 1000;
+const HISTORY_RETENTION_MS = (Number(process.env.APPROVAL_HISTORY_RETENTION_DAYS) || 30) * 86400 * 1000;
+const HISTORY_MAX = 1000;
+
+const DEFAULT_STORE_PATH = path.join(__dirname, '../../data/approvals.json');
 
 // ===== Approval Service =====
 
-class ApprovalService {
+export class ApprovalService {
+    private actions: Map<string, PendingAction> = new Map();
+    private storePath: string;
+
+    constructor(storePath: string = DEFAULT_STORE_PATH) {
+        this.storePath = storePath;
+        this.load();
+    }
+
+    // ===== Persistência =====
+
+    private load(): void {
+        try {
+            const dir = path.dirname(this.storePath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            if (!fs.existsSync(this.storePath)) return;
+
+            const parsed = JSON.parse(fs.readFileSync(this.storePath, 'utf-8'));
+            const arr: any[] = Array.isArray(parsed?.actions) ? parsed.actions : [];
+            for (const a of arr) {
+                this.actions.set(a.id, {
+                    ...a,
+                    requestedAt: new Date(a.requestedAt),
+                    reviewedAt: a.reviewedAt ? new Date(a.reviewedAt) : undefined,
+                    executedAt: a.executedAt ? new Date(a.executedAt) : undefined,
+                });
+            }
+            log.info(`Aprovações carregadas: ${this.actions.size}`);
+        } catch (error) {
+            log.error('Load Error', error);
+        }
+    }
+
+    private save(): void {
+        try {
+            atomicWriteSync(this.storePath, { actions: Array.from(this.actions.values()) });
+        } catch (error) {
+            log.error('Save Error', error);
+        }
+    }
+
+    /**
+     * Expira ações pendentes antigas (TTL) e remove histórico velho/excedente.
+     * Roda sob demanda (nas leituras/escritas) — barato para o volume esperado.
+     */
+    private cleanup(): void {
+        const now = Date.now();
+        let changed = false;
+
+        for (const action of this.actions.values()) {
+            if (action.status === 'pending' && now - new Date(action.requestedAt).getTime() > PENDING_TTL_MS) {
+                action.status = 'failed';
+                action.error = 'Expirada por TTL (não revisada a tempo)';
+                action.reviewedAt = new Date();
+                changed = true;
+                log.warn(`Ação expirada por TTL: ${action.id}`);
+            }
+        }
+
+        // Retenção: remove terminais antigas.
+        for (const [id, action] of this.actions) {
+            if (TERMINAL.includes(action.status)) {
+                const ts = new Date(action.reviewedAt || action.executedAt || action.requestedAt).getTime();
+                if (now - ts > HISTORY_RETENTION_MS) {
+                    this.actions.delete(id);
+                    changed = true;
+                }
+            }
+        }
+
+        // Cap do histórico: mantém apenas as HISTORY_MAX terminais mais recentes.
+        const terminal = Array.from(this.actions.values())
+            .filter(a => TERMINAL.includes(a.status))
+            .sort((a, b) => new Date(a.requestedAt).getTime() - new Date(b.requestedAt).getTime());
+        if (terminal.length > HISTORY_MAX) {
+            for (const a of terminal.slice(0, terminal.length - HISTORY_MAX)) {
+                this.actions.delete(a.id);
+                changed = true;
+            }
+        }
+
+        if (changed) this.save();
+    }
 
     /**
      * Cria uma nova ação pendente na fila de aprovação
@@ -82,7 +174,8 @@ class ApprovalService {
             status: 'pending',
         };
 
-        pendingActions.set(action.id, action);
+        this.actions.set(action.id, action);
+        this.save();
 
         // Emitir evento via Socket.io para notificar aprovadores
         socketService.emit('approval_pending', {
@@ -103,7 +196,8 @@ class ApprovalService {
         banco?: 'inter' | 'itau';
         status?: ActionStatus;
     }): Promise<PendingAction[]> {
-        let actions = Array.from(pendingActions.values());
+        this.cleanup();
+        let actions = Array.from(this.actions.values());
 
         if (filters?.type) {
             actions = actions.filter(a => a.type === filters.type);
@@ -127,9 +221,7 @@ class ApprovalService {
      * Obtém detalhes de uma ação específica
      */
     async getActionById(actionId: string): Promise<PendingAction | null> {
-        return pendingActions.get(actionId) ||
-            actionHistory.find(a => a.id === actionId) ||
-            null;
+        return this.actions.get(actionId) || null;
     }
 
     /**
@@ -140,7 +232,7 @@ class ApprovalService {
         result?: any;
         error?: string;
     }> {
-        const action = pendingActions.get(actionId);
+        const action = this.actions.get(actionId);
 
         if (!action) {
             return { success: false, error: 'Ação não encontrada' };
@@ -154,6 +246,7 @@ class ApprovalService {
         action.status = 'approved';
         action.reviewedBy = approvedBy;
         action.reviewedAt = new Date();
+        this.save();
 
         log.info(`Ação aprovada: ${actionId} por ${approvedBy}`);
 
@@ -163,9 +256,7 @@ class ApprovalService {
             action.status = 'executed';
             action.executedAt = new Date();
             action.result = result;
-
-            // Mover para histórico
-            this.moveToHistory(action);
+            this.save();
 
             // Emitir evento de sucesso
             socketService.emit('approval_executed', {
@@ -178,9 +269,7 @@ class ApprovalService {
         } catch (error: any) {
             action.status = 'failed';
             action.error = error.message;
-
-            // Mover para histórico mesmo com erro
-            this.moveToHistory(action);
+            this.save();
 
             // Emitir evento de erro
             socketService.emit('approval_failed', {
@@ -199,7 +288,7 @@ class ApprovalService {
         success: boolean;
         error?: string;
     }> {
-        const action = pendingActions.get(actionId);
+        const action = this.actions.get(actionId);
 
         if (!action) {
             return { success: false, error: 'Ação não encontrada' };
@@ -213,9 +302,7 @@ class ApprovalService {
         action.reviewedBy = rejectedBy;
         action.reviewedAt = new Date();
         action.rejectionReason = reason;
-
-        // Mover para histórico
-        this.moveToHistory(action);
+        this.save();
 
         // Emitir evento
         socketService.emit('approval_rejected', {
@@ -239,7 +326,9 @@ class ApprovalService {
         status?: ActionStatus;
         limit?: number;
     }): Promise<PendingAction[]> {
-        let history = [...actionHistory];
+        this.cleanup();
+        // Histórico = ações terminais (não-pendentes).
+        let history = Array.from(this.actions.values()).filter(a => a.status !== 'pending');
 
         if (filters?.startDate) {
             history = history.filter(a => new Date(a.requestedAt) >= filters.startDate!);
@@ -277,13 +366,16 @@ class ApprovalService {
         executed: number;
         failed: number;
     }> {
-        const pending = Array.from(pendingActions.values()).filter(a => a.status === 'pending').length;
-        const approved = actionHistory.filter(a => a.status === 'approved').length;
-        const rejected = actionHistory.filter(a => a.status === 'rejected').length;
-        const executed = actionHistory.filter(a => a.status === 'executed').length;
-        const failed = actionHistory.filter(a => a.status === 'failed').length;
-
-        return { pending, approved, rejected, executed, failed };
+        this.cleanup();
+        const all = Array.from(this.actions.values());
+        const count = (s: ActionStatus) => all.filter(a => a.status === s).length;
+        return {
+            pending: count('pending'),
+            approved: count('approved'),
+            rejected: count('rejected'),
+            executed: count('executed'),
+            failed: count('failed'),
+        };
     }
 
     // ===== Private Methods =====
@@ -301,16 +393,6 @@ class ApprovalService {
                 return 'low';
             default:
                 return 'medium';
-        }
-    }
-
-    private moveToHistory(action: PendingAction): void {
-        pendingActions.delete(action.id);
-        actionHistory.push(action);
-
-        // Manter apenas últimos 1000 registros em memória
-        if (actionHistory.length > 1000) {
-            actionHistory.shift();
         }
     }
 

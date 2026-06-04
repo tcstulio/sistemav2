@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'fs';
+
+// fs é mockado globalmente (setup.ts); mockamos atomicWrite p/ espiar a persistência.
+vi.mock('../../utils/atomicWrite', () => ({ atomicWriteSync: vi.fn() }));
+import { atomicWriteSync } from '../../utils/atomicWrite';
+
+const mockedFs = vi.mocked(fs);
+const mockedAtomicWrite = vi.mocked(atomicWriteSync);
 
 const mockEmit = vi.fn();
 vi.mock('../../services/socketService', () => ({
@@ -47,13 +55,17 @@ vi.mock('uuid', () => ({
 
 describe('approvalService', () => {
     let approvalService: any;
+    let ApprovalServiceClass: any;
+    const storePath = 'approvals-test.json'; // fs é mockado; o caminho é irrelevante
 
     beforeEach(async () => {
         vi.clearAllMocks();
         uuidCounter = 0;
-        vi.resetModules();
+        mockedFs.existsSync.mockReturnValue(false); // por padrão, instância carrega vazia
+        // import dinâmico: garante que os mocks (mockEmit etc.) já estão inicializados.
         const mod = await import('../../services/approvalService');
-        approvalService = mod.approvalService;
+        ApprovalServiceClass = mod.ApprovalService;
+        approvalService = new ApprovalServiceClass(storePath);
     });
 
     describe('createPendingAction', () => {
@@ -207,6 +219,7 @@ describe('approvalService', () => {
             expect(result[1].id).toBe(a1.id);
 
             globalThis.Date = RealDate;
+            Date.now = originalNow; // restaura (antes vazava e quebrava Date.now nos testes seguintes)
         });
 
         it('returns empty when no matching filters', async () => {
@@ -698,17 +711,48 @@ describe('approvalService', () => {
         });
     });
 
-    describe('moveToHistory', () => {
-        it('trims history to 1000 entries', async () => {
-            for (let i = 0; i < 1002; i++) {
-                const a = await approvalService.createPendingAction({
-                    type: 'consulta_saldo', description: `d${i}`, requestedBy: 'u', payload: {},
-                });
-                approvalService.moveToHistory(a);
-            }
+    describe('persistência (#36)', () => {
+        it('persiste (atomicWrite) ao criar uma ação', async () => {
+            await approvalService.createPendingAction({
+                type: 'enviar_pix', banco: 'inter', description: 'd', requestedBy: 'u', payload: {},
+            });
+            expect(mockedAtomicWrite).toHaveBeenCalled();
+            const data: any = mockedAtomicWrite.mock.calls.at(-1)![1];
+            expect(data.actions).toHaveLength(1);
+        });
 
-            const history = await approvalService.getActionHistory();
-            expect(history.length).toBeLessThanOrEqual(1000);
+        it('SOBREVIVE a restart — nova instância lê o conteúdo persistido', async () => {
+            const a = await approvalService.createPendingAction({
+                type: 'pagar_boleto', banco: 'itau', description: 'd', requestedBy: 'u', payload: {},
+            });
+            // captura o que foi persistido e simula "restart" lendo esse conteúdo
+            const persisted = mockedAtomicWrite.mock.calls.at(-1)![1];
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify(persisted) as any);
+            const svc2: any = new ApprovalServiceClass(storePath);
+            const found = await svc2.getActionById(a.id);
+            expect(found?.id).toBe(a.id);
+            expect(found?.requestedAt instanceof Date).toBe(true);
+            const pend = await svc2.getPendingActions();
+            expect(pend.map((x: any) => x.id)).toContain(a.id);
+        });
+    });
+
+    describe('TTL / cleanup', () => {
+        it('expira ação pendente antiga (vira failed) no cleanup', async () => {
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({
+                actions: [{
+                    id: 'old-1', type: 'enviar_pix', payload: {}, description: 'velha', riskLevel: 'high',
+                    requestedBy: 'u', requestedAt: new Date('2000-01-01').toISOString(), status: 'pending',
+                }],
+            }) as any);
+            const svc: any = new ApprovalServiceClass(storePath); // load
+            const pend = await svc.getPendingActions();            // dispara cleanup
+            expect(pend.find((x: any) => x.id === 'old-1')).toBeUndefined();
+            const found = await svc.getActionById('old-1');
+            expect(found?.status).toBe('failed');
+            expect(found?.error).toMatch(/TTL/i);
         });
     });
 
