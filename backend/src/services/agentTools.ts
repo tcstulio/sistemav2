@@ -7,6 +7,7 @@ import { ScraperService } from './scraperService';
 import { isValidExternalUrl } from '../utils/urlValidation';
 import { logger } from '../utils/logger';
 import { signDeeplink } from '../utils/deeplinkToken';
+import { minimaxService } from './minimaxService';
 
 const log = logger.child('AgentTools');
 
@@ -98,6 +99,11 @@ export const TOOLS_PROMPT = `
         78. prepare_edit_bom(id, label?, qty?, duration?) - Prepara EDIÇÃO de uma lista de materiais (BOM). Ache o id antes com list_boms. duration em segundos. Não troca o produto final.
         79. prepare_edit_mo(id, label?, qty?) - Prepara EDIÇÃO de uma ordem de produção (MRP). Ache o id antes com list_manufacturing_orders. Não troca o produto a produzir.
         80. prepare_edit_order(id, date?) - Prepara EDIÇÃO do cabeçalho de um pedido de venda. Ache o id antes com list_orders. date em YYYY-MM-DD. Não troca o cliente nem os itens (só o cabeçalho).
+
+        FERRAMENTAS DE MÍDIA (geram um arquivo e devolvem um LINK válido por ~24h):
+        81. generate_speech(text, voice_id?) - Gera ÁUDIO (TTS) do texto e devolve o link do mp3. Use quando o usuário pedir áudio/voz/narração.
+
+        REGRA PARA MÍDIA (generate_*): devolvem um LINK pronto. Inclua o link na resposta para o usuário ouvir/ver.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -546,6 +552,13 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             }
             const pageContent = await ScraperService.fetchPageContent(args.url);
             return `[PAGE CONTENT for ${args.url}]:\n${pageContent ? pageContent.substring(0, 10000) : 'Falha ao acessar página ou conteúdo vazio'}`;
+        }
+
+        // --- MÍDIA (geração via MiniMax; devolvem URL ~24h) ---
+        case 'generate_speech': {
+            if (!args?.text) throw new Error("Parâmetro 'text' ausente.");
+            const { url } = await minimaxService.generateSpeech(String(args.text), { voiceId: args.voice_id ? String(args.voice_id) : undefined });
+            return `Áudio gerado (mp3, válido ~24h): ${url}`;
         }
 
         // AÇÕES HITL (prepare_create_*/prepare_edit_*) caem no dispatch genérico abaixo.
