@@ -63,6 +63,8 @@ export const TOOLS_PROMPT = `
         43. prepare_edit_category(id, label?, type?, description?) - Prepara EDIÇÃO de uma categoria. Ache o id antes com list_categories.
         44. prepare_create_event(label, date_start, date_end?, type_code?, description?) - Rascunho de evento na agenda. date_start/date_end no formato "YYYY-MM-DDTHH:mm". type_code: AC_RDV (reunião), AC_TEL (ligação), AC_EMAIL, AC_OTH.
         45. prepare_create_intervention(socid, date?, description?, project_id?) - Rascunho de intervenção (serviço de campo). socid = id do cliente (ache com search_customer). date em YYYY-MM-DD.
+        46. prepare_create_job(label, qty?, description?) - Rascunho de nova vaga de emprego (label = cargo; qty = quantidade).
+        47. prepare_create_leave(fk_user, date_debut, date_fin, type?, description?) - Rascunho de solicitação de licença/férias. fk_user = id do funcionário (ache com list_users). Datas em YYYY-MM-DD. type: 'Paid Vacation', 'Sick Leave', 'Unpaid', 'Other'.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -147,6 +149,19 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         createFields: ['socid', 'project_id', 'date', 'description'],
         required: ['socid'],
         newRoute: '/interventions/new',
+    },
+    job: {
+        label: 'vaga',
+        // modal self-managed só de criação por ora.
+        createFields: ['label', 'qty', 'description'],
+        required: ['label'],
+        newRoute: '/hr/jobs/new',
+    },
+    leave: {
+        label: 'licença/férias',
+        createFields: ['fk_user', 'date_debut', 'date_fin', 'type', 'description'],
+        required: ['fk_user', 'date_debut', 'date_fin'],
+        newRoute: '/hr/leaves/new',
     },
 };
 
