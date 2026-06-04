@@ -13,9 +13,11 @@ interface CreateBOMModalProps {
     products: Product[];
     onSuccess: () => void;
     initialForm?: Partial<{ label: string; product_id: string; qty: string; duration: string }>; // prefill (#57)
+    editId?: string; // quando presente, o modal salva (PUT /boms/:id) em vez de criar — deeplink HITL (#78)
 }
 
-export const CreateBOMModal: React.FC<CreateBOMModalProps> = ({ isOpen, onClose, config, products, onSuccess, initialForm }) => {
+export const CreateBOMModal: React.FC<CreateBOMModalProps> = ({ isOpen, onClose, config, products, onSuccess, initialForm, editId }) => {
+    const isEdit = !!editId;
     const [bomForm, setBomForm] = useState({
         label: '',
         product_id: '',
@@ -39,11 +41,22 @@ export const CreateBOMModal: React.FC<CreateBOMModalProps> = ({ isOpen, onClose,
 
     const handleCreateBom = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!bomForm.product_id) return;
+        // na criação, o produto final é obrigatório; na edição ele é imutável (não enviado).
+        if (!isEdit && !bomForm.product_id) return;
         setIsSubmittingBom(true);
         try {
-            await DolibarrService.createBOM(config, bomForm);
-            alert("BOM Criada com Sucesso");
+            if (isEdit) {
+                // produto final (product_id) é imutável — só altera label/qty/duration.
+                await DolibarrService.updateObject(config, 'boms', editId!, {
+                    label: bomForm.label,
+                    qty: bomForm.qty,
+                    duration: bomForm.duration,
+                });
+                alert("BOM Atualizada com Sucesso");
+            } else {
+                await DolibarrService.createBOM(config, bomForm);
+                alert("BOM Criada com Sucesso");
+            }
             onSuccess();
             onClose();
             setBomForm({ label: '', product_id: '', qty: 1, duration: 3600 });
@@ -56,7 +69,7 @@ export const CreateBOMModal: React.FC<CreateBOMModalProps> = ({ isOpen, onClose,
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg p-6">
                 <div className="flex justify-between mb-4">
-                    <h3 className="font-bold text-lg dark:text-white">Nova Lista de Materiais (BOM)</h3>
+                    <h3 className="font-bold text-lg dark:text-white">{isEdit ? 'Editar Lista de Materiais (BOM)' : 'Nova Lista de Materiais (BOM)'}</h3>
                     <button onClick={onClose}><X size={20} /></button>
                 </div>
                 <form onSubmit={handleCreateBom} className="space-y-4">
@@ -66,10 +79,11 @@ export const CreateBOMModal: React.FC<CreateBOMModalProps> = ({ isOpen, onClose,
                     </div>
                     <div>
                         <label className="block text-sm font-medium dark:text-slate-300">Produto</label>
-                        <select className="w-full p-2 border rounded dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={bomForm.product_id} onChange={e => setBomForm({ ...bomForm, product_id: e.target.value })} required>
+                        <select className="w-full p-2 border rounded dark:bg-slate-800 dark:border-slate-700 dark:text-white disabled:opacity-60" value={bomForm.product_id} onChange={e => setBomForm({ ...bomForm, product_id: e.target.value })} required={!isEdit} disabled={isEdit}>
                             <option value="">Selecionar...</option>
                             {products.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
                         </select>
+                        {isEdit && <p className="text-xs text-slate-400 mt-1">O produto final não pode ser alterado.</p>}
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         <div>
@@ -84,7 +98,7 @@ export const CreateBOMModal: React.FC<CreateBOMModalProps> = ({ isOpen, onClose,
                     <div className="flex justify-end gap-2 pt-2">
                         <button type="button" onClick={onClose} className="px-4 py-2 text-slate-500">Cancelar</button>
                         <button type="submit" disabled={isSubmittingBom} className="px-4 py-2 bg-indigo-600 text-white rounded flex items-center gap-2">
-                            {isSubmittingBom ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} Criar
+                            {isSubmittingBom ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} {isEdit ? 'Salvar' : 'Criar'}
                         </button>
                     </div>
                 </form>

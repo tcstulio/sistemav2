@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { BOM, DolibarrConfig, Product } from '../../../types';
-import { ArrowLeft, X, Hammer, Layers, Coins, Package } from 'lucide-react';
+import { ArrowLeft, X, Hammer, Layers, Coins, Package, Pencil } from 'lucide-react';
 import { getProductName, getProductPrice } from '../utils';
 
 interface BOMDetailProps {
@@ -8,13 +8,15 @@ interface BOMDetailProps {
     products: Product[];
     config: DolibarrConfig;
     onClose: () => void;
+    onEdit?: () => void;
 }
 
 export const BOMDetail: React.FC<BOMDetailProps> = ({
     bom,
     products,
     config,
-    onClose
+    onClose,
+    onEdit
 }) => {
     const [bomDetailTab, setBomDetailTab] = useState<'overview' | 'components'>('overview');
 
@@ -39,6 +41,11 @@ export const BOMDetail: React.FC<BOMDetailProps> = ({
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
+                    {onEdit && (
+                        <button onClick={onEdit} className="flex items-center gap-1 text-xs bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 px-3 py-1.5 rounded font-medium transition-colors">
+                            <Pencil size={12} /> Editar
+                        </button>
+                    )}
                     <button className="flex items-center gap-1 text-xs bg-indigo-100 text-indigo-700 px-3 py-1 rounded font-bold">
                         <Hammer size={12} /> V{1}
                     </button>

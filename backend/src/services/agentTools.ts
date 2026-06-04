@@ -95,6 +95,7 @@ export const TOOLS_PROMPT = `
         75. prepare_edit_intervention(id, description?, date?, project_id?) - Prepara EDIÇÃO de uma intervenção. Ache o id antes com list_interventions. date em YYYY-MM-DD.
         76. prepare_create_expense(fk_user_author, date_debut, date_fin, total_ttc?, note_public?) - Rascunho de relatório de despesa. fk_user_author = id do funcionário (ache com list_users). Datas em YYYY-MM-DD. total_ttc = valor total.
         77. prepare_edit_expense(id, date_debut?, date_fin?, total_ttc?, note_public?) - Prepara EDIÇÃO de um relatório de despesa. Ache o id antes com list_expense_reports. Não troca o funcionário.
+        78. prepare_edit_bom(id, label?, qty?, duration?) - Prepara EDIÇÃO de uma lista de materiais (BOM). Ache o id antes com list_boms. duration em segundos. Não troca o produto final.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -280,8 +281,11 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
     bom: {
         label: 'lista de materiais (BOM)',
         createFields: ['label', 'product_id', 'qty', 'duration'],
+        // product_id (produto final) é imutável na edição.
+        editFields: ['label', 'qty', 'duration'],
         required: ['product_id'],
         newRoute: '/manufacturing/bom/new',
+        editRoute: '/manufacturing/bom/:id/edit',
     },
     product: {
         label: 'produto/serviço',
