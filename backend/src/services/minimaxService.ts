@@ -56,4 +56,30 @@ export const minimaxService = {
         log.info('TTS gerado', { chars: clean.length, model: body.model });
         return { url };
     },
+
+    /** Imagem — text-to-image; devolve as URLs hospedadas (~24h). */
+    async generateImage(prompt: string, opts?: { aspectRatio?: string; n?: number; model?: string }): Promise<{ urls: string[] }> {
+        if (!config.minimaxApiKey) throw new Error('MINIMAX_API_KEY ausente.');
+        const clean = (prompt || '').trim();
+        if (!clean) throw new Error('Prompt vazio.');
+
+        const n = Math.min(Math.max(opts?.n ?? 1, 1), 9); // API aceita [1, 9]
+        const body = {
+            model: opts?.model || config.minimaxImageModel,
+            prompt: clean,
+            aspect_ratio: opts?.aspectRatio || '1:1',
+            n,
+            response_format: 'url', // pede URL em vez de base64
+            prompt_optimizer: true,
+        };
+
+        const resp = await axios.post(withGroup(`${base()}/image_generation`), body, { headers: authHeaders(), timeout: 120000 });
+        assertOk(resp.data, 'Image');
+        const urls = resp.data?.data?.image_urls;
+        if (!Array.isArray(urls) || urls.length === 0) {
+            throw new Error('MiniMax Image não retornou URLs.');
+        }
+        log.info('Imagem gerada', { n, model: body.model });
+        return { urls };
+    },
 };

@@ -102,6 +102,7 @@ export const TOOLS_PROMPT = `
 
         FERRAMENTAS DE MÍDIA (geram um arquivo e devolvem um LINK válido por ~24h):
         81. generate_speech(text, voice_id?) - Gera ÁUDIO (TTS) do texto e devolve o link do mp3. Use quando o usuário pedir áudio/voz/narração.
+        82. generate_image(prompt, aspect_ratio?) - Gera uma IMAGEM a partir da descrição e devolve o link. aspect_ratio ex.: '1:1', '16:9', '9:16'.
 
         REGRA PARA MÍDIA (generate_*): devolvem um LINK pronto. Inclua o link na resposta para o usuário ouvir/ver.
 
@@ -559,6 +560,11 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             if (!args?.text) throw new Error("Parâmetro 'text' ausente.");
             const { url } = await minimaxService.generateSpeech(String(args.text), { voiceId: args.voice_id ? String(args.voice_id) : undefined });
             return `Áudio gerado (mp3, válido ~24h): ${url}`;
+        }
+        case 'generate_image': {
+            if (!args?.prompt) throw new Error("Parâmetro 'prompt' ausente.");
+            const { urls } = await minimaxService.generateImage(String(args.prompt), { aspectRatio: args.aspect_ratio ? String(args.aspect_ratio) : undefined });
+            return `Imagem gerada (válida ~24h): ${urls.join(' , ')}`;
         }
 
         // AÇÕES HITL (prepare_create_*/prepare_edit_*) caem no dispatch genérico abaixo.
