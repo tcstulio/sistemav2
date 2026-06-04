@@ -161,7 +161,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
             await Operations.createEvent(config, payload);
             setNewMessage('');
             setReplyingTo(null);
-            await refreshData();
+            // recarrega a query de eventos (é o que o chat exibe) — antes só chamava refreshData()
+            // global, que não garantia o reload das mensagens. (#122)
+            await refetch();
+            refreshData();
         } catch (error) {
             log.error("Failed to send message", error);
         } finally {
