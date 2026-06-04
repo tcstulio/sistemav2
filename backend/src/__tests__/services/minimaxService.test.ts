@@ -84,3 +84,45 @@ describe('minimaxService.generateImage', () => {
         await expect(minimaxService.generateImage('x')).rejects.toThrow(/URLs/);
     });
 });
+
+describe('minimaxService.submitVideo / getVideoStatus', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('submitVideo posta em /video_generation e devolve o task_id', async () => {
+        (axios.post as any).mockResolvedValue({ data: { task_id: 'task-123', base_resp: { status_code: 0 } } });
+        const { taskId } = await minimaxService.submitVideo('um drone sobre a praia', { duration: 6, resolution: '1080P' });
+        expect(taskId).toBe('task-123');
+        const [calledUrl, body] = (axios.post as any).mock.calls[0];
+        expect(calledUrl).toBe('https://api.minimax.io/v1/video_generation');
+        expect(body.model).toBe('MiniMax-Hailuo-2.3');
+        expect(body.duration).toBe(6);
+        expect(body.resolution).toBe('1080P');
+    });
+
+    it('submitVideo lança erro com prompt vazio', async () => {
+        await expect(minimaxService.submitVideo('  ')).rejects.toThrow();
+    });
+
+    it('getVideoStatus devolve só o status enquanto processa', async () => {
+        (axios.get as any).mockResolvedValue({ data: { status: 'Processing', base_resp: { status_code: 0 } } });
+        const r = await minimaxService.getVideoStatus('task-123');
+        expect(r.status).toBe('Processing');
+        expect(r.url).toBeUndefined();
+    });
+
+    it('getVideoStatus recupera o download_url quando Success', async () => {
+        (axios.get as any)
+            .mockResolvedValueOnce({ data: { status: 'Success', file_id: 'file-9', base_resp: { status_code: 0 } } })
+            .mockResolvedValueOnce({ data: { file: { download_url: 'https://cdn.minimax.io/video/9.mp4' }, base_resp: { status_code: 0 } } });
+        const r = await minimaxService.getVideoStatus('task-123');
+        expect(r.status).toBe('Success');
+        expect(r.url).toBe('https://cdn.minimax.io/video/9.mp4');
+        // 1ª chamada = query/video_generation; 2ª = files/retrieve
+        expect((axios.get as any).mock.calls[0][0]).toContain('/query/video_generation?task_id=task-123');
+        expect((axios.get as any).mock.calls[1][0]).toContain('/files/retrieve?file_id=file-9');
+    });
+
+    it('getVideoStatus exige task_id', async () => {
+        await expect(minimaxService.getVideoStatus('')).rejects.toThrow();
+    });
+});
