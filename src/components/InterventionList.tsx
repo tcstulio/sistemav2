@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { Intervention, AppView } from '../types';
 import { ClipboardList, Search, Plus, Loader2, CheckCircle2, Calendar, FolderKanban, User, Pencil } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
@@ -321,7 +322,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                 <label className="text-xs text-slate-500 uppercase font-bold">Descrição</label>
                                 <div
                                     className="mt-1 text-sm text-slate-600 dark:text-slate-300 prose prose-slate prose-sm max-w-none dark:prose-invert"
-                                    dangerouslySetInnerHTML={{ __html: selectedIntervention.description || 'Sem descrição.' }}
+                                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(selectedIntervention.description || 'Sem descrição.') }}
                                 />
                             </div>
                         </div>
@@ -342,7 +343,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                         <div>
                                             <div
                                                 className="font-medium text-slate-800 dark:text-white text-sm prose prose-slate prose-sm max-w-none dark:prose-invert [&>p]:m-0"
-                                                dangerouslySetInnerHTML={{ __html: line.desc }}
+                                                dangerouslySetInnerHTML={{ __html: sanitizeHtml(line.desc) }}
                                             />
                                             <div className="text-xs text-slate-500">{formatDateOnly(line.date)}</div>
                                         </div>

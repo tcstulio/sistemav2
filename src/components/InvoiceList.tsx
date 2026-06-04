@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Invoice, AppView } from '../types';
 import { FileText, Search, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, ArrowUp, ShoppingCart, RefreshCcw, Truck } from 'lucide-react';
@@ -734,7 +735,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                                     {line.description && (
                                                         <div
                                                             className="text-xs text-slate-500 mt-1 font-normal prose prose-sm max-w-none prose-p:my-0 prose-ul:my-0 prose-li:my-0"
-                                                            dangerouslySetInnerHTML={{ __html: line.description }}
+                                                            dangerouslySetInnerHTML={{ __html: sanitizeHtml(line.description) }}
                                                         />
                                                     )}
                                                 </td>

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { Building2, Search, MapPin, Users, Star, DollarSign, ExternalLink, Globe, Phone, Mail, Calendar, PartyPopper, Briefcase, Music, Loader2, Filter } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
 import {
@@ -311,7 +312,7 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue 
                                 <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
                                     <h3 className="font-bold text-slate-800 dark:text-white mb-3">Descrição</h3>
                                     <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed"
-                                        dangerouslySetInnerHTML={{ __html: selectedVenue.description.replace(/\n/g, '<br/>') }}
+                                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(selectedVenue.description.replace(/\n/g, '<br/>')) }}
                                     />
                                 </div>
                             )}
