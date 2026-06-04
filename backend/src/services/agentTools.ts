@@ -77,6 +77,7 @@ export const TOOLS_PROMPT = `
         57. prepare_create_proposal(socid, date?, project_id?, note_public?, lines?) - Rascunho de proposta comercial. socid = id do cliente. lines = mesma estrutura da fatura [{fk_product?, desc, qty, subprice, remise_percent?}].
         58. prepare_create_supplier_invoice(socid, date?, lines?) - Rascunho de fatura de fornecedor. socid = id do fornecedor (ache com list_suppliers). lines = [{desc, qty, subprice, remise_percent?}] (sem produto).
         59. prepare_create_supplier_proposal(socid, date?, project_id?, lines?) - Rascunho de solicitação de preço a fornecedor. socid = id do fornecedor. lines = [{fk_product?, desc, qty, subprice, remise_percent?}].
+        60. prepare_create_order(socid, date?, lines?) - Rascunho de pedido de venda. socid = id do cliente (ache com search_customer). lines = [{fk_product?, desc, qty, subprice}].
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -233,6 +234,14 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         newRoute: '/supplier_proposals/new',
         linesField: 'lines',
         lineFields: ['fk_product', 'desc', 'qty', 'subprice', 'remise_percent'],
+    },
+    order: {
+        label: 'pedido de venda',
+        createFields: ['socid', 'date'],
+        required: ['socid'],
+        newRoute: '/orders/new',
+        linesField: 'lines',
+        lineFields: ['fk_product', 'desc', 'qty', 'subprice'],
     },
 };
 

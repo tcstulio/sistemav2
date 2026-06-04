@@ -191,6 +191,7 @@ const App: React.FC = () => {
                         <Route path="/smart_quotation" element={<ViewWrapper Component={SmartQuotationWizard} viewId="supplier_proposals" />} />
 
                         <Route path="/orders" element={<ViewWrapper Component={OrderList} viewId="orders" />} />
+                        <Route path="/orders/new" element={<ViewWrapper Component={OrderList} viewId="orders" />} />
                         <Route path="/orders/:id" element={<ViewWrapper Component={OrderList} viewId="orders" />} />
 
                         <Route path="/shipments" element={<ViewWrapper Component={ShipmentList} viewId="shipments" />} />
