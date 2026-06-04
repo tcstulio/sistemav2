@@ -19,6 +19,10 @@ export const config = {
     zaiApiKey: process.env.ZAI_API_KEY || '',
     zaiBaseUrl: process.env.ZAI_BASE_URL || 'https://api.z.ai/api/coding/paas/v4/',
     zaiModel: process.env.ZAI_MODEL || 'glm-5.1',
+    // Visão (OCR/análise de imagem) via GLM-4.6V — usa a base PaaS padrão (NÃO a base 'coding'),
+    // que é onde o modelo multimodal é servido. Permite OCR sem depender do Gemini.
+    zaiVisionBaseUrl: process.env.ZAI_VISION_BASE_URL || 'https://api.z.ai/api/paas/v4',
+    zaiVisionModel: process.env.ZAI_VISION_MODEL || 'glm-4.6v',
     minimaxApiKey: process.env.MINIMAX_API_KEY || '',
     minimaxBaseUrl: process.env.MINIMAX_BASE_URL || 'https://api.minimax.io/v1/',
     minimaxModel: process.env.MINIMAX_MODEL || 'MiniMax-M3',
