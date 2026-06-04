@@ -34,6 +34,9 @@ export const config = {
     minimaxImageModel: process.env.MINIMAX_IMAGE_MODEL || 'image-01',
     minimaxVideoModel: process.env.MINIMAX_VIDEO_MODEL || 'MiniMax-Hailuo-2.3',
     serperApiKey: process.env.SERPER_API_KEY || '',
+    // Segredo opcional p/ os endpoints públicos de webhook (/trigger e /dolibarr/*).
+    // Se vazio, a verificação é pulada (compat). Defina p/ exigir header x-webhook-secret.
+    webhookSecret: process.env.WEBHOOK_SECRET || '',
 
 
     // Banco Inter
