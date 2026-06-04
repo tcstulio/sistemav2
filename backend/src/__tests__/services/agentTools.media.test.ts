@@ -7,6 +7,7 @@ vi.mock('../../utils/urlValidation', () => ({ isValidExternalUrl: () => true }))
 vi.mock('../../services/minimaxService', () => ({
     minimaxService: {
         generateSpeech: vi.fn().mockResolvedValue({ url: 'https://cdn.minimax.io/audio/x.mp3' }),
+        generateImage: vi.fn().mockResolvedValue({ urls: ['https://cdn.minimax.io/img/1.png'] }),
     },
 }));
 
@@ -27,5 +28,15 @@ describe('agentTools — tools de mídia (MiniMax)', () => {
 
     it('generate_speech exige text', async () => {
         await expect(executeTool('generate_speech', {})).rejects.toThrow();
+    });
+
+    it('generate_image chama o minimaxService e devolve o(s) link(s)', async () => {
+        const out = await executeTool('generate_image', { prompt: 'um gato astronauta', aspect_ratio: '16:9' });
+        expect(minimaxService.generateImage).toHaveBeenCalledWith('um gato astronauta', { aspectRatio: '16:9' });
+        expect(out).toContain('https://cdn.minimax.io/img/1.png');
+    });
+
+    it('generate_image exige prompt', async () => {
+        await expect(executeTool('generate_image', {})).rejects.toThrow();
     });
 });
