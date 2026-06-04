@@ -100,6 +100,9 @@ export const TOOLS_PROMPT = `
         79. prepare_edit_mo(id, label?, qty?) - Prepara EDIÇÃO de uma ordem de produção (MRP). Ache o id antes com list_manufacturing_orders. Não troca o produto a produzir.
         80. prepare_edit_order(id, date?) - Prepara EDIÇÃO do cabeçalho de um pedido de venda. Ache o id antes com list_orders. date em YYYY-MM-DD. Não troca o cliente nem os itens (só o cabeçalho).
 
+        FERRAMENTA DE LOTE (criar VÁRIOS de uma vez, numa única tela de confirmação):
+        85. prepare_batch_create(entity, items) - Cria EM LOTE vários itens da MESMA entidade. entity = tipo ('customer','contact','product','project','supplier','task','ticket','invoice','proposal','order',...); items = array onde cada elemento tem os campos daquele tipo (os mesmos do prepare_create_<entity>), incluindo 'lines' (array) para entidades com itens (fatura/proposta/pedido/etc.). Devolve UM ÚNICO link de revisão em lote. Use quando o usuário pedir para criar vários registros de uma vez. Máx. 50 itens.
+
         FERRAMENTAS DE MÍDIA (geram um arquivo e devolvem um LINK válido por ~24h):
         81. generate_speech(text, voice_id?) - Gera ÁUDIO (TTS) do texto e devolve o link do mp3. Use quando o usuário pedir áudio/voz/narração.
         82. generate_image(prompt, aspect_ratio?) - Gera uma IMAGEM a partir da descrição e devolve o link. aspect_ratio ex.: '1:1', '16:9', '9:16'.
@@ -419,6 +422,31 @@ function tryPrepareDeeplink(tool: string, args: any): string | null {
     return null;
 }
 
+// Trata prepare_batch_create(entity, items): gera UM deeplink de lote (kind batch_create)
+// carregando um array de itens da MESMA entidade (cada item com campos + linhas opcionais).
+// Retorna a msg com o link, null se não for a tool de lote, ou lança em erro de validação.
+function tryPrepareBatch(tool: string, args: any): string | null {
+    if (tool !== 'prepare_batch_create') return null;
+    const entKey = String(args?.entity || '');
+    const ent = DEEPLINK_ENTITIES[entKey];
+    if (!ent?.newRoute) return `Entidade '${entKey}' não suporta criação via deeplink.`;
+
+    const rawItems = Array.isArray(args?.items) ? args.items : [];
+    if (rawItems.length === 0) throw new Error("Parâmetro 'items' (array) ausente ou vazio.");
+    if (rawItems.length > 50) throw new Error('Lote muito grande (máximo de 50 itens por vez).');
+
+    const items = rawItems.map((raw: any) => {
+        const item: Record<string, any> = pickFields(raw, ent.createFields || []);
+        const lines = pickLines(raw, ent);
+        if (lines && lines.length > 0 && ent.linesField) item[ent.linesField] = lines;
+        return item;
+    });
+
+    const token = signDeeplink('batch_create', { entity: entKey, items }, 1800);
+    const deeplink = `/batch/new?prefill=${token}`;
+    return `Preparei um lote de ${items.length} ${ent.label}(s). Clique para revisar e confirmar a criação de todos de uma vez: ${deeplink}`;
+}
+
 /** Executa uma ferramenta do agente e retorna o resultado já formatado como string. */
 export async function executeTool(tool: string, args: any = {}): Promise<string> {
     log.info(`Tool Call: ${tool}`, args);
@@ -585,8 +613,10 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             return `Vídeo ainda processando (status: ${status}). Tente novamente em instantes com o mesmo task_id.`;
         }
 
-        // AÇÕES HITL (prepare_create_*/prepare_edit_*) caem no dispatch genérico abaixo.
+        // AÇÕES HITL (prepare_create_*/prepare_edit_*/prepare_batch_create) caem no dispatch genérico.
         default: {
+            const batchMsg = tryPrepareBatch(tool, args);
+            if (batchMsg !== null) return batchMsg;
             const deeplinkMsg = tryPrepareDeeplink(tool, args);
             if (deeplinkMsg !== null) return deeplinkMsg;
             return `Ferramenta desconhecida: ${tool}`;
