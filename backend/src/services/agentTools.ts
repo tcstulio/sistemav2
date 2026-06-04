@@ -90,6 +90,8 @@ export const TOOLS_PROMPT = `
         70. prepare_edit_user(id, firstname?, lastname?, email?, job?, supervisor_id?) - Prepara EDIÇÃO de um usuário. Ache o id antes com list_users. Não troca o login.
         71. prepare_create_group(name, note?) - Rascunho de novo grupo de usuários.
         72. prepare_edit_group(id, name?, note?) - Prepara EDIÇÃO de um grupo. Ache o id antes com a lista de grupos.
+        73. prepare_create_contract(socid, date_contrat?, date_fin_validite?, note_public?) - Rascunho de novo contrato. socid = id do cliente. Datas em YYYY-MM-DD.
+        74. prepare_edit_contract(id, date_contrat?, date_fin_validite?, note_public?) - Prepara EDIÇÃO de um contrato. Ache o id antes com list_contracts. Datas em YYYY-MM-DD.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -300,6 +302,14 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         required: ['name'],
         newRoute: '/hr/groups/new',
         editRoute: '/hr/groups/:id/edit',
+    },
+    contract: {
+        label: 'contrato',
+        createFields: ['socid', 'date_contrat', 'date_fin_validite', 'note_public'],
+        editFields: ['date_contrat', 'date_fin_validite', 'note_public'],
+        required: ['socid'],
+        newRoute: '/contracts/new',
+        editRoute: '/contracts/:id/edit',
     },
 };
 
