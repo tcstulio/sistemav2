@@ -1,5 +1,7 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { DolibarrUser, ExpenseReport, RecruitmentJobPosition, DolibarrConfig, Task, Project, Ticket, AppView, Candidate, LeaveRequest, UserGroup } from '../types';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Search, Plus, Filter, ArrowUp, ArrowDown, UserCheck, Plane, BarChart3, Banknote, Briefcase, Scan, Users, ArrowUpDown, Network } from 'lucide-react';
 import { TeamTab } from './HR/tabs/TeamTab';
 import { GroupsTab } from './HR/tabs/GroupsTab';
@@ -89,6 +91,26 @@ const HRList: React.FC<HRListProps> = ({
     const [userToEdit, setUserToEdit] = useState<DolibarrUser | null>(null);
     const [groupToEdit, setGroupToEdit] = useState<UserGroup | null>(null);
     const [prefillUserData, setPrefillUserData] = useState<Partial<DolibarrUser> | null>(null);
+
+    // Deeplink HITL do agente (#57): create_job / create_leave (aplica 1x por token).
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    const [jobPrefill, setJobPrefill] = useState<Record<string, string> | undefined>(undefined);
+    const [leavePrefill, setLeavePrefill] = useState<Record<string, string> | undefined>(undefined);
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_job') {
+            appliedPrefillRef.current = prefill;
+            setJobPrefill(prefill.data);
+            setIsJobModalOpen(true);
+            toast.info('Revise os dados e confirme a criação da vaga.');
+        } else if (prefill.kind === 'create_leave') {
+            appliedPrefillRef.current = prefill;
+            setLeavePrefill(prefill.data);
+            setIsLeaveModalOpen(true);
+            toast.info('Revise os dados e confirme a solicitação de licença.');
+        }
+    }, [prefill]);
 
     // Derived Data for UserDetail
     const userTasks = useMemo(() => selectedUser ? tasks.filter(t => (t.fk_user_assign && String(t.fk_user_assign) === String(selectedUser.id)) || (t.fk_user_creat && String(t.fk_user_creat) === String(selectedUser.id))) : [], [selectedUser, tasks]);
@@ -211,8 +233,8 @@ const HRList: React.FC<HRListProps> = ({
                 prefillData={prefillUserData}
                 onRefresh={onRefresh}
             />
-            <JobModal isOpen={isJobModalOpen} onClose={() => setIsJobModalOpen(false)} config={config} onRefresh={onRefresh} />
-            <LeaveModal isOpen={isLeaveModalOpen} onClose={() => setIsLeaveModalOpen(false)} config={config} users={users} onRefresh={onRefresh} />
+            <JobModal isOpen={isJobModalOpen} onClose={() => { setIsJobModalOpen(false); setJobPrefill(undefined); }} config={config} onRefresh={onRefresh} initialForm={jobPrefill} />
+            <LeaveModal isOpen={isLeaveModalOpen} onClose={() => { setIsLeaveModalOpen(false); setLeavePrefill(undefined); }} config={config} users={users} onRefresh={onRefresh} initialForm={leavePrefill} />
             <ExpenseScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} config={config} currentUser={currentUser} users={users} onRefresh={onRefresh} />
             <ExpenseScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} config={config} currentUser={currentUser} users={users} onRefresh={onRefresh} />
 

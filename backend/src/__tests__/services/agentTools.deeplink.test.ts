@@ -144,6 +144,23 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.socid).toBe('9');
     });
 
+    it('prepare_create_job gera /hr/jobs/new com kind create_job', async () => {
+        const out = await executeTool('prepare_create_job', { label: 'Dev Python', qty: '2' });
+        const m = out.match(/\/hr\/jobs\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_job');
+        expect(payload!.data.label).toBe('Dev Python');
+    });
+
+    it('prepare_create_leave gera /hr/leaves/new e exige fk_user/datas', async () => {
+        await expect(executeTool('prepare_create_leave', { fk_user: '1' })).rejects.toThrow();
+        const out = await executeTool('prepare_create_leave', { fk_user: '1', date_debut: '2025-07-01', date_fin: '2025-07-10' });
+        const m = out.match(/\/hr\/leaves\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_leave');
+        expect(payload!.data.fk_user).toBe('1');
+    });
+
     it('entidade sem suporte a edição retorna aviso (ticket não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_ticket', { id: '1', subject: 'x' });
         expect(out).toContain('não suporta edição');
