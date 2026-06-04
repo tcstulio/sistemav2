@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
-import { Building2, Search, MapPin, Users, Star, DollarSign, ExternalLink, Globe, Phone, Mail, Calendar, PartyPopper, Briefcase, Music, Loader2, Filter } from 'lucide-react';
+import { Building2, MapPin, Users, Star, DollarSign, ExternalLink, Globe, Phone, Mail, Calendar, PartyPopper, Briefcase, Music, Loader2 } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
+import { useListControls } from '../hooks/useListControls';
 import {
     VenuePartnership,
     getMaxCapacity,
@@ -19,7 +20,7 @@ import { logger } from '../utils/logger';
 const log = logger.child('VenueList');
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Input, Tabs, Tab, EmptyState } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, ListToolbar } from './ui';
 
 interface VenueListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -32,11 +33,8 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue 
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [selectedVenue, setSelectedVenue] = useState<VenuePartnership | null>(null);
     const [activeTab, setActiveTab] = useState<'overview' | 'capacity' | 'pricing' | 'ratings'>('overview');
-    const [filterType, setFilterType] = useState<string>('');
-    const [showFilters, setShowFilters] = useState(false);
 
     useEffect(() => {
         const fetchVenues = async () => {
@@ -120,25 +118,6 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue 
         };
     };
 
-    const filteredVenues = useMemo(() => {
-        let result = venues;
-
-        if (searchTerm) {
-            const term = searchTerm.toLowerCase();
-            result = result.filter(v =>
-                v.name.toLowerCase().includes(term) ||
-                (v.description && v.description.toLowerCase().includes(term)) ||
-                v.typeLabel.toLowerCase().includes(term)
-            );
-        }
-
-        if (filterType) {
-            result = result.filter(v => v.typeCode === filterType);
-        }
-
-        return result;
-    }, [venues, searchTerm, filterType]);
-
     const venueTypes = useMemo(() => {
         const types = new Map<string, string>();
         venues.forEach(v => {
@@ -148,6 +127,22 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue 
         });
         return Array.from(types.entries());
     }, [venues]);
+
+    // Busca + ordenação + filtro de tipo padronizados (#121).
+    const controls = useListControls(venues, {
+        searchText: (v) => `${v.name || ''} ${v.description || ''} ${v.typeLabel || ''}`,
+        sorts: [
+            { key: 'name', label: 'Nome', get: (v) => v.name },
+            { key: 'capacity', label: 'Capacidade', get: (v) => getMaxCapacity(v) || 0 },
+            { key: 'rating', label: 'Avaliação', get: (v) => getAverageRating(v) || 0 },
+            { key: 'price', label: 'Preço', get: (v) => getBestPrice(v) ?? 0 },
+        ],
+        filters: [
+            { key: 'typeCode', label: 'Tipo', get: (v) => v.typeCode, options: venueTypes.map(([code, label]) => ({ value: code, label })) },
+        ],
+        initialSortKey: 'name',
+    });
+    const filteredVenues = controls.result;
 
     const renderStars = (rating: number | null) => {
         if (rating === null) return <span className="text-slate-400 text-xs">N/A</span>;
@@ -188,44 +183,9 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue 
                 }
                 subtitle={`${venues.length} espaços cadastrados`}
                 actions={
-                    <div className="flex items-center gap-2">
-                        <Button
-                            variant={showFilters ? 'secondary' : 'ghost'}
-                            size="sm"
-                            icon={<Filter size={16} />}
-                            onClick={() => setShowFilters(!showFilters)}
-                        />
-                        <Input
-                            placeholder="Buscar espaços..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            icon={<Search size={16} />}
-                            className="w-48 md:w-64"
-                            fullWidth={false}
-                        />
-                    </div>
+                    <ListToolbar controls={controls} searchPlaceholder="Buscar espaços..." />
                 }
             />
-            {showFilters && (
-                <div className="flex gap-4 items-center bg-slate-50 dark:bg-slate-800/50 p-3 mx-4 mb-2 rounded-lg border border-slate-200 dark:border-slate-700">
-                    <label className="text-sm font-medium text-slate-600 dark:text-slate-400">Tipo:</label>
-                    <select
-                        value={filterType}
-                        onChange={(e) => setFilterType(e.target.value)}
-                        className="px-3 py-1.5 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                    >
-                        <option value="">Todos</option>
-                        {venueTypes.map(([code, label]) => (
-                            <option key={code} value={code}>{label}</option>
-                        ))}
-                    </select>
-                    {filterType && (
-                        <button onClick={() => setFilterType('')} className="text-xs text-indigo-600 hover:underline">
-                            Limpar filtros
-                        </button>
-                    )}
-                </div>
-            )}
         </div>
     );
 
