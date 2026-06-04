@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { SupplierProposal, DolibarrConfig, AppView, Product, SupplierProposalLine } from '../types';
 import { FileText, Search, Plus, Trash2, Save, X, Edit, Loader2, CheckCircle, XCircle, Send, Archive, Ban, FileSignature, FolderKanban, Sparkles } from 'lucide-react';
@@ -662,7 +663,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                                 {(proposalLines.filter(l => String(l.parent_id) === String(selectedProposal.id))).map((line) => (
                                     <tr key={line.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
                                         <td className="px-4 py-3 text-slate-800 dark:text-slate-200">
-                                            <div dangerouslySetInnerHTML={{ __html: line.description || '' }} className="prose dark:prose-invert text-sm max-w-none line-clamp-2" />
+                                            <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(line.description || '') }} className="prose dark:prose-invert text-sm max-w-none line-clamp-2" />
                                         </td>
                                         <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">{line.qty}</td>
                                         <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">${line.subprice?.toLocaleString()}</td>
