@@ -96,6 +96,7 @@ export const TOOLS_PROMPT = `
         76. prepare_create_expense(fk_user_author, date_debut, date_fin, total_ttc?, note_public?) - Rascunho de relatório de despesa. fk_user_author = id do funcionário (ache com list_users). Datas em YYYY-MM-DD. total_ttc = valor total.
         77. prepare_edit_expense(id, date_debut?, date_fin?, total_ttc?, note_public?) - Prepara EDIÇÃO de um relatório de despesa. Ache o id antes com list_expense_reports. Não troca o funcionário.
         78. prepare_edit_bom(id, label?, qty?, duration?) - Prepara EDIÇÃO de uma lista de materiais (BOM). Ache o id antes com list_boms. duration em segundos. Não troca o produto final.
+        79. prepare_edit_mo(id, label?, qty?) - Prepara EDIÇÃO de uma ordem de produção (MRP). Ache o id antes com list_manufacturing_orders. Não troca o produto a produzir.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -275,8 +276,11 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
     mo: {
         label: 'ordem de produção',
         createFields: ['label', 'product_to_produce_id', 'qty', 'project_id', 'date_start'],
+        // produto a produzir é imutável; edição cobre só os campos padrão seguros (rótulo/quantidade).
+        editFields: ['label', 'qty'],
         required: ['product_to_produce_id'],
         newRoute: '/manufacturing/mo/new',
+        editRoute: '/manufacturing/mo/:id/edit',
     },
     bom: {
         label: 'lista de materiais (BOM)',

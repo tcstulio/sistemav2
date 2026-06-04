@@ -383,6 +383,28 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         await expect(executeTool('prepare_edit_bom', { label: 'x' })).rejects.toThrow();
     });
 
+    it('prepare_edit_mo gera /manufacturing/mo/:id/edit com kind edit_mo', async () => {
+        const out = await executeTool('prepare_edit_mo', { id: '12', label: 'Lote revisado', qty: '15' });
+        const m = out.match(/\/manufacturing\/mo\/12\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_mo');
+        expect(payload!.data.id).toBe('12');
+        expect(payload!.data.label).toBe('Lote revisado');
+        expect(payload!.data.qty).toBe('15');
+    });
+
+    it('prepare_edit_mo não inclui product_to_produce_id (produto é imutável)', async () => {
+        const out = await executeTool('prepare_edit_mo', { id: '12', product_to_produce_id: '99', qty: '5' });
+        const m = out.match(/\/manufacturing\/mo\/12\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_mo');
+        expect(payload!.data.product_to_produce_id).toBeUndefined();
+        expect(payload!.data.qty).toBe('5');
+    });
+
+    it('prepare_edit_mo exige id', async () => {
+        await expect(executeTool('prepare_edit_mo', { label: 'x' })).rejects.toThrow();
+    });
+
     it('prepare_edit_invoice gera /invoices/:id/edit e carrega linhas a acrescentar', async () => {
         const out = await executeTool('prepare_edit_invoice', { id: '50', date: '2025-09-01', lines: [{ desc: 'Item extra', qty: 1, subprice: 99 }] });
         const m = out.match(/\/invoices\/50\/edit\?prefill=([A-Za-z0-9._-]+)/);
