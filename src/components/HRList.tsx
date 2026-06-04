@@ -100,6 +100,7 @@ const HRList: React.FC<HRListProps> = ({
     const [jobPrefill, setJobPrefill] = useState<Record<string, string> | undefined>(undefined);
     const [leavePrefill, setLeavePrefill] = useState<Record<string, string> | undefined>(undefined);
     const [candidatePrefill, setCandidatePrefill] = useState<Record<string, string> | undefined>(undefined);
+    const [groupPrefill, setGroupPrefill] = useState<Record<string, string> | undefined>(undefined);
     const [jobEditId, setJobEditId] = useState<string | undefined>(undefined);
     const [leaveEditId, setLeaveEditId] = useState<string | undefined>(undefined);
     const [candidateEditId, setCandidateEditId] = useState<string | undefined>(undefined);
@@ -171,8 +172,42 @@ const HRList: React.FC<HRListProps> = ({
             setActiveTab('recruitment');
             setIsCandidateModalOpen(true);
             toast.info('Revise as mudanças e salve o candidato.');
+        } else if (prefill.kind === 'create_user') {
+            appliedPrefillRef.current = prefill;
+            setUserToEdit(null);
+            setPrefillUserData(prefill.data as Partial<DolibarrUser>);
+            setActiveTab('team');
+            setIsUserModalOpen(true);
+            toast.info('Revise os dados e confirme a criação do usuário.');
+        } else if (prefill.kind === 'edit_user') {
+            if (users.length === 0) return; // aguarda os dados
+            const current = users.find(u => String(u.id) === String(prefill.data.id));
+            if (!current) return;
+            appliedPrefillRef.current = prefill;
+            setUserToEdit(current);
+            setPrefillUserData(prefill.data as Partial<DolibarrUser>); // sobrepõe as mudanças sugeridas
+            setActiveTab('team');
+            setIsUserModalOpen(true);
+            toast.info('Revise as mudanças e salve o usuário.');
+        } else if (prefill.kind === 'create_group') {
+            appliedPrefillRef.current = prefill;
+            setGroupToEdit(null);
+            setGroupPrefill(prefill.data);
+            setActiveTab('groups');
+            setIsGroupModalOpen(true);
+            toast.info('Revise os dados e confirme a criação do grupo.');
+        } else if (prefill.kind === 'edit_group') {
+            if (userGroups.length === 0) return; // aguarda os dados
+            const current = userGroups.find(g => String(g.id) === String(prefill.data.id));
+            if (!current) return;
+            appliedPrefillRef.current = prefill;
+            setGroupToEdit(current);
+            setGroupPrefill(prefill.data);
+            setActiveTab('groups');
+            setIsGroupModalOpen(true);
+            toast.info('Revise as mudanças e salve o grupo.');
         }
-    }, [prefill, jobPositions, leaveRequests, candidates]);
+    }, [prefill, jobPositions, leaveRequests, candidates, users, userGroups]);
 
     // Derived Data for UserDetail
     const userTasks = useMemo(() => selectedUser ? tasks.filter(t => (t.fk_user_assign && String(t.fk_user_assign) === String(selectedUser.id)) || (t.fk_user_creat && String(t.fk_user_creat) === String(selectedUser.id))) : [], [selectedUser, tasks]);
@@ -322,9 +357,9 @@ const HRList: React.FC<HRListProps> = ({
             <ExpenseScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} config={config} currentUser={currentUser} users={users} onRefresh={onRefresh} />
             <ExpenseScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} config={config} currentUser={currentUser} users={users} onRefresh={onRefresh} />
 
-            <GroupModal isOpen={isGroupModalOpen} onClose={() => setIsGroupModalOpen(false)} config={config} groupToEdit={groupToEdit} onRefresh={onRefresh} />
+            <GroupModal isOpen={isGroupModalOpen} onClose={() => { setIsGroupModalOpen(false); setGroupPrefill(undefined); setGroupToEdit(null); }} config={config} groupToEdit={groupToEdit} onRefresh={onRefresh} initialForm={groupPrefill} />
 
-            <GroupModal isOpen={isGroupModalOpen} onClose={() => setIsGroupModalOpen(false)} config={config} groupToEdit={groupToEdit} onRefresh={onRefresh} />
+            <GroupModal isOpen={isGroupModalOpen} onClose={() => { setIsGroupModalOpen(false); setGroupPrefill(undefined); setGroupToEdit(null); }} config={config} groupToEdit={groupToEdit} onRefresh={onRefresh} initialForm={groupPrefill} />
 
             {/* Header */}
             <div className={`p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none ${(selectedUser || viewingCandidates) ? 'hidden lg:block' : 'block'}`}>

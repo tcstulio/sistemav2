@@ -418,6 +418,35 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.price).toBe('59.9');
     });
 
+    it('prepare_create_user gera /hr/users/new e exige login/email', async () => {
+        await expect(executeTool('prepare_create_user', { login: 'jsilva' })).rejects.toThrow();
+        const out = await executeTool('prepare_create_user', { login: 'jsilva', email: 'j@x.com', firstname: 'João' });
+        const m = out.match(/\/hr\/users\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_user');
+        expect(payload!.data.login).toBe('jsilva');
+        expect(payload!.data.email).toBe('j@x.com');
+    });
+
+    it('prepare_edit_user não inclui login (imutável)', async () => {
+        const out = await executeTool('prepare_edit_user', { id: '5', login: 'novo', job: 'Dev' });
+        const m = out.match(/\/hr\/users\/5\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_user');
+        expect(payload!.data.login).toBeUndefined();
+        expect(payload!.data.job).toBe('Dev');
+    });
+
+    it('prepare_create_group e prepare_edit_group geram as rotas corretas', async () => {
+        const a = await executeTool('prepare_create_group', { name: 'RH', note: 'Equipe' });
+        expect(a).toMatch(/\/hr\/groups\/new\?prefill=/);
+        const b = await executeTool('prepare_edit_group', { id: '2', name: 'Financeiro' });
+        const m = b.match(/\/hr\/groups\/2\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_group');
+        expect(payload!.data.name).toBe('Financeiro');
+    });
+
     it('entidade sem suporte a edição retorna aviso (intervenção não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_intervention', { id: '1', description: 'x' });
         expect(out).toContain('não suporta edição');

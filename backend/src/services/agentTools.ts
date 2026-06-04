@@ -86,6 +86,10 @@ export const TOOLS_PROMPT = `
         66. prepare_edit_supplier_proposal(id, date?, project_id?, lines?) - Prepara EDIÇÃO de uma solicitação de preço. lines = itens a ACRESCENTAR.
         67. prepare_create_product(ref, label, type?, price?, description?) - Rascunho de novo produto/serviço. ref = referência única; type: '0'=produto, '1'=serviço; price = preço unitário.
         68. prepare_edit_product(id, ref?, label?, type?, price?, description?) - Prepara EDIÇÃO de um produto/serviço. Ache o id antes com list_products.
+        69. prepare_create_user(login, email, firstname?, lastname?, job?, supervisor_id?) - Rascunho de novo usuário do sistema. login e email obrigatórios. supervisor_id = id do gestor (ache com list_users).
+        70. prepare_edit_user(id, firstname?, lastname?, email?, job?, supervisor_id?) - Prepara EDIÇÃO de um usuário. Ache o id antes com list_users. Não troca o login.
+        71. prepare_create_group(name, note?) - Rascunho de novo grupo de usuários.
+        72. prepare_edit_group(id, name?, note?) - Prepara EDIÇÃO de um grupo. Ache o id antes com a lista de grupos.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -279,6 +283,23 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         required: ['ref', 'label'],
         newRoute: '/products/new',
         editRoute: '/products/:id/edit',
+    },
+    user: {
+        label: 'usuário',
+        createFields: ['login', 'firstname', 'lastname', 'email', 'job', 'supervisor_id'],
+        // login é imutável após a criação.
+        editFields: ['firstname', 'lastname', 'email', 'job', 'supervisor_id'],
+        required: ['login', 'email'],
+        newRoute: '/hr/users/new',
+        editRoute: '/hr/users/:id/edit',
+    },
+    group: {
+        label: 'grupo de usuários',
+        createFields: ['name', 'note'],
+        editFields: ['name', 'note'],
+        required: ['name'],
+        newRoute: '/hr/groups/new',
+        editRoute: '/hr/groups/:id/edit',
     },
 };
 
