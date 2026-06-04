@@ -16,9 +16,12 @@ function authHeaders(): Record<string, string> {
     return { 'Content-Type': 'application/json', Authorization: `Bearer ${config.minimaxApiKey}` };
 }
 
-// Algumas regiões/endpoints da MiniMax exigem ?GroupId=. Anexa só se configurado.
+// Algumas regiões/endpoints da MiniMax exigem GroupId. Anexa só se configurado,
+// usando ? ou & conforme a URL já tenha query (ex.: GETs de status/retrieve).
 function withGroup(url: string): string {
-    return config.minimaxGroupId ? `${url}?GroupId=${encodeURIComponent(config.minimaxGroupId)}` : url;
+    if (!config.minimaxGroupId) return url;
+    const sep = url.includes('?') ? '&' : '?';
+    return `${url}${sep}GroupId=${encodeURIComponent(config.minimaxGroupId)}`;
 }
 
 // Erro de negócio da MiniMax vem em base_resp.status_code (0 = sucesso).
@@ -81,5 +84,46 @@ export const minimaxService = {
         }
         log.info('Imagem gerada', { n, model: body.model });
         return { urls };
+    },
+
+    /** Vídeo (assíncrono) — submete a tarefa e devolve o task_id. */
+    async submitVideo(prompt: string, opts?: { model?: string; duration?: number; resolution?: string }): Promise<{ taskId: string }> {
+        if (!config.minimaxApiKey) throw new Error('MINIMAX_API_KEY ausente.');
+        const clean = (prompt || '').trim();
+        if (!clean) throw new Error('Prompt vazio.');
+
+        const body: Record<string, any> = { model: opts?.model || config.minimaxVideoModel, prompt: clean.slice(0, 2000) };
+        if (opts?.duration) body.duration = opts.duration;       // ex.: 6 ou 10 (segundos)
+        if (opts?.resolution) body.resolution = opts.resolution; // ex.: '768P' | '1080P'
+
+        const resp = await axios.post(withGroup(`${base()}/video_generation`), body, { headers: authHeaders(), timeout: 120000 });
+        assertOk(resp.data, 'Video');
+        const taskId = resp.data?.task_id;
+        if (!taskId) throw new Error('MiniMax Video não retornou task_id.');
+        log.info('Vídeo submetido', { taskId, model: body.model });
+        return { taskId: String(taskId) };
+    },
+
+    /**
+     * Consulta o status da tarefa de vídeo. Quando 'Success', recupera o download_url
+     * via /files/retrieve. Caso contrário devolve só o status (Queueing/Processing/Fail/…).
+     */
+    async getVideoStatus(taskId: string): Promise<{ status: string; url?: string }> {
+        if (!config.minimaxApiKey) throw new Error('MINIMAX_API_KEY ausente.');
+        if (!taskId) throw new Error('task_id ausente.');
+
+        const q = await axios.get(withGroup(`${base()}/query/video_generation?task_id=${encodeURIComponent(taskId)}`), { headers: authHeaders(), timeout: 60000 });
+        assertOk(q.data, 'Video status');
+        const status = String(q.data?.status || 'Unknown');
+        const fileId = q.data?.file_id;
+
+        if (status === 'Success' && fileId) {
+            const f = await axios.get(withGroup(`${base()}/files/retrieve?file_id=${encodeURIComponent(fileId)}`), { headers: authHeaders(), timeout: 60000 });
+            assertOk(f.data, 'File retrieve');
+            const url = f.data?.file?.download_url;
+            if (!url) throw new Error('MiniMax não retornou download_url do vídeo.');
+            return { status, url };
+        }
+        return { status };
     },
 };
