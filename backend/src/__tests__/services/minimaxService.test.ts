@@ -9,6 +9,8 @@ vi.mock('../../config/env', () => ({
         minimaxGroupId: '',
         minimaxTtsModel: 'speech-2.6-hd',
         minimaxVoiceId: 'male-qn-qingse',
+        minimaxImageModel: 'image-01',
+        minimaxVideoModel: 'MiniMax-Hailuo-2.3',
     },
 }));
 
@@ -48,5 +50,37 @@ describe('minimaxService.generateSpeech', () => {
     it('lança erro quando não vem URL válida', async () => {
         (axios.post as any).mockResolvedValue({ data: { data: { audio: 'nao-é-url' }, base_resp: { status_code: 0 } } });
         await expect(minimaxService.generateSpeech('oi')).rejects.toThrow(/URL/);
+    });
+});
+
+describe('minimaxService.generateImage', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('retorna as URLs e posta em /image_generation com response_format url', async () => {
+        (axios.post as any).mockResolvedValue({
+            data: { data: { image_urls: ['https://cdn.minimax.io/img/1.png'] }, base_resp: { status_code: 0 } },
+        });
+        const { urls } = await minimaxService.generateImage('um gato astronauta', { aspectRatio: '16:9' });
+        expect(urls).toEqual(['https://cdn.minimax.io/img/1.png']);
+        const [calledUrl, body] = (axios.post as any).mock.calls[0];
+        expect(calledUrl).toBe('https://api.minimax.io/v1/image_generation');
+        expect(body.response_format).toBe('url');
+        expect(body.aspect_ratio).toBe('16:9');
+        expect(body.model).toBe('image-01');
+    });
+
+    it('limita n ao intervalo [1,9]', async () => {
+        (axios.post as any).mockResolvedValue({ data: { data: { image_urls: ['https://x/1.png'] }, base_resp: { status_code: 0 } } });
+        await minimaxService.generateImage('x', { n: 50 });
+        expect((axios.post as any).mock.calls[0][1].n).toBe(9);
+    });
+
+    it('lança erro com prompt vazio', async () => {
+        await expect(minimaxService.generateImage('  ')).rejects.toThrow();
+    });
+
+    it('lança erro quando não vêm URLs', async () => {
+        (axios.post as any).mockResolvedValue({ data: { data: { image_urls: [] }, base_resp: { status_code: 0 } } });
+        await expect(minimaxService.generateImage('x')).rejects.toThrow(/URLs/);
     });
 });
