@@ -734,7 +734,7 @@ const ProjectList: React.FC<{
     };
 
     return (
-        <div className="h-full bg-slate-50 dark:bg-slate-950 transition-colors">
+        <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
             <div className={selectedProject ? 'hidden lg:block' : 'block'}>
                 <PageHeader
                     title="Projetos"
