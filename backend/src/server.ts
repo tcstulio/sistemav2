@@ -200,6 +200,9 @@ app.use('/api/integration', integrationRoutes);
 import uiConfigRoutes from './routes/uiConfigRoutes';
 app.use('/api/ui-config', uiConfigRoutes);
 
+import dashboardRoutes from './routes/dashboardRoutes';
+app.use('/api/dashboard', dashboardRoutes);
+
 // Health Check
 app.get('/health', async (req, res) => {
     const health: Record<string, any> = {
