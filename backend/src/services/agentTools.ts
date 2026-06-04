@@ -93,6 +93,8 @@ export const TOOLS_PROMPT = `
         73. prepare_create_contract(socid, date_contrat?, date_fin_validite?, note_public?) - Rascunho de novo contrato. socid = id do cliente. Datas em YYYY-MM-DD.
         74. prepare_edit_contract(id, date_contrat?, date_fin_validite?, note_public?) - Prepara EDIÇÃO de um contrato. Ache o id antes com list_contracts. Datas em YYYY-MM-DD.
         75. prepare_edit_intervention(id, description?, date?, project_id?) - Prepara EDIÇÃO de uma intervenção. Ache o id antes com list_interventions. date em YYYY-MM-DD.
+        76. prepare_create_expense(fk_user_author, date_debut, date_fin, total_ttc?, note_public?) - Rascunho de relatório de despesa. fk_user_author = id do funcionário (ache com list_users). Datas em YYYY-MM-DD. total_ttc = valor total.
+        77. prepare_edit_expense(id, date_debut?, date_fin?, total_ttc?, note_public?) - Prepara EDIÇÃO de um relatório de despesa. Ache o id antes com list_expense_reports. Não troca o funcionário.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -313,6 +315,15 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         required: ['socid'],
         newRoute: '/contracts/new',
         editRoute: '/contracts/:id/edit',
+    },
+    expense: {
+        label: 'relatório de despesa',
+        createFields: ['fk_user_author', 'date_debut', 'date_fin', 'total_ttc', 'note_public'],
+        // fk_user_author é imutável após a criação.
+        editFields: ['date_debut', 'date_fin', 'total_ttc', 'note_public'],
+        required: ['fk_user_author', 'date_debut', 'date_fin'],
+        newRoute: '/hr/expenses/new',
+        editRoute: '/hr/expenses/:id/edit',
     },
 };
 
