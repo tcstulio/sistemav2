@@ -61,6 +61,7 @@ export const TOOLS_PROMPT = `
         41. prepare_edit_task(id, label?, description?, planned_workload?, date_start?, date_end?) - Prepara EDIÇÃO de uma tarefa. Ache o id antes com list_tasks. planned_workload em HORAS; datas em YYYY-MM-DD.
         42. prepare_create_category(label, type?, description?) - Rascunho de nova categoria (type: 'product' | 'customer' | 'supplier').
         43. prepare_edit_category(id, label?, type?, description?) - Prepara EDIÇÃO de uma categoria. Ache o id antes com list_categories.
+        44. prepare_create_event(label, date_start, date_end?, type_code?, description?) - Rascunho de evento na agenda. date_start/date_end no formato "YYYY-MM-DDTHH:mm". type_code: AC_RDV (reunião), AC_TEL (ligação), AC_EMAIL, AC_OTH.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -131,6 +132,13 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         required: ['label'],
         newRoute: '/categories/new',
         editRoute: '/categories/:id/edit',
+    },
+    event: {
+        label: 'evento',
+        // edição de evento fica em outra tela (AgendaEntryDetail) — por ora só criação.
+        createFields: ['label', 'date_start', 'date_end', 'type_code', 'description'],
+        required: ['label', 'date_start'],
+        newRoute: '/agenda/new',
     },
 };
 
