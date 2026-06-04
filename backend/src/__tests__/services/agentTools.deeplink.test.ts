@@ -257,6 +257,50 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         await expect(executeTool('prepare_edit_ticket', { id: '1' })).rejects.toThrow();
     });
 
+    it('prepare_create_invoice gera /invoices/new com kind create_invoice e exige socid', async () => {
+        await expect(executeTool('prepare_create_invoice', { date: '2025-06-15' })).rejects.toThrow();
+        const out = await executeTool('prepare_create_invoice', { socid: '7', date: '2025-06-15' });
+        const m = out.match(/\/invoices\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, any>>(m![1], 'create_invoice');
+        expect(payload!.data.socid).toBe('7');
+        expect(payload!.data.date).toBe('2025-06-15');
+    });
+
+    it('prepare_create_invoice carrega as linhas (arrays) com tipos normalizados', async () => {
+        const out = await executeTool('prepare_create_invoice', {
+            socid: '7',
+            lines: [
+                { fk_product: '42', desc: 'Serviço A', qty: '2', subprice: '100', remise_percent: '10' },
+                { desc: 'Item livre', qty: 1, subprice: 50 },
+            ],
+        });
+        const m = out.match(/\/invoices\/new\?prefill=([A-Za-z0-9._-]+)/);
+        const payload = verifyDeeplink<Record<string, any>>(m![1], 'create_invoice');
+        expect(Array.isArray(payload!.data.lines)).toBe(true);
+        expect(payload!.data.lines).toHaveLength(2);
+        // textuais como string, numéricos como number
+        expect(payload!.data.lines[0].fk_product).toBe('42');
+        expect(payload!.data.lines[0].desc).toBe('Serviço A');
+        expect(payload!.data.lines[0].qty).toBe(2);
+        expect(payload!.data.lines[0].subprice).toBe(100);
+        expect(payload!.data.lines[0].remise_percent).toBe(10);
+        // linha sem fk_product é válida (item livre)
+        expect(payload!.data.lines[1].fk_product).toBeUndefined();
+        expect(payload!.data.lines[1].qty).toBe(1);
+    });
+
+    it('prepare_create_invoice descarta campos de linha fora da whitelist', async () => {
+        const out = await executeTool('prepare_create_invoice', {
+            socid: '7',
+            lines: [{ desc: 'X', qty: 1, subprice: 10, hack: 'drop-me' }],
+        });
+        const m = out.match(/\/invoices\/new\?prefill=([A-Za-z0-9._-]+)/);
+        const payload = verifyDeeplink<Record<string, any>>(m![1], 'create_invoice');
+        expect(payload!.data.lines[0].hack).toBeUndefined();
+        expect(payload!.data.lines[0].desc).toBe('X');
+    });
+
     it('entidade sem suporte a edição retorna aviso (intervenção não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_intervention', { id: '1', description: 'x' });
         expect(out).toContain('não suporta edição');

@@ -1,5 +1,6 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Invoice, AppView } from '../types';
 import { FileText, Search, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, ArrowUp, ShoppingCart, RefreshCcw, Truck } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
@@ -95,6 +96,31 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const [selectedInvoiceForPay, setSelectedInvoiceForPay] = useState<Invoice | null>(null);
     const [abandonReason, setAbandonReason] = useState('');
     const [abandoningInvoiceId, setAbandoningInvoiceId] = useState<string | null>(null);
+
+    // Deeplink HITL do agente (#57/#78): create_invoice abre o modal de nova fatura
+    // pré-preenchido, incluindo as LINHAS de itens, p/ o usuário revisar e confirmar.
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_invoice') {
+            appliedPrefillRef.current = prefill;
+            const lines = Array.isArray(prefill.data.lines) ? prefill.data.lines : [];
+            setNewInvoice({
+                socid: prefill.data.socid || '',
+                date: prefill.data.date || new Date().toISOString().split('T')[0],
+                items: lines.map((l: any) => ({
+                    productId: l.fk_product ? String(l.fk_product) : '',
+                    desc: l.desc || '',
+                    qty: Number(l.qty) || 1,
+                    price: Number(l.subprice) || 0,
+                    remise_percent: Number(l.remise_percent) || 0,
+                })),
+            });
+            setIsCreateModalOpen(true);
+            toast.info('Revise os itens e confirme a criação da fatura.');
+        }
+    }, [prefill]);
 
     // =================================================================================================
     // HELPERS
