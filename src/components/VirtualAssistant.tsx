@@ -1,13 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User } from 'lucide-react';
+import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User, Trash2 } from 'lucide-react';
 import { AiService, ChatMessage } from '../services/aiService';
 import { ThirdParty, Invoice, Project, Ticket } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
+import { safeStorage } from '../utils/safeStorage';
 import { logger } from '../utils/logger';
 // Hooks removidos: Backend processa dados via ferramentas IA
 
 const log = logger.child('VirtualAssistant');
+
+// Persistência do histórico do chat (antes era só estado React -> sumia no reload/navegação).
+const VA_HISTORY_KEY = 'coolgroove_va_history';
+const MAX_STORED_MESSAGES = 50;
+const WELCOME_MESSAGE: ChatMessage = { role: 'model', text: 'Olá! Sou seu Assistente Virtual. Posso analisar documentos e responder perguntas sobre seus dados.' };
 
 // Deeplinks internos do agente (ex.: /tickets/new?prefill=<token>) e URLs http(s).
 const INTERNAL_DEEPLINK = /\/[A-Za-z0-9_\-/]+\?prefill=[A-Za-z0-9._-]+/g;
@@ -73,9 +79,11 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   // Data fetching removed - Backend now handles this via ReAct tools
 
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'model', text: 'Olá! Sou seu Assistente Virtual. Posso analisar documentos e responder perguntas sobre seus dados.' }
-  ]);
+  // carrega o histórico persistido (sobrevive a reload/navegação); cai no welcome se vazio.
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const saved = safeStorage.getJSON<ChatMessage[]>(VA_HISTORY_KEY, []);
+    return Array.isArray(saved) && saved.length > 0 ? saved : [WELCOME_MESSAGE];
+  });
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -88,6 +96,16 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, isOpen]);
+
+  // persiste o histórico (últimas N mensagens) a cada mudança.
+  useEffect(() => {
+    safeStorage.setJSON(VA_HISTORY_KEY, messages.slice(-MAX_STORED_MESSAGES));
+  }, [messages]);
+
+  const clearHistory = () => {
+    setMessages([WELCOME_MESSAGE]);
+    safeStorage.removeItem(VA_HISTORY_KEY);
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -201,9 +219,14 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
               <Sparkles size={18} className="text-yellow-300" />
               <h3 className="font-semibold text-sm">Assistente Virtual</h3>
             </div>
-            <button onClick={() => setIsOpen(false)} className="hover:bg-white/20 p-1 rounded-full transition-colors">
-              <X size={18} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button onClick={clearHistory} title="Limpar conversa" className="hover:bg-white/20 p-1 rounded-full transition-colors">
+                <Trash2 size={16} />
+              </button>
+              <button onClick={() => setIsOpen(false)} title="Fechar" className="hover:bg-white/20 p-1 rounded-full transition-colors">
+                <X size={18} />
+              </button>
+            </div>
           </div>
 
           {/* Messages */}
