@@ -51,24 +51,25 @@ export const TOOLS_PROMPT = `
 
         FERRAMENTAS DE AÇÃO (escrita com confirmação na tela; devolvem um LINK):
         33. prepare_create_ticket(subject, message, type_code?, severity_code?, socid?) - Rascunho de ticket de suporte. Se souber o cliente, ache o id antes com search_customer e passe em socid.
-        34. prepare_create_customer(name, email?, phone?, address?, town?, zip?, client?) - Rascunho de novo cliente/prospect (client: '1'=cliente, '0' ou '2'=prospect).
-        35. prepare_edit_customer(id, name?, email?, phone?, address?, town?, zip?, client?) - Prepara EDIÇÃO de um cliente existente. Ache o id antes com search_customer e informe APENAS os campos a mudar.
-        36. prepare_create_project(title, ref?, socid?) - Rascunho de novo projeto. socid = id do cliente (ache com search_customer). ref = referência (ex.: PROJ-2025-001).
-        37. prepare_edit_project(id, title) - Prepara EDIÇÃO de um projeto (ex.: renomear). Ache o id antes com list_projects.
-        38. prepare_create_supplier(name, email?, phone?, address?, town?, zip?) - Rascunho de novo fornecedor.
-        39. prepare_edit_supplier(id, name?, email?, phone?, address?, town?, zip?) - Prepara EDIÇÃO de um fornecedor. Ache o id antes com list_suppliers.
-        40. prepare_create_task(label, project_id, description?, planned_workload?, date_start?, date_end?) - Rascunho de tarefa num projeto. project_id obrigatório (ache com list_projects). planned_workload em HORAS; datas em YYYY-MM-DD.
-        41. prepare_edit_task(id, label?, description?, planned_workload?, date_start?, date_end?) - Prepara EDIÇÃO de uma tarefa. Ache o id antes com list_tasks. planned_workload em HORAS; datas em YYYY-MM-DD.
-        42. prepare_create_category(label, type?, description?) - Rascunho de nova categoria (type: 'product' | 'customer' | 'supplier').
-        43. prepare_edit_category(id, label?, type?, description?) - Prepara EDIÇÃO de uma categoria. Ache o id antes com list_categories.
-        44. prepare_create_event(label, date_start, date_end?, type_code?, description?) - Rascunho de evento na agenda. date_start/date_end no formato "YYYY-MM-DDTHH:mm". type_code: AC_RDV (reunião), AC_TEL (ligação), AC_EMAIL, AC_OTH.
-        45. prepare_create_intervention(socid, date?, description?, project_id?) - Rascunho de intervenção (serviço de campo). socid = id do cliente (ache com search_customer). date em YYYY-MM-DD.
-        46. prepare_create_job(label, qty?, description?) - Rascunho de nova vaga de emprego (label = cargo; qty = quantidade).
-        47. prepare_edit_job(id, label?, qty?, description?) - Prepara EDIÇÃO de uma vaga. Ache o id antes com list_job_positions.
-        48. prepare_create_leave(fk_user, date_debut, date_fin, type?, description?) - Rascunho de solicitação de licença/férias. fk_user = id do funcionário (ache com list_users). Datas em YYYY-MM-DD. type: 'Paid Vacation', 'Sick Leave', 'Unpaid', 'Other'.
-        49. prepare_edit_leave(id, date_debut?, date_fin?, type?, description?) - Prepara EDIÇÃO de uma licença/férias. Ache o id antes com list_leave_requests. Datas em YYYY-MM-DD. Não troca o funcionário (fk_user).
-        50. prepare_create_contact(firstname, lastname, socid, email?, phone_mobile?, poste?) - Rascunho de novo contato. socid = id do cliente (ache com search_customer).
-        51. prepare_edit_contact(id, firstname?, lastname?, email?, phone_mobile?, poste?) - Prepara EDIÇÃO de um contato. Ache o id antes com list_contacts.
+        34. prepare_edit_ticket(id, subject?, message?, severity_code?) - Prepara EDIÇÃO de um ticket. Ache o id antes com list_tickets. severity_code: 'LOW', 'NORMAL', 'HIGH', 'BLOCKING'.
+        35. prepare_create_customer(name, email?, phone?, address?, town?, zip?, client?) - Rascunho de novo cliente/prospect (client: '1'=cliente, '0' ou '2'=prospect).
+        36. prepare_edit_customer(id, name?, email?, phone?, address?, town?, zip?, client?) - Prepara EDIÇÃO de um cliente existente. Ache o id antes com search_customer e informe APENAS os campos a mudar.
+        37. prepare_create_project(title, ref?, socid?) - Rascunho de novo projeto. socid = id do cliente (ache com search_customer). ref = referência (ex.: PROJ-2025-001).
+        38. prepare_edit_project(id, title) - Prepara EDIÇÃO de um projeto (ex.: renomear). Ache o id antes com list_projects.
+        39. prepare_create_supplier(name, email?, phone?, address?, town?, zip?) - Rascunho de novo fornecedor.
+        40. prepare_edit_supplier(id, name?, email?, phone?, address?, town?, zip?) - Prepara EDIÇÃO de um fornecedor. Ache o id antes com list_suppliers.
+        41. prepare_create_task(label, project_id, description?, planned_workload?, date_start?, date_end?) - Rascunho de tarefa num projeto. project_id obrigatório (ache com list_projects). planned_workload em HORAS; datas em YYYY-MM-DD.
+        42. prepare_edit_task(id, label?, description?, planned_workload?, date_start?, date_end?) - Prepara EDIÇÃO de uma tarefa. Ache o id antes com list_tasks. planned_workload em HORAS; datas em YYYY-MM-DD.
+        43. prepare_create_category(label, type?, description?) - Rascunho de nova categoria (type: 'product' | 'customer' | 'supplier').
+        44. prepare_edit_category(id, label?, type?, description?) - Prepara EDIÇÃO de uma categoria. Ache o id antes com list_categories.
+        45. prepare_create_event(label, date_start, date_end?, type_code?, description?) - Rascunho de evento na agenda. date_start/date_end no formato "YYYY-MM-DDTHH:mm". type_code: AC_RDV (reunião), AC_TEL (ligação), AC_EMAIL, AC_OTH.
+        46. prepare_create_intervention(socid, date?, description?, project_id?) - Rascunho de intervenção (serviço de campo). socid = id do cliente (ache com search_customer). date em YYYY-MM-DD.
+        47. prepare_create_job(label, qty?, description?) - Rascunho de nova vaga de emprego (label = cargo; qty = quantidade).
+        48. prepare_edit_job(id, label?, qty?, description?) - Prepara EDIÇÃO de uma vaga. Ache o id antes com list_job_positions.
+        49. prepare_create_leave(fk_user, date_debut, date_fin, type?, description?) - Rascunho de solicitação de licença/férias. fk_user = id do funcionário (ache com list_users). Datas em YYYY-MM-DD. type: 'Paid Vacation', 'Sick Leave', 'Unpaid', 'Other'.
+        50. prepare_edit_leave(id, date_debut?, date_fin?, type?, description?) - Prepara EDIÇÃO de uma licença/férias. Ache o id antes com list_leave_requests. Datas em YYYY-MM-DD. Não troca o funcionário (fk_user).
+        51. prepare_create_contact(firstname, lastname, socid, email?, phone_mobile?, poste?) - Rascunho de novo contato. socid = id do cliente (ache com search_customer).
+        52. prepare_edit_contact(id, firstname?, lastname?, email?, phone_mobile?, poste?) - Prepara EDIÇÃO de um contato. Ache o id antes com list_contacts.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -97,8 +98,10 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
     ticket: {
         label: 'ticket',
         createFields: ['subject', 'message', 'type_code', 'severity_code', 'socid'],
+        editFields: ['subject', 'message', 'severity_code'],
         required: ['subject', 'message'],
         newRoute: '/tickets/new',
+        editRoute: '/tickets/:id/edit',
     },
     customer: {
         label: 'cliente',
