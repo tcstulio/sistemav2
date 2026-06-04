@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { DolibarrConfig, AgendaEvent, AppView } from '../types';
 import { dbService } from '../services/dbService';
 import { DolibarrService } from '../services/dolibarrService';
@@ -15,9 +15,10 @@ interface AgendaEntryDetailProps {
     config: DolibarrConfig;
     initialItemId?: string;
     onNavigate: (view: AppView, id: string) => void;
+    editPrefill?: Record<string, string>; // deeplink HITL: mudanças sugeridas p/ edit_event (#57/#78)
 }
 
-const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialItemId, onNavigate }) => {
+const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialItemId, onNavigate, editPrefill }) => {
     const { getLink, openLink } = useDolibarrLink(config);
     const [data, setData] = useState<any | null>(null);
     const [type, setType] = useState<'event' | 'task' | 'project' | 'intervention' | null>(null);
@@ -95,6 +96,30 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
 
         fetchData();
     }, [config, initialItemId]);
+
+    // Deeplink HITL (#57/#78): quando o agente sugere edição (edit_event), aplica as mudanças
+    // sobre o evento carregado e abre o modo edição (1x por prefill). Datas string -> MS.
+    const appliedEditPrefillRef = useRef<Record<string, string> | undefined>(undefined);
+    useEffect(() => {
+        if (!editPrefill || type !== 'event' || !data) return;
+        if (appliedEditPrefillRef.current === editPrefill) return;
+        appliedEditPrefillRef.current = editPrefill;
+        const event = data as AgendaEvent;
+        const toMs = (s?: string) => {
+            if (!s) return undefined;
+            const d = new Date(s);
+            return isNaN(d.getTime()) ? undefined : d.getTime();
+        };
+        setEditForm({
+            label: editPrefill.label ?? event.label,
+            description: editPrefill.description ?? event.description,
+            date_start: toMs(editPrefill.date_start) ?? event.date_start,
+            date_end: toMs(editPrefill.date_end) ?? event.date_end,
+            percentage: editPrefill.percentage !== undefined ? Number(editPrefill.percentage) : event.percentage,
+            location: event.location,
+        });
+        setIsEditing(true);
+    }, [editPrefill, data, type]);
 
     if (loading) {
         return (
