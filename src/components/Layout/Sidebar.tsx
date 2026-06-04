@@ -9,7 +9,7 @@ import {
     BarChart3, X, LogOut, FileSignature, TrendingUp, PenTool, Factory,
     FolderKanban, ClipboardList, Landmark, CalendarDays, Tag, MessageSquare,
     Activity, Bug, UserCircle, Mail, Bot, Clock, Receipt, Banknote,
-    Calculator, Building2, ChevronDown, ChevronRight, Music, ShieldCheck
+    Calculator, Building2, ChevronDown, ChevronRight, Music, ShieldCheck, Warehouse
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -118,6 +118,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
                 { id: 'products', path: '/products', label: 'Produtos', icon: Package },
                 { id: 'categories', path: '/categories', label: 'Categorias/Tags', icon: Tag },
                 { id: 'inventory', path: '/inventory', label: 'Estoque', icon: Factory },
+                { id: 'warehouses', path: '/warehouses', label: 'Estoques', icon: Warehouse },
                 { id: 'manufacturing', path: '/manufacturing', label: 'Produção', icon: Settings },
             ]
         },

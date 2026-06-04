@@ -107,6 +107,16 @@ export const getProductStock = async (config: DolibarrConfig, id: string) => {
     return request(url, { headers: getHeaders(config.apiKey) });
 };
 
+/**
+ * Fetches a single product with stock data per warehouse.
+ * Dolibarr returns `stock_warehouse: { [warehouseId]: { real, ... } }` when
+ * `includestockdata=1` is passed.
+ */
+export const getProductWithStock = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/products/${id}?includestockdata=1`;
+    return request(url, { headers: getHeaders(config.apiKey) });
+};
+
 export const getWarehouse = async (config: DolibarrConfig, id: string) => {
     const url = `${sanitizeUrl(config.apiUrl)}/warehouses/${id}`;
     return request(url, { headers: getHeaders(config.apiKey) });
