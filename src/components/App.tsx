@@ -234,6 +234,7 @@ const App: React.FC = () => {
 
                         <Route path="/manufacturing" element={<ViewWrapper Component={ManufacturingView} viewId="manufacturing" />} />
                         <Route path="/manufacturing/mo/new" element={<ViewWrapper Component={ManufacturingView} viewId="manufacturing" />} />
+                        <Route path="/manufacturing/mo/:id/edit" element={<ViewWrapper Component={ManufacturingView} viewId="manufacturing" />} />
                         <Route path="/manufacturing/bom/new" element={<ViewWrapper Component={ManufacturingView} viewId="manufacturing" />} />
                         <Route path="/manufacturing/bom/:id/edit" element={<ViewWrapper Component={ManufacturingView} viewId="manufacturing" />} />
 
