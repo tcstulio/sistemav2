@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { toast } from 'sonner';
 import { Order, AppView } from '../types';
-import { ShoppingCart, Search, ExternalLink, Package, CheckCircle, Truck, Clock, FilePlus, Download, Receipt, ArrowDown, ArrowUp, Lock, CheckSquare, Trash2, Plus } from 'lucide-react';
+import { ShoppingCart, Search, ExternalLink, Package, CheckCircle, Truck, Clock, FilePlus, Download, Receipt, ArrowDown, ArrowUp, Lock, CheckSquare, Trash2, Plus, Pencil } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useOrders, useCustomers, useShipments, useInvoices, useUsers } from '../hooks/dolibarr';
@@ -54,6 +54,7 @@ const OrderDetail: React.FC<{
     invoices: any[];
     processingId: string | null;
     onValidate: (id: string) => void;
+    onEdit: () => void;
     onCreateShipment: () => void;
     onClassifyDelivered: () => void;
     onDownloadPdf: (ref: string) => void;
@@ -70,6 +71,7 @@ const OrderDetail: React.FC<{
     invoices,
     processingId,
     onValidate,
+    onEdit,
     onCreateShipment,
     onClassifyDelivered,
     onDownloadPdf,
@@ -118,6 +120,15 @@ const OrderDetail: React.FC<{
                     onBack={onClose}
                     actions={
                         <div className="flex items-center gap-2">
+                            {order.statut === '0' && (
+                                <Button
+                                    onClick={onEdit}
+                                    icon={<Pencil size={18} />}
+                                    className="hidden xl:flex text-slate-600 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700"
+                                >
+                                    Editar
+                                </Button>
+                            )}
                             {order.statut === '0' && (
                                 <Button
                                     onClick={() => onValidate(order.id)}
@@ -321,14 +332,18 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     const [shipmentLines, setShipmentLines] = useState<{ id: string, qty: number, label: string }[]>([]);
     const [isSubmittingShipment, setIsSubmittingShipment] = useState(false);
 
-    // Order Creation State (#57/#78)
+    // Order Creation/Edit State (#57/#78). editOrderId presente => modal salva só o cabeçalho.
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+    const [editOrderId, setEditOrderId] = useState<string | undefined>(undefined);
+    const isEditingOrder = !!editOrderId;
     const [newOrder, setNewOrder] = useState({
         socid: '',
         date: new Date().toISOString().split('T')[0],
         items: [] as { productId: string, desc: string, qty: number, price: number }[],
     });
+
+    const closeOrderModal = () => { setIsCreateModalOpen(false); setEditOrderId(undefined); };
 
     const handleAddOrderItem = () => setNewOrder(prev => ({ ...prev, items: [...prev.items, { productId: '', desc: '', qty: 1, price: 0 }] }));
     const handleUpdateOrderItem = (idx: number, field: 'desc' | 'qty' | 'price', value: string | number) => {
@@ -341,28 +356,49 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
 
     const handleCreateOrder = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!newOrder.socid) return toast.error('Selecione um cliente');
+        if (!isEditingOrder && !newOrder.socid) return toast.error('Selecione um cliente');
         setIsSubmittingOrder(true);
         try {
-            await DolibarrService.createOrder(config, {
-                socid: newOrder.socid,
-                date: new Date(newOrder.date).getTime() / 1000,
-                lines: newOrder.items.map(it => ({
-                    fk_product: it.productId || undefined,
-                    desc: it.desc,
-                    qty: it.qty,
-                    subprice: it.price,
-                    product_type: 0,
-                })),
-            });
-            toast.success('Pedido criado com sucesso');
-            setIsCreateModalOpen(false);
+            if (isEditingOrder) {
+                // edição header-only: cliente e itens são imutáveis na tela; só atualiza a data.
+                await DolibarrService.updateObject(config, 'orders', editOrderId!, {
+                    date: Math.floor(new Date(newOrder.date).getTime() / 1000),
+                });
+                toast.success('Pedido atualizado com sucesso');
+                if (selectedOrder && String(selectedOrder.id) === String(editOrderId)) {
+                    setSelectedOrder({ ...selectedOrder, date: Math.floor(new Date(newOrder.date).getTime() / 1000) });
+                }
+            } else {
+                await DolibarrService.createOrder(config, {
+                    socid: newOrder.socid,
+                    date: new Date(newOrder.date).getTime() / 1000,
+                    lines: newOrder.items.map(it => ({
+                        fk_product: it.productId || undefined,
+                        desc: it.desc,
+                        qty: it.qty,
+                        subprice: it.price,
+                        product_type: 0,
+                    })),
+                });
+                toast.success('Pedido criado com sucesso');
+            }
+            closeOrderModal();
             setNewOrder({ socid: '', date: new Date().toISOString().split('T')[0], items: [] });
             if (onRefresh) onRefresh();
-        } catch (e) { log.error('Failed to create order', e); toast.error('Erro ao criar pedido'); } finally { setIsSubmittingOrder(false); }
+        } catch (e) { log.error('Failed to save order', e); toast.error(isEditingOrder ? 'Erro ao atualizar pedido' : 'Erro ao criar pedido'); } finally { setIsSubmittingOrder(false); }
     };
 
-    // Deeplink HITL do agente (#57/#78): create_order abre o modal pré-preenchido (incl. itens).
+    // Abre o modal em modo edição (cabeçalho) — usado pelo deeplink edit_order e pelo botão "Editar".
+    const openOrderEditor = (ord: Order, dateOverride?: string) => {
+        const dateStr = dateOverride
+            || (ord.date ? new Date(ord.date * 1000).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+        setNewOrder({ socid: String(ord.socid), date: dateStr, items: [] });
+        setEditOrderId(String(ord.id));
+        setIsCreateModalOpen(true);
+    };
+
+    // Deeplink HITL do agente (#57/#78): create_order abre o modal pré-preenchido (incl. itens);
+    // edit_order abre o mesmo modal em modo edição de cabeçalho (só a data).
     const prefill = usePrefill();
     const appliedPrefillRef = useRef<PrefillResult | null>(null);
     useEffect(() => {
@@ -377,8 +413,14 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
             });
             setIsCreateModalOpen(true);
             toast.info('Revise os itens e confirme a criação do pedido.');
+        } else if (prefill.kind === 'edit_order') {
+            const ord = orders.find(o => String(o.id) === String(prefill.data.id));
+            if (!ord) return; // aguarda os dados carregarem
+            appliedPrefillRef.current = prefill;
+            openOrderEditor(ord, prefill.data.date);
+            toast.info('Revise e salve as mudanças no cabeçalho do pedido.');
         }
-    }, [prefill]);
+    }, [prefill, orders]);
 
     // Deep Linking Effect
     useEffect(() => {
@@ -517,27 +559,31 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     return (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
 
-            {/* Create Order Modal (#57/#78) */}
+            {/* Create/Edit Order Modal (#57/#78) */}
             <Modal
                 isOpen={isCreateModalOpen}
-                onClose={() => setIsCreateModalOpen(false)}
-                title="Novo Pedido (Rascunho)"
+                onClose={closeOrderModal}
+                title={isEditingOrder ? "Editar Pedido (Cabeçalho)" : "Novo Pedido (Rascunho)"}
                 size="xl"
             >
                 <form onSubmit={handleCreateOrder} className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cliente</label>
-                            <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={newOrder.socid} onChange={e => setNewOrder({ ...newOrder, socid: e.target.value })} required>
+                            <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white disabled:opacity-60" value={newOrder.socid} onChange={e => setNewOrder({ ...newOrder, socid: e.target.value })} required={!isEditingOrder} disabled={isEditingOrder}>
                                 <option value="">Selecione o Cliente...</option>
                                 {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                             </select>
+                            {isEditingOrder && <p className="text-xs text-slate-400 mt-1">O cliente não pode ser alterado.</p>}
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
                             <input type="date" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={newOrder.date} onChange={e => setNewOrder({ ...newOrder, date: e.target.value })} required />
                         </div>
                     </div>
+                    {isEditingOrder ? (
+                        <p className="text-sm text-slate-400 italic border-t border-slate-100 dark:border-slate-800 pt-4">Os itens do pedido não são editados por esta tela — apenas o cabeçalho (data).</p>
+                    ) : (
                     <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
                         <div className="flex justify-between items-center mb-2">
                             <h4 className="font-bold text-sm text-slate-700 dark:text-slate-300">Itens</h4>
@@ -567,9 +613,10 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                             </div>
                         </div>
                     </div>
+                    )}
                     <div className="flex justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
-                        <Button type="button" variant="secondary" onClick={() => setIsCreateModalOpen(false)}>Cancelar</Button>
-                        <Button type="submit" variant="primary" loading={isSubmittingOrder} icon={<CheckCircle size={16} />}>Criar Pedido</Button>
+                        <Button type="button" variant="secondary" onClick={closeOrderModal}>Cancelar</Button>
+                        <Button type="submit" variant="primary" loading={isSubmittingOrder} icon={<CheckCircle size={16} />}>{isEditingOrder ? 'Salvar' : 'Criar Pedido'}</Button>
                     </div>
                 </form>
             </Modal>
@@ -712,6 +759,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                             invoices={invoices}
                             processingId={processingId}
                             onValidate={handleValidateOrder}
+                            onEdit={() => openOrderEditor(selectedOrder)}
                             onCreateShipment={openShipmentModal}
                             onClassifyDelivered={handleClassifyDelivered}
                             onDownloadPdf={handleDownloadPdf}
