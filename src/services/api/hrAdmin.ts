@@ -1,4 +1,4 @@
-import { DolibarrConfig, BankAccount, Contact, Invoice, SupplierInvoice, BankLine, Candidate, DolibarrUser, ExpenseReport, RecruitmentJobPosition, LeaveRequest } from '../../types';
+import { DolibarrConfig, BankAccount, Contact, Invoice, SupplierInvoice, BankLine, Candidate, DolibarrUser, ExpenseReport, RecruitmentJobPosition, LeaveRequest, UserGroup } from '../../types';
 import { fetchList, fetchPage, request, getHeaders, sanitizeUrl } from './core';
 import { logger } from '../../utils/logger';
 
@@ -378,6 +378,19 @@ export const markExpenseReportAsPaid = async (config: DolibarrConfig, id: string
 };
 
 /* --- GROUPS --- */
+
+export const listGroups = async (config: DolibarrConfig): Promise<UserGroup[]> => {
+    // Authoritative, always-fresh list of user groups (GET /users/groups).
+    // Unlike the delta-synced useGroups hook, this reflects deletions immediately.
+    const data = await fetchList(config, 'users/groups');
+    return data.map((d: Record<string, any>) => ({
+        id: String(d.id),
+        name: d.name || '',
+        note: d.note,
+        datec: d.datec ? parseInt(d.datec) : undefined,
+        tms: d.tms ? parseInt(d.tms) : undefined,
+    }));
+};
 
 export const createGroup = async (config: DolibarrConfig, data: any) => {
     // Endpoint usually /users/groups

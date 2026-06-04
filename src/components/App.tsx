@@ -60,6 +60,7 @@ const ChatPage = React.lazy(() => import('../pages/ChatPage').then(m => ({ defau
 const ChatConversation = React.lazy(() => import('../pages/ChatPage').then(m => ({ default: m.ChatConversation })));
 const Simulator = React.lazy(() => import('../pages/Simulator'));
 const CentroVibeManager = React.lazy(() => import('./CentroVibe/CentroVibeManager'));
+const GroupManager = React.lazy(() => import('./admin/GroupManager').then(m => ({ default: m.GroupManager })));
 
 interface ViewWrapperProps {
     Component: React.ComponentType<{
@@ -288,6 +289,7 @@ const App: React.FC = () => {
                         <Route path="/development" element={<ViewWrapper Component={DevelopmentView} viewId="development" />} />
 
                         <Route path="/settings" element={<ViewWrapper Component={SettingsView} viewId="settings" />} />
+                        <Route path="/admin/groups" element={<ViewWrapper Component={GroupManager} viewId="settings" />} />
 
                         <Route path="/chat" element={<ViewWrapper Component={ChatPage} viewId="chat" />}>
                             <Route index element={<ChatConversation />} />
