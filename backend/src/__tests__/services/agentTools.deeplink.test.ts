@@ -104,6 +104,23 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.id).toBe('12');
     });
 
+    it('prepare_create_category gera /categories/new com kind create_category', async () => {
+        const out = await executeTool('prepare_create_category', { label: 'Clientes VIP', type: 'customer' });
+        const m = out.match(/\/categories\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_category');
+        expect(payload!.data.label).toBe('Clientes VIP');
+        expect(payload!.data.type).toBe('customer');
+    });
+
+    it('prepare_edit_category gera /categories/:id/edit com kind edit_category', async () => {
+        const out = await executeTool('prepare_edit_category', { id: '4', label: 'Renomeada' });
+        const m = out.match(/\/categories\/4\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_category');
+        expect(payload!.data.id).toBe('4');
+    });
+
     it('entidade sem suporte a edição retorna aviso (ticket não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_ticket', { id: '1', subject: 'x' });
         expect(out).toContain('não suporta edição');

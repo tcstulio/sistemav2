@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Category, AppView } from '../types';
-import { Tag, Plus, Trash2, Loader2, CheckCircle2, Folder, Box, User, ArrowUpRight, StickyNote, Search } from 'lucide-react';
+import { Tag, Plus, Trash2, Loader2, CheckCircle2, Folder, Box, User, ArrowUpRight, StickyNote, Search, Pencil } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useCategories } from '../hooks/dolibarr';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { toast } from 'sonner';
@@ -87,6 +88,15 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
     const [newCat, setNewCat] = useState({ label: '', type: 'product', description: '' });
     const [isSubmitting, setIsSubmitting] = useState(false);
 
+    // Edit State
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editCat, setEditCat] = useState({ label: '', type: 'product', description: '' });
+    const [isEditSubmitting, setIsEditSubmitting] = useState(false);
+
+    // Deeplink HITL do agente (#57): create_category / edit_category (aplica 1x por token).
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+
     const filteredCategories = useMemo(() => {
         return categories.filter(c => {
             const matchesSearch = c.label.toLowerCase().includes(searchTerm.toLowerCase());
@@ -134,6 +144,62 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
             toast.error("Falha ao excluir categoria");
         }
     };
+
+    // mapeia o código de tipo do Dolibarr (0/1/2) para o valor do <select> do form
+    const typeToForm = (t: string | number) => {
+        const s = String(t);
+        if (s === '1' || s === 'supplier') return 'supplier';
+        if (s === '2' || s === 'customer') return 'customer';
+        return 'product';
+    };
+
+    const handleEdit = async () => {
+        if (!selectedCategory) return;
+        setIsEditSubmitting(true);
+        try {
+            let typeVal = '0';
+            if (editCat.type === 'supplier') typeVal = '1';
+            if (editCat.type === 'customer') typeVal = '2';
+            await DolibarrService.updateObject(config!, 'categories', selectedCategory.id, { ...editCat, type: typeVal });
+            toast.success("Categoria atualizada com sucesso!");
+            setIsEditModalOpen(false);
+            if (onRefresh) onRefresh();
+        } catch (e: any) {
+            log.error(e);
+            toast.error(`Falha ao atualizar categoria: ${e.message}`);
+        } finally {
+            setIsEditSubmitting(false);
+        }
+    };
+
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_category') {
+            appliedPrefillRef.current = prefill;
+            setNewCat({
+                label: prefill.data.label || '',
+                type: typeToForm(prefill.data.type || 'product'),
+                description: prefill.data.description || '',
+            });
+            setIsCreateModalOpen(true);
+            toast.info('Revise os dados e confirme a criação da categoria.');
+        } else if (prefill.kind === 'edit_category') {
+            if (categories.length === 0) return; // aguarda carregar
+            appliedPrefillRef.current = prefill;
+            const { id, ...changes } = prefill.data;
+            const current = categories.find(c => String(c.id) === String(id));
+            if (!current) { toast.error('Categoria não encontrada para edição.'); return; }
+            setSelectedCategory(current);
+            setEditCat({
+                label: changes.label ?? current.label,
+                type: changes.type ?? typeToForm(current.type),
+                description: changes.description ?? (current.description || ''),
+            });
+            setIsEditModalOpen(true);
+            toast.info('Revise as mudanças sugeridas e salve.');
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [prefill, categories]);
 
     if (isLoading) {
         return (
@@ -221,6 +287,51 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                 </div>
             </Modal>
 
+            {/* Edit Modal */}
+            <Modal
+                isOpen={isEditModalOpen}
+                onClose={() => setIsEditModalOpen(false)}
+                title={`Editar: ${selectedCategory?.label || ''}`}
+                size="sm"
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={() => setIsEditModalOpen(false)}>Cancelar</Button>
+                        <Button loading={isEditSubmitting} icon={<CheckCircle2 size={16} />} onClick={handleEdit}>Salvar</Button>
+                    </>
+                }
+            >
+                <div className="space-y-4">
+                    <Input
+                        label="Rótulo"
+                        required
+                        value={editCat.label}
+                        onChange={e => setEditCat({ ...editCat, label: e.target.value })}
+                        placeholder="Ex: Clientes VIP"
+                    />
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
+                        <select
+                            className="w-full p-2 border border-slate-300 dark:border-slate-700 rounded-lg dark:bg-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                            value={editCat.type}
+                            onChange={e => setEditCat({ ...editCat, type: e.target.value })}
+                        >
+                            <option value="product">Produto</option>
+                            <option value="customer">Cliente</option>
+                            <option value="supplier">Fornecedor</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
+                        <textarea
+                            className="w-full p-2 border border-slate-300 dark:border-slate-700 rounded-lg dark:bg-slate-800 dark:text-white text-sm h-24 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
+                            value={editCat.description}
+                            onChange={e => setEditCat({ ...editCat, description: e.target.value })}
+                            placeholder="Descrição opcional..."
+                        />
+                    </div>
+                </div>
+            </Modal>
+
             {/* List Header */}
             <div className={selectedCategory ? 'hidden lg:block' : 'block'}>
                 <PageHeader
@@ -287,13 +398,25 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                                 subtitle={getTypeBadge(selectedCategory.type)}
                                 onBack={() => setSelectedCategory(null)}
                                 actions={
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        icon={<Trash2 size={18} />}
-                                        onClick={() => handleDelete(selectedCategory.id)}
-                                        className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
-                                    />
+                                    <>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            icon={<Pencil size={18} />}
+                                            onClick={() => {
+                                                setEditCat({ label: selectedCategory.label, type: typeToForm(selectedCategory.type), description: selectedCategory.description || '' });
+                                                setIsEditModalOpen(true);
+                                            }}
+                                            title="Editar"
+                                        />
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            icon={<Trash2 size={18} />}
+                                            onClick={() => handleDelete(selectedCategory.id)}
+                                            className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+                                        />
+                                    </>
                                 }
                             />
 
