@@ -1,42 +1,30 @@
 import React from 'react';
+import DOMPurify from 'dompurify';
 
-const DANGEROUS_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'applet', 'form', 'input', 'textarea', 'select', 'button', 'meta', 'link', 'base', 'style', 'svg', 'math', 'noscript', 'template']);
+// Sanitização de HTML não-confiável (descrições do Dolibarr, corpo de e-mail, etc.)
+// usando DOMPurify (battle-tested) em vez de uma implementação caseira (#33).
 
-function cleanNode(node: Element) {
-    for (let i = node.children.length - 1; i >= 0; i--) {
-        const child = node.children[i] as Element;
-        const tagName = child.tagName.toLowerCase();
-
-        if (DANGEROUS_TAGS.has(tagName)) {
-            child.remove();
-            continue;
+// Hook: garante que todo link abra em nova aba sem expor window.opener.
+let hookAdded = false;
+function ensureHook(): void {
+    if (hookAdded) return;
+    DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+        if (node instanceof Element && node.tagName === 'A' && node.getAttribute('href')) {
+            node.setAttribute('target', '_blank');
+            node.setAttribute('rel', 'noopener noreferrer');
         }
-
-        for (let j = child.attributes.length - 1; j >= 0; j--) {
-            const attr = child.attributes[j];
-            const name = attr.name.toLowerCase();
-            if (
-                name.startsWith('on') ||
-                (name === 'href' && /^\s*(javascript|data|vbscript)\s*:/i.test(attr.value)) ||
-                (name === 'src' && /^\s*(javascript|data|vbscript)\s*:/i.test(attr.value)) ||
-                name === 'formaction' ||
-                name === 'xlink:href'
-            ) {
-                child.removeAttributeNode(attr);
-            }
-        }
-
-        cleanNode(child);
-    }
+    });
+    hookAdded = true;
 }
 
+/** Remove scripts, handlers on*, javascript:/data: URLs, iframes etc. — mantém HTML de formatação. */
 export function sanitizeHtml(html: string): string {
     if (!html) return '';
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    cleanNode(doc.body);
-    return doc.body.innerHTML;
+    ensureHook();
+    return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
 }
 
+/** Remove TODAS as tags, devolvendo só o texto. */
 export function stripHtml(html: string): string {
     if (!html) return '';
     return html.replace(/<[^>]*>/g, '');

@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { DolibarrConfig, ExpenseReport, DolibarrUser, ExpenseReportLine, ExpenseReportPayment, Project } from '../../../types';
+import { sanitizeHtml } from '../../../utils/sanitizeHtml';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { Receipt, X, Calendar, User, FileText, Download, Send, CheckCircle, Banknote, FileEdit, Building, CreditCard, Box, DollarSign, FolderKanban, Upload, Loader2, Search, ExternalLink } from 'lucide-react';
 import { formatDateOnly, formatDateTime } from '../../../utils/dateUtils';
@@ -295,7 +296,7 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
                                                             {line.description && (
                                                                 <div
                                                                     className="text-xs text-slate-500 mt-1 font-normal prose prose-sm max-w-none prose-p:my-0 prose-ul:my-0 prose-li:my-0"
-                                                                    dangerouslySetInnerHTML={{ __html: line.description }}
+                                                                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(line.description) }}
                                                                 />
                                                             )}
                                                             <div className="text-xs text-slate-500 mt-1">

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { sanitizeHtml } from '../../utils/sanitizeHtml';
 import { ArrowLeft, UserX, ChevronDown, Bot, SidebarClose, SidebarOpen, Send, Inbox, Folder, Forward, FolderInput } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -229,7 +230,7 @@ export const EmailReadingPane: React.FC<EmailReadingPaneProps> = ({
             <div className="flex-1 overflow-y-auto p-4 md:p-8 custom-scrollbar bg-white dark:bg-slate-900">
                 <div
                     className="prose dark:prose-invert max-w-none email-content-reset text-sm md:text-base"
-                    dangerouslySetInnerHTML={{ __html: messageBody.html || messageBody.text || '' }}
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(messageBody.html || messageBody.text || '') }}
                 />
 
                 {messageBody.attachments && messageBody.attachments.length > 0 && (

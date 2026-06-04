@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { DolibarrConfig, AppView, Task } from '../types';
+import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { dbService } from '../services/dbService';
 import { mapTask } from '../hooks/dolibarr/mappers';
 import { ChevronLeft, Calendar as CalendarIcon, Clock, User, FolderKanban, FileText, CheckSquare, Settings, Timer, Plus, X, Loader2, Users, Edit, Save, MessageSquare } from 'lucide-react';
@@ -291,7 +292,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                             ) : (
                                 <div
                                     className="prose dark:prose-invert max-w-none text-slate-600 dark:text-slate-300"
-                                    dangerouslySetInnerHTML={{ __html: task.description || "Sem descrição." }}
+                                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(task.description || "Sem descrição.") }}
                                 />
                             )}
                         </div>
