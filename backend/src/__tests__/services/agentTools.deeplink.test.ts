@@ -83,6 +83,27 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.phone).toBe('11 5555-0000');
     });
 
+    it('prepare_create_task exige project_id', async () => {
+        await expect(executeTool('prepare_create_task', { label: 'T' })).rejects.toThrow();
+    });
+
+    it('prepare_create_task gera /tasks/new com kind create_task', async () => {
+        const out = await executeTool('prepare_create_task', { label: 'Setup', project_id: '7', planned_workload: '8' });
+        const m = out.match(/\/tasks\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_task');
+        expect(payload!.data.label).toBe('Setup');
+        expect(payload!.data.project_id).toBe('7');
+    });
+
+    it('prepare_edit_task gera /tasks/:id/edit com kind edit_task', async () => {
+        const out = await executeTool('prepare_edit_task', { id: '12', label: 'Novo título' });
+        const m = out.match(/\/tasks\/12\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_task');
+        expect(payload!.data.id).toBe('12');
+    });
+
     it('entidade sem suporte a edição retorna aviso (ticket não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_ticket', { id: '1', subject: 'x' });
         expect(out).toContain('não suporta edição');
