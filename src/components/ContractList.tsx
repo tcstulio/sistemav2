@@ -1,7 +1,9 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Contract, AppView } from '../types';
-import { FileSignature, Search, Plus, Loader2, CheckCircle2, Calendar, User, FolderKanban, Receipt, ExternalLink, Archive } from 'lucide-react';
+import { FileSignature, Search, Plus, Loader2, CheckCircle2, Calendar, User, FolderKanban, Receipt, ExternalLink, Archive, Pencil } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useContracts, useCustomers, useProjects, useInvoices } from '../hooks/dolibarr';
@@ -46,6 +48,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
     const [processingId, setProcessingId] = useState<string | null>(null);
 
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [editContractId, setEditContractId] = useState<string | undefined>(undefined);
     const [newContractForm, setNewContractForm] = useState({
         socid: '',
         date_contrat: new Date().toISOString().split('T')[0],
@@ -53,6 +56,52 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
         note_public: ''
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const isEditContract = !!editContractId;
+
+    const tsToInput = (ts?: number) => (ts ? new Date(ts < 1e11 ? ts * 1000 : ts).toISOString().split('T')[0] : '');
+
+    const openEditContract = (c: Contract) => {
+        setEditContractId(String(c.id));
+        setNewContractForm({
+            socid: String(c.socid),
+            date_contrat: tsToInput(c.date_contrat),
+            date_fin_validite: tsToInput(c.date_fin_validite),
+            note_public: c.note_public || '',
+        });
+        setIsCreateModalOpen(true);
+    };
+
+    // Deeplink HITL do agente (#57/#78): create_contract / edit_contract abrem o modal pré-preenchido.
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_contract') {
+            appliedPrefillRef.current = prefill;
+            setEditContractId(undefined);
+            setNewContractForm({
+                socid: prefill.data.socid || '',
+                date_contrat: prefill.data.date_contrat || new Date().toISOString().split('T')[0],
+                date_fin_validite: prefill.data.date_fin_validite || '',
+                note_public: prefill.data.note_public || '',
+            });
+            setIsCreateModalOpen(true);
+            toast.info('Revise os dados e confirme a criação do contrato.');
+        } else if (prefill.kind === 'edit_contract') {
+            const c = contracts.find(ct => String(ct.id) === String(prefill.data.id));
+            if (!c) return; // aguarda os dados
+            appliedPrefillRef.current = prefill;
+            setEditContractId(String(c.id));
+            setNewContractForm({
+                socid: String(c.socid),
+                date_contrat: prefill.data.date_contrat || tsToInput(c.date_contrat),
+                date_fin_validite: prefill.data.date_fin_validite || tsToInput(c.date_fin_validite),
+                note_public: prefill.data.note_public ?? c.note_public ?? '',
+            });
+            setIsCreateModalOpen(true);
+            toast.info('Revise as mudanças e salve o contrato.');
+        }
+    }, [prefill, contracts]);
 
     const getCustomerName = (socid: string) => {
         const customer = customers.find(c => String(c.id) === String(socid));
@@ -88,7 +137,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
         );
     }, [selectedContract, invoices]);
 
-    const handleCreateContract = async (e: React.FormEvent) => {
+    const handleSubmitContract = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newContractForm.socid) return;
         setIsSubmitting(true);
@@ -99,13 +148,19 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                 date_fin_validite: newContractForm.date_fin_validite ? new Date(newContractForm.date_fin_validite).getTime() / 1000 : undefined,
                 note_public: newContractForm.note_public
             };
-            await DolibarrService.createContract(config, payload);
-            alert("Contrato Criado com Sucesso");
+            if (editContractId) {
+                await DolibarrService.updateObject(config, 'contracts', editContractId, payload);
+                toast.success("Contrato atualizado");
+            } else {
+                await DolibarrService.createContract(config, payload);
+                toast.success("Contrato criado com sucesso");
+            }
             setIsCreateModalOpen(false);
+            setEditContractId(undefined);
             setNewContractForm({ socid: '', date_contrat: new Date().toISOString().split('T')[0], date_fin_validite: '', note_public: '' });
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            log.error("Failed to create contract", e);
+            log.error("Failed to save contract", e);
             alert(`Falha: ${e.message}`);
         } finally {
             setIsSubmitting(false);
@@ -228,6 +283,9 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                 subtitle="Detalhes do Contrato"
                 actions={
                     <div className="flex items-center gap-2">
+                        <Button variant="secondary" size="sm" icon={<Pencil size={14} />} onClick={() => openEditContract(selectedContract)}>
+                            Editar
+                        </Button>
                         {selectedContract.statut === '0' && (
                             <Button size="sm" icon={processingId ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} onClick={handleValidate} disabled={!!processingId}>
                                 Validar
@@ -356,16 +414,16 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
 
             <Modal
                 isOpen={isCreateModalOpen}
-                onClose={() => setIsCreateModalOpen(false)}
+                onClose={() => { setIsCreateModalOpen(false); setEditContractId(undefined); }}
                 title={
                     <span className="flex items-center gap-2">
-                        <FileSignature size={18} className="text-indigo-600" /> Novo Contrato
+                        <FileSignature size={18} className="text-indigo-600" /> {isEditContract ? 'Editar Contrato' : 'Novo Contrato'}
                     </span>
                 }
                 footer={
                     <>
-                        <Button variant="secondary" onClick={() => setIsCreateModalOpen(false)}>Cancelar</Button>
-                        <Button onClick={(e: any) => handleCreateContract(e)} loading={isSubmitting} icon={<CheckCircle2 size={16} />}>Criar</Button>
+                        <Button variant="secondary" onClick={() => { setIsCreateModalOpen(false); setEditContractId(undefined); }}>Cancelar</Button>
+                        <Button onClick={(e: any) => handleSubmitContract(e)} loading={isSubmitting} icon={<CheckCircle2 size={16} />}>{isEditContract ? 'Salvar' : 'Criar'}</Button>
                     </>
                 }
             >
