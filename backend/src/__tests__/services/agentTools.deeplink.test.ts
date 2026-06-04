@@ -188,6 +188,26 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.id).toBe('8');
     });
 
+    it('prepare_create_candidate gera /hr/candidates/new e exige firstname/lastname/email', async () => {
+        await expect(executeTool('prepare_create_candidate', { firstname: 'João', lastname: 'Silva' })).rejects.toThrow();
+        const out = await executeTool('prepare_create_candidate', { firstname: 'João', lastname: 'Silva', email: 'joao@x.com', fk_job_position: '5' });
+        const m = out.match(/\/hr\/candidates\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_candidate');
+        expect(payload!.data.firstname).toBe('João');
+        expect(payload!.data.email).toBe('joao@x.com');
+        expect(payload!.data.fk_job_position).toBe('5');
+    });
+
+    it('prepare_edit_candidate gera /hr/candidates/:id/edit com kind edit_candidate', async () => {
+        const out = await executeTool('prepare_edit_candidate', { id: '42', note_public: 'Boa entrevista' });
+        const m = out.match(/\/hr\/candidates\/42\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_candidate');
+        expect(payload!.data.id).toBe('42');
+        expect(payload!.data.note_public).toBe('Boa entrevista');
+    });
+
     it('prepare_edit_job gera /hr/jobs/:id/edit com kind edit_job', async () => {
         const out = await executeTool('prepare_edit_job', { id: '5', label: 'Dev Sênior' });
         const m = out.match(/\/hr\/jobs\/5\/edit\?prefill=([A-Za-z0-9._-]+)/);

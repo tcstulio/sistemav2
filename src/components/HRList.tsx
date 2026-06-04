@@ -16,6 +16,7 @@ import { GroupDetail } from './HR/GroupDetail';
 import { UserModal } from './HR/modals/UserModal';
 import { JobModal } from './HR/modals/JobModal';
 import { LeaveModal } from './HR/modals/LeaveModal';
+import { CandidateModal } from './HR/modals/CandidateModal';
 import { ExpenseScannerModal } from './HR/modals/ExpenseScannerModal';
 import { ExpenseDetailModal } from './HR/modals/ExpenseDetailModal';
 import { GroupModal } from './HR/modals/GroupModal';
@@ -84,6 +85,7 @@ const HRList: React.FC<HRListProps> = ({
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
     const [isJobModalOpen, setIsJobModalOpen] = useState(false);
     const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
+    const [isCandidateModalOpen, setIsCandidateModalOpen] = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [isGroupModalOpen, setIsGroupModalOpen] = useState(false); // NEW Group Modal State
 
@@ -97,8 +99,10 @@ const HRList: React.FC<HRListProps> = ({
     const appliedPrefillRef = useRef<PrefillResult | null>(null);
     const [jobPrefill, setJobPrefill] = useState<Record<string, string> | undefined>(undefined);
     const [leavePrefill, setLeavePrefill] = useState<Record<string, string> | undefined>(undefined);
+    const [candidatePrefill, setCandidatePrefill] = useState<Record<string, string> | undefined>(undefined);
     const [jobEditId, setJobEditId] = useState<string | undefined>(undefined);
     const [leaveEditId, setLeaveEditId] = useState<string | undefined>(undefined);
+    const [candidateEditId, setCandidateEditId] = useState<string | undefined>(undefined);
     useEffect(() => {
         if (!prefill || appliedPrefillRef.current === prefill) return;
         if (prefill.kind === 'create_job') {
@@ -144,8 +148,31 @@ const HRList: React.FC<HRListProps> = ({
             setActiveTab('leaves');
             setIsLeaveModalOpen(true);
             toast.info('Revise as mudanças e salve a licença.');
+        } else if (prefill.kind === 'create_candidate') {
+            appliedPrefillRef.current = prefill;
+            setCandidatePrefill(prefill.data);
+            setCandidateEditId(undefined);
+            setActiveTab('recruitment');
+            setIsCandidateModalOpen(true);
+            toast.info('Revise os dados e confirme a criação do candidato.');
+        } else if (prefill.kind === 'edit_candidate') {
+            if (candidates.length === 0) return; // aguarda os dados p/ carregar o registro atual
+            appliedPrefillRef.current = prefill;
+            const current = candidates.find(c => String(c.id) === String(prefill.data.id));
+            setCandidatePrefill({
+                firstname: prefill.data.firstname ?? current?.firstname ?? '',
+                lastname: prefill.data.lastname ?? current?.lastname ?? '',
+                email: prefill.data.email ?? current?.email ?? '',
+                phone: prefill.data.phone ?? current?.phone ?? '',
+                fk_job_position: prefill.data.fk_job_position ?? current?.fk_job_position ?? '',
+                note_public: prefill.data.note_public ?? current?.note_public ?? current?.cv_text ?? '',
+            });
+            setCandidateEditId(String(prefill.data.id));
+            setActiveTab('recruitment');
+            setIsCandidateModalOpen(true);
+            toast.info('Revise as mudanças e salve o candidato.');
         }
-    }, [prefill, jobPositions, leaveRequests]);
+    }, [prefill, jobPositions, leaveRequests, candidates]);
 
     // Derived Data for UserDetail
     const userTasks = useMemo(() => selectedUser ? tasks.filter(t => (t.fk_user_assign && String(t.fk_user_assign) === String(selectedUser.id)) || (t.fk_user_creat && String(t.fk_user_creat) === String(selectedUser.id))) : [], [selectedUser, tasks]);
@@ -231,6 +258,25 @@ const HRList: React.FC<HRListProps> = ({
         setIsUserModalOpen(true);
     }
 
+    const openCreateCandidate = () => {
+        setCandidatePrefill(undefined);
+        setCandidateEditId(undefined);
+        setIsCandidateModalOpen(true);
+    };
+
+    const openEditCandidate = (c: Candidate) => {
+        setCandidatePrefill({
+            firstname: c.firstname || '',
+            lastname: c.lastname || '',
+            email: c.email || '',
+            phone: c.phone || '',
+            fk_job_position: c.fk_job_position || '',
+            note_public: c.note_public || c.cv_text || '',
+        });
+        setCandidateEditId(String(c.id));
+        setIsCandidateModalOpen(true);
+    };
+
     const openEditUserModal = (u: DolibarrUser) => {
         setUserToEdit(u);
         setPrefillUserData(null); // Reset prefill
@@ -272,6 +318,7 @@ const HRList: React.FC<HRListProps> = ({
             />
             <JobModal isOpen={isJobModalOpen} onClose={() => { setIsJobModalOpen(false); setJobPrefill(undefined); setJobEditId(undefined); }} config={config} onRefresh={onRefresh} initialForm={jobPrefill} editId={jobEditId} />
             <LeaveModal isOpen={isLeaveModalOpen} onClose={() => { setIsLeaveModalOpen(false); setLeavePrefill(undefined); setLeaveEditId(undefined); }} config={config} users={users} onRefresh={onRefresh} initialForm={leavePrefill} editId={leaveEditId} />
+            <CandidateModal isOpen={isCandidateModalOpen} onClose={() => { setIsCandidateModalOpen(false); setCandidatePrefill(undefined); setCandidateEditId(undefined); }} config={config} jobPositions={jobPositions} onRefresh={onRefresh} initialForm={candidatePrefill} editId={candidateEditId} />
             <ExpenseScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} config={config} currentUser={currentUser} users={users} onRefresh={onRefresh} />
             <ExpenseScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} config={config} currentUser={currentUser} users={users} onRefresh={onRefresh} />
 
@@ -357,6 +404,7 @@ const HRList: React.FC<HRListProps> = ({
                         {activeTab === 'recruitment' && (
                             <>
                                 <button onClick={() => setViewingCandidates('ALL')} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold shadow-sm transition-all border border-slate-200 dark:border-slate-700"><Users size={14} /> Todos Candidatos</button>
+                                <button onClick={openCreateCandidate} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all"><Plus size={14} /> Novo Candidato</button>
                                 <button onClick={() => setIsJobModalOpen(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white text-xs font-bold shadow-sm transition-all`}><Plus size={14} /> Nova Posição</button>
                             </>
                         )}
@@ -502,6 +550,7 @@ const HRList: React.FC<HRListProps> = ({
                             viewingCandidatesId={viewingCandidates}
                             jobPositions={jobPositions}
                             onHireCandidate={handleHireCandidate}
+                            onEditCandidate={openEditCandidate}
                             onClose={() => setViewingCandidates(null)}
                         />
                     ) : (
