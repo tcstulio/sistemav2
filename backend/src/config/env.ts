@@ -30,7 +30,7 @@ export const config = {
     minimaxGroupId: process.env.MINIMAX_GROUP_ID || '',
     // Geração de mídia (tools do agente). Modelos e voz default — todos configuráveis.
     minimaxTtsModel: process.env.MINIMAX_TTS_MODEL || 'speech-2.6-hd',
-    minimaxVoiceId: process.env.MINIMAX_VOICE_ID || 'male-qn-qingse',
+    minimaxVoiceId: process.env.MINIMAX_VOICE_ID || 'Portuguese_ConfidentWoman',
     minimaxImageModel: process.env.MINIMAX_IMAGE_MODEL || 'image-01',
     minimaxVideoModel: process.env.MINIMAX_VIDEO_MODEL || 'MiniMax-Hailuo-2.3',
     serperApiKey: process.env.SERPER_API_KEY || '',

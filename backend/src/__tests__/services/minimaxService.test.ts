@@ -8,7 +8,7 @@ vi.mock('../../config/env', () => ({
         minimaxBaseUrl: 'https://api.minimax.io/v1/',
         minimaxGroupId: '',
         minimaxTtsModel: 'speech-2.6-hd',
-        minimaxVoiceId: 'male-qn-qingse',
+        minimaxVoiceId: 'Portuguese_ConfidentWoman',
         minimaxImageModel: 'image-01',
         minimaxVideoModel: 'MiniMax-Hailuo-2.3',
     },
@@ -29,7 +29,7 @@ describe('minimaxService.generateSpeech', () => {
         expect(calledUrl).toBe('https://api.minimax.io/v1/t2a_v2');
         expect(body.output_format).toBe('url');
         expect(body.model).toBe('speech-2.6-hd');
-        expect(body.voice_setting.voice_id).toBe('male-qn-qingse');
+        expect(body.voice_setting.voice_id).toBe('Portuguese_ConfidentWoman');
     });
 
     it('respeita voice_id customizado', async () => {
