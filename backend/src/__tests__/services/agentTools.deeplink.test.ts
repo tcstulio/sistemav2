@@ -447,6 +447,25 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.name).toBe('Financeiro');
     });
 
+    it('prepare_create_contract gera /contracts/new e exige socid', async () => {
+        await expect(executeTool('prepare_create_contract', { date_contrat: '2025-01-01' })).rejects.toThrow();
+        const out = await executeTool('prepare_create_contract', { socid: '9', date_contrat: '2025-01-01' });
+        const m = out.match(/\/contracts\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_contract');
+        expect(payload!.data.socid).toBe('9');
+        expect(payload!.data.date_contrat).toBe('2025-01-01');
+    });
+
+    it('prepare_edit_contract gera /contracts/:id/edit com kind edit_contract', async () => {
+        const out = await executeTool('prepare_edit_contract', { id: '6', note_public: 'Renovado' });
+        const m = out.match(/\/contracts\/6\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_contract');
+        expect(payload!.data.id).toBe('6');
+        expect(payload!.data.note_public).toBe('Renovado');
+    });
+
     it('entidade sem suporte a edição retorna aviso (intervenção não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_intervention', { id: '1', description: 'x' });
         expect(out).toContain('não suporta edição');

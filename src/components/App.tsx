@@ -240,6 +240,8 @@ const App: React.FC = () => {
                         <Route path="/interventions/new" element={<ViewWrapper Component={InterventionList} viewId="interventions" />} />
 
                         <Route path="/contracts" element={<ViewWrapper Component={ContractList} viewId="contracts" />} />
+                        <Route path="/contracts/new" element={<ViewWrapper Component={ContractList} viewId="contracts" />} />
+                        <Route path="/contracts/:id/edit" element={<ViewWrapper Component={ContractList} viewId="contracts" />} />
 
                         <Route path="/hr" element={<ViewWrapper Component={HRList} viewId="hr" />} />
                         <Route path="/hr/jobs/new" element={<ViewWrapper Component={HRList} viewId="hr" />} />
