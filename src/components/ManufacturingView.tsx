@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { ManufacturingOrder, BOM, AppView } from '../types';
 import { Factory, Search, Plus, List, Layers, Loader2 } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
@@ -45,6 +47,28 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
 
     // Create BOM State
     const [isBomModalOpen, setIsBomModalOpen] = useState(false);
+
+    // Deeplink HITL do agente (#57/#78): create_mo / create_bom abrem o modal pré-preenchido.
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    const [moPrefill, setMoPrefill] = useState<Record<string, string> | undefined>(undefined);
+    const [bomPrefill, setBomPrefill] = useState<Record<string, string> | undefined>(undefined);
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_mo') {
+            appliedPrefillRef.current = prefill;
+            setMoPrefill(prefill.data);
+            setActiveTab('mo');
+            setIsMoModalOpen(true);
+            toast.info('Revise os dados e confirme a criação da ordem de produção.');
+        } else if (prefill.kind === 'create_bom') {
+            appliedPrefillRef.current = prefill;
+            setBomPrefill(prefill.data);
+            setActiveTab('bom');
+            setIsBomModalOpen(true);
+            toast.info('Revise os dados e confirme a criação da BOM.');
+        }
+    }, [prefill]);
 
     // Execution State (Consumption/Production)
     const [isConsumeModalOpen, setIsConsumeModalOpen] = useState(false);
@@ -93,18 +117,20 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
             {/* Modals */}
             <CreateMOModal
                 isOpen={isMoModalOpen}
-                onClose={() => setIsMoModalOpen(false)}
+                onClose={() => { setIsMoModalOpen(false); setMoPrefill(undefined); }}
                 config={config}
                 products={products}
                 projects={projects}
                 onSuccess={handleRefresh}
+                initialForm={moPrefill}
             />
             <CreateBOMModal
                 isOpen={isBomModalOpen}
-                onClose={() => setIsBomModalOpen(false)}
+                onClose={() => { setIsBomModalOpen(false); setBomPrefill(undefined); }}
                 config={config}
                 products={products}
                 onSuccess={handleRefresh}
+                initialForm={bomPrefill}
             />
             <ConsumeModal
                 isOpen={isConsumeModalOpen}
