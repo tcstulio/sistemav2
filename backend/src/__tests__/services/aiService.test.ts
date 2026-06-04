@@ -84,7 +84,7 @@ vi.mock('../../services/scraperService', () => ({
     },
 }));
 
-import { aiService } from '../../services/aiService';
+import { aiService, LocalProvider } from '../../services/aiService';
 import { GoogleGenAI } from '@google/genai';
 import { dolibarrService } from '../../services/dolibarrService';
 import { ScraperService } from '../../services/scraperService';
@@ -557,6 +557,28 @@ describe('AiService', () => {
         it('analyzeMonthlyReport falls back for local provider', async () => {
             const result = await aiService.analyzeMonthlyReport({});
             expect(result).toContain('dispon');
+        });
+
+        it('generateReply: loop sem progresso vira resposta final (não "Max iterations reached")', async () => {
+            (dolibarrService.listUsers as any).mockResolvedValue([]); // a tool não quebra
+
+            let call = 0;
+            (axios.post as any).mockImplementation(async () => {
+                call++;
+                if (call <= 2) {
+                    // modelo insiste na MESMA tool call (loop sem progresso)
+                    return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"search":"marcus"}}' } }] } };
+                }
+                // chamada de resposta final (sem ferramentas)
+                return { data: { choices: [{ message: { content: 'Não encontrei usuários chamados marcus.' } }] } };
+            });
+
+            // testa o LocalProvider direto (a wrapper aiService.generateReply usa require dinâmico
+            // de configService, que não resolve sob o vitest).
+            const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+            const result = await provider.generateReply([{ role: 'user', parts: 'tarefas do marcus' } as any], 'ctx');
+            expect(result).toBe('Não encontrei usuários chamados marcus.');
+            expect(result).not.toContain('Max iterations');
         });
     });
 });

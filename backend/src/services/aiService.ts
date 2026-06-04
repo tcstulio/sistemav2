@@ -698,7 +698,7 @@ class GoogleProvider implements AIProvider {
 
 // --- Local LLM Provider (OpenAI Compatible) ---
 
-class LocalProvider implements AIProvider {
+export class LocalProvider implements AIProvider {
     private baseUrl: string;
     private modelName: string;
     private apiKey?: string;
@@ -773,6 +773,7 @@ class LocalProvider implements AIProvider {
         let currentContext = context;
         let iterations = 0;
         const MAX_ITERATIONS = 5;
+        const seenToolCalls = new Set<string>(); // detecta repetição da MESMA chamada -> evita loop
 
         while (iterations < MAX_ITERATIONS) {
             let messages = [
@@ -809,6 +810,12 @@ class LocalProvider implements AIProvider {
                         const toolCall = JSON.parse(jsonBlock);
                         log.info(`Local LLM Tool Call: ${toolCall.tool}`, toolCall.args);
 
+                        // Se o modelo repetir a MESMA chamada (loop sem progresso), para de iterar
+                        // e parte para a resposta final com o que já foi coletado.
+                        const callSig = `${toolCall.tool}:${JSON.stringify(toolCall.args || {})}`;
+                        if (seenToolCalls.has(callSig)) break;
+                        seenToolCalls.add(callSig);
+
                         // Unificado: todas as ferramentas vêm de agentTools.executeTool (mesmo conjunto do Gemini)
                         const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
@@ -840,7 +847,33 @@ class LocalProvider implements AIProvider {
                 return `Erro LLM Local: ${detail}`;
             }
         }
-        return "Max iterations reached.";
+        // Esgotou as iterações (ou detectou repetição): em vez do dead-end "Max iterations reached",
+        // faz UMA resposta final SEM ferramentas, com base nos dados já coletados (em currentContext).
+        try {
+            const finalMessages = [
+                {
+                    role: 'system',
+                    content: `Você é um assistente ERP. Responda em Português ao usuário usando SOMENTE os dados coletados abaixo. NÃO chame ferramentas e NÃO retorne JSON. Se os dados não respondem ao pedido, diga isso de forma clara e objetiva e sugira o que falta (ex.: especificar um projeto, cliente ou período).\n\nDADOS COLETADOS:\n${currentContext}`,
+                },
+                ...currentHistory.map(msg => ({
+                    role: msg.role === 'model' ? 'assistant' : msg.role,
+                    content: msg.parts,
+                })),
+            ];
+            while (finalMessages.length > 1 && finalMessages[1].role === 'assistant') {
+                finalMessages.splice(1, 1);
+            }
+            const finalResp = await axios.post(`${this.baseUrl}/chat/completions`, {
+                model: options?.model || this.modelName,
+                messages: finalMessages,
+                temperature: 0.3,
+            }, { headers: this.getHeaders(), timeout: 120000 });
+            const finalText = finalResp.data?.choices?.[0]?.message?.content;
+            if (finalText) return finalText;
+        } catch (e: any) {
+            log.error('Local LLM final-answer fallback error', e?.message || e);
+        }
+        return 'Não consegui completar a solicitação com as ferramentas disponíveis. Pode reformular ou dar mais detalhes (ex.: o projeto, cliente ou período)?';
     }
 
     async analyzeSystem(query: string, fileContext: string): Promise<string> {
