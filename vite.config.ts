@@ -16,6 +16,11 @@ export default defineConfig(({ mode }) => {
         ignored: ['**/.wwebjs_auth/**', '**/.wwebjs_cache/**', '**/backend/**']
       },
       proxy: {
+        '/api/ui-config': {
+          target: 'http://localhost:3004',
+          changeOrigin: true,
+          secure: false,
+        },
         '/api/dolibarr': {
           target: 'http://localhost:3004',
           changeOrigin: true,
