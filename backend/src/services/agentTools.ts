@@ -71,6 +71,8 @@ export const TOOLS_PROMPT = `
         51. prepare_edit_leave(id, date_debut?, date_fin?, type?, description?) - Prepara EDIÇÃO de uma licença/férias. Ache o id antes com list_leave_requests. Datas em YYYY-MM-DD. Não troca o funcionário (fk_user).
         52. prepare_create_contact(firstname, lastname, socid, email?, phone_mobile?, poste?) - Rascunho de novo contato. socid = id do cliente (ache com search_customer).
         53. prepare_edit_contact(id, firstname?, lastname?, email?, phone_mobile?, poste?) - Prepara EDIÇÃO de um contato. Ache o id antes com list_contacts.
+        54. prepare_create_candidate(firstname, lastname, email, phone?, fk_job_position?, note_public?) - Rascunho de novo candidato (RH/Recrutamento). fk_job_position = id da vaga (ache com list_job_positions); omita para candidato espontâneo.
+        55. prepare_edit_candidate(id, firstname?, lastname?, email?, phone?, fk_job_position?, note_public?) - Prepara EDIÇÃO de um candidato. Ache o id antes com list_candidates.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -184,6 +186,14 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         required: ['firstname', 'lastname', 'socid'],
         newRoute: '/contacts/new',
         editRoute: '/contacts/:id/edit',
+    },
+    candidate: {
+        label: 'candidato',
+        createFields: ['firstname', 'lastname', 'email', 'phone', 'fk_job_position', 'note_public'],
+        editFields: ['firstname', 'lastname', 'email', 'phone', 'fk_job_position', 'note_public'],
+        required: ['firstname', 'lastname', 'email'],
+        newRoute: '/hr/candidates/new',
+        editRoute: '/hr/candidates/:id/edit',
     },
 };
 
