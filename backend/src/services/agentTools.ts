@@ -55,6 +55,8 @@ export const TOOLS_PROMPT = `
         35. prepare_edit_customer(id, name?, email?, phone?, address?, town?, zip?, client?) - Prepara EDIÇÃO de um cliente existente. Ache o id antes com search_customer e informe APENAS os campos a mudar.
         36. prepare_create_project(title, ref?, socid?) - Rascunho de novo projeto. socid = id do cliente (ache com search_customer). ref = referência (ex.: PROJ-2025-001).
         37. prepare_edit_project(id, title) - Prepara EDIÇÃO de um projeto (ex.: renomear). Ache o id antes com list_projects.
+        38. prepare_create_supplier(name, email?, phone?, address?, town?, zip?) - Rascunho de novo fornecedor.
+        39. prepare_edit_supplier(id, name?, email?, phone?, address?, town?, zip?) - Prepara EDIÇÃO de um fornecedor. Ache o id antes com list_suppliers.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -101,6 +103,14 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         required: ['title'],
         newRoute: '/projects/new',
         editRoute: '/projects/:id/edit',
+    },
+    supplier: {
+        label: 'fornecedor',
+        createFields: ['name', 'email', 'phone', 'address', 'town', 'zip'],
+        editFields: ['name', 'email', 'phone', 'address', 'town', 'zip'],
+        required: ['name'],
+        newRoute: '/suppliers/new',
+        editRoute: '/suppliers/:id/edit',
     },
 };
 

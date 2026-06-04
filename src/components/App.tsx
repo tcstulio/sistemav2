@@ -158,7 +158,9 @@ const App: React.FC = () => {
                         <Route path="/customers/:id/edit" element={<ViewWrapper Component={CustomerList} viewId="customers" />} />
 
                         <Route path="/suppliers" element={<ViewWrapper Component={SupplierList} viewId="suppliers" />} />
+                        <Route path="/suppliers/new" element={<ViewWrapper Component={SupplierList} viewId="suppliers" />} />
                         <Route path="/suppliers/:id" element={<ViewWrapper Component={SupplierList} viewId="suppliers" />} />
+                        <Route path="/suppliers/:id/edit" element={<ViewWrapper Component={SupplierList} viewId="suppliers" />} />
 
                         <Route path="/venues" element={<ViewWrapper Component={VenueList} viewId="partnerships" />} />
                         <Route path="/venues/:id" element={<ViewWrapper Component={VenueList} viewId="partnerships" />} />
