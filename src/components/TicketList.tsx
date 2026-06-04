@@ -3,7 +3,8 @@ import { usePrefill } from '../hooks/usePrefill';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { toast } from 'sonner';
 import { Ticket, ThirdParty, DolibarrUser, DolibarrConfig, AppView, AgendaEvent, Project } from '../types';
-import { Ticket as TicketIcon, Search, AlertCircle, Clock, Calendar, CheckCircle2, User, ExternalLink, MessageSquare, Send, UserCircle, Sparkles, Loader2, List, Kanban, Plus, ArrowDown, ArrowUp, DollarSign, Users, Info, Phone, Bot, FileText, FolderKanban, ClipboardList, Wrench, Pencil } from 'lucide-react';
+import { Ticket as TicketIcon, AlertCircle, Clock, Calendar, CheckCircle2, User, ExternalLink, MessageSquare, Send, UserCircle, Sparkles, Loader2, List, Kanban, Plus, DollarSign, Users, Info, Phone, Bot, FileText, FolderKanban, ClipboardList, Wrench, Pencil } from 'lucide-react';
+import { useListControls } from '../hooks/useListControls';
 import { AiService } from '../services/aiService';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -15,7 +16,7 @@ import { logger } from '../utils/logger';
 const log = logger.child('TicketList');
 
 // Design System
-import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState, MasterDetailLayout, StatusBadge } from './ui';
+import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState, MasterDetailLayout, StatusBadge, ListToolbar, ConfirmDeleteButton } from './ui';
 import type { StatusConfig } from './ui/StatusBadge';
 
 // Status Config
@@ -35,7 +36,7 @@ interface TicketListProps {
 
 const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialItemId }) => {
     const { config } = useDolibarr();
-    const { data: ticketsData } = useTickets(config);
+    const { data: ticketsData, refetch: refetchTickets } = useTickets(config);
     const tickets = ticketsData || [];
     const { data: customersData } = useCustomers(config);
     const customers = customersData || [];
@@ -49,10 +50,8 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
 
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState<'all' | 'open' | 'closed' | 'assigned'>('all');
     const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list');
-    const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
     const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
     const [replyText, setReplyText] = useState('');
     const [localHistory, setLocalHistory] = useState<any[]>([]);
@@ -167,30 +166,33 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
         return authorId;
     };
 
-    const filteredTickets = useMemo(() => {
-        let result = tickets.filter(t => {
-            const matchesSearch = t.ref.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                t.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (t.origin_email && t.origin_email.toLowerCase().includes(searchTerm.toLowerCase()));
+    // Busca + ordenação padronizadas (#121). O filtro por status fica nas Tabs (lógica
+    // específica de "atribuídos a mim" e do modo Kanban) e é aplicado sobre controls.result.
+    const controls = useListControls(tickets, {
+        searchText: (t) => `${t.ref} ${t.subject} ${t.origin_email || ''}`,
+        sorts: [
+            { key: 'date_c', label: 'Data', get: (t) => t.date_c || 0 },
+            { key: 'ref', label: 'Referência', get: (t) => t.ref },
+            { key: 'subject', label: 'Assunto', get: (t) => t.subject },
+        ],
+        initialSortKey: 'date_c',
+        initialSortDir: 'desc',
+    });
 
-            if (viewMode === 'kanban') return matchesSearch;
+    const filteredTickets = useMemo(() => {
+        return controls.result.filter(t => {
+            if (viewMode === 'kanban') return true;
 
             const isClosed = t.statut === '8' || t.statut === 'CLOSED' || t.statut === 'RESOLVED';
 
-            if (filterStatus === 'open') return matchesSearch && !isClosed;
-            if (filterStatus === 'closed') return matchesSearch && isClosed;
+            if (filterStatus === 'open') return !isClosed;
+            if (filterStatus === 'closed') return isClosed;
             if (filterStatus === 'assigned') {
-                return matchesSearch && !isClosed && (String(t.fk_user_assign) === String(config?.currentUser?.id));
+                return !isClosed && (String(t.fk_user_assign) === String(config?.currentUser?.id));
             }
-            return matchesSearch;
+            return true;
         });
-
-        return result.sort((a, b) => {
-            const da = a.date_c || 0;
-            const db = b.date_c || 0;
-            return sortOrder === 'desc' ? db - da : da - db;
-        });
-    }, [tickets, searchTerm, filterStatus, viewMode, sortOrder, config]);
+    }, [controls.result, filterStatus, viewMode, config]);
 
     const ticketMessages = useMemo(() => {
         if (!selectedTicket) return [];
@@ -366,7 +368,14 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
                                     )}
                                 </div>
                             </div>
-                            <StatusBadge status={t.statut} config={ticketStatuses} size="sm" />
+                            <div className="flex items-center gap-2">
+                                <StatusBadge status={t.statut} config={ticketStatuses} size="sm" />
+                                <ConfirmDeleteButton
+                                    onDelete={() => DolibarrService.deleteTicket(config, t.id)}
+                                    onDeleted={() => { if (selectedTicket?.id === t.id) setSelectedTicket(null); refetchTickets(); onRefresh?.(); }}
+                                    itemLabel={t.ref}
+                                />
+                            </div>
                         </div>
                         <h4 className="font-bold text-sm mb-1 line-clamp-1 dark:text-white">{t.subject}</h4>
                         <div className="text-xs text-slate-500 flex justify-between items-center mt-2">
@@ -665,20 +674,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
                         title="Chamados de Suporte"
                         actions={
                             <div className="flex items-center gap-2">
-                                <Input
-                                    icon={<Search size={18} />}
-                                    placeholder="Buscar..."
-                                    value={searchTerm}
-                                    onChange={e => setSearchTerm(e.target.value)}
-                                    className="w-48"
-                                />
-                                <button
-                                    onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
-                                    className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1 text-sm font-medium"
-                                    title={sortOrder === 'desc' ? "Mais recentes" : "Mais antigos"}
-                                >
-                                    {sortOrder === 'desc' ? <ArrowDown size={18} /> : <ArrowUp size={18} />}
-                                </button>
+                                <ListToolbar controls={controls} searchPlaceholder="Buscar chamado..." />
                                 <Button onClick={() => setIsNewTicketModalOpen(true)} icon={<Plus size={18} />}>Novo</Button>
                                 <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
                                     <button onClick={() => setViewMode('list')} className={`p-2 rounded ${viewMode === 'list' ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-400' : 'text-slate-500'}`}><List size={18} /></button>
