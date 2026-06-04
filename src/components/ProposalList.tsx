@@ -130,8 +130,28 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
             });
             setIsFormOpen(true);
             toast.info('Revise os itens e confirme a criação da proposta.');
+        } else if (prefill.kind === 'edit_proposal') {
+            const prop = proposals.find(p => String(p.id) === String(prefill.data.id));
+            if (!prop) return; // aguarda os dados
+            appliedPrefillRef.current = prefill;
+            handleOpenEdit(prop); // carrega dados + linhas + abre o formulário
+            const extra = Array.isArray(prefill.data.lines) ? prefill.data.lines : [];
+            setFormData(prev => ({
+                ...prev,
+                date: prefill.data.date || prev.date,
+                note_public: prefill.data.note_public ?? prev.note_public,
+                project_id: prefill.data.project_id ?? prev.project_id,
+                lines: [...prev.lines, ...extra.map((l: any) => {
+                    const qty = Number(l.qty) || 1;
+                    const price = Number(l.subprice) || 0;
+                    const discount = Number(l.remise_percent) || 0;
+                    return { productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty, price, discount, total: calculateLineTotal(qty, price, discount) };
+                })],
+            }));
+            toast.info('Revise as mudanças e salve a proposta.');
         }
-    }, [prefill]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [prefill, proposals, proposalLines]);
 
     const handleOpenEdit = (prop: Proposal) => {
         const existingLines = proposalLines.filter(l => String(l.parent_id) === String(prop.id));
