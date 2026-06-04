@@ -251,6 +251,15 @@ export const createCandidate = async (config: DolibarrConfig, data: Record<strin
     });
 };
 
+export const updateCandidate = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/recruitmentcandidates/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
 export const createJobPosition = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/recruitmentjobpositions`;
     return request(url, {
