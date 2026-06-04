@@ -12,6 +12,7 @@ interface GroupModalProps {
     config: DolibarrConfig;
     groupToEdit?: UserGroup | null;
     onRefresh?: () => void;
+    initialForm?: Partial<{ name: string; note: string }>; // prefill do agente (#57/#78)
 }
 
 export const GroupModal: React.FC<GroupModalProps> = ({
@@ -19,7 +20,8 @@ export const GroupModal: React.FC<GroupModalProps> = ({
     onClose,
     config,
     groupToEdit,
-    onRefresh
+    onRefresh,
+    initialForm
 }) => {
     const [groupForm, setGroupForm] = useState({ name: '', note: '' });
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -28,13 +30,14 @@ export const GroupModal: React.FC<GroupModalProps> = ({
         if (isOpen) {
             if (groupToEdit) {
                 setGroupForm({
-                    name: groupToEdit.name || '',
-                    note: groupToEdit.note || ''
+                    name: initialForm?.name ?? groupToEdit.name ?? '',
+                    note: initialForm?.note ?? groupToEdit.note ?? ''
                 });
             } else {
-                setGroupForm({ name: '', note: '' });
+                setGroupForm({ name: initialForm?.name || '', note: initialForm?.note || '' });
             }
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen, groupToEdit]);
 
     const handleSubmit = async (e: React.FormEvent) => {
