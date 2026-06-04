@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ThirdParty, DolibarrConfig, SupplierInvoice, Product, SupplierOrder, AppView, Warehouse } from '../types';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Truck, Search, MapPin, Mail, Phone, Package, ShoppingCart, Receipt, X, ArrowDownCircle, CheckCircle2, Loader2, CheckSquare, Clock, Pencil, Trash2, PlusCircle } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -62,6 +63,29 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [editForm, setEditForm] = useState<Partial<ThirdParty>>({});
     const [isSaving, setIsSaving] = useState(false);
+
+    // Deeplink HITL do agente (#57): create_supplier / edit_supplier (aplica 1x por token).
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_supplier') {
+            appliedPrefillRef.current = prefill;
+            setCreateForm(prev => ({ ...prev, ...prefill.data }));
+            setIsCreateModalOpen(true);
+            toast.info('Revise os dados e confirme o cadastro do fornecedor.');
+        } else if (prefill.kind === 'edit_supplier') {
+            if (suppliers.length === 0) return; // aguarda carregar
+            appliedPrefillRef.current = prefill;
+            const { id, ...changes } = prefill.data;
+            const current = suppliers.find(s => String(s.id) === String(id));
+            if (!current) { toast.error('Fornecedor não encontrado para edição.'); return; }
+            setSelectedSupplier(current);
+            setEditForm({ ...current, ...changes });
+            setIsEditModalOpen(true);
+            toast.info('Revise as mudanças sugeridas e salve.');
+        }
+    }, [prefill, suppliers]);
 
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
