@@ -1101,6 +1101,109 @@ export class LocalProvider implements AIProvider {
         log.warn("LocalProvider: Audio transcription not supported. Consider using Google provider.");
         return "[Transcrição não disponível - LLM local não suporta áudio]";
     }
+
+    // Helper: uma completion de chat (texto). Reusado pelos métodos de análise abaixo.
+    private async complete(userPrompt: string, system = 'Você é um assistente útil.', temperature = 0.3): Promise<string> {
+        const response = await axios.post(`${this.baseUrl}/chat/completions`, {
+            model: this.modelName,
+            messages: [
+                { role: 'system', content: system },
+                { role: 'user', content: userPrompt },
+            ],
+            temperature,
+        }, { headers: this.getHeaders(), timeout: 120000 });
+        return response.data?.choices?.[0]?.message?.content || '';
+    }
+
+    // --- Métodos de análise (antes só existiam no GoogleProvider; sem eles o GLM caía no
+    //     fallback "indisponível"). São geração de texto/JSON — o GLM/local faz bem. (#123) ---
+
+    async draftCollectionEmail(customer: any, amount: number): Promise<string> {
+        const prompt = `Você é um especialista em cobranças amigáveis. Escreva um e-mail de cobrança profissional e cordial em Português do Brasil.\nCLIENTE: ${customer?.name || 'Cliente'} | Valor em aberto: R$ ${Number(amount || 0).toFixed(2)}\nRetorne APENAS um JSON: { "subject": "...", "body": "..." }`;
+        try {
+            const raw = await this.complete(prompt, 'Output only JSON.', 0.4);
+            return raw.match(/\{[\s\S]*\}/)?.[0] || JSON.stringify({ subject: 'Lembrete de Pagamento', body: raw });
+        } catch (e: any) {
+            log.error('LocalProvider draftCollectionEmail Error', e?.message || e);
+            return JSON.stringify({ subject: 'Lembrete de Pagamento', body: 'Erro ao gerar email.' });
+        }
+    }
+
+    async generateSalesForecast(invoices: any[], context?: any): Promise<string> {
+        const invoicesSummary = (invoices || []).map((i) => ({ d: i.date || i.datec, v: i.total_ttc, s: i.status }));
+        const refDate = context?.referenceDate ? new Date(context.referenceDate).toLocaleDateString('pt-BR') : 'Data Atual';
+        const prompt = `Atue como analista financeiro sênior (sazonalidade e previsão de vendas).
+DATA DE REFERÊNCIA (HOJE): ${refDate} (o mês atual está incompleto: faça o "landing" = realizado + projeção dos dias restantes).
+METODOLOGIA: 1) mês atual = realizado + tendência; 2) próximos meses por sazonalidade (anos anteriores); 3) ajuste pela média dos últimos 6 meses.
+DADOS (faturas): ${JSON.stringify(invoicesSummary)}
+Retorne APENAS JSON: { "forecast": [ { "month": "Nome Mês Ano", "predicted_revenue": 0.00, "confidence": "high|medium|low" } ], "summary": "lógica usada", "trend": "up|down|stable" } (3 meses)`;
+        try {
+            const raw = await this.complete(prompt, 'Output only JSON.', 0.3);
+            return raw.match(/\{[\s\S]*\}/)?.[0] || JSON.stringify({ forecast: [], summary: 'Sem dados suficientes.' });
+        } catch (e: any) {
+            log.error('LocalProvider generateSalesForecast Error', e?.message || e);
+            return JSON.stringify({ forecast: [], summary: 'Erro na previsão.' });
+        }
+    }
+
+    async analyzeCustomerSentiment(customer: any, invoices: any[]): Promise<string> {
+        const relevant = (invoices || []).slice(0, 20).map((i) => ({ ref: i.ref, total: i.total_ttc, status: i.status, date: i.date }));
+        const prompt = `Analise o relacionamento com este cliente.\nCLIENTE: ${customer?.name} | Status: ${customer?.status} | Desde: ${customer?.date_creation || 'N/A'}\nFATURAS: ${JSON.stringify(relevant)}\nRetorne APENAS JSON: { "score": 0-100, "label": "Positive|Neutral|Negative|At Risk", "insights": "...", "recommendations": ["..."] }`;
+        try {
+            const raw = await this.complete(prompt, 'Output only JSON.', 0.3);
+            return raw.match(/\{[\s\S]*\}/)?.[0] || JSON.stringify({ score: 50, label: 'Neutral', insights: 'Sem dados.' });
+        } catch (e: any) {
+            log.error('LocalProvider analyzeCustomerSentiment Error', e?.message || e);
+            return JSON.stringify({ score: 50, label: 'Error', insights: 'Erro na análise.' });
+        }
+    }
+
+    async auditProposal(proposal: any): Promise<string> {
+        const prompt = `Você é um auditor de propostas comerciais. Analise e aponte problemas/melhorias.\nPROPOSTA: ${JSON.stringify(proposal)}\nRetorne APENAS JSON: { "score": 0-100, "status": "Aprovada|Revisar|Rejeitada", "issues": ["..."], "suggestions": ["..."], "summary": "..." }`;
+        try {
+            const raw = await this.complete(prompt, 'Output only JSON.', 0.3);
+            return raw.match(/\{[\s\S]*\}/)?.[0] || JSON.stringify({ score: 0, issues: ['Sem dados.'] });
+        } catch (e: any) {
+            log.error('LocalProvider auditProposal Error', e?.message || e);
+            return JSON.stringify({ score: 0, issues: ['Erro na auditoria.'] });
+        }
+    }
+
+    async auditProject(project: any, tasks?: any[], projectInvoices?: any[]): Promise<string> {
+        const prompt = `Você é um gerente de projetos experiente. Analise a saúde do projeto e riscos.\nPROJETO: ${JSON.stringify(project)}\nTAREFAS (${tasks?.length || 0}): ${JSON.stringify(tasks?.slice(0, 20) || [])}\nFATURAS (${projectInvoices?.length || 0}): ${JSON.stringify(projectInvoices?.slice(0, 10) || [])}\nRetorne APENAS JSON: { "health": "Saudável|Atenção|Crítico", "score": 0-100, "risks": ["..."], "recommendations": ["..."], "summary": "..." }`;
+        try {
+            const raw = await this.complete(prompt, 'Output only JSON.', 0.3);
+            return raw.match(/\{[\s\S]*\}/)?.[0] || JSON.stringify({ health: 'unknown', issues: ['Sem dados.'] });
+        } catch (e: any) {
+            log.error('LocalProvider auditProject Error', e?.message || e);
+            return JSON.stringify({ health: 'unknown', issues: ['Erro na análise.'] });
+        }
+    }
+
+    async analyzeSystemLogs(logs: any[]): Promise<string> {
+        const summary = (logs || []).slice(0, 50).map((l) => ({ type: l.endpoint_or_task || l.type, status: l.status, duration: l.duration_ms, error: l.error_message }));
+        const prompt = `Você é especialista em otimização de sistemas. Analise estes logs de API e sugira otimizações.\nLOGS: ${JSON.stringify(summary)}\nRetorne APENAS um JSON array: [ { "type": "error|performance|pattern", "title": "...", "description": "...", "suggestion": "...", "priority": "high|medium|low" } ]`;
+        try {
+            const raw = await this.complete(prompt, 'Output only a JSON array.', 0.3);
+            return raw.match(/\[[\s\S]*\]/)?.[0] || '[]';
+        } catch (e: any) {
+            log.error('LocalProvider analyzeSystemLogs Error', e?.message || e);
+            return '[]';
+        }
+    }
+
+    async analyzeMonthlyReport(data: any): Promise<string> {
+        const prompt = `Atue como um CFO e COO experiente gerando o RELATÓRIO MENSAL EXECUTIVO para a diretoria.
+DADOS DO MÊS: ${JSON.stringify(data, null, 2)}
+Escreva um resumo executivo profissional em Markdown com as seções: ## 1. Resumo Executivo, ## 2. Destaques Financeiros, ## 3. Performance Comercial, ## 4. Eficiência Operacional & RH, ## 5. Recomendações Estratégicas (3-5 ações). Tom profissional e focado em insights, com negrito e listas.`;
+        try {
+            const text = await this.complete(prompt, 'Você é um CFO/COO experiente. Responda em Markdown.', 0.4);
+            return text || 'Não foi possível gerar o relatório.';
+        } catch (e: any) {
+            log.error('LocalProvider analyzeMonthlyReport Error', e?.message || e);
+            return 'Erro ao analisar o relatório mensal.';
+        }
+    }
 }
 
 // --- Service Factory ---
