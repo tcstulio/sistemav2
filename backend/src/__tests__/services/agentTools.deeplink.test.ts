@@ -538,8 +538,29 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.total_ttc).toBe('200');
     });
 
-    it('entidade sem suporte a edição retorna aviso (pedido só tem criação)', async () => {
-        const out = await executeTool('prepare_edit_order', { id: '1', date: '2025-01-01' });
+    it('prepare_edit_order gera /orders/:id/edit com kind edit_order (só o cabeçalho)', async () => {
+        const out = await executeTool('prepare_edit_order', { id: '11', date: '2025-10-01' });
+        const m = out.match(/\/orders\/11\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_order');
+        expect(payload!.data.id).toBe('11');
+        expect(payload!.data.date).toBe('2025-10-01');
+    });
+
+    it('prepare_edit_order não inclui socid nem linhas (cliente/itens imutáveis na edição)', async () => {
+        const out = await executeTool('prepare_edit_order', { id: '11', socid: '99', date: '2025-10-01', lines: [{ desc: 'X', qty: 1, subprice: 10 }] });
+        const m = out.match(/\/orders\/11\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        const payload = verifyDeeplink<Record<string, any>>(m![1], 'edit_order');
+        expect(payload!.data.socid).toBeUndefined();
+        expect(payload!.data.lines).toBeUndefined();
+    });
+
+    it('prepare_edit_order exige id', async () => {
+        await expect(executeTool('prepare_edit_order', { date: '2025-10-01' })).rejects.toThrow();
+    });
+
+    it('entidade inexistente não suporta edição (retorna aviso)', async () => {
+        const out = await executeTool('prepare_edit_inexistente', { id: '1', foo: 'bar' });
         expect(out).toContain('não suporta edição');
     });
 });
