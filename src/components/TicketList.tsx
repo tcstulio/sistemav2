@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { usePrefill } from '../hooks/usePrefill';
 import { toast } from 'sonner';
 import { Ticket, ThirdParty, DolibarrUser, DolibarrConfig, AppView, AgendaEvent, Project } from '../types';
-import { Ticket as TicketIcon, Search, AlertCircle, Clock, Calendar, CheckCircle2, User, ExternalLink, MessageSquare, Send, UserCircle, Sparkles, Loader2, List, Kanban, Plus, ArrowDown, ArrowUp, DollarSign, Users, Info, Phone, Bot, FileText, FolderKanban, ClipboardList, Wrench } from 'lucide-react';
+import { Ticket as TicketIcon, Search, AlertCircle, Clock, Calendar, CheckCircle2, User, ExternalLink, MessageSquare, Send, UserCircle, Sparkles, Loader2, List, Kanban, Plus, ArrowDown, ArrowUp, DollarSign, Users, Info, Phone, Bot, FileText, FolderKanban, ClipboardList, Wrench, Pencil } from 'lucide-react';
 import { AiService } from '../services/aiService';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -66,6 +66,13 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
     const [newTicketForm, setNewTicketForm] = useState({ subject: '', message: '', socid: '', severity_code: 'NORMAL', type_code: 'ISSUE' });
     const [isSubmittingTicket, setIsSubmittingTicket] = useState(false);
     const prefill = usePrefill();
+    const appliedPrefillRef = useRef<typeof prefill>(null);
+
+    // Edit Ticket State (#57/#78)
+    const [isEditTicketModalOpen, setIsEditTicketModalOpen] = useState(false);
+    const [editTicketId, setEditTicketId] = useState<string | undefined>(undefined);
+    const [editTicketForm, setEditTicketForm] = useState({ subject: '', message: '', severity_code: 'NORMAL' });
+    const [isSavingEditTicket, setIsSavingEditTicket] = useState(false);
 
     // Escalation State
     const [isEscalateModalOpen, setIsEscalateModalOpen] = useState(false);
@@ -100,22 +107,38 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
         }
     }, [initialItemId, tickets]);
 
-    // Deeplink HITL do agente (#57 Peça 2/3): a tela é aberta via /tickets/new?prefill=<token>;
-    // o hook usePrefill resolve o token (HMAC) e aqui pré-preenchemos o modal de novo ticket.
+    // Deeplink HITL do agente (#57 Peça 2/3): a tela é aberta via /tickets/new?prefill=<token>
+    // (criar) ou /tickets/:id/edit?prefill=<token> (editar). O hook usePrefill resolve o token
+    // (HMAC) e aqui pré-preenchemos o modal correspondente (aplica 1x por token).
     useEffect(() => {
-        if (prefill?.kind !== 'create_ticket') return;
-        const data = prefill.data;
-        setNewTicketForm(prev => ({
-            ...prev,
-            subject: data.subject || '',
-            message: data.message || '',
-            socid: data.socid || '',
-            type_code: data.type_code || 'ISSUE',
-            severity_code: data.severity_code || 'NORMAL',
-        }));
-        setIsNewTicketModalOpen(true);
-        toast.info('Revise os dados e confirme a criação do ticket.');
-    }, [prefill]);
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_ticket') {
+            appliedPrefillRef.current = prefill;
+            const data = prefill.data;
+            setNewTicketForm(prev => ({
+                ...prev,
+                subject: data.subject || '',
+                message: data.message || '',
+                socid: data.socid || '',
+                type_code: data.type_code || 'ISSUE',
+                severity_code: data.severity_code || 'NORMAL',
+            }));
+            setIsNewTicketModalOpen(true);
+            toast.info('Revise os dados e confirme a criação do ticket.');
+        } else if (prefill.kind === 'edit_ticket') {
+            if (tickets.length === 0) return; // aguarda os dados p/ carregar o registro atual
+            appliedPrefillRef.current = prefill;
+            const current = tickets.find(t => String(t.id) === String(prefill.data.id));
+            setEditTicketId(String(prefill.data.id));
+            setEditTicketForm({
+                subject: prefill.data.subject ?? current?.subject ?? '',
+                message: prefill.data.message ?? current?.message ?? '',
+                severity_code: prefill.data.severity_code ?? current?.severity_code ?? 'NORMAL',
+            });
+            setIsEditTicketModalOpen(true);
+            toast.info('Revise as mudanças e salve o ticket.');
+        }
+    }, [prefill, tickets]);
 
     // Robust Customer Name Resolution
     const getCustomerName = (ticket: Ticket) => {
@@ -242,6 +265,26 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
             setNewTicketForm({ subject: '', message: '', socid: '', severity_code: 'NORMAL', type_code: 'ISSUE' });
             if (onRefresh) onRefresh();
         } catch (e) { log.error("Failed to create ticket", e); } finally { setIsSubmittingTicket(false); }
+    };
+
+    const openEditTicket = (t: Ticket) => {
+        setEditTicketId(String(t.id));
+        setEditTicketForm({ subject: t.subject || '', message: t.message || '', severity_code: t.severity_code || 'NORMAL' });
+        setIsEditTicketModalOpen(true);
+    };
+
+    const handleEditTicket = async () => {
+        if (!editTicketId) return;
+        setIsSavingEditTicket(true);
+        try {
+            await DolibarrService.updateTicket(config, editTicketId, editTicketForm);
+            setIsEditTicketModalOpen(false);
+            toast.success('Chamado atualizado.');
+            if (onRefresh) onRefresh();
+        } catch (e) {
+            log.error("Failed to update ticket", e);
+            toast.error('Falha ao atualizar o chamado.');
+        } finally { setIsSavingEditTicket(false); }
     };
 
     const handleEscalate = () => {
@@ -393,15 +436,26 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
                     </span>
                 }
                 actions={
-                    <Button
-                        variant="secondary"
-                        size="sm"
-                        icon={<Wrench size={14} />}
-                        onClick={handleEscalate}
-                        className="hidden lg:inline-flex"
-                    >
-                        Escalar
-                    </Button>
+                    <div className="flex items-center gap-2">
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            icon={<Pencil size={14} />}
+                            onClick={() => openEditTicket(selectedTicket)}
+                            className="hidden lg:inline-flex"
+                        >
+                            Editar
+                        </Button>
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            icon={<Wrench size={14} />}
+                            onClick={handleEscalate}
+                            className="hidden lg:inline-flex"
+                        >
+                            Escalar
+                        </Button>
+                    </div>
                 }
             />
 
@@ -665,6 +719,33 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
                 <div className="space-y-4">
                     <Input placeholder="Assunto" value={newTicketForm.subject} onChange={e => setNewTicketForm({ ...newTicketForm, subject: e.target.value })} />
                     <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Mensagem" value={newTicketForm.message} onChange={e => setNewTicketForm({ ...newTicketForm, message: e.target.value })} />
+                </div>
+            </Modal>
+
+            {/* Edit Ticket Modal (#57/#78) */}
+            <Modal
+                isOpen={isEditTicketModalOpen}
+                onClose={() => setIsEditTicketModalOpen(false)}
+                title="Editar Chamado"
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={() => setIsEditTicketModalOpen(false)}>Cancelar</Button>
+                        <Button loading={isSavingEditTicket} onClick={handleEditTicket}>Salvar</Button>
+                    </>
+                }
+            >
+                <div className="space-y-4">
+                    <Input placeholder="Assunto" value={editTicketForm.subject} onChange={e => setEditTicketForm({ ...editTicketForm, subject: e.target.value })} />
+                    <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Mensagem" value={editTicketForm.message} onChange={e => setEditTicketForm({ ...editTicketForm, message: e.target.value })} />
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Gravidade</label>
+                        <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editTicketForm.severity_code} onChange={e => setEditTicketForm({ ...editTicketForm, severity_code: e.target.value })}>
+                            <option value="LOW">Baixa</option>
+                            <option value="NORMAL">Normal</option>
+                            <option value="HIGH">Alta</option>
+                            <option value="BLOCKING">Bloqueante</option>
+                        </select>
+                    </div>
                 </div>
             </Modal>
 
