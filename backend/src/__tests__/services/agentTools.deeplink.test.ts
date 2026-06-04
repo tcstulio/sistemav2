@@ -135,6 +135,15 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(out).toContain('não suporta edição');
     });
 
+    it('prepare_create_intervention gera /interventions/new e exige socid', async () => {
+        await expect(executeTool('prepare_create_intervention', { description: 'x' })).rejects.toThrow();
+        const out = await executeTool('prepare_create_intervention', { socid: '9', description: 'Troca de peça' });
+        const m = out.match(/\/interventions\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_intervention');
+        expect(payload!.data.socid).toBe('9');
+    });
+
     it('entidade sem suporte a edição retorna aviso (ticket não tem editRoute)', async () => {
         const out = await executeTool('prepare_edit_ticket', { id: '1', subject: 'x' });
         expect(out).toContain('não suporta edição');

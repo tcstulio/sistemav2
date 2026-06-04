@@ -1,9 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { Intervention, AppView } from '../types';
 import { ClipboardList, Search, Plus, Loader2, CheckCircle2, Calendar, FolderKanban, User } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInterventions, useCustomers, useProjects, useInterventionLines } from '../hooks/dolibarr';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
@@ -56,6 +58,24 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
         description: ''
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Deeplink HITL do agente (#57): create_intervention abre o modal pré-preenchido.
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_intervention') {
+            appliedPrefillRef.current = prefill;
+            setNewIntervention({
+                socid: prefill.data.socid || '',
+                project_id: prefill.data.project_id || '',
+                date: prefill.data.date || new Date().toISOString().split('T')[0],
+                description: prefill.data.description || '',
+            });
+            setIsCreateModalOpen(true);
+            toast.info('Revise os dados e confirme a criação da intervenção.');
+        }
+    }, [prefill]);
 
     const getCustomerName = (socid: string) => {
         const customer = customers.find(c => String(c.id) === String(socid));
