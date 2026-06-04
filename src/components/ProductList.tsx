@@ -27,8 +27,10 @@ import {
     Modal,
     Tabs,
     Tab,
-    EmptyState
+    EmptyState,
+    RichTextEditor
 } from './ui';
+import { SafeHtml } from '../utils/sanitizeHtml';
 
 // ============================================
 // Types
@@ -141,7 +143,9 @@ const ProductDetail: React.FC<{
                                 </div>
                                 <div>
                                     <h3 className="text-lg font-bold text-slate-800 dark:text-white">{product.label}</h3>
-                                    <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{product.description || "Sem descrição."}</p>
+                                    {product.description
+                                        ? <SafeHtml html={product.description} className="text-sm text-slate-500 dark:text-slate-400 mt-1" />
+                                        : <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Sem descrição.</p>}
                                 </div>
                             </div>
 
@@ -537,7 +541,7 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
-                        <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 h-20 resize-none" value={productForm.description || ''} onChange={e => setProductForm({ ...productForm, description: e.target.value })} />
+                        <RichTextEditor value={productForm.description || ''} onChange={html => setProductForm({ ...productForm, description: html })} placeholder="Descreva o produto ou serviço..." />
                     </div>
                 </div>
             </Modal>
@@ -586,7 +590,7 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
-                        <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 h-20 resize-none" value={productForm.description || ''} onChange={e => setProductForm({ ...productForm, description: e.target.value })} />
+                        <RichTextEditor value={productForm.description || ''} onChange={html => setProductForm({ ...productForm, description: html })} placeholder="Descreva o produto ou serviço..." />
                     </div>
                 </div>
             </Modal>
