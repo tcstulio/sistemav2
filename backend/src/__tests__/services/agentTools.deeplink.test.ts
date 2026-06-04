@@ -130,9 +130,18 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.date_start).toBe('2025-06-15T14:30');
     });
 
-    it('prepare_edit_event não é suportado (evento só tem criação por ora)', async () => {
-        const out = await executeTool('prepare_edit_event', { id: '1', label: 'x' });
-        expect(out).toContain('não suporta edição');
+    it('prepare_edit_event gera /agenda/:id/edit com kind edit_event', async () => {
+        const out = await executeTool('prepare_edit_event', { id: '15', label: 'Reunião Atualizada', percentage: '50' });
+        const m = out.match(/\/agenda\/15\/edit\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'edit_event');
+        expect(payload!.data.id).toBe('15');
+        expect(payload!.data.label).toBe('Reunião Atualizada');
+        expect(payload!.data.percentage).toBe('50');
+    });
+
+    it('prepare_edit_event exige id', async () => {
+        await expect(executeTool('prepare_edit_event', { label: 'x' })).rejects.toThrow();
     });
 
     it('prepare_create_intervention gera /interventions/new e exige socid', async () => {
