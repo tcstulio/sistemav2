@@ -1,5 +1,6 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { AppView, SupplierInvoice } from '../types';
 import { FileText, Search, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, X, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, ArrowUp, RefreshCcw, Landmark, Receipt, User, Upload } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
@@ -64,7 +65,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
         ref: string;
         socid: string;
         date: string;
-        items: { id?: string, desc: string, qty: number, price: number, remise_percent: 0 }[];
+        items: { id?: string, desc: string, qty: number, price: number, remise_percent: number }[];
         deletedLineIds: string[];
     } | null>(null);
 
@@ -331,6 +332,28 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
             throw e;
         }
     };
+
+    // Deeplink HITL do agente (#57/#78): create_supplier_invoice abre o modal pré-preenchido
+    // (incl. linhas livres) p/ o usuário revisar e confirmar.
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_supplier_invoice') {
+            appliedPrefillRef.current = prefill;
+            const lines = Array.isArray(prefill.data.lines) ? prefill.data.lines : [];
+            setEditingInvoiceData({
+                id: '',
+                ref: '',
+                socid: prefill.data.socid || '',
+                date: prefill.data.date || new Date().toISOString().split('T')[0],
+                items: lines.map((l: any) => ({ desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0, remise_percent: Number(l.remise_percent) || 0 })),
+                deletedLineIds: [],
+            });
+            setIsEditModalOpen(true);
+            toast.info('Revise os itens e confirme a criação da fatura de fornecedor.');
+        }
+    }, [prefill]);
 
     const handleCreateClick = () => {
         setEditingInvoiceData({

@@ -176,14 +176,17 @@ const App: React.FC = () => {
                         <Route path="/invoices/:id" element={<ViewWrapper Component={InvoiceList} viewId="invoices" />} />
 
                         <Route path="/supplier_invoices" element={<ViewWrapper Component={SupplierInvoiceList} viewId="supplier_invoices" />} />
+                        <Route path="/supplier_invoices/new" element={<ViewWrapper Component={SupplierInvoiceList} viewId="supplier_invoices" />} />
                         <Route path="/supplier_invoices/:id" element={<ViewWrapper Component={SupplierInvoiceList} viewId="supplier_invoices" />} />
 
                         <Route path="/pending_payments" element={<ViewWrapper Component={PendingPayments} viewId="invoices" />} />
 
                         <Route path="/proposals" element={<ViewWrapper Component={ProposalList} viewId="proposals" />} />
+                        <Route path="/proposals/new" element={<ViewWrapper Component={ProposalList} viewId="proposals" />} />
                         <Route path="/proposals/:id" element={<ViewWrapper Component={ProposalList} viewId="proposals" />} />
 
                         <Route path="/supplier_proposals" element={<ViewWrapper Component={SupplierProposalList} viewId="supplier_proposals" />} />
+                        <Route path="/supplier_proposals/new" element={<ViewWrapper Component={SupplierProposalList} viewId="supplier_proposals" />} />
                         <Route path="/supplier_proposals/:id" element={<ViewWrapper Component={SupplierProposalList} viewId="supplier_proposals" />} />
                         <Route path="/smart_quotation" element={<ViewWrapper Component={SmartQuotationWizard} viewId="supplier_proposals" />} />
 
