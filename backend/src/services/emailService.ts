@@ -38,6 +38,16 @@ class EmailService {
         return info;
     }
 
+    // Opções TLS p/ IMAP. Seguro por padrão em produção (rejectUnauthorized=true);
+    // em dev relaxa p/ certs locais. Override explícito via EMAIL_TLS_REJECT_UNAUTHORIZED
+    // ('true' = sempre valida; 'false' = nunca valida, p/ servidores com cert self-signed).
+    private imapTlsOptions(): { rejectUnauthorized: boolean } {
+        const override = process.env.EMAIL_TLS_REJECT_UNAUTHORIZED;
+        if (override === 'true') return { rejectUnauthorized: true };
+        if (override === 'false') return { rejectUnauthorized: false };
+        return { rejectUnauthorized: process.env.NODE_ENV === 'production' };
+    }
+
     // --- Connection Testing ---
 
     async testImapConnection(config: { imapHost: string; imapPort: number; imapUser: string; imapPassword: string; imapTls: boolean }): Promise<{ success: boolean; message: string }> {
@@ -50,7 +60,7 @@ class EmailService {
                     port: config.imapPort,
                     tls: config.imapTls,
                     authTimeout: 10000,
-                    tlsOptions: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : { rejectUnauthorized: false }
+                    tlsOptions: this.imapTlsOptions()
                 }
             });
             connection.end();
@@ -88,7 +98,7 @@ class EmailService {
                 port: account.imapPort,
                 tls: account.imapTls,
                 authTimeout: 10000,
-                tlsOptions: { rejectUnauthorized: false }
+                tlsOptions: this.imapTlsOptions()
             }
         };
         return await imaps.connect(config);
