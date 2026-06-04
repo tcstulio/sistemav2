@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+import crypto from 'crypto';
 
 const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
 
@@ -92,6 +93,45 @@ describe('itauBankingRoutes', () => {
                 .post('/api/itau/webhook/boleto')
                 .send({ nossoNumero: '123', evento: 'LIQUIDACAO' });
 
+            expect(res.status).toBe(200);
+        });
+    });
+
+    describe('Webhook signature verification (ITAU_WEBHOOK_SECRET)', () => {
+        // config é importado (não mockado); mutamos o segredo p/ exercitar a verificação.
+        const SECRET = 'itau-test-secret';
+        let restore: string;
+        beforeEach(async () => {
+            const { config } = await import('../../config/env');
+            restore = (config as any).itauWebhookSecret;
+            (config as any).itauWebhookSecret = SECRET;
+        });
+        afterEach(async () => {
+            const { config } = await import('../../config/env');
+            (config as any).itauWebhookSecret = restore;
+        });
+
+        const sign = (body: any) => crypto.createHmac('sha256', SECRET).update(JSON.stringify(body)).digest('hex');
+
+        it('rejeita (401) webhook sem assinatura quando o segredo está setado', async () => {
+            const res = await request(app).post('/api/itau/webhook/pix').send({ pix: [] });
+            expect(res.status).toBe(401);
+        });
+
+        it('rejeita (401) assinatura inválida', async () => {
+            const res = await request(app)
+                .post('/api/itau/webhook/pix')
+                .set('x-webhook-signature', 'deadbeef')
+                .send({ pix: [] });
+            expect(res.status).toBe(401);
+        });
+
+        it('aceita (200) assinatura HMAC válida', async () => {
+            const body = { pix: [] };
+            const res = await request(app)
+                .post('/api/itau/webhook/pix')
+                .set('x-webhook-signature', sign(body))
+                .send(body);
             expect(res.status).toBe(200);
         });
     });

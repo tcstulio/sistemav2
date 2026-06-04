@@ -7,6 +7,7 @@
 import { Router, Request, Response } from 'express';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import multer from 'multer';
+import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import { itauApiService } from '../services/itauApiService';
@@ -61,11 +62,42 @@ const certUpload = multer({
 // ===== PUBLIC Webhook Receiver Endpoints (no auth - bank callbacks) =====
 
 /**
+ * Verifica a assinatura HMAC-SHA256 do webhook (header x-webhook-signature).
+ * Mesmo padrão do Inter. Comparação em tempo constante.
+ */
+function verifyWebhookSignature(payload: string, signature: string | undefined, secret: string): boolean {
+    if (!signature) return false;
+    const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+    try {
+        return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Se ITAU_WEBHOOK_SECRET estiver configurado, exige assinatura válida; senão segue (compat).
+ * Retorna true se OK, ou já responde 401 e retorna false.
+ */
+function ensureWebhookAuthentic(req: Request, res: Response, label: string): boolean {
+    if (!config.itauWebhookSecret) return true; // verificação opcional (compat)
+    const signature = req.headers['x-webhook-signature'] as string | undefined;
+    const payload = JSON.stringify(req.body);
+    if (!verifyWebhookSignature(payload, signature, config.itauWebhookSecret)) {
+        log.warn(`Invalid signature for ${label} webhook`);
+        res.status(401).json({ error: 'Invalid webhook signature' });
+        return false;
+    }
+    return true;
+}
+
+/**
  * POST /api/itau/webhook/pix
  * Receive PIX webhooks from Itaú
  */
 router.post('/webhook/pix', async (req: Request, res: Response) => {
     try {
+        if (!ensureWebhookAuthentic(req, res, 'PIX')) return;
         log.info('Received PIX webhook', req.body);
 
         const payload: PixWebhookItauPayload = req.body;
@@ -89,6 +121,7 @@ router.post('/webhook/pix', async (req: Request, res: Response) => {
  */
 router.post('/webhook/boleto', async (req: Request, res: Response) => {
     try {
+        if (!ensureWebhookAuthentic(req, res, 'Boleto')) return;
         log.info('Received Boleto webhook', req.body);
 
         const payload: BoletoWebhookItauPayload = req.body;
