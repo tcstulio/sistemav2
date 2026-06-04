@@ -57,6 +57,8 @@ export const TOOLS_PROMPT = `
         37. prepare_edit_project(id, title) - Prepara EDIÇÃO de um projeto (ex.: renomear). Ache o id antes com list_projects.
         38. prepare_create_supplier(name, email?, phone?, address?, town?, zip?) - Rascunho de novo fornecedor.
         39. prepare_edit_supplier(id, name?, email?, phone?, address?, town?, zip?) - Prepara EDIÇÃO de um fornecedor. Ache o id antes com list_suppliers.
+        40. prepare_create_task(label, project_id, description?, planned_workload?, date_start?, date_end?) - Rascunho de tarefa num projeto. project_id obrigatório (ache com list_projects). planned_workload em HORAS; datas em YYYY-MM-DD.
+        41. prepare_edit_task(id, label?, description?, planned_workload?, date_start?, date_end?) - Prepara EDIÇÃO de uma tarefa. Ache o id antes com list_tasks. planned_workload em HORAS; datas em YYYY-MM-DD.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -111,6 +113,14 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         required: ['name'],
         newRoute: '/suppliers/new',
         editRoute: '/suppliers/:id/edit',
+    },
+    task: {
+        label: 'tarefa',
+        createFields: ['label', 'description', 'project_id', 'planned_workload', 'date_start', 'date_end'],
+        editFields: ['label', 'description', 'planned_workload', 'date_start', 'date_end'],
+        required: ['label', 'project_id'],
+        newRoute: '/tasks/new',
+        editRoute: '/tasks/:id/edit',
     },
 };
 

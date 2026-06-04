@@ -474,8 +474,42 @@ const ProjectList: React.FC<{
             });
             setIsEditModalOpen(true);
             toast.info('Revise as mudanças sugeridas e salve.');
+        } else if (prefill.kind === 'create_task') {
+            if (projects.length === 0) return; // aguarda os projetos carregarem
+            const project = projects.find(p => String(p.id) === String(prefill.data.project_id));
+            if (!project) { toast.error('Projeto não encontrado para a tarefa.'); return; }
+            appliedPrefillRef.current = prefill;
+            setSelectedProject(project);
+            setEditingTaskId(null);
+            setTaskForm({
+                label: prefill.data.label || '',
+                description: prefill.data.description || '',
+                planned_workload: Number(prefill.data.planned_workload) || 0,
+                date_start: prefill.data.date_start || '',
+                date_end: prefill.data.date_end || '',
+            });
+            setIsTaskModalOpen(true);
+            toast.info('Revise os dados e confirme a criação da tarefa.');
+        } else if (prefill.kind === 'edit_task') {
+            if (tasks.length === 0) return; // aguarda as tarefas carregarem
+            const { id, ...changes } = prefill.data;
+            const current = tasks.find(t => String(t.id) === String(id));
+            if (!current) { toast.error('Tarefa não encontrada para edição.'); return; }
+            appliedPrefillRef.current = prefill;
+            const parent = projects.find(p => String(p.id) === String(current.project_id));
+            if (parent) setSelectedProject(parent);
+            setEditingTaskId(String(id));
+            setTaskForm({
+                label: changes.label ?? current.label,
+                description: changes.description ?? (current.description || ''),
+                planned_workload: changes.planned_workload !== undefined ? Number(changes.planned_workload) : (current.planned_workload || 0) / 3600,
+                date_start: changes.date_start ?? (current.date_start ? formatDateForInput(current.date_start) : ''),
+                date_end: changes.date_end ?? (current.date_end ? formatDateForInput(current.date_end) : ''),
+            });
+            setIsTaskModalOpen(true);
+            toast.info('Revise as mudanças sugeridas e salve.');
         }
-    }, [prefill, projects]);
+    }, [prefill, projects, tasks]);
 
     useEffect(() => { setPage(0); }, [searchTerm, filterStatus]);
 

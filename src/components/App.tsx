@@ -191,7 +191,10 @@ const App: React.FC = () => {
                         <Route path="/projects/:id/edit" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
 
                         <Route path="/tasks" element={<ViewWrapper Component={TaskDetail} viewId="projects" />} />
+                        {/* criação/edição de tarefa via deeplink HITL abrem o TaskModal dentro do ProjectList */}
+                        <Route path="/tasks/new" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
                         <Route path="/tasks/:id" element={<ViewWrapper Component={TaskDetail} viewId="projects" />} />
+                        <Route path="/tasks/:id/edit" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
 
                         <Route path="/tickets" element={<ViewWrapper Component={TicketList} viewId="tickets" />} />
                         <Route path="/tickets/new" element={<ViewWrapper Component={TicketList} viewId="tickets" />} />
