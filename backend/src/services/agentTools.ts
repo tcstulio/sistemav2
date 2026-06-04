@@ -103,8 +103,11 @@ export const TOOLS_PROMPT = `
         FERRAMENTAS DE MÍDIA (geram um arquivo e devolvem um LINK válido por ~24h):
         81. generate_speech(text, voice_id?) - Gera ÁUDIO (TTS) do texto e devolve o link do mp3. Use quando o usuário pedir áudio/voz/narração.
         82. generate_image(prompt, aspect_ratio?) - Gera uma IMAGEM a partir da descrição e devolve o link. aspect_ratio ex.: '1:1', '16:9', '9:16'.
+        83. generate_video(prompt, duration?, resolution?) - Inicia a geração de um VÍDEO (assíncrono) e devolve um task_id. duration: 6 ou 10 (seg); resolution: '768P' ou '1080P'. O vídeo NÃO fica pronto na hora.
+        84. check_video(task_id) - Verifica o status do vídeo iniciado por generate_video. Quando pronto, devolve o link. Senão, informa que ainda está processando.
 
         REGRA PARA MÍDIA (generate_*): devolvem um LINK pronto. Inclua o link na resposta para o usuário ouvir/ver.
+        REGRA PARA VÍDEO: generate_video devolve um task_id e demora minutos; avise o usuário e use check_video(task_id) depois (ex.: quando ele pedir o resultado) para obter o link.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -565,6 +568,21 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             if (!args?.prompt) throw new Error("Parâmetro 'prompt' ausente.");
             const { urls } = await minimaxService.generateImage(String(args.prompt), { aspectRatio: args.aspect_ratio ? String(args.aspect_ratio) : undefined });
             return `Imagem gerada (válida ~24h): ${urls.join(' , ')}`;
+        }
+        case 'generate_video': {
+            if (!args?.prompt) throw new Error("Parâmetro 'prompt' ausente.");
+            const { taskId } = await minimaxService.submitVideo(String(args.prompt), {
+                duration: args.duration ? Number(args.duration) : undefined,
+                resolution: args.resolution ? String(args.resolution) : undefined,
+            });
+            return `Geração de vídeo iniciada (leva alguns minutos). task_id: ${taskId}. Use check_video com esse task_id para pegar o link quando estiver pronto.`;
+        }
+        case 'check_video': {
+            if (!args?.task_id) throw new Error("Parâmetro 'task_id' ausente.");
+            const { status, url } = await minimaxService.getVideoStatus(String(args.task_id));
+            if (url) return `Vídeo pronto (válido ~24h): ${url}`;
+            if (status === 'Fail') return `A geração do vídeo (task_id ${args.task_id}) falhou.`;
+            return `Vídeo ainda processando (status: ${status}). Tente novamente em instantes com o mesmo task_id.`;
         }
 
         // AÇÕES HITL (prepare_create_*/prepare_edit_*) caem no dispatch genérico abaixo.
