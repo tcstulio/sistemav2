@@ -37,7 +37,7 @@ export const AiService = {
     // Resolve um deeplink de prefill gerado pelo agente (#57 Peça 2/3): troca o token assinado
     // pelos dados (verificados via HMAC no backend). Genérico: devolve { kind, data } —
     // kind = create_ticket | create_customer | edit_customer | ... e data = campos a pré-preencher.
-    resolvePrefill: async (token: string): Promise<{ kind: string; data: Record<string, string> } | null> => {
+    resolvePrefill: async (token: string): Promise<{ kind: string; data: Record<string, any> } | null> => {
         try {
             const response = await axios.get(`${API_URL}/prefill`, { params: { token }, ...getAuthHeaders() });
             const d = response.data;

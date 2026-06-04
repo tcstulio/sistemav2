@@ -73,6 +73,7 @@ export const TOOLS_PROMPT = `
         53. prepare_edit_contact(id, firstname?, lastname?, email?, phone_mobile?, poste?) - Prepara EDIÇÃO de um contato. Ache o id antes com list_contacts.
         54. prepare_create_candidate(firstname, lastname, email, phone?, fk_job_position?, note_public?) - Rascunho de novo candidato (RH/Recrutamento). fk_job_position = id da vaga (ache com list_job_positions); omita para candidato espontâneo.
         55. prepare_edit_candidate(id, firstname?, lastname?, email?, phone?, fk_job_position?, note_public?) - Prepara EDIÇÃO de um candidato. Ache o id antes com list_candidates.
+        56. prepare_create_invoice(socid, date?, lines?) - Rascunho de fatura de venda. socid = id do cliente (ache com search_customer). date em YYYY-MM-DD. lines = array de itens [{fk_product?, desc, qty, subprice, remise_percent?}] — fk_product = id do produto (opcional; ache com list_products), desc = descrição, qty = quantidade, subprice = preço unitário, remise_percent = % de desconto.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -90,11 +91,13 @@ export const TOOLS_PROMPT = `
 // escreve direto: gera um deeplink assinado; o usuário revisa e confirma na tela (com a auth dele).
 interface DeeplinkEntity {
     label: string;            // nome amigável p/ a mensagem
-    createFields?: string[];  // whitelist de campos na criação
+    createFields?: string[];  // whitelist de campos escalares na criação
     editFields?: string[];    // whitelist de campos na edição
     required?: string[];      // obrigatórios na criação
     newRoute?: string;        // rota de criação (ex.: '/tickets/new')
     editRoute?: string;       // rota de edição com :id (ex.: '/customers/:id/edit')
+    linesField?: string;      // nome do campo de LINHAS no prefill (ex.: 'lines') p/ entidades com itens
+    lineFields?: string[];    // whitelist dos campos de cada linha (ex.: ['fk_product','desc','qty','subprice'])
 }
 
 const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
@@ -195,6 +198,15 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         newRoute: '/hr/candidates/new',
         editRoute: '/hr/candidates/:id/edit',
     },
+    invoice: {
+        label: 'fatura',
+        createFields: ['socid', 'date'],
+        required: ['socid'],
+        newRoute: '/invoices/new',
+        // entidade com linhas de produto (o modal exibe os itens p/ revisão):
+        linesField: 'lines',
+        lineFields: ['fk_product', 'desc', 'qty', 'subprice', 'remise_percent'],
+    },
 };
 
 function pickFields(args: any, fields: string[]): Record<string, string> {
@@ -204,6 +216,26 @@ function pickFields(args: any, fields: string[]): Record<string, string> {
         if (v !== undefined && v !== null && v !== '') out[f] = String(v);
     }
     return out;
+}
+
+// Extrai e normaliza as LINHAS de itens (entidades com produtos). Campos textuais
+// (fk_product/desc) viram string; numéricos (qty/subprice/remise_percent/tva_tx) viram Number.
+function pickLines(args: any, ent: DeeplinkEntity): any[] | undefined {
+    if (!ent.linesField || !ent.lineFields) return undefined;
+    const arr = args?.[ent.linesField];
+    if (!Array.isArray(arr)) return undefined;
+    const textFields = new Set(['fk_product', 'desc', 'description']);
+    return arr
+        .map((raw: any) => {
+            const line: Record<string, any> = {};
+            for (const f of ent.lineFields!) {
+                const v = raw?.[f];
+                if (v === undefined || v === null || v === '') continue;
+                line[f] = textFields.has(f) ? String(v) : Number(v);
+            }
+            return line;
+        })
+        .filter((l: Record<string, any>) => Object.keys(l).length > 0);
 }
 
 // Trata prepare_create_<entity> e prepare_edit_<entity>. Retorna a msg com o deeplink,
@@ -216,7 +248,9 @@ function tryPrepareDeeplink(tool: string, args: any): string | null {
         for (const r of ent.required || []) {
             if (!args?.[r]) throw new Error(`Parâmetro '${r}' ausente.`);
         }
-        const prefill = pickFields(args, ent.createFields || []);
+        const prefill: Record<string, any> = pickFields(args, ent.createFields || []);
+        const lines = pickLines(args, ent);
+        if (lines && lines.length > 0 && ent.linesField) prefill[ent.linesField] = lines;
         const token = signDeeplink(`create_${create[1]}`, prefill, 1800); // 30 min
         const deeplink = `${ent.newRoute}?prefill=${token}`;
         return `Preparei o rascunho do ${ent.label}. Clique para revisar e confirmar a criação na tela: ${deeplink}`;
