@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { ManufacturingOrder, DolibarrConfig, Project, Product, StockMovement } from '../../../types';
-import { Package, Clock, User, AlertCircle, ArrowLeft, Settings, X, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { Package, Clock, User, AlertCircle, ArrowLeft, Settings, X, ArrowDownCircle, ArrowUpCircle, Pencil } from 'lucide-react';
 import { formatDateTime } from '../../../utils/dateUtils';
 import { getProductName, getStatusBadge } from '../utils';
 
@@ -11,6 +11,7 @@ interface ManufacturingOrderDetailProps {
     stockMovements: StockMovement[];
     config: DolibarrConfig;
     onClose: () => void;
+    onEdit?: () => void;
     onOpenConsume: () => void;
     onOpenProduce: () => void;
 }
@@ -21,6 +22,7 @@ export const ManufacturingOrderDetail: React.FC<ManufacturingOrderDetailProps> =
     stockMovements,
     config,
     onClose,
+    onEdit,
     onOpenConsume,
     onOpenProduce
 }) => {
@@ -42,6 +44,11 @@ export const ManufacturingOrderDetail: React.FC<ManufacturingOrderDetailProps> =
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
+                    {onEdit && (
+                        <button onClick={onEdit} className="flex items-center gap-1 text-xs bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 px-3 py-1.5 rounded font-medium transition-colors">
+                            <Pencil size={12} /> Editar
+                        </button>
+                    )}
                     <button className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><Settings size={20} /></button>
                     <button onClick={onClose} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
                 </div>
