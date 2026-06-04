@@ -1,7 +1,8 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { toast } from 'sonner';
 import { Order, AppView } from '../types';
-import { ShoppingCart, Search, ExternalLink, Package, CheckCircle, Truck, Clock, FilePlus, Download, Receipt, ArrowDown, ArrowUp, Lock, CheckSquare, Trash2 } from 'lucide-react';
+import { ShoppingCart, Search, ExternalLink, Package, CheckCircle, Truck, Clock, FilePlus, Download, Receipt, ArrowDown, ArrowUp, Lock, CheckSquare, Trash2, Plus } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useOrders, useCustomers, useShipments, useInvoices, useUsers } from '../hooks/dolibarr';
@@ -320,6 +321,65 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     const [shipmentLines, setShipmentLines] = useState<{ id: string, qty: number, label: string }[]>([]);
     const [isSubmittingShipment, setIsSubmittingShipment] = useState(false);
 
+    // Order Creation State (#57/#78)
+    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+    const [newOrder, setNewOrder] = useState({
+        socid: '',
+        date: new Date().toISOString().split('T')[0],
+        items: [] as { productId: string, desc: string, qty: number, price: number }[],
+    });
+
+    const handleAddOrderItem = () => setNewOrder(prev => ({ ...prev, items: [...prev.items, { productId: '', desc: '', qty: 1, price: 0 }] }));
+    const handleUpdateOrderItem = (idx: number, field: 'desc' | 'qty' | 'price', value: string | number) => {
+        const items = [...newOrder.items];
+        (items[idx] as any)[field] = value;
+        setNewOrder({ ...newOrder, items });
+    };
+    const handleRemoveOrderItem = (idx: number) => setNewOrder({ ...newOrder, items: newOrder.items.filter((_, i) => i !== idx) });
+    const calculateOrderTotal = () => newOrder.items.reduce((acc, it) => acc + (it.price * it.qty), 0);
+
+    const handleCreateOrder = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!newOrder.socid) return toast.error('Selecione um cliente');
+        setIsSubmittingOrder(true);
+        try {
+            await DolibarrService.createOrder(config, {
+                socid: newOrder.socid,
+                date: new Date(newOrder.date).getTime() / 1000,
+                lines: newOrder.items.map(it => ({
+                    fk_product: it.productId || undefined,
+                    desc: it.desc,
+                    qty: it.qty,
+                    subprice: it.price,
+                    product_type: 0,
+                })),
+            });
+            toast.success('Pedido criado com sucesso');
+            setIsCreateModalOpen(false);
+            setNewOrder({ socid: '', date: new Date().toISOString().split('T')[0], items: [] });
+            if (onRefresh) onRefresh();
+        } catch (e) { log.error('Failed to create order', e); toast.error('Erro ao criar pedido'); } finally { setIsSubmittingOrder(false); }
+    };
+
+    // Deeplink HITL do agente (#57/#78): create_order abre o modal pré-preenchido (incl. itens).
+    const prefill = usePrefill();
+    const appliedPrefillRef = useRef<PrefillResult | null>(null);
+    useEffect(() => {
+        if (!prefill || appliedPrefillRef.current === prefill) return;
+        if (prefill.kind === 'create_order') {
+            appliedPrefillRef.current = prefill;
+            const lines = Array.isArray(prefill.data.lines) ? prefill.data.lines : [];
+            setNewOrder({
+                socid: prefill.data.socid || '',
+                date: prefill.data.date || new Date().toISOString().split('T')[0],
+                items: lines.map((l: any) => ({ productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0 })),
+            });
+            setIsCreateModalOpen(true);
+            toast.info('Revise os itens e confirme a criação do pedido.');
+        }
+    }, [prefill]);
+
     // Deep Linking Effect
     useEffect(() => {
         if (initialItemId && orders.length > 0) {
@@ -457,6 +517,63 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     return (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
 
+            {/* Create Order Modal (#57/#78) */}
+            <Modal
+                isOpen={isCreateModalOpen}
+                onClose={() => setIsCreateModalOpen(false)}
+                title="Novo Pedido (Rascunho)"
+                size="xl"
+            >
+                <form onSubmit={handleCreateOrder} className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cliente</label>
+                            <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={newOrder.socid} onChange={e => setNewOrder({ ...newOrder, socid: e.target.value })} required>
+                                <option value="">Selecione o Cliente...</option>
+                                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data</label>
+                            <input type="date" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={newOrder.date} onChange={e => setNewOrder({ ...newOrder, date: e.target.value })} required />
+                        </div>
+                    </div>
+                    <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
+                        <div className="flex justify-between items-center mb-2">
+                            <h4 className="font-bold text-sm text-slate-700 dark:text-slate-300">Itens</h4>
+                            <Button type="button" variant="ghost" size="sm" icon={<Plus size={12} />} onClick={handleAddOrderItem}>Adicionar Item</Button>
+                        </div>
+                        <div className="space-y-2">
+                            {newOrder.items.length === 0 && <p className="text-sm text-slate-400 italic text-center py-4">Nenhum item adicionado.</p>}
+                            {newOrder.items.map((item, idx) => (
+                                <div key={idx} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
+                                    <div className="flex-1">
+                                        <input className="w-full p-1 text-sm border rounded dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Descrição do item" value={item.desc} onChange={e => handleUpdateOrderItem(idx, 'desc', e.target.value)} />
+                                    </div>
+                                    <div className="w-20">
+                                        <input type="number" className="w-full p-1 text-sm border rounded dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Qtd" value={item.qty} onChange={e => handleUpdateOrderItem(idx, 'qty', parseInt(e.target.value) || 1)} min="1" />
+                                    </div>
+                                    <div className="w-24">
+                                        <input type="number" className="w-full p-1 text-sm border rounded dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Preço" value={item.price} onChange={e => handleUpdateOrderItem(idx, 'price', parseFloat(e.target.value) || 0)} />
+                                    </div>
+                                    <button type="button" onClick={() => handleRemoveOrderItem(idx)} className="p-1 text-red-400 hover:text-red-600"><Trash2 size={16} /></button>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="flex justify-end mt-4 pt-2 border-t border-slate-100 dark:border-slate-800">
+                            <div className="text-right">
+                                <span className="text-xs text-slate-500 uppercase font-bold mr-2">Total (S/ Imposto)</span>
+                                <span className="text-xl font-bold text-slate-800 dark:text-white">${calculateOrderTotal().toFixed(2)}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="flex justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+                        <Button type="button" variant="secondary" onClick={() => setIsCreateModalOpen(false)}>Cancelar</Button>
+                        <Button type="submit" variant="primary" loading={isSubmittingOrder} icon={<CheckCircle size={16} />}>Criar Pedido</Button>
+                    </div>
+                </form>
+            </Modal>
+
             {/* Shipment Modal */}
             <Modal
                 isOpen={isShipmentModalOpen && !!selectedOrder}
@@ -530,7 +647,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                                 onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
                                 title={sortOrder === 'desc' ? "Mais recentes" : "Mais antigos"}
                             />
-                            <Button icon={<FilePlus size={18} />} onClick={() => toast.info("Não implementado nesta demo.")}>
+                            <Button icon={<FilePlus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                                 Novo
                             </Button>
                         </div>
