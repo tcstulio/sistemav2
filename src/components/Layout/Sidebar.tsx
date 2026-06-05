@@ -1,9 +1,11 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useModules } from '../../hooks/dolibarr';
 import { useOrgBranding } from '../../hooks/useOrgBranding';
 import { safeStorage } from '../../utils/safeStorage';
+import { MENU_REGISTRY } from '../../config/menuRegistry';
+import { applyOrderVisibility, getUserPrefs } from '../../utils/orderVisibility';
 import {
     Layout, Users, FileText, Package, ShoppingCart, Truck, Settings, LifeBuoy,
     BarChart3, X, LogOut, FileSignature, TrendingUp, PenTool, Factory,
@@ -31,6 +33,54 @@ interface MenuGroup {
 
 const COLLAPSED_GROUPS_KEY = 'sidebar_collapsed_groups';
 
+/** Namespace do override pessoal do usuário (#110). */
+const MENU_PREFS_KEY = 'coolgroove_menu_prefs';
+
+// Ícones ficam aqui (fora do registry, p/ manter o editor leve). id -> ícone.
+const MENU_ICONS: Record<string, React.ElementType> = {
+    dashboard: Layout,
+    'my-tasks': ClipboardList,
+    agenda: CalendarDays,
+    whatsapp: MessageSquare,
+    chat: MessageSquare,
+    email: Mail,
+    automation: Bot,
+    venues: Building2,
+    centrovibe: Music,
+    simulator: Calculator,
+    customers: Users,
+    proposals: FileSignature,
+    orders: ShoppingCart,
+    shipments: Truck,
+    contracts: PenTool,
+    interventions: ClipboardList,
+    tickets: LifeBuoy,
+    invoices: FileText,
+    payments: TrendingUp,
+    tax_payments: Landmark,
+    suppliers: Truck,
+    supplier_proposals: FileSignature,
+    supplier_invoices: FileText,
+    supplier_payments: TrendingUp,
+    pending_payments: Clock,
+    expense_report_payments: Receipt,
+    projects: FolderKanban,
+    hr: UserCircle,
+    salary_payments: Banknote,
+    bank_accounts: Landmark,
+    reports: BarChart3,
+    monthly_report: FileText,
+    products: Package,
+    categories: Tag,
+    inventory: Factory,
+    warehouses: Warehouse,
+    manufacturing: Settings,
+    activity: Activity,
+    groups: ShieldCheck,
+    development: Bug,
+    settings: Settings,
+};
+
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
     const { config, setConfig, canAccess } = useDolibarr();
     const { data: modules } = useModules(config);
@@ -49,89 +99,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
         });
     }, []);
 
-    // Menu Configuration
-    const menuGroups: MenuGroup[] = [
-        {
-            items: [
-                { id: 'dashboard', path: '/', label: 'Painel Principal', icon: Layout },
-                { id: 'my-tasks', path: '/my-tasks', label: 'Minhas Tarefas', icon: ClipboardList },
-                { id: 'agenda', path: '/agenda', label: 'Agenda', icon: CalendarDays },
-            ]
-        },
-        {
-            title: 'AGENTE IA',
-            items: [
-                { id: 'whatsapp', path: '/whatsapp', label: 'WhatsApp Omni', icon: MessageSquare },
-                { id: 'chat', path: '/chat', label: 'Chat Interno', icon: MessageSquare },
-                { id: 'email', path: '/email', label: 'Emails', icon: Mail },
-                { id: 'automation', path: '/automation', label: 'Automação', icon: Bot },
-                { id: 'venues', path: '/venues', label: 'Espaços', icon: Building2 },
-                { id: 'centrovibe', path: '/centrovibe', label: 'CentroVibe', icon: Music },
-                { id: 'simulator', path: '/simulator', label: 'Simulador', icon: Calculator },
-            ]
-        },
-        {
-            title: 'VENDAS & CRM',
-            items: [
-                { id: 'customers', path: '/customers', label: 'Clientes', icon: Users },
-                { id: 'proposals', path: '/proposals', label: 'Propostas', icon: FileSignature },
-                { id: 'orders', path: '/orders', label: 'Pedidos de Venda', icon: ShoppingCart },
-                { id: 'shipments', path: '/shipments', label: 'Envios', icon: Truck },
-                { id: 'contracts', path: '/contracts', label: 'Contratos', icon: PenTool },
-                { id: 'interventions', path: '/interventions', label: 'Intervenções', icon: ClipboardList },
-                { id: 'tickets', path: '/tickets', label: 'Chamados', icon: LifeBuoy },
-            ]
-        },
-        {
-            title: 'FINANCEIRO',
-            items: [
-                { id: 'invoices', path: '/invoices', label: 'Faturas', icon: FileText },
-                { id: 'payments', path: '/payments', label: 'Pagamentos', icon: TrendingUp },
-                { id: 'tax_payments', path: '/tax_payments', label: 'Impostos e Encargos', icon: Landmark },
-            ]
-        },
-        {
-            title: 'COMPRAS & DESPESAS',
-            items: [
-                { id: 'suppliers', path: '/suppliers', label: 'Fornecedores', icon: Truck },
-                { id: 'supplier_proposals', path: '/supplier_proposals', label: 'Solicitações de Preço', icon: FileSignature },
-                { id: 'supplier_invoices', path: '/supplier_invoices', label: 'Faturas de Fornecedor', icon: FileText },
-                { id: 'supplier_payments', path: '/supplier_payments', label: 'Pagamentos de Fornecedor', icon: TrendingUp },
-                { id: 'pending_payments', path: '/pending_payments', label: 'Pendências Financeiras', icon: Clock },
-                { id: 'expense_report_payments', path: '/expense_report_payments', label: 'Pagamentos de Despesas', icon: Receipt },
-            ]
-        },
-        {
-            title: 'GESTÃO & OPERACIONAL',
-            items: [
-                { id: 'projects', path: '/projects', label: 'Projetos', icon: FolderKanban },
-                { id: 'hr', path: '/hr', label: 'RH & Equipe', icon: UserCircle },
-                { id: 'salary_payments', path: '/salary_payments', label: 'Salários', icon: Banknote },
-                { id: 'bank_accounts', path: '/bank_accounts', label: 'Bancos', icon: Landmark },
-                { id: 'reports', path: '/reports', label: 'Relatórios', icon: BarChart3 },
-                { id: 'monthly_report', path: '/monthly-report', label: 'Relatório Mensal (IA)', icon: FileText },
-            ]
-        },
-        {
-            title: 'ESTOQUE & PRODUTOS',
-            items: [
-                { id: 'products', path: '/products', label: 'Produtos', icon: Package },
-                { id: 'categories', path: '/categories', label: 'Categorias/Tags', icon: Tag },
-                { id: 'inventory', path: '/inventory', label: 'Estoque', icon: Factory },
-                { id: 'warehouses', path: '/warehouses', label: 'Estoques', icon: Warehouse },
-                { id: 'manufacturing', path: '/manufacturing', label: 'Produção', icon: Settings },
-            ]
-        },
-        {
-            title: 'SISTEMA',
-            items: [
-                { id: 'activity', path: '/activity', label: 'Atividades', icon: Activity },
-                { id: 'groups', path: '/admin/groups', label: 'Grupos', icon: ShieldCheck },
-                { id: 'development', path: '/development', label: 'Console Dev', icon: Bug },
-                { id: 'settings', path: '/settings', label: 'Configurações', icon: Settings },
-            ]
-        }
-    ];
+    // Menu Configuration — montado a partir do registry (fonte única) + mapa de ícones (#110).
+    const menuGroups: MenuGroup[] = useMemo(() =>
+        MENU_REGISTRY.map(group => ({
+            title: group.title,
+            items: group.items.map(item => ({
+                id: item.id,
+                path: item.path,
+                label: item.label,
+                icon: MENU_ICONS[item.id] || Layout,
+            })),
+        })),
+    []);
 
     // Helper: Map Dolibarr Modules to App Views
     const checkModuleAccess = (viewId: string): boolean => {
@@ -163,9 +142,26 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
         }
     };
 
+    const branding = useOrgBranding();
+
+    // Override pessoal de ordem/visibilidade (#110). Reage ao editor (evento) e a outras abas (storage).
+    const [userMenuPrefs, setUserMenuPrefs] = useState(() => getUserPrefs(MENU_PREFS_KEY));
+    useEffect(() => {
+        const refresh = () => setUserMenuPrefs(getUserPrefs(MENU_PREFS_KEY));
+        const onStorage = (e: StorageEvent) => { if (e.key === MENU_PREFS_KEY) refresh(); };
+        window.addEventListener('menu-prefs-changed', refresh);
+        window.addEventListener('storage', onStorage);
+        return () => {
+            window.removeEventListener('menu-prefs-changed', refresh);
+            window.removeEventListener('storage', onStorage);
+        };
+    }, []);
+
     // Filter Logic
     const visibleMenuGroups = useMemo(() => {
+        const orgMenuPrefs = branding?.menu;
         return menuGroups.map(group => {
+            // 1) Filtro de PERMISSÃO (RBAC + módulos + admin override) — INTACTO.
             const filteredItems = group.items.filter(item => {
                 const isModuleActive = checkModuleAccess(item.id);
                 const hasPermission = canAccess ? canAccess(item.id) : true;
@@ -180,12 +176,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
                 return isModuleActive && hasPermission;
             });
 
+            // 2) Por CIMA do filtro: ordem/visibilidade (admin define padrão da org + override do usuário).
+            //    Estético apenas — nunca expõe item que o RBAC já escondeu (aplicado sobre filteredItems).
+            const orderedItems = applyOrderVisibility(filteredItems, i => i.id, orgMenuPrefs, userMenuPrefs);
+
             return {
                 ...group,
-                items: filteredItems
+                items: orderedItems
             };
         }).filter(group => group.items.length > 0);
-    }, [config, modules, canAccess]);
+    }, [config, modules, canAccess, branding, userMenuPrefs, menuGroups]);
 
     // Auto-expand group if it contains the active route
     const groupHasActiveItem = useCallback((group: MenuGroup): boolean => {
@@ -206,7 +206,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
         setIsOpen(false);
     };
 
-    const branding = useOrgBranding();
     const companyName = branding?.companyName || 'CoolGroove';
     const logoText = branding?.logoText || 'D';
 
