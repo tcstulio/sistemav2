@@ -11,6 +11,21 @@ import { TOOLS_PROMPT, executeTool } from './agentTools';
 
 const log = logger.child('AiService');
 
+function extractToolCall(text: string): { tool: string; args: any } | null {
+    const startMatch = text.search(/\{\s*"tool"\s*:/);
+    if (startMatch === -1) return null;
+    let depth = 0;
+    for (let i = startMatch; i < text.length; i++) {
+        if (text[i] === '{') depth++;
+        else if (text[i] === '}') depth--;
+        if (depth === 0) {
+            try { return JSON.parse(text.slice(startMatch, i + 1)); }
+            catch { return null; }
+        }
+    }
+    return null;
+}
+
 // --- Interfaces ---
 
 export interface ChatMessage {
@@ -122,40 +137,26 @@ class GoogleProvider implements AIProvider {
 
             const textResponse = response.text || "";
 
-            // Check for tool call JSON
-            const toolMatch = textResponse.match(/\{[\s\S]*"tool"[\s\S]*\}/);
+            const toolCall = extractToolCall(textResponse);
 
-            if (toolMatch) {
+            if (toolCall) {
                 try {
-                    const jsonBlock = toolMatch[0];
-                    const toolCall = JSON.parse(jsonBlock);
-
                     log.info(`Tool Call: ${toolCall.tool}`, toolCall.args);
 
                     const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
-                    // Ações HITL (prepare_*) são TERMINAIS: o resultado já é a mensagem com o
-                    // deeplink para o usuário. Retorna direto (sem re-raciocinar / evita loop).
                     if (String(toolCall.tool).startsWith('prepare_')) {
                         return toolResult;
                     }
 
-                    // Add tool result to history (simulated as System or User input with data)
-                    // We append it to the context for the next turn
                     currentContext += `\n\n[DADOS OBTIDOS VIA ${toolCall.tool}]:\n${toolResult}\n`;
 
-                    // Also strictly append to history or just let the prompt reconstruction handle it via context update
-                    // But to prevent loops, we must ensure the model sees the result.
-                    // The simplest way here is updating 'currentContext' which is injected in the prompt.
-
                     iterations++;
-                    continue; // Loop again
+                    continue;
 
                 } catch (e: any) {
                     log.error("Tool execution failed", e);
-                    const errorMsg = `Erro na execução da ferramenta ${toolMatch ? (JSON.parse(toolMatch[0]).tool || 'desconhecida') : 'desconhecida'}: ${e.message}`;
-                    // Continue to next iteration so LLM can see the error
-                    currentContext += `\n\n[ERRO NA EXECUÇÃO]:\n${errorMsg}\n`;
+                    currentContext += `\n\n[ERRO NA EXECUÇÃO]: ${e.message}\n`;
                     iterations++;
                     continue;
                 }
@@ -801,38 +802,28 @@ export class LocalProvider implements AIProvider {
 
                 const reply = response.data.choices[0].message.content;
 
-                // Check for Tool Call
-                const toolMatch = reply.match(/\{[\s\S]*"tool"[\s\S]*\}/);
+                const toolCall = extractToolCall(reply);
 
-                if (toolMatch) {
+                if (toolCall) {
                     try {
-                        const jsonBlock = toolMatch[0];
-                        const toolCall = JSON.parse(jsonBlock);
                         log.info(`Local LLM Tool Call: ${toolCall.tool}`, toolCall.args);
 
-                        // Se o modelo repetir a MESMA chamada (loop sem progresso), para de iterar
-                        // e parte para a resposta final com o que já foi coletado.
                         const callSig = `${toolCall.tool}:${JSON.stringify(toolCall.args || {})}`;
                         if (seenToolCalls.has(callSig)) break;
                         seenToolCalls.add(callSig);
 
-                        // Unificado: todas as ferramentas vêm de agentTools.executeTool (mesmo conjunto do Gemini)
                         const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
-                        // Ações HITL (prepare_*) são TERMINAIS: devolve o link direto ao usuário
-                        // (evita o GLM re-chamar a tool a cada iteração -> "Max iterations reached").
                         if (String(toolCall.tool).startsWith('prepare_')) {
                             return toolResult;
                         }
 
-                        // Update Context & History for next turn
                         currentContext += `\n\n[TOOL RESULT]: ${toolResult}`;
                         iterations++;
                         continue;
 
                     } catch (e: any) {
                         log.error("Local LLM Tool Error", e);
-                        // If invalid JSON, maybe it's just text. Return it.
                         return reply;
                     }
                 }

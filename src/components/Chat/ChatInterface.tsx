@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { Send, User as UserIcon, Calendar, Clock, Loader2, Search, X, CheckSquare, Paperclip, ArrowLeft } from 'lucide-react';
 import { format } from 'date-fns';
@@ -25,6 +26,17 @@ interface ChatInterfaceProps {
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, elementType, title = "Comentários", height = "400px", onBack }) => {
     const { config, currentUser, refreshData } = useDolibarr();
     const { data: events, isLoading, refetch } = useEvents(config);
+    const navigate = useNavigate();
+
+    const handleInternalLinkClick = useCallback((e: React.MouseEvent) => {
+        const target = e.target as HTMLElement;
+        const anchor = target.closest('a[data-internal-link="true"]');
+        if (anchor) {
+            e.preventDefault();
+            const href = anchor.getAttribute('href');
+            if (href) navigate(href);
+        }
+    }, [navigate]);
 
     // States
     const [newMessage, setNewMessage] = useState('');
@@ -161,9 +173,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
             await Operations.createEvent(config, payload);
             setNewMessage('');
             setReplyingTo(null);
-            // recarrega a query de eventos (é o que o chat exibe) — antes só chamava refreshData()
-            // global, que não garantia o reload das mensagens. (#122)
             await refetch();
+            setTimeout(() => refetch(), 1500);
             refreshData();
         } catch (error) {
             log.error("Failed to send message", error);
@@ -233,7 +244,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
             </div>
 
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50 dark:bg-gray-900/50" ref={scrollRef}>
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50 dark:bg-gray-900/50" ref={scrollRef} onClick={handleInternalLinkClick}>
                 {chatMessages.length === 0 ? (
                     <div className="text-center text-gray-400 py-10 text-sm">Nenhum comentário ainda. Inicie a conversa!</div>
                 ) : (

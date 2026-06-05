@@ -69,7 +69,7 @@ export class DolibarrService extends DolibarrServiceBase {
     // === Operations ===
     addTimeSpent = (taskId: string, data: AddTimeSpentModel, userKey?: string) => this.operations.addTimeSpent(taskId, data, userKey);
     getTicket = (id: string) => this.operations.getTicket(id);
-    listProjects = (search?: string) => this.operations.listProjects(search);
+    listProjects = (params?: { search?: string; socid?: string }) => this.operations.listProjects(params);
     listTasks = (projectId?: string) => this.operations.listTasks(projectId);
     listUserTasks = (userId: string) => this.operations.listUserTasks(userId);
     listTickets = (params?: { search?: string, limit?: number }) => this.operations.listTickets(params);
