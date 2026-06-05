@@ -8,6 +8,8 @@ import { useDolibarrData } from '../hooks/useDolibarrData';
 import { runBackgroundSync } from '../services/backgroundSyncService';
 import { logger } from '../utils/logger';
 import { safeStorage } from '../utils/safeStorage';
+import { resolveScreenAccess, ScreenPermissions } from '../utils/screenPermissions';
+import { getUiConfig } from '../services/uiConfigService';
 
 const log = logger.child('DolibarrContext');
 
@@ -44,20 +46,23 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     return safeStorage.getJSON<AppNotification[]>('coolgroove_notifications', []);
   });
   const [isInitialized, setIsInitialized] = useState(false);
+  // #112 — overrides de tela por pessoa/grupo (org-wide) + grupos do usuário logado.
+  const [orgScreenPerms, setOrgScreenPerms] = useState<ScreenPermissions | null>(null);
+  const [userGroupIds, setUserGroupIds] = useState<string[]>([]);
 
   // 1. Permission Logic (Must be defined before data hook)
-  const canAccess = useCallback((module: string): boolean => {
-    if (!config) return false;
-    if (!currentUser) return false;
+  // Acesso BASE (direitos Dolibarr), sem considerar os overrides de tela. Função pura por usuário.
+  const computeBaseAccess = useCallback((module: string, user: DolibarrUser): boolean => {
     // 0. Public Modules (Accessible to everyone)
     if (module === 'dashboard') return true;
 
     // 1. Admin Override (normalized to number by normalizeUser)
-    if (currentUser.admin === 1) return true;
+    if (user.admin === 1) return true;
 
-    if (!currentUser.rights) {
+    if (!user.rights) {
       return false;
     }
+    const currentUser = { ...user, rights: user.rights }; // rights já estreitado (não-undefined)
 
     const rightsMap: Record<string, { module: string, perms: string[] }> = {
       // CRM
@@ -156,12 +161,49 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
       if (r.read || r.lire || r.consulter) return true;
     }
     return false;
-  }, [config, currentUser]);
+  }, []);
+
+  // canAccess = acesso base + overrides de tela por pessoa/grupo (#112).
+  const canAccess = useCallback((module: string): boolean => {
+    if (!config || !currentUser) return false;
+    const base = computeBaseAccess(module, currentUser);
+    return resolveScreenAccess({
+      screenId: module,
+      base,
+      isAdmin: currentUser.admin === 1,
+      userId: currentUser.id,
+      groupIds: userGroupIds,
+      perms: orgScreenPerms,
+    });
+  }, [config, currentUser, userGroupIds, orgScreenPerms, computeBaseAccess]);
 
   // 2. Data Hook (Reduced to Sync & Utility)
   const {
     isLoading, isSyncing, error, refreshData
   } = useDolibarrData({ config, canAccess, isSyncPaused });
+
+  // 2b. #112 — carrega overrides de tela (org) e grupos do usuário p/ o canAccess.
+  useEffect(() => {
+    let cancelled = false;
+    if (!config || !currentUser) {
+      setOrgScreenPerms(null);
+      setUserGroupIds([]);
+      return;
+    }
+    // Overrides org-wide (vale p/ todos; admin ignora no resolver, mas carrega sem custo).
+    getUiConfig()
+      .then((cfg) => { if (!cancelled && cfg?.screenPermissions) setOrgScreenPerms(cfg.screenPermissions); })
+      .catch(() => { /* mantém null = sem override */ });
+    // Grupos do usuário (não precisa p/ admin, que tem bypass).
+    if (currentUser.admin === 1) {
+      setUserGroupIds([]);
+    } else {
+      DolibarrService.getUserGroups(config, currentUser.id)
+        .then((groups: { id: string }[]) => { if (!cancelled) setUserGroupIds((groups || []).map((g) => String(g.id))); })
+        .catch(() => { if (!cancelled) setUserGroupIds([]); });
+    }
+    return () => { cancelled = true; };
+  }, [config, currentUser]);
 
   // 3. Persistence for notifications
   useEffect(() => {

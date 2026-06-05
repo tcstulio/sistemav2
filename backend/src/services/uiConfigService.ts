@@ -23,6 +23,19 @@ export interface OrderVisibilityPrefs {
     order: string[];
 }
 
+// #112 — Regra de permissão de tela por entidade (pessoa ou grupo).
+// `allowed` = telas explicitamente liberadas (mesmo sem direito Dolibarr, p/ telas de app);
+// `hidden` = telas explicitamente ocultadas. Pessoa tem precedência sobre grupo; hidden vence allowed no mesmo escopo.
+export interface ScreenRule {
+    hidden: string[];
+    allowed: string[];
+}
+
+export interface ScreenPermissions {
+    groups: Record<string, ScreenRule>;  // groupId -> regra
+    users: Record<string, ScreenRule>;   // userId -> regra
+}
+
 export interface UiConfig {
     companyName: string;   // nome exibido no app (antes era hardcoded "CoolGroove")
     logoText: string;      // texto curto/inicial do bloco de logo
@@ -30,12 +43,14 @@ export interface UiConfig {
     themeColor: string;    // cor padrão da organização (Tailwind color)
     menu: OrderVisibilityPrefs;       // #110 — ordem/visibilidade do menu lateral (padrão da org)
     dashboard: OrderVisibilityPrefs;  // #111 — ordem/visibilidade dos widgets do painel (padrão da org)
+    screenPermissions: ScreenPermissions;  // #112 — permissões de tela por pessoa/grupo
 }
 
-// Entrada de update: branding parcial + prefs parciais (sanitizadas em update()).
-export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard'>> & {
+// Entrada de update: branding parcial + prefs/permissões parciais (sanitizadas em update()).
+export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions'>> & {
     menu?: Partial<OrderVisibilityPrefs>;
     dashboard?: Partial<OrderVisibilityPrefs>;
+    screenPermissions?: unknown;
 };
 
 const DEFAULTS: UiConfig = {
@@ -44,6 +59,7 @@ const DEFAULTS: UiConfig = {
     themeColor: 'indigo',
     menu: { hidden: [], order: [] },
     dashboard: { hidden: [], order: [] },
+    screenPermissions: { groups: {}, users: {} },
 };
 
 // Sanitiza um array de ids vindo do cliente (string curta, sem duplicatas, limite de tamanho).
@@ -63,6 +79,25 @@ function sanitizeIdArray(v: unknown, maxItems = 200): string[] {
 function sanitizePrefs(v: unknown): OrderVisibilityPrefs {
     const p = (v && typeof v === 'object') ? (v as Record<string, unknown>) : {};
     return { hidden: sanitizeIdArray(p.hidden), order: sanitizeIdArray(p.order) };
+}
+
+function sanitizeRule(v: unknown): ScreenRule {
+    const r = (v && typeof v === 'object') ? (v as Record<string, unknown>) : {};
+    return { hidden: sanitizeIdArray(r.hidden), allowed: sanitizeIdArray(r.allowed) };
+}
+
+// Sanitiza o mapa de permissões de tela (groups/users -> regra), limitando o nº de entidades.
+function sanitizeScreenPermissions(v: unknown): ScreenPermissions {
+    const p = (v && typeof v === 'object') ? (v as Record<string, unknown>) : {};
+    const out: ScreenPermissions = { groups: {}, users: {} };
+    (['groups', 'users'] as const).forEach((scope) => {
+        const m = (p[scope] && typeof p[scope] === 'object') ? (p[scope] as Record<string, unknown>) : {};
+        Object.keys(m).slice(0, 500).forEach((key) => {
+            const id = String(key).trim().slice(0, 40);
+            if (id) out[scope][id] = sanitizeRule(m[key]);
+        });
+    });
+    return out;
 }
 
 // Allowlist das cores do Tailwind usadas no tema (evita injeção de classe arbitrária).
@@ -95,6 +130,7 @@ export class UiConfigService {
                     // objetos aninhados precisam de merge p/ não perder os defaults quando o arquivo é antigo
                     menu: { ...DEFAULTS.menu, ...(parsed.menu || {}) },
                     dashboard: { ...DEFAULTS.dashboard, ...(parsed.dashboard || {}) },
+                    screenPermissions: sanitizeScreenPermissions(parsed.screenPermissions),
                 };
             }
         } catch (error) {
@@ -130,6 +166,9 @@ export class UiConfigService {
         }
         if (partial.dashboard !== undefined) {
             next.dashboard = sanitizePrefs(partial.dashboard);
+        }
+        if (partial.screenPermissions !== undefined) {
+            next.screenPermissions = sanitizeScreenPermissions(partial.screenPermissions);
         }
         this.data = next;
         this.save();

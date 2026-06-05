@@ -392,6 +392,16 @@ export const listGroups = async (config: DolibarrConfig): Promise<UserGroup[]> =
     }));
 };
 
+// #112 — grupos de um usuário (GET /users/{id}/groups). Usado para resolver permissões de tela.
+export const getUserGroups = async (config: DolibarrConfig, userId: string): Promise<UserGroup[]> => {
+    const data = await fetchList(config, `users/${userId}/groups`);
+    return (Array.isArray(data) ? data : []).map((d: Record<string, any>) => ({
+        id: String(d.id),
+        name: d.name || '',
+        note: d.note,
+    }));
+};
+
 export const createGroup = async (config: DolibarrConfig, data: any) => {
     // Endpoint usually /users/groups
     const url = `${sanitizeUrl(config.apiUrl)}/users/groups`;
