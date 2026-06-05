@@ -10,6 +10,11 @@ import { FinancialHealthWidget } from './Finance/FinancialHealthWidget';
 import { getDashboardArtifacts, saveSalesForecast } from '../services/dashboardArtifacts';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
+import { useOrgBranding } from '../hooks/useOrgBranding';
+import { applyOrderVisibility, getUserPrefs, OrderVisibilityPrefs } from '../utils/orderVisibility';
+import { DASHBOARD_WIDGETS } from '../config/dashboardWidgets';
+
+const DASHBOARD_PREFS_KEY = 'coolgroove_dashboard_prefs';
 
 const log = logger.child('Dashboard');
 
@@ -29,6 +34,16 @@ interface ForecastData {
 
 const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     const { config, canAccess } = useDolibarr();
+
+    // #111 — ordem + visibilidade dos widgets (admin define o padrão da org; usuário personaliza localmente).
+    const orgBranding = useOrgBranding();
+    const orgPrefs = orgBranding?.dashboard;
+    const [userPrefs, setUserPrefsState] = useState<OrderVisibilityPrefs>(() => getUserPrefs(DASHBOARD_PREFS_KEY));
+    useEffect(() => {
+        const onPrefsChanged = () => setUserPrefsState(getUserPrefs(DASHBOARD_PREFS_KEY));
+        window.addEventListener('dashboard-prefs-changed', onPrefsChanged);
+        return () => window.removeEventListener('dashboard-prefs-changed', onPrefsChanged);
+    }, []);
 
     // Data Hooks
     const { data: invoicesData } = useInvoices(config);
@@ -292,18 +307,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         }
     };
 
-    return (
-        <div className="p-4 md:p-6 space-y-6 overflow-y-auto h-full">
-            <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Visão Geral</h1>
-                    <p className="text-slate-500 dark:text-slate-400 text-sm">O que está acontecendo com seu negócio hoje.</p>
-                </div>
-            </div>
-
-
-            {/* KPI Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+    // #111 — cada widget de topo vira um nó identificado por id; a ordem/visibilidade
+    // é aplicada por região (full/main/sidebar) preservando o grid responsivo.
+    // Cada nó mantém seu próprio guard de permissão (canAccess) e pode renderizar null.
+    const widgetNodes: Record<string, React.ReactNode> = {
+        kpis: (
+            <div key="kpis" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
                 {canAccess('invoices') && (
                     <Card
                         title="Receita Total"
@@ -342,15 +351,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                     />
                 )}
             </div>
+        ),
 
-            {/* Charts & Forecast Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        // ----- Coluna principal (gráficos / análise) -----
 
-                {/* Main Chart Column */}
-                <div className="lg:col-span-2 space-y-6 min-w-0">
-
-                    {/* Cash Flow Chart */}
-                    {canAccess('bank_accounts') && (
+        'cashflow': (
+            <React.Fragment key="cashflow">
+                {/* Cash Flow Chart */}
+                {canAccess('bank_accounts') && (
                         <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col transition-colors min-w-0">
                             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-6">Fluxo de Caixa (Receita vs Despesas)</h3>
                             <div className="w-full h-[300px] min-w-0" style={{ width: '100%', height: 300 }}>
@@ -383,9 +391,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                             </div>
                         </div>
                     )}
+            </React.Fragment>
+        ),
 
-                    {/* Cash Flow Forecast Chart - 90 Days */}
-                    {(canAccess('invoices') || canAccess('supplier_invoices')) && (
+        'cashflow-forecast': (
+            <React.Fragment key="cashflow-forecast">
+                {/* Cash Flow Forecast Chart - 90 Days */}
+                {(canAccess('invoices') || canAccess('supplier_invoices')) && (
                         <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col transition-colors min-w-0">
                             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-6">Projeção de Fluxo de Caixa (90 dias)</h3>
                             <div className="w-full h-[250px] min-w-0" style={{ width: '100%', height: 250 }}>
@@ -413,18 +425,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                             </div>
                         </div>
                     )}
+            </React.Fragment>
+        ),
 
-                    {/* Análise Financeira IA — reposicionada para depois da Projeção de Fluxo (#124) */}
-                    {(canAccess('invoices') || canAccess('bank_accounts')) && (
-                        <FinancialHealthWidget data={financialContext} />
-                    )}
-                </div>
+        // Análise Financeira IA — reposicionada para depois da Projeção de Fluxo (#124)
+        'financial-health': (canAccess('invoices') || canAccess('bank_accounts')) ? (
+            <FinancialHealthWidget key="financial-health" data={financialContext} />
+        ) : null,
 
-                {/* Sidebar Widgets */}
-                <div className="space-y-6">
+        // ----- Coluna lateral -----
 
-                    {/* My Pending Items Widget */}
-                    {(myAssignments.tasks.length > 0 || myAssignments.interventions.length > 0 || myAssignments.tickets.length > 0) && (
+        'my-pending': (
+            <React.Fragment key="my-pending">
+                {/* My Pending Items Widget */}
+                {(myAssignments.tasks.length > 0 || myAssignments.interventions.length > 0 || myAssignments.tickets.length > 0) && (
                         <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
                             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
                                 <ClipboardList size={18} className="text-orange-500" /> Minhas Pendências
@@ -460,9 +474,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                             </div>
                         </div>
                     )}
+            </React.Fragment>
+        ),
 
-                    {/* Sales Forecast Widget */}
-                    {canAccess('invoices') && (
+        'sales-forecast': (
+            <React.Fragment key="sales-forecast">
+                {/* Sales Forecast Widget */}
+                {canAccess('invoices') && (
                         <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 relative overflow-hidden transition-colors">
                             <div className="absolute top-0 right-0 p-3 opacity-10">
                                 <TrendingUp size={100} className="text-indigo-600 dark:text-indigo-400" />
@@ -540,9 +558,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                             )}
                         </div>
                     )}
+            </React.Fragment>
+        ),
 
-                    {/* Operational Alerts / Late Tasks / Low Stock */}
-                    {((lateTasks.length > 0 && canAccess('tasks')) || (lowStockItems.length > 0 && canAccess('products'))) && (
+        'operational-alerts': (
+            <React.Fragment key="operational-alerts">
+                {/* Operational Alerts / Late Tasks / Low Stock */}
+                {((lateTasks.length > 0 && canAccess('tasks')) || (lowStockItems.length > 0 && canAccess('products'))) && (
                         <div className="bg-red-50 dark:bg-red-900/10 p-6 rounded-xl shadow-sm border border-red-100 dark:border-red-900/30 transition-colors animate-in fade-in">
                             <h3 className="text-lg font-bold text-red-800 dark:text-red-300 mb-4 flex items-center gap-2">
                                 <AlertOctagon size={18} /> Alertas Operacionais
@@ -593,11 +615,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                             </div>
                         </div>
                     )}
+            </React.Fragment>
+        ),
 
-
-
-                    {/* Quick Actions */}
-                    <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
+        'quick-actions': (
+            <React.Fragment key="quick-actions">
+                {/* Quick Actions */}
+                <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
                         <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4">Ações Rápidas</h3>
                         <div className="space-y-3">
                             {canAccess('invoices') && (
@@ -645,6 +669,41 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                             </button>
                         </div>
                     </div>
+            </React.Fragment>
+        ),
+    };
+
+    // Ordena/filtra os widgets de cada região respeitando o padrão da org + override do usuário.
+    const orderedRegion = (region: 'full' | 'main' | 'sidebar') =>
+        applyOrderVisibility(
+            DASHBOARD_WIDGETS.filter((w) => w.region === region),
+            (w) => w.id,
+            orgPrefs,
+            userPrefs,
+        ).map((w) => <React.Fragment key={w.id}>{widgetNodes[w.id]}</React.Fragment>);
+
+    return (
+        <div className="p-4 md:p-6 space-y-6 overflow-y-auto h-full">
+            <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Visão Geral</h1>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm">O que está acontecendo com seu negócio hoje.</p>
+                </div>
+            </div>
+
+            {/* Faixa superior (largura total) */}
+            {orderedRegion('full')}
+
+            {/* Charts & Forecast Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Main Chart Column */}
+                <div className="lg:col-span-2 space-y-6 min-w-0">
+                    {orderedRegion('main')}
+                </div>
+
+                {/* Sidebar Widgets */}
+                <div className="space-y-6">
+                    {orderedRegion('sidebar')}
                 </div>
             </div>
         </div >
