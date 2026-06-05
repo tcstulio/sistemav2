@@ -3,9 +3,10 @@ import { toast } from 'sonner';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Invoice, AppView } from '../types';
-import { FileText, Search, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, ArrowUp, ShoppingCart, RefreshCcw, Truck } from 'lucide-react';
+import { FileText, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, Trash2, Loader2, CheckCircle, CreditCard, ShoppingCart, RefreshCcw, Truck } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useInvoiceMutations } from '../hooks/useMutations';
+import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
 import { PaginationControls } from './common/PaginationControls';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -18,11 +19,12 @@ import { MasterDetailLayout } from './ui/MasterDetailLayout';
 import { PageHeader } from './ui/PageHeader';
 import { Card } from './ui/Card';
 import { Button } from './ui/Button';
-import { Input } from './ui/Input';
 import { Modal } from './ui/Modal';
 import { Tabs, Tab } from './ui/Tabs';
 import { EmptyState } from './ui/EmptyState';
 import { StatusBadge } from './ui/StatusBadge';
+import { ListToolbar } from './ui/ListToolbar';
+import { ConfirmDeleteButton } from './ui/ConfirmDeleteButton';
 import { logger } from '../utils/logger';
 
 const log = logger.child('InvoiceList');
@@ -49,7 +51,7 @@ interface InvoiceListProps {
 const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const { config, refreshData } = useDolibarr();
 
-    const { data: invoices = [] } = useInvoices(config);
+    const { data: invoices = [], refetch: refetchInvoices } = useInvoices(config);
     const { data: customers = [] } = useCustomers(config);
     const { data: projects = [] } = useProjects(config);
     const { data: products = [] } = useProducts(config, !!config);
@@ -59,9 +61,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const { data: payments = [] } = usePayments(config);
     const { data: paymentLinks = [] } = usePaymentInvoiceLinks(config);
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState<'all' | 'unpaid' | 'paid' | 'draft'>('all');
-    const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
 
@@ -70,7 +70,6 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     // Pagination
     const [page, setPage] = useState(0);
     const [limit, setLimit] = useState(20);
-    useEffect(() => { setPage(0); }, [searchTerm]);
 
     // Creation State
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -162,21 +161,32 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
         return p ? p.title : null;
     };
 
-    const filteredInvoices = useMemo(() => {
-        let result = invoices.filter(inv => {
-            const customerName = getCustomerName(inv.socid).toLowerCase();
-            const matchesSearch =
-                inv.ref.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                customerName.includes(searchTerm.toLowerCase());
-
-            if (filterStatus === 'paid') return matchesSearch && inv.statut === '2';
-            if (filterStatus === 'unpaid') return matchesSearch && inv.statut === '1';
-            if (filterStatus === 'draft') return matchesSearch && inv.statut === '0';
-            return matchesSearch;
+    // Filtro de status (Tabs) aplicado como pré-filtro antes de busca/ordenação (#121).
+    const statusFilteredInvoices = useMemo(() => {
+        return invoices.filter(inv => {
+            if (filterStatus === 'paid') return inv.statut === '2';
+            if (filterStatus === 'unpaid') return inv.statut === '1';
+            if (filterStatus === 'draft') return inv.statut === '0';
+            return true;
         });
+    }, [invoices, filterStatus]);
 
-        return result.sort((a, b) => sortOrder === 'desc' ? b.date - a.date : a.date - b.date);
-    }, [invoices, customers, searchTerm, filterStatus, sortOrder]);
+    // Busca + ordenação padronizadas (#121). Busca por ref ou nome do cliente.
+    const controls = useListControls(statusFilteredInvoices, {
+        searchText: (inv) => `${inv.ref || ''} ${getCustomerName(inv.socid)}`,
+        sorts: [
+            { key: 'date', label: 'Data', get: (inv) => inv.date ?? 0 },
+            { key: 'ref', label: 'Referência', get: (inv) => inv.ref },
+            { key: 'total', label: 'Valor', get: (inv) => inv.total_ttc ?? 0 },
+            { key: 'customer', label: 'Cliente', get: (inv) => getCustomerName(inv.socid) },
+        ],
+        initialSortKey: 'date',
+        initialSortDir: 'desc',
+    });
+    const filteredInvoices = controls.result;
+
+    // Reset da paginação quando a busca muda.
+    useEffect(() => { setPage(0); }, [controls.search]);
 
     const invoiceLines = useMemo(() => {
         if (!selectedInvoice) return [];
@@ -420,19 +430,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                 subtitle="Acompanhe pagamentos e receita"
                 actions={
                     <div className="flex items-center gap-2">
-                        <Input
-                            icon={<Search size={18} />}
-                            placeholder="Buscar ref ou cliente..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-64"
-                        />
-                        <Button
-                            variant="ghost"
-                            icon={sortOrder === 'desc' ? <ArrowDown size={18} /> : <ArrowUp size={18} />}
-                            onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
-                            title={sortOrder === 'desc' ? "Mais recentes" : "Mais antigos"}
-                        />
+                        <ListToolbar controls={controls} searchPlaceholder="Buscar ref ou cliente..." />
                         <Button variant="primary" icon={<Plus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                             Novo
                         </Button>
@@ -474,6 +472,16 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                         <span className="font-mono text-xs text-slate-400">{inv.ref}</span>
                                         <StatusBadge status={getInvoiceStatusKey(inv)} config={invoiceStatuses} />
                                     </div>
+                                    {inv.statut === '0' && (
+                                        <ConfirmDeleteButton
+                                            onDelete={() => DolibarrService.deleteInvoice(config, inv.id)}
+                                            onDeleted={() => {
+                                                if (selectedInvoice?.id === inv.id) setSelectedInvoice(null);
+                                                refetchInvoices();
+                                            }}
+                                            itemLabel={inv.ref}
+                                        />
+                                    )}
                                 </div>
                                 <h3
                                     className="font-bold text-slate-800 dark:text-white text-sm mb-1 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
@@ -550,6 +558,13 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 >
                                     Editar
                                 </Button>
+                                <ConfirmDeleteButton
+                                    withLabel
+                                    onDelete={() => DolibarrService.deleteInvoice(config, selectedInvoice.id)}
+                                    onDeleted={() => { setSelectedInvoice(null); refetchInvoices(); }}
+                                    itemLabel={selectedInvoice.ref}
+                                    className="px-2 py-1"
+                                />
                             </>
                         )}
                         {selectedInvoice.statut === '1' && selectedInvoice.type !== '2' && (
