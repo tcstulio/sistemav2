@@ -7,6 +7,15 @@ interface TaskForm {
     planned_workload: number;
     date_start: string;
     date_end: string;
+    fk_user_assign: string;
+}
+
+interface DolibarrUser {
+    id: string;
+    lastname?: string;
+    firstname?: string;
+    email?: string;
+    login?: string;
 }
 
 interface TaskModalProps {
@@ -17,6 +26,7 @@ interface TaskModalProps {
     setForm: (form: TaskForm) => void;
     isSubmitting: boolean;
     isEditing: boolean;
+    users?: DolibarrUser[];
 }
 
 export const TaskModal: React.FC<TaskModalProps> = ({
@@ -26,7 +36,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     form,
     setForm,
     isSubmitting,
-    isEditing
+    isEditing,
+    users = []
 }) => {
     if (!isOpen) return null;
 
@@ -49,6 +60,21 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                             value={form.label}
                             onChange={e => setForm({ ...form, label: e.target.value })}
                         />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Responsável</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={form.fk_user_assign}
+                            onChange={e => setForm({ ...form, fk_user_assign: e.target.value })}
+                        >
+                            <option value="">Nenhum</option>
+                            {users.map(u => (
+                                <option key={u.id} value={u.id}>
+                                    {u.firstname || u.lastname ? `${u.firstname || ''} ${u.lastname || ''}`.trim() : u.login || `ID ${u.id}`}
+                                </option>
+                            ))}
+                        </select>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Carga Horária Planejada (h)</label>
