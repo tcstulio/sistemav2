@@ -2,7 +2,9 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { DolibarrUser, ExpenseReport, RecruitmentJobPosition, DolibarrConfig, Task, Project, Ticket, AppView, Candidate, LeaveRequest, UserGroup } from '../types';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
-import { Search, Plus, Filter, ArrowUp, ArrowDown, UserCheck, Plane, BarChart3, Banknote, Briefcase, Scan, Users, ArrowUpDown, Network } from 'lucide-react';
+import { ListControls } from '../hooks/useListControls';
+import { ListToolbar } from './ui';
+import { Plus, UserCheck, Plane, BarChart3, Banknote, Briefcase, Scan, Users, Network } from 'lucide-react';
 import { TeamTab } from './HR/tabs/TeamTab';
 import { GroupsTab } from './HR/tabs/GroupsTab';
 import { HierarchyTab } from './HR/tabs/HierarchyTab';
@@ -73,7 +75,6 @@ const HRList: React.FC<HRListProps> = ({
     const [searchTerm, setSearchTerm] = useState('');
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'default', direction: 'desc' });
     const [displayLimit, setDisplayLimit] = useState(50);
-    const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
 
     // Selection State
     const [selectedUser, setSelectedUser] = useState<DolibarrUser | null>(null);
@@ -298,14 +299,6 @@ const HRList: React.FC<HRListProps> = ({
         setSortConfig({ key: 'default', direction: 'desc' });
     };
 
-    const handleSort = (key: string) => {
-        setSortConfig(prev => ({
-            key,
-            direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
-        }));
-        setIsSortMenuOpen(false);
-    };
-
     const handleToggleUser = (userId: string, isMulti: boolean) => {
         setSelectedUserIds(prev => {
             if (prev.includes(userId)) {
@@ -376,8 +369,33 @@ const HRList: React.FC<HRListProps> = ({
             case 'expenses': return [{ key: 'date', label: 'Data' }, { key: 'amount', label: 'Valor' }, { key: 'status', label: 'Status' }];
             case 'leaves': return [{ key: 'date', label: 'Data Início' }, { key: 'status', label: 'Status' }];
             case 'recruitment': return [{ key: 'label', label: 'Posição' }, { key: 'qty', label: 'Vagas' }];
+            case 'groups': return [{ key: 'name', label: 'Nome' }, { key: 'date', label: 'Data' }];
             default: return [];
         }
+    };
+
+    // Toolbar padronizada (#121) — adapta os controles de busca/ordenação existentes ao
+    // <ListToolbar>. As abas de RH (TeamTab, ExpensesTab, etc.) continuam recebendo
+    // searchTerm/sortConfig e fazendo a filtragem/ordenação internamente, sem mudança de contrato.
+    const sortOptions = getSortOptions();
+    const hrToolbarControls: ListControls<unknown> = {
+        search: searchTerm,
+        setSearch: setSearchTerm,
+        sortKey: sortConfig.key === 'default' ? (sortOptions[0]?.key ?? '') : sortConfig.key,
+        setSortKey: (k) => setSortConfig(prev => ({ key: k, direction: prev.direction })),
+        sortDir: sortConfig.direction,
+        toggleSortDir: () => setSortConfig(prev => ({
+            key: prev.key === 'default' ? (sortOptions[0]?.key ?? 'default') : prev.key,
+            direction: prev.direction === 'asc' ? 'desc' : 'asc',
+        })),
+        filterValues: {},
+        setFilter: () => { },
+        clear: () => { setSearchTerm(''); setSortConfig({ key: 'default', direction: 'desc' }); },
+        result: [],
+        config: {
+            searchText: () => '',
+            sorts: sortOptions.map(o => ({ key: o.key, label: o.label, get: () => '' })),
+        },
     };
 
     return (
@@ -412,43 +430,8 @@ const HRList: React.FC<HRListProps> = ({
                         <p className="text-sm text-slate-500 dark:text-slate-400">Gerencie funcionários, tempo e despesas</p>
                     </div>
                     <div className="relative flex items-center gap-2">
-                        <div className="relative">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                            <input
-                                type="text"
-                                placeholder="Buscar..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                className={`pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-${config.themeColor}-500 focus:border-${config.themeColor}-500 outline-none w-full md:w-64 text-sm transition-all`}
-                            />
-                        </div>
-
                         {activeTab !== 'workload' && (
-                            <div className="relative">
-                                <button
-                                    onClick={() => setIsSortMenuOpen(!isSortMenuOpen)}
-                                    className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                                >
-                                    <ArrowUpDown size={20} />
-                                </button>
-                                {isSortMenuOpen && (
-                                    <div className="absolute right-0 top-full mt-2 w-40 bg-white dark:bg-slate-900 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50 overflow-hidden animate-in fade-in zoom-in-95">
-                                        <div className="p-2 text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 dark:bg-slate-800/50">Ordenar Por</div>
-                                        {getSortOptions().map(option => (
-                                            <button
-                                                key={option.key}
-                                                onClick={() => handleSort(option.key)}
-                                                className={`w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800 ${sortConfig.key === option.key ? 'text-indigo-600 dark:text-indigo-400 font-medium' : 'text-slate-700 dark:text-slate-300'}`}
-                                            >
-                                                {option.label}
-                                                {sortConfig.key === option.key && (
-                                                    sortConfig.direction === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />
-                                                )}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
+                            <ListToolbar controls={hrToolbarControls} searchPlaceholder="Buscar..." />
                         )}
                     </div>
                 </div>
