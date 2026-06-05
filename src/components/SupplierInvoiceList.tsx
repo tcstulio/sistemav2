@@ -3,16 +3,17 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { AppView, SupplierInvoice } from '../types';
-import { FileText, Search, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, X, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, ArrowUp, RefreshCcw, Landmark, Receipt, User, Upload } from 'lucide-react';
+import { FileText, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, X, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, RefreshCcw, Landmark, Receipt, User, Upload } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { LinkedObjects } from './common/LinkedObjects';
 import { PaginationControls } from './common/PaginationControls';
+import { useListControls } from '../hooks/useListControls';
 import { logger } from '../utils/logger';
 
 const log = logger.child('SupplierInvoiceList');
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Input, Tabs, Tab, EmptyState, StatusBadge } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, StatusBadge, ListToolbar, ConfirmDeleteButton } from './ui';
 import type { StatusConfig } from './ui';
 
 const supplierInvoiceStatuses: Record<string, StatusConfig> = {
@@ -38,7 +39,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
     const { config, refreshData } = useDolibarr();
 
     // Data Hooks
-    const { data: invoices = [] } = useSupplierInvoices(config);
+    const { data: invoices = [], refetch: refetchInvoices } = useSupplierInvoices(config);
     const { data: suppliers = [] } = useSuppliers(config);
     const { data: projects = [] } = useProjects(config);
     const { data: allInvoiceLines = [] } = useSupplierInvoiceLines(config);
@@ -46,9 +47,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
     const { data: payments = [] } = useSupplierPayments(config);
     const { data: paymentLinks = [] } = useSupplierPaymentInvoiceLinks(config);
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState<'all' | 'unpaid' | 'paid' | 'draft'>('all');
-    const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
     const [selectedInvoice, setSelectedInvoice] = useState<SupplierInvoice | null>(null);
 
     // Pagination State
@@ -129,11 +128,6 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
         setActiveTab('details');
     }, [selectedInvoice?.id]);
 
-    // Reset page on search
-    useEffect(() => {
-        setPage(0);
-    }, [searchTerm]);
-
     // Helper to find supplier name
     const getSupplierName = (socid: string) => {
         const supplier = suppliers.find(s => s.id === socid);
@@ -152,27 +146,35 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
         return p ? p.title : null;
     };
 
-    const filteredInvoices = useMemo(() => {
-        let result = invoices.filter(inv => {
-            const supplierName = getSupplierName(inv.socid).toLowerCase();
-            const matchesSearch =
-                inv.ref.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                supplierName.includes(searchTerm.toLowerCase());
-
-            // Status mapping for Supplier Invoices might differ slightly, but assuming standard:
-            // 0=Draft, 1=Unpaid, 2=Paid
-            if (filterStatus === 'paid') return matchesSearch && inv.statut === '2';
-            if (filterStatus === 'unpaid') return matchesSearch && inv.statut === '1';
-            if (filterStatus === 'draft') return matchesSearch && inv.statut === '0';
-
-            return matchesSearch;
+    // Filtro de status (Tabs) aplicado antes de busca/ordenação (#121).
+    // 0=Draft, 1=Unpaid, 2=Paid
+    const statusFilteredInvoices = useMemo(() => {
+        return invoices.filter(inv => {
+            if (filterStatus === 'paid') return inv.statut === '2';
+            if (filterStatus === 'unpaid') return inv.statut === '1';
+            if (filterStatus === 'draft') return inv.statut === '0';
+            return true;
         });
+    }, [invoices, filterStatus]);
 
-        // Client-side Sort
-        return result.sort((a, b) => {
-            return sortOrder === 'desc' ? b.date - a.date : a.date - b.date;
-        });
-    }, [invoices, suppliers, searchTerm, filterStatus, sortOrder]);
+    // Busca + ordenação padronizadas (#121). Busca por ref/fornecedor; ordena por data (desc por padrão).
+    const controls = useListControls(statusFilteredInvoices, {
+        searchText: (inv) => `${inv.ref || ''} ${getSupplierName(inv.socid) || ''}`,
+        sorts: [
+            { key: 'date', label: 'Data', get: (inv) => inv.date ?? 0 },
+            { key: 'ref', label: 'Referência', get: (inv) => inv.ref },
+            { key: 'total', label: 'Valor', get: (inv) => inv.total_ttc ?? 0 },
+        ],
+        initialSortKey: 'date',
+        initialSortDir: 'desc',
+    });
+    const filteredInvoices = controls.result;
+    const searchTerm = controls.search;
+
+    // Reset page on search
+    useEffect(() => {
+        setPage(0);
+    }, [searchTerm]);
 
     const invoiceLines = useMemo(() => {
         if (!selectedInvoice) return [];
@@ -381,21 +383,6 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
         setIsEditModalOpen(true);
     };
 
-    const handleDeleteInvoice = async () => {
-        if (!selectedInvoice || !config || !confirm("Tem certeza que deseja excluir esta fatura (rascunho)?")) return;
-        try {
-            await DolibarrService.deleteSupplierInvoice(config, selectedInvoice.id);
-            toast.success("Fatura excluída");
-            setSelectedInvoice(null);
-            refreshData();
-        } catch (e: any) {
-            log.error("Failed to delete invoice", e);
-            toast.error("Erro ao excluir: " + e.message);
-        }
-    };
-
-
-
     if (!config) return null;
 
     // 1. Header
@@ -410,21 +397,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                 subtitle="Gerencie contas a pagar e despesas"
                 actions={
                     <div className="flex items-center gap-2">
-                        <Input
-                            placeholder="Buscar ref ou fornecedor..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            icon={<Search size={16} />}
-                            className="w-48 md:w-64"
-                            fullWidth={false}
-                        />
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
-                            icon={sortOrder === 'desc' ? <ArrowDown size={16} /> : <ArrowUp size={16} />}
-                            title={sortOrder === 'desc' ? "Mais recentes" : "Mais antigos"}
-                        />
+                        <ListToolbar controls={controls} searchPlaceholder="Buscar ref ou fornecedor..." />
                         <Button icon={<Plus size={16} />} onClick={handleCreateClick}>
                             Nova Fatura
                         </Button>
@@ -466,9 +439,15 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                         <span className="font-mono text-xs text-slate-400">{inv.ref}</span>
                                         {getStatusBadge(inv)}
                                     </div>
-                                    <div className="flex items-center text-xs text-slate-500">
-                                        <Landmark size={12} className="mr-1" />
-                                        Fornecedor
+                                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                                        <span className="flex items-center"><Landmark size={12} className="mr-1" /> Fornecedor</span>
+                                        {inv.statut === '0' && (
+                                            <ConfirmDeleteButton
+                                                onDelete={() => DolibarrService.deleteSupplierInvoice(config, inv.id)}
+                                                onDeleted={() => { if (selectedInvoice?.id === inv.id) setSelectedInvoice(null); refetchInvoices(); }}
+                                                itemLabel={inv.ref}
+                                            />
+                                        )}
                                     </div>
                                 </div>
                                 <h3
@@ -564,7 +543,11 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                         )}
                         <Button variant="ghost" size="sm" icon={<ExternalLink size={16} />} onClick={() => openInDolibarr(selectedInvoice.id)} title="Abrir no Dolibarr" />
                         {selectedInvoice.statut === '0' && (
-                            <Button variant="danger" size="sm" icon={<Trash2 size={16} />} onClick={handleDeleteInvoice} title="Excluir" />
+                            <ConfirmDeleteButton
+                                onDelete={() => DolibarrService.deleteSupplierInvoice(config, selectedInvoice.id)}
+                                onDeleted={() => { setSelectedInvoice(null); refetchInvoices(); }}
+                                itemLabel={selectedInvoice.ref}
+                            />
                         )}
                     </div>
                 }
