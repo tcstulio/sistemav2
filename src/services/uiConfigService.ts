@@ -2,6 +2,7 @@ import axios from 'axios';
 import { safeStorage } from '../utils/safeStorage';
 import { logger } from '../utils/logger';
 import { ScreenPermissions } from '../utils/screenPermissions';
+import { CustomPage } from '../config/customPages';
 
 const log = logger.child('UiConfigService');
 
@@ -20,6 +21,7 @@ export interface UiConfig {
     menu?: OrderVisibilityPrefs;       // #110 — padrão da org p/ o menu lateral
     dashboard?: OrderVisibilityPrefs;  // #111 — padrão da org p/ os widgets do painel
     screenPermissions?: ScreenPermissions;  // #112 — permissões de tela por pessoa/grupo
+    customPages?: CustomPage[];        // #113 — telas customizadas por grupo
 }
 
 const API_URL = '/api/ui-config';

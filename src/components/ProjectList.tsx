@@ -435,7 +435,7 @@ const ProjectList: React.FC<{
     const appliedPrefillRef = useRef<PrefillResult | null>(null);
     const [createPrefill, setCreatePrefill] = useState<Record<string, string> | undefined>(undefined);
 
-    const [taskForm, setTaskForm] = useState({ label: '', description: '', planned_workload: 0, date_start: '', date_end: '' });
+    const [taskForm, setTaskForm] = useState({ label: '', description: '', planned_workload: 0, date_start: '', date_end: '', fk_user_assign: '' });
     const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
     const [ticketForm, setTicketForm] = useState({ subject: '', message: '', type_code: 'ISSUE', severity_code: 'NORMAL' });
@@ -487,6 +487,7 @@ const ProjectList: React.FC<{
                 planned_workload: Number(prefill.data.planned_workload) || 0,
                 date_start: prefill.data.date_start || '',
                 date_end: prefill.data.date_end || '',
+                fk_user_assign: prefill.data.fk_user_assign || '',
             });
             setIsTaskModalOpen(true);
             toast.info('Revise os dados e confirme a criação da tarefa.');
@@ -505,6 +506,7 @@ const ProjectList: React.FC<{
                 planned_workload: changes.planned_workload !== undefined ? Number(changes.planned_workload) : (current.planned_workload || 0) / 3600,
                 date_start: changes.date_start ?? (current.date_start ? formatDateForInput(current.date_start) : ''),
                 date_end: changes.date_end ?? (current.date_end ? formatDateForInput(current.date_end) : ''),
+                fk_user_assign: current.fk_user_assign || '',
             });
             setIsTaskModalOpen(true);
             toast.info('Revise as mudanças sugeridas e salve.');
@@ -638,10 +640,11 @@ const ProjectList: React.FC<{
                 planned_workload: (task.planned_workload || 0) / 3600,
                 date_start: task.date_start ? formatDateForInput(task.date_start) : '',
                 date_end: task.date_end ? formatDateForInput(task.date_end) : '',
+                fk_user_assign: task.fk_user_assign || '',
             });
         } else {
             setEditingTaskId(null);
-            setTaskForm({ label: '', description: '', planned_workload: 0, date_start: '', date_end: '' });
+            setTaskForm({ label: '', description: '', planned_workload: 0, date_start: '', date_end: '', fk_user_assign: '' });
         }
         setIsTaskModalOpen(true);
     };
@@ -664,8 +667,17 @@ const ProjectList: React.FC<{
                 await DolibarrService.updateTask(config, editingTaskId, payload);
                 toast.success("Tarefa atualizada");
             } else {
-                await DolibarrService.createTask(config, payload);
-                toast.success("Tarefa criada");
+                const createdTask = await DolibarrService.createTask(config, payload);
+                if (createdTask?.id && taskForm.fk_user_assign) {
+                    try {
+                        await DolibarrService.addTaskParticipant(config, createdTask.id, taskForm.fk_user_assign);
+                    } catch (assignErr: any) {
+                        log.warn('Failed to assign user to task', assignErr);
+                        toast.success("Tarefa criada, mas falha ao atribuir responsável");
+                    }
+                } else {
+                    toast.success("Tarefa criada");
+                }
             }
             setIsTaskModalOpen(false);
             if (refreshData) refreshData();
@@ -879,6 +891,7 @@ const ProjectList: React.FC<{
                 setForm={setTaskForm}
                 isSubmitting={isSubmitting}
                 isEditing={!!editingTaskId}
+                users={users}
             />
 
             <TicketModal
