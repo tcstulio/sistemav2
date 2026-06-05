@@ -38,20 +38,23 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
         }
     }
 
-    async listProjects(search?: string): Promise<any[]> {
+    async listProjects(params?: { search?: string; socid?: string }): Promise<any[]> {
         try {
             const headers = this.getHeaders();
             const url = `${this.baseUrl}projects`;
-            let sqlfilters = undefined;
-            if (search) {
-                sqlfilters = `(${buildLikeFilter('t.title', search)}) or (${buildLikeFilter('t.ref', search)})`;
+            const parts: string[] = [];
+            if (params?.search) {
+                parts.push(`(${buildLikeFilter('t.title', params.search)}) or (${buildLikeFilter('t.ref', params.search)})`);
+            }
+            if (params?.socid) {
+                parts.push(`${buildSqlFilter('t.fk_soc', ':=', params.socid)}`);
             }
 
             const response = await axios.get(url, {
                 headers,
                 params: {
-                    sqlfilters,
-                    limit: 5,
+                    sqlfilters: parts.length > 0 ? parts.join(' and ') : undefined,
+                    limit: 20,
                     sortfield: 't.datec',
                     sortorder: 'DESC'
                 },
