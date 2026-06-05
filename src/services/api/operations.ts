@@ -169,6 +169,14 @@ export const deleteTicket = async (config: DolibarrConfig, id: string) => {
     });
 };
 
+export const deleteIntervention = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/interventions/${id}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
 export const addProjectParticipant = async (config: DolibarrConfig, projectId: string, userId: string) => {
     const url = `${sanitizeUrl(config.apiUrl)}/projects/${projectId}/participants`;
     return request(url, {
