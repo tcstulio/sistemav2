@@ -11,12 +11,13 @@ import { useSupplierProposals, useSuppliers, useProducts, useProjects, useSuppli
 import { RichTextEditor } from './common/RichTextEditor';
 import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
+import { useListControls } from '../hooks/useListControls';
 import { logger } from '../utils/logger';
 
 const log = logger.child('SupplierProposalList');
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Input, Tabs, Tab, EmptyState, StatusBadge } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, StatusBadge, ListToolbar, ConfirmDeleteButton } from './ui';
 import type { StatusConfig } from './ui';
 
 const supplierProposalStatuses: Record<string, StatusConfig> = {
@@ -50,7 +51,6 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
 
     if (!config) return <div className="p-8 text-center flex items-center justify-center gap-2 text-slate-500"><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-500"></div> Carregando...</div>;
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState<'all' | 'open' | 'signed' | 'draft' | 'declined'>('all');
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [selectedProposal, setSelectedProposal] = useState<SupplierProposal | null>(null);
@@ -179,25 +179,6 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
         setIsFormOpen(true);
     };
 
-    // Handle Delete
-    const handleDelete = async (e: React.MouseEvent, id: string) => {
-        e.stopPropagation();
-        if (!confirm("Tem certeza que deseja EXCLUIR esta solicitação de preço?")) return;
-
-        setProcessingId(id);
-        try {
-            await DolibarrService.deleteSupplierProposal(config, id);
-            alert("Excluída com sucesso!");
-            if (selectedProposal?.id === id) setSelectedProposal(null);
-            refetchProposals();
-        } catch (err: any) {
-            log.error("Failed to delete supplier proposal", err);
-            alert("Erro ao excluir: " + (err.message || 'Erro desconhecido'));
-        } finally {
-            setProcessingId(null);
-        }
-    };
-
     // Add Line to Form
     const handleAddLine = () => {
         setFormData(prev => ({
@@ -312,21 +293,29 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
         return p ? p.title : null;
     };
 
-    const filteredProposals = useMemo(() => {
+    // Filtro de status (Tabs) aplicado antes de busca/ordenação (#121).
+    const statusFilteredProposals = useMemo(() => {
         return proposals.filter(p => {
-            const supplierName = getSupplierName(p.socid).toLowerCase();
-            const matchesSearch =
-                p.ref.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                supplierName.includes(searchTerm.toLowerCase());
-
-            if (filterStatus === 'open') return matchesSearch && p.statut === '1';
-            if (filterStatus === 'signed') return matchesSearch && (p.statut === '2' || p.statut === '4');
-            if (filterStatus === 'draft') return matchesSearch && p.statut === '0';
-            if (filterStatus === 'declined') return matchesSearch && p.statut === '3';
-
-            return matchesSearch;
+            if (filterStatus === 'open') return p.statut === '1';
+            if (filterStatus === 'signed') return p.statut === '2' || p.statut === '4';
+            if (filterStatus === 'draft') return p.statut === '0';
+            if (filterStatus === 'declined') return p.statut === '3';
+            return true;
         });
-    }, [proposals, suppliers, searchTerm, filterStatus]);
+    }, [proposals, filterStatus]);
+
+    // Busca + ordenação padronizadas (#121). Busca por ref/fornecedor; ordena por data (desc por padrão).
+    const controls = useListControls(statusFilteredProposals, {
+        searchText: (p) => `${p.ref || ''} ${getSupplierName(p.socid) || ''}`,
+        sorts: [
+            { key: 'date', label: 'Data', get: (p) => p.datec ?? 0 },
+            { key: 'ref', label: 'Referência', get: (p) => p.ref },
+            { key: 'total', label: 'Valor', get: (p) => p.total_ht ?? 0 },
+        ],
+        initialSortKey: 'date',
+        initialSortDir: 'desc',
+    });
+    const filteredProposals = controls.result;
 
     const getStatusBadge = (status: string) => <StatusBadge status={status} config={supplierProposalStatuses} />;
 
@@ -421,14 +410,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                 subtitle="Demande de prix"
                 actions={
                     <div className="flex items-center gap-2">
-                        <Input
-                            placeholder="Buscar..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            icon={<Search size={16} />}
-                            className="w-48"
-                            fullWidth={false}
-                        />
+                        <ListToolbar controls={controls} searchPlaceholder="Buscar ref ou fornecedor..." />
                         <Button
                             variant="secondary"
                             icon={<Sparkles size={16} />}
@@ -473,9 +455,18 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                             </span>
                             {getStatusBadge(proposal.statut)}
                         </div>
-                        <span className="text-sm font-bold text-slate-900 dark:text-white shrink-0">
-                            ${proposal.total_ht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-sm font-bold text-slate-900 dark:text-white">
+                                ${proposal.total_ht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </span>
+                            {(proposal.statut === '0' || proposal.statut === '1') && (
+                                <ConfirmDeleteButton
+                                    onDelete={() => DolibarrService.deleteSupplierProposal(config, proposal.id)}
+                                    onDeleted={() => { if (selectedProposal?.id === proposal.id) setSelectedProposal(null); refetchProposals(); }}
+                                    itemLabel={proposal.ref}
+                                />
+                            )}
+                        </div>
                     </div>
                     <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
                         <div className="flex items-center gap-2 truncate">
@@ -547,12 +538,15 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                             >
                                 <Edit size={16} /> Editar
                             </button>
-                            <button
-                                onClick={(e) => handleDelete(e, selectedProposal.id)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg text-sm font-medium transition-colors border border-red-200"
-                            >
-                                <Trash2 size={16} /> Excluir
-                            </button>
+                            <div className="flex items-center px-3 py-1.5 bg-red-50 hover:bg-red-100 rounded-lg text-red-600 transition-colors border border-red-200">
+                                <ConfirmDeleteButton
+                                    onDelete={() => DolibarrService.deleteSupplierProposal(config, selectedProposal.id)}
+                                    onDeleted={() => { setSelectedProposal(null); refetchProposals(); }}
+                                    itemLabel={selectedProposal.ref}
+                                    withLabel
+                                    className="!text-red-600"
+                                />
+                            </div>
                         </>
                     )}
                 </div>
