@@ -10,8 +10,15 @@ function ensureHook(): void {
     if (hookAdded) return;
     DOMPurify.addHook('afterSanitizeAttributes', (node) => {
         if (node instanceof Element && node.tagName === 'A' && node.getAttribute('href')) {
-            node.setAttribute('target', '_blank');
-            node.setAttribute('rel', 'noopener noreferrer');
+            const href = node.getAttribute('href') || '';
+            if (href.startsWith('/')) {
+                node.setAttribute('data-internal-link', 'true');
+                node.removeAttribute('target');
+                node.removeAttribute('rel');
+            } else {
+                node.setAttribute('target', '_blank');
+                node.setAttribute('rel', 'noopener noreferrer');
+            }
         }
     });
     hookAdded = true;

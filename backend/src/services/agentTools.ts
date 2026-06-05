@@ -8,6 +8,10 @@ import { isValidExternalUrl } from '../utils/urlValidation';
 import { logger } from '../utils/logger';
 import { signDeeplink } from '../utils/deeplinkToken';
 import { minimaxService } from './minimaxService';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 const log = logger.child('AgentTools');
 
@@ -16,40 +20,50 @@ export const TOOLS_PROMPT = `
         Você pode buscar dados em tempo real se necessário. Para usar uma ferramenta, responda APENAS com um JSON no seguinte formato:
         { "tool": "nome_da_ferramenta", "args": { ... } }
 
-        Ferramentas:
-        1. search_customer(query: string) - Busca clientes por nome, email ou alias.
-        2. get_customer_details(id: string) - Traz faturas, projetos e agenda de um cliente específico.
-        3. list_invoices(status: 'unpaid' | 'paid' | 'draft', limit: number) - Lista faturas de clientes.
-        4. list_projects(search: string) - Lista projetos.
-        5. list_orders(status: 'draft'|'validated'|'processed', search: string) - Lista pedidos de venda.
-        6. list_proposals(status: 'draft'|'open'|'signed', search: string) - Lista propostas comerciais.
-        7. list_tickets(search: string) - Lista tickets de suporte.
-        8. list_products(search: string) - Lista produtos e serviços.
-        9. list_bank_accounts() - Lista contas bancárias e saldos.
-        10. list_contracts(search: string) - Lista contratos ativos/recentes.
-        11. list_shipments(search: string) - Lista envios/expedições.
-        12. list_supplier_invoices(status: 'unpaid'|'paid') - Lista faturas de fornecedor.
-        13. list_expense_reports(status: 'approved'|'paid') - Lista relatórios de despesas.
-        14. list_users(search: string) - Lista usuários/funcionários.
-        15. list_warehouses() - Lista estoques/armazéns.
-        16. list_tasks(projectId: string) - Lista tarefas de um projeto.
-        86. list_user_tasks(userId: string) - Lista as tarefas atribuídas a um usuário/pessoa. Ache o userId antes com list_users.
-        17. list_events(limit: number) - Lista eventos da agenda.
-        18. list_contacts(search: string) - Lista contatos (pessoas de contato).
-        19. list_categories(type: string) - Lista categorias (customer, product, etc).
-        20. list_suppliers(search: string) - Lista fornecedores.
-        21. list_supplier_orders(status: 'draft'|'validated') - Lista pedidos de compra.
-        22. list_payments(limit: number) - Lista pagamentos recebidos.
-        23. list_bank_lines(accountId: string, limit: number) - Lista linhas/movimentações de conta bancária.
-        24. list_stock_movements(productId: string) - Lista movimentações de estoque.
-        25. list_interventions(search: string) - Lista intervenções/serviços em campo.
-        26. list_leave_requests(status: string) - Lista solicitações de férias/ausências.
-        27. list_boms(search: string) - Lista listas técnicas (BOM).
-        28. list_manufacturing_orders(status: 'draft'|'validated'|'inprogress') - Lista ordens de produção.
-        29. list_candidates(search: string) - Lista candidatos (RH/Recrutamento).
-        30. list_job_positions() - Lista vagas de emprego abertas.
-        31. search_web(query: string) - Pesquisa preços e fornecedores na internet (Google via Serper).
-        32. extract_from_url(url: string) - Acessa um link e extrai o conteúdo da página.
+        MODELO DE DADOS (relações entre entidades):
+        Cliente (thirdparty) ──fk_soc──→ Projeto ──fk_projet──→ Tarefa
+        Cliente ──fk_soc──→ Fatura, Pedido, Proposta, Contrato
+        Projeto ──fk_project──→ Tarefa ──fk_task──→ TimeSpent
+        Tarefa ──fk_user_assign──→ Usuário
+        Use a tool \`search\` quando quiser encontrar entidades relacionadas.
+
+        FERRAMENTA DE BUSCA UNIFICADA (use como primeira escolha):
+        1. search(query: string) - Busca cruzada em TODAS as entidades (clientes, projetos, tarefas, faturas, pedidos, propostas). Retorna o grafo de relacionamentos automaticamente. Exemplo: search("carvalhos") encontra o cliente, seus projetos, tarefas e faturas.
+
+        FERRAMENTAS DE DETALHE (use quando já tem o ID):
+        2. search_customer(query: string) - Busca clientes por nome, email ou alias.
+        3. get_customer_details(id: string) - Traz faturas, projetos e agenda de um cliente específico.
+        4. list_invoices(status: 'unpaid' | 'paid' | 'draft', limit: number) - Lista faturas de clientes.
+        5. list_projects(search: string, socid: string) - Lista projetos. socid = id do cliente para filtrar projetos de um cliente específico.
+        6. list_orders(status: 'draft'|'validated'|'processed', search: string) - Lista pedidos de venda.
+        7. list_proposals(status: 'draft'|'open'|'signed', search: string) - Lista propostas comerciais.
+        8. list_tickets(search: string) - Lista tickets de suporte.
+        9. list_products(search: string) - Lista produtos e serviços.
+        10. list_bank_accounts() - Lista contas bancárias e saldos.
+        11. list_contracts(search: string) - Lista contratos ativos/recentes.
+        12. list_shipments(search: string) - Lista envios/expedições.
+        13. list_supplier_invoices(status: 'unpaid'|'paid') - Lista faturas de fornecedor.
+        14. list_expense_reports(status: 'approved'|'paid') - Lista relatórios de despesas.
+        15. list_users(search: string) - Lista usuários/funcionários.
+        16. list_warehouses() - Lista estoques/armazéns.
+        17. list_tasks(projectId: string) - Lista tarefas de um projeto.
+        18. list_user_tasks(userId: string) - Lista as tarefas atribuídas a um usuário.
+        19. list_events(limit: number) - Lista eventos da agenda.
+        20. list_contacts(search: string) - Lista contatos (pessoas de contato).
+        21. list_categories(type: string) - Lista categorias (customer, product, etc).
+        22. list_suppliers(search: string) - Lista fornecedores.
+        23. list_supplier_orders(status: 'draft'|'validated') - Lista pedidos de compra.
+        24. list_payments(limit: number) - Lista pagamentos recebidos.
+        25. list_bank_lines(accountId: string, limit: number) - Lista linhas/movimentações de conta bancária.
+        26. list_stock_movements(productId: string) - Lista movimentações de estoque.
+        27. list_interventions(search: string) - Lista intervenções/serviços em campo.
+        28. list_leave_requests(status: string) - Lista solicitações de férias/ausências.
+        29. list_boms(search: string) - Lista listas técnicas (BOM).
+        30. list_manufacturing_orders(status: 'draft'|'validated'|'inprogress') - Lista ordens de produção.
+        31. list_candidates(search: string) - Lista candidatos (RH/Recrutamento).
+        32. list_job_positions() - Lista vagas de emprego abertas.
+        33. search_web(query: string) - Pesquisa preços e fornecedores na internet (Google via Serper).
+        34. extract_from_url(url: string) - Acessa um link e extrai o conteúdo da página.
 
         FERRAMENTAS DE AÇÃO (escrita com confirmação na tela; devolvem um LINK):
         33. prepare_create_ticket(subject, message, type_code?, severity_code?, socid?) - Rascunho de ticket de suporte. Se souber o cliente, ache o id antes com search_customer e passe em socid.
@@ -112,6 +126,9 @@ export const TOOLS_PROMPT = `
 
         REGRA PARA MÍDIA (generate_*): devolvem um LINK pronto. Inclua o link na resposta para o usuário ouvir/ver.
         REGRA PARA VÍDEO: generate_video devolve um task_id e demora minutos; avise o usuário e use check_video(task_id) depois (ex.: quando ele pedir o resultado) para obter o link.
+
+        FERRAMENTA DE GESTÃO DO PROJETO:
+        90. create_github_issue(title, body, labels?) - Cria um issue no GitHub do projeto (tcstulio/sistemav2). Use quando o usuário reportar um bug, solicitar uma feature, ou pedir para registrar algo. labels opcionais: 'bug', 'enhancement', 'security', 'question' (pode ser string ou array). Retorna o link do issue criado.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -452,6 +469,86 @@ function tryPrepareBatch(tool: string, args: any): string | null {
 export async function executeTool(tool: string, args: any = {}): Promise<string> {
     log.info(`Tool Call: ${tool}`, args);
     switch (tool) {
+        case 'search': {
+            if (!args?.query) throw new Error("Parâmetro 'query' ausente.");
+            const q = args.query;
+            const [customers, projects, tasks, invoices, orders, proposals] = await Promise.all([
+                dolibarrService.searchThirdParty(q).catch(() => []),
+                dolibarrService.listProjects({ search: q }).catch(() => []),
+                dolibarrService.listTasks().catch(() => []),
+                dolibarrService.listInvoices({}).catch(() => []),
+                dolibarrService.listOrders({ search: q }).catch(() => []),
+                dolibarrService.listProposals({ search: q }).catch(() => []),
+            ]);
+
+            const customerIds = customers.map((c: any) => String(c.id));
+            let relatedProjects: any[] = [];
+            if (customerIds.length > 0) {
+                const allCustProjs = await Promise.all(
+                    customerIds.map(id => dolibarrService.listProjects({ socid: id }).catch(() => []))
+                );
+                relatedProjects = allCustProjs.flat();
+            }
+
+            const allProjects = [...projects, ...relatedProjects];
+            const projIds = allProjects.map((p: any) => String(p.id));
+            let relatedTasks: any[] = [];
+            if (projIds.length > 0) {
+                const allProjTasks = await Promise.all(
+                    projIds.slice(0, 5).map(id => dolibarrService.listTasks(id).catch(() => []))
+                );
+                relatedTasks = allProjTasks.flat();
+            }
+
+            const parts: string[] = [];
+
+            if (customers.length > 0) {
+                parts.push('<h3>👥 Clientes</h3><ul>' +
+                    customers.map((c: any) =>
+                        `<li><a href="/customers/${c.id}" class="text-blue-600 underline font-semibold">${c.name}</a> — ${c.email || 'sem email'} (ID: ${c.id})</li>`
+                    ).join('') + '</ul>');
+            }
+
+            if (allProjects.length > 0) {
+                const statusLabel = (s: any) => s == 1 ? '🟢 Aberto' : s == 0 ? '⚪ Rascunho' : '🔴 Fechado';
+                parts.push('<h3>📁 Projetos</h3><ul>' +
+                    allProjects.map((p: any) =>
+                        `<li><a href="/projects/${p.id}" class="text-blue-600 underline font-semibold">${p.ref} — ${p.title}</a> ${statusLabel(p.statut)}</li>`
+                    ).join('') + '</ul>');
+            }
+
+            if (relatedTasks.length > 0) {
+                parts.push('<h3>📋 Tarefas dos projetos</h3><ul>' +
+                    relatedTasks.slice(0, 15).map((t: any) =>
+                        `<li><a href="/tasks/${t.id}" class="text-blue-600 underline">${t.ref} — ${t.label}</a> — ${t.progress || 0}%</li>`
+                    ).join('') + '</ul>');
+            }
+
+            if (invoices.length > 0) {
+                const statusInv = (s: any) => s == 1 ? '✅' : s == 0 ? '📝' : '❌';
+                parts.push('<h3>💰 Faturas</h3><ul>' +
+                    invoices.slice(0, 5).map((i: any) =>
+                        `<li><a href="/invoices/${i.id}" class="text-blue-600 underline">${i.ref}</a> — R$ ${parseFloat(i.total_ttc || 0).toFixed(2)} ${statusInv(i.statut)}</li>`
+                    ).join('') + '</ul>');
+            }
+
+            if (orders.length > 0) {
+                parts.push('<h3>📦 Pedidos</h3><ul>' +
+                    orders.slice(0, 5).map((o: any) =>
+                        `<li>${o.ref} — R$ ${parseFloat(o.total_ttc || 0).toFixed(2)}</li>`
+                    ).join('') + '</ul>');
+            }
+
+            if (proposals.length > 0) {
+                parts.push('<h3>📄 Propostas</h3><ul>' +
+                    proposals.slice(0, 5).map((p: any) =>
+                        `<li>${p.ref} — R$ ${parseFloat(p.total_ttc || 0).toFixed(2)}</li>`
+                    ).join('') + '</ul>');
+            }
+
+            if (parts.length === 0) return `Nenhum resultado encontrado para "${q}".`;
+            return `Resultados para "<strong>${q}</strong>":<br/><br/>${parts.join('<br/>')}`;
+        }
         case 'search_customer': {
             if (!args?.query) throw new Error("Parâmetro 'query' ausente.");
             const customers = await dolibarrService.searchThirdParty(args.query);
@@ -466,8 +563,8 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             return `Faturas: ${JSON.stringify(invs.map((i: any) => ({ ref: i.ref, total: i.total_ttc, status: i.statut, date: i.date })))}`;
         }
         case 'list_projects': {
-            const projs = await dolibarrService.listProjects(args?.search || '');
-            return `Projetos: ${JSON.stringify(projs.map((p: any) => ({ ref: p.ref, title: p.title, status: p.statut })))}`;
+            const projs = await dolibarrService.listProjects(args);
+            return `Projetos: ${JSON.stringify(projs.map((p: any) => ({ ref: p.ref, title: p.title, status: p.statut, socid: p.fk_soc })))}`;
         }
         case 'list_orders': {
             const orders = await dolibarrService.listOrders(args);
@@ -617,6 +714,24 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             if (url) return `Vídeo pronto (válido ~24h): ${url}`;
             if (status === 'Fail') return `A geração do vídeo (task_id ${args.task_id}) falhou.`;
             return `Vídeo ainda processando (status: ${status}). Tente novamente em instantes com o mesmo task_id.`;
+        }
+
+        case 'create_github_issue': {
+            if (!args?.title) throw new Error("Parâmetro 'title' ausente.");
+            const title = String(args.title);
+            const body = String(args.body || '');
+            let labels = args.labels;
+            if (typeof labels === 'string') labels = [labels];
+            const labelArgs = labels && labels.length > 0 ? labels.flatMap((l: string) => ['--label', l]) : [];
+            const allArgs = ['issue', 'create', '--repo', 'tcstulio/sistemav2', '--title', title, '--body', body, ...labelArgs];
+            try {
+                const { stdout } = await execFileAsync('gh', allArgs, { timeout: 15000 });
+                const issueUrl = stdout.trim();
+                return `Issue criado com sucesso: ${issueUrl}`;
+            } catch (e: any) {
+                log.error('create_github_issue failed', e);
+                return `Erro ao criar issue: ${e.message}`;
+            }
         }
 
         // AÇÕES HITL (prepare_create_*/prepare_edit_*/prepare_batch_create) caem no dispatch genérico.
