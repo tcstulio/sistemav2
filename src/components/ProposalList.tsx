@@ -11,6 +11,7 @@ import { RichTextEditor } from './common/RichTextEditor';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
 import { useProposals, useCustomers, useProducts, useProjects, useProposalLines, useUsers } from '../hooks/dolibarr';
+import { useListControls } from '../hooks/useListControls';
 import { logger } from '../utils/logger';
 
 const log = logger.child('ProposalList');
@@ -18,11 +19,12 @@ import { MasterDetailLayout } from './ui/MasterDetailLayout';
 import { PageHeader } from './ui/PageHeader';
 import { Card } from './ui/Card';
 import { Button } from './ui/Button';
-import { Input } from './ui/Input';
 import { Modal } from './ui/Modal';
 import { Tabs, Tab } from './ui/Tabs';
 import { EmptyState } from './ui/EmptyState';
 import { StatusBadge } from './ui/StatusBadge';
+import { ListToolbar } from './ui/ListToolbar';
+import { ConfirmDeleteButton } from './ui/ConfirmDeleteButton';
 import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 
@@ -56,7 +58,6 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
 
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState<'all' | 'open' | 'signed' | 'draft' | 'declined'>('all');
     const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list');
     const [processingId, setProcessingId] = useState<string | null>(null);
@@ -175,22 +176,6 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
         setIsFormOpen(true);
     };
 
-    const handleDelete = async (e: React.MouseEvent, id: string) => {
-        e.stopPropagation();
-        setProcessingId(id);
-        try {
-            await DolibarrService.deleteProposal(config, id);
-            toast.success("Proposta excluída com sucesso!");
-            if (selectedProposal?.id === id) setSelectedProposal(null);
-            refetchProposals();
-        } catch (err: any) {
-            log.error("Failed to delete proposal", err);
-            toast.error("Erro ao excluir: " + (err.message || 'Erro desconhecido'));
-        } finally {
-            setProcessingId(null);
-        }
-    };
-
     const handleAddLine = () => {
         setFormData(prev => ({
             ...prev,
@@ -292,21 +277,31 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
         return p ? p.title : null;
     };
 
-    const filteredProposals = useMemo(() => {
+    // Filtro de status (Tabs) como pré-filtro; no kanban as colunas mostram todos os status (#121).
+    const statusFilteredProposals = useMemo(() => {
         return proposals.filter(p => {
-            const customerName = getCustomerName(p.socid).toLowerCase();
-            const matchesSearch =
-                p.ref.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                customerName.includes(searchTerm.toLowerCase());
-
-            if (viewMode === 'kanban') return matchesSearch;
-            if (filterStatus === 'open') return matchesSearch && p.statut === '1';
-            if (filterStatus === 'signed') return matchesSearch && (p.statut === '2' || p.statut === '4');
-            if (filterStatus === 'draft') return matchesSearch && p.statut === '0';
-            if (filterStatus === 'declined') return matchesSearch && p.statut === '3';
-            return matchesSearch;
+            if (viewMode === 'kanban') return true;
+            if (filterStatus === 'open') return p.statut === '1';
+            if (filterStatus === 'signed') return p.statut === '2' || p.statut === '4';
+            if (filterStatus === 'draft') return p.statut === '0';
+            if (filterStatus === 'declined') return p.statut === '3';
+            return true;
         });
-    }, [proposals, customers, searchTerm, filterStatus, viewMode]);
+    }, [proposals, filterStatus, viewMode]);
+
+    // Busca + ordenação padronizadas (#121). Busca por ref ou nome do cliente.
+    const controls = useListControls(statusFilteredProposals, {
+        searchText: (p) => `${p.ref || ''} ${getCustomerName(p.socid)}`,
+        sorts: [
+            { key: 'date', label: 'Data', get: (p) => p.date ?? 0 },
+            { key: 'ref', label: 'Referência', get: (p) => p.ref },
+            { key: 'total', label: 'Valor', get: (p) => p.total_ttc ?? 0 },
+            { key: 'customer', label: 'Cliente', get: (p) => getCustomerName(p.socid) },
+        ],
+        initialSortKey: 'date',
+        initialSortDir: 'desc',
+    });
+    const filteredProposals = controls.result;
 
     const { openLink } = useDolibarrLink(config);
 
@@ -497,7 +492,15 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                         </div>
                         <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
                             <Button variant="ghost" size="sm" icon={<Edit size={18} />} onClick={(e) => { e.stopPropagation(); handleOpenEdit(prop); }} />
-                            <Button variant="ghost" size="sm" icon={<Trash2 size={18} />} onClick={(e) => handleDelete(e, prop.id)} className="hover:!text-red-600" />
+                            <ConfirmDeleteButton
+                                onDelete={() => DolibarrService.deleteProposal(config, prop.id)}
+                                onDeleted={() => {
+                                    if (selectedProposal?.id === prop.id) setSelectedProposal(null);
+                                    refetchProposals();
+                                }}
+                                itemLabel={prop.ref}
+                                iconSize={18}
+                            />
                         </div>
                         <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
                         <Button variant="ghost" size="sm" icon={<Scale size={18} />} onClick={(e) => handleAudit(e, prop)} className="!text-violet-600" />
@@ -519,13 +522,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                 subtitle={`${filteredProposals.length} proposta${filteredProposals.length !== 1 ? 's' : ''}`}
                 actions={
                     <div className="flex items-center gap-2">
-                        <Input
-                            icon={<Search size={18} />}
-                            placeholder="Buscar..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-64"
-                        />
+                        <ListToolbar controls={controls} searchPlaceholder="Buscar ref ou cliente..." />
                         <Button variant="primary" icon={<Plus size={18} />} onClick={handleOpenCreate}>
                             Nova
                         </Button>
@@ -643,9 +640,13 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                                 <Button variant="secondary" size="sm" icon={<Edit size={16} />} onClick={() => handleOpenEdit(selectedProposal)}>
                                     Editar
                                 </Button>
-                                <Button variant="danger" size="sm" icon={<Trash2 size={16} />} onClick={(e) => handleDelete(e, selectedProposal.id)}>
-                                    Excluir
-                                </Button>
+                                <ConfirmDeleteButton
+                                    withLabel
+                                    onDelete={() => DolibarrService.deleteProposal(config, selectedProposal.id)}
+                                    onDeleted={() => { setSelectedProposal(null); refetchProposals(); }}
+                                    itemLabel={selectedProposal.ref}
+                                    className="px-2 py-1"
+                                />
                             </>
                         )}
                     </div>
