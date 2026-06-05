@@ -2,10 +2,11 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { Intervention, AppView } from '../types';
-import { ClipboardList, Search, Plus, Loader2, CheckCircle2, Calendar, FolderKanban, User, Pencil } from 'lucide-react';
+import { ClipboardList, Plus, Loader2, CheckCircle2, Calendar, FolderKanban, User, Pencil } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInterventions, useCustomers, useProjects, useInterventionLines } from '../hooks/dolibarr';
+import { useListControls } from '../hooks/useListControls';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
@@ -14,7 +15,7 @@ import { logger } from '../utils/logger';
 const log = logger.child('InterventionList');
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Input, Modal, Tabs, Tab, EmptyState, StatusBadge } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Modal, Tabs, Tab, EmptyState, StatusBadge, ListToolbar } from './ui';
 import type { StatusConfig } from './ui';
 
 const interventionStatuses: Record<string, StatusConfig> = {
@@ -46,7 +47,6 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
 
     if (!config) return null;
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState<'all' | 'me' | 'draft' | 'validated' | 'done'>('all');
     const [selectedIntervention, setSelectedIntervention] = useState<Intervention | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
@@ -119,23 +119,30 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
         return p ? p.title : null;
     };
 
+    // Busca + ordenação padronizadas (#121). O filtro por status fica nas Tabs (inclui
+    // "Minhas") e é aplicado sobre controls.result.
+    const controls = useListControls(interventions, {
+        searchText: (i) => `${i.ref} ${getCustomerName(i.socid)} ${i.description || ''}`,
+        sorts: [
+            { key: 'date', label: 'Data', get: (i) => i.date || 0 },
+            { key: 'ref', label: 'Referência', get: (i) => i.ref },
+            { key: 'customer', label: 'Cliente', get: (i) => getCustomerName(i.socid) },
+        ],
+        initialSortKey: 'date',
+        initialSortDir: 'desc',
+    });
+
     const filteredInterventions = useMemo(() => {
-        return interventions.filter(i => {
-            const customerName = getCustomerName(i.socid).toLowerCase();
-            const matchesSearch =
-                i.ref.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                customerName.includes(searchTerm.toLowerCase());
-
-            if (filterStatus === 'draft') return matchesSearch && i.statut === '0';
-            if (filterStatus === 'validated') return matchesSearch && i.statut === '1';
-            if (filterStatus === 'done') return matchesSearch && i.statut === '2';
+        return controls.result.filter(i => {
+            if (filterStatus === 'draft') return i.statut === '0';
+            if (filterStatus === 'validated') return i.statut === '1';
+            if (filterStatus === 'done') return i.statut === '2';
             if (filterStatus === 'me') {
-                return matchesSearch && (String(i.fk_user_author) === String(config?.currentUser?.id));
+                return String(i.fk_user_author) === String(config?.currentUser?.id);
             }
-
-            return matchesSearch;
+            return true;
         });
-    }, [interventions, customers, searchTerm, filterStatus, config]);
+    }, [controls.result, filterStatus, config]);
 
     const handleSubmitIntervention = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -198,14 +205,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                 subtitle="Serviço de campo e ordens de trabalho"
                 actions={
                     <div className="flex items-center gap-2">
-                        <Input
-                            placeholder="Buscar..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            icon={<Search size={16} />}
-                            className="w-48 md:w-64"
-                            fullWidth={false}
-                        />
+                        <ListToolbar controls={controls} searchPlaceholder="Buscar intervenção..." />
                         <Button icon={<Plus size={16} />} onClick={() => setIsCreateModalOpen(true)}>
                             Nova Intervenção
                         </Button>
