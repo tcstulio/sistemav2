@@ -3,10 +3,11 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Contract, AppView } from '../types';
-import { FileSignature, Search, Plus, Loader2, CheckCircle2, Calendar, User, FolderKanban, Receipt, ExternalLink, Archive, Pencil } from 'lucide-react';
+import { FileSignature, Plus, Loader2, CheckCircle2, Calendar, User, FolderKanban, Receipt, ExternalLink, Archive, Pencil } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useContracts, useCustomers, useProjects, useInvoices } from '../hooks/dolibarr';
+import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
@@ -14,7 +15,7 @@ import { logger } from '../utils/logger';
 const log = logger.child('ContractList');
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Input, Modal, Tabs, Tab, EmptyState, StatusBadge } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Modal, Tabs, Tab, EmptyState, StatusBadge, ListToolbar } from './ui';
 import type { StatusConfig } from './ui';
 
 const contractStatuses: Record<string, StatusConfig> = {
@@ -41,7 +42,6 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
 
     if (!config) return null;
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'draft' | 'closed'>('all');
     const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
     const [activeTab, setActiveTab] = useState<'overview' | 'invoices'>('overview');
@@ -114,20 +114,27 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
         return p ? p.title : null;
     };
 
+    // Busca + ordenação padronizadas (#121). O filtro por status fica nas Tabs e é
+    // aplicado sobre controls.result.
+    const controls = useListControls(contracts, {
+        searchText: (c) => `${c.ref} ${getCustomerName(c.socid)}`,
+        sorts: [
+            { key: 'date_contrat', label: 'Data', get: (c) => c.date_contrat || 0 },
+            { key: 'ref', label: 'Referência', get: (c) => c.ref },
+            { key: 'customer', label: 'Cliente', get: (c) => getCustomerName(c.socid) },
+        ],
+        initialSortKey: 'date_contrat',
+        initialSortDir: 'desc',
+    });
+
     const filteredContracts = useMemo(() => {
-        return contracts.filter(c => {
-            const customerName = getCustomerName(c.socid).toLowerCase();
-            const matchesSearch =
-                c.ref.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                customerName.includes(searchTerm.toLowerCase());
-
-            if (filterStatus === 'active') return matchesSearch && c.statut === '1';
-            if (filterStatus === 'draft') return matchesSearch && c.statut === '0';
-            if (filterStatus === 'closed') return matchesSearch && c.statut === '2';
-
-            return matchesSearch;
+        return controls.result.filter(c => {
+            if (filterStatus === 'active') return c.statut === '1';
+            if (filterStatus === 'draft') return c.statut === '0';
+            if (filterStatus === 'closed') return c.statut === '2';
+            return true;
         });
-    }, [contracts, customers, searchTerm, filterStatus]);
+    }, [controls.result, filterStatus]);
 
     const contractInvoices = useMemo(() => {
         if (!selectedContract) return [];
@@ -206,14 +213,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                 subtitle="Gerencie acordos de serviço e assinaturas"
                 actions={
                     <div className="flex items-center gap-2">
-                        <Input
-                            placeholder="Buscar..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            icon={<Search size={16} />}
-                            className="w-48 md:w-64"
-                            fullWidth={false}
-                        />
+                        <ListToolbar controls={controls} searchPlaceholder="Buscar contrato..." />
                         <Button icon={<Plus size={16} />} onClick={() => setIsCreateModalOpen(true)}>
                             Novo Contrato
                         </Button>
