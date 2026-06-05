@@ -77,9 +77,6 @@ class GoogleProvider implements AIProvider {
             throw new Error("Google AI not configured.");
         }
 
-        // const { dolibarrService } = require('./dolibarrService'); // Replaced by static import
-
-        // Tool Definitions
         const toolsPrompt = TOOLS_PROMPT;
 
         let currentHistory = [...conversationHistory];
@@ -754,21 +751,8 @@ export class LocalProvider implements AIProvider {
         // We need to implement the ReAct loop here too because standard OpenAI interface doesn't automate this
         // unless we use the Function Calling API. But for generic Local LLM compatibility, prompting is safer.
 
-        // const { dolibarrService } = require('./dolibarrService'); // Replaced by static import
-
-        const toolsPrompt = `
-        FERRAMENTAS DISPONÍVEIS:
-        Responda APENAS com um JSON no formato: { "tool": "nome", "args": { ... } } se precisar de dados.
-        Caso contrário, responda normalmente.
-
-        1. search_customer(query: string)
-        2. get_customer_details(id: string)
-        3. list_invoices(status: string)
-        ... (outras ferramentas omitidas para brevidade, assumindo que o modelo conhece o contexto)
-        `;
-
-        // Conjunto completo de ferramentas (mesmo do Gemini), via registro unificado
-        const toolsLite = TOOLS_PROMPT;
+        // Conjunto completo de ferramentas, via registro unificado
+        const toolsPrompt = TOOLS_PROMPT;
 
         let currentHistory = [...conversationHistory];
         let currentContext = context;
@@ -778,7 +762,7 @@ export class LocalProvider implements AIProvider {
 
         while (iterations < MAX_ITERATIONS) {
             let messages = [
-                { role: 'system', content: `Você é um assistente ERP. Use Português. ${currentContext}. \n${toolsLite}` },
+                { role: 'system', content: `Você é um assistente ERP. Use Português. ${currentContext}. \n${toolsPrompt}` },
                 ...currentHistory.map(msg => ({
                     role: msg.role === 'model' ? 'assistant' : msg.role,
                     content: msg.parts

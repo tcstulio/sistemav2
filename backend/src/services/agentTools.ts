@@ -133,6 +133,13 @@ export const TOOLS_PROMPT = `
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
 
+        REGRAS OBRIGATÓRIAS:
+        1. NUNCA passe query vazia em search_customer ou search — sempre use um termo específico. Se o usuário não disse o nome, pergunte antes de buscar.
+        2. Sempre que possível, use a tool "search" (busca unificada) como PRIMEIRA ESCOLHA — ela já traz entidades relacionadas automaticamente.
+        3. Para criar/editar registros, SEMPRE busque o ID antes (use search, list_*, ou search_customer). Nunca invente IDs.
+        4. Os resultados das ferramentas contêm LINKS navegáveis (HTML). Inclua-os na resposta para o usuário clicar.
+        5. Se uma ferramenta retornar "nenhum resultado", informe o usuário e sugira alternativas (mudar o termo, buscar outra entidade).
+
         EXEMPLO:
         User: "Detalhes do cliente 123"
         Assistant: { "tool": "get_customer_details", "args": { "id": "123" } }
@@ -550,132 +557,255 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             return `Resultados para "<strong>${q}</strong>":<br/><br/>${parts.join('<br/>')}`;
         }
         case 'search_customer': {
-            if (!args?.query) throw new Error("Parâmetro 'query' ausente.");
+            if (!args?.query || String(args.query).trim() === '') {
+                return 'Especifique um nome ou termo para buscar clientes (query não pode ser vazio).';
+            }
             const customers = await dolibarrService.searchThirdParty(args.query);
-            return `Resultado da busca: ${JSON.stringify(customers.map((c: any) => ({ id: c.id, name: c.name, email: c.email })))}`;
+            if (customers.length === 0) return `Nenhum cliente encontrado para "${args.query}".`;
+            return '<h3>👥 Clientes encontrados</h3><ul>' +
+                customers.map((c: any) =>
+                    `<li><a href="/customers/${c.id}" class="text-blue-600 underline font-semibold">${c.name}</a> — ${c.email || 'sem email'} (ID: ${c.id})</li>`
+                ).join('') + '</ul>';
         }
         case 'get_customer_details': {
             if (!args?.id) throw new Error("Parâmetro 'id' ausente.");
-            return await dolibarrService.getCustomerContext(args.id);
+            const context = await dolibarrService.getCustomerContext(args.id);
+            return `<a href="/customers/${args.id}" class="text-blue-600 underline font-semibold">Abrir ficha do cliente</a>\n\n${context}`;
         }
         case 'list_invoices': {
             const invs = await dolibarrService.listInvoices(args || {});
-            return `Faturas: ${JSON.stringify(invs.map((i: any) => ({ ref: i.ref, total: i.total_ttc, status: i.statut, date: i.date })))}`;
+            if (invs.length === 0) return 'Nenhuma fatura encontrada.';
+            const statusLabel = (s: any) => s == 1 ? '✅ Paga' : s == 0 ? '📝 Rascunho' : '❌ Não paga';
+            return '<h3>🧾 Faturas</h3><ul>' +
+                invs.map((i: any) =>
+                    `<li><a href="/invoices/${i.id}" class="text-blue-600 underline font-semibold">${i.ref}</a> — R$ ${parseFloat(i.total_ttc || 0).toFixed(2)} ${statusLabel(i.statut)}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_projects': {
             const projs = await dolibarrService.listProjects(args);
-            return `Projetos: ${JSON.stringify(projs.map((p: any) => ({ ref: p.ref, title: p.title, status: p.statut, socid: p.fk_soc })))}`;
+            if (projs.length === 0) return 'Nenhum projeto encontrado.';
+            const statusLabel = (s: any) => s == 1 ? '🟢 Aberto' : s == 0 ? '⚪ Rascunho' : '🔴 Fechado';
+            return '<h3>📁 Projetos</h3><ul>' +
+                projs.map((p: any) =>
+                    `<li><a href="/projects/${p.id}" class="text-blue-600 underline font-semibold">${p.ref} — ${p.title}</a> ${statusLabel(p.statut)}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_orders': {
             const orders = await dolibarrService.listOrders(args);
-            return `Pedidos: ${JSON.stringify(orders.map((o: any) => ({ ref: o.ref, total: o.total_ttc, status: o.statut, date: o.date_commande })))}`;
+            if (orders.length === 0) return 'Nenhum pedido encontrado.';
+            return '<h3>📦 Pedidos de Venda</h3><ul>' +
+                orders.map((o: any) =>
+                    `<li><a href="/orders/${o.id}" class="text-blue-600 underline font-semibold">${o.ref}</a> — R$ ${parseFloat(o.total_ttc || 0).toFixed(2)}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_proposals': {
             const props = await dolibarrService.listProposals(args);
-            return `Propostas: ${JSON.stringify(props.map((p: any) => ({ ref: p.ref, total: p.total_ttc, status: p.statut, date: p.datep })))}`;
+            if (props.length === 0) return 'Nenhuma proposta encontrada.';
+            return '<h3>📄 Propostas</h3><ul>' +
+                props.map((p: any) =>
+                    `<li><a href="/proposals/${p.id}" class="text-blue-600 underline font-semibold">${p.ref}</a> — R$ ${parseFloat(p.total_ttc || 0).toFixed(2)}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_tickets': {
             const tickets = await dolibarrService.listTickets(args);
-            return `Tickets: ${JSON.stringify(tickets.map((t: any) => ({ track_id: t.track_id, subject: t.subject, message: t.message, date: t.datec })))}`;
+            if (tickets.length === 0) return 'Nenhum ticket encontrado.';
+            return '<h3>🎫 Tickets</h3><ul>' +
+                tickets.map((t: any) =>
+                    `<li><a href="/tickets/${t.id}" class="text-blue-600 underline font-semibold">${t.subject}</a> — ${t.track_id || ''}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_products': {
             const prods = await dolibarrService.listProducts(args?.search);
-            return `Produtos: ${JSON.stringify(prods.map((p: any) => ({ ref: p.ref, label: p.label, price: p.price })))}`;
+            if (prods.length === 0) return 'Nenhum produto encontrado.';
+            return '<h3>📦 Produtos</h3><ul>' +
+                prods.map((p: any) =>
+                    `<li><a href="/products/${p.id}" class="text-blue-600 underline font-semibold">${p.ref} — ${p.label}</a> — R$ ${parseFloat(p.price || 0).toFixed(2)}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_bank_accounts': {
             const banks = await dolibarrService.listBankAccounts();
-            return `Contas Bancárias: ${JSON.stringify(banks.map((b: any) => ({ label: b.label, balance: b.solde, currency: b.currency_code })))}`;
+            if (banks.length === 0) return 'Nenhuma conta bancária encontrada.';
+            return '<h3>🏦 Contas Bancárias</h3><ul>' +
+                banks.map((b: any) =>
+                    `<li><a href="/bank_accounts" class="text-blue-600 underline font-semibold">${b.label || b.ref}</a> — Saldo: R$ ${parseFloat(b.solde || 0).toFixed(2)} ${b.currency_code || ''}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_contracts': {
             const contracts = await dolibarrService.listContracts(args?.search);
-            return `Contratos: ${JSON.stringify(contracts.map((c: any) => ({ ref: c.ref, status: c.statut, date: c.date_contrat })))}`;
+            if (contracts.length === 0) return 'Nenhum contrato encontrado.';
+            return '<h3>📑 Contratos</h3><ul>' +
+                contracts.map((c: any) =>
+                    `<li><a href="/contracts" class="text-blue-600 underline font-semibold">${c.ref}</a></li>`
+                ).join('') + '</ul>';
         }
         case 'list_shipments': {
             const ships = await dolibarrService.listShipments(args?.search);
-            return `Expedições: ${JSON.stringify(ships.map((s: any) => ({ ref: s.ref, status: s.statut, date: s.date_creation })))}`;
+            if (ships.length === 0) return 'Nenhum envio encontrado.';
+            return '<h3>🚚 Envios</h3><ul>' +
+                ships.map((s: any) =>
+                    `<li><a href="/shipments" class="text-blue-600 underline font-semibold">${s.ref}</a></li>`
+                ).join('') + '</ul>';
         }
         case 'list_supplier_invoices': {
             const supInvs = await dolibarrService.listSupplierInvoices(args?.status);
-            return `Faturas Fornecedor: ${JSON.stringify(supInvs.map((i: any) => ({ ref: i.ref, total: i.total_ttc, status: i.statut, date: i.datef })))}`;
+            if (supInvs.length === 0) return 'Nenhuma fatura de fornecedor encontrada.';
+            return '<h3>🧾 Faturas de Fornecedor</h3><ul>' +
+                supInvs.map((i: any) =>
+                    `<li><a href="/supplier_invoices/${i.id}" class="text-blue-600 underline font-semibold">${i.ref}</a> — R$ ${parseFloat(i.total_ttc || 0).toFixed(2)}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_expense_reports': {
             const expenses = await dolibarrService.listExpenseReports(args?.status);
-            return `Despesas: ${JSON.stringify(expenses.map((e: any) => ({ ref: e.ref, total: e.total_ttc, status: e.statut, date: e.date_debut })))}`;
+            if (expenses.length === 0) return 'Nenhum relatório de despesa encontrado.';
+            return '<h3>💰 Despesas</h3><ul>' +
+                expenses.map((e: any) =>
+                    `<li>${e.ref} — R$ ${parseFloat(e.total_ttc || 0).toFixed(2)}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_users': {
             const users = await dolibarrService.listUsers(args?.search);
-            return `Usuários: ${JSON.stringify(users.map((u: any) => ({ id: u.id, name: u.lastname + ' ' + u.firstname, email: u.email, job: u.job })))}`;
+            if (users.length === 0) return 'Nenhum usuário encontrado.';
+            return '<h3>👥 Usuários</h3><ul>' +
+                users.map((u: any) =>
+                    `<li><a href="/hr/${u.id}" class="text-blue-600 underline font-semibold">${u.lastname} ${u.firstname}</a> — ${u.email || ''} ${u.job ? '(' + u.job + ')' : ''}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_warehouses': {
             const warehouses = await dolibarrService.listWarehouses();
-            return `Armazéns: ${JSON.stringify(warehouses.map((w: any) => ({ label: w.label, description: w.description })))}`;
+            if (warehouses.length === 0) return 'Nenhum armazém encontrado.';
+            return '<h3>🏭 Armazéns</h3><ul>' +
+                warehouses.map((w: any) =>
+                    `<li><a href="/warehouses" class="text-blue-600 underline font-semibold">${w.label}</a>${w.description ? ' — ' + w.description : ''}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_tasks': {
             const tasks = await dolibarrService.listTasks(args?.projectId);
-            return `Tarefas: ${JSON.stringify(tasks.map((t: any) => ({ ref: t.ref, label: t.label, progress: t.progress, dateo: t.dateo })))}`;
+            if (tasks.length === 0) return 'Nenhuma tarefa encontrada.';
+            return '<h3>📋 Tarefas</h3><ul>' +
+                tasks.map((t: any) =>
+                    `<li><a href="/tasks/${t.id}" class="text-blue-600 underline font-semibold">${t.ref} — ${t.label}</a> — ${t.progress || 0}%</li>`
+                ).join('') + '</ul>';
         }
         case 'list_user_tasks': {
             if (!args?.userId) throw new Error("Parâmetro 'userId' ausente.");
             const userTasks = await dolibarrService.listUserTasks(args.userId);
-            return `Tarefas do usuário: ${JSON.stringify(userTasks.map((t: any) => ({ ref: t.ref, label: t.label, progress: t.progress, dateo: t.dateo })))}`;
+            if (userTasks.length === 0) return 'Nenhuma tarefa encontrada para este usuário.';
+            return '<h3>📋 Tarefas do Usuário</h3><ul>' +
+                userTasks.map((t: any) =>
+                    `<li><a href="/tasks/${t.id}" class="text-blue-600 underline font-semibold">${t.ref} — ${t.label}</a> — ${t.progress || 0}%</li>`
+                ).join('') + '</ul>';
         }
         case 'list_events': {
             const events = await dolibarrService.listEvents(args?.limit);
-            return `Eventos: ${JSON.stringify(events.map((e: any) => ({ label: e.label, datep: e.datep, datef: e.datef, type: e.type_code })))}`;
+            if (events.length === 0) return 'Nenhum evento encontrado.';
+            return '<h3>📅 Eventos</h3><ul>' +
+                events.map((e: any) =>
+                    `<li><a href="/agenda/${e.id}" class="text-blue-600 underline font-semibold">${e.label}</a> — ${e.datep || ''}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_contacts': {
             const contacts = await dolibarrService.listContacts(args?.search);
-            return `Contatos: ${JSON.stringify(contacts.map((c: any) => ({ id: c.id, name: c.lastname + ' ' + c.firstname, email: c.email, phone: c.phone_mobile })))}`;
+            if (contacts.length === 0) return 'Nenhum contato encontrado.';
+            return '<h3>📇 Contatos</h3><ul>' +
+                contacts.map((c: any) =>
+                    `<li><a href="/contacts/${c.id}" class="text-blue-600 underline font-semibold">${c.lastname} ${c.firstname}</a> — ${c.email || ''} ${c.phone_mobile ? '| ' + c.phone_mobile : ''}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_categories': {
             const cats = await dolibarrService.listCategories(args?.type);
-            return `Categorias: ${JSON.stringify(cats.map((c: any) => ({ id: c.id, label: c.label, type: c.type })))}`;
+            if (cats.length === 0) return 'Nenhuma categoria encontrada.';
+            return '<h3>🏷️ Categorias</h3><ul>' +
+                cats.map((c: any) =>
+                    `<li><a href="/categories" class="text-blue-600 underline font-semibold">${c.label}</a> (${c.type || ''})</li>`
+                ).join('') + '</ul>';
         }
         case 'list_suppliers': {
             const suppliers = await dolibarrService.listSuppliers(args?.search);
-            return `Fornecedores: ${JSON.stringify(suppliers.map((s: any) => ({ id: s.id, name: s.name, email: s.email })))}`;
+            if (suppliers.length === 0) return 'Nenhum fornecedor encontrado.';
+            return '<h3>🏭 Fornecedores</h3><ul>' +
+                suppliers.map((s: any) =>
+                    `<li><a href="/suppliers/${s.id}" class="text-blue-600 underline font-semibold">${s.name}</a> — ${s.email || 'sem email'}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_supplier_orders': {
             const supOrders = await dolibarrService.listSupplierOrders(args?.status);
-            return `Pedidos Compra: ${JSON.stringify(supOrders.map((o: any) => ({ ref: o.ref, total: o.total_ttc, status: o.statut, date: o.date_commande })))}`;
+            if (supOrders.length === 0) return 'Nenhum pedido de compra encontrado.';
+            return '<h3>📦 Pedidos de Compra</h3><ul>' +
+                supOrders.map((o: any) =>
+                    `<li>${o.ref} — R$ ${parseFloat(o.total_ttc || 0).toFixed(2)}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_payments': {
             const payments = await dolibarrService.listPayments(args?.limit);
-            return `Pagamentos: ${JSON.stringify(payments.map((p: any) => ({ id: p.id, amount: p.amount, date: p.datep })))}`;
+            if (payments.length === 0) return 'Nenhum pagamento encontrado.';
+            return '<h3>💳 Pagamentos</h3><ul>' +
+                payments.map((p: any) =>
+                    `<li><a href="/payments/${p.id}" class="text-blue-600 underline font-semibold">Pagamento #${p.id}</a> — R$ ${parseFloat(p.amount || 0).toFixed(2)}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_bank_lines': {
             const bankLines = await dolibarrService.listBankLines(args?.accountId, args?.limit);
-            return `Movimentações Banco: ${JSON.stringify(bankLines.map((l: any) => ({ label: l.label, amount: l.amount, date: l.dateo })))}`;
+            if (bankLines.length === 0) return 'Nenhuma movimentação encontrada.';
+            return '<h3>🏦 Movimentações Bancárias</h3><ul>' +
+                bankLines.map((l: any) =>
+                    `<li>${l.label || ''} — R$ ${parseFloat(l.amount || 0).toFixed(2)} (${l.dateo || ''})</li>`
+                ).join('') + '</ul>';
         }
         case 'list_stock_movements': {
             const stockMoves = await dolibarrService.listStockMovements(args?.productId);
-            return `Movimentações Estoque: ${JSON.stringify(stockMoves.map((m: any) => ({ product: m.fk_product, qty: m.qty, date: m.datem })))}`;
+            if (stockMoves.length === 0) return 'Nenhuma movimentação de estoque encontrada.';
+            return '<h3>📦 Movimentações de Estoque</h3><ul>' +
+                stockMoves.map((m: any) =>
+                    `<li>Produto ${m.fk_product} — Qty: ${m.qty} (${m.datem || ''})</li>`
+                ).join('') + '</ul>';
         }
         case 'list_interventions': {
             const interventions = await dolibarrService.listInterventions(args?.search);
-            return `Intervenções: ${JSON.stringify(interventions.map((i: any) => ({ ref: i.ref, description: i.description, date: i.datec })))}`;
+            if (interventions.length === 0) return 'Nenhuma intervenção encontrada.';
+            return '<h3>🔧 Intervenções</h3><ul>' +
+                interventions.map((i: any) =>
+                    `<li><a href="/interventions" class="text-blue-600 underline font-semibold">${i.ref}</a>${i.description ? ' — ' + i.description : ''}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_leave_requests': {
             const leaves = await dolibarrService.listLeaveRequests(args?.status);
-            return `Solicitações Férias: ${JSON.stringify(leaves.map((l: any) => ({ ref: l.ref, status: l.statut, date_debut: l.date_debut })))}`;
+            if (leaves.length === 0) return 'Nenhuma solicitação de férias encontrada.';
+            return '<h3>🏖️ Solicitações de Férias</h3><ul>' +
+                leaves.map((l: any) =>
+                    `<li>${l.ref} — ${l.date_debut || ''}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_boms': {
             const boms = await dolibarrService.listBOMs(args?.search);
-            return `BOMs: ${JSON.stringify(boms.map((b: any) => ({ ref: b.ref, label: b.label, status: b.status })))}`;
+            if (boms.length === 0) return 'Nenhum BOM encontrado.';
+            return '<h3>🔩 Listas Técnicas (BOM)</h3><ul>' +
+                boms.map((b: any) =>
+                    `<li><a href="/manufacturing" class="text-blue-600 underline font-semibold">${b.ref} — ${b.label}</a></li>`
+                ).join('') + '</ul>';
         }
         case 'list_manufacturing_orders': {
             const mos = await dolibarrService.listManufacturingOrders(args?.status);
-            return `Ordens Produção: ${JSON.stringify(mos.map((m: any) => ({ ref: m.ref, qty: m.qty, status: m.status, date_start: m.date_start_planned })))}`;
+            if (mos.length === 0) return 'Nenhuma ordem de produção encontrada.';
+            return '<h3>🏭 Ordens de Produção</h3><ul>' +
+                mos.map((m: any) =>
+                    `<li><a href="/manufacturing" class="text-blue-600 underline font-semibold">${m.ref}</a> — Qty: ${m.qty}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_candidates': {
             const candidates = await dolibarrService.listCandidates(args?.search);
-            return `Candidatos: ${JSON.stringify(candidates.map((c: any) => ({ id: c.id, name: c.lastname + ' ' + c.firstname, email: c.email })))}`;
+            if (candidates.length === 0) return 'Nenhum candidato encontrado.';
+            return '<h3>👤 Candidatos</h3><ul>' +
+                candidates.map((c: any) =>
+                    `<li>${c.lastname} ${c.firstname} — ${c.email || ''}</li>`
+                ).join('') + '</ul>';
         }
         case 'list_job_positions': {
             const jobs = await dolibarrService.listJobPositions(true);
-            return jobs.length > 0
-                ? `Vagas ABERTAS: ${JSON.stringify(jobs.map((j: any) => ({ ref: j.ref, label: j.label, status: j.status, qty: j.qty })))}`
-                : 'Nenhuma vaga aberta no momento.';
+            if (jobs.length === 0) return 'Nenhuma vaga aberta no momento.';
+            return '<h3>💼 Vagas Abertas</h3><ul>' +
+                jobs.map((j: any) =>
+                    `<li>${j.ref} — ${j.label} (Qty: ${j.qty || 1})</li>`
+                ).join('') + '</ul>';
         }
         case 'search_web': {
             const searchResults = await ScraperService.searchGoogle(args?.query);
