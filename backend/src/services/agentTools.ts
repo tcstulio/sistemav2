@@ -60,7 +60,7 @@ export const TOOLS_PROMPT = `
         38. prepare_edit_project(id, title) - Prepara EDIÇÃO de um projeto (ex.: renomear). Ache o id antes com list_projects.
         39. prepare_create_supplier(name, email?, phone?, address?, town?, zip?) - Rascunho de novo fornecedor.
         40. prepare_edit_supplier(id, name?, email?, phone?, address?, town?, zip?) - Prepara EDIÇÃO de um fornecedor. Ache o id antes com list_suppliers.
-        41. prepare_create_task(label, project_id, description?, planned_workload?, date_start?, date_end?) - Rascunho de tarefa num projeto. project_id obrigatório (ache com list_projects). planned_workload em HORAS; datas em YYYY-MM-DD.
+        41. prepare_create_task(label, project_id, description?, planned_workload?, date_start?, date_end?, fk_user_assign?) - Rascunho de tarefa num projeto. project_id obrigatório (ache com list_projects). planned_workload em HORAS; datas em YYYY-MM-DD. fk_user_assign = id do usuário responsável (ache com list_users).
         42. prepare_edit_task(id, label?, description?, planned_workload?, date_start?, date_end?) - Prepara EDIÇÃO de uma tarefa. Ache o id antes com list_tasks. planned_workload em HORAS; datas em YYYY-MM-DD.
         43. prepare_create_category(label, type?, description?) - Rascunho de nova categoria (type: 'product' | 'customer' | 'supplier').
         44. prepare_edit_category(id, label?, type?, description?) - Prepara EDIÇÃO de uma categoria. Ache o id antes com list_categories.
@@ -174,7 +174,7 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
     },
     task: {
         label: 'tarefa',
-        createFields: ['label', 'description', 'project_id', 'planned_workload', 'date_start', 'date_end'],
+        createFields: ['label', 'description', 'project_id', 'planned_workload', 'date_start', 'date_end', 'fk_user_assign'],
         editFields: ['label', 'description', 'planned_workload', 'date_start', 'date_end'],
         required: ['label', 'project_id'],
         newRoute: '/tasks/new',

@@ -30,7 +30,13 @@ export const BATCH_ENTITIES: Record<string, BatchEntityDef> = {
     contact: { label: 'Contato', create: (c, it) => DolibarrService.createContact(c, it) },
     product: { label: 'Produto/Serviço', create: (c, it) => DolibarrService.createProduct(c, it) },
     project: { label: 'Projeto', create: (c, it) => DolibarrService.createProject(c, it) },
-    task: { label: 'Tarefa', create: (c, it) => DolibarrService.createTask(c, { ...it, date_start: toUnix(it.date_start), date_end: toUnix(it.date_end) }) },
+    task: { label: 'Tarefa', create: async (c, it) => {
+        const task = await DolibarrService.createTask(c, { ...it, date_start: toUnix(it.date_start), date_end: toUnix(it.date_end) });
+        if (task?.id && it.fk_user_assign) {
+            try { await DolibarrService.addTaskParticipant(c, task.id, it.fk_user_assign); } catch {}
+        }
+        return task;
+    }},
     ticket: { label: 'Ticket', create: (c, it) => DolibarrService.createTicket(c, it) },
     category: { label: 'Categoria', create: (c, it) => DolibarrService.createCategory(c, it) },
     candidate: { label: 'Candidato', create: (c, it) => DolibarrService.createCandidate(c, it) },
