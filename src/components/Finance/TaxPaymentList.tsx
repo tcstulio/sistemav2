@@ -1,14 +1,15 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { AppView } from '../../types';
-import { Search, Calendar, Landmark, Wallet } from 'lucide-react';
+import { Calendar, Landmark, Wallet } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useVATPayments, useSocialContributionPayments } from '../../hooks/dolibarr';
+import { useListControls } from '../../hooks/useListControls';
 import { formatDateOnly } from '../../utils/dateUtils';
 import { MasterDetailLayout } from '../ui/MasterDetailLayout';
 import { PageHeader } from '../ui/PageHeader';
 import { Card } from '../ui/Card';
-import { Input } from '../ui/Input';
 import { EmptyState } from '../ui/EmptyState';
+import { ListToolbar } from '../ui/ListToolbar';
 import { PaginationControls } from '../common/PaginationControls';
 
 interface TaxPaymentListProps {
@@ -21,26 +22,49 @@ const TaxPaymentList: React.FC<TaxPaymentListProps> = ({ onNavigate }) => {
     const { data: vatPayments = [] } = useVATPayments(config);
     const { data: socialPayments = [] } = useSocialContributionPayments(config);
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [page, setPage] = useState(0);
     const [limit, setLimit] = useState(20);
 
-    const allPayments = useMemo(() => {
-        const combined = [
-            ...vatPayments.map(p => ({ ...p, type: 'VAT' as const, label: 'Imposto (IVA)' })),
-            ...socialPayments.map(p => ({ ...p, type: 'SOCIAL' as const, label: 'Encargo Social' }))
-        ];
+    // Combina IVA + Encargos antes de busca/ordenação/filtro.
+    const combinedPayments = useMemo(() => [
+        ...vatPayments.map(p => ({ ...p, type: 'VAT' as const, label: 'Imposto (IVA)' })),
+        ...socialPayments.map(p => ({ ...p, type: 'SOCIAL' as const, label: 'Encargo Social' }))
+    ], [vatPayments, socialPayments]);
 
-        return combined.filter(p => {
-            return p.ref.toLowerCase().includes(searchTerm.toLowerCase());
-        }).sort((a, b) => b.date_payment - a.date_payment);
-    }, [vatPayments, socialPayments, searchTerm]);
+    // Busca + ordenação + filtro por tipo (#121). Pagamentos não são deletáveis (sem deleteX seguro).
+    const controls = useListControls(combinedPayments, {
+        searchText: (p) => `${p.ref || ''} ${p.label || ''}`,
+        sorts: [
+            { key: 'date', label: 'Data', get: (p) => p.date_payment ?? 0 },
+            { key: 'amount', label: 'Valor', get: (p) => p.amount ?? 0 },
+            { key: 'ref', label: 'Referência', get: (p) => p.ref },
+        ],
+        filters: [
+            {
+                key: 'type',
+                label: 'Tipo',
+                get: (p) => p.type,
+                options: [
+                    { value: 'VAT', label: 'Imposto (IVA)' },
+                    { value: 'SOCIAL', label: 'Encargo Social' },
+                ],
+            },
+        ],
+        initialSortKey: 'date',
+        initialSortDir: 'desc',
+    });
+    const allPayments = controls.result;
 
     const paginatedPayments = useMemo(() => {
         return allPayments.slice(page * limit, (page + 1) * limit);
     }, [allPayments, page, limit]);
 
     const totalPaid = useMemo(() => allPayments.reduce((acc, p) => acc + p.amount, 0), [allPayments]);
+
+    // Reset de página ao mudar busca/filtro/ordenação.
+    useEffect(() => {
+        setPage(0);
+    }, [controls.search, controls.filterValues, controls.sortKey, controls.sortDir]);
 
     if (!config) return null;
 
@@ -54,13 +78,7 @@ const TaxPaymentList: React.FC<TaxPaymentListProps> = ({ onNavigate }) => {
                         <div className="text-orange-600 dark:text-orange-400 font-bold text-lg">${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
                         <div className="text-xs text-orange-800 dark:text-orange-300 uppercase font-bold tracking-wide">Total Pago</div>
                     </div>
-                    <Input
-                        icon={<Search size={18} />}
-                        placeholder="Buscar ref..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-64"
-                    />
+                    <ListToolbar controls={controls} searchPlaceholder="Buscar ref..." />
                 </div>
             }
         />
