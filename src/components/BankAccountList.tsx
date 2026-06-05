@@ -6,13 +6,14 @@ import { BankStatementImport, CashFlowChart, BankingInsightsPanel, InterBankDash
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useBankAccounts, useBankLines, useInvoices, useSupplierInvoices } from '../hooks/dolibarr';
+import { useListControls } from '../hooks/useListControls';
 import { formatDateOnly } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
 
 const log = logger.child('BankAccountList');
 
 // Design System
-import { PageHeader, Card, Button, Input, Modal, EmptyState } from './ui';
+import { PageHeader, Card, Button, Input, Modal, EmptyState, ListToolbar, ConfirmDeleteButton } from './ui';
 
 interface BankAccountListProps {
     onRefresh?: () => void;
@@ -27,7 +28,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
     const [showSettings, setShowSettings] = useState(false);
 
     // --- DOLIBARR BANK ACCOUNTS LOGIC ---
-    const { data: accountsData } = useBankAccounts(config);
+    const { data: accountsData, refetch: refetchAccounts } = useBankAccounts(config);
     const accounts = accountsData || [];
     const { data: linesData } = useBankLines(config, !!config);
     const lines = linesData || [];
@@ -69,6 +70,29 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
     const totalBalance = useMemo(() => {
         return accounts.reduce((sum, acc) => sum + (acc.status === '0' ? acc.solde : 0), 0);
     }, [accounts]);
+
+    // Busca + ordenação + filtro padronizados (#121) para as contas Dolibarr.
+    const accountControls = useListControls(accounts, {
+        searchText: (a) => `${a.label || ''} ${a.bank || ''} ${a.number || ''} ${a.currency_code || ''}`,
+        sorts: [
+            { key: 'label', label: 'Rótulo', get: (a) => a.label },
+            { key: 'bank', label: 'Banco', get: (a) => a.bank },
+            { key: 'solde', label: 'Saldo', get: (a) => a.solde ?? 0 },
+        ],
+        filters: [
+            {
+                key: 'status',
+                label: 'Situação',
+                get: (a) => a.status,
+                options: [
+                    { value: '0', label: 'Aberta' },
+                    { value: '1', label: 'Fechada' },
+                ],
+            },
+        ],
+        initialSortKey: 'label',
+    });
+    const filteredAccounts = accountControls.result;
 
     const accountLines = useMemo(() => {
         if (!selectedAccount) return [];
@@ -550,6 +574,9 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                             </button>
                                         </div>
                                     </div>
+                                    {accounts.length > 0 && (
+                                        <ListToolbar controls={accountControls} searchPlaceholder="Buscar conta..." />
+                                    )}
                                 </div>
 
                                 <div className="flex-1 min-h-0 flex overflow-hidden">
@@ -562,9 +589,15 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                 description="Crie uma nova conta para começar."
                                                 action={<Button onClick={() => setIsCreateModalOpen(true)} icon={<Plus size={16} />}>Nova Conta</Button>}
                                             />
+                                        ) : filteredAccounts.length === 0 ? (
+                                            <EmptyState
+                                                icon={Landmark}
+                                                title="Nenhuma conta corresponde aos filtros"
+                                                description="Ajuste a busca ou os filtros."
+                                            />
                                         ) : (
                                             <div className={`grid gap-4 ${selectedAccount ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'}`}>
-                                                {accounts.map((account) => (
+                                                {filteredAccounts.map((account) => (
                                                     <div
                                                         key={account.id}
                                                         onClick={() => {
@@ -583,6 +616,15 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                                     <p className="text-xs text-slate-500 font-mono">{account.currency_code}</p>
                                                                 </div>
                                                             </div>
+                                                            <ConfirmDeleteButton
+                                                                onDelete={() => DolibarrService.deleteBankAccount(config, account.id)}
+                                                                onDeleted={() => {
+                                                                    if (selectedAccount?.id === account.id) setSelectedAccount(null);
+                                                                    refetchAccounts();
+                                                                    if (onRefresh) onRefresh();
+                                                                }}
+                                                                itemLabel={account.label}
+                                                            />
                                                         </div>
                                                         <div className="p-4">
                                                             <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Saldo</p>
