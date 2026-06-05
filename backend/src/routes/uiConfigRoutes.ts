@@ -27,6 +27,9 @@ const ScreenPermissionsSchema = z.object({
     users: z.record(z.string(), RuleSchema).optional(),
 }).optional();
 
+// #113 — telas customizadas; sanitização final fica no service (sanitizeCustomPages).
+const CustomPagesSchema = z.array(z.any()).optional();
+
 const UpdateSchema = z.object({
     companyName: z.string().min(1).max(100).optional(),
     logoText: z.string().min(1).max(8).optional(),
@@ -35,6 +38,7 @@ const UpdateSchema = z.object({
     menu: PrefsSchema,         // #110 — ordem/visibilidade do menu
     dashboard: PrefsSchema,    // #111 — ordem/visibilidade dos widgets
     screenPermissions: ScreenPermissionsSchema,  // #112 — permissões de tela por pessoa/grupo
+    customPages: CustomPagesSchema,              // #113 — telas customizadas por grupo
 });
 
 // Leitura: qualquer usuário logado (p/ renderizar branding/tema da org).
