@@ -36,6 +36,34 @@ export interface ScreenPermissions {
     users: Record<string, ScreenRule>;   // userId -> regra
 }
 
+// #113 — Telas customizadas por grupo. Cada página tem blocos e uma allow-list de visibilidade.
+export type CustomBlockType = 'richtext' | 'links' | 'widget' | 'embed';
+
+export interface CustomBlock {
+    id: string;
+    type: CustomBlockType;
+    title?: string;                 // cabeçalho opcional do bloco
+    html?: string;                  // type=richtext (saneado no cliente ao renderizar)
+    links?: { label: string; url: string; external?: boolean }[];  // type=links
+    widgetId?: string;              // type=widget (id de um widget reutilizável)
+    embedUrl?: string;              // type=embed (iframe https)
+    height?: number;                // type=embed — altura em px
+}
+
+export interface CustomPageVisibility {
+    groups: string[];   // ids de grupo; vazio = todos os logados
+    users: string[];    // ids de usuário
+}
+
+export interface CustomPage {
+    id: string;
+    title: string;
+    icon?: string;      // nome de ícone lucide
+    slug: string;       // rota /p/:slug (URL-safe)
+    visibility: CustomPageVisibility;
+    blocks: CustomBlock[];
+}
+
 export interface UiConfig {
     companyName: string;   // nome exibido no app (antes era hardcoded "CoolGroove")
     logoText: string;      // texto curto/inicial do bloco de logo
@@ -44,13 +72,15 @@ export interface UiConfig {
     menu: OrderVisibilityPrefs;       // #110 — ordem/visibilidade do menu lateral (padrão da org)
     dashboard: OrderVisibilityPrefs;  // #111 — ordem/visibilidade dos widgets do painel (padrão da org)
     screenPermissions: ScreenPermissions;  // #112 — permissões de tela por pessoa/grupo
+    customPages: CustomPage[];        // #113 — telas customizadas por grupo
 }
 
-// Entrada de update: branding parcial + prefs/permissões parciais (sanitizadas em update()).
-export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions'>> & {
+// Entrada de update: branding parcial + prefs/permissões/páginas parciais (sanitizadas em update()).
+export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions' | 'customPages'>> & {
     menu?: Partial<OrderVisibilityPrefs>;
     dashboard?: Partial<OrderVisibilityPrefs>;
     screenPermissions?: unknown;
+    customPages?: unknown;
 };
 
 const DEFAULTS: UiConfig = {
@@ -60,6 +90,7 @@ const DEFAULTS: UiConfig = {
     menu: { hidden: [], order: [] },
     dashboard: { hidden: [], order: [] },
     screenPermissions: { groups: {}, users: {} },
+    customPages: [],
 };
 
 // Sanitiza um array de ids vindo do cliente (string curta, sem duplicatas, limite de tamanho).
@@ -84,6 +115,75 @@ function sanitizePrefs(v: unknown): OrderVisibilityPrefs {
 function sanitizeRule(v: unknown): ScreenRule {
     const r = (v && typeof v === 'object') ? (v as Record<string, unknown>) : {};
     return { hidden: sanitizeIdArray(r.hidden), allowed: sanitizeIdArray(r.allowed) };
+}
+
+// ---- #113: saneamento de telas customizadas ----
+function str(v: unknown, max: number): string {
+    return typeof v === 'string' ? v.slice(0, max) : '';
+}
+
+function slugify(v: unknown): string {
+    return str(v, 60).toLowerCase().trim()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
+}
+
+function sanitizeBlock(v: unknown, idx: number): CustomBlock | null {
+    if (!v || typeof v !== 'object') return null;
+    const b = v as Record<string, unknown>;
+    const type = b.type;
+    if (type !== 'richtext' && type !== 'links' && type !== 'embed' && type !== 'widget') return null;
+    const block: CustomBlock = {
+        id: str(b.id, 40) || `b${idx}`,
+        type,
+        title: str(b.title, 120) || undefined,
+    };
+    if (type === 'richtext') {
+        block.html = str(b.html, 20000); // saneado com DOMPurify no cliente ao renderizar
+    } else if (type === 'links') {
+        const arr = Array.isArray(b.links) ? b.links : [];
+        block.links = arr.slice(0, 50).map((l) => {
+            const link = (l && typeof l === 'object') ? l as Record<string, unknown> : {};
+            return { label: str(link.label, 120), url: str(link.url, 500), external: !!link.external };
+        }).filter((l) => l.label && l.url);
+    } else if (type === 'widget') {
+        block.widgetId = str(b.widgetId, 60);
+    } else if (type === 'embed') {
+        const url = str(b.embedUrl, 1000);
+        block.embedUrl = /^https?:\/\//i.test(url) ? url : ''; // só http(s)
+        const h = Number(b.height);
+        block.height = Number.isFinite(h) ? Math.min(2000, Math.max(120, Math.round(h))) : 480;
+    }
+    return block;
+}
+
+function sanitizeCustomPages(v: unknown): CustomPage[] {
+    if (!Array.isArray(v)) return [];
+    const seenSlugs = new Set<string>();
+    const out: CustomPage[] = [];
+    for (const item of v.slice(0, 100)) {
+        if (!item || typeof item !== 'object') continue;
+        const p = item as Record<string, unknown>;
+        const id = str(p.id, 40);
+        const title = str(p.title, 120).trim();
+        if (!title) continue;
+        let slug = slugify(p.slug) || slugify(title) || `pagina-${out.length + 1}`;
+        while (seenSlugs.has(slug)) slug = `${slug}-${out.length + 1}`; // sem colisão
+        seenSlugs.add(slug);
+        const vis = (p.visibility && typeof p.visibility === 'object') ? p.visibility as Record<string, unknown> : {};
+        const blocksRaw = Array.isArray(p.blocks) ? p.blocks : [];
+        out.push({
+            id: id || `page-${out.length + 1}`,
+            title,
+            icon: str(p.icon, 40) || undefined,
+            slug,
+            visibility: { groups: sanitizeIdArray(vis.groups), users: sanitizeIdArray(vis.users) },
+            blocks: blocksRaw.slice(0, 50).map((b, i) => sanitizeBlock(b, i)).filter((b): b is CustomBlock => b !== null),
+        });
+    }
+    return out;
 }
 
 // Sanitiza o mapa de permissões de tela (groups/users -> regra), limitando o nº de entidades.
@@ -131,6 +231,7 @@ export class UiConfigService {
                     menu: { ...DEFAULTS.menu, ...(parsed.menu || {}) },
                     dashboard: { ...DEFAULTS.dashboard, ...(parsed.dashboard || {}) },
                     screenPermissions: sanitizeScreenPermissions(parsed.screenPermissions),
+                    customPages: sanitizeCustomPages(parsed.customPages),
                 };
             }
         } catch (error) {
@@ -169,6 +270,9 @@ export class UiConfigService {
         }
         if (partial.screenPermissions !== undefined) {
             next.screenPermissions = sanitizeScreenPermissions(partial.screenPermissions);
+        }
+        if (partial.customPages !== undefined) {
+            next.customPages = sanitizeCustomPages(partial.customPages);
         }
         this.data = next;
         this.save();

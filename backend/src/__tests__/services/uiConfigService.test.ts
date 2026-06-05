@@ -25,6 +25,7 @@ describe('uiConfigService', () => {
             menu: { hidden: [], order: [] },
             dashboard: { hidden: [], order: [] },
             screenPermissions: { groups: {}, users: {} },
+            customPages: [],
         });
     });
 
@@ -61,6 +62,36 @@ describe('uiConfigService', () => {
         expect(out.screenPermissions.groups['5']).toEqual({ hidden: ['invoices'], allowed: ['simulator'] });
         expect(out.screenPermissions.users['12']).toEqual({ hidden: ['orders'], allowed: [] });
         expect(mockedWrite).toHaveBeenCalled();
+    });
+
+    it('update sanitiza customPages (#113): slug seguro, embed só https, blocos válidos', () => {
+        const svc = new UiConfigService('ui.json');
+        const out = svc.update({
+            customPages: [
+                {
+                    title: 'Portal RH', slug: 'Portal RH!!', icon: 'Users',
+                    visibility: { groups: ['3'], users: [] },
+                    blocks: [
+                        { id: 'a', type: 'richtext', html: '<b>oi</b>' },
+                        { id: 'b', type: 'embed', embedUrl: 'javascript:alert(1)', height: 99999 },
+                        { id: 'c', type: 'embed', embedUrl: 'https://ok.com', height: 600 },
+                        { id: 'd', type: 'links', links: [{ label: 'Site', url: 'https://x.com' }, { label: '', url: '' }] },
+                        { type: 'invalid' },
+                    ],
+                },
+                { title: '' }, // descartada (sem título)
+            ],
+        } as any);
+        expect(out.customPages).toHaveLength(1);
+        const page = out.customPages[0];
+        expect(page.slug).toBe('portal-rh');
+        expect(page.visibility).toEqual({ groups: ['3'], users: [] });
+        // bloco embed inválido fica com url vazia; height limitado; bloco 'invalid' removido; link vazio removido
+        expect(page.blocks.map((b) => b.type)).toEqual(['richtext', 'embed', 'embed', 'links']);
+        expect(page.blocks[1].embedUrl).toBe('');
+        expect(page.blocks[1].height).toBe(2000);
+        expect(page.blocks[2].embedUrl).toBe('https://ok.com');
+        expect(page.blocks[3].links).toHaveLength(1);
     });
 
     it('update aplica menu/dashboard (#110/#111)', () => {
