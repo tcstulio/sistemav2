@@ -1,18 +1,19 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { Shipment, AppView } from '../types';
-import { Truck, Search, ExternalLink, Calendar, Package, Loader2, FilePlus, CheckCircle2 } from 'lucide-react';
+import { Truck, ExternalLink, Calendar, Package, Loader2, FilePlus, CheckCircle2 } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useShipments, useCustomers, useOrders, useUsers } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
+import { useListControls } from '../hooks/useListControls';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
 
 const log = logger.child('ShipmentList');
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Input, Tabs, Tab, EmptyState, StatusBadge } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, EmptyState, StatusBadge, ListToolbar, ConfirmDeleteButton } from './ui';
 import type { StatusConfig } from './ui';
 
 const shipmentStatuses: Record<string, StatusConfig> = {
@@ -28,7 +29,7 @@ interface ShipmentListProps {
 
 const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) => {
     const { config } = useDolibarr();
-    const { data: shipmentsData } = useShipments(config);
+    const { data: shipmentsData, refetch: refetchShipments } = useShipments(config);
     const shipments = shipmentsData || [];
     const { data: customersData } = useCustomers(config);
     const customers = customersData || [];
@@ -39,7 +40,6 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
 
     if (!config) return null;
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
 
@@ -62,19 +62,30 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
         return authorId;
     };
 
-    const filteredShipments = useMemo(() => {
-        return shipments.filter(s => {
-            const customerName = getCustomerName(s.socid).toLowerCase();
-            const orderRef = getOrderRef(s.fk_commande)?.toLowerCase() || '';
-            const matchesSearch =
-                s.ref.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                customerName.includes(searchTerm.toLowerCase()) ||
-                orderRef.includes(searchTerm.toLowerCase()) ||
-                (s.tracking_number && s.tracking_number.toLowerCase().includes(searchTerm.toLowerCase()));
-
-            return matchesSearch;
-        }).sort((a, b) => b.date_creation - a.date_creation);
-    }, [shipments, customers, orders, searchTerm]);
+    // Busca + ordenação + filtro de status padronizados (#121).
+    const controls = useListControls(shipments, {
+        searchText: (s) => `${s.ref || ''} ${getCustomerName(s.socid) || ''} ${getOrderRef(s.fk_commande) || ''} ${s.tracking_number || ''}`,
+        sorts: [
+            { key: 'date', label: 'Data', get: (s) => s.date_creation ?? 0 },
+            { key: 'ref', label: 'Referência', get: (s) => s.ref },
+            { key: 'customer', label: 'Cliente', get: (s) => getCustomerName(s.socid) },
+        ],
+        filters: [
+            {
+                key: 'status',
+                label: 'Status',
+                get: (s) => s.status,
+                options: [
+                    { value: '0', label: 'Rascunho' },
+                    { value: '1', label: 'Validado' },
+                    { value: '2', label: 'Entregue' },
+                ],
+            },
+        ],
+        initialSortKey: 'date',
+        initialSortDir: 'desc',
+    });
+    const filteredShipments = controls.result;
 
     const handleDownloadPdf = (e: React.MouseEvent, ref: string) => {
         e.stopPropagation();
@@ -106,14 +117,7 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                 }
                 subtitle="Rastreie entregas e despachos"
                 actions={
-                    <Input
-                        placeholder="Buscar envio, rastreio..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        icon={<Search size={16} />}
-                        className="w-48 md:w-64"
-                        fullWidth={false}
-                    />
+                    <ListToolbar controls={controls} searchPlaceholder="Buscar envio, rastreio..." />
                 }
             />
         </div>
@@ -137,7 +141,16 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                                     <Truck size={16} className="text-slate-400" />
                                     <h4 className="font-bold text-slate-800 dark:text-white text-sm">{ship.ref}</h4>
                                 </div>
-                                <StatusBadge status={ship.status} config={shipmentStatuses} size="sm" />
+                                <div className="flex items-center gap-1">
+                                    <StatusBadge status={ship.status} config={shipmentStatuses} size="sm" />
+                                    {ship.status === '0' && (
+                                        <ConfirmDeleteButton
+                                            onDelete={() => DolibarrService.deleteShipment(config, ship.id)}
+                                            onDeleted={() => { if (selectedShipment?.id === ship.id) setSelectedShipment(null); refetchShipments(); }}
+                                            itemLabel={ship.ref}
+                                        />
+                                    )}
+                                </div>
                             </div>
                             <div className="text-sm text-slate-600 dark:text-slate-300 font-medium mb-1">
                                 {getCustomerName(ship.socid)}
@@ -177,6 +190,13 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                             </Button>
                         )}
                         <Button variant="ghost" size="sm" icon={<ExternalLink size={16} />} onClick={(e) => handleDownloadPdf(e, selectedShipment.ref)} title="Baixar PDF" />
+                        {selectedShipment.status === '0' && (
+                            <ConfirmDeleteButton
+                                onDelete={() => DolibarrService.deleteShipment(config, selectedShipment.id)}
+                                onDeleted={() => { setSelectedShipment(null); refetchShipments(); }}
+                                itemLabel={selectedShipment.ref}
+                            />
+                        )}
                     </div>
                 }
             />
