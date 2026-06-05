@@ -4,12 +4,20 @@ import { logger } from '../utils/logger';
 
 const log = logger.child('UiConfigService');
 
-// Config de UI da ORGANIZAÇÃO (branding/tema), definida pelo admin no backend.
+// Preferência de ordem + visibilidade (menu #110 e dashboard #111).
+export interface OrderVisibilityPrefs {
+    hidden: string[];
+    order: string[];
+}
+
+// Config de UI da ORGANIZAÇÃO (branding/tema/menu/dashboard), definida pelo admin no backend.
 export interface UiConfig {
     companyName: string;
     logoText: string;
     logoUrl?: string;
     themeColor: string;
+    menu?: OrderVisibilityPrefs;       // #110 — padrão da org p/ o menu lateral
+    dashboard?: OrderVisibilityPrefs;  // #111 — padrão da org p/ os widgets do painel
 }
 
 const API_URL = '/api/ui-config';
