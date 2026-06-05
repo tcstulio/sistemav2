@@ -12,11 +12,18 @@ import { createLogger } from '../utils/logger';
 const log = createLogger('UiConfig');
 const router = Router();
 
+const PrefsSchema = z.object({
+    hidden: z.array(z.string()).optional(),
+    order: z.array(z.string()).optional(),
+}).optional();
+
 const UpdateSchema = z.object({
     companyName: z.string().min(1).max(100).optional(),
     logoText: z.string().min(1).max(8).optional(),
     logoUrl: z.string().max(500).optional(),
     themeColor: z.string().optional(),
+    menu: PrefsSchema,         // #110 — ordem/visibilidade do menu
+    dashboard: PrefsSchema,    // #111 — ordem/visibilidade dos widgets
 });
 
 // Leitura: qualquer usuário logado (p/ renderizar branding/tema da org).
