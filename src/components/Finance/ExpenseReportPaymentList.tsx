@@ -2,9 +2,10 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { AppView, ExpenseReportPayment, ExpenseReport } from '../../types';
 import { ExpenseDetailModal } from '../HR/modals/ExpenseDetailModal';
 
-import { Search, Calendar, FileText, Wallet, Receipt, X, CreditCard, User, Copy, Hash } from 'lucide-react';
+import { Calendar, FileText, Wallet, Receipt, X, CreditCard, User, Copy, Hash } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useExpenseReportPayments, useExpenseReports, useExpenseReportPaymentLinks, useBankAccounts, useUsers, useExpenseReportLines, useProjects } from '../../hooks/dolibarr';
+import { useListControls } from '../../hooks/useListControls';
 
 import { formatDateOnly } from '../../utils/dateUtils';
 import { formatCurrency, formatDate } from '../../utils/formatUtils';
@@ -13,7 +14,7 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 import { toast } from 'sonner';
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Input, EmptyState } from '../ui';
+import { PageHeader, MasterDetailLayout, Card, EmptyState, ListToolbar } from '../ui';
 
 interface ExpenseReportPaymentListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -32,10 +33,22 @@ const ExpenseReportPaymentList: React.FC<ExpenseReportPaymentListProps> = ({ onN
     const { data: expenseReportLines = [] } = useExpenseReportLines(config);
     const { data: projects = [] } = useProjects(config);
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [selectedPayment, setSelectedPayment] = useState<ExpenseReportPayment | null>(null);
     const [viewingExpenseReport, setViewingExpenseReport] = useState<ExpenseReport | null>(null);
     const [showDebug, setShowDebug] = useState(false);
+
+    // Busca + ordenação padronizadas (#121). Pagamentos não são deletáveis (sem deleteX seguro).
+    const controls = useListControls(paymentsData, {
+        searchText: (p) => `${p.ref || ''} ${p.num_paiement || ''}`,
+        sorts: [
+            { key: 'date', label: 'Data', get: (p) => p.date_payment ?? 0 },
+            { key: 'amount', label: 'Valor', get: (p) => p.amount ?? 0 },
+            { key: 'ref', label: 'Referência', get: (p) => p.ref },
+        ],
+        initialSortKey: 'date',
+        initialSortDir: 'desc',
+    });
+    const payments = controls.result;
 
     // Deep Link Effect
     useEffect(() => {
@@ -46,14 +59,6 @@ const ExpenseReportPaymentList: React.FC<ExpenseReportPaymentListProps> = ({ onN
             }
         }
     }, [initialItemId, paymentsData]);
-
-    // Filter
-    const payments = useMemo(() => {
-        return paymentsData.filter(p => {
-            const matchesSearch = p.ref.toLowerCase().includes(searchTerm.toLowerCase());
-            return matchesSearch;
-        }).sort((a, b) => b.date_payment - a.date_payment);
-    }, [paymentsData, searchTerm]);
 
     const totalPaid = useMemo(() => payments.reduce((acc, p) => acc + p.amount, 0), [payments]);
 
@@ -118,14 +123,7 @@ const ExpenseReportPaymentList: React.FC<ExpenseReportPaymentListProps> = ({ onN
                                     <div className="text-purple-600 dark:text-purple-400 font-bold text-lg">${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
                                     <div className="text-xs text-purple-800 dark:text-purple-300 uppercase font-bold tracking-wide">Total</div>
                                 </div>
-                                <Input
-                                    placeholder="Buscar ref..."
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                    icon={<Search size={16} />}
-                                    className="w-48"
-                                    fullWidth={false}
-                                />
+                                <ListToolbar controls={controls} searchPlaceholder="Buscar ref/número..." />
                             </div>
                         }
                     />

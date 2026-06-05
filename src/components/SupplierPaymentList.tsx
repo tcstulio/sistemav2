@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { AppView, SupplierPayment } from '../types';
-import { Search, ArrowUpRight, Calendar, TrendingDown, Wallet, Link2, X, FileText, StickyNote, Hash, CreditCard, User, Copy } from 'lucide-react';
+import { ArrowUpRight, Calendar, TrendingDown, Wallet, Link2, X, FileText, StickyNote, Hash, CreditCard, User, Copy } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useSupplierPayments, useSupplierInvoices, useSupplierPaymentInvoiceLinks, useBankAccounts, useUsers } from '../hooks/dolibarr';
+import { useListControls } from '../hooks/useListControls';
 import { formatDateOnly } from '../utils/dateUtils';
 import { formatCurrency, formatDate } from '../utils/formatUtils';
 import { toast } from 'sonner';
@@ -10,7 +11,7 @@ import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Input, EmptyState } from './ui';
+import { PageHeader, MasterDetailLayout, Card, EmptyState, ListToolbar } from './ui';
 
 interface SupplierPaymentListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -46,11 +47,29 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
     const { data: bankAccounts } = useBankAccounts(config);
     const { data: users } = useUsers(config);
 
-    if (!config) return <div className="p-8 text-center flex items-center justify-center gap-2 text-slate-500"><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-500"></div> Carregando...</div>;
-
-    const [searchTerm, setSearchTerm] = useState('');
     const [selectedPayment, setSelectedPayment] = useState<SupplierPayment | null>(null);
     const [showDebug, setShowDebug] = useState(false);
+
+    // Busca + ordenação + filtro por modo (#121). Pagamentos não são deletáveis (sem deleteX seguro).
+    const controls = useListControls(rawPayments, {
+        searchText: (p) => `${p.ref || ''} ${p.num_paiement || ''} ${p.note || ''}`,
+        sorts: [
+            { key: 'date', label: 'Data', get: (p) => Number(p.date_payment) || 0 },
+            { key: 'amount', label: 'Valor', get: (p) => Number(p.amount) || 0 },
+            { key: 'ref', label: 'Referência', get: (p) => p.ref },
+        ],
+        filters: [
+            {
+                key: 'mode',
+                label: 'Modo',
+                get: (p) => (p.mode_id != null ? String(p.mode_id) : ''),
+                options: Object.entries(PAYMENT_MODES).map(([value, label]) => ({ value, label })),
+            },
+        ],
+        initialSortKey: 'date',
+        initialSortDir: 'desc',
+    });
+    const payments = controls.result;
 
     // Deep Link Effect
     useEffect(() => {
@@ -61,14 +80,6 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
             }
         }
     }, [initialItemId, rawPayments]);
-
-    // Filter payments
-    const payments = useMemo(() => {
-        return rawPayments.filter(p => {
-            const matchesSearch = p.ref.toLowerCase().includes(searchTerm.toLowerCase());
-            return matchesSearch;
-        }).sort((a, b) => Number(b.date_payment) - Number(a.date_payment));
-    }, [rawPayments, searchTerm]);
 
     const totalPaid = useMemo(() => payments.reduce((acc, p) => acc + Number(p.amount), 0), [payments]);
 
@@ -111,6 +122,9 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
         return { bankAccount, author, paymentModeLabel, allocations };
     }, [selectedPayment, bankAccounts, users, links, invoices]);
 
+    // Guard após todos os hooks (evita "rendered fewer hooks").
+    if (!config) return <div className="p-8 text-center flex items-center justify-center gap-2 text-slate-500"><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-500"></div> Carregando...</div>;
+
     return (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
 
@@ -129,14 +143,7 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
                                 <div className="text-rose-600 dark:text-rose-400 font-bold text-lg">-${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
                                 <div className="text-xs text-rose-800 dark:text-rose-300 uppercase font-bold tracking-wide">Total</div>
                             </div>
-                            <Input
-                                placeholder="Buscar ref..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                icon={<Search size={16} />}
-                                className="w-48"
-                                fullWidth={false}
-                            />
+                            <ListToolbar controls={controls} searchPlaceholder="Buscar ref/nota..." />
                         </div>
                     }
                 />

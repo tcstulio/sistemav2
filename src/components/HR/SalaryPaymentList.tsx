@@ -1,8 +1,9 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { AppView, SalaryPayment } from '../../types';
-import { Search, Calendar, User, Wallet, DollarSign, CreditCard, Hash, Copy } from 'lucide-react';
+import { Calendar, User, Wallet, DollarSign, CreditCard, Hash, Copy } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useSalaryPayments, useUsers, useBankAccounts } from '../../hooks/dolibarr';
+import { useListControls } from '../../hooks/useListControls';
 import { formatDateOnly } from '../../utils/dateUtils';
 import { formatCurrency, formatDate } from '../../utils/formatUtils';
 import { FixedSizeList as ListWindow } from 'react-window';
@@ -10,7 +11,7 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 import { toast } from 'sonner';
 
 // Design System
-import { PageHeader, Card, Input, EmptyState, MasterDetailLayout } from '../ui';
+import { PageHeader, Card, EmptyState, MasterDetailLayout, ListToolbar } from '../ui';
 
 interface SalaryPaymentListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -25,8 +26,20 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
     const { data: users = [] } = useUsers(config);
     const { data: bankAccounts = [] } = useBankAccounts(config);
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [selectedPayment, setSelectedPayment] = useState<SalaryPayment | null>(null);
+
+    // Busca + ordenação padronizadas (#121). Pagamentos não são deletáveis (sem deleteX seguro).
+    const controls = useListControls(salaryPayments, {
+        searchText: (p) => `${p.ref || ''} ${p.num_payment || ''}`,
+        sorts: [
+            { key: 'date', label: 'Data', get: (p) => p.date_payment ?? 0 },
+            { key: 'amount', label: 'Valor', get: (p) => p.amount ?? 0 },
+            { key: 'ref', label: 'Referência', get: (p) => p.ref },
+        ],
+        initialSortKey: 'date',
+        initialSortDir: 'desc',
+    });
+    const payments = controls.result;
 
     // Deep Link Effect
     useEffect(() => {
@@ -37,13 +50,6 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
             }
         }
     }, [initialItemId, salaryPayments]);
-
-    // Filter
-    const payments = useMemo(() => {
-        return salaryPayments.filter(p => {
-            return p.ref.toLowerCase().includes(searchTerm.toLowerCase());
-        }).sort((a, b) => b.date_payment - a.date_payment);
-    }, [salaryPayments, searchTerm]);
 
     const totalPaid = useMemo(() => payments.reduce((acc, p) => acc + p.amount, 0), [payments]);
 
@@ -258,13 +264,7 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
                                 <div className="text-blue-600 dark:text-blue-400 font-bold text-lg">${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
                                 <div className="text-xs text-blue-800 dark:text-blue-300 uppercase font-bold tracking-wide">Total Pago</div>
                             </div>
-                            <Input
-                                icon={<Search size={18} />}
-                                placeholder="Buscar ref..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                className="w-64"
-                            />
+                            <ListToolbar controls={controls} searchPlaceholder="Buscar ref/número..." />
                         </div>
                     }
                 />
