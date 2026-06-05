@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Payment, AppView } from '../types';
-import { Search, ArrowDownLeft, Calendar, FileText, TrendingUp, Wallet, Link2, X, CreditCard, Copy, StickyNote, Hash, User } from 'lucide-react';
+import { ArrowDownLeft, Calendar, FileText, TrendingUp, Wallet, Link2, X, CreditCard, Copy, StickyNote, Hash, User } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
 import { usePayments, useInvoices, usePaymentInvoiceLinks, useBankAccounts, useUsers } from '../hooks/dolibarr';
+import { useListControls } from '../hooks/useListControls';
 import { formatDateOnly } from '../utils/dateUtils';
 import { formatDate, formatCurrency } from '../utils/formatUtils';
 import { FixedSizeList as ListWindow } from 'react-window';
@@ -10,7 +11,7 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 import { toast } from 'sonner';
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Input, EmptyState } from './ui';
+import { PageHeader, MasterDetailLayout, Card, EmptyState, ListToolbar } from './ui';
 
 // Map Dolibarr Payment Mode IDs to Labels
 const PAYMENT_MODES: Record<string, string> = {
@@ -46,8 +47,28 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
     const { data: bankAccounts } = useBankAccounts(config);
     const { data: users } = useUsers(config);
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
+
+    // Busca + ordenação + filtro padronizados (#121).
+    const controls = useListControls(rawPayments, {
+        searchText: (p) => `${p.ref || ''} ${p.num_paiement || ''} ${p.note || ''}`,
+        sorts: [
+            { key: 'date', label: 'Data', get: (p) => new Date(p.date_payment).getTime() || 0 },
+            { key: 'amount', label: 'Valor', get: (p) => p.amount ?? 0 },
+            { key: 'ref', label: 'Referência', get: (p) => p.ref },
+        ],
+        filters: [
+            {
+                key: 'mode',
+                label: 'Modo',
+                get: (p) => (p.mode_id != null ? String(p.mode_id) : ''),
+                options: Object.entries(PAYMENT_MODES).map(([value, label]) => ({ value, label })),
+            },
+        ],
+        initialSortKey: 'date',
+        initialSortDir: 'desc',
+    });
+    const payments = controls.result;
 
     // Deep Link Effect
     useEffect(() => {
@@ -59,17 +80,9 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
         }
     }, [initialItemId, rawPayments]);
 
-    if (!config) return <div className="p-8 text-center flex items-center justify-center gap-2 text-slate-500"><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-500"></div> Carregando...</div>;
-
-    // Filter payments
-    const payments = useMemo(() => {
-        return rawPayments.filter(p => {
-            const matchesSearch = p.ref.toLowerCase().includes(searchTerm.toLowerCase());
-            return matchesSearch;
-        }).sort((a, b) => new Date(b.date_payment).getTime() - new Date(a.date_payment).getTime());
-    }, [rawPayments, searchTerm]);
-
     const totalReceived = useMemo(() => payments.reduce((acc, p) => acc + p.amount, 0), [payments]);
+
+    if (!config) return <div className="p-8 text-center flex items-center justify-center gap-2 text-slate-500"><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-500"></div> Carregando...</div>;
 
     // Find linked invoices for a payment
     const getLinkedInvoices = (paymentId: number | string) => {
@@ -122,14 +135,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
                                 <div className="text-emerald-600 dark:text-emerald-400 font-bold text-lg">${totalReceived.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
                                 <div className="text-xs text-emerald-800 dark:text-emerald-300 uppercase font-bold tracking-wide">Total</div>
                             </div>
-                            <Input
-                                placeholder="Buscar ref..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                icon={<Search size={16} />}
-                                className="w-48"
-                                fullWidth={false}
-                            />
+                            <ListToolbar controls={controls} searchPlaceholder="Buscar pagamento..." />
                         </div>
                     }
                 />
