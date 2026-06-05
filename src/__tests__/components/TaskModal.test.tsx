@@ -16,7 +16,8 @@ describe('TaskModal', () => {
         description: '',
         planned_workload: 8,
         date_start: '2024-01-01',
-        date_end: '2024-01-31'
+        date_end: '2024-01-31',
+        fk_user_assign: ''
     };
 
     it('renders nothing when isOpen is false', () => {
