@@ -533,6 +533,14 @@ export const deleteOrder = async (config: DolibarrConfig, id: string) => {
     });
 };
 
+export const deleteContract = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/contracts/${id}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
 export const deleteSupplierOrder = async (config: DolibarrConfig, id: string) => {
     const url = `${sanitizeUrl(config.apiUrl)}/supplierorders/${id}`;
     return request(url, {

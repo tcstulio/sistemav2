@@ -15,7 +15,7 @@ import { logger } from '../utils/logger';
 const log = logger.child('InterventionList');
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Modal, Tabs, Tab, EmptyState, StatusBadge, ListToolbar } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Modal, Tabs, Tab, EmptyState, StatusBadge, ListToolbar, ConfirmDeleteButton } from './ui';
 import type { StatusConfig } from './ui';
 
 const interventionStatuses: Record<string, StatusConfig> = {
@@ -31,7 +31,7 @@ interface InterventionListProps {
 
 const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefresh }) => {
     const { config } = useDolibarr();
-    const { data: interventionsData } = useInterventions(config);
+    const { data: interventionsData, refetch: refetchInterventions } = useInterventions(config);
     const interventions = interventionsData || [];
     const { data: customersData } = useCustomers(config);
     const customers = customersData || [];
@@ -239,7 +239,20 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                         >
                             <div className="flex justify-between items-start mb-2">
                                 <h4 className="font-bold text-slate-800 dark:text-white text-sm">{int.ref}</h4>
-                                <StatusBadge status={int.statut} config={interventionStatuses} size="sm" />
+                                <div className="flex items-center gap-1 shrink-0">
+                                    <StatusBadge status={int.statut} config={interventionStatuses} size="sm" />
+                                    {int.statut === '0' && (
+                                        <ConfirmDeleteButton
+                                            itemLabel={int.ref}
+                                            onDelete={() => DolibarrService.deleteIntervention(config, int.id)}
+                                            onDeleted={() => {
+                                                if (selectedIntervention?.id === int.id) setSelectedIntervention(null);
+                                                refetchInterventions();
+                                                if (onRefresh) onRefresh();
+                                            }}
+                                        />
+                                    )}
+                                </div>
                             </div>
                             <div className="text-sm text-slate-600 dark:text-slate-300 font-medium mb-1 truncate">{int.description || 'Sem descrição'}</div>
                             <div className="text-xs text-slate-500 flex items-center justify-between mt-2">
@@ -281,6 +294,19 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                             <Button size="sm" icon={processingId ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} onClick={handleValidate} disabled={!!processingId}>
                                 Validar
                             </Button>
+                        )}
+                        {selectedIntervention.statut === '0' && (
+                            <ConfirmDeleteButton
+                                withLabel
+                                itemLabel={selectedIntervention.ref}
+                                stopPropagation={false}
+                                onDelete={() => DolibarrService.deleteIntervention(config, selectedIntervention.id)}
+                                onDeleted={() => {
+                                    setSelectedIntervention(null);
+                                    refetchInterventions();
+                                    if (onRefresh) onRefresh();
+                                }}
+                            />
                         )}
                     </div>
                 }

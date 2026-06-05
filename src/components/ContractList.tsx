@@ -15,7 +15,7 @@ import { logger } from '../utils/logger';
 const log = logger.child('ContractList');
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Modal, Tabs, Tab, EmptyState, StatusBadge, ListToolbar } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Modal, Tabs, Tab, EmptyState, StatusBadge, ListToolbar, ConfirmDeleteButton } from './ui';
 import type { StatusConfig } from './ui';
 
 const contractStatuses: Record<string, StatusConfig> = {
@@ -31,7 +31,7 @@ interface ContractListProps {
 
 const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) => {
     const { config } = useDolibarr();
-    const { data: contractsData } = useContracts(config);
+    const { data: contractsData, refetch: refetchContracts } = useContracts(config);
     const contracts = contractsData || [];
     const { data: customersData } = useCustomers(config);
     const customers = customersData || [];
@@ -246,7 +246,20 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                         >
                             <div className="flex justify-between items-start mb-2">
                                 <h4 className="font-bold text-slate-800 dark:text-white text-sm">{contract.ref}</h4>
-                                <StatusBadge status={contract.statut} config={contractStatuses} size="sm" />
+                                <div className="flex items-center gap-1 shrink-0">
+                                    <StatusBadge status={contract.statut} config={contractStatuses} size="sm" />
+                                    {(contract.statut === '0' || contract.statut === '2') && (
+                                        <ConfirmDeleteButton
+                                            itemLabel={contract.ref}
+                                            onDelete={() => DolibarrService.deleteContract(config, contract.id)}
+                                            onDeleted={() => {
+                                                if (selectedContract?.id === contract.id) setSelectedContract(null);
+                                                refetchContracts();
+                                                if (onRefresh) onRefresh();
+                                            }}
+                                        />
+                                    )}
+                                </div>
                             </div>
                             <div className="text-sm text-slate-600 dark:text-slate-300 font-medium mb-1">
                                 <span
@@ -295,6 +308,19 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                             <Button variant="danger" size="sm" icon={processingId ? <Loader2 size={14} className="animate-spin" /> : <Archive size={14} />} onClick={handleClose} disabled={!!processingId}>
                                 Fechar
                             </Button>
+                        )}
+                        {(selectedContract.statut === '0' || selectedContract.statut === '2') && (
+                            <ConfirmDeleteButton
+                                withLabel
+                                itemLabel={selectedContract.ref}
+                                stopPropagation={false}
+                                onDelete={() => DolibarrService.deleteContract(config, selectedContract.id)}
+                                onDeleted={() => {
+                                    setSelectedContract(null);
+                                    refetchContracts();
+                                    if (onRefresh) onRefresh();
+                                }}
+                            />
                         )}
                     </div>
                 }
