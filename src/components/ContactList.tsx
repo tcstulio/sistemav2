@@ -6,8 +6,9 @@ import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useContacts, useCustomers } from '../hooks/dolibarr';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
+import { useListControls } from '../hooks/useListControls';
 import { logger } from '../utils/logger';
-import { PageHeader, MasterDetailLayout, Card, Button, Input, Modal, EmptyState } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Input, Modal, EmptyState, ListToolbar, ConfirmDeleteButton } from './ui';
 
 const log = logger.child('ContactList');
 
@@ -22,12 +23,11 @@ type ContactForm = typeof emptyForm;
 
 const ContactList: React.FC<ContactListProps> = ({ onNavigate, onRefresh, initialItemId }) => {
     const { config, refreshData } = useDolibarr();
-    const { data: contactsData } = useContacts(config);
+    const { data: contactsData, refetch: refetchContacts } = useContacts(config);
     const contacts = contactsData || [];
     const { data: customersData } = useCustomers(config);
     const customers = customersData || [];
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
 
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -80,13 +80,16 @@ const ContactList: React.FC<ContactListProps> = ({ onNavigate, onRefresh, initia
         }
     }, [prefill, contacts]);
 
-    const filtered = useMemo(() => {
-        const q = searchTerm.toLowerCase();
-        return contacts.filter(c =>
-            `${c.firstname || ''} ${c.lastname || ''}`.toLowerCase().includes(q) ||
-            (c.email || '').toLowerCase().includes(q)
-        );
-    }, [contacts, searchTerm]);
+    // Busca + ordenação padronizadas (#121).
+    const controls = useListControls(contacts, {
+        searchText: (c) => `${c.firstname || ''} ${c.lastname || ''} ${c.email || ''} ${customerName(c.socid)}`,
+        sorts: [
+            { key: 'name', label: 'Nome', get: (c) => `${c.firstname || ''} ${c.lastname || ''}`.trim() },
+            { key: 'company', label: 'Cliente', get: (c) => customerName(c.socid) },
+        ],
+        initialSortKey: 'name',
+    });
+    const filtered = controls.result;
 
     if (!config) return <div className="p-8 text-center text-slate-500">Carregando configuração...</div>;
 
@@ -115,16 +118,6 @@ const ContactList: React.FC<ContactListProps> = ({ onNavigate, onRefresh, initia
             setIsEditModalOpen(false);
             refresh();
         } catch (e: any) { log.error(e); toast.error(`Falha: ${e.message}`); } finally { setIsSaving(false); }
-    };
-
-    const handleDelete = async () => {
-        if (!selectedContact || !confirm('Excluir este contato?')) return;
-        try {
-            await DolibarrService.deleteContact(config, selectedContact.id);
-            toast.success('Contato excluído.');
-            setSelectedContact(null);
-            refresh();
-        } catch (e: any) { log.error(e); toast.error(`Falha: ${e.message}`); }
     };
 
     const openEdit = (c: Contact) => {
@@ -204,7 +197,7 @@ const ContactList: React.FC<ContactListProps> = ({ onNavigate, onRefresh, initia
                     subtitle="Pessoas de contato dos clientes"
                     actions={
                         <div className="flex items-center gap-2">
-                            <Input placeholder="Buscar..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} icon={<Search size={16} />} className="w-48" fullWidth={false} />
+                            <ListToolbar controls={controls} searchPlaceholder="Buscar contato..." />
                             <Button icon={<Plus size={18} />} onClick={() => { setCreateForm({ ...emptyForm }); setIsCreateModalOpen(true); }}>Novo</Button>
                         </div>
                     }
@@ -224,7 +217,12 @@ const ContactList: React.FC<ContactListProps> = ({ onNavigate, onRefresh, initia
                                 <Card key={c.id} onClick={() => setSelectedContact(c)} selected={selectedContact?.id === c.id} hoverable padding="md">
                                     <div className="flex items-center gap-2 mb-1">
                                         <UserCircle size={16} className="text-indigo-400 shrink-0" />
-                                        <h4 className="font-bold text-slate-800 dark:text-white truncate text-sm">{c.firstname} {c.lastname}</h4>
+                                        <h4 className="font-bold text-slate-800 dark:text-white truncate text-sm flex-1">{c.firstname} {c.lastname}</h4>
+                                        <ConfirmDeleteButton
+                                            onDelete={() => DolibarrService.deleteContact(config, c.id)}
+                                            onDeleted={() => { if (selectedContact?.id === c.id) setSelectedContact(null); refetchContacts(); }}
+                                            itemLabel={`${c.firstname} ${c.lastname}`.trim()}
+                                        />
                                     </div>
                                     <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 ml-6 truncate">
                                         <Mail size={12} className="opacity-50" /> {c.email || 'Sem e-mail'}
@@ -247,7 +245,12 @@ const ContactList: React.FC<ContactListProps> = ({ onNavigate, onRefresh, initia
                                 actions={
                                     <>
                                         <Button variant="ghost" size="sm" icon={<Pencil size={18} />} onClick={() => openEdit(selectedContact)} title="Editar" />
-                                        <Button variant="ghost" size="sm" icon={<Trash2 size={18} />} onClick={handleDelete} className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20" />
+                                        <ConfirmDeleteButton
+                                            onDelete={() => DolibarrService.deleteContact(config, selectedContact.id)}
+                                            onDeleted={() => { setSelectedContact(null); refetchContacts(); }}
+                                            itemLabel={`${selectedContact.firstname} ${selectedContact.lastname}`.trim()}
+                                            iconSize={18}
+                                        />
                                     </>
                                 }
                             />
