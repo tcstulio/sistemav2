@@ -2,10 +2,11 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { toast } from 'sonner';
 import { Order, AppView } from '../types';
-import { ShoppingCart, Search, ExternalLink, Package, CheckCircle, Truck, Clock, FilePlus, Download, Receipt, ArrowDown, ArrowUp, Lock, CheckSquare, Trash2, Plus, Pencil } from 'lucide-react';
+import { ShoppingCart, ExternalLink, Package, CheckCircle, Truck, Clock, FilePlus, Download, Receipt, Lock, CheckSquare, Trash2, Plus, Pencil } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useOrders, useCustomers, useShipments, useInvoices, useUsers } from '../hooks/dolibarr';
+import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
@@ -13,7 +14,7 @@ import { logger } from '../utils/logger';
 const log = logger.child('OrderList');
 
 // Design System
-import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState, MasterDetailLayout, StatusBadge } from './ui';
+import { PageHeader, Card, Button, Input, Modal, Tabs, Tab, EmptyState, MasterDetailLayout, StatusBadge, ListToolbar, ConfirmDeleteButton } from './ui';
 import type { StatusConfig } from './ui/StatusBadge';
 
 interface OrderListProps {
@@ -61,6 +62,8 @@ const OrderDetail: React.FC<{
     onOpenDolibarr: (id: string) => void;
     onDeleteShipment: (id: string) => void;
     onCreateInvoiceLike: (id: string) => void;
+    onDeleteOrder: () => Promise<any>;
+    onOrderDeleted: () => void;
 }> = ({
     order,
     onClose,
@@ -77,7 +80,9 @@ const OrderDetail: React.FC<{
     onDownloadPdf,
     onOpenDolibarr,
     onDeleteShipment,
-    onCreateInvoiceLike
+    onCreateInvoiceLike,
+    onDeleteOrder,
+    onOrderDeleted
 }) => {
         const [activeTab, setActiveTab] = useState<'overview' | 'shipments' | 'invoices'>('overview');
 
@@ -139,6 +144,15 @@ const OrderDetail: React.FC<{
                                 >
                                     Validar
                                 </Button>
+                            )}
+                            {order.statut === '0' && (
+                                <ConfirmDeleteButton
+                                    withLabel
+                                    onDelete={onDeleteOrder}
+                                    onDeleted={onOrderDeleted}
+                                    itemLabel={order.ref}
+                                    className="px-2 py-1"
+                                />
                             )}
                             {(order.statut === '1' || order.statut === '2') && (
                                 <Button
@@ -308,7 +322,7 @@ const OrderDetail: React.FC<{
 
 const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefresh }) => {
     const { config } = useDolibarr();
-    const { data: ordersData } = useOrders(config);
+    const { data: ordersData, refetch: refetchOrders } = useOrders(config);
     const orders = ordersData || [];
     const { data: customersData } = useCustomers(config);
     const customers = customersData || [];
@@ -321,9 +335,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     // Fallback if config is null
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState<'all' | 'validated' | 'processing' | 'delivered'>('all');
-    const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
 
@@ -437,25 +449,30 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
         return customer ? customer.name : 'Cliente Desconhecido';
     };
 
-    const filteredOrders = useMemo(() => {
-        let result = orders.filter(o => {
-            const customerName = getCustomerName(o.socid).toLowerCase();
-            const matchesSearch =
-                o.ref.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                customerName.includes(searchTerm.toLowerCase());
-
-            // Status: 0=Draft, 1=Validated, 2=Processing, 3=Delivered/Closed
-            if (filterStatus === 'validated') return matchesSearch && o.statut === '1';
-            if (filterStatus === 'processing') return matchesSearch && o.statut === '2';
-            if (filterStatus === 'delivered') return matchesSearch && o.statut === '3';
-
-            return matchesSearch;
+    // Filtro de status (Tabs) como pré-filtro antes de busca/ordenação (#121).
+    // Status: 0=Draft, 1=Validated, 2=Processing, 3=Delivered/Closed
+    const statusFilteredOrders = useMemo(() => {
+        return orders.filter(o => {
+            if (filterStatus === 'validated') return o.statut === '1';
+            if (filterStatus === 'processing') return o.statut === '2';
+            if (filterStatus === 'delivered') return o.statut === '3';
+            return true;
         });
+    }, [orders, filterStatus]);
 
-        return result.sort((a, b) => {
-            return sortOrder === 'desc' ? b.date - a.date : a.date - b.date;
-        });
-    }, [orders, customers, searchTerm, filterStatus, sortOrder]);
+    // Busca + ordenação padronizadas (#121). Busca por ref ou nome do cliente.
+    const controls = useListControls(statusFilteredOrders, {
+        searchText: (o) => `${o.ref || ''} ${getCustomerName(o.socid)}`,
+        sorts: [
+            { key: 'date', label: 'Data', get: (o) => o.date ?? 0 },
+            { key: 'ref', label: 'Referência', get: (o) => o.ref },
+            { key: 'total', label: 'Valor', get: (o) => o.total_ttc ?? 0 },
+            { key: 'customer', label: 'Cliente', get: (o) => getCustomerName(o.socid) },
+        ],
+        initialSortKey: 'date',
+        initialSortDir: 'desc',
+    });
+    const filteredOrders = controls.result;
 
     const openInDolibarr = (id: string) => {
         const baseUrl = config.apiUrl.replace('/api/index.php', '');
@@ -528,6 +545,13 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
         } finally {
             setIsSubmittingShipment(false);
         }
+    };
+
+    // Exclusão de pedido (#121) — usada no card e no detalhe via ConfirmDeleteButton.
+    const handleOrderDeleted = (id: string) => {
+        if (selectedOrder && String(selectedOrder.id) === String(id)) setSelectedOrder(null);
+        refetchOrders();
+        if (onRefresh) onRefresh();
     };
 
     const handleDeleteShipment = async (id: string) => {
@@ -680,20 +704,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                     subtitle="Gerencie pedidos de clientes e envios"
                     actions={
                         <div className="flex items-center gap-2">
-                            <Input
-                                placeholder="Buscar pedido ou cliente..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                icon={<Search size={16} />}
-                                className="w-48"
-                                fullWidth={false}
-                            />
-                            <Button
-                                variant="secondary"
-                                icon={sortOrder === 'desc' ? <ArrowDown size={18} /> : <ArrowUp size={18} />}
-                                onClick={() => setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
-                                title={sortOrder === 'desc' ? "Mais recentes" : "Mais antigos"}
-                            />
+                            <ListToolbar controls={controls} searchPlaceholder="Buscar pedido ou cliente..." />
                             <Button icon={<FilePlus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                                 Novo
                             </Button>
@@ -736,6 +747,13 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                                             <span className="font-mono text-xs text-slate-400">{ord.ref}</span>
                                             <StatusBadge status={ord.statut} config={orderStatuses} size="sm" />
                                         </div>
+                                        {ord.statut === '0' && (
+                                            <ConfirmDeleteButton
+                                                onDelete={() => DolibarrService.deleteOrder(config, ord.id)}
+                                                onDeleted={() => handleOrderDeleted(ord.id)}
+                                                itemLabel={ord.ref}
+                                            />
+                                        )}
                                     </div>
                                     <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-1 line-clamp-1">{getCustomerName(ord.socid)}</h3>
                                     <div className="flex justify-between items-end">
@@ -766,6 +784,8 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                             onOpenDolibarr={openInDolibarr}
                             onDeleteShipment={handleDeleteShipment}
                             onCreateInvoiceLike={handleCreateInvoice}
+                            onDeleteOrder={() => DolibarrService.deleteOrder(config, selectedOrder.id)}
+                            onOrderDeleted={() => handleOrderDeleted(selectedOrder.id)}
                         />
                     )
                 }
