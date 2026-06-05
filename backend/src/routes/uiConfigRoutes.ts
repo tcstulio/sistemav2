@@ -17,6 +17,16 @@ const PrefsSchema = z.object({
     order: z.array(z.string()).optional(),
 }).optional();
 
+// #112 — mapa de permissões de tela; sanitização final fica no service (sanitizeScreenPermissions).
+const RuleSchema = z.object({
+    hidden: z.array(z.string()).optional(),
+    allowed: z.array(z.string()).optional(),
+});
+const ScreenPermissionsSchema = z.object({
+    groups: z.record(z.string(), RuleSchema).optional(),
+    users: z.record(z.string(), RuleSchema).optional(),
+}).optional();
+
 const UpdateSchema = z.object({
     companyName: z.string().min(1).max(100).optional(),
     logoText: z.string().min(1).max(8).optional(),
@@ -24,6 +34,7 @@ const UpdateSchema = z.object({
     themeColor: z.string().optional(),
     menu: PrefsSchema,         // #110 — ordem/visibilidade do menu
     dashboard: PrefsSchema,    // #111 — ordem/visibilidade dos widgets
+    screenPermissions: ScreenPermissionsSchema,  // #112 — permissões de tela por pessoa/grupo
 });
 
 // Leitura: qualquer usuário logado (p/ renderizar branding/tema da org).
