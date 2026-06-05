@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { safeStorage } from '../utils/safeStorage';
 import { logger } from '../utils/logger';
+import { ScreenPermissions } from '../utils/screenPermissions';
 
 const log = logger.child('UiConfigService');
 
@@ -10,7 +11,7 @@ export interface OrderVisibilityPrefs {
     order: string[];
 }
 
-// Config de UI da ORGANIZAÇÃO (branding/tema/menu/dashboard), definida pelo admin no backend.
+// Config de UI da ORGANIZAÇÃO (branding/tema/menu/dashboard/permissões), definida pelo admin no backend.
 export interface UiConfig {
     companyName: string;
     logoText: string;
@@ -18,6 +19,7 @@ export interface UiConfig {
     themeColor: string;
     menu?: OrderVisibilityPrefs;       // #110 — padrão da org p/ o menu lateral
     dashboard?: OrderVisibilityPrefs;  // #111 — padrão da org p/ os widgets do painel
+    screenPermissions?: ScreenPermissions;  // #112 — permissões de tela por pessoa/grupo
 }
 
 const API_URL = '/api/ui-config';

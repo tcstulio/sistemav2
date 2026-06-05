@@ -18,7 +18,14 @@ describe('uiConfigService', () => {
 
     it('retorna defaults quando não há arquivo', () => {
         const svc = new UiConfigService('ui.json');
-        expect(svc.get()).toEqual({ companyName: 'CoolGroove', logoText: 'D', themeColor: 'indigo' });
+        expect(svc.get()).toEqual({
+            companyName: 'CoolGroove',
+            logoText: 'D',
+            themeColor: 'indigo',
+            menu: { hidden: [], order: [] },
+            dashboard: { hidden: [], order: [] },
+            screenPermissions: { groups: {}, users: {} },
+        });
     });
 
     it('update aplica e persiste campos válidos', () => {
@@ -41,6 +48,26 @@ describe('uiConfigService', () => {
         const out = svc.update({ companyName: 'x'.repeat(200), logoText: 'ABCDEFGHIJ' });
         expect(out.companyName.length).toBe(100);
         expect(out.logoText.length).toBe(8);
+    });
+
+    it('update sanitiza screenPermissions (#112)', () => {
+        const svc = new UiConfigService('ui.json');
+        const out = svc.update({
+            screenPermissions: {
+                groups: { '5': { hidden: ['invoices', 'invoices', ''], allowed: ['simulator'] } },
+                users: { '12': { hidden: ['orders'] } as any },
+            } as any,
+        });
+        expect(out.screenPermissions.groups['5']).toEqual({ hidden: ['invoices'], allowed: ['simulator'] });
+        expect(out.screenPermissions.users['12']).toEqual({ hidden: ['orders'], allowed: [] });
+        expect(mockedWrite).toHaveBeenCalled();
+    });
+
+    it('update aplica menu/dashboard (#110/#111)', () => {
+        const svc = new UiConfigService('ui.json');
+        const out = svc.update({ menu: { hidden: ['chat'], order: ['dashboard', 'agenda'] } });
+        expect(out.menu).toEqual({ hidden: ['chat'], order: ['dashboard', 'agenda'] });
+        expect(out.dashboard).toEqual({ hidden: [], order: [] }); // intacto
     });
 
     it('carrega do arquivo quando existe (preenche defaults faltantes)', () => {
