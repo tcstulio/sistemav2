@@ -6,6 +6,7 @@ import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useSuppliers, useProducts, useSupplierInvoices, useSupplierOrders, useWarehouses, useUsers } from '../hooks/dolibarr';
 import { useSupplierMutations } from '../hooks/useMutations';
+import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
 
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
@@ -15,7 +16,7 @@ import { logger } from '../utils/logger';
 const log = logger.child('SupplierList');
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Input, Modal, Tabs, Tab, EmptyState, ConfirmModal, StatusBadge } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Input, Modal, Tabs, Tab, EmptyState, ConfirmModal, StatusBadge, ListToolbar, ConfirmDeleteButton } from './ui';
 import type { StatusConfig } from './ui';
 import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
@@ -34,7 +35,7 @@ interface SupplierListProps {
 
 export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefresh }) => {
     const { config } = useDolibarr();
-    const { data: suppliersData } = useSuppliers(config);
+    const { data: suppliersData, refetch: refetchSuppliers } = useSuppliers(config);
     const suppliers = suppliersData || [];
     const { data: productsData } = useProducts(config);
     const products = productsData || [];
@@ -47,11 +48,10 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
     const { data: users = [] } = useUsers(config);
 
     // Mutations
-    const { createSupplier, updateSupplier, deleteSupplier } = useSupplierMutations(config);
+    const { createSupplier, updateSupplier } = useSupplierMutations(config);
 
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
-    const [searchTerm, setSearchTerm] = useState('');
     const [selectedSupplier, setSelectedSupplier] = useState<ThirdParty | null>(null);
     const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'invoices' | 'products'>('overview');
 
@@ -87,9 +87,6 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
         }
     }, [prefill, suppliers]);
 
-    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-    const [isDeleting, setIsDeleting] = useState(false);
-
     // Order Detail State
     const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
     const [isProcessingOrder, setIsProcessingOrder] = useState(false);
@@ -111,12 +108,17 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
         return u ? (u.firstname ? `${u.firstname} ${u.lastname}` : u.login) : `User ${id}`;
     };
 
-    const filteredSuppliers = useMemo(() => {
-        return suppliers.filter(s =>
-            s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (s.email && s.email.toLowerCase().includes(searchTerm.toLowerCase()))
-        );
-    }, [suppliers, searchTerm]);
+    // Busca + ordenação padronizadas (#121).
+    const controls = useListControls(suppliers, {
+        searchText: (s) => `${s.name || ''} ${s.email || ''} ${s.town || ''} ${s.code_fournisseur || ''}`,
+        sorts: [
+            { key: 'name', label: 'Nome', get: (s) => s.name },
+            { key: 'town', label: 'Cidade', get: (s) => s.town },
+            { key: 'date', label: 'Atualizado', get: (s) => s.date_modification ?? 0 },
+        ],
+        initialSortKey: 'name',
+    });
+    const filteredSuppliers = controls.result;
 
     // Derived data for selected supplier
     const currentSupplierInvoices = useMemo(() => selectedSupplier ? supplierInvoices.filter(i => String(i.socid) === String(selectedSupplier.id)) : [], [selectedSupplier, supplierInvoices]);
@@ -263,25 +265,6 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
         }
     };
 
-    const handleDeleteClick = () => {
-        setIsDeleteModalOpen(true);
-    };
-
-    const handleDeleteConfirm = async () => {
-        if (!selectedSupplier) return;
-        setIsDeleting(true);
-        try {
-            await deleteSupplier.mutateAsync(selectedSupplier.id);
-            toast.success("Fornecedor removido com sucesso!");
-            setIsDeleteModalOpen(false);
-            setSelectedSupplier(null);
-        } catch (e: any) {
-            toast.error("Erro ao remover: " + e.message);
-        } finally {
-            setIsDeleting(false);
-        }
-    };
-
     return (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors relative">
 
@@ -339,20 +322,6 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                     <Input label="Cód. Fornecedor" value={editForm.code_fournisseur || ''} onChange={e => setEditForm({ ...editForm, code_fournisseur: e.target.value })} />
                 </div>
             </Modal>
-
-            {/* Delete Modal */}
-            <ConfirmModal
-                isOpen={isDeleteModalOpen}
-                onClose={() => setIsDeleteModalOpen(false)}
-                onConfirm={handleDeleteConfirm}
-                title="Remover Fornecedor?"
-                message={`Tem certeza que deseja remover ${selectedSupplier?.name || ''}? Esta ação não pode ser desfeita.`}
-                confirmLabel="Confirmar Remoção"
-                isLoading={isDeleting}
-                variant="danger"
-            />
-
-
 
             {/* Reception Modal */}
             <Modal
@@ -421,14 +390,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                     subtitle="Gerencie vendedores e pedidos de compra"
                     actions={
                         <div className="flex items-center gap-2">
-                            <Input
-                                placeholder="Buscar..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                icon={<Search size={16} />}
-                                className="w-48"
-                                fullWidth={false}
-                            />
+                            <ListToolbar controls={controls} searchPlaceholder="Buscar fornecedor..." />
                             <Button icon={<PlusCircle size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                                 Novo Fornecedor
                             </Button>
@@ -472,7 +434,14 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                             padding="md"
                                                             className="mb-2"
                                                         >
-                                                            <h4 className="font-bold text-slate-800 dark:text-white truncate text-sm">{sup.name}</h4>
+                                                            <div className="flex items-start justify-between gap-2">
+                                                                <h4 className="font-bold text-slate-800 dark:text-white truncate text-sm flex-1">{sup.name}</h4>
+                                                                <ConfirmDeleteButton
+                                                                    onDelete={() => DolibarrService.deleteThirdParty(config, sup.id)}
+                                                                    onDeleted={() => { if (selectedSupplier?.id === sup.id) setSelectedSupplier(null); refetchSuppliers(); }}
+                                                                    itemLabel={sup.name}
+                                                                />
+                                                            </div>
                                                             <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 truncate">{sup.email}</div>
                                                             {sup.phone && <div className="text-xs text-slate-500 mt-1 flex items-center gap-1"><Phone size={12} /> {sup.phone}</div>}
                                                         </Card>
@@ -496,7 +465,12 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                 actions={
                                     <div className="flex items-center gap-2">
                                         <Button variant="ghost" size="sm" icon={<Pencil size={18} />} onClick={handleEditClick} title="Editar" />
-                                        <Button variant="ghost" size="sm" icon={<Trash2 size={18} />} onClick={handleDeleteClick} title="Remover" className="hover:!text-red-600" />
+                                        <ConfirmDeleteButton
+                                            onDelete={() => DolibarrService.deleteThirdParty(config, selectedSupplier.id)}
+                                            onDeleted={() => { setSelectedSupplier(null); refetchSuppliers(); }}
+                                            itemLabel={selectedSupplier.name}
+                                            iconSize={18}
+                                        />
                                         <Button variant="ghost" size="sm" icon={<X size={18} />} onClick={() => setSelectedSupplier(null)} className="hidden lg:flex" />
                                     </div>
                                 }
