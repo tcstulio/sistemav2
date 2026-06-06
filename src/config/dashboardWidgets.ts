@@ -30,4 +30,5 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDef[] = [
     { id: 'sales-forecast', label: 'Previsão de Vendas', region: 'sidebar' },
     { id: 'operational-alerts', label: 'Alertas Operacionais', region: 'sidebar' },
     { id: 'quick-actions', label: 'Ações Rápidas', region: 'sidebar' },
+    { id: 'project-evolution', label: 'Evolução do Projeto (Issues)', region: 'sidebar' },
 ];

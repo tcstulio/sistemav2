@@ -13,6 +13,7 @@ import { logger } from '../utils/logger';
 import { useOrgBranding } from '../hooks/useOrgBranding';
 import { applyOrderVisibility, getUserPrefs, OrderVisibilityPrefs } from '../utils/orderVisibility';
 import { DASHBOARD_WIDGETS } from '../config/dashboardWidgets';
+import { GithubService, GitHubIssue, IssueStats } from '../services/githubService';
 
 const DASHBOARD_PREFS_KEY = 'coolgroove_dashboard_prefs';
 
@@ -671,6 +672,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                     </div>
             </React.Fragment>
         ),
+
+        'project-evolution': (
+            <ProjectEvolutionWidget key="project-evolution" />
+        ),
     };
 
     // Ordena/filtra os widgets de cada região respeitando o padrão da org + override do usuário.
@@ -735,3 +740,92 @@ const Card: React.FC<CardProps> = ({ title, value, icon: Icon, color, onClick, s
 );
 
 export default Dashboard;
+
+const LABEL_COLORS: Record<string, string> = {
+    bug: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400',
+    enhancement: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400',
+    security: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
+    question: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+};
+
+const ProjectEvolutionWidget: React.FC = () => {
+    const [stats, setStats] = useState<IssueStats | null>(null);
+    const [recent, setRecent] = useState<GitHubIssue[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        (async () => {
+            const [s, issues] = await Promise.all([
+                GithubService.getStats(),
+                GithubService.getIssues({ state: 'all', limit: 8 }),
+            ]);
+            setStats(s);
+            setRecent(issues);
+            setLoading(false);
+        })();
+    }, []);
+
+    if (loading) {
+        return (
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-center h-24 text-sm text-slate-400">
+                    <Loader2 size={18} className="animate-spin mr-2" /> Carregando...
+                </div>
+            </div>
+        );
+    }
+
+    if (!stats) return null;
+
+    return (
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-slate-800 dark:text-white">Evolução do Projeto</h3>
+                <div className="flex items-center gap-3 text-xs">
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" />{stats.totalClosed} fechados</span>
+                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" />{stats.totalOpen} abertos</span>
+                </div>
+            </div>
+
+            <div className="space-y-2">
+                {recent.map(issue => (
+                    <a
+                        key={issue.number}
+                        href={issue.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-start gap-2 p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group"
+                    >
+                        <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${issue.state === 'OPEN' ? 'bg-amber-500' : 'bg-green-500'}`} />
+                        <div className="flex-1 min-w-0">
+                            <p className="text-sm text-slate-700 dark:text-slate-300 truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
+                                <span className="text-slate-400 mr-1">#{issue.number}</span>{issue.title}
+                            </p>
+                            <div className="flex gap-1 mt-0.5 flex-wrap">
+                                {(issue.labels || []).map((l: any) => (
+                                    <span key={l.name} className={`text-[10px] px-1.5 py-0.5 rounded ${LABEL_COLORS[l.name] || 'bg-slate-100 text-slate-500'}`}>
+                                        {l.name}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    </a>
+                ))}
+            </div>
+
+            {Object.keys(stats.byLabel).length > 0 && (
+                <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                    <p className="text-xs text-slate-400 mb-2">Por categoria</p>
+                    <div className="grid grid-cols-2 gap-1.5">
+                        {Object.entries(stats.byLabel).map(([label, counts]) => (
+                            <div key={label} className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                                <span className="truncate">{label}</span>
+                                <span>{counts.closed}✓ {counts.open > 0 ? `${counts.open}⏳` : ''}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
