@@ -77,9 +77,6 @@ class GoogleProvider implements AIProvider {
             throw new Error("Google AI not configured.");
         }
 
-        // const { dolibarrService } = require('./dolibarrService'); // Replaced by static import
-
-        // Tool Definitions
         const toolsPrompt = TOOLS_PROMPT;
 
         let currentHistory = [...conversationHistory];
@@ -754,21 +751,8 @@ export class LocalProvider implements AIProvider {
         // We need to implement the ReAct loop here too because standard OpenAI interface doesn't automate this
         // unless we use the Function Calling API. But for generic Local LLM compatibility, prompting is safer.
 
-        // const { dolibarrService } = require('./dolibarrService'); // Replaced by static import
-
-        const toolsPrompt = `
-        FERRAMENTAS DISPONÍVEIS:
-        Responda APENAS com um JSON no formato: { "tool": "nome", "args": { ... } } se precisar de dados.
-        Caso contrário, responda normalmente.
-
-        1. search_customer(query: string)
-        2. get_customer_details(id: string)
-        3. list_invoices(status: string)
-        ... (outras ferramentas omitidas para brevidade, assumindo que o modelo conhece o contexto)
-        `;
-
-        // Conjunto completo de ferramentas (mesmo do Gemini), via registro unificado
-        const toolsLite = TOOLS_PROMPT;
+        // Conjunto completo de ferramentas, via registro unificado
+        const toolsPrompt = TOOLS_PROMPT;
 
         let currentHistory = [...conversationHistory];
         let currentContext = context;
@@ -778,7 +762,7 @@ export class LocalProvider implements AIProvider {
 
         while (iterations < MAX_ITERATIONS) {
             let messages = [
-                { role: 'system', content: `Você é um assistente ERP. Use Português. ${currentContext}. \n${toolsLite}` },
+                { role: 'system', content: `Você é um assistente ERP. Use Português. ${currentContext}. \n${toolsPrompt}` },
                 ...currentHistory.map(msg => ({
                     role: msg.role === 'model' ? 'assistant' : msg.role,
                     content: msg.parts
@@ -1199,38 +1183,28 @@ Escreva um resumo executivo profissional em Markdown com as seções: ## 1. Resu
 
 // --- Service Factory ---
 
-let currentProvider: AIProvider | null = null;
+let defaultProvider: AIProvider | null = null;
 
-// Config de visão (GLM-4.6V) p/ o provider GLM — só quando há chave Z.AI.
 const glmVisionConfig = (apiKey?: string) => apiKey
     ? { baseUrl: (config as any).zaiVisionBaseUrl || 'https://api.z.ai/api/paas/v4', model: (config as any).zaiVisionModel || 'glm-4.6v' }
     : undefined;
 
+function createProvider(name: string, url?: string, key?: string, modelName?: string): AIProvider {
+    if (name === 'google') return new GoogleProvider(key || config.googleApiKey, modelName);
+    if (name === 'glm') return new LocalProvider(url || config.zaiBaseUrl, modelName || config.zaiModel, key || config.zaiApiKey, glmVisionConfig(key || config.zaiApiKey));
+    if (name === 'minimax') return new LocalProvider(url || config.minimaxBaseUrl, modelName || config.minimaxModel, key || config.minimaxApiKey);
+    return new LocalProvider(url || config.localLlmUrl, modelName || config.localModelName);
+}
+
 const getProvider = (specificProviderName?: string): AIProvider => {
     if (specificProviderName) {
-        if (specificProviderName === 'google') {
-            return new GoogleProvider(config.googleApiKey);
-        } else if (specificProviderName === 'local') {
-            return new LocalProvider(config.localLlmUrl, config.localModelName);
-        } else if (specificProviderName === 'glm') {
-            return new LocalProvider(config.zaiBaseUrl, config.zaiModel, config.zaiApiKey, glmVisionConfig(config.zaiApiKey));
-        } else if (specificProviderName === 'minimax') {
-            return new LocalProvider(config.minimaxBaseUrl, config.minimaxModel, config.minimaxApiKey);
-        }
+        return createProvider(specificProviderName);
     }
 
-    if (currentProvider) return currentProvider;
-
-    if (config.llmProvider === 'local') {
-        currentProvider = new LocalProvider(config.localLlmUrl, config.localModelName);
-    } else if (config.llmProvider === 'glm') {
-        currentProvider = new LocalProvider(config.zaiBaseUrl, config.zaiModel, config.zaiApiKey, glmVisionConfig(config.zaiApiKey));
-    } else if (config.llmProvider === 'minimax') {
-        currentProvider = new LocalProvider(config.minimaxBaseUrl, config.minimaxModel, config.minimaxApiKey);
-    } else {
-        currentProvider = new GoogleProvider(config.googleApiKey);
+    if (!defaultProvider) {
+        defaultProvider = createProvider(config.llmProvider);
     }
-    return currentProvider!;
+    return defaultProvider;
 };
 
 // --- Roteamento por capacidade (#57 Peça 3) ---
@@ -1249,16 +1223,8 @@ const getMultimodalProvider = (): AIProvider | null => {
 
 export const aiService = {
     setConfig: (providerName: 'local' | 'google' | 'glm' | 'minimax', url?: string, key?: string, modelName?: string) => {
-        if (providerName === 'google') {
-            currentProvider = new GoogleProvider(key || config.googleApiKey, modelName);
-        } else if (providerName === 'glm') {
-            currentProvider = new LocalProvider(url || config.zaiBaseUrl, modelName || config.zaiModel, key || config.zaiApiKey, glmVisionConfig(key || config.zaiApiKey));
-        } else if (providerName === 'minimax') {
-            currentProvider = new LocalProvider(url || config.minimaxBaseUrl, modelName || config.minimaxModel, key || config.minimaxApiKey);
-        } else {
-            currentProvider = new LocalProvider(url || config.localLlmUrl, modelName || config.localModelName);
-        }
-        log.info(`AI Provider switched to: ${providerName} (Model: ${modelName})`);
+        defaultProvider = createProvider(providerName, url, key, modelName);
+        log.info(`AI Provider set to: ${providerName} (Model: ${modelName})`);
     },
 
     getModels: async () => {

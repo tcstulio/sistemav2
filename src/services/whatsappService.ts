@@ -145,9 +145,7 @@ export const WhatsAppService = {
                 else if (msgType === 'video' || mime.startsWith('video/')) attachmentType = 'video';
                 else if (msgType === 'ptt' || msgType === 'audio' || mime.startsWith('audio/')) attachmentType = 'audio';
 
-                // Get API Key for Media URL
-                const apiKey = getHeaders().DOLAPIKEY;
-                const mediaUrl = `${config.WHATSAPP_API_URL}/messages/${m.id}/media?sessionId=${sessionId}&DOLAPIKEY=${apiKey}`;
+                const mediaUrl = `${config.WHATSAPP_API_URL}/messages/${m.id}/media?sessionId=${sessionId}`;
 
                 return {
                     id: m.id,
