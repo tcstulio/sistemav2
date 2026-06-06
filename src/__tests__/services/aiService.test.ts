@@ -289,7 +289,7 @@ describe('AiService', () => {
     describe('chatWithData', () => {
         it('sends chat message with history', async () => {
             const reply = 'Here is the information you requested';
-            const response = { data: { reply } };
+            const response = { data: { reply, sessionId: 'chat_123' } };
             mockAxios.post.mockResolvedValue(response);
 
             const history = [
@@ -298,11 +298,12 @@ describe('AiService', () => {
             ];
             const result = await AiService.chatWithData('Show my invoices', history);
 
-            expect(result).toBe(reply);
+            expect(result.reply).toBe(reply);
+            expect(result.sessionId).toBe('chat_123');
         });
 
         it('includes date context in request', async () => {
-            const response = { data: { reply: 'Response' } };
+            const response = { data: { reply: 'Response', sessionId: null } };
             mockAxios.post.mockResolvedValue(response);
 
             await AiService.chatWithData('Test', []);
@@ -317,7 +318,7 @@ describe('AiService', () => {
 
             const result = await AiService.chatWithData('Test', []);
 
-            expect(result).toBe('Erro de conexão com o Assistente Virtual.');
+            expect(result.reply).toBe('Erro de conexão com o Assistente Virtual.');
         });
     });
 
