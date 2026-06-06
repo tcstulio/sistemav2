@@ -49,6 +49,23 @@ vi.mock('../../utils/logger', () => ({
     },
 }));
 
+vi.mock('../../services/agentTools', () => ({
+    setToolCallListener: vi.fn(),
+    TOOLS_PROMPT: '',
+    executeTool: vi.fn(),
+}));
+
+vi.mock('../../services/chatSessionService', () => ({
+    chatSessionService: {
+        createSession: vi.fn(() => ({ id: 'mock_session' })),
+        addMessage: vi.fn(),
+        getSession: vi.fn(),
+        getSessions: vi.fn(() => []),
+        deleteSession: vi.fn(),
+        getStats: vi.fn(() => ({ totalSessions: 0 })),
+    },
+}));
+
 import aiRoutes from '../../routes/aiRoutes';
 
 function createApp() {
