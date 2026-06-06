@@ -542,14 +542,14 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             if (orders.length > 0) {
                 parts.push('<h3>📦 Pedidos</h3><ul>' +
                     orders.slice(0, 5).map((o: any) =>
-                        `<li>${o.ref} — R$ ${parseFloat(o.total_ttc || 0).toFixed(2)}</li>`
+                        `<li><a href="/orders/${o.id}" class="text-blue-600 underline font-semibold">${o.ref}</a> — R$ ${parseFloat(o.total_ttc || 0).toFixed(2)}</li>`
                     ).join('') + '</ul>');
             }
 
             if (proposals.length > 0) {
                 parts.push('<h3>📄 Propostas</h3><ul>' +
                     proposals.slice(0, 5).map((p: any) =>
-                        `<li>${p.ref} — R$ ${parseFloat(p.total_ttc || 0).toFixed(2)}</li>`
+                        `<li><a href="/proposals/${p.id}" class="text-blue-600 underline font-semibold">${p.ref}</a> — R$ ${parseFloat(p.total_ttc || 0).toFixed(2)}</li>`
                     ).join('') + '</ul>');
             }
 
@@ -659,7 +659,7 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             if (expenses.length === 0) return 'Nenhum relatório de despesa encontrado.';
             return '<h3>💰 Despesas</h3><ul>' +
                 expenses.map((e: any) =>
-                    `<li>${e.ref} — R$ ${parseFloat(e.total_ttc || 0).toFixed(2)}</li>`
+                    `<li><a href="/hr/expenses" class="text-blue-600 underline font-semibold">${e.ref}</a> — R$ ${parseFloat(e.total_ttc || 0).toFixed(2)}</li>`
                 ).join('') + '</ul>';
         }
         case 'list_users': {
@@ -732,7 +732,7 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             if (supOrders.length === 0) return 'Nenhum pedido de compra encontrado.';
             return '<h3>📦 Pedidos de Compra</h3><ul>' +
                 supOrders.map((o: any) =>
-                    `<li>${o.ref} — R$ ${parseFloat(o.total_ttc || 0).toFixed(2)}</li>`
+                    `<li><a href="/supplier_orders" class="text-blue-600 underline font-semibold">${o.ref}</a> — R$ ${parseFloat(o.total_ttc || 0).toFixed(2)}</li>`
                 ).join('') + '</ul>';
         }
         case 'list_payments': {
@@ -756,7 +756,7 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             if (stockMoves.length === 0) return 'Nenhuma movimentação de estoque encontrada.';
             return '<h3>📦 Movimentações de Estoque</h3><ul>' +
                 stockMoves.map((m: any) =>
-                    `<li>Produto ${m.fk_product} — Qty: ${m.qty} (${m.datem || ''})</li>`
+                    `<li><a href="/products/${m.fk_product}" class="text-blue-600 underline font-semibold">Produto ${m.fk_product}</a> — Qty: ${m.qty} (${m.datem || ''})</li>`
                 ).join('') + '</ul>';
         }
         case 'list_interventions': {
@@ -772,7 +772,7 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             if (leaves.length === 0) return 'Nenhuma solicitação de férias encontrada.';
             return '<h3>🏖️ Solicitações de Férias</h3><ul>' +
                 leaves.map((l: any) =>
-                    `<li>${l.ref} — ${l.date_debut || ''}</li>`
+                    `<li><a href="/hr/leaves" class="text-blue-600 underline font-semibold">${l.ref}</a> — ${l.date_debut || ''}</li>`
                 ).join('') + '</ul>';
         }
         case 'list_boms': {
@@ -796,7 +796,7 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             if (candidates.length === 0) return 'Nenhum candidato encontrado.';
             return '<h3>👤 Candidatos</h3><ul>' +
                 candidates.map((c: any) =>
-                    `<li>${c.lastname} ${c.firstname} — ${c.email || ''}</li>`
+                    `<li><a href="/hr/candidates" class="text-blue-600 underline font-semibold">${c.lastname} ${c.firstname}</a> — ${c.email || ''}</li>`
                 ).join('') + '</ul>';
         }
         case 'list_job_positions': {
@@ -804,19 +804,24 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             if (jobs.length === 0) return 'Nenhuma vaga aberta no momento.';
             return '<h3>💼 Vagas Abertas</h3><ul>' +
                 jobs.map((j: any) =>
-                    `<li>${j.ref} — ${j.label} (Qty: ${j.qty || 1})</li>`
+                    `<li><a href="/hr/jobs" class="text-blue-600 underline font-semibold">${j.ref} — ${j.label}</a> (Qty: ${j.qty || 1})</li>`
                 ).join('') + '</ul>';
         }
         case 'search_web': {
             const searchResults = await ScraperService.searchGoogle(args?.query);
-            return `[WEB SEARCH RESULTS]:\n${JSON.stringify(searchResults)}`;
+            if (!searchResults || searchResults.length === 0) return `Nenhum resultado encontrado para "${args?.query}".`;
+            return '<h3>🔍 Resultados da Web</h3><ul>' +
+                searchResults.map((r: any) =>
+                    `<li><a href="${r.link || '#'}" class="text-blue-600 underline font-semibold">${r.title || 'Sem título'}</a> — ${r.snippet || ''}</li>`
+                ).join('') + '</ul>';
         }
         case 'extract_from_url': {
             if (!isValidExternalUrl(args?.url)) {
                 return 'Erro: URL inválida ou bloqueada (IPs privados/internos não são permitidos).';
             }
             const pageContent = await ScraperService.fetchPageContent(args.url);
-            return `[PAGE CONTENT for ${args.url}]:\n${pageContent ? pageContent.substring(0, 10000) : 'Falha ao acessar página ou conteúdo vazio'}`;
+            if (!pageContent) return 'Falha ao acessar página ou conteúdo vazio.';
+            return `<h3>📄 Conteúdo extraído de <a href="${args.url}" class="text-blue-600 underline">${args.url}</a></h3><div>${pageContent.substring(0, 10000)}</div>`;
         }
 
         // --- MÍDIA (geração via MiniMax; devolvem URL ~24h) ---
