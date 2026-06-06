@@ -66,7 +66,7 @@ export const useMessages = (sessionId: string, chatId: string | null) => {
                 status: 'delivered', // Incoming is delivered to us
                 attachments: msg.hasMedia ? [{
                     type: msg.mimetype?.startsWith('audio') ? 'audio' : 'file', // Simplified
-                    url: config ? `${config.WHATSAPP_API_URL}/messages/${msg.id}/media?sessionId=${msg.sessionId}` : "", // Approximate
+                    url: config ? `${config.WHATSAPP_API_URL}/messages/${msg.id}/media?sessionId=${msg.sessionId}` : "",
                     name: 'Media'
                 }] : undefined
             };
