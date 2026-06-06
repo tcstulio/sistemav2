@@ -136,6 +136,7 @@ export const TOOLS_PROMPT = `
 
         FERRAMENTA DE GESTÃO DO PROJETO:
         90. create_github_issue(title, body, labels?) - Cria um issue no GitHub do projeto (tcstulio/sistemav2). Use quando o usuário reportar um bug, solicitar uma feature, ou pedir para registrar algo. labels opcionais: 'bug', 'enhancement', 'security', 'question' (pode ser string ou array). Retorna o link do issue criado.
+        91. list_github_issues(state?, label?, limit?) - Lista issues do GitHub do projeto. state: 'open' (padrão), 'closed', 'all'. label: filtrar por label (ex.: 'bug', 'enhancement'). limit: máx de issues (padrão 20). Retorna número, título, estado, labels e link.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -882,6 +883,36 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             } catch (e: any) {
                 log.error('create_github_issue failed', e);
                 return `Erro ao criar issue: ${e.message}`;
+            }
+        }
+
+        case 'list_github_issues': {
+            const state = String(args?.state || 'open');
+            const label = args?.label ? String(args.label) : undefined;
+            const limit = String(args?.limit || 20);
+            const listArgs = [
+                'issue', 'list',
+                '--repo', 'tcstulio/sistemav2',
+                '--state', state,
+                '--json', 'number,title,state,labels,createdAt,url',
+                '--limit', limit
+            ];
+            if (label) {
+                listArgs.push('--label', label);
+            }
+            try {
+                const { stdout } = await execFileAsync('gh', listArgs, { timeout: 15000 });
+                const issues = JSON.parse(stdout);
+                if (issues.length === 0) return `Nenhum issue encontrado (state=${state}).`;
+                return '<h3>📋 Issues do Projeto</h3><ul>' +
+                    issues.map((i: any) => {
+                        const labelStr = (i.labels || []).map((l: any) => l.name).join(', ');
+                        return `<li><a href="${i.url}" class="text-blue-600 underline font-semibold">#${i.number}</a> ${i.title} ${labelStr ? `<span class="text-gray-500">[${labelStr}]</span>` : ''}</li>`;
+                    }).join('') +
+                    '</ul>';
+            } catch (e: any) {
+                log.error('list_github_issues failed', e);
+                return `Erro ao listar issues: ${e.message}`;
             }
         }
 

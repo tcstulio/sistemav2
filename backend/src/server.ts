@@ -12,6 +12,7 @@ const log = createLogger('Server');
 import { config } from './config/env';
 import whatsappRoutes from './routes/whatsappRoutes';
 import schedulerRoutes from './routes/schedulerRoutes';
+import githubRoutes from './routes/githubRoutes';
 import { sessionService } from './services/legacy/sessionService';
 import { schedulerService } from './services/schedulerService';
 
@@ -202,6 +203,8 @@ app.use('/api/ui-config', uiConfigRoutes);
 
 import dashboardRoutes from './routes/dashboardRoutes';
 app.use('/api/dashboard', dashboardRoutes);
+
+app.use('/api/github', githubRoutes);
 
 // Health Check
 app.get('/health', async (req, res) => {
