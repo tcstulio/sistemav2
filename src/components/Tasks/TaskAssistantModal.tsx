@@ -211,7 +211,8 @@ export const TaskAssistantModal: React.FC<TaskAssistantModalProps> = ({
                 `;
             }
 
-            const response = await AiService.chatWithData(prompt, []);
+            const responseRaw = await AiService.chatWithData(prompt, []);
+            const response = typeof responseRaw === 'string' ? responseRaw : responseRaw?.reply;
             setResult(response);
 
         } catch (error) {

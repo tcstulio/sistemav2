@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { aiService } from '../services/aiService';
+import { chatSessionService } from '../services/chatSessionService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { createLogger } from '../utils/logger';
 import { verifyDeeplink } from '../utils/deeplinkToken';
@@ -20,7 +21,8 @@ const GenerateReplySchema = z.object({
     })).optional(),
     context: z.string().optional(),
     image: z.string().optional(), // Base64 image for multimodal chat
-    module: z.string().default('chat')
+    module: z.string().default('chat'),
+    sessionId: z.string().optional()
 });
 
 const AnalyzeSystemSchema = z.object({
@@ -29,9 +31,30 @@ const AnalyzeSystemSchema = z.object({
 
 router.post('/generate-reply', async (req, res) => {
     try {
-        const { history, context, image, module } = GenerateReplySchema.parse(req.body);
+        const { history, context, image, module, sessionId } = GenerateReplySchema.parse(req.body);
         const reply = await aiService.generateReply(history as any || [], context || '', image, module);
-        res.json({ reply });
+
+        if (sessionId && module === 'chat') {
+            try {
+                const lastUserMsg = (history || []).filter((h: any) => h.role === 'user').pop();
+                if (lastUserMsg) {
+                    chatSessionService.addMessage(sessionId, {
+                        role: 'user',
+                        content: lastUserMsg.parts,
+                        metadata: { hasImage: !!image }
+                    });
+                }
+                chatSessionService.addMessage(sessionId, {
+                    role: 'model',
+                    content: reply,
+                    metadata: { provider: 'auto' }
+                });
+            } catch (sessionErr: any) {
+                log.warn('Failed to save chat session message', { error: sessionErr.message });
+            }
+        }
+
+        res.json({ reply, sessionId });
     } catch (error: any) {
         log.error('Generate Reply Error', { error: error.message, stack: error.stack });
 
@@ -335,6 +358,64 @@ router.post('/analyze/monthly-report', async (req, res) => {
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
         }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// --- Chat Session Routes ---
+
+router.post('/sessions', (req, res) => {
+    try {
+        const userLogin = (req as any).user?.login || 'unknown';
+        const { firstMessage } = req.body;
+        const session = chatSessionService.createSession(userLogin, firstMessage);
+        res.json({ success: true, data: session });
+    } catch (error: any) {
+        log.error('Create session error', { error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.get('/sessions', (req, res) => {
+    try {
+        const { limit } = req.query;
+        const sessions = chatSessionService.getSessions(undefined, limit ? parseInt(limit as string) : 50);
+        res.json({ count: sessions.length, data: sessions });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.get('/sessions/:id', (req, res) => {
+    try {
+        const session = chatSessionService.getSession(req.params.id);
+        if (!session) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+        res.json({ data: session });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.delete('/sessions/:id', (req, res) => {
+    try {
+        const success = chatSessionService.deleteSession(req.params.id);
+        if (success) {
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ error: 'Session not found' });
+        }
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.get('/sessions-stats', (req, res) => {
+    try {
+        const stats = chatSessionService.getStats();
+        res.json(stats);
+    } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
 });

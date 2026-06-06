@@ -23,11 +23,20 @@ const getAuthHeaders = () => {
     };
 };
 
-// ChatMessage interface for AI conversations
 export interface ChatMessage {
     role: 'user' | 'model' | 'system';
     text: string;
     isError?: boolean;
+}
+
+export interface ChatSessionInfo {
+    id: string;
+    userId: string;
+    title: string;
+    messageCount: number;
+    lastPreview: string;
+    createdAt: number;
+    updatedAt: number;
 }
 
 const API_URL = '/api/ai';
@@ -242,7 +251,7 @@ export const AiService = {
         }
     },
 
-    chatWithData: async (msg: string, history: ChatMessage[], userImage?: string) => {
+    chatWithData: async (msg: string, history: ChatMessage[], userImage?: string, sessionId?: string) => {
         try {
             // Context is now handled by the backend (ReAct / Tools), but we inject basic temporal awareness
             const now = new Date();
@@ -264,14 +273,67 @@ export const AiService = {
                 history: backendHistory,
                 context: dataContext,
                 image: userImage,
-                module: 'chat'
+                module: 'chat',
+                sessionId
             }, getAuthHeaders());
 
-            return response.data.reply;
+            return {
+                reply: response.data.reply,
+                sessionId: response.data.sessionId
+            };
 
         } catch (error: any) {
             handleAiError('Chat', error);
-            return "Erro de conexão com o Assistente Virtual.";
+            return { reply: "Erro de conexão com o Assistente Virtual.", sessionId: null };
+        }
+    },
+
+    createChatSession: async (firstMessage?: string): Promise<ChatSessionInfo | null> => {
+        try {
+            const response = await axios.post(`${API_URL}/sessions`, { firstMessage }, getAuthHeaders());
+            return response.data.data;
+        } catch (error: any) {
+            handleAiError('Criar sessão', error);
+            return null;
+        }
+    },
+
+    getChatSessions: async (limit?: number): Promise<ChatSessionInfo[]> => {
+        try {
+            const params = limit ? { limit: String(limit) } : {};
+            const response = await axios.get(`${API_URL}/sessions`, { params, ...getAuthHeaders() });
+            return response.data.data || [];
+        } catch (error: any) {
+            handleAiError('Listar sessões', error);
+            return [];
+        }
+    },
+
+    getChatSession: async (id: string): Promise<{ messages: ChatMessage[] } | null> => {
+        try {
+            const response = await axios.get(`${API_URL}/sessions/${id}`, getAuthHeaders());
+            const session = response.data.data;
+            if (!session) return null;
+            return {
+                messages: session.messages.map((m: any) => ({
+                    role: m.role,
+                    text: m.content,
+                    isError: false
+                }))
+            };
+        } catch (error: any) {
+            handleAiError('Carregar sessão', error);
+            return null;
+        }
+    },
+
+    deleteChatSession: async (id: string): Promise<boolean> => {
+        try {
+            await axios.delete(`${API_URL}/sessions/${id}`, getAuthHeaders());
+            return true;
+        } catch (error: any) {
+            handleAiError('Deletar sessão', error);
+            return false;
         }
     },
 

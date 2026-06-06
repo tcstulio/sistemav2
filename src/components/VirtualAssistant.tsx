@@ -12,6 +12,7 @@ const log = logger.child('VirtualAssistant');
 
 // Persistência do histórico do chat (antes era só estado React -> sumia no reload/navegação).
 const VA_HISTORY_KEY = 'coolgroove_va_history';
+const VA_SESSION_ID_KEY = 'coolgroove_va_session_id';
 const MAX_STORED_MESSAGES = 50;
 const WELCOME_MESSAGE: ChatMessage = { role: 'model', text: 'Olá! Sou seu Assistente Virtual. Posso analisar documentos e responder perguntas sobre seus dados.' };
 
@@ -79,6 +80,9 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   // Data fetching removed - Backend now handles this via ReAct tools
 
   const [isOpen, setIsOpen] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(() => {
+    return safeStorage.getItem(VA_SESSION_ID_KEY);
+  });
   // carrega o histórico persistido (sobrevive a reload/navegação); cai no welcome se vazio.
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     const saved = safeStorage.getJSON<ChatMessage[]>(VA_HISTORY_KEY, []);
@@ -105,6 +109,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const clearHistory = () => {
     setMessages([WELCOME_MESSAGE]);
     safeStorage.removeItem(VA_HISTORY_KEY);
+    safeStorage.removeItem(VA_SESSION_ID_KEY);
+    setCurrentSessionId(null);
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -145,11 +151,6 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     setIsLoading(true);
 
     try {
-      // Passar apenas a mensagem e imagem. O backend buscará os dados (Ferramentas).
-      // Mantendo historico? O backend pede historico, mas o frontend service original nao passava o state 'messages'.
-      // Vamos verificar o frontend aiService.
-      // Filter out the initial welcome message if it exists (usually the first message)
-      // We only want to send relevant conversation history
       const relevantHistory = messages.filter((m, index) => {
         if (index === 0 && m.role === 'model' && m.text.includes('Olá! Sou seu Assistente Virtual')) {
           return false;
@@ -157,7 +158,22 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         return true;
       });
 
-      const responseText = await AiService.chatWithData(userMsg, relevantHistory, userImage?.data);
+      let sid = currentSessionId;
+      if (!sid) {
+        const session = await AiService.createChatSession(userMsg);
+        if (session) {
+          sid = session.id;
+          setCurrentSessionId(sid);
+          safeStorage.setItem(VA_SESSION_ID_KEY, sid);
+        }
+      }
+
+      const result = await AiService.chatWithData(userMsg, relevantHistory, userImage?.data, sid || undefined);
+      const responseText = result.reply;
+      if (result.sessionId && !sid) {
+        setCurrentSessionId(result.sessionId);
+        safeStorage.setItem(VA_SESSION_ID_KEY, result.sessionId);
+      }
       if (responseText) {
         setMessages(prev => [...prev, { role: 'model', text: responseText }]);
       } else {

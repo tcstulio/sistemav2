@@ -109,8 +109,9 @@ export const SmartQuotationWizard: React.FC = () => {
 
             // We use chatWithData as a proxy to general generate
             const response = await AiService.chatWithData(prompt, []);
+            const replyText = typeof response === 'string' ? response : response?.reply;
             // Extract JSON
-            const jsonMatch = response?.match(/\[[\s\S]*\]/);
+            const jsonMatch = replyText?.match(/\[[\s\S]*\]/);
             if (jsonMatch) {
                 const rawItems = JSON.parse(jsonMatch[0]);
 
@@ -162,7 +163,8 @@ export const SmartQuotationWizard: React.FC = () => {
             // In reality, we call the chat endpoint which calls the 'search_web' tool we just added
             for (const item of parsedItems) {
                 const query = `Preço de ${item.productName} ${item.spec} no Brasil`;
-                const searchResponse = await AiService.chatWithData(query, []); // This trigger search_web internally
+                const searchResponseRaw = await AiService.chatWithData(query, []);
+                const searchResponse = typeof searchResponseRaw === 'string' ? searchResponseRaw : searchResponseRaw?.reply;
 
                 // Parse the "Simulation" text returned by the tool (or hallucinated)
                 // We expect lines like "1. Loja: R$ Price"
@@ -175,7 +177,8 @@ export const SmartQuotationWizard: React.FC = () => {
                     Retorne APENAS um JSON array de ofertas:
                     [{ "source": "Nome Loja", "price": 100.00, "link": "http..." }]
                 `;
-                const structureRes = await AiService.chatWithData(structurePrompt, []);
+                const structureResRaw = await AiService.chatWithData(structurePrompt, []);
+                const structureRes = typeof structureResRaw === 'string' ? structureResRaw : structureResRaw?.reply;
                 const jsonMatch = structureRes?.match(/\[[\s\S]*\]/);
 
                 if (jsonMatch) {

@@ -39,6 +39,14 @@ vi.mock('../../utils/logger', () => ({
         error: vi.fn(),
         fatal: vi.fn(),
     }),
+    logger: {
+        child: () => ({
+            debug: vi.fn(),
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+        }),
+    },
 }));
 
 import aiRoutes from '../../routes/aiRoutes';
