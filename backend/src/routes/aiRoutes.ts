@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { aiService } from '../services/aiService';
 import { chatSessionService } from '../services/chatSessionService';
+import { setToolCallListener } from '../services/agentTools';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { createLogger } from '../utils/logger';
 import { verifyDeeplink } from '../utils/deeplinkToken';
@@ -32,7 +33,17 @@ const AnalyzeSystemSchema = z.object({
 router.post('/generate-reply', async (req, res) => {
     try {
         const { history, context, image, module, sessionId } = GenerateReplySchema.parse(req.body);
+
+        const toolCalls: Array<{ tool: string; args: Record<string, any>; result: string; duration: number }> = [];
+        if (sessionId && module === 'chat') {
+            setToolCallListener((tool, args, result, duration) => {
+                toolCalls.push({ tool, args, result: result.slice(0, 2000), duration });
+            });
+        }
+
         const reply = await aiService.generateReply(history as any || [], context || '', image, module);
+
+        setToolCallListener(null);
 
         if (sessionId && module === 'chat') {
             try {
@@ -47,7 +58,7 @@ router.post('/generate-reply', async (req, res) => {
                 chatSessionService.addMessage(sessionId, {
                     role: 'model',
                     content: reply,
-                    metadata: { provider: 'auto' }
+                    metadata: { provider: 'auto', toolCalls: toolCalls.length > 0 ? toolCalls : undefined }
                 });
             } catch (sessionErr: any) {
                 log.warn('Failed to save chat session message', { error: sessionErr.message });

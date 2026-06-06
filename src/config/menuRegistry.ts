@@ -97,6 +97,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
             { id: 'activity', path: '/activity', label: 'Atividades' },
             { id: 'groups', path: '/admin/groups', label: 'Grupos' },
             { id: 'development', path: '/development', label: 'Console Dev' },
+            { id: 'chat_sessions', path: '/chat-sessions', label: 'Sessões IA' },
             { id: 'settings', path: '/settings', label: 'Configurações' },
         ],
     },

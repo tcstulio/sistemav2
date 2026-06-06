@@ -78,6 +78,7 @@ const MENU_ICONS: Record<string, React.ElementType> = {
     activity: Activity,
     groups: ShieldCheck,
     development: Bug,
+    chat_sessions: MessageSquare,
     settings: Settings,
 };
 

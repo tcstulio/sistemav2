@@ -15,6 +15,13 @@ const execFileAsync = promisify(execFile);
 
 const log = logger.child('AgentTools');
 
+type ToolCallListener = (tool: string, args: Record<string, any>, result: string, durationMs: number) => void;
+let activeToolCallListener: ToolCallListener | null = null;
+
+export function setToolCallListener(fn: ToolCallListener | null) {
+    activeToolCallListener = fn;
+}
+
 export const TOOLS_PROMPT = `
         FERRAMENTAS DISPONÍVEIS:
         Você pode buscar dados em tempo real se necessário. Para usar uma ferramenta, responda APENAS com um JSON no seguinte formato:
@@ -475,6 +482,15 @@ function tryPrepareBatch(tool: string, args: any): string | null {
 /** Executa uma ferramenta do agente e retorna o resultado já formatado como string. */
 export async function executeTool(tool: string, args: any = {}): Promise<string> {
     log.info(`Tool Call: ${tool}`, args);
+    const t0 = Date.now();
+    const result = await executeToolInner(tool, args);
+    if (activeToolCallListener) {
+        try { activeToolCallListener(tool, args, result, Date.now() - t0); } catch { /* ignore */ }
+    }
+    return result;
+}
+
+async function executeToolInner(tool: string, args: any): Promise<string> {
     switch (tool) {
         case 'search': {
             if (!args?.query) throw new Error("Parâmetro 'query' ausente.");

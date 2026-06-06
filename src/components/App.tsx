@@ -47,6 +47,7 @@ const CategoryList = React.lazy(() => import('./CategoryList'));
 const WhatsAppView = React.lazy(() => import('./WhatsAppView'));
 const EmailView = React.lazy(() => import('./Email/EmailView'));
 const SchedulerAdmin = React.lazy(() => import('./SchedulerAdmin'));
+const ChatSessionsView = React.lazy(() => import('./ChatSessionsView'));
 const ActivityView = React.lazy(() => import('./ActivityView'));
 const TaskDetail = React.lazy(() => import('./TaskDetail'));
 const PendingPayments = React.lazy(() => import('./PendingPayments').then(m => ({ default: m.PendingPayments })));
@@ -289,6 +290,7 @@ const App: React.FC = () => {
                         <Route path="/activity" element={<ViewWrapper Component={ActivityView} viewId="activity" />} />
 
                         <Route path="/development" element={<ViewWrapper Component={DevelopmentView} viewId="development" />} />
+                        <Route path="/chat-sessions" element={<ViewWrapper Component={ChatSessionsView} viewId="development" />} />
 
                         <Route path="/settings" element={<ViewWrapper Component={SettingsView} viewId="settings" />} />
                         <Route path="/admin/groups" element={<ViewWrapper Component={GroupManager} viewId="settings" />} />
