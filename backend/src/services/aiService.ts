@@ -1183,38 +1183,28 @@ Escreva um resumo executivo profissional em Markdown com as seções: ## 1. Resu
 
 // --- Service Factory ---
 
-let currentProvider: AIProvider | null = null;
+let defaultProvider: AIProvider | null = null;
 
-// Config de visão (GLM-4.6V) p/ o provider GLM — só quando há chave Z.AI.
 const glmVisionConfig = (apiKey?: string) => apiKey
     ? { baseUrl: (config as any).zaiVisionBaseUrl || 'https://api.z.ai/api/paas/v4', model: (config as any).zaiVisionModel || 'glm-4.6v' }
     : undefined;
 
+function createProvider(name: string, url?: string, key?: string, modelName?: string): AIProvider {
+    if (name === 'google') return new GoogleProvider(key || config.googleApiKey, modelName);
+    if (name === 'glm') return new LocalProvider(url || config.zaiBaseUrl, modelName || config.zaiModel, key || config.zaiApiKey, glmVisionConfig(key || config.zaiApiKey));
+    if (name === 'minimax') return new LocalProvider(url || config.minimaxBaseUrl, modelName || config.minimaxModel, key || config.minimaxApiKey);
+    return new LocalProvider(url || config.localLlmUrl, modelName || config.localModelName);
+}
+
 const getProvider = (specificProviderName?: string): AIProvider => {
     if (specificProviderName) {
-        if (specificProviderName === 'google') {
-            return new GoogleProvider(config.googleApiKey);
-        } else if (specificProviderName === 'local') {
-            return new LocalProvider(config.localLlmUrl, config.localModelName);
-        } else if (specificProviderName === 'glm') {
-            return new LocalProvider(config.zaiBaseUrl, config.zaiModel, config.zaiApiKey, glmVisionConfig(config.zaiApiKey));
-        } else if (specificProviderName === 'minimax') {
-            return new LocalProvider(config.minimaxBaseUrl, config.minimaxModel, config.minimaxApiKey);
-        }
+        return createProvider(specificProviderName);
     }
 
-    if (currentProvider) return currentProvider;
-
-    if (config.llmProvider === 'local') {
-        currentProvider = new LocalProvider(config.localLlmUrl, config.localModelName);
-    } else if (config.llmProvider === 'glm') {
-        currentProvider = new LocalProvider(config.zaiBaseUrl, config.zaiModel, config.zaiApiKey, glmVisionConfig(config.zaiApiKey));
-    } else if (config.llmProvider === 'minimax') {
-        currentProvider = new LocalProvider(config.minimaxBaseUrl, config.minimaxModel, config.minimaxApiKey);
-    } else {
-        currentProvider = new GoogleProvider(config.googleApiKey);
+    if (!defaultProvider) {
+        defaultProvider = createProvider(config.llmProvider);
     }
-    return currentProvider!;
+    return defaultProvider;
 };
 
 // --- Roteamento por capacidade (#57 Peça 3) ---
@@ -1233,16 +1223,8 @@ const getMultimodalProvider = (): AIProvider | null => {
 
 export const aiService = {
     setConfig: (providerName: 'local' | 'google' | 'glm' | 'minimax', url?: string, key?: string, modelName?: string) => {
-        if (providerName === 'google') {
-            currentProvider = new GoogleProvider(key || config.googleApiKey, modelName);
-        } else if (providerName === 'glm') {
-            currentProvider = new LocalProvider(url || config.zaiBaseUrl, modelName || config.zaiModel, key || config.zaiApiKey, glmVisionConfig(key || config.zaiApiKey));
-        } else if (providerName === 'minimax') {
-            currentProvider = new LocalProvider(url || config.minimaxBaseUrl, modelName || config.minimaxModel, key || config.minimaxApiKey);
-        } else {
-            currentProvider = new LocalProvider(url || config.localLlmUrl, modelName || config.localModelName);
-        }
-        log.info(`AI Provider switched to: ${providerName} (Model: ${modelName})`);
+        defaultProvider = createProvider(providerName, url, key, modelName);
+        log.info(`AI Provider set to: ${providerName} (Model: ${modelName})`);
     },
 
     getModels: async () => {
