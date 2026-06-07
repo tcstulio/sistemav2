@@ -15,6 +15,7 @@ import { DolibarrHRService } from './hr';
 import { DolibarrManufacturingService } from './manufacturing';
 import { DolibarrSuppliersService } from './suppliers';
 import { DolibarrPartnershipsService, VenuePartnership } from './partnerships';
+import { DolibarrFinanceService } from './finance';
 
 // Re-export types for backward compatibility
 export { CreateThirdPartyModel, CreateInvoiceModel, AddPaymentModel, ValidateSupplierOrderModel, CloseProposalModel, AddTimeSpentModel };
@@ -34,6 +35,7 @@ export class DolibarrService extends DolibarrServiceBase {
     private manufacturing = new DolibarrManufacturingService();
     private suppliers = new DolibarrSuppliersService();
     private partnerships = new DolibarrPartnershipsService();
+    private finance = new DolibarrFinanceService();
 
     // === Third Parties ===
     createThirdParty = (data: CreateThirdPartyModel, userKey?: string) => this.thirdParties.createThirdParty(data, userKey);
@@ -102,6 +104,15 @@ export class DolibarrService extends DolibarrServiceBase {
     getPartnership = (id: string) => this.partnerships.getPartnership(id);
     searchPartnerships = (params?: { search?: string, minCapacity?: number, typeCode?: string, limit?: number }) => this.partnerships.searchPartnerships(params);
     getPartnershipsByType = () => this.partnerships.getPartnershipsByType();
+
+    // === Finance ===
+    getBankBalances = () => this.finance.getBankBalances();
+    getBankStatement = (accountId: string, dateFrom?: string, dateTo?: string) => this.finance.getBankStatement(accountId, dateFrom, dateTo);
+    getAccountsReceivable = (dateFrom?: string, dateTo?: string) => this.finance.getAccountsReceivable(dateFrom, dateTo);
+    getAccountsPayable = (dateFrom?: string, dateTo?: string) => this.finance.getAccountsPayable(dateFrom, dateTo);
+    getOpenProposals = () => this.finance.getOpenProposals();
+    getCashFlowForecast = (dateFrom: string, dateTo: string) => this.finance.getCashFlowForecast(dateFrom, dateTo);
+    getFinancialSummary = () => this.finance.getFinancialSummary();
 }
 
 // Export singleton instance for backward compatibility
