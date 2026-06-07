@@ -11,7 +11,8 @@ import {
     BarChart3, X, LogOut, FileSignature, TrendingUp, PenTool, Factory,
     FolderKanban, ClipboardList, Landmark, CalendarDays, Tag, MessageSquare,
     Activity, Bug, UserCircle, Mail, Bot, Clock, Receipt, Banknote,
-    Calculator, Building2, ChevronDown, ChevronRight, Music, ShieldCheck, Warehouse
+    Calculator, Building2, ChevronDown, ChevronRight, Music, ShieldCheck, Warehouse,
+    Zap
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -76,6 +77,7 @@ const MENU_ICONS: Record<string, React.ElementType> = {
     warehouses: Warehouse,
     manufacturing: Settings,
     activity: Activity,
+    tasks: Zap,
     groups: ShieldCheck,
     development: Bug,
     chat_sessions: MessageSquare,
