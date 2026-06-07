@@ -295,7 +295,7 @@ const App: React.FC = () => {
 
                         <Route path="/settings" element={<ViewWrapper Component={SettingsView} viewId="settings" />} />
                         <Route path="/admin/groups" element={<ViewWrapper Component={GroupManager} viewId="settings" />} />
-                        <Route path="/tasks" element={<ViewWrapper Component={TasksBoard} viewId="development" />} />
+                        <Route path="/opencode-tasks" element={<ViewWrapper Component={TasksBoard} viewId="development" />} />
 
                         <Route path="/chat" element={<ViewWrapper Component={ChatPage} viewId="chat" />}>
                             <Route index element={<ChatConversation />} />
