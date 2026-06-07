@@ -31,4 +31,5 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDef[] = [
     { id: 'operational-alerts', label: 'Alertas Operacionais', region: 'sidebar' },
     { id: 'quick-actions', label: 'Ações Rápidas', region: 'sidebar' },
     { id: 'project-evolution', label: 'Evolução do Projeto (Issues)', region: 'sidebar' },
+    { id: 'agent-activity', label: 'Atividade do Marciano', region: 'sidebar' },
 ];

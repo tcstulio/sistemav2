@@ -14,6 +14,7 @@ import { useOrgBranding } from '../hooks/useOrgBranding';
 import { applyOrderVisibility, getUserPrefs, OrderVisibilityPrefs } from '../utils/orderVisibility';
 import { DASHBOARD_WIDGETS } from '../config/dashboardWidgets';
 import { GithubService, GitHubIssue, IssueStats } from '../services/githubService';
+import { AgentActivityFeed } from './Agent/AgentActivityFeed';
 
 const DASHBOARD_PREFS_KEY = 'coolgroove_dashboard_prefs';
 
@@ -675,6 +676,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
         'project-evolution': (
             <ProjectEvolutionWidget key="project-evolution" />
+        ),
+
+        'agent-activity': (
+            <AgentActivityFeed key="agent-activity" />
         ),
     };
 

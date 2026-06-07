@@ -4,6 +4,7 @@ import { chatSessionService } from '../services/chatSessionService';
 import { setToolCallListener } from '../services/agentTools';
 import { extractToolCall } from '../services/aiService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { agentActivityService } from '../services/agentActivityService';
 import { createLogger } from '../utils/logger';
 import { verifyDeeplink } from '../utils/deeplinkToken';
 
@@ -84,6 +85,18 @@ router.post('/generate-reply', async (req, res) => {
         if (sessionId && module === 'chat') {
             setToolCallListener((tool, args, result, duration) => {
                 toolCalls.push({ tool, args, result: result.slice(0, 2000), duration });
+                try {
+                    const userData = (req as any).user?.userData;
+                    agentActivityService.record({
+                        userId: userData?.id || 'unknown',
+                        userName: userData?.name || userData?.login || 'unknown',
+                        tool,
+                        args,
+                        result: result.slice(0, 500),
+                        durationMs: duration,
+                        isError: result.toLowerCase().includes('error') || result.toLowerCase().includes('erro'),
+                    });
+                } catch { /* ignore activity logging errors */ }
             });
         }
 
@@ -507,6 +520,23 @@ router.get('/sessions-stats', (req, res) => {
     try {
         const stats = chatSessionService.getStats();
         res.json(stats);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.get('/agent/activity', requireDolibarrLogin, (req, res) => {
+    try {
+        const { userId, entityType, action, limit, since } = req.query;
+        const activities = agentActivityService.getActivities({
+            userId: userId as string,
+            entityType: entityType as string,
+            action: action as string,
+            limit: limit ? parseInt(limit as string) : 50,
+            since: since ? parseInt(since as string) : undefined,
+        });
+        const stats = agentActivityService.getStats();
+        res.json({ activities, stats });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
