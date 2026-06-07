@@ -69,7 +69,7 @@ const EmailView: React.FC = () => {
     const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
 
     // CRM & Automations Data
-    const { config, setNotifications } = useDolibarr();
+    const { config } = useDolibarr();
     const { data: users = [] } = useUsers(config || null, !!config);
     const { data: customers = [] } = useCustomers(config || null, !!config);
     const { data: invoices = [] } = useInvoices(config || null, !!config);
@@ -298,20 +298,6 @@ const EmailView: React.FC = () => {
                 const currentUids = new Set(data.map(m => m.id));
                 const newEmails = data.filter(m => !prevMessageUidsRef.current.has(m.id));
                 if (newEmails.length > 0 && newEmails.length <= 5) {
-                    const newNotes = newEmails.map(email => {
-                        const from = typeof email.from === 'string' ? email.from : email.from.name || email.from.address;
-                        return {
-                            id: `email_${email.id}_${Date.now()}`,
-                            type: 'email' as const,
-                            title: `Novo email de ${from}`,
-                            message: email.subject,
-                            date: Date.now(),
-                            priority: 'low' as const,
-                            read: false,
-                            linkTo: { view: 'email' as const, id: accountId }
-                        };
-                    });
-                    setNotifications(prev => [...newNotes, ...prev]);
                     toast.info(`${newEmails.length} novo(s) email(s)`);
                 }
             }

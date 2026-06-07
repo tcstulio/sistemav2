@@ -61,13 +61,16 @@ export type AppView = 'dashboard' | 'reports' | 'agenda' | 'tickets' | 'customer
 
 export interface AppNotification {
     id: string;
-    type: 'stock' | 'invoice' | 'ticket' | 'info' | 'whatsapp' | 'email';
+    event?: string;
+    type: 'stock' | 'invoice' | 'ticket' | 'info' | 'whatsapp' | 'email' | 'agent' | 'task';
     title: string;
     message: string;
     date: number;
     priority: 'low' | 'medium' | 'high';
     read: boolean;
     linkTo?: { view: AppView; id: string };
+    senderName?: string;
+    channels?: string[];
 }
 
 
