@@ -1,7 +1,7 @@
 
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useState } from 'react';
 import { AppNotification, AppView } from '../types';
-import { X, Bell, AlertTriangle, CheckCircle, Info, Clock, AlertCircle as AlertCircleIcon, Mail, Bot, ShoppingCart, MessageSquare } from 'lucide-react';
+import { X, Bell, AlertTriangle, CheckCircle, Info, Clock, AlertCircle as AlertCircleIcon, Mail, Bot, ShoppingCart, MessageSquare, Filter } from 'lucide-react';
 import { formatTime } from '../utils/dateUtils';
 
 interface NotificationPanelProps {
@@ -13,6 +13,18 @@ interface NotificationPanelProps {
     onClearAll: () => void;
     onMarkAllRead: () => void;
 }
+
+type FilterType = 'all' | 'invoice' | 'ticket' | 'stock' | 'agent' | 'whatsapp' | 'task' | 'info';
+
+const FILTER_OPTIONS: { key: FilterType; label: string }[] = [
+    { key: 'all', label: 'Todos' },
+    { key: 'invoice', label: 'Faturas' },
+    { key: 'ticket', label: 'Tickets' },
+    { key: 'stock', label: 'Estoque' },
+    { key: 'agent', label: 'Agente' },
+    { key: 'whatsapp', label: 'WhatsApp' },
+    { key: 'task', label: 'Tarefas' },
+];
 
 const getIcon = (type: string, priority: string) => {
     if (priority === 'high') return <AlertCircleIcon size={20} className="text-red-500" />;
@@ -29,10 +41,16 @@ const getIcon = (type: string, priority: string) => {
 };
 
 const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, notifications, onMarkRead, onNavigate, onClearAll, onMarkAllRead }) => {
-    const sortedNotifications = useMemo(
-        () => [...notifications].sort((a, b) => b.date - a.date),
-        [notifications]
-    );
+    const [activeFilter, setActiveFilter] = useState<FilterType>('all');
+    const [showFilters, setShowFilters] = useState(false);
+
+    const filteredNotifications = useMemo(() => {
+        let result = [...notifications].sort((a, b) => b.date - a.date);
+        if (activeFilter !== 'all') {
+            result = result.filter(n => n.type === activeFilter);
+        }
+        return result;
+    }, [notifications, activeFilter]);
 
     const unreadCount = useMemo(
         () => notifications.filter(n => !n.read).length,
@@ -57,21 +75,42 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
                         )}
                     </div>
                     <div className="flex gap-2">
+                        <button onClick={() => setShowFilters(!showFilters)} className={`text-xs font-medium ${showFilters ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
+                            <Filter size={14} />
+                        </button>
                         <button onClick={onMarkAllRead} className="text-xs text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium">Lidas</button>
                         <button onClick={onClearAll} className="text-xs text-slate-500 hover:text-red-600 dark:hover:text-red-400 font-medium">Limpar</button>
                         <button onClick={onClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
                     </div>
                 </div>
 
-                <div className="overflow-y-auto h-[calc(100%-60px)] p-2">
-                    {sortedNotifications.length === 0 ? (
+                {showFilters && (
+                    <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 flex flex-wrap gap-1.5 bg-slate-50/50 dark:bg-slate-900/50">
+                        {FILTER_OPTIONS.map(f => (
+                            <button
+                                key={f.key}
+                                onClick={() => setActiveFilter(f.key)}
+                                className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-all ${
+                                    activeFilter === f.key
+                                        ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+                                        : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                                }`}
+                            >
+                                {f.label}
+                            </button>
+                        ))}
+                    </div>
+                )}
+
+                <div className="overflow-y-auto h-[calc(100%-60px)] p-2" style={{ height: showFilters ? 'calc(100% - 100px)' : undefined }}>
+                    {filteredNotifications.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-3">
                             <CheckCircle size={48} className="opacity-20" />
-                            <p>Tudo em dia!</p>
+                            <p>{activeFilter === 'all' ? 'Tudo em dia!' : 'Nenhuma notificação deste tipo'}</p>
                         </div>
                     ) : (
                         <div className="space-y-2">
-                            {sortedNotifications.map(note => (
+                            {filteredNotifications.map(note => (
                                 <div
                                     key={note.id}
                                     className={`p-3 rounded-lg border transition-all cursor-pointer ${note.read ? 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 opacity-60' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm border-l-4 border-l-indigo-500'}`}
