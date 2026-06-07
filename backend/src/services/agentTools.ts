@@ -155,6 +155,13 @@ export const TOOLS_PROMPT = `
         FERRAMENTAS DE DOCUMENTO (PDF):
         111. get_document_pdf(entity_type, entity_id) - Obtém o PDF de um documento Dolibarr e retorna como base64. entity_type: 'invoice', 'order', 'proposal', 'supplier_order', 'supplier_invoice', 'intervention', 'contract', 'shipment'. entity_id = id do documento (ache com list_invoices, list_orders, etc.). Retorna o PDF em base64 para download ou envio.
 
+        FERRAMENTAS FINANCEIRAS:
+        112. get_financial_summary() - Resumo financeiro geral: saldo bancário total, contas a receber, contas a pagar, propostas abertas, posição líquida. Use quando o usuário perguntar "como está a saúde financeira?", "qual o saldo?", "quanto devemos?", "quanto temos a receber?".
+        113. get_bank_balance(account_id?) - Saldo bancário. Sem account_id retorna todas as contas. Com account_id retorna apenas aquela conta. Use quando o usuário perguntar "qual o saldo do Inter?".
+        114. get_accounts_receivable(date_from?, date_to?) - Faturas a receber (não pagas). Opcionalmente filtra por período de vencimento (YYYY-MM-DD). Mostra valor, vencimento, se está atrasada, e cliente. Use quando o usuário perguntar "o que temos a receber?", "quais faturas estão atrasadas?".
+        115. get_accounts_payable(date_from?, date_to?) - Contas a pagar: faturas de fornecedor não pagas + despesas pendentes. Opcionalmente filtra por período. Use quando o usuário perguntar "o que temos a pagar?", "quais contas vencem essa semana?".
+        116. get_cash_flow_forecast(date_from, date_to) - Fluxo de caixa projetado semanal. Mostra receitas previstas - despesas previstas por semana, com acumulado. date_from e date_to obrigatórios (YYYY-MM-DD). Use quando o usuário perguntar "como fica o fluxo de caixa até o fim do mês?", "previsão de caixa".
+
         FERRAMENTAS DE VERIFICAÇÃO E COMUNICAÇÃO:
         99. read_project_file(file_path, offset?, limit?) - Lê um arquivo de código-fonte do projeto. Use para VERIFICAR se um bug é real antes de criar uma issue. file_path é relativo à raiz (ex.: 'src/components/InterventionList.tsx', 'backend/src/routes/interventionRoutes.ts'). Retorna até 500 linhas. Use offset (linha inicial) e limit (max linhas) para paginar.
         100. ask_user(question) - Faz uma pergunta ao usuário e PARA a execução para aguardar a resposta. Use quando: (a) não tem certeza se algo é um bug real, (b) precisa de mais detalhes antes de criar uma issue, (c) quer confirmar se deve prosseguir com uma ação destrutiva. SEMPRE prefira perguntar a assumir.
@@ -1324,6 +1331,136 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 return `PDF da ${label} #${entityId} obtido com sucesso (${pdf.length} bytes). Base64: ${base64.substring(0, 100)}...[truncado, ${base64.length} chars total]. Para download: GET /api/documents/${entityType}/${entityId}/pdf`;
             } catch (e: any) {
                 return `Erro ao obter PDF de ${entityType} #${entityId}: ${e.message || e}`;
+            }
+        }
+
+        case 'get_financial_summary': {
+            try {
+                const s = await dolibarrService.getFinancialSummary();
+                const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                const lines = [
+                    `<h3>📊 Resumo Financeiro — ${s.date}</h3>`,
+                    `<b>🏦 Saldo bancário total:</b> ${fmt(s.totalBankBalance)}`,
+                    ...s.bankBalances.map(b => `&nbsp;&nbsp;${b.label}: ${fmt(b.balance)} (${b.transactionCount} transações)`),
+                    '',
+                    `<b>📥 Contas a receber:</b> ${fmt(s.totalReceivable)}`,
+                    s.totalReceivableOverdue > 0 ? `&nbsp;&nbsp;<span style="color:red">⚠️ Vencidas: ${fmt(s.totalReceivableOverdue)}</span>` : '&nbsp;&nbsp;✅ Nenhuma vencida',
+                    '',
+                    `<b>📤 Contas a pagar:</b> ${fmt(s.totalPayable)}`,
+                    s.totalPayableOverdue > 0 ? `&nbsp;&nbsp;<span style="color:red">⚠️ Vencidas: ${fmt(s.totalPayableOverdue)}</span>` : '&nbsp;&nbsp;✅ Nenhuma vencida',
+                    '',
+                    `<b>📋 Propostas abertas:</b> ${s.openProposals} propostas totaling ${fmt(s.openProposalsValue)}`,
+                    '',
+                    `<b>📐 Posição líquida (saldo + a receber - a pagar):</b> ${fmt(s.netPosition)}`,
+                ];
+                return lines.join('\n');
+            } catch (e: any) {
+                return `Erro ao obter resumo financeiro: ${e.message || e}`;
+            }
+        }
+
+        case 'get_bank_balance': {
+            const acctId = String(args?.account_id || '').trim();
+            try {
+                if (acctId) {
+                    const lines = await dolibarrService.getBankStatement(acctId);
+                    const balance = lines.reduce((s: number, l: any) => s + (l.amount || 0), 0);
+                    const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                    return `Saldo da conta #${acctId}: ${fmt(balance)} (${lines.length} transações)`;
+                }
+                const balances = await dolibarrService.getBankBalances();
+                const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                const total = balances.reduce((s, b) => s + b.balance, 0);
+                const lines = [
+                    '<h3>🏦 Saldos Bancários</h3>',
+                    ...balances.map(b => `${b.label} (#${b.accountId}): ${fmt(b.balance)} (${b.transactionCount} transações)`),
+                    '',
+                    `<b>Total: ${fmt(total)}</b>`,
+                ];
+                return lines.join('\n');
+            } catch (e: any) {
+                return `Erro ao obter saldo bancário: ${e.message || e}`;
+            }
+        }
+
+        case 'get_accounts_receivable': {
+            const dateFrom = args?.date_from ? String(args.date_from) : undefined;
+            const dateTo = args?.date_to ? String(args.date_to) : undefined;
+            try {
+                const items = await dolibarrService.getAccountsReceivable(dateFrom, dateTo);
+                if (items.length === 0) return 'Nenhuma conta a receber encontrada.';
+                const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                const total = items.reduce((s, i) => s + i.totalTtc, 0);
+                const overdue = items.filter(i => i.isOverdue);
+                const overdueTotal = overdue.reduce((s, i) => s + i.totalTtc, 0);
+                const lines = [
+                    `<h3>📥 Contas a Receber (${items.length} faturas, total: ${fmt(total)})</h3>`,
+                    overdue.length > 0 ? `<span style="color:red">⚠️ ${overdue.length} vencidas totalizando ${fmt(overdueTotal)}</span>` : '',
+                    '<ul>',
+                    ...items.slice(0, 30).map(i => {
+                        const dueStr = i.dueDate ? new Date(parseInt(i.dueDate) * 1000).toLocaleDateString('pt-BR') : 'sem data';
+                        const overdueTag = i.isOverdue ? ' <span style="color:red">⚠️ VENCIDA</span>' : '';
+                        return `<li><a href="/invoices/${i.id}">${i.ref}</a> — ${fmt(i.totalTtc)} — venc: ${dueStr}${overdueTag} — ${i.socName}</li>`;
+                    }),
+                    '</ul>',
+                ];
+                return lines.filter(Boolean).join('\n');
+            } catch (e: any) {
+                return `Erro ao obter contas a receber: ${e.message || e}`;
+            }
+        }
+
+        case 'get_accounts_payable': {
+            const dateFrom = args?.date_from ? String(args.date_from) : undefined;
+            const dateTo = args?.date_to ? String(args.date_to) : undefined;
+            try {
+                const items = await dolibarrService.getAccountsPayable(dateFrom, dateTo);
+                if (items.length === 0) return 'Nenhuma conta a pagar encontrada.';
+                const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                const total = items.reduce((s, i) => s + i.totalTtc, 0);
+                const overdue = items.filter(i => i.isOverdue);
+                const overdueTotal = overdue.reduce((s, i) => s + i.totalTtc, 0);
+                const typeLabel = (t: string) => t === 'supplier_invoice' ? 'Fornecedor' : 'Despesa';
+                const lines = [
+                    `<h3>📤 Contas a Pagar (${items.length} itens, total: ${fmt(total)})</h3>`,
+                    overdue.length > 0 ? `<span style="color:red">⚠️ ${overdue.length} vencidas totalizando ${fmt(overdueTotal)}</span>` : '',
+                    '<ul>',
+                    ...items.slice(0, 30).map(i => {
+                        const dueStr = i.dueDate ? new Date(parseInt(i.dueDate) * 1000).toLocaleDateString('pt-BR') : 'sem data';
+                        const overdueTag = i.isOverdue ? ' <span style="color:red">⚠️ VENCIDA</span>' : '';
+                        const soc = i.socName ? ` — ${i.socName}` : '';
+                        return `<li>[${typeLabel(i.type)}] ${i.ref} — ${fmt(i.totalTtc)} — venc: ${dueStr}${overdueTag}${soc}</li>`;
+                    }),
+                    '</ul>',
+                ];
+                return lines.filter(Boolean).join('\n');
+            } catch (e: any) {
+                return `Erro ao obter contas a pagar: ${e.message || e}`;
+            }
+        }
+
+        case 'get_cash_flow_forecast': {
+            const cfFrom = String(args?.date_from || '').trim();
+            const cfTo = String(args?.date_to || '').trim();
+            if (!cfFrom || !cfFrom.match(/^\d{4}-\d{2}-\d{2}$/)) return 'Informe date_from (YYYY-MM-DD). Ex.: "2026-06-07".';
+            if (!cfTo || !cfTo.match(/^\d{4}-\d{2}-\d{2}$/)) return 'Informe date_to (YYYY-MM-DD). Ex.: "2026-07-07".';
+            try {
+                const periods = await dolibarrService.getCashFlowForecast(cfFrom, cfTo);
+                if (periods.length === 0) return 'Nenhum dado de fluxo de caixa para o período.';
+                const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+                const lines = [
+                    `<h3>📈 Fluxo de Caixa Projetado (${cfFrom} a ${cfTo})</h3>`,
+                    '<table><tr><th>Semana</th><th>A Receber</th><th>A Pagar</th><th>Líquido</th><th>Acumulado</th></tr>',
+                    ...periods.map(p => {
+                        const netColor = p.net >= 0 ? 'green' : 'red';
+                        const cumColor = p.cumulativeNet >= 0 ? 'green' : 'red';
+                        return `<tr><td>${p.period}</td><td>${fmt(p.receivable)}</td><td>${fmt(p.payable)}</td><td style="color:${netColor}">${fmt(p.net)}</td><td style="color:${cumColor}"><b>${fmt(p.cumulativeNet)}</b></td></tr>`;
+                    }),
+                    '</table>',
+                ];
+                return lines.join('\n');
+            } catch (e: any) {
+                return `Erro ao obter fluxo de caixa: ${e.message || e}`;
             }
         }
 
