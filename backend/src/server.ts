@@ -204,6 +204,9 @@ app.use('/api/ui-config', uiConfigRoutes);
 import dashboardRoutes from './routes/dashboardRoutes';
 app.use('/api/dashboard', dashboardRoutes);
 
+import taskRoutes from './routes/taskRoutes';
+app.use('/api/tasks', taskRoutes);
+
 app.use('/api/github', githubRoutes);
 
 // Health Check
