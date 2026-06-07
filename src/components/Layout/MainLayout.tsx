@@ -7,11 +7,11 @@ import NotificationPanel from '../NotificationPanel';
 import GlobalSearch from '../GlobalSearch';
 import VirtualAssistant from '../VirtualAssistant';
 import { useDolibarr } from '../../context/DolibarrContext';
-import { useNotifications } from '../../hooks/useNotifications';
+import { useNotifications, useNotificationActions } from '../../hooks/useNotifications';
 
 export const MainLayout: React.FC = () => {
     const {
-        config, setConfig,
+        config,
         notifications, setNotifications,
     } = useDolibarr();
 
@@ -20,12 +20,9 @@ export const MainLayout: React.FC = () => {
     const [isSearchOpen, setIsSearchOpen] = useState(false);
 
     const navigate = useNavigate();
+    const notificationAction = useNotificationActions();
 
-    // Adapter for legacy onNavigate support in GlobalSearch/Notifications
-    // Many child components still use (view, id) signature.
     const handleNavigate = (view: string, id: string = '') => {
-        // Map abstract view names to paths if necessary, or assume 1:1
-        // Special cases?
         if (id) {
             navigate(`/${view}/${id}`);
         } else {
@@ -60,10 +57,19 @@ export const MainLayout: React.FC = () => {
                     isOpen={isNotificationPanelOpen}
                     onClose={() => setIsNotificationPanelOpen(false)}
                     notifications={notifications}
-                    onMarkRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n))}
-                    onMarkAllRead={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+                    onMarkRead={async (id) => {
+                        setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+                        await notificationAction('markRead', id);
+                    }}
+                    onMarkAllRead={async () => {
+                        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+                        await notificationAction('markAllRead');
+                    }}
                     onNavigate={handleNavigate}
-                    onClearAll={() => setNotifications([])}
+                    onClearAll={async () => {
+                        setNotifications([]);
+                        await notificationAction('clearAll');
+                    }}
                 />
 
                 <GlobalSearch

@@ -1,7 +1,7 @@
 
 import React, { useMemo, useCallback } from 'react';
 import { AppNotification, AppView } from '../types';
-import { X, Bell, AlertTriangle, CheckCircle, Info, Clock, AlertCircle as AlertCircleIcon, Mail } from 'lucide-react';
+import { X, Bell, AlertTriangle, CheckCircle, Info, Clock, AlertCircle as AlertCircleIcon, Mail, Bot, ShoppingCart, MessageSquare } from 'lucide-react';
 import { formatTime } from '../utils/dateUtils';
 
 interface NotificationPanelProps {
@@ -14,15 +14,21 @@ interface NotificationPanelProps {
     onMarkAllRead: () => void;
 }
 
-const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, notifications, onMarkRead, onNavigate, onClearAll, onMarkAllRead }) => {
-    const getIcon = useCallback((type: string, priority: string) => {
-        if (priority === 'high') return <AlertCircleIcon size={20} className="text-red-500" />;
-        if (type === 'stock') return <AlertTriangle size={20} className="text-orange-500" />;
-        if (type === 'invoice') return <AlertTriangle size={20} className="text-yellow-500" />;
-        if (type === 'email') return <Mail size={20} className="text-indigo-500" />;
-        return <Info size={20} className="text-blue-500" />;
-    }, []);
+const getIcon = (type: string, priority: string) => {
+    if (priority === 'high') return <AlertCircleIcon size={20} className="text-red-500" />;
+    switch (type) {
+        case 'stock': return <AlertTriangle size={20} className="text-orange-500" />;
+        case 'invoice': return <AlertTriangle size={20} className="text-yellow-500" />;
+        case 'email': return <Mail size={20} className="text-indigo-500" />;
+        case 'agent': return <Bot size={20} className="text-purple-500" />;
+        case 'whatsapp': return <MessageSquare size={20} className="text-green-500" />;
+        case 'ticket': return <AlertCircleIcon size={20} className="text-amber-500" />;
+        case 'task': return <ShoppingCart size={20} className="text-blue-500" />;
+        default: return <Info size={20} className="text-blue-500" />;
+    }
+};
 
+const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, notifications, onMarkRead, onNavigate, onClearAll, onMarkAllRead }) => {
     const sortedNotifications = useMemo(
         () => [...notifications].sort((a, b) => b.date - a.date),
         [notifications]
@@ -44,9 +50,11 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
                     <div className="flex items-center gap-2">
                         <Bell size={18} className="text-slate-600 dark:text-slate-300" />
                         <h3 className="font-bold text-slate-800 dark:text-white">Notificações</h3>
-                        <span className="text-xs bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 px-2 py-0.5 rounded-full font-bold">
-                            {unreadCount}
-                        </span>
+                        {unreadCount > 0 && (
+                            <span className="text-xs bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 px-2 py-0.5 rounded-full font-bold">
+                                {unreadCount}
+                            </span>
+                        )}
                     </div>
                     <div className="flex gap-2">
                         <button onClick={onMarkAllRead} className="text-xs text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium">Lidas</button>
@@ -66,7 +74,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
                             {sortedNotifications.map(note => (
                                 <div
                                     key={note.id}
-                                    className={`p-3 rounded-lg border transition-all ${note.read ? 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 opacity-60' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm border-l-4 border-l-indigo-500'}`}
+                                    className={`p-3 rounded-lg border transition-all cursor-pointer ${note.read ? 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 opacity-60' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm border-l-4 border-l-indigo-500'}`}
                                     onClick={() => {
                                         onMarkRead(note.id);
                                         if (note.linkTo) {
@@ -79,7 +87,12 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
                                         <div className="mt-1 shrink-0">{getIcon(note.type, note.priority)}</div>
                                         <div className="flex-1 min-w-0">
                                             <div className="flex justify-between items-start">
-                                                <h4 className={`text-sm font-semibold ${note.read ? 'text-slate-600 dark:text-slate-400' : 'text-slate-800 dark:text-white'}`}>{note.title}</h4>
+                                                <div className="flex items-center gap-1.5">
+                                                    <h4 className={`text-sm font-semibold ${note.read ? 'text-slate-600 dark:text-slate-400' : 'text-slate-800 dark:text-white'}`}>{note.title}</h4>
+                                                    {note.senderName && (
+                                                        <span className="text-[10px] bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 px-1.5 py-0.5 rounded font-medium">{note.senderName}</span>
+                                                    )}
+                                                </div>
                                                 <span className="text-[10px] text-slate-400 whitespace-nowrap ml-2">{formatTime(note.date)}</span>
                                             </div>
                                             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">{note.message}</p>

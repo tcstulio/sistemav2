@@ -3,7 +3,6 @@ import { DolibarrConfig, ThirdParty, Invoice, Product, Proposal, Order, Project,
 import { DolibarrService } from '../services/dolibarrService';
 import { dbService } from '../services/dbService';
 import { WhatsAppService } from '../services/whatsappService';
-import { AutomationService } from '../services/automationService';
 import { useDolibarrData } from '../hooks/useDolibarrData';
 import { runBackgroundSync } from '../services/backgroundSyncService';
 import { logger } from '../utils/logger';
@@ -41,10 +40,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [config, setConfigState] = useState<DolibarrConfig | null>(null);
   const [isSyncPaused, setIsSyncPaused] = useState(false);
   const [currentUser, setCurrentUser] = useState<DolibarrUser | null>(null);
-  // 1. Load notifications from local storage
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    return safeStorage.getJSON<AppNotification[]>('coolgroove_notifications', []);
-  });
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [isInitialized, setIsInitialized] = useState(false);
   // #112 — overrides de tela por pessoa/grupo (org-wide) + grupos do usuário logado.
   const [orgScreenPerms, setOrgScreenPerms] = useState<ScreenPermissions | null>(null);
@@ -205,11 +201,6 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     return () => { cancelled = true; };
   }, [config, currentUser]);
 
-  // 3. Persistence for notifications
-  useEffect(() => {
-    safeStorage.setJSON('coolgroove_notifications', notifications);
-  }, [notifications]);
-
   // 3b. Effect to bubble up hook errors to notifications
   useEffect(() => {
     if (error) {
@@ -219,158 +210,6 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
       }, ...prev]);
     }
   }, [error]);
-
-  // Removed direct WA sending in favor of AutomationService
-
-
-  // Helper to process sync changes for notifications
-  const processSyncChanges = useCallback((changes: Record<string, any[]>) => {
-    if (!currentUser) return;
-
-    const newNotes: AppNotification[] = [];
-    const now = Date.now();
-    const automationTriggers: { context: any }[] = [];
-
-    // Check Tasks
-    if (changes.tasks && changes.tasks.length > 0) {
-      changes.tasks.forEach((task: Task) => {
-        // Only interested if assigned to me or created by me (if I care about updates)
-        // Focusing on assignments to me
-        if (task.fk_user_assign === currentUser.id || task.fk_user_assign === currentUser.login) {
-          // Determine type
-          const isNew = Math.abs((task.date_modification || 0) - (task.date_creation || 0)) < 600; // Created within last 10 mins of update
-          const isDone = Number(task.progress) === 100;
-          // Spam prevention: Ignore items older than 48h
-          if ((now - (task.date_modification || 0)) > 48 * 60 * 60 * 1000) return;
-
-          // Duplicate check (simple) - if we already have a unread notification for this ID
-          const exists = notifications.some(n => n.linkTo?.id === task.id && !n.read);
-          if (exists) return;
-
-          if (isDone) {
-            // Maybe don't notify me if I finished it? Only if someone else finished it?
-            // Skip completion for now to avoid self-spam
-          } else if (isNew) {
-            newNotes.push({
-              id: `task-${task.id}-${now}`,
-              type: 'info',
-              priority: 'medium',
-              title: 'Nova Tarefa Atribuída',
-              message: `${task.ref} - ${task.label}`,
-              date: now,
-              read: false,
-              linkTo: { view: 'tasks', id: task.id }
-            });
-            automationTriggers.push({
-              context: {
-                title: 'Nova Tarefa Atribuída',
-                message: `${task.ref} - ${task.label}`,
-                type: 'task',
-                user_phone: currentUser.phone_mobile,
-                user_email: currentUser.email,
-                ref: task.ref,
-                label: task.label
-              }
-            });
-          } else {
-            // Update
-            // Optional: Uncomment to enable update notifications
-            /*
-            newNotes.push({
-                id: `task-upt-${task.id}-${now}`,
-                type: 'info',
-                priority: 'low',
-                title: 'Tarefa Atualizada',
-                message: `${task.ref} - ${task.label}`,
-                date: now,
-                read: false,
-                linkTo: { view: 'tasks', id: task.id }
-            });
-            */
-          }
-        }
-      });
-    }
-
-    // Check Events (Agenda)
-    if (changes.events && changes.events.length > 0) {
-      changes.events.forEach((evt: AgendaEvent) => {
-        // Check assignee (user_assigned holds ID)
-        if (evt.user_assigned === currentUser.id || evt.user_assigned === currentUser.login) {
-          // Spam prevention
-          if ((now - (evt.date_modification || 0)) > 48 * 60 * 60 * 1000) return;
-
-          const isNew = Math.abs((evt.date_modification || 0) - (evt.date_c || 0)) < 600;
-          if (isNew) {
-            newNotes.push({
-              id: `evt-${evt.id}-${now}`,
-              type: 'info',
-              priority: 'medium',
-              title: 'Novo Evento na Agenda',
-              message: `${evt.label} (${new Date((evt.date_start || 0)).toLocaleDateString()})`,
-              date: now,
-              read: false,
-              linkTo: { view: 'agenda', id: evt.id }
-            });
-            automationTriggers.push({
-              context: {
-                title: 'Novo Evento',
-                message: `${evt.label} em ${new Date((evt.date_start || 0)).toLocaleDateString()}`,
-                type: 'event',
-                user_phone: currentUser.phone_mobile,
-                user_email: currentUser.email,
-                label: evt.label
-              }
-            });
-          }
-        }
-      });
-    }
-
-    // Check Tickets
-    if (changes.tickets && changes.tickets.length > 0) {
-      changes.tickets.forEach((tick: Ticket) => {
-        if (tick.fk_user_assign === currentUser.id) {
-          // Spam prevention
-          if ((now - (tick.date_modification || 0)) > 48 * 60 * 60 * 1000) return;
-
-          const isNew = Math.abs((tick.tms || 0) - (tick.datec || 0)) < 600;
-          if (isNew) {
-            newNotes.push({
-              id: `tick-${tick.id}-${now}`,
-              type: 'ticket',
-              priority: 'high',
-              title: 'Novo Ticket Atribuído',
-              message: `${tick.ref} - ${tick.subject}`,
-              date: now,
-              read: false,
-              linkTo: { view: 'tickets', id: tick.id }
-            });
-            automationTriggers.push({
-              context: {
-                title: 'Novo Chamado',
-                message: `${tick.ref} - ${tick.subject}`,
-                type: 'ticket',
-                user_phone: currentUser.phone_mobile,
-                user_email: currentUser.email,
-                ref: tick.ref,
-                subject: tick.subject
-              }
-            });
-          }
-        }
-      });
-    }
-
-    if (newNotes.length > 0) {
-      setNotifications(prev => [...newNotes, ...prev]);
-
-      // Trigger Automations
-      automationTriggers.forEach(trigger => {
-        AutomationService.trigger('notification_created', trigger.context);
-      });
-    }
-  }, [currentUser, notifications]);
 
   // Background sync flag and abort controller
   const hasRunBackgroundSync = useRef(false);
@@ -427,9 +266,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
                 if (result.errors.length > 0) {
                   log.warn('Background sync errors', result.errors);
                 }
-                // Process notifications
-                processSyncChanges(result.changes);
-                // Invalidate React Query cache to refresh UI with synced data
+                // Process notifications (now handled by backend NotificationService)
                 refreshDataRef.current?.();
               }).catch(err => {
                 log.error('Background sync failed', err);
@@ -480,9 +317,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
           log.debug('AutoSync triggering background sync...');
         }
         // Call global background sync to ensure DB is updated
-        runBackgroundSync(currentConfig).then((result) => {
-          processSyncChanges(result.changes);
-          // Then invalidate queries to refresh UI
+        runBackgroundSync(currentConfig).then(() => {
           refreshDataRef.current?.();
         }).catch((err) => {
           log.error('AutoSync background sync failed', err);
@@ -512,7 +347,6 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
           if (result.errors.length > 0) {
             log.warn('Background sync errors', result.errors);
           }
-          processSyncChanges(result.changes);
         }).catch(err => {
           log.error('Background sync failed', err);
         });

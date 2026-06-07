@@ -10,7 +10,7 @@ import { Toaster } from 'sonner';
 import Dashboard from './Dashboard';
 import SetupWizard from './SetupWizard';
 import { MainLayout } from './Layout/MainLayout';
-import { useNotifications } from '../hooks/useNotifications';
+
 import NotFound from './NotFound';
 import { DolibarrConfig } from '../types';
 
@@ -106,21 +106,6 @@ const ViewWrapper: React.FC<ViewWrapperProps> = ({ Component, viewId, passProps 
     );
 };
 
-// Notification Handler Component
-const NotificationHandler = () => {
-    const { setNotifications } = useDolibarr();
-    const navigate = useNavigate();
-
-    const handleNavigate = (view: string, id: string) => {
-        if (id) navigate(`/${view}/${id}`);
-        else navigate(`/${view}`);
-    };
-
-    useNotifications(setNotifications, handleNavigate);
-
-    return null;
-};
-
 const App: React.FC = () => {
     const { config, setConfig, isInitialized } = useDolibarr();
 
@@ -143,7 +128,6 @@ const App: React.FC = () => {
         <>
             <Toaster richColors position="top-right" />
             <BrowserRouter>
-                <NotificationHandler />
                 <ErrorBoundary componentName="CoolGroove Sistema">
                 <Suspense fallback={
                     <div className="flex h-screen w-full items-center justify-center bg-slate-50 dark:bg-slate-950">
