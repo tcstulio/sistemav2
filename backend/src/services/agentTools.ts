@@ -162,6 +162,13 @@ export const TOOLS_PROMPT = `
         115. get_accounts_payable(date_from?, date_to?) - Contas a pagar: faturas de fornecedor não pagas + despesas pendentes. Opcionalmente filtra por período. Use quando o usuário perguntar "o que temos a pagar?", "quais contas vencem essa semana?".
         116. get_cash_flow_forecast(date_from, date_to) - Fluxo de caixa projetado semanal. Mostra receitas previstas - despesas previstas por semana, com acumulado. date_from e date_to obrigatórios (YYYY-MM-DD). Use quando o usuário perguntar "como fica o fluxo de caixa até o fim do mês?", "previsão de caixa".
 
+        FERRAMENTAS DE SETUP/CONFIGURAÇÃO:
+        117. get_company_info() - Dados da empresa (nome, CNPJ, endereço, email, telefone, site, moeda, idioma). Use quando precisar de dados da empresa para preencher formulários ou responder perguntas sobre a empresa.
+        118. list_payment_types() - Métodos de pagamento disponíveis no sistema (ex.: PIX, boleto, cartão). Use para saber quais formas de pagamento oferecer ao cliente.
+        119. list_tax_rates() - Taxas de imposto cadastradas (ICMS, PIS, COFINS, etc.). Use para verificar qual alíquota aplicar.
+        120. list_currencies() - Moedas disponíveis no sistema com cotações.
+        121. list_countries() - Países disponíveis com códigos ISO.
+
         FERRAMENTAS DE VERIFICAÇÃO E COMUNICAÇÃO:
         99. read_project_file(file_path, offset?, limit?) - Lê um arquivo de código-fonte do projeto. Use para VERIFICAR se um bug é real antes de criar uma issue. file_path é relativo à raiz (ex.: 'src/components/InterventionList.tsx', 'backend/src/routes/interventionRoutes.ts'). Retorna até 500 linhas. Use offset (linha inicial) e limit (max linhas) para paginar.
         100. ask_user(question) - Faz uma pergunta ao usuário e PARA a execução para aguardar a resposta. Use quando: (a) não tem certeza se algo é um bug real, (b) precisa de mais detalhes antes de criar uma issue, (c) quer confirmar se deve prosseguir com uma ação destrutiva. SEMPRE prefira perguntar a assumir.
@@ -1461,6 +1468,93 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 return lines.join('\n');
             } catch (e: any) {
                 return `Erro ao obter fluxo de caixa: ${e.message || e}`;
+            }
+        }
+
+        case 'get_company_info': {
+            try {
+                const info = await dolibarrService.getCompanyInfo();
+                if (!info) return 'Não foi possível obter dados da empresa.';
+                const lines = [
+                    '<h3>🏢 Dados da Empresa</h3>',
+                    `<b>Nome:</b> ${info.name}`,
+                    `<b>CNPJ:</b> ${info.idprof4 || 'não informado'}`,
+                    `<b>Endereço:</b> ${info.address}, ${info.zip} — ${info.town} (${info.country_code})`,
+                    `<b>Telefone:</b> ${info.phone}`,
+                    `<b>Email:</b> ${info.email}`,
+                    `<b>Site:</b> ${info.url}`,
+                    `<b>Gestores:</b> ${info.managers}`,
+                    `<b>Idioma:</b> ${info.default_lang}`,
+                    `<b>Capital:</b> ${info.capital ? info.capital.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : 'não informado'}`,
+                    `<b>Contribuinte ICMS:</b> ${info.tva_assuj ? 'Sim' : 'Não'}`,
+                ];
+                return lines.join('\n');
+            } catch (e: any) {
+                return `Erro ao obter dados da empresa: ${e.message || e}`;
+            }
+        }
+
+        case 'list_payment_types': {
+            try {
+                const types = await dolibarrService.listPaymentTypes();
+                if (types.length === 0) return 'Nenhum método de pagamento encontrado.';
+                const lines = [
+                    `<h3>💳 Métodos de Pagamento (${types.length})</h3>`,
+                    '<ul>',
+                    ...types.map((t: any) => `<li><b>${t.code || t.id}</b> — ${t.label || t.libelle || 'sem nome'} ${t.active === 1 || t.active === '1' ? '' : '(inativo)'}</li>`),
+                    '</ul>',
+                ];
+                return lines.join('\n');
+            } catch (e: any) {
+                return `Erro ao listar métodos de pagamento: ${e.message || e}`;
+            }
+        }
+
+        case 'list_tax_rates': {
+            try {
+                const rates = await dolibarrService.listVatRates();
+                if (rates.length === 0) return 'Nenhuma taxa de imposto encontrada.';
+                const lines = [
+                    `<h3>📊 Taxas de Imposto (${rates.length})</h3>`,
+                    '<ul>',
+                    ...rates.map((r: any) => `<li><b>${r.tva_tx || r.rate || r.id}%</b> — ${r.label || r.libelle || 'sem nome'} ${r.active === 1 || r.active === '1' ? '' : '(inativo)'}</li>`),
+                    '</ul>',
+                ];
+                return lines.join('\n');
+            } catch (e: any) {
+                return `Erro ao listar taxas de imposto: ${e.message || e}`;
+            }
+        }
+
+        case 'list_currencies': {
+            try {
+                const currencies = await dolibarrService.listCurrencies();
+                if (currencies.length === 0) return 'Nenhuma moeda encontrada.';
+                const lines = [
+                    `<h3>💰 Moedas (${currencies.length})</h3>`,
+                    '<ul>',
+                    ...currencies.map((c: any) => `<li><b>${c.code_iso || c.code}</b> — ${c.label || c.libelle || 'sem nome'} ${c.rate ? `(taxa: ${c.rate})` : ''}</li>`),
+                    '</ul>',
+                ];
+                return lines.join('\n');
+            } catch (e: any) {
+                return `Erro ao listar moedas: ${e.message || e}`;
+            }
+        }
+
+        case 'list_countries': {
+            try {
+                const countries = await dolibarrService.listCountries();
+                if (countries.length === 0) return 'Nenhum país encontrado.';
+                const lines = [
+                    `<h3>🌍 Países (${countries.length})</h3>`,
+                    '<ul>',
+                    ...countries.map((c: any) => `<li><b>${c.code || c.code_iso}</b> — ${c.label || c.libelle || c.nom || 'sem nome'}</li>`),
+                    '</ul>',
+                ];
+                return lines.join('\n');
+            } catch (e: any) {
+                return `Erro ao listar países: ${e.message || e}`;
             }
         }
 
