@@ -313,6 +313,11 @@ import { eventScraperService } from './services/eventScraperService';
 eventScraperService.startWorker(6);
 log.info('EventScraperService worker started (6h interval)');
 
+// Start Alert Cron (invoices, stock, tasks, tickets)
+import { alertCronService } from './services/alertCronService';
+alertCronService.start();
+log.info('AlertCronService started');
+
 // Initialize Banking Services
 import { interApiService } from './services/interApiService';
 import { itauApiService } from './services/itauApiService';
@@ -365,6 +370,9 @@ const gracefulShutdown = async (signal: string) => {
 
     // 2. Stop Scheduler Worker
     schedulerService.stopWorker();
+
+    // 3. Stop Alert Cron
+    alertCronService.stop();
 
     // 3. Destroy WhatsApp Clients (Releases Chrome processes & Ports)
     try {
