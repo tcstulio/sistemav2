@@ -270,8 +270,8 @@ router.post('/analyze/pdf', async (req, res) => {
     try {
         const { pdf, question } = AnalyzePdfSchema.parse(req.body);
         const pdfBuffer = Buffer.from(pdf, 'base64');
-        const pdfParse = await import('pdf-parse');
-        const data = await (pdfParse.default || pdfParse)(pdfBuffer);
+        const pdfParse = require('pdf-parse');
+        const data = await pdfParse(pdfBuffer);
         const text = data.text.substring(0, 15000);
 
         const prompt = `Analise o conteúdo deste documento PDF e responda à pergunta do usuário.
