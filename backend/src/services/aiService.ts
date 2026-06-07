@@ -11,18 +11,52 @@ import { TOOLS_PROMPT, executeTool } from './agentTools';
 
 const log = logger.child('AiService');
 
-function extractToolCall(text: string): { tool: string; args: any } | null {
+export function extractToolCall(text: string): { tool: string; args: any } | null {
+    // Format 1: {"tool": "name", "args": {...}}  (our standard)
     const startMatch = text.search(/\{\s*"tool"\s*:/);
-    if (startMatch === -1) return null;
-    let depth = 0;
-    for (let i = startMatch; i < text.length; i++) {
-        if (text[i] === '{') depth++;
-        else if (text[i] === '}') depth--;
-        if (depth === 0) {
-            try { return JSON.parse(text.slice(startMatch, i + 1)); }
-            catch { return null; }
+    if (startMatch !== -1) {
+        let depth = 0;
+        for (let i = startMatch; i < text.length; i++) {
+            if (text[i] === '{') depth++;
+            else if (text[i] === '}') depth--;
+            if (depth === 0) {
+                try { return JSON.parse(text.slice(startMatch, i + 1)); }
+                catch { /* fall through */ }
+                break;
+            }
         }
     }
+
+    // Format 2: <tool_call: {"name": "...", "arguments": {...}}>  (GLM-style)
+    const glmMatch = text.match(/<tool_call:\s*(\{[\s\S]*?\})>/);
+    if (glmMatch) {
+        try {
+            const parsed = JSON.parse(glmMatch[1]);
+            if (parsed.name) {
+                return { tool: parsed.name, args: parsed.arguments || parsed.args || {} };
+            }
+        } catch { /* fall through */ }
+    }
+
+    // Format 3: {"name": "...", "arguments": {...}}  (bare alternate)
+    const altMatch = text.search(/\{\s*"name"\s*:\s*"(\w+)"/);
+    if (altMatch !== -1) {
+        let depth = 0;
+        for (let i = altMatch; i < text.length; i++) {
+            if (text[i] === '{') depth++;
+            else if (text[i] === '}') depth--;
+            if (depth === 0) {
+                try {
+                    const parsed = JSON.parse(text.slice(altMatch, i + 1));
+                    if (parsed.name) {
+                        return { tool: parsed.name, args: parsed.arguments || parsed.args || {} };
+                    }
+                } catch { /* fall through */ }
+                break;
+            }
+        }
+    }
+
     return null;
 }
 
