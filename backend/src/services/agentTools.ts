@@ -143,11 +143,11 @@ export const TOOLS_PROMPT = `
         93. get_screen_help(route) - Retorna a descrição completa de uma tela do sistema (label, descrição, ações, campos, dicas). Use quando o usuário perguntar "o que essa tela faz?", "como uso essa tela?" ou "onde faço X?". route = caminho da tela (ex.: '/customers', '/invoices').
 
         FERRAMENTAS DE TASK RUNNER (automação opencode):
-        94. create_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada.
-        95. list_tasks(status?) - Lista tasks do board. status: 'pending', 'running', 'reviewing', 'approved', 'merged', 'rejected', 'failed'. Sem status = todas. Retorna número, título, status, score do judge e PR.
-        96. start_task(issueNumber) - Inicia a execução automática de uma task (opencode implementa e abre PR). Use quando o usuário disser "iniciar task", "executar" ou "começar". Retorna status atualizado.
-        97. task_feedback(issueNumber, feedback) - Envia instrução adicional para corrigir uma task em andamento. Use quando o usuário disser para ajustar algo na task.
-        98. merge_task(issueNumber) - Mergea o PR da task e fecha a issue. Use quando o usuário aprovar o resultado.
+        94. create_opencode_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada.
+        95. list_opencode_tasks(status?) - Lista tasks do board opencode. status: 'pending', 'running', 'reviewing', 'approved', 'merged', 'rejected', 'failed'. Sem status = todas. Retorna número, título, status, score do judge e PR.
+        96. start_opencode_task(issueNumber) - Inicia a execução automática de uma task (opencode implementa e abre PR). Use quando o usuário disser "iniciar task", "executar" ou "começar". Retorna status atualizado.
+        97. opencode_task_feedback(issueNumber, feedback) - Envia instrução adicional para corrigir uma task em andamento. Use quando o usuário disser para ajustar algo na task.
+        98. merge_opencode_task(issueNumber) - Mergea o PR da task e fecha a issue. Use quando o usuário aprovar o resultado.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -509,6 +509,11 @@ const TOOL_ALIASES: Record<string, string> = {
     create_ticket: 'create_github_issue',
     bug_report: 'create_bug_report',
     report_bug: 'create_bug_report',
+    create_task: 'create_opencode_task',
+    start_task: 'start_opencode_task',
+    list_opencode_task: 'list_opencode_tasks',
+    merge_task: 'merge_opencode_task',
+    task_feedback: 'opencode_task_feedback',
 };
 
 export async function executeTool(tool: string, args: any = {}): Promise<string> {
@@ -1012,7 +1017,7 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             return help;
         }
 
-        case 'create_task': {
+        case 'create_opencode_task': {
             const tTitle = String(args?.title || 'Task');
             const tBody = String(args?.body || '');
             let tLabels = args?.labels || ['enhancement'];
@@ -1031,7 +1036,7 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             }
         }
 
-        case 'list_tasks': {
+        case 'list_opencode_tasks': {
             try {
                 const { taskRunnerService } = require('./taskRunnerService');
                 const tasks = await taskRunnerService.syncTasks();
@@ -1046,7 +1051,7 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             }
         }
 
-        case 'start_task': {
+        case 'start_opencode_task': {
             const issueNum = Number(args?.issueNumber);
             if (!issueNum) return 'Informe o número da issue (issueNumber).';
             try {
@@ -1059,7 +1064,7 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             }
         }
 
-        case 'task_feedback': {
+        case 'opencode_task_feedback': {
             const fbIssue = Number(args?.issueNumber);
             const fbText = String(args?.feedback || '');
             if (!fbIssue || !fbText) return 'Informe issueNumber e feedback.';
@@ -1072,7 +1077,7 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             }
         }
 
-        case 'merge_task': {
+        case 'merge_opencode_task': {
             const mergeIssue = Number(args?.issueNumber);
             if (!mergeIssue) return 'Informe o número da issue (issueNumber).';
             try {
