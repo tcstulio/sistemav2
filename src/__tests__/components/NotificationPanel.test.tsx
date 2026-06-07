@@ -91,8 +91,10 @@ describe('NotificationPanel', () => {
 
     it('calls onClose when close button is clicked', () => {
         renderPanel();
-        const closeButton = screen.getByRole('button', { name: '' });
-        fireEvent.click(closeButton);
+        const buttons = screen.getAllByRole('button');
+        const closeButton = buttons.find(b => b.querySelector('svg.lucide-x'));
+        expect(closeButton).toBeTruthy();
+        fireEvent.click(closeButton!);
         expect(mockOnClose).toHaveBeenCalled();
     });
 
