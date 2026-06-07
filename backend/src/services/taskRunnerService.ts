@@ -5,6 +5,7 @@ import path from 'path';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { logger } from '../utils/logger';
 import { aiService } from './aiService';
+import { socketService } from './socketService';
 
 const log = logger.child('TaskRunner');
 const execFileAsync = promisify(execFile);
@@ -43,6 +44,22 @@ class TaskRunnerService {
 
     constructor() {
         this.load();
+    }
+
+    private emitLog(issueNumber: number, type: string, message: string) {
+        socketService.emit(`task:${issueNumber}:log`, { type, message, timestamp: new Date().toISOString() });
+    }
+
+    private emitStatus(task: Task) {
+        socketService.emit(`task:${task.issueNumber}:status`, {
+            status: task.status,
+            judgeScore: task.judgeScore,
+            judgeReview: task.judgeReview,
+            prNumber: task.prNumber,
+            prUrl: task.prUrl,
+            error: task.error,
+            updatedAt: task.updatedAt,
+        });
     }
 
     private load() {
@@ -138,7 +155,9 @@ class TaskRunnerService {
     private async executeTask(task: Task, branch: string): Promise<void> {
         const { issueNumber } = task;
         log.info(`Starting task #${issueNumber} on branch ${branch}`);
+        this.emitLog(issueNumber, 'info', `Iniciando task #${issueNumber} no branch ${branch}`);
 
+        this.emitLog(issueNumber, 'info', 'Baixando alterações do main...');
         await execFileAsync('git', ['fetch', 'origin', 'main'], { timeout: 30000 });
         try {
             await execFileAsync('git', ['branch', '-D', branch], { timeout: 10000 });
@@ -146,12 +165,15 @@ class TaskRunnerService {
         await execFileAsync('git', ['checkout', '-b', branch, 'origin/main'], { timeout: 15000 });
         await execFileAsync('git', ['push', 'origin', branch, '--force'], { timeout: 30000 });
 
+        this.emitLog(issueNumber, 'info', 'Lendo issue do GitHub...');
         const { stdout: issueBody } = await execFileAsync('gh', [
             'issue', 'view', String(issueNumber),
             '--repo', REPO,
             '--json', 'title,body,labels,comments'
         ], { timeout: 15000 });
         const issueData = JSON.parse(issueBody);
+
+        this.emitLog(issueNumber, 'info', 'Gerando plano de implementação...');
 
         let prompt = `## Issue #${issueNumber}: ${issueData.title}\n\n${issueData.body || ''}`;
         if (issueData.comments?.length) {
@@ -223,14 +245,19 @@ Then implement the changes. Be thorough and follow existing code patterns.`;
 
         const reply = await aiService.generateReply(history, '', undefined, 'chat');
         log.info(`Task #${issueNumber} plan generated`);
+        this.emitLog(issueNumber, 'success', 'Plano gerado. Implementando mudanças...');
+        this.emitLog(issueNumber, 'ai', reply.substring(0, 2000));
 
         await execFileAsync('git', ['add', '-A'], { timeout: 10000 });
         try {
             await execFileAsync('git', ['commit', '-m', `feat(#${issueNumber}): ${issueData.title.substring(0, 72)}`], { timeout: 15000 });
+            this.emitLog(issueNumber, 'success', 'Mudanças commitadas');
         } catch {
             log.warn(`Task #${issueNumber} nothing to commit`);
+            this.emitLog(issueNumber, 'warn', 'Nada a commitar');
         }
         await execFileAsync('git', ['push', 'origin', branch], { timeout: 30000 });
+        this.emitLog(issueNumber, 'info', 'Push realizado. Criando PR...');
 
         let prNumber: number | undefined;
         let prUrl: string | undefined;
@@ -246,6 +273,7 @@ Then implement the changes. Be thorough and follow existing code patterns.`;
             const match = prOut.match(/\/pull\/(\d+)/);
             if (match) prNumber = parseInt(match[1]);
             prUrl = prOut.trim();
+            this.emitLog(issueNumber, 'success', `PR #${prNumber} criado: ${prUrl}`);
         } catch (e: any) {
             if (e.message?.includes('already exists')) {
                 const { stdout: existingPr } = await execFileAsync('gh', [
@@ -266,8 +294,10 @@ Then implement the changes. Be thorough and follow existing code patterns.`;
         task.prNumber = prNumber;
         task.prUrl = prUrl;
         task.updatedAt = new Date().toISOString();
+        this.emitStatus(task);
 
         if (prNumber) {
+            this.emitLog(issueNumber, 'info', 'Executando Judge (revisão automática)...');
             await this.runJudge(task);
         } else {
             task.status = 'reviewing';
@@ -280,7 +310,8 @@ Then implement the changes. Be thorough and follow existing code patterns.`;
 
         log.info(`Judging PR #${task.prNumber} for task #${task.issueNumber}`);
         task.status = 'reviewing';
-        this.save();
+        this.emitStatus(task);
+        this.emitLog(task.issueNumber, 'info', `Judge: avaliando PR #${task.prNumber}...`);
 
         try {
             const { stdout: diff } = await execFileAsync('gh', [
@@ -319,8 +350,10 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
 
                 if (result.score >= 7 || task.judgeAttempts >= 3) {
                     task.status = 'approved';
+                    this.emitLog(task.issueNumber, 'success', `Judge aprovou com score ${result.score}/10`);
                 } else {
                     log.info(`Judge score ${result.score}/10, auto-fixing (attempt ${task.judgeAttempts})`);
+                    this.emitLog(task.issueNumber, 'warn', `Judge reprovou (${result.score}/10). Auto-corrigindo (tentativa ${task.judgeAttempts})...`);
                     task.feedbackHistory.push(`Judge (score ${result.score}/10): ${result.review}`);
                     task.status = 'fixing';
                     this.save();
@@ -340,6 +373,7 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
 
         task.updatedAt = new Date().toISOString();
         this.save();
+        this.emitStatus(task);
     }
 
     async addFeedback(issueNumber: number, feedback: string): Promise<Task> {
