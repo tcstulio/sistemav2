@@ -700,14 +700,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             {orderedRegion('full')}
 
             {/* Charts & Forecast Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Main Chart Column */}
-                <div className="lg:col-span-2 space-y-6 min-w-0">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 min-h-0">
+                <div className="lg:col-span-2 space-y-6 min-w-0 min-h-0">
                     {orderedRegion('main')}
                 </div>
 
-                {/* Sidebar Widgets */}
-                <div className="space-y-6">
+                <div className="space-y-6 min-h-0">
                     {orderedRegion('sidebar')}
                 </div>
             </div>
@@ -752,12 +750,13 @@ const ProjectEvolutionWidget: React.FC = () => {
     const [stats, setStats] = useState<IssueStats | null>(null);
     const [recent, setRecent] = useState<GitHubIssue[]>([]);
     const [loading, setLoading] = useState(true);
+    const [showAll, setShowAll] = useState(false);
 
     useEffect(() => {
         (async () => {
             const [s, issues] = await Promise.all([
                 GithubService.getStats(),
-                GithubService.getIssues({ state: 'all', limit: 8 }),
+                GithubService.getIssues({ state: 'all', limit: 20 }),
             ]);
             setStats(s);
             setRecent(issues);
@@ -777,6 +776,8 @@ const ProjectEvolutionWidget: React.FC = () => {
 
     if (!stats) return null;
 
+    const visibleIssues = showAll ? recent : recent.slice(0, 5);
+
     return (
         <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
             <div className="flex items-center justify-between mb-4">
@@ -787,8 +788,8 @@ const ProjectEvolutionWidget: React.FC = () => {
                 </div>
             </div>
 
-            <div className="space-y-2">
-                {recent.map(issue => (
+            <div className="space-y-1.5">
+                {visibleIssues.map(issue => (
                     <a
                         key={issue.number}
                         href={issue.url}
@@ -801,20 +802,31 @@ const ProjectEvolutionWidget: React.FC = () => {
                             <p className="text-sm text-slate-700 dark:text-slate-300 truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
                                 <span className="text-slate-400 mr-1">#{issue.number}</span>{issue.title}
                             </p>
-                            <div className="flex gap-1 mt-0.5 flex-wrap">
-                                {(issue.labels || []).map((l: any) => (
-                                    <span key={l.name} className={`text-[10px] px-1.5 py-0.5 rounded ${LABEL_COLORS[l.name] || 'bg-slate-100 text-slate-500'}`}>
-                                        {l.name}
-                                    </span>
-                                ))}
-                            </div>
+                            {(issue.labels || []).length > 0 && (
+                                <div className="flex gap-1 mt-0.5 flex-wrap">
+                                    {(issue.labels || []).map((l: any) => (
+                                        <span key={l.name} className={`text-[10px] px-1.5 py-0.5 rounded ${LABEL_COLORS[l.name] || 'bg-slate-100 text-slate-500'}`}>
+                                            {l.name}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </a>
                 ))}
             </div>
 
+            {recent.length > 5 && (
+                <button
+                    onClick={() => setShowAll(!showAll)}
+                    className="w-full text-center text-xs text-indigo-600 dark:text-indigo-400 hover:underline mt-2 py-1"
+                >
+                    {showAll ? 'Mostrar menos' : `Ver mais ${recent.length - 5} issues`}
+                </button>
+            )}
+
             {Object.keys(stats.byLabel).length > 0 && (
-                <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
                     <p className="text-xs text-slate-400 mb-2">Por categoria</p>
                     <div className="grid grid-cols-2 gap-1.5">
                         {Object.entries(stats.byLabel).map(([label, counts]) => (

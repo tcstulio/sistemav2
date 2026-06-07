@@ -96,4 +96,25 @@ router.post('/:issueNumber/merge', async (req, res) => {
     }
 });
 
+router.put('/:issueNumber', async (req, res) => {
+    try {
+        const { title, body, labels } = req.body;
+        const task = await taskRunnerService.updateTask(Number(req.params.issueNumber), { title, body, labels });
+        res.json(task);
+    } catch (error: any) {
+        log.error('Update task error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.delete('/:issueNumber', async (req, res) => {
+    try {
+        await taskRunnerService.deleteTask(Number(req.params.issueNumber));
+        res.json({ ok: true });
+    } catch (error: any) {
+        log.error('Delete task error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
 export default router;

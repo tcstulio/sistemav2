@@ -248,6 +248,7 @@ const App: React.FC = () => {
 
                         <Route path="/interventions" element={<ViewWrapper Component={InterventionList} viewId="interventions" />} />
                         <Route path="/interventions/new" element={<ViewWrapper Component={InterventionList} viewId="interventions" />} />
+                        <Route path="/interventions/:id" element={<ViewWrapper Component={InterventionList} viewId="interventions" />} />
                         <Route path="/interventions/:id/edit" element={<ViewWrapper Component={InterventionList} viewId="interventions" />} />
 
                         <Route path="/contracts" element={<ViewWrapper Component={ContractList} viewId="contracts" />} />

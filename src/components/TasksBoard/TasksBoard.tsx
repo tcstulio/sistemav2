@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { TaskService, Task } from '../../services/taskService';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
-import { Play, CheckCircle, XCircle, RotateCcw, GitMerge, MessageSquare, Loader2, AlertCircle, Clock, Eye, RefreshCw, ExternalLink, ThumbsUp, Star } from 'lucide-react';
+import { Play, CheckCircle, XCircle, RotateCcw, GitMerge, MessageSquare, Loader2, AlertCircle, Clock, Eye, RefreshCw, ExternalLink, ThumbsUp, Star, Trash2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import DiffViewer from './DiffViewer';
 
@@ -16,7 +16,7 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.Rea
     failed: { color: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', icon: <AlertCircle size={14} />, label: 'Falhou' },
 };
 
-const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) => void; polling: boolean; onReview: (task: Task) => void }> = ({ task, onAction, polling, onReview }) => {
+const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) => void; polling: boolean; onReview: (task: Task) => void; onEdit: (task: Task) => void; onDelete: (task: Task) => void }> = ({ task, onAction, polling, onReview, onEdit, onDelete }) => {
     const [expanded, setExpanded] = useState(false);
     const [feedback, setFeedback] = useState('');
     const [showFeedback, setShowFeedback] = useState(false);
@@ -84,6 +84,10 @@ const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) =>
                 <Button variant="ghost" size="sm" icon={<Eye size={12} />} onClick={() => setExpanded(!expanded)}>
                     {expanded ? 'Fechar' : 'Detalhes'}
                 </Button>
+                <Button variant="ghost" size="sm" icon={<Pencil size={12} />} onClick={() => onEdit(task)}>Editar</Button>
+                {task.status !== 'running' && task.status !== 'fixing' && (
+                    <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500 hover:text-red-700" />
+                )}
             </div>
 
             {showFeedback && (
@@ -157,6 +161,10 @@ const TasksBoard: React.FC = () => {
     const [reviewTask, setReviewTask] = useState<Task | null>(null);
     const [diffText, setDiffText] = useState('');
     const [diffLoading, setDiffLoading] = useState(false);
+    const [editTask, setEditTask] = useState<Task | null>(null);
+    const [editTitle, setEditTitle] = useState('');
+    const [editBody, setEditBody] = useState('');
+    const [deleteConfirm, setDeleteConfirm] = useState<Task | null>(null);
 
     const openReview = async (task: Task) => {
         setReviewTask(task);
@@ -193,6 +201,36 @@ const TasksBoard: React.FC = () => {
                     toast.info('Enviando correção...');
                     break;
             }
+            load();
+        } catch (e: any) {
+            toast.error(e.response?.data?.error || e.message);
+        }
+    };
+
+    const openEdit = (task: Task) => {
+        setEditTask(task);
+        setEditTitle(task.title);
+        setEditBody(task.body);
+    };
+
+    const saveEdit = async () => {
+        if (!editTask) return;
+        try {
+            await TaskService.update(editTask.issueNumber, { title: editTitle, body: editBody });
+            toast.success('Task atualizada');
+            setEditTask(null);
+            load();
+        } catch (e: any) {
+            toast.error(e.response?.data?.error || e.message);
+        }
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteConfirm) return;
+        try {
+            await TaskService.delete(deleteConfirm.issueNumber);
+            toast.success('Task deletada');
+            setDeleteConfirm(null);
             load();
         } catch (e: any) {
             toast.error(e.response?.data?.error || e.message);
@@ -245,7 +283,7 @@ const TasksBoard: React.FC = () => {
                     </Card>
                 )}
                 {filteredTasks.map(task => (
-                    <TaskCard key={task.issueNumber} task={task} onAction={handleAction} polling={hasActive} onReview={openReview} />
+                    <TaskCard key={task.issueNumber} task={task} onAction={handleAction} polling={hasActive} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} />
                 ))}
             </div>
 
@@ -269,6 +307,49 @@ const TasksBoard: React.FC = () => {
                         onReject={async () => { await TaskService.reject(reviewTask.issueNumber); setReviewTask(null); toast.info('Task rejeitada'); load(); }}
                     />
                 )
+            )}
+
+            {editTask && (
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setEditTask(null)}>
+                    <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 w-full max-w-lg space-y-4" onClick={e => e.stopPropagation()}>
+                        <h2 className="text-lg font-bold text-slate-800 dark:text-white">Editar Task #{editTask.issueNumber}</h2>
+                        <div>
+                            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Título</label>
+                            <input
+                                type="text"
+                                value={editTitle}
+                                onChange={e => setEditTitle(e.target.value)}
+                                className="w-full mt-1 text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Descrição</label>
+                            <textarea
+                                value={editBody}
+                                onChange={e => setEditBody(e.target.value)}
+                                rows={8}
+                                className="w-full mt-1 text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+                            />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => setEditTask(null)}>Cancelar</Button>
+                            <Button variant="primary" size="sm" onClick={saveEdit}>Salvar</Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {deleteConfirm && (
+                <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setDeleteConfirm(null)}>
+                    <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 w-full max-w-sm space-y-4" onClick={e => e.stopPropagation()}>
+                        <h2 className="text-lg font-bold text-slate-800 dark:text-white">Deletar Task #{deleteConfirm.issueNumber}?</h2>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">Essa ação não pode ser desfeita. A task será removida do board (o issue no GitHub será mantido).</p>
+                        <div className="flex justify-end gap-2">
+                            <Button variant="ghost" size="sm" onClick={() => setDeleteConfirm(null)}>Cancelar</Button>
+                            <Button variant="primary" size="sm" onClick={confirmDelete} className="bg-red-600 hover:bg-red-700">Deletar</Button>
+                        </div>
+                    </div>
+                </div>
             )}
         </PageLayout>
     );
