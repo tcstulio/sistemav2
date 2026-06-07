@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User, Trash2 } from 'lucide-react';
+import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User, Trash2, History, Plus } from 'lucide-react';
 import { AiService, ChatMessage } from '../services/aiService';
 import { ThirdParty, Invoice, Project, Ticket } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -87,7 +87,6 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(() => {
     return safeStorage.getItem(VA_SESSION_ID_KEY);
   });
-  // carrega o histórico persistido (sobrevive a reload/navegação); cai no welcome se vazio.
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     const saved = safeStorage.getJSON<ChatMessage[]>(VA_HISTORY_KEY, []);
     return Array.isArray(saved) && saved.length > 0 ? saved : [WELCOME_MESSAGE];
@@ -96,6 +95,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [attachedImage, setAttachedImage] = useState<{ data: string, mimeType: string } | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [sessions, setSessions] = useState<Array<{ id: string; title: string; updatedAt: number; messageCount: number }>>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -105,10 +106,51 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     }
   }, [messages, isOpen]);
 
-  // persiste o histórico (últimas N mensagens) a cada mudança.
   useEffect(() => {
     safeStorage.setJSON(VA_HISTORY_KEY, messages.slice(-MAX_STORED_MESSAGES));
   }, [messages]);
+
+  useEffect(() => {
+    if (currentSessionId && messages.length <= 1) {
+      AiService.getChatSession(currentSessionId).then(session => {
+        if (session?.messages?.length) {
+          const restored: ChatMessage[] = session.messages
+            .filter((m: any) => m.role === 'user' || m.role === 'model')
+            .map((m: any) => ({ role: m.role, text: m.content }));
+          if (restored.length > 0) setMessages(restored);
+        }
+      }).catch(() => { /* fallback to localStorage */ });
+    }
+  }, []);
+
+  const loadSessions = async () => {
+    const list = await AiService.getChatSessions(20);
+    setSessions(list.map((s: any) => ({ id: s.id, title: s.title, updatedAt: s.updatedAt, messageCount: s.messageCount })));
+    setShowHistory(true);
+  };
+
+  const switchSession = async (sessionId: string) => {
+    const session = await AiService.getChatSession(sessionId);
+    if (session?.messages?.length) {
+      const restored: ChatMessage[] = session.messages
+        .filter((m: any) => m.role === 'user' || m.role === 'model')
+        .map((m: any) => ({ role: m.role, text: m.content }));
+      setMessages(restored.length > 0 ? restored : [WELCOME_MESSAGE]);
+    } else {
+      setMessages([WELCOME_MESSAGE]);
+    }
+    setCurrentSessionId(sessionId);
+    safeStorage.setItem(VA_SESSION_ID_KEY, sessionId);
+    setShowHistory(false);
+  };
+
+  const startNewSession = () => {
+    setMessages([WELCOME_MESSAGE]);
+    setCurrentSessionId(null);
+    safeStorage.removeItem(VA_SESSION_ID_KEY);
+    safeStorage.removeItem(VA_HISTORY_KEY);
+    setShowHistory(false);
+  };
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -254,6 +296,12 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
               <h3 className="font-semibold text-sm">Assistente Virtual</h3>
             </div>
             <div className="flex items-center gap-1">
+              <button onClick={startNewSession} title="Nova conversa" className="hover:bg-white/20 p-1 rounded-full transition-colors">
+                <Plus size={16} />
+              </button>
+              <button onClick={loadSessions} title="Histórico de conversas" className="hover:bg-white/20 p-1 rounded-full transition-colors">
+                <History size={16} />
+              </button>
               <button onClick={clearHistory} title="Limpar conversa" className="hover:bg-white/20 p-1 rounded-full transition-colors">
                 <Trash2 size={16} />
               </button>
@@ -263,8 +311,33 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
             </div>
           </div>
 
+          {/* History Panel */}
+          {showHistory && (
+            <div className="flex-1 overflow-y-auto p-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 space-y-1">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Conversas anteriores</span>
+                <button onClick={() => setShowHistory(false)} className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline">Fechar</button>
+              </div>
+              {sessions.length === 0 && (
+                <p className="text-xs text-slate-400 text-center py-4">Nenhuma conversa anterior</p>
+              )}
+              {sessions.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => switchSession(s.id)}
+                  className={`w-full text-left p-2.5 rounded-lg transition-colors text-sm ${s.id === currentSessionId ? 'bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                >
+                  <div className="font-medium text-slate-700 dark:text-slate-300 truncate">{s.title}</div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    {new Date(s.updatedAt).toLocaleString('pt-BR')} · {s.messageCount} msgs
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 dark:bg-slate-950" ref={scrollRef}>
+          <div className={`flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 dark:bg-slate-950 ${showHistory ? 'hidden' : ''}`} ref={scrollRef}>
             {messages.map((msg, idx) => (
               <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`flex gap-2 max-w-[85%] ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
