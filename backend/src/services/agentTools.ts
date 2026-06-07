@@ -152,6 +152,9 @@ export const TOOLS_PROMPT = `
         109. validate_order(order_id) - Valida (confirma) um pedido de venda em rascunho. order_id = id do pedido (ache com list_orders). Muda status de rascunho para validado.
         110. validate_proposal(proposal_id) - Valida (confirma) uma proposta comercial em rascunho. proposal_id = id da proposta (ache com list_proposals). Muda status de rascunho para validada.
 
+        FERRAMENTAS DE DOCUMENTO (PDF):
+        111. get_document_pdf(entity_type, entity_id) - Obtém o PDF de um documento Dolibarr e retorna como base64. entity_type: 'invoice', 'order', 'proposal', 'supplier_order', 'supplier_invoice', 'intervention', 'contract', 'shipment'. entity_id = id do documento (ache com list_invoices, list_orders, etc.). Retorna o PDF em base64 para download ou envio.
+
         FERRAMENTAS DE VERIFICAÇÃO E COMUNICAÇÃO:
         99. read_project_file(file_path, offset?, limit?) - Lê um arquivo de código-fonte do projeto. Use para VERIFICAR se um bug é real antes de criar uma issue. file_path é relativo à raiz (ex.: 'src/components/InterventionList.tsx', 'backend/src/routes/interventionRoutes.ts'). Retorna até 500 linhas. Use offset (linha inicial) e limit (max linhas) para paginar.
         100. ask_user(question) - Faz uma pergunta ao usuário e PARA a execução para aguardar a resposta. Use quando: (a) não tem certeza se algo é um bug real, (b) precisa de mais detalhes antes de criar uma issue, (c) quer confirmar se deve prosseguir com uma ação destrutiva. SEMPRE prefira perguntar a assumir.
@@ -1303,6 +1306,24 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 return `Proposta #${propId} validada com sucesso. Status atualizado para validada.`;
             } catch (e: any) {
                 return `Erro ao validar proposta #${propId}: ${e.message || e}`;
+            }
+        }
+
+        case 'get_document_pdf': {
+            const entityType = String(args?.entity_type || '').trim();
+            const entityId = String(args?.entity_id || args?.id || '').trim();
+            if (!entityType) return 'Informe o tipo de documento (parâmetro "entity_type"): invoice, order, proposal, supplier_order, supplier_invoice, intervention, contract, shipment.';
+            if (!entityId) return 'Informe o ID do documento (parâmetro "entity_id").';
+            const validTypes = ['invoice', 'order', 'proposal', 'supplier_order', 'supplier_invoice', 'intervention', 'contract', 'shipment'];
+            if (!validTypes.includes(entityType)) return `Tipo inválido: ${entityType}. Tipos válidos: ${validTypes.join(', ')}.`;
+            try {
+                const pdf = await dolibarrService.getDocumentPDF(entityType, entityId);
+                const base64 = pdf.toString('base64');
+                const typeLabels: Record<string, string> = { invoice: 'Fatura', order: 'Pedido', proposal: 'Proposta', supplier_order: 'Pedido fornecedor', supplier_invoice: 'Fatura fornecedor', intervention: 'Intervenção', contract: 'Contrato', shipment: 'Expedição' };
+                const label = typeLabels[entityType] || entityType;
+                return `PDF da ${label} #${entityId} obtido com sucesso (${pdf.length} bytes). Base64: ${base64.substring(0, 100)}...[truncado, ${base64.length} chars total]. Para download: GET /api/documents/${entityType}/${entityId}/pdf`;
+            } catch (e: any) {
+                return `Erro ao obter PDF de ${entityType} #${entityId}: ${e.message || e}`;
             }
         }
 
