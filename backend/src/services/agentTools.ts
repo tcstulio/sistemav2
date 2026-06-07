@@ -142,6 +142,13 @@ export const TOOLS_PROMPT = `
         FERRAMENTA DE AJUDA DE TELA:
         93. get_screen_help(route) - Retorna a descrição completa de uma tela do sistema (label, descrição, ações, campos, dicas). Use quando o usuário perguntar "o que essa tela faz?", "como uso essa tela?" ou "onde faço X?". route = caminho da tela (ex.: '/customers', '/invoices').
 
+        FERRAMENTAS DE TASK RUNNER (automação opencode):
+        94. create_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada.
+        95. list_tasks(status?) - Lista tasks do board. status: 'pending', 'running', 'reviewing', 'approved', 'merged', 'rejected', 'failed'. Sem status = todas. Retorna número, título, status, score do judge e PR.
+        96. start_task(issueNumber) - Inicia a execução automática de uma task (opencode implementa e abre PR). Use quando o usuário disser "iniciar task", "executar" ou "começar". Retorna status atualizado.
+        97. task_feedback(issueNumber, feedback) - Envia instrução adicional para corrigir uma task em andamento. Use quando o usuário disser para ajustar algo na task.
+        98. merge_task(issueNumber) - Mergea o PR da task e fecha a issue. Use quando o usuário aprovar o resultado.
+
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
 
@@ -1003,6 +1010,78 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             if (info.fields) help += `\nCampos: ${info.fields.join(', ')}`;
             if (info.tips) help += `\nDicas: ${info.tips.join(' ')}`;
             return help;
+        }
+
+        case 'create_task': {
+            const tTitle = String(args?.title || 'Task');
+            const tBody = String(args?.body || '');
+            let tLabels = args?.labels || ['enhancement'];
+            if (typeof tLabels === 'string') tLabels = [tLabels];
+            if (!tLabels.includes('opencode-task')) tLabels.push('opencode-task');
+            const labelArgs = ([] as string[]).concat(...tLabels.map((l: string) => ['--label', l]));
+            try {
+                const { stdout } = await execFileAsync('gh', [
+                    'issue', 'create', '--repo', 'tcstulio/sistemav2',
+                    '--title', tTitle, '--body', tBody,
+                    ...labelArgs
+                ], { timeout: 15000 });
+                return `Task criada: ${stdout.trim()}\nAcesse /tasks no sistema para iniciar a execução automática.`;
+            } catch (e: any) {
+                return `Erro ao criar task: ${e.message}`;
+            }
+        }
+
+        case 'list_tasks': {
+            try {
+                const { taskRunnerService } = require('./taskRunnerService');
+                const tasks = await taskRunnerService.syncTasks();
+                const filterStatus = args?.status;
+                const filtered = filterStatus ? tasks.filter((t: any) => t.status === filterStatus) : tasks;
+                if (filtered.length === 0) return 'Nenhuma task encontrada.';
+                return filtered.slice(0, 20).map((t: any) =>
+                    `#${t.issueNumber} [${t.status}] ${t.title}${t.prNumber ? ` (PR #${t.prNumber})` : ''}${t.judgeScore !== undefined ? ` Judge: ${t.judgeScore}/10` : ''}`
+                ).join('\n');
+            } catch (e: any) {
+                return `Erro ao listar tasks: ${e.message}`;
+            }
+        }
+
+        case 'start_task': {
+            const issueNum = Number(args?.issueNumber);
+            if (!issueNum) return 'Informe o número da issue (issueNumber).';
+            try {
+                const { taskRunnerService } = require('./taskRunnerService');
+                await taskRunnerService.syncTasks();
+                const task = await taskRunnerService.startTask(issueNum);
+                return `Task #${issueNum} iniciada! Branch: ${task.branch}. O opencode está implementando. Acompanhe em /tasks.`;
+            } catch (e: any) {
+                return `Erro ao iniciar task #${issueNum}: ${e.message}`;
+            }
+        }
+
+        case 'task_feedback': {
+            const fbIssue = Number(args?.issueNumber);
+            const fbText = String(args?.feedback || '');
+            if (!fbIssue || !fbText) return 'Informe issueNumber e feedback.';
+            try {
+                const { taskRunnerService } = require('./taskRunnerService');
+                const task = await taskRunnerService.addFeedback(fbIssue, fbText);
+                return `Feedback enviado para task #${fbIssue}. Status: ${task.status}. O opencode vai corrigir.`;
+            } catch (e: any) {
+                return `Erro ao enviar feedback: ${e.message}`;
+            }
+        }
+
+        case 'merge_task': {
+            const mergeIssue = Number(args?.issueNumber);
+            if (!mergeIssue) return 'Informe o número da issue (issueNumber).';
+            try {
+                const { taskRunnerService } = require('./taskRunnerService');
+                const task = await taskRunnerService.mergeTask(mergeIssue);
+                return `Task #${mergeIssue} merged! PR #${task.prNumber} mergeado e issue fechada.`;
+            } catch (e: any) {
+                return `Erro ao fazer merge: ${e.message}`;
+            }
         }
 
         // AÇÕES HITL (prepare_create_*/prepare_edit_*/prepare_batch_create) caem no dispatch genérico.
