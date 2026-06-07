@@ -94,7 +94,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
     {
         title: 'SISTEMA',
         items: [
-            { id: 'opencode-tasks', path: '/opencode-tasks', label: 'Tasks (opencode)' },
+            { id: 'issues', path: '/issues', label: 'Issues & Tasks' },
             { id: 'activity', path: '/activity', label: 'Atividades' },
             { id: 'groups', path: '/admin/groups', label: 'Grupos' },
             { id: 'development', path: '/development', label: 'Console Dev' },

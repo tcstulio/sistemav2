@@ -64,6 +64,7 @@ const Simulator = React.lazy(() => import('../pages/Simulator'));
 const CentroVibeManager = React.lazy(() => import('./CentroVibe/CentroVibeManager'));
 const GroupManager = React.lazy(() => import('./admin/GroupManager').then(m => ({ default: m.GroupManager })));
 const TasksBoard = React.lazy(() => import('./TasksBoard/TasksBoard'));
+const IssuesPage = React.lazy(() => import('./Issues/IssuesPage'));
 
 interface ViewWrapperProps {
     Component: React.ComponentType<{
@@ -297,6 +298,7 @@ const App: React.FC = () => {
                         <Route path="/settings" element={<ViewWrapper Component={SettingsView} viewId="settings" />} />
                         <Route path="/admin/groups" element={<ViewWrapper Component={GroupManager} viewId="settings" />} />
                         <Route path="/opencode-tasks" element={<ViewWrapper Component={TasksBoard} viewId="development" />} />
+                        <Route path="/issues" element={<ViewWrapper Component={IssuesPage} viewId="development" />} />
 
                         <Route path="/chat" element={<ViewWrapper Component={ChatPage} viewId="chat" />}>
                             <Route index element={<ChatConversation />} />
