@@ -257,7 +257,7 @@ export const AiService = {
             const dateStr = now.toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
             const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-            let dataContext = `[SISTEMA] Data atual: ${dateStr}. Hora: ${timeStr}. Usuário logado: Admin. Use ferramentas para buscar dados específicos.`;
+            let dataContext = `[SISTEMA] Data atual: ${dateStr}. Hora: ${timeStr}. Use ferramentas para buscar dados específicos.`;
             if (pageContext) dataContext += '\n' + pageContext;
 
             // Map frontend history to backend format (text -> parts)

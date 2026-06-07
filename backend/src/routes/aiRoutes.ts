@@ -55,6 +55,31 @@ router.post('/generate-reply', async (req, res) => {
     try {
         const { history, context, image, module, sessionId } = GenerateReplySchema.parse(req.body);
 
+        const user = (req as any).user;
+        let enrichedContext = context || '';
+        if (user) {
+            const userIdentity = [
+                `\n[SISTEMA] Identidade do usuário:`,
+                `- Login: ${user.login || 'desconhecido'}`,
+                `- Nome: ${[user.firstname, user.lastname].filter(Boolean).join(' ') || user.login || 'desconhecido'}`,
+                `- Email: ${user.email || 'não informado'}`,
+                `- Cargo: ${user.job || 'não informado'}`,
+                `- Admin: ${user.admin ? 'Sim' : 'Não'}`,
+                `- ID Dolibarr: ${user.id || 'não informado'}`,
+            ].join('\n');
+            enrichedContext += userIdentity;
+
+            if (user.id) {
+                try {
+                    const { userPermissionsService } = require('../services/userPermissionsService');
+                    const permContext = await userPermissionsService.getProfileForContext(String(user.id));
+                    enrichedContext += '\n\n' + permContext;
+                } catch (e: any) {
+                    log.warn('Failed to load user permissions context', e.message);
+                }
+            }
+        }
+
         const toolCalls: Array<{ tool: string; args: Record<string, any>; result: string; duration: number }> = [];
         if (sessionId && module === 'chat') {
             setToolCallListener((tool, args, result, duration) => {
@@ -62,7 +87,7 @@ router.post('/generate-reply', async (req, res) => {
             });
         }
 
-        const reply = await aiService.generateReply(history as any || [], context || '', image, module);
+        const reply = await aiService.generateReply(history as any || [], enrichedContext, image, module);
 
         setToolCallListener(null);
 

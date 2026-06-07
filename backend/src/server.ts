@@ -330,6 +330,17 @@ import { itauApiService } from './services/itauApiService';
     }
 })();
 
+import { agentConfigService } from './services/agentConfigService';
+(async () => {
+    try {
+        await agentConfigService.refresh();
+        const profile = await agentConfigService.getProfile();
+        log.info(`Agent config loaded: ${profile.lastname} (${profile.job}), enabled=${profile.config.enabled}`);
+    } catch (e: any) {
+        log.error(`Failed to load agent config: ${e.message}`);
+    }
+})();
+
 // Graceful Shutdown Logic
 const gracefulShutdown = async (signal: string) => {
     log.info(`${signal} received - starting graceful shutdown`);

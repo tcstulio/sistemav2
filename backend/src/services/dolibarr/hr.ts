@@ -12,6 +12,22 @@ const log = createLogger('DolibarrHR');
 
 export class DolibarrHRService extends DolibarrServiceBase {
 
+    async getUserById(id: string): Promise<any | null> {
+        try {
+            const headers = this.getHeaders();
+            const url = `${this.baseUrl}users/${id}`;
+            const response = await axios.get(url, {
+                headers,
+                httpsAgent: this.httpsAgent,
+                validateStatus: (s) => s === 200
+            });
+            return response.data || null;
+        } catch (error) {
+            log.error(`getUserById Error (id=${id})`, error);
+            return null;
+        }
+    }
+
     async listUsers(search?: string): Promise<any[]> {
         try {
             const headers = this.getHeaders();

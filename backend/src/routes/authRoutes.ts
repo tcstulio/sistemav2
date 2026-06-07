@@ -25,14 +25,16 @@ router.post('/login', loginLimiter, async (req, res) => {
     try {
         const { login, password } = LoginSchema.parse(req.body);
 
-        // Valida a senha do usuário no Dolibarr (lança se a senha estiver errada).
         const result = await dolibarrService.login(login, password);
 
-        // PROTÓTIPO (Desenho B): a senha autentica; devolvemos um TOKEN DE SESSÃO
-        // inofensivo (NÃO a chave admin). O middleware requireDolibarrLogin troca
-        // esse token pela chave de serviço (Marciano) server-side ao falar com o
-        // Dolibarr — a chave admin nunca chega ao navegador.
-        const sessionToken = createProtoSession(login, result.token);
+        let userData: any = null;
+        try {
+            userData = await dolibarrService.getUserByKey(result.token);
+        } catch {
+            log.warn(`Could not fetch user data for ${login}, proceeding without profile`);
+        }
+
+        const sessionToken = createProtoSession(login, result.token, userData);
 
         res.cookie('dolapikey', sessionToken, {
             httpOnly: true,

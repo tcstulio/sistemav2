@@ -21,6 +21,20 @@ const pinoInstance = pino({
           }),
 });
 
+const MAX_LOG_BUFFER = 500;
+const logBuffer: string[] = [];
+
+function pushToBuffer(level: string, msg: string, data?: unknown) {
+    const ts = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const entry = `${ts} [${level.toUpperCase()}] ${msg}${data ? ' ' + (typeof data === 'string' ? data : JSON.stringify(data).substring(0, 300)) : ''}`;
+    logBuffer.push(entry);
+    if (logBuffer.length > MAX_LOG_BUFFER) logBuffer.shift();
+}
+
+export function getRecentLogs(lines: number = 50): string[] {
+    return logBuffer.slice(-lines);
+}
+
 class Logger {
     private context?: string;
 
@@ -38,22 +52,27 @@ class Logger {
 
     debug(message: string, data?: unknown): void {
         pinoInstance.debug(this.enrich(message, data));
+        pushToBuffer('debug', this.enrich(message, data).msg, data);
     }
 
     info(message: string, data?: unknown): void {
         pinoInstance.info(this.enrich(message, data));
+        pushToBuffer('info', this.enrich(message, data).msg, data);
     }
 
     warn(message: string, data?: unknown): void {
         pinoInstance.warn(this.enrich(message, data));
+        pushToBuffer('warn', this.enrich(message, data).msg, data);
     }
 
     error(message: string, data?: unknown): void {
         pinoInstance.error(this.enrich(message, data));
+        pushToBuffer('error', this.enrich(message, data).msg, data);
     }
 
     fatal(message: string, data?: unknown): void {
         pinoInstance.fatal(this.enrich(message, data));
+        pushToBuffer('fatal', this.enrich(message, data).msg, data);
     }
 
     child(context: string): Logger {

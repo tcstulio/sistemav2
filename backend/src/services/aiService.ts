@@ -8,6 +8,7 @@ import { ScraperService } from './scraperService';
 import { logger } from '../utils/logger';
 import { isValidExternalUrl } from '../utils/urlValidation';
 import { TOOLS_PROMPT, executeTool } from './agentTools';
+import { agentConfigService } from './agentConfigService';
 
 const log = logger.child('AiService');
 
@@ -125,10 +126,11 @@ class GoogleProvider implements AIProvider {
                 `${msg.role.toUpperCase()}: ${msg.parts}`
             ).join('\n');
 
+            const agentPrompt = agentConfigService.getSystemPrompt();
             const prompt = `
-                Você é um assistente de atendimento inteligente e assistente virtual do Dolibarr ERP.
+                Você é o Marciano — o agente de inteligência artificial do CoolGroove System (ERP Dolibarr).
                 Responda de forma prestativa, profissional e concisa em Português do Brasil.
-                
+                ${agentPrompt ? '\n' + agentPrompt + '\n' : ''}
                 CONTEXTO DE DADOS:
                 ${currentContext}
                 
@@ -186,6 +188,9 @@ class GoogleProvider implements AIProvider {
                     continue;
 
                 } catch (e: any) {
+                    if (e.name === 'AskUserInterrupt') {
+                        return e.question;
+                    }
                     log.error("Tool execution failed", e);
                     currentContext += `\n\n[ERRO NA EXECUÇÃO]: ${e.message}\n`;
                     iterations++;
@@ -795,8 +800,9 @@ export class LocalProvider implements AIProvider {
         const seenToolCalls = new Set<string>(); // detecta repetição da MESMA chamada -> evita loop
 
         while (iterations < MAX_ITERATIONS) {
+            const agentPrompt = agentConfigService.getSystemPrompt();
             let messages = [
-                { role: 'system', content: `Você é um assistente ERP. Use Português. ${currentContext}. \n${toolsPrompt}` },
+                { role: 'system', content: `Você é o Marciano — agente IA do CoolGroove System (ERP Dolibarr). Use Português. ${agentPrompt ? '\n' + agentPrompt : ''}\n\nCONTEXTO: ${currentContext}\n\n${toolsPrompt}` },
                 ...currentHistory.map(msg => ({
                     role: msg.role === 'model' ? 'assistant' : msg.role,
                     content: msg.parts
@@ -841,6 +847,9 @@ export class LocalProvider implements AIProvider {
                         continue;
 
                     } catch (e: any) {
+                        if (e.name === 'AskUserInterrupt') {
+                            return e.question;
+                        }
                         log.error("Local LLM Tool Error", e);
                         return reply;
                     }
