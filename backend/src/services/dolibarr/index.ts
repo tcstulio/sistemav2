@@ -16,6 +16,7 @@ import { DolibarrManufacturingService } from './manufacturing';
 import { DolibarrSuppliersService } from './suppliers';
 import { DolibarrPartnershipsService, VenuePartnership } from './partnerships';
 import { DolibarrFinanceService } from './finance';
+import { DolibarrSetupService } from './setup';
 
 // Re-export types for backward compatibility
 export { CreateThirdPartyModel, CreateInvoiceModel, AddPaymentModel, ValidateSupplierOrderModel, CloseProposalModel, AddTimeSpentModel };
@@ -36,6 +37,7 @@ export class DolibarrService extends DolibarrServiceBase {
     private suppliers = new DolibarrSuppliersService();
     private partnerships = new DolibarrPartnershipsService();
     private finance = new DolibarrFinanceService();
+    private setup = new DolibarrSetupService();
 
     // === Third Parties ===
     createThirdParty = (data: CreateThirdPartyModel, userKey?: string) => this.thirdParties.createThirdParty(data, userKey);
@@ -113,6 +115,13 @@ export class DolibarrService extends DolibarrServiceBase {
     getOpenProposals = () => this.finance.getOpenProposals();
     getCashFlowForecast = (dateFrom: string, dateTo: string) => this.finance.getCashFlowForecast(dateFrom, dateTo);
     getFinancialSummary = () => this.finance.getFinancialSummary();
+
+    // === Setup ===
+    getCompanyInfo = () => this.setup.getCompanyInfo();
+    listCurrencies = () => this.setup.listCurrencies();
+    listCountries = () => this.setup.listCountries();
+    listVatRates = () => this.setup.listVatRates();
+    listPaymentTypes = () => this.setup.listPaymentTypes();
 }
 
 // Export singleton instance for backward compatibility
