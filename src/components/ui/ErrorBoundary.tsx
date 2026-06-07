@@ -1,6 +1,7 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp, MessageSquare } from 'lucide-react';
 import { logger } from '../../utils/logger';
+import { captureError } from '../../utils/errorStore';
 
 const log = logger.child('ErrorBoundary');
 
@@ -50,12 +51,17 @@ export class ErrorBoundary extends Component<Props, State> {
     componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
         this.setState({ errorInfo });
 
-        // Log error to console in development
+        captureError({
+            message: error.message,
+            stack: error.stack,
+            componentStack: errorInfo.componentStack || undefined,
+            componentName: this.props.componentName
+        });
+
         if (process.env.NODE_ENV !== 'production') {
             log.error('Caught error', { error: error.message, stack: errorInfo.componentStack });
         }
 
-        // Call custom error handler if provided
         this.props.onError?.(error, errorInfo);
     }
 
@@ -105,6 +111,18 @@ export class ErrorBoundary extends Component<Props, State> {
                     >
                         <RefreshCw className="w-4 h-4" />
                         Tentar novamente
+                    </button>
+
+                    <button
+                        onClick={() => {
+                            window.dispatchEvent(new CustomEvent('open-virtual-assistant', {
+                                detail: { message: `Erro em ${componentName || 'página'}: ${error?.message || 'erro desconhecido'}` }
+                            }));
+                        }}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors mb-4"
+                    >
+                        <MessageSquare className="w-4 h-4" />
+                        Reportar ao Assistente
                     </button>
 
                     {showDetails && errorInfo && (

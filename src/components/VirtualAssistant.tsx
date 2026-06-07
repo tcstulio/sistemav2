@@ -6,6 +6,8 @@ import { ThirdParty, Invoice, Project, Ticket } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
 import { safeStorage } from '../utils/safeStorage';
 import { logger } from '../utils/logger';
+import { formatErrorsForAgent } from '../utils/errorStore';
+import { useLocation } from 'react-router-dom';
 // Hooks removidos: Backend processa dados via ferramentas IA
 
 const log = logger.child('VirtualAssistant');
@@ -76,6 +78,7 @@ interface VirtualAssistantProps {
 const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const { config } = useDolibarr();
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Data fetching removed - Backend now handles this via ReAct tools
 
@@ -105,6 +108,18 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   useEffect(() => {
     safeStorage.setJSON(VA_HISTORY_KEY, messages.slice(-MAX_STORED_MESSAGES));
   }, [messages]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.message) {
+        setIsOpen(true);
+        setInput(detail.message);
+      }
+    };
+    window.addEventListener('open-virtual-assistant', handler);
+    return () => window.removeEventListener('open-virtual-assistant', handler);
+  }, []);
 
   const clearHistory = () => {
     setMessages([WELCOME_MESSAGE]);
@@ -168,7 +183,9 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         }
       }
 
-      const result = await AiService.chatWithData(userMsg, relevantHistory, userImage?.data, sid || undefined);
+      const pageContext = `Página atual: ${location.pathname}${location.search || ''}\n${formatErrorsForAgent()}`;
+
+      const result = await AiService.chatWithData(userMsg, relevantHistory, userImage?.data, sid || undefined, pageContext);
       const responseText = result.reply;
       if (result.sessionId && !sid) {
         setCurrentSessionId(result.sessionId);
