@@ -101,6 +101,45 @@ const ActivityReportModal: React.FC<ActivityReportModalProps> = ({ isOpen, onClo
         }
     }, [isOpen]);
 
+    const exportPdf = () => {
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+            toast.error('Bloqueador de popup impediu a exportação.');
+            return;
+        }
+
+        const dateStr = `${dateRange.start || 'inicio'}_a_${dateRange.end || 'agora'}`.replace(/\//g, '-');
+        const html = `<!DOCTYPE html><html><head><title>Relatório de Atividades</title>
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 40px; color: #1e293b; line-height: 1.6; max-width: 800px; margin: 0 auto; }
+                h1 { color: #4f46e5; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+                h2 { color: #334155; margin-top: 24px; }
+                h3 { color: #475569; }
+                .meta { color: #64748b; font-size: 14px; margin-bottom: 24px; }
+                ul, ol { padding-left: 20px; }
+                li { margin-bottom: 4px; }
+                strong { color: #1e293b; }
+                @media print { body { padding: 20px; } }
+            </style>
+        </head><body>
+            <h1>Relatório de Atividades</h1>
+            <div class="meta">
+                <strong>Período:</strong> ${dateRange.start || 'Início'} até ${dateRange.end || 'Agora'}<br>
+                <strong>Usuário:</strong> ${userName || 'Todos'}<br>
+                <strong>Total de atividades:</strong> ${logs.length}<br>
+                <strong>Gerado em:</strong> ${new Date().toLocaleString('pt-BR')}
+            </div>
+            <hr>
+            ${report}
+        </body></html>`;
+
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.onload = () => {
+            printWindow.print();
+        };
+    };
+
     return (
         <Modal
             isOpen={isOpen}
@@ -131,8 +170,9 @@ const ActivityReportModal: React.FC<ActivityReportModalProps> = ({ isOpen, onClo
                             Copiar
                         </Button>
                         <Button
-                            onClick={() => toast.info("Exportação para PDF será implementada em breve.")}
+                            onClick={exportPdf}
                             icon={<Download size={16} />}
+                            disabled={!report || isGenerating}
                         >
                             Exportar PDF
                         </Button>
