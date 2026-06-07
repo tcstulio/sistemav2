@@ -135,7 +135,7 @@ export const TOOLS_PROMPT = `
         REGRA PARA VÍDEO: generate_video devolve um task_id e demora minutos; avise o usuário e use check_video(task_id) depois (ex.: quando ele pedir o resultado) para obter o link.
 
         FERRAMENTA DE GESTÃO DO PROJETO:
-        90. create_github_issue(title, body, labels?) - Cria um issue no GitHub do projeto (tcstulio/sistemav2). Use quando o usuário reportar um bug, solicitar uma feature, ou pedir para registrar algo. labels opcionais: 'bug', 'enhancement', 'security', 'question' (pode ser string ou array). Retorna o link do issue criado.
+        90. create_github_issue(title, body, labels?) - Cria um issue no GitHub do projeto (tcstulio/sistemav2). Use quando o usuário reportar um bug, solicitar uma feature, ou pedir para registrar algo. labels opcionais: 'bug', 'enhancement', 'security', 'question' (pode ser string ou array). IMPORTANTE: antes de criar, SEMPRE use list_github_issues para verificar se já existe um issue similar aberto. NÃO crie duplicatas.
         91. list_github_issues(state?, label?, limit?) - Lista issues do GitHub do projeto. state: 'open' (padrão), 'closed', 'all'. label: filtrar por label (ex.: 'bug', 'enhancement'). limit: máx de issues (padrão 20). Retorna número, título, estado, labels e link.
         92. create_bug_report(title, error_message, route, component?) - Cria um issue de bug com contexto de erro (rota, componente, stack trace). Use quando o usuário reportar um erro visual ou crash. Preencha title, error_message e route automaticamente.
 
@@ -910,9 +910,27 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             const body = String(args.body || '');
             let labels = args.labels;
             if (typeof labels === 'string') labels = [labels];
-            const labelArgs = labels && labels.length > 0 ? labels.flatMap((l: string) => ['--label', l]) : [];
-            const allArgs = ['issue', 'create', '--repo', 'tcstulio/sistemav2', '--title', title, '--body', body, ...labelArgs];
+
             try {
+                const { stdout: searchOut } = await execFileAsync('gh', [
+                    'issue', 'list',
+                    '--repo', 'tcstulio/sistemav2',
+                    '--state', 'open',
+                    '--limit', '30',
+                    '--json', 'number,title'
+                ], { timeout: 15000 });
+                const existing: Array<{ number: number; title: string }> = JSON.parse(searchOut);
+                const normalized = title.toLowerCase().replace(/[^a-z0-9]/g, '');
+                const dupe = existing.find(e => {
+                    const eNorm = e.title.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    return eNorm === normalized || (eNorm.length > 20 && normalized.length > 20 && (eNorm.includes(normalized.substring(0, 20)) || normalized.includes(eNorm.substring(0, 20))));
+                });
+                if (dupe) {
+                    return `Já existe um issue aberto com título similar: #${dupe.number} "${dupe.title}". NÃO criei duplicata. Use add_github_issue_comment ou reference este issue existente.`;
+                }
+
+                const labelArgs = labels && labels.length > 0 ? labels.flatMap((l: string) => ['--label', l]) : [];
+                const allArgs = ['issue', 'create', '--repo', 'tcstulio/sistemav2', '--title', title, '--body', body, ...labelArgs];
                 const { stdout } = await execFileAsync('gh', allArgs, { timeout: 15000 });
                 const issueUrl = stdout.trim();
                 return `Issue criado com sucesso: ${issueUrl}`;
