@@ -2,12 +2,33 @@ import { Router } from 'express';
 import { aiService } from '../services/aiService';
 import { chatSessionService } from '../services/chatSessionService';
 import { setToolCallListener } from '../services/agentTools';
+import { extractToolCall } from '../services/aiService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { createLogger } from '../utils/logger';
 import { verifyDeeplink } from '../utils/deeplinkToken';
 
 const log = createLogger('AI');
 const router = Router();
+
+// Debug routes (no auth required)
+router.post('/debug/extract-tool', (req, res) => {
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: 'Missing text' });
+    const result = extractToolCall(text);
+    res.json({ extracted: result, input: text });
+});
+
+router.post('/debug/execute-tool', async (req, res) => {
+    const { tool, args } = req.body;
+    if (!tool) return res.status(400).json({ error: 'Missing tool' });
+    try {
+        const { executeTool } = require('../services/agentTools');
+        const result = await executeTool(tool, args || {});
+        res.json({ tool, args, result: result.substring(0, 2000) });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // Protect AI Routes
 router.use(requireDolibarrLogin);

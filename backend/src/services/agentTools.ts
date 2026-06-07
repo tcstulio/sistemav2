@@ -149,11 +149,19 @@ export const TOOLS_PROMPT = `
         4. Os resultados das ferramentas contêm LINKS navegáveis (HTML). Inclua-os na resposta para o usuário clicar.
         5. Se uma ferramenta retornar "nenhum resultado", informe o usuário e sugira alternativas (mudar o termo, buscar outra entidade).
 
-        EXEMPLO:
-        User: "Detalhes do cliente 123"
-        Assistant: { "tool": "get_customer_details", "args": { "id": "123" } }
-        User: (Sistema retorna detalhes)
-        Assistant: "O Cliente X tem 3 faturas em aberto..."
+        EXEMPLOS DE FORMATO (OBRIGATÓRIO usar EXATAMENTE este formato JSON):
+        User: "Quais faturas estão em aberto?"
+        Assistant: { "tool": "list_invoices", "args": { "status": "unpaid", "limit": 10 } }
+        User: (Sistema retorna dados)
+        Assistant: "Encontrei 3 faturas em aberto..."
+
+        User: "Crie uma issue de bug no login"
+        Assistant: { "tool": "create_github_issue", "args": { "title": "Bug no login", "body": "Erro ao fazer login na tela principal", "labels": ["bug"] } }
+
+        User: "Liste as issues abertas"
+        Assistant: { "tool": "list_github_issues", "args": { "state": "open", "limit": 20 } }
+
+        IMPORTANTE: Use SEMPRE o formato {"tool": "nome_exato", "args": {...}}. NÃO use <tool_call:> ou outros formatos.
         `;
 
 // --- AÇÕES HITL via deeplink (#57 Peça 2/3) ---
@@ -482,10 +490,22 @@ function tryPrepareBatch(tool: string, args: any): string | null {
 }
 
 /** Executa uma ferramenta do agente e retorna o resultado já formatado como string. */
+const TOOL_ALIASES: Record<string, string> = {
+    create_issue: 'create_github_issue',
+    list_issues: 'list_github_issues',
+    search_customer: 'search_customer',
+    get_customer: 'get_customer_details',
+    list_customers: 'search_customer',
+    create_ticket: 'create_github_issue',
+    bug_report: 'create_bug_report',
+    report_bug: 'create_bug_report',
+};
+
 export async function executeTool(tool: string, args: any = {}): Promise<string> {
-    log.info(`Tool Call: ${tool}`, args);
+    const resolvedTool = TOOL_ALIASES[tool] || tool;
+    log.info(`Tool Call: ${tool}${resolvedTool !== tool ? ` -> ${resolvedTool}` : ''}`, args);
     const t0 = Date.now();
-    const result = await executeToolInner(tool, args);
+    const result = await executeToolInner(resolvedTool, args);
     if (activeToolCallListener) {
         try { activeToolCallListener(tool, args, result, Date.now() - t0); } catch { /* ignore */ }
     }
