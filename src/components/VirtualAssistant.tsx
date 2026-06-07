@@ -8,6 +8,7 @@ import { safeStorage } from '../utils/safeStorage';
 import { logger } from '../utils/logger';
 import { formatErrorsForAgent } from '../utils/errorStore';
 import { useLocation } from 'react-router-dom';
+import { formatViewContext } from '../config/viewRegistry';
 // Hooks removidos: Backend processa dados via ferramentas IA
 
 const log = logger.child('VirtualAssistant');
@@ -183,7 +184,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         }
       }
 
-      const pageContext = `Página atual: ${location.pathname}${location.search || ''}\n${formatErrorsForAgent()}`;
+      const pageContext = `${formatViewContext(location.pathname, location.search || undefined)}\n${formatErrorsForAgent()}`;
 
       const result = await AiService.chatWithData(userMsg, relevantHistory, userImage?.data, sid || undefined, pageContext);
       const responseText = result.reply;

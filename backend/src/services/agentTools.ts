@@ -139,6 +139,9 @@ export const TOOLS_PROMPT = `
         91. list_github_issues(state?, label?, limit?) - Lista issues do GitHub do projeto. state: 'open' (padrão), 'closed', 'all'. label: filtrar por label (ex.: 'bug', 'enhancement'). limit: máx de issues (padrão 20). Retorna número, título, estado, labels e link.
         92. create_bug_report(title, error_message, route, component?) - Cria um issue de bug com contexto de erro (rota, componente, stack trace). Use quando o usuário reportar um erro visual ou crash. Preencha title, error_message e route automaticamente.
 
+        FERRAMENTA DE AJUDA DE TELA:
+        93. get_screen_help(route) - Retorna a descrição completa de uma tela do sistema (label, descrição, ações, campos, dicas). Use quando o usuário perguntar "o que essa tela faz?", "como uso essa tela?" ou "onde faço X?". route = caminho da tela (ex.: '/customers', '/invoices').
+
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
 
@@ -956,6 +959,50 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 log.error('create_bug_report failed', e);
                 return `Erro ao criar bug report: ${e.message}`;
             }
+        }
+
+        case 'get_screen_help': {
+            const screenRoute = String(args?.route || '').trim();
+            if (!screenRoute) return 'Informe a rota da tela (ex.: /customers, /invoices).';
+            const normalized = screenRoute.replace(/\/+$/, '') || '/';
+            const VIEW_HELP: Record<string, { label: string; description: string; actions: string[]; fields?: string[]; tips?: string[] }> = {
+                '/': { label: 'Dashboard', description: 'Painel principal com indicadores do sistema.', actions: ['ver resumo financeiro', 'ver tickets recentes', 'navegar para telas'] },
+                '/customers': { label: 'Clientes', description: 'Lista clientes e prospects. Permite buscar, criar, editar e ver detalhes.', actions: ['listar', 'buscar', 'criar', 'editar', 'ver detalhes'], fields: ['nome', 'email', 'telefone', 'endereço', 'cidade', 'tipo'], tips: ['Use search_customer para buscar. Use get_customer_details para ver faturas e projetos.'] },
+                '/contacts': { label: 'Contatos', description: 'Lista pessoas de contato associadas a clientes.', actions: ['listar', 'criar', 'editar'], fields: ['nome', 'sobrenome', 'email', 'telefone', 'cargo'] },
+                '/suppliers': { label: 'Fornecedores', description: 'Lista fornecedores cadastrados.', actions: ['listar', 'buscar', 'criar', 'editar'], fields: ['nome', 'email', 'telefone', 'endereço'] },
+                '/invoices': { label: 'Faturas', description: 'Lista faturas de venda. Filtrar por status, criar e editar.', actions: ['listar', 'filtrar', 'criar', 'editar'], fields: ['cliente', 'data', 'status', 'itens', 'total'], tips: ['Use list_invoices com status "unpaid" para faturas em aberto.'] },
+                '/supplier_invoices': { label: 'Faturas de Fornecedor', description: 'Lista faturas recebidas de fornecedores.', actions: ['listar', 'criar', 'editar'], fields: ['fornecedor', 'data', 'status', 'itens'] },
+                '/proposals': { label: 'Propostas Comerciais', description: 'Lista propostas a clientes com status.', actions: ['listar', 'criar', 'editar'], fields: ['cliente', 'data', 'status', 'itens'] },
+                '/supplier_proposals': { label: 'Solicitações de Preço', description: 'Lista solicitações de preço a fornecedores.', actions: ['listar', 'criar', 'editar'], fields: ['fornecedor', 'data', 'itens'] },
+                '/orders': { label: 'Pedidos de Venda', description: 'Lista pedidos de venda com itens.', actions: ['listar', 'criar', 'editar'], fields: ['cliente', 'data', 'status', 'itens'] },
+                '/projects': { label: 'Projetos', description: 'Lista projetos com tarefas e progresso.', actions: ['listar', 'criar', 'editar', 'ver tarefas'], fields: ['título', 'referência', 'cliente', 'status'] },
+                '/tasks': { label: 'Tarefas', description: 'Detalhe de tarefa com prazo e responsável.', actions: ['ver detalhes', 'atualizar status', 'editar'], fields: ['título', 'projeto', 'responsável', 'prazo'] },
+                '/tickets': { label: 'Tickets de Suporte', description: 'Lista tickets com severidade e tipo.', actions: ['listar', 'criar', 'editar'], fields: ['assunto', 'mensagem', 'tipo', 'severidade', 'cliente'] },
+                '/products': { label: 'Produtos', description: 'Lista produtos com estoque e preço.', actions: ['listar', 'buscar', 'criar', 'editar'], fields: ['referência', 'nome', 'preço', 'descrição'] },
+                '/services': { label: 'Serviços', description: 'Lista serviços cadastrados.', actions: ['listar', 'criar', 'editar'], fields: ['referência', 'nome', 'preço'] },
+                '/categories': { label: 'Categorias', description: 'Categorias de produtos, clientes e fornecedores.', actions: ['listar', 'criar', 'editar'], fields: ['nome', 'tipo', 'descrição'] },
+                '/inventory': { label: 'Estoque', description: 'Visão geral do estoque por armazém.', actions: ['ver estoque', 'filtrar', 'ver movimentações'], fields: ['produto', 'armazém', 'quantidade'] },
+                '/manufacturing': { label: 'Manufatura', description: 'Ordens de produção e listas de materiais.', actions: ['listar ordens', 'criar ordem', 'listar BOMs'], fields: ['produto', 'quantidade', 'status'] },
+                '/interventions': { label: 'Intervenções', description: 'Serviços de campo.', actions: ['listar', 'criar', 'editar'], fields: ['cliente', 'data', 'descrição'] },
+                '/contracts': { label: 'Contratos', description: 'Contratos ativos com datas de vigência.', actions: ['listar', 'criar', 'editar'], fields: ['cliente', 'data início', 'data fim'] },
+                '/hr': { label: 'Recursos Humanos', description: 'Hub de RH: funcionários, vagas, candidatos, licenças.', actions: ['listar funcionários', 'criar vaga', 'listar candidatos'], fields: ['módulos: usuários, vagas, candidatos, licenças'] },
+                '/agenda': { label: 'Agenda', description: 'Calendário de eventos e compromissos.', actions: ['ver agenda', 'criar evento', 'editar'], fields: ['título', 'data', 'tipo'] },
+                '/payments': { label: 'Pagamentos', description: 'Pagamentos recebidos de clientes.', actions: ['listar', 'ver detalhes'], fields: ['cliente', 'valor', 'data'] },
+                '/bank_accounts': { label: 'Contas Bancárias', description: 'Contas bancárias com saldos.', actions: ['listar', 'ver saldo'], fields: ['banco', 'saldo'] },
+                '/reports': { label: 'Relatórios', description: 'Hub de relatórios.', actions: ['ver relatórios', 'gerar mensal'] },
+                '/simulator': { label: 'Simulador Financeiro', description: 'Simulação de cenários financeiros.', actions: ['criar simulação', 'ver resultados'], fields: ['drivers', 'receita', 'custos'] },
+                '/settings': { label: 'Configurações', description: 'Configurações gerais do sistema.', actions: ['editar perfil', 'alterar config'] },
+                '/chat': { label: 'Chat', description: 'Chat direto com contatos.', actions: ['ver conversas', 'enviar mensagem'] },
+                '/whatsapp': { label: 'WhatsApp', description: 'Conversas WhatsApp integradas.', actions: ['ver conversas', 'enviar mensagem'] },
+                '/email': { label: 'E-mail', description: 'Gerenciamento de emails.', actions: ['ver emails', 'enviar email'] },
+            };
+            const baseRoute = '/' + normalized.split('/').filter(Boolean)[0];
+            const info = VIEW_HELP[normalized] || VIEW_HELP[baseRoute];
+            if (!info) return `Tela "${screenRoute}" não encontrada. Telas disponíveis: ${Object.keys(VIEW_HELP).join(', ')}`;
+            let help = `Tela: ${info.label}\nDescrição: ${info.description}\nAções: ${info.actions.join(', ')}`;
+            if (info.fields) help += `\nCampos: ${info.fields.join(', ')}`;
+            if (info.tips) help += `\nDicas: ${info.tips.join(' ')}`;
+            return help;
         }
 
         // AÇÕES HITL (prepare_create_*/prepare_edit_*/prepare_batch_create) caem no dispatch genérico.
