@@ -10,10 +10,22 @@ import { signDeeplink } from '../utils/deeplinkToken';
 import { minimaxService } from './minimaxService';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import * as fs from 'fs';
+import * as path from 'path';
+import { getRecentLogs } from '../utils/logger';
+import { agentConfigService } from './agentConfigService';
 
 const execFileAsync = promisify(execFile);
+const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 
 const log = logger.child('AgentTools');
+
+export class AskUserInterrupt extends Error {
+    constructor(public readonly question: string) {
+        super(question);
+        this.name = 'AskUserInterrupt';
+    }
+}
 
 type ToolCallListener = (tool: string, args: Record<string, any>, result: string, durationMs: number) => void;
 let activeToolCallListener: ToolCallListener | null = null;
@@ -134,6 +146,14 @@ export const TOOLS_PROMPT = `
         REGRA PARA MÍDIA (generate_*): devolvem um LINK pronto. Inclua o link na resposta para o usuário ouvir/ver.
         REGRA PARA VÍDEO: generate_video devolve um task_id e demora minutos; avise o usuário e use check_video(task_id) depois (ex.: quando ele pedir o resultado) para obter o link.
 
+        FERRAMENTAS DE VERIFICAÇÃO E COMUNICAÇÃO:
+        99. read_project_file(file_path, offset?, limit?) - Lê um arquivo de código-fonte do projeto. Use para VERIFICAR se um bug é real antes de criar uma issue. file_path é relativo à raiz (ex.: 'src/components/InterventionList.tsx', 'backend/src/routes/interventionRoutes.ts'). Retorna até 500 linhas. Use offset (linha inicial) e limit (max linhas) para paginar.
+        100. ask_user(question) - Faz uma pergunta ao usuário e PARA a execução para aguardar a resposta. Use quando: (a) não tem certeza se algo é um bug real, (b) precisa de mais detalhes antes de criar uma issue, (c) quer confirmar se deve prosseguir com uma ação destrutiva. SEMPRE prefira perguntar a assumir.
+        101. search_code(pattern, path?) - Busca um texto/regex em todos os arquivos do projeto (grep). Retorna os arquivos e linhas onde encontrou. Use para ENCONTRAR qual arquivo contém um componente, função ou trecho de código antes de ler o arquivo completo. pattern = texto ou regex (ex.: 'ConfirmDelete', 'function deleteIntervention', 'ArrowLeft'). path = subdiretório opcional (ex.: 'src/components').
+        102. project_structure(path?) - Lista a árvore de diretórios do projeto. path = subdiretório opcional (ex.: 'src/components'). Use para ENTENDER a estrutura do projeto antes de procurar arquivos.
+        103. read_logs(lines?) - Lê as últimas linhas do log do backend (erros, warnings, requests). lines = quantas linhas (padrão 50, máx 200). Use para VERIFICAR erros reais de runtime antes de criar bug reports.
+        104. git_recent(limit?) - Lista os últimos commits do repositório. limit = quantos (padrão 10). Mostra hash, mensagem e data. Use para entender O QUE MUDOU recentemente e correlacionar com bugs.
+
         FERRAMENTA DE GESTÃO DO PROJETO:
         90. create_github_issue(title, body, labels?) - Cria um issue no GitHub do projeto (tcstulio/sistemav2). Use quando o usuário reportar um bug, solicitar uma feature, ou pedir para registrar algo. labels opcionais: 'bug', 'enhancement', 'security', 'question' (pode ser string ou array). IMPORTANTE: antes de criar, SEMPRE use list_github_issues para verificar se já existe um issue similar aberto. NÃO crie duplicatas.
         91. list_github_issues(state?, label?, limit?) - Lista issues do GitHub do projeto. state: 'open' (padrão), 'closed', 'all'. label: filtrar por label (ex.: 'bug', 'enhancement'). limit: máx de issues (padrão 20). Retorna número, título, estado, labels e link.
@@ -158,6 +178,10 @@ export const TOOLS_PROMPT = `
         3. Para criar/editar registros, SEMPRE busque o ID antes (use search, list_*, ou search_customer). Nunca invente IDs.
         4. Os resultados das ferramentas contêm LINKS navegáveis (HTML). Inclua-os na resposta para o usuário clicar.
         5. Se uma ferramenta retornar "nenhum resultado", informe o usuário e sugira alternativas (mudar o termo, buscar outra entidade).
+        6. **NUNCA crie issues de bug sem VERIFICAR o código primeiro** — use search_code para encontrar o arquivo, read_project_file para ler, e read_logs para ver erros reais. Se não tiver certeza, use ask_user para perguntar o usuário antes de criar a issue.
+        7. **NUNCA crie issues em sequência sobre o mesmo tema** — se criou uma issue sobre "delete intervenção", NÃO crie outra sobre "excluir intervenção" ou "apagar intervenção". Uma issue por problema.
+        8. **Se o usuário não pediu explicitamente para criar uma issue, NÃO crie** — apenas informe o problema e pergunte se deseja registrar.
+        9. **NUNCA assuma que algo está quebrado sem evidência** — um erro de API pode ser temporário; uma tela que você não viu pode funcionar normalmente. Quando em dúvida, use ask_user.
 
         EXEMPLOS DE FORMATO (OBRIGATÓRIO usar EXATAMENTE este formato JSON):
         User: "Quais faturas estão em aberto?"
@@ -172,6 +196,13 @@ export const TOOLS_PROMPT = `
         Assistant: { "tool": "list_github_issues", "args": { "state": "open", "limit": 20 } }
 
         IMPORTANTE: Use SEMPRE o formato {"tool": "nome_exato", "args": {...}}. NÃO use <tool_call:> ou outros formatos.
+
+        SOBRE VOCÊ:
+        - Você é o assistente virtual do CoolGroove System (sistemav2), um ERP baseado em Dolibarr.
+        - O contexto da conversa inclui a IDENTIDADE DO USUÁRIO (login, nome, email, cargo, admin). Use isso para personalizar respostas.
+        - Se o usuário é admin, você pode sugerir ações administrativas. Se não é admin, limite-se ao que ele pode fazer.
+        - O sistema roda em Express+TypeScript (backend) e React+Vite (frontend). O repositório é tcstulio/sistemav2.
+        - Você NÃO deve criar issues, tasks ou bugs por conta própria — SEMPRE confirme com o usuário antes.
         `;
 
 // --- AÇÕES HITL via deeplink (#57 Peça 2/3) ---
@@ -514,11 +545,34 @@ const TOOL_ALIASES: Record<string, string> = {
     list_opencode_task: 'list_opencode_tasks',
     merge_task: 'merge_opencode_task',
     task_feedback: 'opencode_task_feedback',
+    read_file: 'read_project_file',
+    read_code: 'read_project_file',
+    verify_code: 'read_project_file',
+    grep: 'search_code',
+    search_file: 'search_code',
+    find_code: 'search_code',
+    find_in_files: 'search_code',
+    list_files: 'project_structure',
+    tree: 'project_structure',
+    ls: 'project_structure',
+    logs: 'read_logs',
+    show_logs: 'read_logs',
+    recent_commits: 'git_recent',
+    git_log: 'git_recent',
+    pergunta: 'ask_user',
+    confirmar: 'ask_user',
 };
 
 export async function executeTool(tool: string, args: any = {}): Promise<string> {
     const resolvedTool = TOOL_ALIASES[tool] || tool;
     log.info(`Tool Call: ${tool}${resolvedTool !== tool ? ` -> ${resolvedTool}` : ''}`, args);
+
+    if (agentConfigService.isToolBlocked(resolvedTool)) {
+        const msg = `Ferramenta "${resolvedTool}" está bloqueada pela configuração do agente. Peça ao administrador para liberar.`;
+        log.warn(`Blocked tool: ${resolvedTool}`);
+        return msg;
+    }
+
     const t0 = Date.now();
     const result = await executeToolInner(resolvedTool, args);
     if (activeToolCallListener) {
@@ -1104,6 +1158,144 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 return `Task #${mergeIssue} merged! PR #${task.prNumber} mergeado e issue fechada.`;
             } catch (e: any) {
                 return `Erro ao fazer merge: ${e.message}`;
+            }
+        }
+
+        case 'read_project_file': {
+            const filePath = String(args?.file_path || '').trim();
+            if (!filePath) return 'Informe o caminho do arquivo (ex.: src/components/InterventionList.tsx).';
+            const normalizedPath = filePath.replace(/\\/g, '/').replace(/^\//, '');
+            const fullPath = path.resolve(PROJECT_ROOT, normalizedPath);
+            if (!fullPath.startsWith(PROJECT_ROOT)) return 'Caminho fora do projeto não permitido.';
+            if (!fs.existsSync(fullPath)) return `Arquivo não encontrado: ${normalizedPath}. Verifique o caminho.`;
+            try {
+                const stat = fs.statSync(fullPath);
+                if (stat.isDirectory()) {
+                    const entries = fs.readdirSync(fullPath).slice(0, 50);
+                    return `Diretório "${normalizedPath}" contém ${entries.length} itens:\n${entries.join('\n')}`;
+                }
+                const content = fs.readFileSync(fullPath, 'utf-8');
+                const lines = content.split('\n');
+                const offset = Math.max(0, Number(args?.offset || 0));
+                const limit = Math.min(500, Number(args?.limit || 500));
+                const selected = lines.slice(offset, offset + limit);
+                const header = `Arquivo: ${normalizedPath} (${lines.length} linhas totais, mostrando ${offset + 1}-${Math.min(offset + limit, lines.length)})\n\n`;
+                return header + selected.map((l, i) => `${offset + i + 1}: ${l}`).join('\n');
+            } catch (e: any) {
+                return `Erro ao ler arquivo: ${e.message}`;
+            }
+        }
+
+        case 'ask_user': {
+            const question = String(args?.question || '').trim();
+            if (!question) return 'Especifique a pergunta no parâmetro "question".';
+            throw new AskUserInterrupt(question);
+        }
+
+        case 'search_code': {
+            const pattern = String(args?.pattern || '').trim();
+            if (!pattern) return 'Informe o texto ou regex a buscar (ex.: "ConfirmDelete", "function handleSubmit").';
+            const searchDir = String(args?.path || '').trim();
+            const baseDir = searchDir ? path.resolve(PROJECT_ROOT, searchDir) : PROJECT_ROOT;
+            if (!baseDir.startsWith(PROJECT_ROOT)) return 'Caminho fora do projeto não permitido.';
+            if (!fs.existsSync(baseDir)) return `Diretório não encontrado: ${searchDir || '.'}`;
+            try {
+                const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage', '__pycache__']);
+                const MAX_RESULTS = 30;
+                const results: string[] = [];
+                const regex = new RegExp(pattern, 'i');
+                function walk(dir: string, depth: number) {
+                    if (depth > 6 || results.length >= MAX_RESULTS) return;
+                    const entries = fs.readdirSync(dir, { withFileTypes: true });
+                    for (const entry of entries) {
+                        if (results.length >= MAX_RESULTS) return;
+                        if (entry.isDirectory()) {
+                            if (IGNORE_DIRS.has(entry.name)) continue;
+                            walk(path.join(dir, entry.name), depth + 1);
+                        } else {
+                            const ext = path.extname(entry.name).toLowerCase();
+                            if (!['.ts', '.tsx', '.js', '.jsx', '.vue', '.json', '.css', '.scss', '.html', '.md', '.py'].includes(ext)) continue;
+                            try {
+                                const fp = path.join(dir, entry.name);
+                                const content = fs.readFileSync(fp, 'utf-8');
+                                const lines = content.split('\n');
+                                for (let i = 0; i < lines.length && results.length < MAX_RESULTS; i++) {
+                                    if (regex.test(lines[i])) {
+                                        const relPath = path.relative(PROJECT_ROOT, fp).replace(/\\/g, '/');
+                                        results.push(`${relPath}:${i + 1}: ${lines[i].trim().substring(0, 150)}`);
+                                    }
+                                }
+                            } catch { /* skip unreadable */ }
+                        }
+                    }
+                }
+                walk(baseDir, 0);
+                if (results.length === 0) return `Nenhum resultado para "${pattern}"${searchDir ? ` em ${searchDir}` : ''}.`;
+                return `Encontrado ${results.length} ocorrência(s) para "${pattern}":\n\n${results.join('\n')}`;
+            } catch (e: any) {
+                return `Erro na busca: ${e.message}`;
+            }
+        }
+
+        case 'project_structure': {
+            const structDir = String(args?.path || '').trim();
+            const baseDir = structDir ? path.resolve(PROJECT_ROOT, structDir) : PROJECT_ROOT;
+            if (!baseDir.startsWith(PROJECT_ROOT)) return 'Caminho fora do projeto não permitido.';
+            if (!fs.existsSync(baseDir) || !fs.statSync(baseDir).isDirectory()) return `Diretório não encontrado: ${structDir || '.'}`;
+            try {
+                const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'coverage', '__pycache__']);
+                const MAX_ENTRIES = 100;
+                const lines: string[] = [];
+                function walk(dir: string, prefix: string, depth: number) {
+                    if (depth > 4 || lines.length >= MAX_ENTRIES) return;
+                    const entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => {
+                        if (a.isDirectory() && !b.isDirectory()) return -1;
+                        if (!a.isDirectory() && b.isDirectory()) return 1;
+                        return a.name.localeCompare(b.name);
+                    });
+                    for (const entry of entries) {
+                        if (lines.length >= MAX_ENTRIES) { lines.push(`${prefix}... (truncado)`); return; }
+                        if (entry.name.startsWith('.') && entry.name !== '.env.example') continue;
+                        if (entry.isDirectory() && IGNORE_DIRS.has(entry.name)) continue;
+                        const relPath = path.relative(PROJECT_ROOT, path.join(dir, entry.name)).replace(/\\/g, '/');
+                        if (entry.isDirectory()) {
+                            lines.push(`${prefix}${entry.name}/`);
+                            walk(path.join(dir, entry.name), prefix + '  ', depth + 1);
+                        } else {
+                            lines.push(`${prefix}${entry.name}`);
+                        }
+                    }
+                }
+                walk(baseDir, '', 0);
+                const header = structDir ? `Estrutura de ${structDir}:` : 'Estrutura do projeto:';
+                return `${header}\n${lines.join('\n')}`;
+            } catch (e: any) {
+                return `Erro ao listar estrutura: ${e.message}`;
+            }
+        }
+
+        case 'read_logs': {
+            const logLines = Math.min(200, Math.max(10, Number(args?.lines || 50)));
+            const level = String(args?.level || '').toLowerCase();
+            let recent = getRecentLogs(logLines * 3);
+            if (level && ['error', 'warn', 'info', 'debug'].includes(level)) {
+                recent = recent.filter(l => l.includes(`[${level.toUpperCase()}]`));
+            }
+            recent = recent.slice(-logLines);
+            if (recent.length === 0) return 'Nenhum log encontrado ainda (o servidor acabou de iniciar ou não há entradas).';
+            return `Últimas ${recent.length} linhas do log${level ? ` (filtrado por ${level})` : ''}:\n\n${recent.join('\n')}`;
+        }
+
+        case 'git_recent': {
+            const gitLimit = Math.min(30, Math.max(1, Number(args?.limit || 10)));
+            try {
+                const { stdout } = await execFileAsync('git', [
+                    'log', `--max-count=${gitLimit}`, '--pretty=format:%h %s (%cr)', '--no-merges'
+                ], { timeout: 10000, cwd: PROJECT_ROOT });
+                if (!stdout.trim()) return 'Nenhum commit encontrado.';
+                return `Últimos ${gitLimit} commits:\n\n${stdout.trim()}`;
+            } catch (e: any) {
+                return `Erro ao ler git log: ${e.message}`;
             }
         }
 

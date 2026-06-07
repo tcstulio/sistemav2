@@ -62,7 +62,10 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
     if (protoSession) {
         req.headers['dolapikey'] = config.dolibarrKey;
         if (req.query) { (req.query as any).DOLAPIKEY = config.dolibarrKey; }
-        (req as any).user = { login: protoSession.login };
+        (req as any).user = {
+            login: protoSession.login,
+            ...(protoSession.userData || {}),
+        };
         return next();
     }
 
