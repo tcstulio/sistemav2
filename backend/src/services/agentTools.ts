@@ -147,6 +147,11 @@ export const TOOLS_PROMPT = `
         REGRA PARA MÍDIA (generate_*): devolvem um LINK pronto. Inclua o link na resposta para o usuário ouvir/ver.
         REGRA PARA VÍDEO: generate_video devolve um task_id e demora minutos; avise o usuário e use check_video(task_id) depois (ex.: quando ele pedir o resultado) para obter o link.
 
+        FERRAMENTAS DE VALIDAÇÃO (confirma entidades do Dolibarr — ação imediata, sem deeplink):
+        108. validate_invoice(invoice_id) - Valida (confirma) uma fatura de venda em rascunho. invoice_id = id da fatura (ache com list_invoices). Muda status de rascunho para validada.
+        109. validate_order(order_id) - Valida (confirma) um pedido de venda em rascunho. order_id = id do pedido (ache com list_orders). Muda status de rascunho para validado.
+        110. validate_proposal(proposal_id) - Valida (confirma) uma proposta comercial em rascunho. proposal_id = id da proposta (ache com list_proposals). Muda status de rascunho para validada.
+
         FERRAMENTAS DE VERIFICAÇÃO E COMUNICAÇÃO:
         99. read_project_file(file_path, offset?, limit?) - Lê um arquivo de código-fonte do projeto. Use para VERIFICAR se um bug é real antes de criar uma issue. file_path é relativo à raiz (ex.: 'src/components/InterventionList.tsx', 'backend/src/routes/interventionRoutes.ts'). Retorna até 500 linhas. Use offset (linha inicial) e limit (max linhas) para paginar.
         100. ask_user(question) - Faz uma pergunta ao usuário e PARA a execução para aguardar a resposta. Use quando: (a) não tem certeza se algo é um bug real, (b) precisa de mais detalhes antes de criar uma issue, (c) quer confirmar se deve prosseguir com uma ação destrutiva. SEMPRE prefira perguntar a assumir.
@@ -1265,6 +1270,39 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 return `Falha ao enviar WhatsApp: ${result.error}`;
             } catch (e: any) {
                 return `Erro ao enviar WhatsApp: ${e.message}`;
+            }
+        }
+
+        case 'validate_invoice': {
+            const invId = String(args?.invoice_id || args?.id || '').trim();
+            if (!invId) return 'Informe o ID da fatura (parâmetro "invoice_id"). Ache com list_invoices.';
+            try {
+                const result = await dolibarrService.validateInvoice(invId);
+                return `Fatura #${invId} validada com sucesso. Status atualizado para validada.`;
+            } catch (e: any) {
+                return `Erro ao validar fatura #${invId}: ${e.message || e}`;
+            }
+        }
+
+        case 'validate_order': {
+            const ordId = String(args?.order_id || args?.id || '').trim();
+            if (!ordId) return 'Informe o ID do pedido (parâmetro "order_id"). Ache com list_orders.';
+            try {
+                const result = await dolibarrService.validateOrder(ordId);
+                return `Pedido #${ordId} validado com sucesso. Status atualizado para validado.`;
+            } catch (e: any) {
+                return `Erro ao validar pedido #${ordId}: ${e.message || e}`;
+            }
+        }
+
+        case 'validate_proposal': {
+            const propId = String(args?.proposal_id || args?.id || '').trim();
+            if (!propId) return 'Informe o ID da proposta (parâmetro "proposal_id"). Ache com list_proposals.';
+            try {
+                const result = await dolibarrService.validateProposal(propId);
+                return `Proposta #${propId} validada com sucesso. Status atualizado para validada.`;
+            } catch (e: any) {
+                return `Erro ao validar proposta #${propId}: ${e.message || e}`;
             }
         }
 

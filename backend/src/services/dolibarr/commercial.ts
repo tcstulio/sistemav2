@@ -181,4 +181,19 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
             return [];
         }
     }
+
+    async validateInvoice(invoiceId: string, userKey?: string): Promise<any> {
+        const url = `${this.baseUrl}invoices/${invoiceId}/validate`;
+        return this.requestWithAuth('POST', url, {}, userKey || this.apiKey);
+    }
+
+    async validateOrder(orderId: string, userKey?: string): Promise<any> {
+        const url = `${this.baseUrl}orders/${orderId}/validate`;
+        return this.requestWithAuth('POST', url, {}, userKey || this.apiKey);
+    }
+
+    async validateProposal(proposalId: string, userKey?: string): Promise<any> {
+        const url = `${this.baseUrl}proposals/${proposalId}/validate`;
+        return this.requestWithAuth('POST', url, {}, userKey || this.apiKey);
+    }
 }
