@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { TaskService, Task } from '../../services/taskService';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
-import { Play, CheckCircle, XCircle, RotateCcw, GitMerge, MessageSquare, Loader2, AlertCircle, Clock, Eye, RefreshCw, ExternalLink, ThumbsUp, Star, Trash2, Pencil } from 'lucide-react';
+import { Play, CheckCircle, XCircle, RotateCcw, GitMerge, MessageSquare, Loader2, AlertCircle, Clock, Eye, RefreshCw, ExternalLink, ThumbsUp, Star, Trash2, Pencil, Terminal } from 'lucide-react';
 import { toast } from 'sonner';
 import DiffViewer from './DiffViewer';
+import TaskConsole from './TaskConsole';
 
 const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
     pending: { color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800', icon: <Clock size={14} />, label: 'Pendente' },
@@ -16,7 +17,7 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.Rea
     failed: { color: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', icon: <AlertCircle size={14} />, label: 'Falhou' },
 };
 
-const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) => void; polling: boolean; onReview: (task: Task) => void; onEdit: (task: Task) => void; onDelete: (task: Task) => void }> = ({ task, onAction, polling, onReview, onEdit, onDelete }) => {
+const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) => void; polling: boolean; onReview: (task: Task) => void; onEdit: (task: Task) => void; onDelete: (task: Task) => void; onConsole: (task: Task) => void }> = ({ task, onAction, polling, onReview, onEdit, onDelete, onConsole }) => {
     const [expanded, setExpanded] = useState(false);
     const [feedback, setFeedback] = useState('');
     const [showFeedback, setShowFeedback] = useState(false);
@@ -85,6 +86,9 @@ const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) =>
                     {expanded ? 'Fechar' : 'Detalhes'}
                 </Button>
                 <Button variant="ghost" size="sm" icon={<Pencil size={12} />} onClick={() => onEdit(task)}>Editar</Button>
+                {isActive && (
+                    <Button variant="ghost" size="sm" icon={<Terminal size={12} />} onClick={() => onConsole(task)} className="text-indigo-500 hover:text-indigo-700">Console</Button>
+                )}
                 {task.status !== 'running' && task.status !== 'fixing' && (
                     <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500 hover:text-red-700" />
                 )}
@@ -165,6 +169,7 @@ const TasksBoard: React.FC = () => {
     const [editTitle, setEditTitle] = useState('');
     const [editBody, setEditBody] = useState('');
     const [deleteConfirm, setDeleteConfirm] = useState<Task | null>(null);
+    const [consoleTask, setConsoleTask] = useState<Task | null>(null);
 
     const openReview = async (task: Task) => {
         setReviewTask(task);
@@ -283,7 +288,7 @@ const TasksBoard: React.FC = () => {
                     </Card>
                 )}
                 {filteredTasks.map(task => (
-                    <TaskCard key={task.issueNumber} task={task} onAction={handleAction} polling={hasActive} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} />
+                    <TaskCard key={task.issueNumber} task={task} onAction={handleAction} polling={hasActive} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} />
                 ))}
             </div>
 
@@ -350,6 +355,10 @@ const TasksBoard: React.FC = () => {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {consoleTask && (
+                <TaskConsole issueNumber={consoleTask.issueNumber} onClose={() => setConsoleTask(null)} />
             )}
         </PageLayout>
     );
