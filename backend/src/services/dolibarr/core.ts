@@ -389,4 +389,72 @@ export class DolibarrServiceBase {
             };
         }
     }
+
+    protected static readonly DOCUMENT_MODULES: Record<string, string> = {
+        invoice: 'facture',
+        order: 'commande',
+        proposal: 'propal',
+        supplier_order: 'supplier_order',
+        supplier_invoice: 'supplier_invoice',
+        intervention: 'ficheinter',
+        contract: 'contract',
+        shipment: 'expedition',
+    };
+
+    async getDocumentPDF(entityType: string, entityId: string): Promise<Buffer> {
+        const modulepart = DolibarrServiceBase.DOCUMENT_MODULES[entityType] || entityType;
+        const entityRef = await this.getEntityRef(entityType, entityId);
+        const originalFile = `${entityRef}/${entityRef}.pdf`;
+
+        const url = `${this.baseUrl}documents/download`;
+        const headers = this.getHeaders();
+
+        try {
+            const response = await axios.get(url, {
+                headers,
+                params: { modulepart, original_file: originalFile },
+                httpsAgent: this.httpsAgent,
+                validateStatus: (s) => s < 500
+            });
+
+            if (response.data?.content) {
+                return Buffer.from(response.data.content, 'base64');
+            }
+
+            throw new Error(`PDF não encontrado para ${entityType} #${entityId}`);
+        } catch (error: any) {
+            if (error.message?.includes('PDF não encontrado')) throw error;
+            this.handleError(error, `getDocumentPDF ${entityType}/${entityId}`);
+        }
+    }
+
+    protected async getEntityRef(entityType: string, entityId: string): Promise<string> {
+        const endpointMap: Record<string, string> = {
+            invoice: 'invoices',
+            order: 'orders',
+            proposal: 'proposals',
+            supplier_order: 'supplierorders',
+            supplier_invoice: 'supplierinvoices',
+            intervention: 'interventions',
+            contract: 'contracts',
+            shipment: 'shipments',
+        };
+
+        const endpoint = endpointMap[entityType];
+        if (!endpoint) return entityId;
+
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}${endpoint}/${entityId}`;
+
+        try {
+            const response = await axios.get(url, {
+                headers,
+                httpsAgent: this.httpsAgent,
+                validateStatus: (s) => s === 200
+            });
+            return response.data?.ref || entityId;
+        } catch {
+            return entityId;
+        }
+    }
 }

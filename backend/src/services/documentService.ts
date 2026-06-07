@@ -52,24 +52,7 @@ class DocumentService {
      */
     async getInvoicePDF(invoiceId: string): Promise<Buffer> {
         try {
-            // Dolibarr endpoint: GET /documents/download?modulepart=facture&original_file=...
-            const response = await dolibarrService.proxyRequest(
-                'GET',
-                `/documents/download`,
-                null,
-                {
-                    modulepart: 'facture',
-                    original_file: `${invoiceId}/${invoiceId}.pdf`
-                },
-                {}
-            );
-
-            if (response.data) {
-                // Dolibarr retorna base64
-                return Buffer.from(response.data.content, 'base64');
-            }
-
-            throw new Error('Documento não encontrado');
+            return await dolibarrService.getDocumentPDF('invoice', invoiceId);
         } catch (error: any) {
             log.error(`Erro ao obter PDF da fatura ${invoiceId}: ${error.message}`);
             throw new Error(`Falha ao obter PDF da fatura: ${error.message}`);

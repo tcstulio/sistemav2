@@ -7,6 +7,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { documentService } from '../services/documentService';
+import { dolibarrService } from '../services/dolibarrService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { createLogger } from '../utils/logger';
 
@@ -145,6 +146,27 @@ router.get('/customer/:thirdPartyId/phone', async (req: Request, res: Response) 
 
         res.json({ success: true, phone });
     } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+const VALID_DOC_TYPES = ['invoice', 'order', 'proposal', 'supplier_order', 'supplier_invoice', 'intervention', 'contract', 'shipment'] as const;
+
+router.get('/:entityType/:entityId/pdf', async (req: Request, res: Response) => {
+    try {
+        const { entityType, entityId } = req.params;
+
+        if (!VALID_DOC_TYPES.includes(entityType as any)) {
+            return res.status(400).json({ success: false, error: `Tipo inválido: ${entityType}. Tipos: ${VALID_DOC_TYPES.join(', ')}` });
+        }
+
+        const pdf = await dolibarrService.getDocumentPDF(entityType, entityId);
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${entityType}_${entityId}.pdf"`);
+        res.send(pdf);
+    } catch (error: any) {
+        log.error(`Erro ao obter PDF ${req.params.entityType}/${req.params.entityId}: ${error.message}`);
         res.status(500).json({ success: false, error: error.message });
     }
 });
