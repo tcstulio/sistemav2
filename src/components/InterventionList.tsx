@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { Intervention, AppView } from '../types';
@@ -31,6 +32,7 @@ interface InterventionListProps {
 
 const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefresh }) => {
     const { config } = useDolibarr();
+    const { id: urlId } = useParams<{ id: string }>();
     const { data: interventionsData, refetch: refetchInterventions } = useInterventions(config);
     const interventions = interventionsData || [];
     const { data: customersData } = useCustomers(config);
@@ -50,6 +52,13 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
     const [filterStatus, setFilterStatus] = useState<'all' | 'me' | 'draft' | 'validated' | 'done'>('all');
     const [selectedIntervention, setSelectedIntervention] = useState<Intervention | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (urlId && interventions.length > 0 && !selectedIntervention) {
+            const found = interventions.find(i => String(i.id) === urlId);
+            if (found) handleSelectIntervention(found);
+        }
+    }, [urlId, interventions]);
 
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [editInterventionId, setEditInterventionId] = useState<string | undefined>(undefined);

@@ -71,4 +71,13 @@ export const TaskService = {
         const response = await axios.post(`${API_URL}/${issueNumber}/merge`, {}, getAuthHeaders());
         return response.data;
     },
+
+    update: async (issueNumber: number, data: Partial<Pick<Task, 'title' | 'body' | 'labels'>>): Promise<Task> => {
+        const response = await axios.put(`${API_URL}/${issueNumber}`, data, getAuthHeaders());
+        return response.data;
+    },
+
+    delete: async (issueNumber: number): Promise<void> => {
+        await axios.delete(`${API_URL}/${issueNumber}`, getAuthHeaders());
+    },
 };

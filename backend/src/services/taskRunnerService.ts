@@ -167,13 +167,47 @@ class TaskRunnerService {
             }
         }
 
+        let agentsMd = '';
+        try {
+            const agentsPath = path.join(__dirname, '../../../AGENTS.md');
+            if (fs.existsSync(agentsPath)) {
+                agentsMd = fs.readFileSync(agentsPath, 'utf-8');
+            }
+        } catch { /* ignore */ }
+
+        let repoTree = '';
+        try {
+            const { stdout: treeOut } = await execFileAsync('git', ['ls-tree', '-r', '--name-only', 'HEAD', '--', 'src/', 'backend/src/'], { timeout: 10000 });
+            repoTree = treeOut.substring(0, 4000);
+        } catch { /* ignore */ }
+
         const { stdout: diff } = await execFileAsync('git', ['diff', 'main', '--stat'], { timeout: 15000 });
 
-        const planPrompt = `You are a senior developer. Analyze this GitHub issue and create an implementation plan.
+        const planPrompt = `You are a senior developer working on a full-stack ERP system. Analyze this GitHub issue and implement the solution.
+
+## Project Context
+- Backend: Express + TypeScript (port 3004), restarts via nodemon
+- Frontend: React + Vite (port 5173), uses Tailwind CSS + shadcn-style UI components
+- Data backend: Dolibarr ERP (REST API)
+- Database: JSON files in backend/data/ for local state
+- \`npm run dev:all\` starts both via concurrently
+
+## Tech Stack
+- React Router for routing (App.tsx defines all routes)
+- UI components in src/components/ui/ (PageHeader, Card, Button, Modal, Tabs, etc.)
+- Hooks in src/hooks/dolibarr.ts for data fetching (useInvoices, useTasks, etc.)
+- Services in src/services/ for API calls
+- Backend services in backend/src/services/
+- Backend routes in backend/src/routes/
+
+${agentsMd ? `## Project Conventions (AGENTS.md)\n${agentsMd}\n` : ''}
+## Repository Structure (directories)
+${repoTree || 'Unable to read'}
+
+## Current Changes
+${diff || 'No changes yet'}
 
 ${prompt}
-
-Current repo diff from main:\n${diff || 'No changes yet'}
 
 Respond with a concise plan listing:
 1. Files to modify/create
@@ -183,7 +217,7 @@ Respond with a concise plan listing:
 Then implement the changes. Be thorough and follow existing code patterns.`;
 
         const history = [
-            { role: 'system' as const, parts: 'You are an expert developer. Implement the solution based on the issue description. Write clean, production-quality code. Follow existing patterns in the codebase.' },
+            { role: 'system' as const, parts: 'You are an expert full-stack developer (Express + React + TypeScript). Implement the solution based on the issue description. Write clean, production-quality code. Follow existing patterns in the codebase. Use the project conventions from AGENTS.md. Respond in Portuguese for user-facing text.' },
             { role: 'user' as const, parts: planPrompt },
         ];
 
@@ -386,6 +420,36 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         task.updatedAt = new Date().toISOString();
         this.save();
         return task;
+    }
+
+    async updateTask(issueNumber: number, updates: Partial<Pick<Task, 'title' | 'body' | 'labels'>>): Promise<Task> {
+        const task = this.store.tasks[issueNumber];
+        if (!task) throw new Error(`Task #${issueNumber} not found`);
+
+        if (updates.title !== undefined) task.title = updates.title;
+        if (updates.body !== undefined) task.body = updates.body;
+        if (updates.labels !== undefined) task.labels = updates.labels;
+        task.updatedAt = new Date().toISOString();
+        this.save();
+        return task;
+    }
+
+    async deleteTask(issueNumber: number): Promise<void> {
+        const task = this.store.tasks[issueNumber];
+        if (!task) throw new Error(`Task #${issueNumber} not found`);
+
+        if (task.status === 'running' || task.status === 'fixing') {
+            throw new Error(`Cannot delete task #${issueNumber} while ${task.status}`);
+        }
+
+        if (task.prNumber) {
+            try {
+                await execFileAsync('gh', ['pr', 'close', String(task.prNumber), '--repo', REPO, '--comment', 'Task deleted'], { timeout: 15000 });
+            } catch { /* ignore */ }
+        }
+
+        delete this.store.tasks[issueNumber];
+        this.save();
     }
 
     async getDiff(issueNumber: number): Promise<string> {
