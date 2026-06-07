@@ -412,6 +412,16 @@ export const AiService = {
         }
     },
 
+    analyzePdf: async (pdfBase64: string, question?: string) => {
+        try {
+            const response = await axios.post(`${API_URL}/analyze/pdf`, { pdf: pdfBase64, question }, getAuthHeaders());
+            return response.data.result;
+        } catch (error: any) {
+            log.error('PDF Analysis Error', error);
+            return "[Erro na análise do PDF]";
+        }
+    },
+
     analyzeDataQuality: async (data: any[], type: string) => {
         try {
             const response = await axios.post(`${API_URL}/analyze/data-quality`, {

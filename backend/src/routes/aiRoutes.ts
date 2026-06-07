@@ -261,6 +261,41 @@ router.post('/transcribe-audio', async (req, res) => {
     }
 });
 
+const AnalyzePdfSchema = z.object({
+    pdf: z.string(),
+    question: z.string().optional()
+});
+
+router.post('/analyze/pdf', async (req, res) => {
+    try {
+        const { pdf, question } = AnalyzePdfSchema.parse(req.body);
+        const pdfBuffer = Buffer.from(pdf, 'base64');
+        const pdfParse = await import('pdf-parse');
+        const data = await (pdfParse.default || pdfParse)(pdfBuffer);
+        const text = data.text.substring(0, 15000);
+
+        const prompt = `Analise o conteúdo deste documento PDF e responda à pergunta do usuário.
+
+Conteúdo do PDF:
+${text}
+
+${question ? `Pergunta: ${question}` : 'Faça um resumo dos pontos principais do documento.'}`;
+
+        const reply = await aiService.generateReply(
+            [{ role: 'user' as const, parts: prompt }],
+            'Você é um assistente especializado em análise de documentos.',
+            undefined,
+            'chat'
+        );
+        res.json({ result: reply });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Draft Collection Email
 const DraftEmailSchema = z.object({
     customer: z.any(),

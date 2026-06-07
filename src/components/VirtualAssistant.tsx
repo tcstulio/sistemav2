@@ -97,8 +97,12 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const [attachedImage, setAttachedImage] = useState<{ data: string, mimeType: string } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState<Array<{ id: string; title: string; updatedAt: number; messageCount: number }>>([]);
+  const [attachedPdf, setAttachedPdf] = useState<{ name: string; data: string } | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -178,7 +182,6 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64String = reader.result as string;
-      // Extract the base64 data part (remove "data:image/png;base64,")
       const base64Data = base64String.split(',')[1];
       setAttachedImage({
         data: base64Data,
@@ -188,21 +191,33 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     reader.readAsDataURL(file);
   };
 
+  const handlePdfSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64Data = (reader.result as string).split(',')[1];
+      setAttachedPdf({ name: file.name, data: base64Data });
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSend = async () => {
-    if ((!input.trim() && !attachedImage) || isLoading) return;
+    if ((!input.trim() && !attachedImage && !attachedPdf) || isLoading) return;
 
     const userMsg = input;
     const userImage = attachedImage;
+    const userPdf = attachedPdf;
 
     setInput('');
     setAttachedImage(null);
+    setAttachedPdf(null);
 
-    // Optimistic UI update
     setMessages(prev => [
       ...prev,
       {
         role: 'user',
-        text: userMsg + (userImage ? ' [Imagem Anexada]' : '')
+        text: userMsg + (userImage ? ' [Imagem Anexada]' : '') + (userPdf ? ` [PDF: ${userPdf.name}]` : '')
       }
     ]);
 
@@ -216,6 +231,12 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         return true;
       });
 
+      let pdfContext = '';
+      if (userPdf) {
+        const pdfAnalysis = await AiService.analyzePdf(userPdf.data, userMsg || undefined);
+        pdfContext = `\n\n[CONTEXTO DO PDF "${userPdf.name}"]: ${pdfAnalysis}`;
+      }
+
       let sid = currentSessionId;
       if (!sid) {
         const session = await AiService.createChatSession(userMsg);
@@ -226,7 +247,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         }
       }
 
-      const pageContext = `${formatViewContext(location.pathname, location.search || undefined)}\n${formatErrorsForAgent()}`;
+      const pageContext = `${formatViewContext(location.pathname, location.search || undefined)}\n${formatErrorsForAgent()}${pdfContext}`;
 
       const result = await AiService.chatWithData(userMsg, relevantHistory, userImage?.data, sid || undefined, pageContext);
       const responseText = result.reply;
@@ -253,34 +274,57 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     }
   };
 
-  const toggleVoice = () => {
-    if (!('webkitSpeechRecognition' in window)) {
-      alert("Reconhecimento de voz não suportado neste navegador.");
-      return;
-    }
-
-    if (isListening) {
+  const toggleVoice = async () => {
+    if (isListening && mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
       setIsListening(false);
       return;
     }
 
-    const recognition = new (window as any).webkitSpeechRecognition();
-    recognition.lang = 'pt-BR'; // Portuguese
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
 
-    recognition.onstart = () => setIsListening(true);
-    recognition.onend = () => setIsListening(false);
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      setInput(prev => prev + (prev ? ' ' : '') + transcript);
-    };
-    recognition.onerror = (event: any) => {
-      log.error("Erro de fala", event);
-      setIsListening(false);
-    };
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
 
-    recognition.start();
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const base64 = (reader.result as string).split(',')[1];
+          setIsLoading(true);
+          setMessages(prev => [...prev, { role: 'user', text: '🎤 Mensagem de voz...' }]);
+          try {
+            const transcription = await AiService.transcribeAudio(base64, 'audio/webm');
+            setMessages(prev => {
+              const updated = [...prev];
+              updated[updated.length - 1] = { role: 'user', text: transcription };
+              return updated;
+            });
+            setInput(transcription);
+          } catch {
+            setMessages(prev => {
+              const updated = [...prev];
+              updated[updated.length - 1] = { role: 'user', text: '🎤 [Erro na transcrição]', isError: true };
+              return updated;
+            });
+          } finally {
+            setIsLoading(false);
+          }
+        };
+        reader.readAsDataURL(blob);
+      };
+
+      recorder.start();
+      setIsListening(true);
+    } catch {
+      setMessages(prev => [...prev, { role: 'model', text: 'Não consegui acessar o microfone. Verifique as permissões.', isError: true }]);
+    }
   };
 
   return (
@@ -381,6 +425,16 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
             </div>
           )}
 
+          {/* PDF Preview */}
+          {attachedPdf && (
+            <div className="p-2 bg-slate-100 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center gap-2">
+              <div className="text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 px-2 py-1 rounded flex items-center gap-1">
+                <FileText size={12} /> {attachedPdf.name}
+                <button onClick={() => setAttachedPdf(null)} className="ml-1 hover:text-red-500"><X size={12} /></button>
+              </div>
+            </div>
+          )}
+
           {/* Input Area */}
           <div className="p-3 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0">
             <div className="flex items-end gap-2">
@@ -399,12 +453,26 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
                 >
                   <Paperclip size={20} />
                 </button>
+                <button
+                  onClick={() => pdfInputRef.current?.click()}
+                  className={`p-2 rounded-full transition-all hover:bg-slate-100 dark:hover:bg-slate-800 ${attachedPdf ? 'text-red-600' : 'text-slate-400'}`}
+                  title="Anexar PDF"
+                >
+                  <FileText size={20} />
+                </button>
                 <input
                   type="file"
                   ref={fileInputRef}
                   className="hidden"
                   accept="image/*"
                   onChange={handleFileSelect}
+                />
+                <input
+                  type="file"
+                  ref={pdfInputRef}
+                  className="hidden"
+                  accept=".pdf"
+                  onChange={handlePdfSelect}
                 />
               </div>
 
@@ -422,7 +490,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
 
               <button
                 onClick={handleSend}
-                disabled={!input.trim() && !attachedImage}
+                disabled={!input.trim() && !attachedImage && !attachedPdf}
                 className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
               >
                 <Send size={20} />
