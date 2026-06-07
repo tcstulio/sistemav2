@@ -137,6 +137,7 @@ export const TOOLS_PROMPT = `
         FERRAMENTA DE GESTÃO DO PROJETO:
         90. create_github_issue(title, body, labels?) - Cria um issue no GitHub do projeto (tcstulio/sistemav2). Use quando o usuário reportar um bug, solicitar uma feature, ou pedir para registrar algo. labels opcionais: 'bug', 'enhancement', 'security', 'question' (pode ser string ou array). Retorna o link do issue criado.
         91. list_github_issues(state?, label?, limit?) - Lista issues do GitHub do projeto. state: 'open' (padrão), 'closed', 'all'. label: filtrar por label (ex.: 'bug', 'enhancement'). limit: máx de issues (padrão 20). Retorna número, título, estado, labels e link.
+        92. create_bug_report(title, error_message, route, component?) - Cria um issue de bug com contexto de erro (rota, componente, stack trace). Use quando o usuário reportar um erro visual ou crash. Preencha title, error_message e route automaticamente.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
@@ -913,6 +914,27 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             } catch (e: any) {
                 log.error('list_github_issues failed', e);
                 return `Erro ao listar issues: ${e.message}`;
+            }
+        }
+
+        case 'create_bug_report': {
+            const errTitle = args?.title || 'Bug reportado via assistente';
+            const errorMsg = args?.error_message || 'Sem detalhes';
+            const route = args?.route || 'Desconhecida';
+            const component = args?.component || '';
+            const body = `## Bug Reportado via Assistente Virtual\n\n**Rota:** \`${route}\`\n${component ? `**Componente:** \`${component}\`\n` : ''}**Erro:** ${errorMsg}\n\n_Criado automaticamente pelo assistente IA._`;
+            try {
+                const { stdout } = await execFileAsync('gh', [
+                    'issue', 'create',
+                    '--repo', 'tcstulio/sistemav2',
+                    '--title', String(errTitle),
+                    '--body', body,
+                    '--label', 'bug'
+                ], { timeout: 15000 });
+                return `Bug report criado: ${stdout.trim()}`;
+            } catch (e: any) {
+                log.error('create_bug_report failed', e);
+                return `Erro ao criar bug report: ${e.message}`;
             }
         }
 

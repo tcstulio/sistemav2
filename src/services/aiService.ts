@@ -251,14 +251,14 @@ export const AiService = {
         }
     },
 
-    chatWithData: async (msg: string, history: ChatMessage[], userImage?: string, sessionId?: string) => {
+    chatWithData: async (msg: string, history: ChatMessage[], userImage?: string, sessionId?: string, pageContext?: string) => {
         try {
-            // Context is now handled by the backend (ReAct / Tools), but we inject basic temporal awareness
             const now = new Date();
             const dateStr = now.toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
             const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-            const dataContext = `[SISTEMA] Data atual: ${dateStr}. Hora: ${timeStr}. Usuário logado: Admin. Use ferramentas para buscar dados específicos.`;
+            let dataContext = `[SISTEMA] Data atual: ${dateStr}. Hora: ${timeStr}. Usuário logado: Admin. Use ferramentas para buscar dados específicos.`;
+            if (pageContext) dataContext += '\n' + pageContext;
 
             // Map frontend history to backend format (text -> parts)
             const backendHistory = history.map(m => ({
