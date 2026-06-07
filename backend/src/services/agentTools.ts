@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getRecentLogs } from '../utils/logger';
 import { agentConfigService } from './agentConfigService';
+import { channelRouter } from './channelRouter';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
@@ -153,6 +154,11 @@ export const TOOLS_PROMPT = `
         102. project_structure(path?) - Lista a árvore de diretórios do projeto. path = subdiretório opcional (ex.: 'src/components'). Use para ENTENDER a estrutura do projeto antes de procurar arquivos.
         103. read_logs(lines?) - Lê as últimas linhas do log do backend (erros, warnings, requests). lines = quantas linhas (padrão 50, máx 200). Use para VERIFICAR erros reais de runtime antes de criar bug reports.
         104. git_recent(limit?) - Lista os últimos commits do repositório. limit = quantos (padrão 10). Mostra hash, mensagem e data. Use para entender O QUE MUDOU recentemente e correlacionar com bugs.
+
+        FERRAMENTAS DE NOTIFICAÇÃO:
+        105. notify_team(message, priority?) - Manda uma notificação in-app pra toda a equipe. Use quando faz algo que os outros precisam saber (criou fatura, validou pedido, etc.).
+        106. notify_person(name, phone?, email?, message, channels?) - Manda notificação pra uma pessoa específica (cliente, fornecedor, membro da equipe). channels = array com "whatsapp" e/ou "email" e/ou "in-app". Precisa de phone pra WhatsApp, email pra email.
+        107. send_whatsapp(phone, message) - Manda WhatsApp direto pra qualquer número. phone = número com código país (ex.: "5511999999999").
 
         FERRAMENTA DE GESTÃO DO PROJETO:
         90. create_github_issue(title, body, labels?) - Cria um issue no GitHub do projeto (tcstulio/sistemav2). Use quando o usuário reportar um bug, solicitar uma feature, ou pedir para registrar algo. labels opcionais: 'bug', 'enhancement', 'security', 'question' (pode ser string ou array). IMPORTANTE: antes de criar, SEMPRE use list_github_issues para verificar se já existe um issue similar aberto. NÃO crie duplicatas.
@@ -559,6 +565,10 @@ const TOOL_ALIASES: Record<string, string> = {
     show_logs: 'read_logs',
     recent_commits: 'git_recent',
     git_log: 'git_recent',
+    send_notification: 'notify_team',
+    alert_team: 'notify_team',
+    send_message: 'notify_person',
+    whatsapp: 'send_whatsapp',
     pergunta: 'ask_user',
     confirmar: 'ask_user',
 };
@@ -1190,6 +1200,72 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             const question = String(args?.question || '').trim();
             if (!question) return 'Especifique a pergunta no parâmetro "question".';
             throw new AskUserInterrupt(question);
+        }
+
+        case 'notify_team': {
+            const msg = String(args?.message || '').trim();
+            if (!msg) return 'Informe a mensagem (parâmetro "message").';
+            try {
+                const { notificationService } = require('./notificationService');
+                await notificationService.notifyTeam({
+                    event: 'agent.action',
+                    title: 'Mensagem do Marciano',
+                    message: msg,
+                    priority: args?.priority || 'medium',
+                    senderName: 'Marciano',
+                });
+                return `Notificação enviada pra equipe: "${msg.substring(0, 80)}"`;
+            } catch (e: any) {
+                return `Erro ao notificar equipe: ${e.message}`;
+            }
+        }
+
+        case 'notify_person': {
+            const pName = String(args?.name || '').trim();
+            const pPhone = args?.phone ? String(args.phone).replace(/\D/g, '') : '';
+            const pEmail = args?.email ? String(args.email).trim() : '';
+            const pMsg = String(args?.message || '').trim();
+            const pChannels = Array.isArray(args?.channels) ? args.channels : ['in-app'];
+
+            if (!pName) return 'Informe o nome da pessoa (parâmetro "name").';
+            if (!pMsg) return 'Informe a mensagem (parâmetro "message").';
+            if (pChannels.includes('whatsapp') && !pPhone) return 'Para WhatsApp, informe o telefone (parâmetro "phone").';
+            if (pChannels.includes('email') && !pEmail) return 'Para email, informe o email (parâmetro "email").';
+
+            try {
+                const { notificationService } = require('./notificationService');
+                await notificationService.notifyPerson({
+                    event: 'custom',
+                    title: `Mensagem para ${pName}`,
+                    message: pMsg,
+                    channels: pChannels,
+                    recipientName: pName,
+                    recipientPhone: pPhone,
+                    recipientEmail: pEmail,
+                    senderName: 'Marciano',
+                });
+                const sent = pChannels.join(', ');
+                return `Notificação enviada para ${pName} via ${sent}: "${pMsg.substring(0, 80)}"`;
+            } catch (e: any) {
+                return `Erro ao notificar ${pName}: ${e.message}`;
+            }
+        }
+
+        case 'send_whatsapp': {
+            const waPhone = String(args?.phone || '').replace(/\D/g, '');
+            const waMsg = String(args?.message || '').trim();
+            if (!waPhone) return 'Informe o telefone (parâmetro "phone", ex.: 5511999999999).';
+            if (!waMsg) return 'Informe a mensagem (parâmetro "message").';
+            try {
+                const chatId = waPhone.includes('@c.us') ? waPhone : `${waPhone}@c.us`;
+                const result = await channelRouter.sendWhatsApp(chatId, waMsg);
+                if (result.success) {
+                    return `WhatsApp enviado para ${waPhone}: "${waMsg.substring(0, 80)}"`;
+                }
+                return `Falha ao enviar WhatsApp: ${result.error}`;
+            } catch (e: any) {
+                return `Erro ao enviar WhatsApp: ${e.message}`;
+            }
         }
 
         case 'search_code': {
