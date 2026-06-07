@@ -3,6 +3,7 @@ import { TaskService, Task } from '../../services/taskService';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
 import { Play, CheckCircle, XCircle, RotateCcw, GitMerge, MessageSquare, Loader2, AlertCircle, Clock, Eye, RefreshCw, ExternalLink, ThumbsUp, Star } from 'lucide-react';
 import { toast } from 'sonner';
+import DiffViewer from './DiffViewer';
 
 const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
     pending: { color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800', icon: <Clock size={14} />, label: 'Pendente' },
@@ -15,7 +16,7 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.Rea
     failed: { color: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', icon: <AlertCircle size={14} />, label: 'Falhou' },
 };
 
-const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) => void; polling: boolean }> = ({ task, onAction, polling }) => {
+const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) => void; polling: boolean; onReview: (task: Task) => void }> = ({ task, onAction, polling, onReview }) => {
     const [expanded, setExpanded] = useState(false);
     const [feedback, setFeedback] = useState('');
     const [showFeedback, setShowFeedback] = useState(false);
@@ -67,6 +68,7 @@ const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) =>
                 )}
                 {(task.status === 'reviewing' || task.status === 'approved') && (
                     <>
+                        <Button variant="primary" size="sm" icon={<Eye size={12} />} onClick={() => onReview(task)}>Revisar</Button>
                         <Button variant="primary" size="sm" icon={<CheckCircle size={12} />} onClick={() => onAction('merge', task)}>Merge</Button>
                         <Button variant="ghost" size="sm" icon={<MessageSquare size={12} />} onClick={() => setShowFeedback(!showFeedback)}>Corrigir</Button>
                         <Button variant="ghost" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Refazer</Button>
@@ -152,6 +154,22 @@ const TasksBoard: React.FC = () => {
         return () => clearInterval(interval);
     }, [load]);
 
+    const [reviewTask, setReviewTask] = useState<Task | null>(null);
+    const [diffText, setDiffText] = useState('');
+    const [diffLoading, setDiffLoading] = useState(false);
+
+    const openReview = async (task: Task) => {
+        setReviewTask(task);
+        setDiffLoading(true);
+        try {
+            const diff = await TaskService.getDiff(task.issueNumber);
+            setDiffText(diff);
+        } catch {
+            setDiffText('');
+        }
+        setDiffLoading(false);
+    };
+
     const handleAction = async (action: string, task: Task) => {
         try {
             switch (action) {
@@ -227,9 +245,31 @@ const TasksBoard: React.FC = () => {
                     </Card>
                 )}
                 {filteredTasks.map(task => (
-                    <TaskCard key={task.issueNumber} task={task} onAction={handleAction} polling={hasActive} />
+                    <TaskCard key={task.issueNumber} task={task} onAction={handleAction} polling={hasActive} onReview={openReview} />
                 ))}
             </div>
+
+            {reviewTask && (
+                diffLoading ? (
+                    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">
+                        <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 flex flex-col items-center gap-3">
+                            <Loader2 size={24} className="animate-spin text-indigo-500" />
+                            <p className="text-sm text-slate-500">Carregando diff...</p>
+                        </div>
+                    </div>
+                ) : (
+                    <DiffViewer
+                        diff={diffText}
+                        judgeScore={reviewTask.judgeScore}
+                        judgeReview={reviewTask.judgeReview}
+                        prUrl={reviewTask.prUrl}
+                        onClose={() => setReviewTask(null)}
+                        onMerge={async () => { await TaskService.merge(reviewTask.issueNumber); setReviewTask(null); toast.success('PR merged!'); load(); }}
+                        onFix={() => setReviewTask(null)}
+                        onReject={async () => { await TaskService.reject(reviewTask.issueNumber); setReviewTask(null); toast.info('Task rejeitada'); load(); }}
+                    />
+                )
+            )}
         </PageLayout>
     );
 };
