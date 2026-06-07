@@ -54,6 +54,9 @@ export class DolibarrService extends DolibarrServiceBase {
     listOrders = (params?: { status?: string, search?: string, limit?: number }) => this.commercial.listOrders(params);
     listProposals = (params?: { status?: string, search?: string, limit?: number }) => this.commercial.listProposals(params);
     listContracts = (search?: string) => this.commercial.listContracts(search);
+    validateInvoice = (invoiceId: string, userKey?: string) => this.commercial.validateInvoice(invoiceId, userKey);
+    validateOrder = (orderId: string, userKey?: string) => this.commercial.validateOrder(orderId, userKey);
+    validateProposal = (proposalId: string, userKey?: string) => this.commercial.validateProposal(proposalId, userKey);
 
     // === Payments ===
     addPayment = (invoiceId: string, data: AddPaymentModel, userKey?: string) => this.payments.addPayment(invoiceId, data, userKey);
