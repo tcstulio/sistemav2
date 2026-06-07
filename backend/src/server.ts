@@ -207,6 +207,9 @@ app.use('/api/dashboard', dashboardRoutes);
 import taskRoutes from './routes/taskRoutes';
 app.use('/api/tasks', taskRoutes);
 
+import notificationRoutes from './routes/notificationRoutes';
+app.use('/api/notifications', notificationRoutes);
+
 app.use('/api/github', githubRoutes);
 
 // Health Check
