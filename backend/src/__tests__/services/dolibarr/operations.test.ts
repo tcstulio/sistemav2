@@ -285,4 +285,61 @@ describe('DolibarrOperationsService', () => {
             expect(result).toEqual([]);
         });
     });
+
+    describe('listUserTasks (#116 / auditoria)', () => {
+        // A API REST do Dolibarr NÃO expõe /users/{id}/tasks. A correção usa o custom_sync.php:
+        // type=tasks (fk_user_assign = projet_task.fk_user_valid) + type=task_contacts
+        // (atribuições via element_contact). Resposta: { data: [...], pagination: {...} }.
+        const tasks = [
+            { id: 1, ref: 'T1', label: 'Tarefa A', progress: 10, fk_user_assign: '7' },
+            { id: 2, ref: 'T2', label: 'Tarefa B', progress: 50, fk_user_assign: '9' },
+            { id: 3, ref: 'T3', label: 'Tarefa C', progress: 0, fk_user_assign: '7' },
+        ];
+        // Atribuições por contato: tarefa 2 também é do usuário 7; tarefa 1 também é do usuário 9.
+        const taskContacts = [
+            { id: 10, task_id: 2, user_id: '7' },
+            { id: 11, task_id: 1, user_id: '9' },
+        ];
+        const mockSync = () =>
+            mockAxios.get.mockImplementation((_url: string, opts: any) => {
+                const type = opts?.params?.type;
+                const data = type === 'tasks' ? tasks : type === 'task_contacts' ? taskContacts : [];
+                return Promise.resolve({ status: 200, data: { data, pagination: {} } });
+            });
+
+        it('não chama o endpoint inexistente users/{id}/tasks (usa custom_sync.php)', async () => {
+            mockSync();
+            await service.listUserTasks('7');
+            const urls = mockAxios.get.mock.calls.map((c) => c[0] as string);
+            expect(urls.every((u) => !/users\/\d+\/tasks/.test(u))).toBe(true);
+            expect(urls.some((u) => u.includes('custom_sync.php'))).toBe(true);
+        });
+
+        it('consulta custom_sync nas fontes tasks e task_contacts', async () => {
+            mockSync();
+            await service.listUserTasks('7');
+            const types = mockAxios.get.mock.calls.map((c) => c[1]?.params?.type);
+            expect(types).toContain('tasks');
+            expect(types).toContain('task_contacts');
+        });
+
+        it('inclui tarefas por responsável (fk_user_assign) E por atribuição de contato', async () => {
+            mockSync();
+            const result = await service.listUserTasks('7');
+            // T1, T3 (fk_user_assign=7) + T2 (atribuída ao 7 via task_contacts)
+            expect(result.map((t: any) => t.ref).sort()).toEqual(['T1', 'T2', 'T3']);
+        });
+
+        it('não inclui tarefas de outro usuário', async () => {
+            mockSync();
+            const result = await service.listUserTasks('9');
+            // T2 (fk_user_assign=9) + T1 (atribuída ao 9 via task_contacts)
+            expect(result.map((t: any) => t.ref).sort()).toEqual(['T1', 'T2']);
+        });
+
+        it('retorna [] em caso de erro', async () => {
+            mockAxios.get.mockRejectedValue(new Error('fail'));
+            expect(await service.listUserTasks('7')).toEqual([]);
+        });
+    });
 });

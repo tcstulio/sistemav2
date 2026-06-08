@@ -90,18 +90,33 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
         }
     }
 
+    // custom_sync.php responde { data: [...], pagination }; tolera array direto por segurança.
+    private extractSyncRows(res: any): any[] {
+        const payload = res?.data;
+        if (Array.isArray(payload?.data)) return payload.data;
+        return Array.isArray(payload) ? payload : [];
+    }
+
     async listUserTasks(userId: string): Promise<any[]> {
         try {
-            const headers = this.getHeaders();
-            // Endpoint nativo do Dolibarr: tarefas atribuídas a um usuário.
-            const url = `${this.baseUrl}users/${userId}/tasks`;
-            const response = await axios.get(url, {
-                headers,
-                params: { limit: 25 },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-            return Array.isArray(response.data) ? response.data : [];
+            const uid = String(userId);
+            // A API REST padrão do Dolibarr NÃO expõe "tarefas de um usuário" (só /tasks,
+            // /tasks/{id}/roles, /projects/{id}/tasks; users/{id}/tasks não existe → 404).
+            // Usamos o custom_sync.php em duas fontes:
+            //  - type=tasks: projeta projet_task.fk_user_valid como fk_user_assign (responsável);
+            //  - type=task_contacts: atribuições via element_contact (task_id + user_id).
+            const [tasksRes, contactsRes] = await Promise.all([
+                this.proxyCustomSync({ type: 'tasks', last_modified: 0, limit: 5000 }, this.getHeaders()),
+                this.proxyCustomSync({ type: 'task_contacts', last_modified: 0, limit: 5000 }, this.getHeaders()),
+            ]);
+            const tasks = this.extractSyncRows(tasksRes);
+            const assignedTaskIds = new Set(
+                this.extractSyncRows(contactsRes)
+                    .filter((c) => String(c.user_id) === uid)
+                    .map((c) => String(c.task_id))
+            );
+            // Entra se a pessoa é o responsável (fk_user_assign) OU está atribuída via contato.
+            return tasks.filter((t) => String(t.fk_user_assign) === uid || assignedTaskIds.has(String(t.id)));
         } catch (error: any) {
             log.error(`listUserTasks Error for ${userId}`, error?.message || error);
             return [];
