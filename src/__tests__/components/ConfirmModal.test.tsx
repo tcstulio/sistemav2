@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 
+// O Modal usa createPortal (renderiza em document.body), então inspecionamos `baseElement`
+// (= document.body, inclui o portal) em vez de `container` (subárvore do render, agora vazia).
 describe('ConfirmModal', () => {
     const defaultProps = {
         isOpen: true,
@@ -15,8 +17,8 @@ describe('ConfirmModal', () => {
     });
 
     it('renders when isOpen is true', () => {
-        const { container } = render(<ConfirmModal {...defaultProps} />);
-        expect(container.querySelector('button')).toBeTruthy();
+        const { baseElement } = render(<ConfirmModal {...defaultProps} />);
+        expect(baseElement.querySelector('button')).toBeTruthy();
     });
 
     it('does not render when isOpen is false', () => {
@@ -25,38 +27,38 @@ describe('ConfirmModal', () => {
     });
 
     it('renders with custom title', () => {
-        const { container } = render(<ConfirmModal {...defaultProps} title="Delete Item" />);
-        expect(container.textContent).toContain('Delete Item');
+        const { baseElement } = render(<ConfirmModal {...defaultProps} title="Delete Item" />);
+        expect(baseElement.textContent).toContain('Delete Item');
     });
 
     it('renders default title when not provided', () => {
-        const { container } = render(<ConfirmModal {...defaultProps} />);
-        expect(container.textContent).toContain('Confirmar');
+        const { baseElement } = render(<ConfirmModal {...defaultProps} />);
+        expect(baseElement.textContent).toContain('Confirmar');
     });
 
     it('renders two buttons', () => {
-        const { container } = render(<ConfirmModal {...defaultProps} />);
-        const buttons = container.querySelectorAll('button');
+        const { baseElement } = render(<ConfirmModal {...defaultProps} />);
+        const buttons = baseElement.querySelectorAll('button');
         expect(buttons.length).toBe(2);
     });
 
     it('renders message text', () => {
-        const { container } = render(<ConfirmModal {...defaultProps} />);
-        expect(container.textContent).toContain('Are you sure?');
+        const { baseElement } = render(<ConfirmModal {...defaultProps} />);
+        expect(baseElement.textContent).toContain('Are you sure?');
     });
 
     it('renders with danger variant by default', () => {
-        const { container } = render(<ConfirmModal {...defaultProps} />);
-        expect(container.querySelector('[class*="red"]')).toBeTruthy();
+        const { baseElement } = render(<ConfirmModal {...defaultProps} />);
+        expect(baseElement.querySelector('[class*="red"]')).toBeTruthy();
     });
 
     it('renders with warning variant', () => {
-        const { container } = render(<ConfirmModal {...defaultProps} variant="warning" />);
-        expect(container.querySelector('[class*="amber"]')).toBeTruthy();
+        const { baseElement } = render(<ConfirmModal {...defaultProps} variant="warning" />);
+        expect(baseElement.querySelector('[class*="amber"]')).toBeTruthy();
     });
 
     it('renders with info variant', () => {
-        const { container } = render(<ConfirmModal {...defaultProps} variant="info" />);
-        expect(container.querySelector('[class*="blue"]')).toBeTruthy();
+        const { baseElement } = render(<ConfirmModal {...defaultProps} variant="info" />);
+        expect(baseElement.querySelector('[class*="blue"]')).toBeTruthy();
     });
 });

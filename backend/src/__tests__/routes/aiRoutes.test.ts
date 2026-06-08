@@ -5,7 +5,7 @@ import express from 'express';
 const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
 
 const mockAiService = vi.hoisted(() => ({
-    generateReply: vi.fn(() => 'Generated reply text'),
+    generateReply: vi.fn(() => ({ text: 'Generated reply text' })),
     analyzeSystem: vi.fn(() => 'System analysis result'),
     analyzeSentiment: vi.fn(() => ({ score: 0.8, label: 'positive' })),
     extractCustomerInfo: vi.fn(() => ({ name: 'John', email: 'john@test.com' })),
