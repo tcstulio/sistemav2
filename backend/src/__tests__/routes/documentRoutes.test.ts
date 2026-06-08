@@ -19,6 +19,26 @@ vi.mock('../../services/documentService', () => ({
     documentService: mockDocumentService,
 }));
 
+vi.mock('../../services/dolibarrService', () => ({
+    dolibarrService: {},
+}));
+
+vi.mock('../../services/interApiService', () => ({
+    interApiService: {},
+}));
+
+vi.mock('../../services/itauApiService', () => ({
+    itauApiService: {},
+}));
+
+vi.mock('../../services/legacy/messageService', () => ({
+    messageService: {},
+}));
+
+vi.mock('../../services/approvalService', () => ({
+    approvalService: {},
+}));
+
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({
         debug: vi.fn(),

@@ -114,7 +114,9 @@ class AgentConfigService {
                     };
                 }
             } catch (e: any) {
-                log.warn('Failed to parse agent config, using defaults', e.message);
+                const rawConfig = user.array_options?.options_dados_conta;
+                const preview = typeof rawConfig === 'string' ? rawConfig.substring(0, 80) : JSON.stringify(rawConfig)?.substring(0, 80);
+                log.warn(`Failed to parse agent config, using defaults: ${e.message} (raw: ${preview})`);
             }
 
             this.profile = {

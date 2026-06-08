@@ -29,6 +29,7 @@ vi.mock('../../services/approvalService', () => ({
 vi.mock('../../services/dolibarrService', () => ({
     dolibarrService: {
         proxyRequest: vi.fn(),
+        getDocumentPDF: vi.fn(),
     },
 }));
 
@@ -64,21 +65,19 @@ describe('DocumentService', () => {
 
     describe('getInvoicePDF', () => {
         it('gets invoice PDF from Dolibarr', async () => {
-            (dolibarrService.proxyRequest as any).mockResolvedValue({
-                data: { content: Buffer.from('invoice-pdf').toString('base64') },
-            });
+            (dolibarrService.getDocumentPDF as any).mockResolvedValue(Buffer.from('invoice-pdf'));
 
             const result = await documentService.getInvoicePDF('INV001');
             expect(result.toString()).toBe('invoice-pdf');
         });
 
         it('throws when document not found', async () => {
-            (dolibarrService.proxyRequest as any).mockResolvedValue({ data: null });
+            (dolibarrService.getDocumentPDF as any).mockRejectedValue(new Error('Documento não encontrado'));
             await expect(documentService.getInvoicePDF('INV999')).rejects.toThrow('Documento não encontrado');
         });
 
         it('throws on proxy error', async () => {
-            (dolibarrService.proxyRequest as any).mockRejectedValue(new Error('Proxy failed'));
+            (dolibarrService.getDocumentPDF as any).mockRejectedValue(new Error('Proxy failed'));
             await expect(documentService.getInvoicePDF('INV001')).rejects.toThrow('Falha ao obter PDF');
         });
     });
@@ -172,9 +171,7 @@ describe('DocumentService', () => {
         });
 
         it('sends invoice document', async () => {
-            (dolibarrService.proxyRequest as any).mockResolvedValue({
-                data: { content: Buffer.from('inv-pdf').toString('base64') },
-            });
+            (dolibarrService.getDocumentPDF as any).mockResolvedValue(Buffer.from('inv-pdf'));
             (messageService.sendFile as any).mockResolvedValue({ id: 'msg2' } as any);
 
             const result = await documentService.executeDocumentSend({
