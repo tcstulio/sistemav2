@@ -49,10 +49,21 @@ vi.mock('../../utils/logger', () => ({
     },
 }));
 
+vi.mock('../../services/dolibarrService', () => ({
+    dolibarrService: {},
+}));
+
 vi.mock('../../services/agentTools', () => ({
     setToolCallListener: vi.fn(),
     TOOLS_PROMPT: '',
     executeTool: vi.fn(),
+}));
+
+vi.mock('../../services/agentActivityService', () => ({
+    agentActivityService: {
+        logActivity: vi.fn(),
+        getActivities: vi.fn(() => []),
+    },
 }));
 
 vi.mock('../../services/chatSessionService', () => ({

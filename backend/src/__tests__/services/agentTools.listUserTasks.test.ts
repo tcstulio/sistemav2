@@ -35,7 +35,7 @@ describe('agentTools — list_user_tasks (#116)', () => {
     it('lida graciosamente com lista vazia', async () => {
         (dolibarrService.listUserTasks as any).mockResolvedValue([]);
         const out = await executeTool('list_user_tasks', { userId: '99' });
-        expect(out).toContain('[]');
+        expect(out).toContain('Nenhuma tarefa');
     });
 
     it('está documentada no TOOLS_PROMPT', () => {
