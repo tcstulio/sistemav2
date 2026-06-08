@@ -1,16 +1,11 @@
 import axios from 'axios';
 import { safeStorage } from '../utils/safeStorage';
 import { logger } from '../utils/logger';
+import { OrderVisibilityPrefs } from '../utils/orderVisibility';
 import { ScreenPermissions } from '../utils/screenPermissions';
 import { CustomPage } from '../config/customPages';
 
 const log = logger.child('UiConfigService');
-
-// Preferência de ordem + visibilidade (menu #110 e dashboard #111).
-export interface OrderVisibilityPrefs {
-    hidden: string[];
-    order: string[];
-}
 
 // Config de UI da ORGANIZAÇÃO (branding/tema/menu/dashboard/permissões), definida pelo admin no backend.
 export interface UiConfig {

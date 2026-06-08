@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Card, Button } from '../ui';
-import { Menu, Eye, EyeOff, ChevronUp, ChevronDown, RotateCcw, Save } from 'lucide-react';
+import { Menu, Eye, EyeOff, ChevronUp, ChevronDown, RotateCcw, Save, Pencil, GripVertical } from 'lucide-react';
 import { MENU_REGISTRY, MENU_REGISTRY_ITEMS, MenuRegistryItem } from '../../config/menuRegistry';
 import {
     applyOrderVisibility,
@@ -29,19 +29,25 @@ const MENU_PREFS_KEY = 'coolgroove_menu_prefs';
 
 interface EditorState {
     hidden: Set<string>;
-    /** order por grupo (índice do grupo no MENU_REGISTRY -> ids em ordem) */
     orderByGroup: string[][];
+    groupOrder: string[];
+    groupTitles: Record<string, string>;
+    hiddenGroups: Set<string>;
 }
 
 /** Constrói o estado inicial do editor a partir de prefs salvas (org ou usuário). */
 function buildState(prefs?: Partial<OrderVisibilityPrefs> | null): EditorState {
     const hidden = new Set<string>(prefs?.hidden || []);
+    const hiddenGroups = new Set<string>(prefs?.hiddenGroups || []);
+    const groupTitles: Record<string, string> = { ...(prefs?.groupTitles || {}) };
     const orderByGroup = MENU_REGISTRY.map(group =>
-        // ordena os itens do grupo conforme as prefs; não oculta aqui (queremos mostrar todos no editor)
         applyOrderVisibility(group.items, i => i.id, null, { order: prefs?.order || [], hidden: [] })
             .map(i => i.id)
     );
-    return { hidden, orderByGroup };
+    const groupOrder = (prefs?.groupOrder && prefs.groupOrder.length > 0)
+        ? prefs.groupOrder
+        : MENU_REGISTRY.map(g => g.id);
+    return { hidden, orderByGroup, groupOrder, groupTitles, hiddenGroups };
 }
 
 /** Achata o estado do editor em OrderVisibilityPrefs para persistir. */
@@ -49,6 +55,9 @@ function flattenState(state: EditorState): OrderVisibilityPrefs {
     return {
         hidden: Array.from(state.hidden),
         order: state.orderByGroup.flat(),
+        groupOrder: state.groupOrder,
+        groupTitles: state.groupTitles,
+        hiddenGroups: Array.from(state.hiddenGroups),
     };
 }
 
@@ -62,9 +71,16 @@ interface EditableMenuListProps {
 }
 
 const EditableMenuList: React.FC<EditableMenuListProps> = ({ state, onChange }) => {
+    const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
     const itemsById = useMemo(() => {
         const map = new Map<string, MenuRegistryItem>();
         MENU_REGISTRY_ITEMS.forEach(i => map.set(i.id, i));
+        return map;
+    }, []);
+
+    const groupById = useMemo(() => {
+        const map = new Map<string, typeof MENU_REGISTRY[number]>();
+        MENU_REGISTRY.forEach(g => map.set(g.id, g));
         return map;
     }, []);
 
@@ -84,65 +100,102 @@ const EditableMenuList: React.FC<EditableMenuListProps> = ({ state, onChange }) 
         onChange({ ...state, orderByGroup });
     };
 
+    const toggleGroupHidden = (groupId: string) => {
+        const hiddenGroups = new Set(state.hiddenGroups);
+        if (hiddenGroups.has(groupId)) hiddenGroups.delete(groupId); else hiddenGroups.add(groupId);
+        onChange({ ...state, hiddenGroups });
+    };
+
+    const moveGroup = (groupPosIdx: number, dir: -1 | 1) => {
+        const target = groupPosIdx + dir;
+        if (target < 0 || target >= state.groupOrder.length) return;
+        const next = [...state.groupOrder];
+        [next[groupPosIdx], next[target]] = [next[target], next[groupPosIdx]];
+        onChange({ ...state, groupOrder: next });
+    };
+
+    const renameGroup = (groupId: string, newTitle: string) => {
+        const groupTitles = { ...state.groupTitles };
+        if (newTitle.trim()) {
+            groupTitles[groupId] = newTitle.trim();
+        } else {
+            delete groupTitles[groupId];
+        }
+        onChange({ ...state, groupTitles });
+    };
+
+    const orderedGroupIds = state.groupOrder;
+    const groupIdxMap = new Map(MENU_REGISTRY.map((g, i) => [g.id, i]));
+
     return (
         <div className="space-y-4">
-            {MENU_REGISTRY.map((group, groupIdx) => (
-                <div key={group.title || `grp-${groupIdx}`}>
-                    {group.title && (
-                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">
-                            {group.title}
-                        </h4>
-                    )}
-                    <ul className="space-y-1">
-                        {state.orderByGroup[groupIdx].map((id, itemIdx) => {
-                            const item = itemsById.get(id);
-                            if (!item) return null;
-                            const isHidden = state.hidden.has(id);
-                            return (
-                                <li
-                                    key={id}
-                                    className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-sm
-                                        ${isHidden
+            {orderedGroupIds.map((groupId, groupPosIdx) => {
+                const registryGroup = groupById.get(groupId);
+                if (!registryGroup) return null;
+                const groupIdx = groupIdxMap.get(groupId);
+                if (groupIdx === undefined) return null;
+                const isHidden = state.hiddenGroups.has(groupId);
+                const displayTitle = state.groupTitles[groupId] || registryGroup.title || 'Geral';
+                const isRenaming = (renamingGroup === groupId);
+
+                return (
+                    <div key={groupId} className={`rounded-lg border p-3 ${isHidden ? 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900'}`}>
+                        <div className="flex items-center gap-2 mb-2">
+                            <button type="button" title={isHidden ? 'Mostrar grupo' : 'Ocultar grupo'} onClick={() => toggleGroupHidden(groupId)} className="text-slate-400 hover:text-indigo-600 transition-colors">
+                                {isHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                            </button>
+                            <button type="button" title="Mover grupo para cima" disabled={groupPosIdx === 0} onClick={() => moveGroup(groupPosIdx, -1)} className="text-slate-400 hover:text-indigo-600 disabled:opacity-30 transition-colors">
+                                <ChevronUp size={14} />
+                            </button>
+                            <button type="button" title="Mover grupo para baixo" disabled={groupPosIdx === orderedGroupIds.length - 1} onClick={() => moveGroup(groupPosIdx, 1)} className="text-slate-400 hover:text-indigo-600 disabled:opacity-30 transition-colors">
+                                <ChevronDown size={14} />
+                            </button>
+                            {isRenaming ? (
+                                <input
+                                    autoFocus
+                                    className="flex-1 text-xs font-bold uppercase tracking-wider bg-transparent border-b border-indigo-400 outline-none text-slate-700 dark:text-slate-200"
+                                    value={displayTitle}
+                                    onChange={e => renameGroup(groupId, e.target.value)}
+                                    onBlur={() => setRenamingGroup(null)}
+                                    onKeyDown={e => { if (e.key === 'Enter') setRenamingGroup(null); }}
+                                />
+                            ) : (
+                                <h4 className={`text-xs font-bold uppercase tracking-wider flex-1 ${isHidden ? 'line-through text-slate-400' : 'text-slate-500'}`} onDoubleClick={() => setRenamingGroup(groupId)}>
+                                    {displayTitle}
+                                </h4>
+                            )}
+                            <button type="button" title="Renomear grupo" onClick={() => setRenamingGroup(isRenaming ? null : groupId)} className="text-slate-400 hover:text-indigo-600 transition-colors">
+                                <Pencil size={12} />
+                            </button>
+                        </div>
+                        <ul className="space-y-1">
+                            {state.orderByGroup[groupIdx].map((id, itemIdx) => {
+                                const item = itemsById.get(id);
+                                if (!item) return null;
+                                const itemHidden = state.hidden.has(id);
+                                return (
+                                    <li key={id} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-sm
+                                        ${itemHidden
                                             ? 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-slate-400'
                                             : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200'
-                                        }`}
-                                >
-                                    <button
-                                        type="button"
-                                        title={isHidden ? 'Mostrar item' : 'Ocultar item'}
-                                        aria-label={isHidden ? 'Mostrar item' : 'Ocultar item'}
-                                        onClick={() => toggleHidden(id)}
-                                        className="text-slate-400 hover:text-indigo-600 transition-colors"
-                                    >
-                                        {isHidden ? <EyeOff size={16} /> : <Eye size={16} />}
-                                    </button>
-                                    <span className={`flex-1 truncate ${isHidden ? 'line-through' : ''}`}>{item.label}</span>
-                                    <button
-                                        type="button"
-                                        title="Mover para cima"
-                                        aria-label="Mover para cima"
-                                        disabled={itemIdx === 0}
-                                        onClick={() => move(groupIdx, itemIdx, -1)}
-                                        className="text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:text-slate-400 transition-colors"
-                                    >
-                                        <ChevronUp size={16} />
-                                    </button>
-                                    <button
-                                        type="button"
-                                        title="Mover para baixo"
-                                        aria-label="Mover para baixo"
-                                        disabled={itemIdx === state.orderByGroup[groupIdx].length - 1}
-                                        onClick={() => move(groupIdx, itemIdx, 1)}
-                                        className="text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:text-slate-400 transition-colors"
-                                    >
-                                        <ChevronDown size={16} />
-                                    </button>
-                                </li>
-                            );
-                        })}
-                    </ul>
-                </div>
-            ))}
+                                        }`}>
+                                        <button type="button" title={itemHidden ? 'Mostrar item' : 'Ocultar item'} onClick={() => toggleHidden(id)} className="text-slate-400 hover:text-indigo-600 transition-colors">
+                                            {itemHidden ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                        <span className={`flex-1 truncate ${itemHidden ? 'line-through' : ''}`}>{item.label}</span>
+                                        <button type="button" title="Mover para cima" disabled={itemIdx === 0} onClick={() => move(groupIdx, itemIdx, -1)} className="text-slate-400 hover:text-indigo-600 disabled:opacity-30 transition-colors">
+                                            <ChevronUp size={16} />
+                                        </button>
+                                        <button type="button" title="Mover para baixo" disabled={itemIdx === state.orderByGroup[groupIdx].length - 1} onClick={() => move(groupIdx, itemIdx, 1)} className="text-slate-400 hover:text-indigo-600 disabled:opacity-30 transition-colors">
+                                            <ChevronDown size={16} />
+                                        </button>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    </div>
+                );
+            })}
         </div>
     );
 };
@@ -163,9 +216,9 @@ export const MenuConfigEditor: React.FC<MenuConfigEditorProps> = ({ isAdmin }) =
         toast.success('Menu personalizado');
     };
     const handleResetUser = () => {
-        const cleared: EditorState = { hidden: new Set(), orderByGroup: buildState(null).orderByGroup };
+        const cleared: EditorState = { hidden: new Set(), orderByGroup: buildState(null).orderByGroup, groupOrder: MENU_REGISTRY.map(g => g.id), groupTitles: {}, hiddenGroups: new Set() };
         setUserState(cleared);
-        setUserPrefs(MENU_PREFS_KEY, { hidden: [], order: [] });
+        setUserPrefs(MENU_PREFS_KEY, { hidden: [], order: [], groupOrder: [], groupTitles: {}, hiddenGroups: [] });
         window.dispatchEvent(new Event('menu-prefs-changed'));
         toast.success('Menu restaurado ao padrão');
     };

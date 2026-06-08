@@ -28,6 +28,7 @@ interface MenuItem {
 }
 
 interface MenuGroup {
+    id: string;
     title?: string;
     items: MenuItem[];
 }
@@ -106,6 +107,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
     // Menu Configuration — montado a partir do registry (fonte única) + mapa de ícones (#110).
     const menuGroups: MenuGroup[] = useMemo(() =>
         MENU_REGISTRY.map(group => ({
+            id: group.id,
             title: group.title,
             items: group.items.map(item => ({
                 id: item.id,
@@ -164,31 +166,49 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
     // Filter Logic
     const visibleMenuGroups = useMemo(() => {
         const orgMenuPrefs = branding?.menu;
-        return menuGroups.map(group => {
-            // 1) Filtro de PERMISSÃO (RBAC + módulos + admin override) — INTACTO.
+        const userGroupOrder = userMenuPrefs.groupOrder && userMenuPrefs.groupOrder.length > 0 ? userMenuPrefs.groupOrder : [];
+        const orgGroupOrder = orgMenuPrefs?.groupOrder && orgMenuPrefs.groupOrder.length > 0 ? orgMenuPrefs.groupOrder : [];
+        const groupOrder = userGroupOrder.length > 0 ? userGroupOrder : orgGroupOrder;
+
+        const userGroupTitles = userMenuPrefs.groupTitles && Object.keys(userMenuPrefs.groupTitles).length > 0 ? userMenuPrefs.groupTitles : {};
+        const orgGroupTitles = orgMenuPrefs?.groupTitles && Object.keys(orgMenuPrefs.groupTitles).length > 0 ? orgMenuPrefs.groupTitles : {};
+        const groupTitles = { ...orgGroupTitles, ...userGroupTitles };
+
+        const hiddenGroups = new Set<string>([
+            ...(orgMenuPrefs?.hiddenGroups || []),
+            ...(userMenuPrefs.hiddenGroups || []),
+        ]);
+
+        let ordered = menuGroups;
+        if (groupOrder.length > 0) {
+            const rank = new Map<string, number>();
+            groupOrder.forEach((id: string, idx: number) => rank.set(id, idx));
+            ordered = [...menuGroups].sort((a, b) => {
+                const ra = rank.has(a.id) ? rank.get(a.id)! : Number.MAX_SAFE_INTEGER;
+                const rb = rank.has(b.id) ? rank.get(b.id)! : Number.MAX_SAFE_INTEGER;
+                return ra - rb;
+            });
+        }
+
+        return ordered.map(group => {
+            if (hiddenGroups.has(group.id)) return null;
+
             const filteredItems = group.items.filter(item => {
                 const isModuleActive = checkModuleAccess(item.id);
                 const hasPermission = canAccess ? canAccess(item.id) : true;
-
-                // Admin Override: Admins see everything
                 const isAdmin = config?.currentUser?.admin === 1 || config?.currentUser?.admin === '1' || config?.currentUser?.admin === true;
-
-                if (isAdmin) {
-                    return true;
-                }
-
+                if (isAdmin) return true;
                 return isModuleActive && hasPermission;
             });
 
-            // 2) Por CIMA do filtro: ordem/visibilidade (admin define padrão da org + override do usuário).
-            //    Estético apenas — nunca expõe item que o RBAC já escondeu (aplicado sobre filteredItems).
             const orderedItems = applyOrderVisibility(filteredItems, i => i.id, orgMenuPrefs, userMenuPrefs);
 
             return {
                 ...group,
+                title: groupTitles[group.id] || group.title,
                 items: orderedItems
             };
-        }).filter(group => group.items.length > 0);
+        }).filter((g): g is NonNullable<typeof g> => g !== null && g.items.length > 0);
     }, [config, modules, canAccess, branding, userMenuPrefs, menuGroups]);
 
     // Auto-expand group if it contains the active route
@@ -227,18 +247,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
             {/* Scrollable Navigation */}
             <nav className="flex-1 overflow-y-auto p-4 space-y-1 custom-scrollbar">
                 {visibleMenuGroups.map((group, groupIdx) => {
-                    const hasTitle = !!group.title;
-                    const isCollapsed = hasTitle && collapsedGroups[group.title!] && !groupHasActiveItem(group);
+                    const title = group.title || '';
+                    const hasTitle = !!title;
+                    const isCollapsed = hasTitle && collapsedGroups[title] && !groupHasActiveItem(group);
 
                     return (
-                        <div key={groupIdx}>
+                        <div key={group.id}>
                             {hasTitle ? (
                                 <button
-                                    onClick={() => toggleGroup(group.title!)}
+                                    onClick={() => toggleGroup(title)}
                                     className="w-full flex items-center justify-between px-3 py-2 mt-3 mb-1 rounded-md hover:bg-slate-800/50 transition-colors group"
                                 >
                                     <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider group-hover:text-slate-400 transition-colors">
-                                        {group.title}
+                                        {title}
                                     </h3>
                                     {isCollapsed
                                         ? <ChevronRight size={14} className="text-slate-600 group-hover:text-slate-400 transition-colors" />
