@@ -106,11 +106,11 @@ export const DashboardConfigEditor: React.FC<DashboardConfigEditorProps> = ({ is
     useEffect(() => {
         if (!isAdmin) return;
         if (orgBranding?.dashboard) {
-            setOrgPrefs({ hidden: orgBranding.dashboard.hidden || [], order: orgBranding.dashboard.order || [] });
+            setOrgPrefs({ hidden: orgBranding.dashboard.hidden || [], order: orgBranding.dashboard.order || [], groupOrder: [], groupTitles: {}, hiddenGroups: [] });
             return;
         }
         getUiConfig().then((c) => {
-            if (c?.dashboard) setOrgPrefs({ hidden: c.dashboard.hidden || [], order: c.dashboard.order || [] });
+            if (c?.dashboard) setOrgPrefs({ hidden: c.dashboard.hidden || [], order: c.dashboard.order || [], groupOrder: [], groupTitles: {}, hiddenGroups: [] });
         });
     }, [isAdmin, orgBranding]);
 

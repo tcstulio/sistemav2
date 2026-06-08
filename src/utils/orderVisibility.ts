@@ -6,9 +6,12 @@ import { safeStorage } from './safeStorage';
 export interface OrderVisibilityPrefs {
     hidden: string[];
     order: string[];
+    groupOrder: string[];
+    groupTitles: Record<string, string>;
+    hiddenGroups: string[];
 }
 
-export const EMPTY_PREFS: OrderVisibilityPrefs = { hidden: [], order: [] };
+export const EMPTY_PREFS: OrderVisibilityPrefs = { hidden: [], order: [], groupOrder: [], groupTitles: {}, hiddenGroups: [] };
 
 /** Lê o override pessoal do usuário (localStorage) para um namespace (ex.: 'coolgroove_menu_prefs'). */
 export function getUserPrefs(key: string): OrderVisibilityPrefs {
@@ -16,6 +19,9 @@ export function getUserPrefs(key: string): OrderVisibilityPrefs {
     return {
         hidden: Array.isArray(p.hidden) ? p.hidden : [],
         order: Array.isArray(p.order) ? p.order : [],
+        groupOrder: Array.isArray(p.groupOrder) ? p.groupOrder : [],
+        groupTitles: p.groupTitles && typeof p.groupTitles === 'object' ? p.groupTitles : {},
+        hiddenGroups: Array.isArray(p.hiddenGroups) ? p.hiddenGroups : [],
     };
 }
 

@@ -14,6 +14,8 @@ export interface MenuRegistryItem {
 }
 
 export interface MenuRegistryGroup {
+    /** id estável do grupo (usado por prefs de ordem/visibilidade/renomeio) */
+    id: string;
     /** título do grupo (ausente no grupo "raiz" sem cabeçalho) */
     title?: string;
     items: MenuRegistryItem[];
@@ -21,6 +23,7 @@ export interface MenuRegistryGroup {
 
 export const MENU_REGISTRY: MenuRegistryGroup[] = [
     {
+        id: 'root',
         items: [
             { id: 'dashboard', path: '/', label: 'Painel Principal' },
             { id: 'my-tasks', path: '/my-tasks', label: 'Minhas Tarefas' },
@@ -28,6 +31,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
         ],
     },
     {
+        id: 'agent',
         title: 'AGENTE IA',
         items: [
             { id: 'whatsapp', path: '/whatsapp', label: 'WhatsApp Omni' },
@@ -40,6 +44,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
         ],
     },
     {
+        id: 'sales',
         title: 'VENDAS & CRM',
         items: [
             { id: 'customers', path: '/customers', label: 'Clientes' },
@@ -52,6 +57,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
         ],
     },
     {
+        id: 'financial',
         title: 'FINANCEIRO',
         items: [
             { id: 'invoices', path: '/invoices', label: 'Faturas' },
@@ -60,6 +66,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
         ],
     },
     {
+        id: 'purchases',
         title: 'COMPRAS & DESPESAS',
         items: [
             { id: 'suppliers', path: '/suppliers', label: 'Fornecedores' },
@@ -71,6 +78,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
         ],
     },
     {
+        id: 'operations',
         title: 'GESTÃO & OPERACIONAL',
         items: [
             { id: 'projects', path: '/projects', label: 'Projetos' },
@@ -82,6 +90,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
         ],
     },
     {
+        id: 'inventory',
         title: 'ESTOQUE & PRODUTOS',
         items: [
             { id: 'products', path: '/products', label: 'Produtos' },
@@ -92,6 +101,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
         ],
     },
     {
+        id: 'system',
         title: 'SISTEMA',
         items: [
             { id: 'issues', path: '/issues', label: 'Issues & Tasks' },
