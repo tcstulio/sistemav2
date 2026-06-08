@@ -17,6 +17,10 @@ import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useWarehouses, useProducts } from '../hooks/dolibarr';
 import { logger } from '../utils/logger';
+import { mapWithConcurrency } from '../utils/mapWithConcurrency';
+
+// #125: nº máximo de consultas simultâneas de estoque ao Dolibarr (evita fan-out N+1).
+const STOCK_FETCH_CONCURRENCY = 6;
 
 import {
     PageHeader,
@@ -188,19 +192,18 @@ const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId
             setStockItems([]);
             try {
                 const candidates = products.filter(p => p.type === '0' && (p.stock_reel || 0) > 0);
-                const results = await Promise.all(
-                    candidates.map(async product => {
-                        try {
-                            const full: any = await DolibarrService.getProductWithStock(config, product.id);
-                            const warehouseStock = full?.stock_warehouse?.[warehouse.id];
-                            const qty = warehouseStock ? parseFloat(warehouseStock.real ?? warehouseStock.stock ?? '0') : 0;
-                            return qty > 0 ? { product, qty } : null;
-                        } catch (e) {
-                            log.warn(`Falha ao buscar estoque do produto ${product.id}`, e);
-                            return null;
-                        }
-                    })
-                );
+                // #125: limita a concorrência para não disparar centenas de chamadas simultâneas ao Dolibarr.
+                const results = await mapWithConcurrency(candidates, STOCK_FETCH_CONCURRENCY, async product => {
+                    try {
+                        const full: any = await DolibarrService.getProductWithStock(config, product.id);
+                        const warehouseStock = full?.stock_warehouse?.[warehouse.id];
+                        const qty = warehouseStock ? parseFloat(warehouseStock.real ?? warehouseStock.stock ?? '0') : 0;
+                        return qty > 0 ? { product, qty } : null;
+                    } catch (e) {
+                        log.warn(`Falha ao buscar estoque do produto ${product.id}`, e);
+                        return null;
+                    }
+                });
                 setStockItems(
                     results
                         .filter((r): r is WarehouseStockItem => r !== null)
