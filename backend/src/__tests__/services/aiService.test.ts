@@ -581,8 +581,8 @@ describe('AiService', () => {
             // de configService, que não resolve sob o vitest).
             const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
             const result = await provider.generateReply([{ role: 'user', parts: 'tarefas do marcus' } as any], 'ctx');
-            expect(result).toBe('Não encontrei usuários chamados marcus.');
-            expect(result).not.toContain('Max iterations');
+            expect(result.text).toBe('Não encontrei usuários chamados marcus.');
+            expect(result.text).not.toContain('Max iterations');
         });
     });
 });

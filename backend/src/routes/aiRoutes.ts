@@ -100,7 +100,7 @@ router.post('/generate-reply', async (req, res) => {
             });
         }
 
-        const reply = await aiService.generateReply(history as any || [], enrichedContext, image, module);
+        const result = await aiService.generateReply(history as any || [], enrichedContext, image, module);
 
         setToolCallListener(null);
 
@@ -116,15 +116,15 @@ router.post('/generate-reply', async (req, res) => {
                 }
                 chatSessionService.addMessage(sessionId, {
                     role: 'model',
-                    content: reply,
-                    metadata: { provider: 'auto', toolCalls: toolCalls.length > 0 ? toolCalls : undefined }
+                    content: result.text,
+                    metadata: { provider: 'auto', toolCalls: toolCalls.length > 0 ? toolCalls : undefined, usage: result.usage }
                 });
             } catch (sessionErr: any) {
                 log.warn('Failed to save chat session message', { error: sessionErr.message });
             }
         }
 
-        res.json({ reply, sessionId });
+        res.json({ reply: result.text, sessionId, usage: result.usage });
     } catch (error: any) {
         log.error('Generate Reply Error', { error: error.message, stack: error.stack });
 
@@ -319,13 +319,13 @@ ${text}
 
 ${question ? `Pergunta: ${question}` : 'Faça um resumo dos pontos principais do documento.'}`;
 
-        const reply = await aiService.generateReply(
+        const result = await aiService.generateReply(
             [{ role: 'user' as const, parts: prompt }],
             'Você é um assistente especializado em análise de documentos.',
             undefined,
             'chat'
         );
-        res.json({ result: reply });
+        res.json({ result: result.text });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });

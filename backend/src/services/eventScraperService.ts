@@ -205,7 +205,8 @@ class EventScraperService {
                     { role: 'user' as const, parts: prompt },
                 ];
 
-                const reply = await aiService.generateReply(history, '', undefined, 'centrovibe');
+                const replyResult = await aiService.generateReply(history, '', undefined, 'centrovibe');
+                const reply = replyResult.text;
 
                 // Parse JSON array from response
                 const jsonMatch = reply.match(/\[[\s\S]*?\]/);
