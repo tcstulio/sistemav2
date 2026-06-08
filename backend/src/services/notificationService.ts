@@ -49,6 +49,33 @@ const STORE_PATH = path.join(__dirname, '../../data/notifications.json');
 const MAX_NOTIFICATIONS = 1000;
 
 class NotificationService {
+
+    private static readonly ENTITY_ROUTE_MAP: Record<string, string> = {
+        invoice: 'invoices',
+        order: 'orders',
+        proposal: 'proposals',
+        ticket: 'tickets',
+        product: 'products',
+        task: 'my-tasks',
+        project: 'projects',
+        supplier_order: 'suppliers',
+        supplier_invoice: 'supplier_invoices',
+        expense_report: 'expense_report_payments',
+        contract: 'contracts',
+        shipment: 'shipments',
+        intervention: 'interventions',
+    };
+
+    private resolveLinkTo(params: { linkTo?: string; entityType?: string; entityId?: string }): string | undefined {
+        if (params.linkTo) return params.linkTo;
+        if (!params.entityType) return undefined;
+        const route = NotificationService.ENTITY_ROUTE_MAP[params.entityType];
+        if (!route) return undefined;
+        if (!params.entityId) return route;
+        const ids = params.entityId.split(',').map(s => s.trim()).filter(Boolean);
+        if (ids.length === 1) return `${route}/${ids[0]}`;
+        return route;
+    }
     private data: NotificationStore;
 
     constructor() {
@@ -112,7 +139,7 @@ class NotificationService {
             senderName: params.senderName,
             entityType: params.entityType,
             entityId: params.entityId,
-            linkTo: params.linkTo,
+            linkTo: this.resolveLinkTo(params),
             read: false,
             createdAt: Date.now(),
             deliveredTo: [],

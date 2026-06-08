@@ -113,7 +113,7 @@ class AlertCronService {
                 `${overdue.length} fatura(s) vencida(s) — Total: R$ ${total.toFixed(2)}`,
                 message || `${overdue.length} faturas vencidas. Total: R$ ${total.toFixed(2)}`,
                 'invoice',
-                overdue.map((inv: any) => inv.ref).join(','),
+                overdue.map((inv: any) => String(inv.id || inv.rowid)).join(','),
             );
 
             this.markAlerted(dedupKey);
@@ -155,7 +155,7 @@ class AlertCronService {
                 `${upcoming.length} fatura(s) vencendo em até 3 dias`,
                 message,
                 'invoice',
-                upcoming.map((inv: any) => inv.ref).join(','),
+                upcoming.map((inv: any) => String(inv.id || inv.rowid)).join(','),
             );
 
             this.markAlerted(dedupKey);
