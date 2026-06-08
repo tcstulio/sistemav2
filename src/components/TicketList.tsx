@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Ticket, ThirdParty, DolibarrUser, DolibarrConfig, AppView, AgendaEvent, Project } from '../types';
 import { Ticket as TicketIcon, AlertCircle, Clock, Calendar, CheckCircle2, User, ExternalLink, MessageSquare, Send, UserCircle, Sparkles, Loader2, List, Kanban, Plus, DollarSign, Users, Info, Phone, Bot, FileText, FolderKanban, ClipboardList, Wrench, Pencil } from 'lucide-react';
 import { useListControls } from '../hooks/useListControls';
+import { ticketSorts, TICKET_DATE_SORT_KEY } from './TicketList.sorts';
 import { AiService } from '../services/aiService';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -170,12 +171,8 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
     // específica de "atribuídos a mim" e do modo Kanban) e é aplicado sobre controls.result.
     const controls = useListControls(tickets, {
         searchText: (t) => `${t.ref} ${t.subject} ${t.origin_email || ''}`,
-        sorts: [
-            { key: 'date_c', label: 'Data', get: (t) => t.date_c || 0 },
-            { key: 'ref', label: 'Referência', get: (t) => t.ref },
-            { key: 'subject', label: 'Assunto', get: (t) => t.subject },
-        ],
-        initialSortKey: 'date_c',
+        sorts: ticketSorts,
+        initialSortKey: TICKET_DATE_SORT_KEY,
         initialSortDir: 'desc',
     });
 
@@ -202,7 +199,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
         messages.push({
             id: 'original',
             text: selectedTicket.message,
-            date: selectedTicket.date_c,
+            date: selectedTicket.datec,
             sender: 'customer',
             user: getCustomerName(selectedTicket),
             type: 'message'
@@ -388,7 +385,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
                             >
                                 {getCustomerName(t)}
                             </span>
-                            <span className="text-xs text-slate-500">{formatDateTime(t.date_c)}</span>
+                            <span className="text-xs text-slate-500">{formatDateTime(t.datec)}</span>
                         </div>
                     </Card>
                 ))}
