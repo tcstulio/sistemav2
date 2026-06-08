@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User, Trash2, History, Plus } from 'lucide-react';
+import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User, Trash2, History, Plus, Zap } from 'lucide-react';
 import { AiService, ChatMessage } from '../services/aiService';
 import { ThirdParty, Invoice, Project, Ticket } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -256,7 +256,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         safeStorage.setItem(VA_SESSION_ID_KEY, result.sessionId);
       }
       if (responseText) {
-        setMessages(prev => [...prev, { role: 'model', text: responseText }]);
+        setMessages(prev => [...prev, { role: 'model', text: responseText, usage: (result as any).usage }]);
       } else {
         setMessages(prev => [...prev, { role: 'model', text: "Não consegui gerar uma resposta." }]);
       }
@@ -338,6 +338,14 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
             <div className="flex items-center gap-2">
               <Sparkles size={18} className="text-yellow-300" />
               <h3 className="font-semibold text-sm">Assistente Virtual</h3>
+              {messages.length > 0 && (() => {
+                const total = messages.reduce((sum, m) => sum + (m.usage?.totalTokens || 0), 0);
+                return total > 0 ? (
+                  <span className="flex items-center gap-1 text-[10px] text-white/70 bg-white/10 px-1.5 py-0.5 rounded" title={`Sessão: ${total.toLocaleString()} tokens`}>
+                    <Zap size={10} /> {total.toLocaleString()}
+                  </span>
+                ) : null;
+              })()}
             </div>
             <div className="flex items-center gap-1">
               <button onClick={startNewSession} title="Nova conversa" className="hover:bg-white/20 p-1 rounded-full transition-colors">
@@ -393,6 +401,13 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-none'
                     }`}>
                     {msg.role === 'model' ? renderMessageContent(msg.text, navigate) : msg.text}
+                    {msg.role === 'model' && msg.usage && (
+                      <div className="flex items-center gap-2 mt-1 pt-1 border-t border-slate-100 dark:border-slate-700/50">
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500" title="Tokens enviados / recebidos / total">
+                          ↑{msg.usage.promptTokens?.toLocaleString()} ↓{msg.usage.completionTokens?.toLocaleString()} · {msg.usage.totalTokens?.toLocaleString()} tokens
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

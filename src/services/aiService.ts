@@ -27,6 +27,11 @@ export interface ChatMessage {
     role: 'user' | 'model' | 'system';
     text: string;
     isError?: boolean;
+    usage?: {
+        promptTokens: number;
+        completionTokens: number;
+        totalTokens: number;
+    };
 }
 
 export interface ChatSessionInfo {
@@ -279,7 +284,8 @@ export const AiService = {
 
             return {
                 reply: response.data.reply,
-                sessionId: response.data.sessionId
+                sessionId: response.data.sessionId,
+                usage: response.data.usage
             };
 
         } catch (error: any) {

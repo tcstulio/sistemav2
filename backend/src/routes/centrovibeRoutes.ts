@@ -244,9 +244,8 @@ Return ONLY the JSON object, no other text.`;
             { role: 'user' as const, parts: prompt }
         ];
 
-        const reply = await aiService.generateReply(history, '', undefined, 'centrovibe');
-
-        // Try to parse JSON from response
+        const replyRes = await aiService.generateReply(history, '', undefined, 'centrovibe');
+        const reply = replyRes.text;
         try {
             const jsonMatch = reply.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
@@ -285,8 +284,8 @@ router.post('/ai/advisor', async (req, res) => {
             { role: 'user' as const, parts: message }
         ];
 
-        const reply = await aiService.generateReply(history, '', undefined, 'centrovibe');
-        res.json({ reply });
+        const replyRes = await aiService.generateReply(history, '', undefined, 'centrovibe');
+        res.json({ reply: replyRes.text });
     } catch (error: any) {
         log.error('Advisor chat error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message });
@@ -310,7 +309,8 @@ Return ONLY the JSON, no other text.`;
             { role: 'user' as const, parts: prompt }
         ];
 
-        const reply = await aiService.generateReply(history, '', undefined, 'centrovibe');
+        const replyRes2 = await aiService.generateReply(history, '', undefined, 'centrovibe');
+        const reply = replyRes2.text;
 
         try {
             const jsonMatch = reply.match(/\{[\s\S]*\}/);

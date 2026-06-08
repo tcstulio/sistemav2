@@ -295,11 +295,12 @@ class BotService {
             }
 
             // Generate reply with retry on failure
-            let replyText = await retryWithBackoff(
+            let replyResult = await retryWithBackoff(
                 () => aiService.generateReply(history, context),
-                3, // max retries
-                1000 // base delay 1s
+                3,
+                1000
             );
+            let replyText = typeof replyResult === 'string' ? replyResult : replyResult.text;
 
             // Cleanup: Strip any hallucinated signatures in the response
             if (replyText) {
@@ -380,10 +381,11 @@ class BotService {
 
                     try {
                         await sessionService.sendTyping(sessionId, chatId);
-                        const summary = await retryWithBackoff(
+                        const summaryResult = await retryWithBackoff(
                             () => aiService.generateReply([], summaryContext),
                             2, 1000
                         );
+                        const summary = typeof summaryResult === 'string' ? summaryResult : summaryResult.text;
                         await messageService.sendText(sessionId, chatId, `📋 *Resumo da Conversa*\n\n${summary}`);
                     } catch (e) {
                         await messageService.sendText(sessionId, chatId, '❌ Erro ao gerar resumo. Tente novamente.');

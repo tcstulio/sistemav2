@@ -68,8 +68,19 @@ export interface ChatMessage {
     parts: string;
 }
 
+export interface TokenUsage {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+}
+
+export interface GenerateReplyResult {
+    text: string;
+    usage?: TokenUsage;
+}
+
 interface AIProvider {
-    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<string>;
+    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<GenerateReplyResult>;
     analyzeSystem(query: string, fileContext: string, options?: { provider?: string, model?: string }): Promise<string>;
     analyzeSentiment(text: string): Promise<{ score: number; label: string }>;
     extractCustomerInfo(text: string): Promise<any>;
@@ -106,7 +117,7 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<string> {
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<GenerateReplyResult> {
         if (!this.ai) {
             log.error('Google AI not configured.');
             throw new Error("Google AI not configured.");
@@ -118,6 +129,7 @@ class GoogleProvider implements AIProvider {
         let currentContext = context;
         let iterations = 0;
         const MAX_ITERATIONS = 5;
+        const accUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
         while (iterations < MAX_ITERATIONS) {
 
@@ -170,6 +182,13 @@ class GoogleProvider implements AIProvider {
 
             const textResponse = response.text || "";
 
+            const meta = (response as any).responseMetaData?.usageMetadata || (response as any).usageMetadata;
+            if (meta) {
+                accUsage.promptTokens += meta.promptTokenCount || 0;
+                accUsage.completionTokens += meta.candidatesTokenCount || meta.completionTokenCount || 0;
+                accUsage.totalTokens += meta.totalTokenCount || 0;
+            }
+
             const toolCall = extractToolCall(textResponse);
 
             if (toolCall) {
@@ -179,7 +198,7 @@ class GoogleProvider implements AIProvider {
                     const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
                     if (String(toolCall.tool).startsWith('prepare_')) {
-                        return toolResult;
+                        return { text: toolResult, usage: accUsage };
                     }
 
                     currentContext += `\n\n[DADOS OBTIDOS VIA ${toolCall.tool}]:\n${toolResult}\n`;
@@ -189,7 +208,7 @@ class GoogleProvider implements AIProvider {
 
                 } catch (e: any) {
                     if (e.name === 'AskUserInterrupt') {
-                        return e.question;
+                        return { text: e.question, usage: accUsage };
                     }
                     log.error("Tool execution failed", e);
                     currentContext += `\n\n[ERRO NA EXECUÇÃO]: ${e.message}\n`;
@@ -199,10 +218,10 @@ class GoogleProvider implements AIProvider {
             }
 
             // No tool call, return final response
-            return textResponse;
+            return { text: textResponse, usage: accUsage };
         }
 
-        return "Desculpe, não consegui obter todas as informações necessárias após várias tentativas.";
+        return { text: "Desculpe, não consegui obter todas as informações necessárias após várias tentativas.", usage: accUsage };
     }
 
     async draftCollectionEmail(customer: any, amount: number): Promise<string> {
@@ -785,19 +804,22 @@ export class LocalProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<string> {
-        // Reuse same tools prompt as Google Provider
-        // We need to implement the ReAct loop here too because standard OpenAI interface doesn't automate this
-        // unless we use the Function Calling API. But for generic Local LLM compatibility, prompting is safer.
-
-        // Conjunto completo de ferramentas, via registro unificado
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<GenerateReplyResult> {
         const toolsPrompt = TOOLS_PROMPT;
 
         let currentHistory = [...conversationHistory];
         let currentContext = context;
         let iterations = 0;
         const MAX_ITERATIONS = 5;
-        const seenToolCalls = new Set<string>(); // detecta repetição da MESMA chamada -> evita loop
+        const seenToolCalls = new Set<string>();
+        const accUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+        const accumulate = (usage: any) => {
+            if (!usage) return;
+            accUsage.promptTokens += usage.prompt_tokens || 0;
+            accUsage.completionTokens += usage.completion_tokens || 0;
+            accUsage.totalTokens += usage.total_tokens || 0;
+        };
 
         while (iterations < MAX_ITERATIONS) {
             const agentPrompt = agentConfigService.getSystemPrompt();
@@ -809,7 +831,6 @@ export class LocalProvider implements AIProvider {
                 }))
             ];
 
-            // Template fix
             while (messages.length > 1 && messages[1].role === 'assistant') {
                 messages.splice(1, 1);
             }
@@ -823,6 +844,8 @@ export class LocalProvider implements AIProvider {
                     headers: this.getHeaders(),
                     timeout: 120000
                 });
+
+                accumulate(response.data.usage);
 
                 const reply = response.data.choices[0].message.content;
 
@@ -839,7 +862,7 @@ export class LocalProvider implements AIProvider {
                         const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
                         if (String(toolCall.tool).startsWith('prepare_')) {
-                            return toolResult;
+                            return { text: toolResult, usage: accUsage };
                         }
 
                         currentContext += `\n\n[TOOL RESULT]: ${toolResult}`;
@@ -848,25 +871,23 @@ export class LocalProvider implements AIProvider {
 
                     } catch (e: any) {
                         if (e.name === 'AskUserInterrupt') {
-                            return e.question;
+                            return { text: e.question, usage: accUsage };
                         }
                         log.error("Local LLM Tool Error", e);
-                        return reply;
+                        return { text: reply, usage: accUsage };
                     }
                 }
 
-                return reply;
+                return { text: reply, usage: accUsage };
 
             } catch (error: any) {
                 const detail = error?.response
                     ? `HTTP ${error.response.status} ${JSON.stringify(error.response.data)?.slice(0, 300)}`
                     : (error?.code || error?.message || String(error));
                 log.error(`Local LLM Error [url=${this.baseUrl}/chat/completions model=${this.modelName}]: ${detail}`);
-                return `Erro LLM Local: ${detail}`;
+                return { text: `Erro LLM Local: ${detail}`, usage: accUsage };
             }
         }
-        // Esgotou as iterações (ou detectou repetição): em vez do dead-end "Max iterations reached",
-        // faz UMA resposta final SEM ferramentas, com base nos dados já coletados (em currentContext).
         try {
             const finalMessages = [
                 {
@@ -886,12 +907,13 @@ export class LocalProvider implements AIProvider {
                 messages: finalMessages,
                 temperature: 0.3,
             }, { headers: this.getHeaders(), timeout: 120000 });
+            accumulate(finalResp.data?.usage);
             const finalText = finalResp.data?.choices?.[0]?.message?.content;
-            if (finalText) return finalText;
+            if (finalText) return { text: finalText, usage: accUsage };
         } catch (e: any) {
             log.error('Local LLM final-answer fallback error', e?.message || e);
         }
-        return 'Não consegui completar a solicitação com as ferramentas disponíveis. Pode reformular ou dar mais detalhes (ex.: o projeto, cliente ou período)?';
+        return { text: 'Não consegui completar a solicitação com as ferramentas disponíveis. Pode reformular ou dar mais detalhes (ex.: o projeto, cliente ou período)?', usage: accUsage };
     }
 
     async analyzeSystem(query: string, fileContext: string): Promise<string> {

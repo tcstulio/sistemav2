@@ -243,7 +243,8 @@ Then implement the changes. Be thorough and follow existing code patterns.`;
             { role: 'user' as const, parts: planPrompt },
         ];
 
-        const reply = await aiService.generateReply(history, '', undefined, 'chat');
+        const result = await aiService.generateReply(history, '', undefined, 'chat');
+        const reply = result.text;
         log.info(`Task #${issueNumber} plan generated`);
         this.emitLog(issueNumber, 'success', 'Plano gerado. Implementando mudanças...');
         this.emitLog(issueNumber, 'ai', reply.substring(0, 2000));
@@ -340,7 +341,8 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
                 { role: 'user' as const, parts: judgePrompt },
             ];
 
-            const reply = await aiService.generateReply(history, '', undefined, 'chat');
+            const judgeResult = await aiService.generateReply(history, '', undefined, 'chat');
+            const reply = judgeResult.text;
             const jsonMatch = reply.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 const result = JSON.parse(jsonMatch[0]);

@@ -78,6 +78,11 @@ export interface ChatMessage {
     role: 'user' | 'model';
     text: string;
     isError?: boolean;
+    usage?: {
+        promptTokens: number;
+        completionTokens: number;
+        totalTokens: number;
+    };
 }
 
 export interface Link {
