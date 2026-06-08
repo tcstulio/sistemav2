@@ -11,6 +11,15 @@ const log = logger.child('TaskRunner');
 const execFileAsync = promisify(execFile);
 
 const STORE_PATH = path.join(__dirname, '../../data/tasks.json');
+const REPO_ROOT = path.resolve(__dirname, '../../../');
+
+function git(args: string[], opts?: { timeout?: number }) {
+    return execFileAsync('git', args, { cwd: REPO_ROOT, timeout: opts?.timeout });
+}
+
+function gh(args: string[], opts?: { timeout?: number }) {
+    return execFileAsync('gh', args, { cwd: REPO_ROOT, timeout: opts?.timeout });
+}
 
 export type TaskStatus = 'pending' | 'running' | 'reviewing' | 'approved' | 'fixing' | 'merged' | 'rejected' | 'failed';
 
@@ -85,7 +94,7 @@ class TaskRunnerService {
 
     async listIssues(): Promise<any[]> {
         try {
-            const { stdout } = await execFileAsync('gh', [
+            const { stdout } = await gh([
                 'issue', 'list',
                 '--repo', REPO,
                 '--label', 'opencode-task',
@@ -158,15 +167,15 @@ class TaskRunnerService {
         this.emitLog(issueNumber, 'info', `Iniciando task #${issueNumber} no branch ${branch}`);
 
         this.emitLog(issueNumber, 'info', 'Baixando alterações do main...');
-        await execFileAsync('git', ['fetch', 'origin', 'main'], { timeout: 30000 });
+        await git(['fetch', 'origin', 'main'], { timeout: 30000 });
         try {
-            await execFileAsync('git', ['branch', '-D', branch], { timeout: 10000 });
+            await git(['branch', '-D', branch], { timeout: 10000 });
         } catch { /* branch might not exist */ }
-        await execFileAsync('git', ['checkout', '-b', branch, 'origin/main'], { timeout: 15000 });
-        await execFileAsync('git', ['push', 'origin', branch, '--force'], { timeout: 30000 });
+        await git(['checkout', '-b', branch, 'origin/main'], { timeout: 15000 });
+        await git(['push', 'origin', branch, '--force'], { timeout: 30000 });
 
         this.emitLog(issueNumber, 'info', 'Lendo issue do GitHub...');
-        const { stdout: issueBody } = await execFileAsync('gh', [
+        const { stdout: issueBody } = await gh([
             'issue', 'view', String(issueNumber),
             '--repo', REPO,
             '--json', 'title,body,labels,comments'
@@ -199,11 +208,11 @@ class TaskRunnerService {
 
         let repoTree = '';
         try {
-            const { stdout: treeOut } = await execFileAsync('git', ['ls-tree', '-r', '--name-only', 'HEAD', '--', 'src/', 'backend/src/'], { timeout: 10000 });
+            const { stdout: treeOut } = await git(['ls-tree', '-r', '--name-only', 'HEAD', '--', 'src/', 'backend/src/'], { timeout: 10000 });
             repoTree = treeOut.substring(0, 4000);
         } catch { /* ignore */ }
 
-        const { stdout: diff } = await execFileAsync('git', ['diff', 'main', '--stat'], { timeout: 15000 });
+        const { stdout: diff } = await git(['diff', 'main', '--stat'], { timeout: 15000 });
 
         const planPrompt = `You are a senior developer working on a full-stack ERP system. Analyze this GitHub issue and implement the solution.
 
@@ -249,21 +258,21 @@ Then implement the changes. Be thorough and follow existing code patterns.`;
         this.emitLog(issueNumber, 'success', 'Plano gerado. Implementando mudanças...');
         this.emitLog(issueNumber, 'ai', reply.substring(0, 2000));
 
-        await execFileAsync('git', ['add', '-A'], { timeout: 10000 });
+        await git(['add', '-A'], { timeout: 10000 });
         try {
-            await execFileAsync('git', ['commit', '-m', `feat(#${issueNumber}): ${issueData.title.substring(0, 72)}`], { timeout: 15000 });
+            await git(['commit', '-m', `feat(#${issueNumber}): ${issueData.title.substring(0, 72)}`], { timeout: 15000 });
             this.emitLog(issueNumber, 'success', 'Mudanças commitadas');
         } catch {
             log.warn(`Task #${issueNumber} nothing to commit`);
             this.emitLog(issueNumber, 'warn', 'Nada a commitar');
         }
-        await execFileAsync('git', ['push', 'origin', branch], { timeout: 30000 });
+        await git(['push', 'origin', branch], { timeout: 30000 });
         this.emitLog(issueNumber, 'info', 'Push realizado. Criando PR...');
 
         let prNumber: number | undefined;
         let prUrl: string | undefined;
         try {
-            const { stdout: prOut } = await execFileAsync('gh', [
+            const { stdout: prOut } = await gh([
                 'pr', 'create',
                 '--repo', REPO,
                 '--head', branch,
@@ -277,7 +286,7 @@ Then implement the changes. Be thorough and follow existing code patterns.`;
             this.emitLog(issueNumber, 'success', `PR #${prNumber} criado: ${prUrl}`);
         } catch (e: any) {
             if (e.message?.includes('already exists')) {
-                const { stdout: existingPr } = await execFileAsync('gh', [
+                const { stdout: existingPr } = await gh([
                     'pr', 'list',
                     '--repo', REPO,
                     '--head', branch,
@@ -315,7 +324,7 @@ Then implement the changes. Be thorough and follow existing code patterns.`;
         this.emitLog(task.issueNumber, 'info', `Judge: avaliando PR #${task.prNumber}...`);
 
         try {
-            const { stdout: diff } = await execFileAsync('gh', [
+            const { stdout: diff } = await gh([
                 'pr', 'diff', String(task.prNumber),
                 '--repo', REPO,
             ], { timeout: 30000 });
@@ -402,7 +411,7 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
 
         if (task.prNumber) {
             try {
-                await execFileAsync('gh', ['pr', 'close', String(task.prNumber), '--repo', REPO, '--comment', 'Redoing task'], { timeout: 15000 });
+                await gh(['pr', 'close', String(task.prNumber), '--repo', REPO, '--comment', 'Redoing task'], { timeout: 15000 });
             } catch { /* PR might not exist */ }
         }
 
@@ -432,7 +441,7 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
 
         if (task.prNumber) {
             try {
-                await execFileAsync('gh', ['pr', 'close', String(task.prNumber), '--repo', REPO, '--comment', 'Rejected'], { timeout: 15000 });
+                await gh(['pr', 'close', String(task.prNumber), '--repo', REPO, '--comment', 'Rejected'], { timeout: 15000 });
             } catch { /* ignore */ }
         }
 
@@ -448,8 +457,8 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         if (!task) throw new Error(`Task #${issueNumber} not found`);
         if (!task.prNumber) throw new Error('No PR to merge');
 
-        await execFileAsync('gh', ['pr', 'merge', String(task.prNumber), '--repo', REPO, '--squash', '--delete-branch'], { timeout: 30000 });
-        await execFileAsync('gh', ['issue', 'close', String(issueNumber), '--repo', REPO, '--comment', `Merged via PR #${task.prNumber}`], { timeout: 15000 });
+        await gh(['pr', 'merge', String(task.prNumber), '--repo', REPO, '--squash', '--delete-branch'], { timeout: 30000 });
+        await gh(['issue', 'close', String(issueNumber), '--repo', REPO, '--comment', `Merged via PR #${task.prNumber}`], { timeout: 15000 });
 
         task.status = 'merged';
         task.completedAt = new Date().toISOString();
@@ -480,7 +489,7 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
 
         if (task.prNumber) {
             try {
-                await execFileAsync('gh', ['pr', 'close', String(task.prNumber), '--repo', REPO, '--comment', 'Task deleted'], { timeout: 15000 });
+                await gh(['pr', 'close', String(task.prNumber), '--repo', REPO, '--comment', 'Task deleted'], { timeout: 15000 });
             } catch { /* ignore */ }
         }
 
@@ -493,7 +502,7 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         if (!task?.branch) throw new Error('No branch for this task');
 
         try {
-            const { stdout } = await execFileAsync('git', ['diff', 'main...', task.branch], { timeout: 15000 });
+            const { stdout } = await git(['diff', 'main...', task.branch], { timeout: 15000 });
             return stdout;
         } catch {
             return 'Unable to fetch diff';

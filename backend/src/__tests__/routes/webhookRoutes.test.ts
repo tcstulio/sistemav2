@@ -56,6 +56,23 @@ vi.mock('../../services/legacy/messageService', () => ({
     messageService: mockMessageService,
 }));
 
+vi.mock('../../services/eventRouter', () => ({
+    eventRouter: {
+        route: vi.fn(),
+        processEvent: vi.fn(),
+    },
+}));
+
+vi.mock('../../services/notificationService', () => ({
+    notificationService: {
+        create: vi.fn(),
+    },
+}));
+
+vi.mock('../../services/notificationTemplates', () => ({
+    renderTemplate: vi.fn(() => 'Rendered notification'),
+}));
+
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({
         debug: vi.fn(),
