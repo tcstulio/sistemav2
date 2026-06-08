@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -84,12 +85,16 @@ export const Modal: React.FC<ModalProps> = ({
 
     if (!isOpen) return null;
 
-    return (
+    return createPortal(
         <div
             className="fixed inset-0 z-50 flex items-center justify-center p-4"
             role="dialog"
             aria-modal="true"
             aria-labelledby={title ? 'modal-title' : undefined}
+            // Renderizado via portal no body; impede que cliques (overlay, botões, conteúdo)
+            // borbulhem na árvore React de componentes para ancestrais clicáveis — ex.: um
+            // <Card onClick> que envolve o ConfirmDeleteButton em listas (#121).
+            onClick={(e) => e.stopPropagation()}
         >
             {/* Overlay */}
             <div
@@ -141,7 +146,8 @@ export const Modal: React.FC<ModalProps> = ({
                     </div>
                 )}
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 
