@@ -285,7 +285,8 @@ export const AiService = {
             return {
                 reply: response.data.reply,
                 sessionId: response.data.sessionId,
-                usage: response.data.usage
+                usage: response.data.usage,
+                contextWindow: response.data.contextWindow
             };
 
         } catch (error: any) {

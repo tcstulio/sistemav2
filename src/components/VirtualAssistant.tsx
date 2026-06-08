@@ -98,6 +98,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState<Array<{ id: string; title: string; updatedAt: number; messageCount: number }>>([]);
   const [attachedPdf, setAttachedPdf] = useState<{ name: string; data: string } | null>(null);
+  const [contextWindow, setContextWindow] = useState<number>(200000);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -251,12 +252,25 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
 
       const result = await AiService.chatWithData(userMsg, relevantHistory, userImage?.data, sid || undefined, pageContext);
       const responseText = result.reply;
+      if ((result as any).contextWindow) setContextWindow((result as any).contextWindow);
       if (result.sessionId && !sid) {
         setCurrentSessionId(result.sessionId);
         safeStorage.setItem(VA_SESSION_ID_KEY, result.sessionId);
       }
       if (responseText) {
-        setMessages(prev => [...prev, { role: 'model', text: responseText, usage: (result as any).usage }]);
+        const newUsage = (result as any).usage;
+        setMessages(prev => {
+          const updated: ChatMessage[] = [...prev, { role: 'model' as const, text: responseText, usage: newUsage }];
+          const total = updated.reduce((sum, m) => sum + (m.usage?.totalTokens || 0), 0);
+          const pct = contextWindow > 0 ? (total / contextWindow) * 100 : 0;
+          if (pct > 90) {
+            return [...updated, { role: 'model' as const, text: '⚠️ Contexto acima de 90%. Considere iniciar uma nova conversa para manter a qualidade das respostas.', isError: true }];
+          }
+          if (pct > 70) {
+            return [...updated, { role: 'model' as const, text: '💡 O contexto está ficando grande (>70%). Se as respostas perderem qualidade, comece uma nova conversa.' }];
+          }
+          return updated;
+        });
       } else {
         setMessages(prev => [...prev, { role: 'model', text: "Não consegui gerar uma resposta." }]);
       }
@@ -340,10 +354,17 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
               <h3 className="font-semibold text-sm">Assistente Virtual</h3>
               {messages.length > 0 && (() => {
                 const total = messages.reduce((sum, m) => sum + (m.usage?.totalTokens || 0), 0);
+                const pct = contextWindow > 0 ? Math.min(100, Math.round((total / contextWindow) * 100)) : 0;
+                const barColor = pct > 90 ? 'bg-red-400' : pct > 70 ? 'bg-yellow-400' : 'bg-emerald-400';
                 return total > 0 ? (
-                  <span className="flex items-center gap-1 text-[10px] text-white/70 bg-white/10 px-1.5 py-0.5 rounded" title={`Sessão: ${total.toLocaleString()} tokens`}>
-                    <Zap size={10} /> {total.toLocaleString()}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] text-white/70" title={`${total.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`}>
+                      {total.toLocaleString()} ({pct}%)
+                    </span>
+                    <div className="w-12 h-1.5 bg-white/20 rounded-full overflow-hidden">
+                      <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
                 ) : null;
               })()}
             </div>

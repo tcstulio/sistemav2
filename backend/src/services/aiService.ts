@@ -77,6 +77,29 @@ export interface TokenUsage {
 export interface GenerateReplyResult {
     text: string;
     usage?: TokenUsage;
+    contextWindow?: number;
+}
+
+const CONTEXT_WINDOWS: Record<string, number> = {
+    'glm-5.1': 200000,
+    'glm-4.6v': 128000,
+    'glm-4': 128000,
+    'minimax-m3': 1000000,
+    'gemini-2.0-flash': 1000000,
+    'gemini-1.5-flash': 1000000,
+    'gemini-2.5-pro': 1000000,
+    'llama3': 8192,
+    'llama3.1': 128000,
+    'qwen2.5': 32768,
+};
+
+function getContextWindow(model?: string): number {
+    if (!model) return 128000;
+    const key = model.toLowerCase().replace(/[.\-]/g, '');
+    for (const [k, v] of Object.entries(CONTEXT_WINDOWS)) {
+        if (key.includes(k.replace(/[.\-]/g, ''))) return v;
+    }
+    return 128000;
 }
 
 interface AIProvider {
@@ -122,6 +145,7 @@ class GoogleProvider implements AIProvider {
             log.error('Google AI not configured.');
             throw new Error("Google AI not configured.");
         }
+        const ctxWindow = getContextWindow(options?.model || this.modelName);
 
         const toolsPrompt = TOOLS_PROMPT;
 
@@ -198,7 +222,7 @@ class GoogleProvider implements AIProvider {
                     const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
                     if (String(toolCall.tool).startsWith('prepare_')) {
-                        return { text: toolResult, usage: accUsage };
+                        return { text: toolResult, usage: accUsage, contextWindow: ctxWindow };
                     }
 
                     currentContext += `\n\n[DADOS OBTIDOS VIA ${toolCall.tool}]:\n${toolResult}\n`;
@@ -208,7 +232,7 @@ class GoogleProvider implements AIProvider {
 
                 } catch (e: any) {
                     if (e.name === 'AskUserInterrupt') {
-                        return { text: e.question, usage: accUsage };
+                        return { text: e.question, usage: accUsage, contextWindow: ctxWindow };
                     }
                     log.error("Tool execution failed", e);
                     currentContext += `\n\n[ERRO NA EXECUÇÃO]: ${e.message}\n`;
@@ -218,10 +242,10 @@ class GoogleProvider implements AIProvider {
             }
 
             // No tool call, return final response
-            return { text: textResponse, usage: accUsage };
+            return { text: textResponse, usage: accUsage, contextWindow: ctxWindow };
         }
 
-        return { text: "Desculpe, não consegui obter todas as informações necessárias após várias tentativas.", usage: accUsage };
+        return { text: "Desculpe, não consegui obter todas as informações necessárias após várias tentativas.", usage: accUsage, contextWindow: ctxWindow };
     }
 
     async draftCollectionEmail(customer: any, amount: number): Promise<string> {
@@ -806,6 +830,7 @@ export class LocalProvider implements AIProvider {
 
     async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<GenerateReplyResult> {
         const toolsPrompt = TOOLS_PROMPT;
+        const ctxWindow = getContextWindow(options?.model || this.modelName);
 
         let currentHistory = [...conversationHistory];
         let currentContext = context;
@@ -862,7 +887,7 @@ export class LocalProvider implements AIProvider {
                         const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
                         if (String(toolCall.tool).startsWith('prepare_')) {
-                            return { text: toolResult, usage: accUsage };
+                            return { text: toolResult, usage: accUsage, contextWindow: ctxWindow };
                         }
 
                         currentContext += `\n\n[TOOL RESULT]: ${toolResult}`;
@@ -871,21 +896,21 @@ export class LocalProvider implements AIProvider {
 
                     } catch (e: any) {
                         if (e.name === 'AskUserInterrupt') {
-                            return { text: e.question, usage: accUsage };
+                            return { text: e.question, usage: accUsage, contextWindow: ctxWindow };
                         }
                         log.error("Local LLM Tool Error", e);
-                        return { text: reply, usage: accUsage };
+                        return { text: reply, usage: accUsage, contextWindow: ctxWindow };
                     }
                 }
 
-                return { text: reply, usage: accUsage };
+                return { text: reply, usage: accUsage, contextWindow: ctxWindow };
 
             } catch (error: any) {
                 const detail = error?.response
                     ? `HTTP ${error.response.status} ${JSON.stringify(error.response.data)?.slice(0, 300)}`
                     : (error?.code || error?.message || String(error));
                 log.error(`Local LLM Error [url=${this.baseUrl}/chat/completions model=${this.modelName}]: ${detail}`);
-                return { text: `Erro LLM Local: ${detail}`, usage: accUsage };
+                return { text: `Erro LLM Local: ${detail}`, usage: accUsage, contextWindow: ctxWindow };
             }
         }
         try {
@@ -909,11 +934,11 @@ export class LocalProvider implements AIProvider {
             }, { headers: this.getHeaders(), timeout: 120000 });
             accumulate(finalResp.data?.usage);
             const finalText = finalResp.data?.choices?.[0]?.message?.content;
-            if (finalText) return { text: finalText, usage: accUsage };
+            if (finalText) return { text: finalText, usage: accUsage, contextWindow: ctxWindow };
         } catch (e: any) {
             log.error('Local LLM final-answer fallback error', e?.message || e);
         }
-        return { text: 'Não consegui completar a solicitação com as ferramentas disponíveis. Pode reformular ou dar mais detalhes (ex.: o projeto, cliente ou período)?', usage: accUsage };
+        return { text: 'Não consegui completar a solicitação com as ferramentas disponíveis. Pode reformular ou dar mais detalhes (ex.: o projeto, cliente ou período)?', usage: accUsage, contextWindow: ctxWindow };
     }
 
     async analyzeSystem(query: string, fileContext: string): Promise<string> {
