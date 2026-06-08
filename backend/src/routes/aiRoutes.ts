@@ -124,7 +124,7 @@ router.post('/generate-reply', async (req, res) => {
             }
         }
 
-        res.json({ reply: result.text, sessionId, usage: result.usage });
+        res.json({ reply: result.text, sessionId, usage: result.usage, contextWindow: result.contextWindow });
     } catch (error: any) {
         log.error('Generate Reply Error', { error: error.message, stack: error.stack });
 
