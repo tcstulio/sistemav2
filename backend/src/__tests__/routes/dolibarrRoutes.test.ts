@@ -22,6 +22,7 @@ const mockDelegation = vi.hoisted(() => ({
     get: vi.fn(() => ({ taskId: '50', aceite: { status: 'pending', deadlineDay: 100 } })),
     requestAcceptance: vi.fn(() => ({ taskId: '50', aceite: { status: 'pending' } })),
     setDoc: vi.fn(() => ({ taskId: '50', objetivo: 'Obj', criterio: 'Crit' })),
+    setTemplate: vi.fn(() => ({ taskId: '50', template: 'contagem_de_estoque' })),
     accept: vi.fn(() => ({ taskId: '50', aceite: { status: 'accepted' } })),
     decline: vi.fn(() => ({ taskId: '50', aceite: { status: 'declined' } })),
 }));
@@ -279,6 +280,14 @@ describe('dolibarrRoutes', () => {
             expect(res.status).toBe(200);
             expect(mockDelegation.setDoc).toHaveBeenCalledWith('50', { objetivo: 'Contar bebidas', criterio: 'Planilha enviada' });
             expect(mockDolibarrService.proxyRequest).not.toHaveBeenCalled();
+        });
+
+        it('PUT delegation/template define o template estruturado', async () => {
+            const res = await request(app)
+                .put('/api/dolibarr/tasks/50/delegation/template')
+                .send({ template: 'contagem_de_estoque', templateConfig: { warehouseId: '1' } });
+            expect(res.status).toBe(200);
+            expect(mockDelegation.setTemplate).toHaveBeenCalledWith('50', 'contagem_de_estoque', { warehouseId: '1' });
         });
 
         it('POST decline recusa e escala imediatamente ao solicitante', async () => {

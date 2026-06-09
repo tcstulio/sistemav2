@@ -262,3 +262,9 @@ export const setDelegationDoc = async (config: DolibarrConfig, taskId: string, d
     const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/delegation/doc`;
     return request(url, { method: 'PUT', headers: getHeaders(config.apiKey), body: JSON.stringify(doc) });
 };
+
+// Template de execução estruturada (ex.: contagem de estoque)
+export const setDelegationTemplate = async (config: DolibarrConfig, taskId: string, template: string, templateConfig?: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/delegation/template`;
+    return request(url, { method: 'PUT', headers: getHeaders(config.apiKey), body: JSON.stringify({ template, templateConfig }) });
+};
