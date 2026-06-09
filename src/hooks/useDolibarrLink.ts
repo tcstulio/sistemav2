@@ -4,12 +4,20 @@ import { logger } from '../utils/logger';
 
 const log = logger.child('DolibarrLink');
 
+// URL web do Dolibarr (para os deep-links). Quando a apiUrl é o proxy/relativa (ex.: atrás do
+// backend ou de um túnel), não dá pra derivar a raiz dela — usamos VITE_DOLIBARR_URL ou o
+// domínio de produção como fallback, evitando que o link resolva contra a origem do webapp (404).
+const DOLIBARR_WEB_URL = ((import.meta as any)?.env?.VITE_DOLIBARR_URL || 'https://sistema.coolgroove.com.br').replace(/\/+$/, '');
+
 export const useDolibarrLink = (config: DolibarrConfig | null) => {
     const getLink = useCallback((module: string, id: string, ref?: string) => {
         if (!config || !id) return '#';
 
-        // Base URL cleanup (remove /api/index.php if present to get root)
-        const baseUrl = config.apiUrl.replace(/\/api\/index\.php\/?$/, '').replace(/\/$/, '');
+        // Se a apiUrl for absoluta (http[s]), deriva a raiz dela; senão, usa o DOLIBARR_WEB_URL.
+        const raw = (config.apiUrl || '').trim();
+        const baseUrl = /^https?:\/\//i.test(raw)
+            ? raw.replace(/\/api\/index\.php\/?$/, '').replace(/\/+$/, '')
+            : DOLIBARR_WEB_URL;
 
         switch (module) {
             case 'invoice':
