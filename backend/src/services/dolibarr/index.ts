@@ -79,6 +79,8 @@ export class DolibarrService extends DolibarrServiceBase {
     listProjects = (params?: { search?: string; socid?: string }) => this.operations.listProjects(params);
     listTasks = (projectId?: string) => this.operations.listTasks(projectId);
     listUserTasks = (userId: string) => this.operations.listUserTasks(userId);
+    listTasksFull = () => this.operations.listTasksFull();
+    getAllTaskContacts = () => this.operations.getAllTaskContacts();
     getTaskContacts = (taskId: string) => this.operations.getTaskContacts(taskId);
     setTaskContact = (taskId: string, userId: string, typeCode?: 'TASKEXECUTIVE' | 'TASKCONTRIBUTOR') => this.operations.setTaskContact(taskId, userId, typeCode);
     removeTaskContact = (taskId: string, contactRowid: string) => this.operations.removeTaskContact(taskId, contactRowid);

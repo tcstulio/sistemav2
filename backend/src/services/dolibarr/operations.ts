@@ -123,15 +123,31 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
         }
     }
 
-    /** Contatos (pessoas) de UMA tarefa via custom_sync (type=task_contacts): [{id, task_id, user_id, type_id}]. */
-    async getTaskContacts(taskId: string): Promise<any[]> {
+    /** Todas as tarefas via custom_sync (type=tasks): traz fk_user_creat, date_end, progress, budget, etc. */
+    async listTasksFull(): Promise<any[]> {
         try {
-            const res = await this.proxyCustomSync({ type: 'task_contacts', last_modified: 0, limit: 5000 }, this.getHeaders());
-            return this.extractSyncRows(res).filter((c) => String(c.task_id) === String(taskId));
+            const res = await this.proxyCustomSync({ type: 'tasks', last_modified: 0, limit: 5000 }, this.getHeaders());
+            return this.extractSyncRows(res);
         } catch (error: any) {
-            log.error(`getTaskContacts Error task=${taskId}`, error?.message || error);
+            log.error('listTasksFull Error', error?.message || error);
             return [];
         }
+    }
+
+    /** Todos os vínculos de contato de tarefas (type=task_contacts): [{id, task_id, user_id, type_id}]. */
+    async getAllTaskContacts(): Promise<any[]> {
+        try {
+            const res = await this.proxyCustomSync({ type: 'task_contacts', last_modified: 0, limit: 5000 }, this.getHeaders());
+            return this.extractSyncRows(res);
+        } catch (error: any) {
+            log.error('getAllTaskContacts Error', error?.message || error);
+            return [];
+        }
+    }
+
+    /** Contatos (pessoas) de UMA tarefa: [{id, task_id, user_id, type_id}]. */
+    async getTaskContacts(taskId: string): Promise<any[]> {
+        return (await this.getAllTaskContacts()).filter((c) => String(c.task_id) === String(taskId));
     }
 
     /** Define contato da tarefa (TASKEXECUTIVE=Responsável | TASKCONTRIBUTOR=Interveniente) via custom_sync (issue #72). */

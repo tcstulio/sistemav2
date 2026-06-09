@@ -2,6 +2,7 @@ import { createLogger } from '../utils/logger';
 import { dolibarrService } from './dolibarr';
 import { notificationService, NotificationEvent } from './notificationService';
 import { renderTemplate } from './notificationTemplates';
+import { dispatchTaskNotification } from './taskNotificationService';
 
 const log = createLogger('AlertCron');
 
@@ -210,39 +211,42 @@ class AlertCronService {
 
     async checkOverdueTasks() {
         try {
-            const tasks = await dolibarrService.listTasks();
-            if (!tasks || tasks.length === 0) return;
-
-            const now = new Date();
-            const today = now.getTime() / 1000;
-
-            const overdue = tasks.filter((t: any) => {
-                const deadline = t.date_end || t.datee;
-                if (!deadline) return false;
-                const progress = parseFloat(t.progress || '0');
-                return deadline < today && progress < 100;
-            });
-
-            if (overdue.length === 0) return;
-
             const dedupKey = this.dedupKey('overdue_tasks', 'daily');
             if (this.wasAlertedToday(dedupKey)) return;
 
-            const message = overdue
-                .slice(0, 10)
-                .map((t: any) => `${t.ref || t.rowid}: ${t.label} (${t.progress || 0}%)`)
-                .join('\n');
+            // custom_sync (type=tasks) traz TODAS as tarefas com date_end/progress/fk_user_creat
+            // (a API REST /tasks limita a 10 e não tem o responsável). Camada 2.
+            const tasks = await dolibarrService.listTasksFull();
+            if (!tasks || tasks.length === 0) return;
 
-            await this.notify(
-                'custom',
-                `${overdue.length} tarefa(s) atrasada(s)`,
-                message,
-                'task',
-                overdue.map((t: any) => String(t.id || t.rowid)).join(','),
-            );
+            const today = Date.now() / 1000;
+            const overdue = tasks.filter((t: any) => {
+                const deadline = Number(t.date_end || t.datee || 0);
+                const progress = parseFloat(t.progress || '0');
+                return deadline > 0 && deadline < today && progress < 100;
+            });
+            if (overdue.length === 0) return;
+
+            // Cobrança DIRECIONADA: cada tarefa atrasada -> Responsável (via matriz da config),
+            // em vez do broadcast genérico. Indexa os contatos uma vez.
+            const allContacts = await dolibarrService.getAllTaskContacts();
+            const contactsByTask = new Map<string, any[]>();
+            for (const c of allContacts) {
+                const k = String(c.task_id);
+                if (!contactsByTask.has(k)) contactsByTask.set(k, []);
+                contactsByTask.get(k)!.push(c);
+            }
+
+            const MAX = 100; // cap por execução para não sobrecarregar
+            for (const task of overdue.slice(0, MAX)) {
+                await dispatchTaskNotification('overdue', task, { taskContacts: contactsByTask.get(String(task.id)) || [] });
+            }
+            if (overdue.length > MAX) {
+                log.warn(`checkOverdueTasks: ${overdue.length} atrasadas; processadas as ${MAX} primeiras (cap)`);
+            }
 
             this.markAlerted(dedupKey);
-            log.info(`Alert: ${overdue.length} overdue tasks`);
+            log.info(`Alert: ${overdue.length} overdue tasks (cobrança direcionada ao responsável)`);
         } catch (e) {
             log.error('checkOverdueTasks error', e);
         }
