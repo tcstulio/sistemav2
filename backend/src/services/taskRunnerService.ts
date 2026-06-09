@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { execFile, exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
@@ -9,16 +9,27 @@ import { socketService } from './socketService';
 
 const log = logger.child('TaskRunner');
 const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
+const BIG = 20 * 1024 * 1024; // maxBuffer p/ saídas grandes (diff, npm, opencode)
 
 const STORE_PATH = path.join(__dirname, '../../data/tasks.json');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
+// Worktree ISOLADO do TaskRunner — o agente nunca toca o diretório do dev/main.
+const WT_ROOT = path.resolve(REPO_ROOT, '..', 'sistemav2-taskrunner-wt');
+const PROMPT_FILE = '.taskrunner-prompt.md';
 
-function git(args: string[], opts?: { timeout?: number }) {
-    return execFileAsync('git', args, { cwd: REPO_ROOT, timeout: opts?.timeout });
+function git(args: string[], opts?: { timeout?: number; cwd?: string }) {
+    return execFileAsync('git', args, { cwd: opts?.cwd || REPO_ROOT, timeout: opts?.timeout, maxBuffer: BIG });
 }
 
-function gh(args: string[], opts?: { timeout?: number }) {
-    return execFileAsync('gh', args, { cwd: REPO_ROOT, timeout: opts?.timeout });
+function gh(args: string[], opts?: { timeout?: number; cwd?: string }) {
+    return execFileAsync('gh', args, { cwd: opts?.cwd || REPO_ROOT, timeout: opts?.timeout, maxBuffer: BIG });
+}
+
+// opencode/npm/npx rodam via shell (resolvem o .cmd no Windows). Os comandos são strings
+// CONTROLADAS (sem conteúdo do usuário) — o prompt detalhado vai num arquivo no worktree.
+function sh(command: string, cwd: string, timeout: number) {
+    return execAsync(command, { cwd, timeout, maxBuffer: BIG, windowsHide: true });
 }
 
 export type TaskStatus = 'pending' | 'running' | 'reviewing' | 'approved' | 'fixing' | 'merged' | 'rejected' | 'failed';
@@ -161,143 +172,142 @@ class TaskRunnerService {
         return task;
     }
 
-    private async executeTask(task: Task, branch: string): Promise<void> {
-        const { issueNumber } = task;
-        log.info(`Starting task #${issueNumber} on branch ${branch}`);
-        this.emitLog(issueNumber, 'info', `Iniciando task #${issueNumber} no branch ${branch}`);
+    /** Garante um worktree git ISOLADO, limpo, no branch fix-N a partir de origin/main. */
+    private async ensureWorktree(branch: string): Promise<void> {
+        await git(['fetch', 'origin', 'main'], { timeout: 60000 });
+        if (!fs.existsSync(WT_ROOT)) {
+            await git(['worktree', 'add', '--force', WT_ROOT, 'origin/main'], { timeout: 120000 });
+        }
+        // branch fresco do main mais recente + remove restos não-rastreados de runs anteriores
+        await git(['checkout', '-B', branch, 'origin/main'], { timeout: 30000, cwd: WT_ROOT });
+        await git(['clean', '-fd'], { timeout: 30000, cwd: WT_ROOT }); // preserva node_modules (ignorado)
+        // dependências (uma vez; o worktree persiste entre tasks)
+        if (!fs.existsSync(path.join(WT_ROOT, 'node_modules'))) {
+            await sh('npm ci', WT_ROOT, 600000);
+        }
+        if (!fs.existsSync(path.join(WT_ROOT, 'backend', 'node_modules'))) {
+            await sh('npm ci', path.join(WT_ROOT, 'backend'), 600000);
+        }
+    }
 
-        this.emitLog(issueNumber, 'info', 'Baixando alterações do main...');
-        await git(['fetch', 'origin', 'main'], { timeout: 30000 });
+    /** Mudanças de CÓDIGO no worktree (ignora node_modules / lock / o arquivo de prompt). */
+    private async worktreeChanges(): Promise<string[]> {
+        const { stdout } = await git(['status', '--porcelain'], { timeout: 15000, cwd: WT_ROOT });
+        return stdout.split('\n')
+            .map((l) => l.trim())
+            .filter((l) => l && !l.includes('node_modules') && !l.includes('package-lock') && !l.includes(PROMPT_FILE));
+    }
+
+    /** Gate de verificação: typecheck backend + frontend no worktree. */
+    private async verify(): Promise<{ ok: boolean; output: string }> {
         try {
-            await git(['branch', '-D', branch], { timeout: 10000 });
-        } catch { /* branch might not exist */ }
-        await git(['checkout', '-b', branch, 'origin/main'], { timeout: 15000 });
-        await git(['push', 'origin', branch, '--force'], { timeout: 30000 });
+            await sh('npx tsc --noEmit -p backend/tsconfig.json', WT_ROOT, 240000);
+            await sh('npx tsc --noEmit -p tsconfig.json', WT_ROOT, 240000);
+            return { ok: true, output: 'typecheck OK (backend + frontend)' };
+        } catch (e: any) {
+            return { ok: false, output: ((e.stdout || '') + '\n' + (e.stderr || e.message || '')).substring(0, 4000) };
+        }
+    }
 
-        this.emitLog(issueNumber, 'info', 'Lendo issue do GitHub...');
-        const { stdout: issueBody } = await gh([
-            'issue', 'view', String(issueNumber),
-            '--repo', REPO,
-            '--json', 'title,body,labels,comments'
-        ], { timeout: 15000 });
-        const issueData = JSON.parse(issueBody);
-
-        this.emitLog(issueNumber, 'info', 'Gerando plano de implementação...');
-
-        let prompt = `## Issue #${issueNumber}: ${issueData.title}\n\n${issueData.body || ''}`;
+    private buildPrompt(task: Task, issueData: any): string {
+        let p = `# Tarefa (issue #${task.issueNumber}): ${issueData.title}\n\n${issueData.body || ''}\n`;
         if (issueData.comments?.length) {
-            prompt += '\n\n## Comments:\n';
-            for (const c of issueData.comments) {
-                prompt += `\n- **${c.author?.login || 'user'}**: ${c.body}\n`;
-            }
+            p += '\n## Comentários\n';
+            for (const c of issueData.comments) p += `- **${c.author?.login || 'user'}**: ${c.body}\n`;
         }
         if (task.feedbackHistory.length) {
-            prompt += '\n\n## Feedback anterior:\n';
-            for (const fb of task.feedbackHistory) {
-                prompt += `\n- ${fb}\n`;
+            p += '\n## Feedback / correções a ATENDER\n';
+            for (const fb of task.feedbackHistory) p += `- ${fb}\n`;
+        }
+        p += `\n## Instruções\nImplemente a tarefa acima neste repositório (backend: Express+TypeScript em backend/; frontend: React+Vite em src/). Siga as convenções existentes (TypeScript, testes com vitest). Escreva código de produção e os testes correspondentes. Garanta que \`tsc --noEmit\` passe. NÃO altere o arquivo ${PROMPT_FILE}.`;
+        return p;
+    }
+
+    private async executeTask(task: Task, branch: string): Promise<void> {
+        const { issueNumber } = task;
+        log.info(`Starting task #${issueNumber} on branch ${branch} (worktree isolado)`);
+        this.emitLog(issueNumber, 'info', `Iniciando #${issueNumber} em worktree isolado (branch ${branch})`);
+
+        // 1) Worktree limpo e isolado (nunca toca o dev/main)
+        this.emitLog(issueNumber, 'info', 'Preparando worktree a partir de origin/main...');
+        await this.ensureWorktree(branch);
+
+        // 2) Lê a issue
+        this.emitLog(issueNumber, 'info', 'Lendo issue do GitHub...');
+        const { stdout: issueBody } = await gh(['issue', 'view', String(issueNumber), '--repo', REPO, '--json', 'title,body,labels,comments'], { timeout: 15000 });
+        const issueData = JSON.parse(issueBody);
+
+        // 3) Implementa com opencode (com 1 retry guiado pelo typecheck)
+        const promptPath = path.join(WT_ROOT, PROMPT_FILE);
+        let verify = { ok: false, output: 'não verificado' };
+        const MAX_IMPL = 2;
+        for (let attempt = 1; attempt <= MAX_IMPL; attempt++) {
+            fs.writeFileSync(promptPath, this.buildPrompt(task, issueData));
+            this.emitLog(issueNumber, 'info', `Implementando com opencode (tentativa ${attempt}/${MAX_IMPL})...`);
+            try {
+                const { stdout } = await sh(`opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`, WT_ROOT, 900000);
+                this.emitLog(issueNumber, 'ai', String(stdout).substring(0, 1500));
+            } catch (e: any) {
+                this.emitLog(issueNumber, 'warn', `opencode erro: ${String(e.message || e).substring(0, 300)}`);
             }
+
+            // FAIL-FAST: produziu mudança de código?
+            const changes = await this.worktreeChanges();
+            if (changes.length === 0) {
+                task.status = 'failed';
+                task.error = 'O agente não produziu nenhuma mudança de arquivo.';
+                task.updatedAt = new Date().toISOString();
+                this.emitLog(issueNumber, 'warn', 'Nenhuma mudança gerada — abortando (sem PR).');
+                this.save();
+                this.emitStatus(task);
+                return;
+            }
+
+            // GATE: typecheck
+            this.emitLog(issueNumber, 'info', 'Verificando (typecheck back+front)...');
+            verify = await this.verify();
+            if (verify.ok) { this.emitLog(issueNumber, 'success', 'Typecheck OK'); break; }
+            this.emitLog(issueNumber, 'warn', `Typecheck falhou${attempt < MAX_IMPL ? ' — pedindo correção ao opencode...' : ' (vai no PR marcado p/ revisão).'}`);
+            if (attempt < MAX_IMPL) task.feedbackHistory.push(`O typecheck falhou. Corrija estes erros:\n${verify.output}`);
         }
 
-        let agentsMd = '';
+        // 4) Commit + push (remove o arquivo de prompt antes de commitar)
+        fs.rmSync(promptPath, { force: true });
+        await git(['add', '-A'], { timeout: 15000, cwd: WT_ROOT });
         try {
-            const agentsPath = path.join(__dirname, '../../../AGENTS.md');
-            if (fs.existsSync(agentsPath)) {
-                agentsMd = fs.readFileSync(agentsPath, 'utf-8');
-            }
-        } catch { /* ignore */ }
-
-        let repoTree = '';
-        try {
-            const { stdout: treeOut } = await git(['ls-tree', '-r', '--name-only', 'HEAD', '--', 'src/', 'backend/src/'], { timeout: 10000 });
-            repoTree = treeOut.substring(0, 4000);
-        } catch { /* ignore */ }
-
-        const { stdout: diff } = await git(['diff', 'main', '--stat'], { timeout: 15000 });
-
-        const planPrompt = `You are a senior developer working on a full-stack ERP system. Analyze this GitHub issue and implement the solution.
-
-## Project Context
-- Backend: Express + TypeScript (port 3004), restarts via nodemon
-- Frontend: React + Vite (port 5173), uses Tailwind CSS + shadcn-style UI components
-- Data backend: Dolibarr ERP (REST API)
-- Database: JSON files in backend/data/ for local state
-- \`npm run dev:all\` starts both via concurrently
-
-## Tech Stack
-- React Router for routing (App.tsx defines all routes)
-- UI components in src/components/ui/ (PageHeader, Card, Button, Modal, Tabs, etc.)
-- Hooks in src/hooks/dolibarr.ts for data fetching (useInvoices, useTasks, etc.)
-- Services in src/services/ for API calls
-- Backend services in backend/src/services/
-- Backend routes in backend/src/routes/
-
-${agentsMd ? `## Project Conventions (AGENTS.md)\n${agentsMd}\n` : ''}
-## Repository Structure (directories)
-${repoTree || 'Unable to read'}
-
-## Current Changes
-${diff || 'No changes yet'}
-
-${prompt}
-
-Respond with a concise plan listing:
-1. Files to modify/create
-2. Key changes per file
-3. Any tests to write
-
-Then implement the changes. Be thorough and follow existing code patterns.`;
-
-        const history = [
-            { role: 'system' as const, parts: 'You are an expert full-stack developer (Express + React + TypeScript). Implement the solution based on the issue description. Write clean, production-quality code. Follow existing patterns in the codebase. Use the project conventions from AGENTS.md. Respond in Portuguese for user-facing text.' },
-            { role: 'user' as const, parts: planPrompt },
-        ];
-
-        const result = await aiService.generateReply(history, '', undefined, 'chat');
-        const reply = result.text;
-        log.info(`Task #${issueNumber} plan generated`);
-        this.emitLog(issueNumber, 'success', 'Plano gerado. Implementando mudanças...');
-        this.emitLog(issueNumber, 'ai', reply.substring(0, 2000));
-
-        await git(['add', '-A'], { timeout: 10000 });
-        try {
-            await git(['commit', '-m', `feat(#${issueNumber}): ${issueData.title.substring(0, 72)}`], { timeout: 15000 });
+            await git(['commit', '-m', `feat(#${issueNumber}): ${String(issueData.title).substring(0, 72)}`], { timeout: 20000, cwd: WT_ROOT });
             this.emitLog(issueNumber, 'success', 'Mudanças commitadas');
         } catch {
-            log.warn(`Task #${issueNumber} nothing to commit`);
-            this.emitLog(issueNumber, 'warn', 'Nada a commitar');
+            task.status = 'failed';
+            task.error = 'Nada a commitar após a implementação.';
+            this.save();
+            this.emitStatus(task);
+            return;
         }
-        await git(['push', 'origin', branch], { timeout: 30000 });
+        await git(['push', 'origin', branch, '--force'], { timeout: 60000, cwd: WT_ROOT });
         this.emitLog(issueNumber, 'info', 'Push realizado. Criando PR...');
 
+        // 5) PR (marca o resultado da verificação; NUNCA faz merge — portão humano)
+        const verifyTag = verify.ok ? '✅ typecheck OK' : '⚠️ typecheck FALHOU — revisar com atenção';
         let prNumber: number | undefined;
         let prUrl: string | undefined;
         try {
             const { stdout: prOut } = await gh([
-                'pr', 'create',
-                '--repo', REPO,
-                '--head', branch,
-                '--base', 'main',
+                'pr', 'create', '--repo', REPO, '--head', branch, '--base', 'main',
                 '--title', `feat(#${issueNumber}): ${issueData.title}`,
-                '--body', `Closes #${issueNumber}\n\nImplemented by opencode task runner.\n\n${reply.substring(0, 500)}`,
-            ], { timeout: 20000 });
+                '--body', `Closes #${issueNumber}\n\nImplementado pelo TaskRunner (opencode) em worktree isolado.\n\n**Verificação:** ${verifyTag}\n\n⚠️ Requer revisão humana antes do merge.`,
+            ], { timeout: 30000 });
             const match = prOut.match(/\/pull\/(\d+)/);
             if (match) prNumber = parseInt(match[1]);
             prUrl = prOut.trim();
             this.emitLog(issueNumber, 'success', `PR #${prNumber} criado: ${prUrl}`);
         } catch (e: any) {
             if (e.message?.includes('already exists')) {
-                const { stdout: existingPr } = await gh([
-                    'pr', 'list',
-                    '--repo', REPO,
-                    '--head', branch,
-                    '--json', 'number,url',
-                    '--limit', '1'
-                ], { timeout: 15000 });
+                const { stdout: existingPr } = await gh(['pr', 'list', '--repo', REPO, '--head', branch, '--json', 'number,url', '--limit', '1'], { timeout: 15000 });
                 const prs = JSON.parse(existingPr);
-                if (prs.length) {
-                    prNumber = prs[0].number;
-                    prUrl = prs[0].url;
-                }
+                if (prs.length) { prNumber = prs[0].number; prUrl = prs[0].url; }
+            } else {
+                this.emitLog(issueNumber, 'warn', `Falha ao criar PR: ${String(e.message).substring(0, 300)}`);
             }
         }
 
@@ -499,11 +509,18 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
 
     async getDiff(issueNumber: number): Promise<string> {
         const task = this.store.tasks[issueNumber];
-        if (!task?.branch) throw new Error('No branch for this task');
-
+        if (!task) throw new Error('Task not found');
         try {
-            const { stdout } = await git(['diff', 'main...', task.branch], { timeout: 15000 });
-            return stdout;
+            // O branch vive no worktree/origin — o diff vem do PR (ou do worktree como fallback).
+            if (task.prNumber) {
+                const { stdout } = await gh(['pr', 'diff', String(task.prNumber), '--repo', REPO], { timeout: 30000 });
+                return stdout;
+            }
+            if (task.branch && fs.existsSync(WT_ROOT)) {
+                const { stdout } = await git(['diff', `origin/main...${task.branch}`], { timeout: 15000, cwd: WT_ROOT });
+                return stdout;
+            }
+            return 'Sem PR/branch ainda.';
         } catch {
             return 'Unable to fetch diff';
         }
