@@ -1,0 +1,119 @@
+/**
+ * Motor de acompanhamento de delegações (Fase 1d).
+ *
+ * Um "tick" diário percorre as tarefas em aberto e, por REGRAS (cadência), decide e dispara
+ * a próxima ação via dispatchTaskNotification (camada 2): lembra antes do prazo, cobra o
+ * Responsável no vencimento, re-cobra, escala ao solicitante (Criador) e reporta a conclusão.
+ *
+ * Estado durável por tarefa em data/delegation_tracking.json (sobrevive a restart) — guarda
+ * nº de cobranças, datas e flags. A decisão é pura (delegationFollowUpLogic); aqui só há I/O.
+ *
+ * Trava de canais externos da camada 2 segue valendo: por padrão só 'in-app' sai.
+ */
+import fs from 'fs';
+import path from 'path';
+import { atomicWriteSync } from '../utils/atomicWrite';
+import { createLogger } from '../utils/logger';
+import { dolibarrService } from './dolibarr';
+import { dispatchTaskNotification } from './taskNotificationService';
+import { decideFollowUp, Cadence, DEFAULT_CADENCE, TaskTracking } from './delegationFollowUpLogic';
+
+const log = createLogger('DelegationFollowUp');
+
+type TrackingStore = Record<string, TaskTracking>;
+
+export interface TickResult {
+    tasks: number;
+    baselines: number;
+    deadline_reminder: number;
+    overdue: number;
+    stalled: number;
+    completed: number;
+}
+
+const DEFAULT_STORE_PATH = path.join(__dirname, '../../data/delegation_tracking.json');
+
+export class DelegationFollowUpService {
+    private store: TrackingStore = {};
+    private readonly storePath: string;
+    private cadence: Cadence;
+    /** teto de disparos por tick (rede de segurança; o baseline-na-1ª-vez já evita flood). */
+    private readonly maxDispatchesPerTick = 200;
+
+    constructor(storePath: string = DEFAULT_STORE_PATH, cadence: Cadence = DEFAULT_CADENCE) {
+        this.storePath = storePath;
+        this.cadence = cadence;
+        this.load();
+    }
+
+    private load() {
+        try {
+            const dir = path.dirname(this.storePath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            if (fs.existsSync(this.storePath)) {
+                this.store = JSON.parse(fs.readFileSync(this.storePath, 'utf-8')) || {};
+            }
+        } catch (e) {
+            log.error('load error', e);
+            this.store = {};
+        }
+    }
+
+    private save() {
+        try {
+            atomicWriteSync(this.storePath, this.store);
+        } catch (e) {
+            log.error('save error', e);
+        }
+    }
+
+    /** Executa um tick de acompanhamento. `nowMs` é injetável para teste. */
+    async runTick(nowMs: number = Date.now()): Promise<TickResult> {
+        const result: TickResult = { tasks: 0, baselines: 0, deadline_reminder: 0, overdue: 0, stalled: 0, completed: 0 };
+        try {
+            const tasks = await dolibarrService.listTasksFull();
+            if (!tasks || tasks.length === 0) return result;
+            result.tasks = tasks.length;
+
+            const allContacts = await dolibarrService.getAllTaskContacts();
+            const contactsByTask = new Map<string, any[]>();
+            for (const c of allContacts) {
+                const k = String(c.task_id);
+                if (!contactsByTask.has(k)) contactsByTask.set(k, []);
+                contactsByTask.get(k)!.push(c);
+            }
+
+            let dispatches = 0;
+            for (const task of tasks) {
+                const id = String(task.id);
+                const prev = this.store[id];
+                const { event, tracking } = decideFollowUp(task, prev, nowMs, this.cadence);
+                this.store[id] = tracking;
+
+                if (!prev) {
+                    result.baselines++;
+                    continue; // 1ª observação: só baseline, nada dispara
+                }
+                if (!event) continue;
+
+                if (dispatches >= this.maxDispatchesPerTick) {
+                    log.warn(`tick atingiu o teto de ${this.maxDispatchesPerTick} disparos; restante adiado p/ o próximo tick`);
+                    break;
+                }
+                dispatches++;
+                result[event]++;
+                await dispatchTaskNotification(event, task, { taskContacts: contactsByTask.get(id) || [] });
+            }
+
+            this.save();
+            const acted = result.deadline_reminder + result.overdue + result.stalled + result.completed;
+            log.info(`tick: ${result.tasks} tarefas, ${result.baselines} baseline(s), ${acted} ação(ões) ` +
+                `[lembrete=${result.deadline_reminder} cobrança=${result.overdue} escala=${result.stalled} reporte=${result.completed}]`);
+        } catch (e) {
+            log.error('runTick error', e);
+        }
+        return result;
+    }
+}
+
+export const delegationFollowUpService = new DelegationFollowUpService();
