@@ -7,13 +7,14 @@ import { ChevronLeft, Calendar as CalendarIcon, Clock, User, FolderKanban, FileT
 import { RichTextEditor } from './common/RichTextEditor';
 import { LinkedObjects } from './common/LinkedObjects';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
-import { useTaskTimeLogs, useUsers, useTaskContacts, useTasks } from '../hooks/dolibarr';
+import { useTaskTimeLogs, useUsers, useTaskContacts, useTasks, useProducts, useWarehouses } from '../hooks/dolibarr';
 import { DolibarrService } from '../services/dolibarrService';
 import { ChatInterface } from './Chat/ChatInterface';
 import { TaskContactsManager } from './Tasks/TaskContactsManager';
 import { DelegationPanel } from './Tasks/DelegationPanel';
 import { DelegationDocPanel } from './Tasks/DelegationDocPanel';
 import { DelegationStepsPanel } from './Tasks/DelegationStepsPanel';
+import { StockCountPanel } from './Tasks/StockCountPanel';
 import { logger } from '../utils/logger';
 
 const log = logger.child('TaskDetail');
@@ -37,6 +38,8 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
     const { data: users = [] } = useUsers(config);
     const { data: taskContacts = [] } = useTaskContacts(config);
     const { data: allTasks = [], refetch: refetchTasks } = useTasks(config);
+    const { data: allProducts = [] } = useProducts(config);
+    const { data: allWarehouses = [] } = useWarehouses(config);
 
     const [isTimeModalOpen, setIsTimeModalOpen] = useState(false);
     const [timeForm, setTimeForm] = useState({
@@ -363,6 +366,17 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                                 taskId={initialItemId}
                                 projectId={task.project_id}
                                 tasks={allTasks}
+                                onChanged={() => refetchTasks()}
+                            />
+                        )}
+
+                        {/* Delegação: template estruturado — contagem de estoque (verificação N2) */}
+                        {initialItemId && (
+                            <StockCountPanel
+                                config={config}
+                                taskId={initialItemId}
+                                products={allProducts}
+                                warehouses={allWarehouses}
                                 onChanged={() => refetchTasks()}
                             />
                         )}

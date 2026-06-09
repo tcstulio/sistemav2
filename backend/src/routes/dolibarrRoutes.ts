@@ -227,6 +227,18 @@ router.put('/tasks/:id/delegation/doc',
         }
     });
 
+// Define o template de execução estruturada (ex.: contagem de estoque) — verificação N2.
+router.put('/tasks/:id/delegation/template',
+    validate(z.object({ template: z.string().min(1).max(64), templateConfig: z.any().optional() })),
+    async (req, res) => {
+        try {
+            const rec = delegationService.setTemplate(req.params.id, req.body.template, req.body.templateConfig);
+            res.json({ success: true, delegation: rec });
+        } catch (error: any) {
+            res.status(error.status || 500).json({ error: error.message });
+        }
+    });
+
 // Solicita o aceite: marca pending com prazo e avisa o responsável (acceptance_pending).
 router.post('/tasks/:id/delegation/request-acceptance',
     validate(z.object({ task: TaskRef, prazoDeAceiteDays: z.number().int().positive().optional(), by: z.string().optional() })),

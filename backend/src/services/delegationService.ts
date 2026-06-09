@@ -22,6 +22,8 @@ export interface DelegationRecord {
     taskId: string;
     objetivo?: string;   // Inc 2 (documentação oficial)
     criterio?: string;   // Inc 2 (critério de pronto)
+    template?: string;          // Inc 5 (ex.: 'contagem_de_estoque')
+    templateConfig?: any;       // Inc 5 (ex.: { warehouseId })
     aceite?: {
         status: AceiteStatus;
         deadlineDay?: number; // day index do prazo de aceite
@@ -84,6 +86,11 @@ export class DelegationService {
         this.store[id] = next;
         this.save();
         return next;
+    }
+
+    /** Define o template de execução estruturada (ex.: contagem de estoque). */
+    setTemplate(taskId: string, template: string, templateConfig?: any): DelegationRecord {
+        return this.upsert(taskId, { template, templateConfig });
     }
 
     /** Documentação oficial: objetivo + critério de pronto (o "o que é esperado"). */
