@@ -12,6 +12,7 @@ import { DolibarrService } from '../services/dolibarrService';
 import { ChatInterface } from './Chat/ChatInterface';
 import { TaskContactsManager } from './Tasks/TaskContactsManager';
 import { DelegationPanel } from './Tasks/DelegationPanel';
+import { DelegationDocPanel } from './Tasks/DelegationDocPanel';
 import { logger } from '../utils/logger';
 
 const log = logger.child('TaskDetail');
@@ -346,6 +347,11 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                         {/* Delegação: ciclo de vida / aceite (Fase 1.5) */}
                         {initialItemId && (
                             <DelegationPanel config={config} taskId={initialItemId} task={task} currentUserId={(config as any).currentUser?.id} />
+                        )}
+
+                        {/* Delegação: documentação oficial (objetivo + critério de pronto) */}
+                        {initialItemId && (
+                            <DelegationDocPanel config={config} taskId={initialItemId} />
                         )}
 
                         {/* Gestão de Responsável/Intervenientes (camada 2f) — ao vivo via custom_sync #72 */}

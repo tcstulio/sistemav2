@@ -86,6 +86,14 @@ export class DelegationService {
         return next;
     }
 
+    /** Documentação oficial: objetivo + critério de pronto (o "o que é esperado"). */
+    setDoc(taskId: string, doc: { objetivo?: string; criterio?: string }): DelegationRecord {
+        const patch: Partial<DelegationRecord> = {};
+        if (doc.objetivo !== undefined) patch.objetivo = doc.objetivo;
+        if (doc.criterio !== undefined) patch.criterio = doc.criterio;
+        return this.upsert(taskId, patch);
+    }
+
     /** Solicita o aceite: marca pending com um prazo (day index). nowMs injetável p/ teste. */
     requestAcceptance(taskId: string, opts: { nowMs?: number; prazoDeAceiteDays?: number; by?: string } = {}): DelegationRecord {
         const nowMs = opts.nowMs ?? Date.now();
