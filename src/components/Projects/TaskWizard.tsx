@@ -321,25 +321,20 @@ export const TaskWizard: React.FC<TaskWizardProps> = ({ isOpen, onClose, project
 
                 const createdTask = await DolibarrService.createTask(config, payload);
                 if (createdTask && createdTask.id) {
-                    // 2. Add Responsible (if selected)
+                    // 2. Responsável → TASKEXECUTIVE (via custom_sync #72, o canal que grava)
                     if (row.assigned_user_id) {
                         try {
-                            // Try adding as 'responsible' type if mapped, or just 'internal'
-                            // Standard keys: '9' for responsible? '1' for participant?
-                            // Actually standard API usually uses codes.
-                            // Let's assume standard 'internal_contact' logic
-                            // For now, I'll use the new helper.
-                            await DolibarrService.addTaskParticipant(config, createdTask.id, row.assigned_user_id);
-                        } catch (e) { log.warn('Failed to assign user', e); }
+                            await DolibarrService.setTaskContact(config, createdTask.id, row.assigned_user_id, 'TASKEXECUTIVE');
+                        } catch (e) { log.warn('Failed to assign responsible', e); }
                     }
 
-                    // 3. Add Participants
+                    // 3. Intervenientes → TASKCONTRIBUTOR
                     if (row.participant_ids && row.participant_ids.length > 0) {
                         for (const uid of row.participant_ids) {
-                            if (uid === row.assigned_user_id) continue; // Skip if main responsible
+                            if (uid === row.assigned_user_id) continue; // já é o Responsável
                             try {
-                                await DolibarrService.addTaskParticipant(config, createdTask.id, uid);
-                            } catch (e) { log.warn('Failed to add participant', { uid, error: e }); }
+                                await DolibarrService.setTaskContact(config, createdTask.id, uid, 'TASKCONTRIBUTOR');
+                            } catch (e) { log.warn('Failed to add contributor', { uid, error: e }); }
                         }
                     }
                 }
