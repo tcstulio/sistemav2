@@ -104,6 +104,26 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
         expect(payload!.data.id).toBe('12');
     });
 
+    it('prepare_create_delegation gera /tasks/new com kind create_delegation e carrega critério+responsável', async () => {
+        const out = await executeTool('prepare_create_delegation', {
+            label: 'Relatório de vendas', project_id: '7', fk_user_assign: '16', date_end: '2026-06-12', criterio: 'Planilha enviada',
+        });
+        const m = out.match(/\/tasks\/new\?prefill=([A-Za-z0-9._-]+)/);
+        expect(m).not.toBeNull();
+        const payload = verifyDeeplink<Record<string, string>>(m![1], 'create_delegation');
+        expect(payload).not.toBeNull();
+        expect(payload!.data.label).toBe('Relatório de vendas');
+        expect(payload!.data.project_id).toBe('7');
+        expect(payload!.data.fk_user_assign).toBe('16');
+        expect(payload!.data.date_end).toBe('2026-06-12');
+        expect(payload!.data.criterio).toBe('Planilha enviada');
+    });
+
+    it('prepare_create_delegation exige fk_user_assign (e project_id)', async () => {
+        await expect(executeTool('prepare_create_delegation', { label: 'X', project_id: '7' })).rejects.toThrow();
+        await expect(executeTool('prepare_create_delegation', { label: 'X', fk_user_assign: '16' })).rejects.toThrow();
+    });
+
     it('prepare_create_category gera /categories/new com kind create_category', async () => {
         const out = await executeTool('prepare_create_category', { label: 'Clientes VIP', type: 'customer' });
         const m = out.match(/\/categories\/new\?prefill=([A-Za-z0-9._-]+)/);

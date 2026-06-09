@@ -96,6 +96,7 @@ export const TOOLS_PROMPT = `
         40. prepare_edit_supplier(id, name?, email?, phone?, address?, town?, zip?) - Prepara EDIÇÃO de um fornecedor. Ache o id antes com list_suppliers.
         41. prepare_create_task(label, project_id, description?, planned_workload?, date_start?, date_end?, fk_user_assign?) - Rascunho de tarefa num projeto. project_id obrigatório (ache com list_projects). planned_workload em HORAS; datas em YYYY-MM-DD. fk_user_assign = id do usuário responsável (ache com list_users).
         42. prepare_edit_task(id, label?, description?, planned_workload?, date_start?, date_end?) - Prepara EDIÇÃO de uma tarefa. Ache o id antes com list_tasks. planned_workload em HORAS; datas em YYYY-MM-DD.
+        42b. prepare_create_delegation(label, project_id, fk_user_assign, date_end?, criterio?, description?) - Cria uma DELEGAÇÃO: tarefa + responsável + critério de pronto, pedindo o ACEITE do responsável. Use quando alguém PEDE algo a outra pessoa ("peça pro fulano entregar X até sexta"). project_id e fk_user_assign obrigatórios (ache com list_projects/list_users). date_end (prazo) em YYYY-MM-DD. criterio = como saber que terminou. O solicitante é quem confirmar.
         43. prepare_create_category(label, type?, description?) - Rascunho de nova categoria (type: 'product' | 'customer' | 'supplier').
         44. prepare_edit_category(id, label?, type?, description?) - Prepara EDIÇÃO de uma categoria. Ache o id antes com list_categories.
         45. prepare_create_event(label, date_start, date_end?, type_code?, description?) - Rascunho de evento na agenda. date_start/date_end no formato "YYYY-MM-DDTHH:mm". type_code: AC_RDV (reunião), AC_TEL (ligação), AC_EMAIL, AC_OTH.
@@ -289,6 +290,14 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
         required: ['label', 'project_id'],
         newRoute: '/tasks/new',
         editRoute: '/tasks/:id/edit',
+    },
+    delegation: {
+        // Delegação = tarefa + responsável + critério de pronto, com pedido de aceite (Fase 1.5).
+        // Reusa a tela de nova tarefa (/tasks/new); o frontend trata o kind 'create_delegation'.
+        label: 'delegação',
+        createFields: ['label', 'description', 'project_id', 'date_end', 'fk_user_assign', 'criterio'],
+        required: ['label', 'project_id', 'fk_user_assign'],
+        newRoute: '/tasks/new',
     },
     category: {
         label: 'categoria',
