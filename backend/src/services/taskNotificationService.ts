@@ -21,10 +21,14 @@ export async function dispatchTaskNotification(
     opts?: { taskContacts?: TaskContact[] },
 ): Promise<void> {
     try {
-        const matrix = uiConfigService.get().taskNotifications;
+        const cfg = uiConfigService.get();
         const contacts = opts?.taskContacts ?? await dolibarrService.getTaskContacts(String(task.id));
         const roleUsers = resolveRoleUsers(task, contacts);
-        const targets = planTargets(event, roleUsers, matrix);
+        const externalOn = cfg.taskNotificationsExternalEnabled;
+        const targets = planTargets(event, roleUsers, cfg.taskNotifications)
+            // trava de segurança: sem canais externos habilitados, só in-app sai (testável no webapp).
+            .map((t) => ({ userId: t.userId, channels: externalOn ? t.channels : t.channels.filter((c) => c === 'in-app') }))
+            .filter((t) => t.channels.length > 0);
         if (!targets.length) return;
 
         for (const { userId, channels } of targets) {
