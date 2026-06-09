@@ -116,10 +116,9 @@ Hoje o agente só roda no chat. Para "se certificar", ele precisa de um **modo a
 
 - **Fase 0 — FEITO:** responsável gravável (#72) + notificação por papel + cron de overdue (rede de segurança). *(Em produção / acumulado.)*
 - **Fase 1 — MVP "delegação rastreável" (regras, sem LLM autônomo):**
-  - Delegação sobre Tarefa+extrafields + solicitante.
-  - Corrigir `prepare_create_task` → `setTaskContact`. UI de atribuir (2f). Criar delegação via chat (HITL).
-  - Tick por **regras**: cobra o responsável (in-app) e reporta ao solicitante na conclusão. Verificação N1. Trava externa off.
+  - ✅ 1a responsável gravável (`setTaskContact`) · ✅ #74 responsável visível · ✅ 1b/2f UI de atribuir · ✅ 1d motor por regras (cobra/escala/reporta) + verificação N1 · ⬜ **1c criar delegação via chat (HITL) — issue #286**.
   - **Entrega:** pedidos viram delegações rastreáveis, cobradas e reportadas — **testável 100% no webapp**.
+- **Fase 1.5 — "delegação como fluxo" (ver §13):** ciclo de vida com **aceite (prazo + escala imediata)**, **documentação oficial** (critério de pronto), **sub-tarefas + barra de progresso**, transparência a todos os envolvidos, e **templates estruturados** (1º: contagem de estoque = verificação N2). *(Issues abaixo.)*
 - **Fase 2 — "agente cobra com inteligência":**
   - Modo autônomo: o tick invoca o LLM para os casos de julgamento (cobrança contextual, ajuda, escalonamento). Cadência configurável. WhatsApp/e-mail ligados após validação.
 - **Fase 3 — "verificação e visibilidade":**
@@ -146,8 +145,45 @@ Hoje o agente só roda no chat. Para "se certificar", ele precisa de um **modo a
 
 ---
 
-## 12. Decisões em aberto (para validar)
-1. A Delegação **é** a Tarefa do Dolibarr (recomendado) ou um conceito separado?
-2. Solicitante = criador (`fk_user_creat`) ou papel explícito?
-3. Acompanhamento começa por **regras** (Fase 1) e ganha **LLM** depois (Fase 2)? *(recomendado)*
-4. **Cadência inicial** (ex.: lembra 1 dia antes do prazo · cobra no vencimento · re-cobra a cada 2 dias · escala ao solicitante após 3 cobranças sem progresso).
+## 12. Decisões (validadas)
+1. A Delegação **é** a Tarefa do Dolibarr. ✅
+2. Solicitante = criador (`fk_user_creat`) por ora. ✅
+3. Acompanhamento começa por **regras** (Fase 1) e ganha **LLM** depois (Fase 2). ✅
+4. **Cadência inicial:** lembra 1 dia antes · cobra no vencimento · re-cobra a cada 2 dias · escala ao solicitante após 3 cobranças sem progresso. ✅ (implementada em `delegationFollowUpLogic`)
+5. **Comunicação automática (sem aprovação por mensagem), porém auditável.** ✅ Toda mensagem fica logada; supervisão vem da trilha, não de um portão por envio.
+6. **Aceite obrigatório com prazo:** ao receber, o responsável tem um **prazo de aceite** para confirmar. **Recusa OU prazo estourado sem resposta → escala imediatamente ao solicitante.** ✅
+
+---
+
+## 13. Ciclo de vida da delegação (execução estruturada, auditável e transparente)
+
+A Delegação deixa de ser "tarefa com prazo" e vira um **objeto de fluxo**: criada → avisada → **aceita** → documentada → decomposta em passos → acompanhada por barra de progresso → concluída e registrada — com **todos os envolvidos vendo o que é esperado**.
+
+### 13.1 O ciclo
+| Etapa | O que acontece | No sistema |
+|---|---|---|
+| **Criada** | o pedido vira delegação | tarefa-mãe (solicitante = `fk_user_creat`) |
+| **Aviso** | avisa o responsável e quem deve saber | matriz (`assigned` → responsável + intervenientes) |
+| **Aceite (com prazo)** | o responsável confirma que recebeu/aceita, dentro do **prazo de aceite** | novo estado "aguardando aceite" → "aceita"; registra quem/quando |
+| **↳ recusa ou sem resposta no prazo** | **escala imediatamente ao solicitante** | evento de escalação de aceite |
+| **Documentação oficial** | o "o que é esperado": objetivo, critério de pronto, passos | o **contrato** da delegação (visível a todos) |
+| **Fluxo de tarefas** | a doc vira passos | **sub-tarefas** (`fk_task_parent`, nativo do Dolibarr) |
+| **Barra de progresso** | acompanha o avanço | `progress` da mãe = agregado das filhas |
+| **Todos informados** | cada envolvido vê o esperado e onde está | tela + notificações por papel |
+| **Concluída + registrada** | fecha e comprova | progresso 100% + registro auditável; **motor reporta ao solicitante** |
+
+### 13.2 A "documentação oficial" — um artefato, quatro funções
+O documento do que é esperado serve simultaneamente como: **(1) clareza** (todos sabem o combinado), **(2) checklist** (vira os passos/barra), **(3) critério de verificação** (pronto = passos registrados) e **(4) registro de auditoria** (foi isto que foi combinado, confirmado por fulano às HH:MM).
+- **Fase 1 (regras):** a doc é escrita por uma pessoa ou vem de um **template**.
+- **Fase 2 (LLM):** o agente **gera** a doc a partir do pedido; a pessoa só **confirma** (o "aceite").
+
+### 13.3 Respostas limitadas = templates estruturados (verificação N2)
+Para tornar a execução auditável e auto-verificável, uma delegação de **tipo conhecido** abre um **fluxo guiado com resposta tipada e validada** (não texto livre). Primeiro template: **contagem de estoque** — apresenta item a item, recebe um número por item, valida (item ∈ lista, qtd ≥ 0) e, ao enviar, **registra o movimento de estoque no Dolibarr** + marca 100%. A contagem registrada *é* a prova de conclusão (N2), sem confirmação "no olho".
+- **Canal:** o estruturado vive **in-app** (onde dá pra limitar/validar); o WhatsApp/automático é só o **toque + link** que abre a tela.
+
+### 13.4 Transparência e auditoria
+- **Transparência:** a matriz define quem é avisado por papel/evento; a doc oficial é visível na tela a todos que podem ver a tarefa — todos veem o mesmo "esperado" e a mesma barra.
+- **Auditoria (trilha por delegação):** notificações enviadas (`notifications.json`) + estado do acompanhamento (`delegation_tracking.json`: cobranças/datas/aceite) + o registro final no Dolibarr (autor + timestamp). Comunicação automática, mas tudo rastreável.
+
+### 13.5 Ponte para o Tulipa
+O "fluxo de tarefas" é exatamente o **DAG de orquestração do Tulipa** (Fase 4): começa nativo com sub-tarefas do Dolibarr e migra sem reescrever a lógica (que já é abstraída como "Delegação").
