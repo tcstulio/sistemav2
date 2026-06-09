@@ -15,6 +15,7 @@ import { DelegationPanel } from './Tasks/DelegationPanel';
 import { DelegationDocPanel } from './Tasks/DelegationDocPanel';
 import { DelegationStepsPanel } from './Tasks/DelegationStepsPanel';
 import { StockCountPanel } from './Tasks/StockCountPanel';
+import { DelegationTimelinePanel } from './Tasks/DelegationTimelinePanel';
 import { logger } from '../utils/logger';
 
 const log = logger.child('TaskDetail');
@@ -379,6 +380,11 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                                 warehouses={allWarehouses}
                                 onChanged={() => refetchTasks()}
                             />
+                        )}
+
+                        {/* Delegação: linha do tempo / histórico (quem fez o quê, quando) */}
+                        {initialItemId && (
+                            <DelegationTimelinePanel config={config} taskId={initialItemId} users={users} />
                         )}
 
                         {/* Gestão de Responsável/Intervenientes (camada 2f) — ao vivo via custom_sync #72 */}

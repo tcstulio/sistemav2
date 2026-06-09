@@ -268,3 +268,9 @@ export const setDelegationTemplate = async (config: DolibarrConfig, taskId: stri
     const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/delegation/template`;
     return request(url, { method: 'PUT', headers: getHeaders(config.apiKey), body: JSON.stringify({ template, templateConfig }) });
 };
+
+// Linha do tempo (histórico) da delegação: [{ type, at, by?, note? }]
+export const getDelegationEvents = async (config: DolibarrConfig, taskId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/delegation/events`;
+    return request(url, { method: 'GET', headers: getHeaders(config.apiKey) });
+};

@@ -39,6 +39,12 @@ vi.mock('../../services/dolibarrService', () => ({
 vi.mock('../../services/delegationService', () => ({ delegationService: mockDelegation }));
 vi.mock('../../services/taskNotificationService', () => ({ dispatchTaskNotification: mockDispatch }));
 
+const mockEvents = vi.hoisted(() => ({
+    logEvent: vi.fn(),
+    getEvents: vi.fn(() => [{ type: 'accepted', at: '2026-06-09T00:00:00Z', by: '16' }]),
+}));
+vi.mock('../../services/delegationEventsService', () => ({ delegationEventsService: mockEvents }));
+
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({
         debug: vi.fn(),
@@ -261,10 +267,19 @@ describe('dolibarrRoutes', () => {
             expect(mockDispatch).toHaveBeenCalledWith('acceptance_pending', expect.objectContaining({ id: '50' }));
         });
 
-        it('POST accept registra o aceite', async () => {
+        it('POST accept registra o aceite e loga o evento', async () => {
             const res = await request(app).post('/api/dolibarr/tasks/50/delegation/accept').send({ by: '16' });
             expect(res.status).toBe(200);
             expect(mockDelegation.accept).toHaveBeenCalledWith('50', '16');
+            expect(mockEvents.logEvent).toHaveBeenCalledWith('50', 'accepted', { by: '16' });
+        });
+
+        it('GET delegation/events retorna a linha do tempo', async () => {
+            const res = await request(app).get('/api/dolibarr/tasks/50/delegation/events');
+            expect(res.status).toBe(200);
+            expect(mockEvents.getEvents).toHaveBeenCalledWith('50');
+            expect(res.body).toHaveLength(1);
+            expect(mockDolibarrService.proxyRequest).not.toHaveBeenCalled();
         });
 
         it('POST accept sem "by" retorna 400', async () => {
