@@ -18,6 +18,14 @@ const mockDolibarrService = vi.hoisted(() => ({
     proxyRequest: vi.fn(() => ({ status: 200, data: {} })),
 }));
 
+const mockDelegation = vi.hoisted(() => ({
+    get: vi.fn(() => ({ taskId: '50', aceite: { status: 'pending', deadlineDay: 100 } })),
+    requestAcceptance: vi.fn(() => ({ taskId: '50', aceite: { status: 'pending' } })),
+    accept: vi.fn(() => ({ taskId: '50', aceite: { status: 'accepted' } })),
+    decline: vi.fn(() => ({ taskId: '50', aceite: { status: 'declined' } })),
+}));
+const mockDispatch = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrLogin: mockRequireDolibarrLogin,
 }));
@@ -25,6 +33,9 @@ vi.mock('../../middleware/authMiddleware', () => ({
 vi.mock('../../services/dolibarrService', () => ({
     dolibarrService: mockDolibarrService,
 }));
+
+vi.mock('../../services/delegationService', () => ({ delegationService: mockDelegation }));
+vi.mock('../../services/taskNotificationService', () => ({ dispatchTaskNotification: mockDispatch }));
 
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({
@@ -226,6 +237,47 @@ describe('dolibarrRoutes', () => {
             expect(res.status).toBe(200);
             expect(mockDolibarrService.removeTaskContact).toHaveBeenCalledWith('123', '7');
             expect(mockDolibarrService.proxyRequest).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('Delegação — ciclo de vida (aceite)', () => {
+        const task = { id: '50', fk_user_creat: '9', label: 'Relatório', ref: 'TK50' };
+
+        it('GET /tasks/:id/delegation retorna o estado da delegação', async () => {
+            const res = await request(app).get('/api/dolibarr/tasks/50/delegation');
+            expect(res.status).toBe(200);
+            expect(mockDelegation.get).toHaveBeenCalledWith('50');
+            expect(mockDolibarrService.proxyRequest).not.toHaveBeenCalled();
+        });
+
+        it('POST request-acceptance solicita aceite e avisa o responsável', async () => {
+            const res = await request(app)
+                .post('/api/dolibarr/tasks/50/delegation/request-acceptance')
+                .send({ task, by: '9' });
+            expect(res.status).toBe(200);
+            expect(mockDelegation.requestAcceptance).toHaveBeenCalledWith('50', expect.objectContaining({ by: '9' }));
+            expect(mockDispatch).toHaveBeenCalledWith('acceptance_pending', expect.objectContaining({ id: '50' }));
+        });
+
+        it('POST accept registra o aceite', async () => {
+            const res = await request(app).post('/api/dolibarr/tasks/50/delegation/accept').send({ by: '16' });
+            expect(res.status).toBe(200);
+            expect(mockDelegation.accept).toHaveBeenCalledWith('50', '16');
+        });
+
+        it('POST accept sem "by" retorna 400', async () => {
+            const res = await request(app).post('/api/dolibarr/tasks/50/delegation/accept').send({});
+            expect(res.status).toBe(400);
+            expect(mockDelegation.accept).not.toHaveBeenCalled();
+        });
+
+        it('POST decline recusa e escala imediatamente ao solicitante', async () => {
+            const res = await request(app)
+                .post('/api/dolibarr/tasks/50/delegation/decline')
+                .send({ by: '16', reason: 'já tratei', task });
+            expect(res.status).toBe(200);
+            expect(mockDelegation.decline).toHaveBeenCalledWith('50', '16', 'já tratei');
+            expect(mockDispatch).toHaveBeenCalledWith('acceptance_overdue', expect.objectContaining({ id: '50' }));
         });
     });
 

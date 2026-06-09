@@ -16,13 +16,25 @@
  * evitando um flood retroativo no primeiro tick após o deploy.
  */
 
-export type FollowUpEvent = 'deadline_reminder' | 'overdue' | 'stalled' | 'completed';
+export type FollowUpEvent =
+    | 'acceptance_pending'  // cobra o ACEITE do responsável
+    | 'acceptance_overdue'  // escala ao solicitante (recusa ou prazo de aceite estourado)
+    | 'deadline_reminder'
+    | 'overdue'
+    | 'stalled'
+    | 'completed';
 
 export interface FollowUpTask {
     id: string | number;
     date_end?: string | number | null; // unix (segundos)
     progress?: string | number | null; // 0..100
     fk_user_creat?: string | number | null;
+}
+
+/** Estado de aceite da delegação (subconjunto que a decisão precisa; o registro completo vive no delegationService). */
+export interface AceiteState {
+    status: 'pending' | 'accepted' | 'declined';
+    deadlineDay?: number; // day index do prazo de aceite
 }
 
 export interface TaskTracking {
@@ -32,18 +44,21 @@ export interface TaskTracking {
     escalated: boolean;              // já escalou ao solicitante neste ciclo?
     reportedDone: boolean;           // já reportou a conclusão?
     progressAtLastCobranca?: number; // progresso na última cobrança/baseline (detecta avanço)
+    acceptanceEscalated?: boolean;   // já escalou a falta de aceite ao solicitante?
 }
 
 export interface Cadence {
     reminderDaysBefore: number;     // janela do lembrete antes do prazo
     recobrancaIntervalDays: number; // intervalo entre re-cobranças
     escalateAfterCobrancas: number; // nº de cobranças sem progresso antes de escalar
+    prazoDeAceiteDays: number;      // prazo (dias) p/ o responsável aceitar antes de escalar
 }
 
 export const DEFAULT_CADENCE: Cadence = {
     reminderDaysBefore: 1,
     recobrancaIntervalDays: 2,
     escalateAfterCobrancas: 3,
+    prazoDeAceiteDays: 1,
 };
 
 export const DAY_MS = 86400000;
@@ -82,6 +97,7 @@ export function decideFollowUp(
     prev: TaskTracking | undefined,
     todayMs: number,
     cadence: Cadence = DEFAULT_CADENCE,
+    aceite?: AceiteState,
 ): FollowUpDecision {
     const progress = num(task.progress);
     const done = progress >= 100;
@@ -98,6 +114,19 @@ export function decideFollowUp(
             return { event: 'completed', tracking: { ...prev, reportedDone: true } };
         }
         return { event: null, tracking: prev };
+    }
+
+    // Fase de ACEITE — só quando há registro de delegação. Sem registro (tarefa comum) ou já
+    // aceita, segue direto para a cadência de entrega (compatível com o comportamento atual).
+    if (aceite?.status === 'pending') {
+        // Prazo de aceite estourado sem resposta -> escala ao solicitante (uma vez).
+        if (aceite.deadlineDay !== undefined && todayDay > aceite.deadlineDay && !prev.acceptanceEscalated) {
+            return { event: 'acceptance_overdue', tracking: { ...prev, acceptanceEscalated: true } };
+        }
+        return { event: null, tracking: prev }; // aguardando aceite -> sem cadência de entrega
+    }
+    if (aceite?.status === 'declined') {
+        return { event: null, tracking: prev }; // recusada: a escalação imediata é feita na rota
     }
 
     const dueSec = num(task.date_end);

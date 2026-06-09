@@ -16,6 +16,7 @@ import { atomicWriteSync } from '../utils/atomicWrite';
 import { createLogger } from '../utils/logger';
 import { dolibarrService } from './dolibarr';
 import { dispatchTaskNotification } from './taskNotificationService';
+import { delegationService } from './delegationService';
 import { decideFollowUp, Cadence, DEFAULT_CADENCE, TaskTracking } from './delegationFollowUpLogic';
 
 const log = createLogger('DelegationFollowUp');
@@ -25,6 +26,8 @@ type TrackingStore = Record<string, TaskTracking>;
 export interface TickResult {
     tasks: number;
     baselines: number;
+    acceptance_pending: number; // nunca disparado pelo tick (vem da rota); mantido p/ tipagem
+    acceptance_overdue: number;
     deadline_reminder: number;
     overdue: number;
     stalled: number;
@@ -69,7 +72,7 @@ export class DelegationFollowUpService {
 
     /** Executa um tick de acompanhamento. `nowMs` é injetável para teste. */
     async runTick(nowMs: number = Date.now()): Promise<TickResult> {
-        const result: TickResult = { tasks: 0, baselines: 0, deadline_reminder: 0, overdue: 0, stalled: 0, completed: 0 };
+        const result: TickResult = { tasks: 0, baselines: 0, acceptance_pending: 0, acceptance_overdue: 0, deadline_reminder: 0, overdue: 0, stalled: 0, completed: 0 };
         try {
             const tasks = await dolibarrService.listTasksFull();
             if (!tasks || tasks.length === 0) return result;
@@ -87,7 +90,8 @@ export class DelegationFollowUpService {
             for (const task of tasks) {
                 const id = String(task.id);
                 const prev = this.store[id];
-                const { event, tracking } = decideFollowUp(task, prev, nowMs, this.cadence);
+                const aceite = delegationService.getAceite(id);
+                const { event, tracking } = decideFollowUp(task, prev, nowMs, this.cadence, aceite);
                 this.store[id] = tracking;
 
                 if (!prev) {
@@ -106,9 +110,9 @@ export class DelegationFollowUpService {
             }
 
             this.save();
-            const acted = result.deadline_reminder + result.overdue + result.stalled + result.completed;
+            const acted = result.acceptance_overdue + result.deadline_reminder + result.overdue + result.stalled + result.completed;
             log.info(`tick: ${result.tasks} tarefas, ${result.baselines} baseline(s), ${acted} ação(ões) ` +
-                `[lembrete=${result.deadline_reminder} cobrança=${result.overdue} escala=${result.stalled} reporte=${result.completed}]`);
+                `[aceite-escala=${result.acceptance_overdue} lembrete=${result.deadline_reminder} cobrança=${result.overdue} escala=${result.stalled} reporte=${result.completed}]`);
         } catch (e) {
             log.error('runTick error', e);
         }

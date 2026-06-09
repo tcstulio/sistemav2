@@ -169,8 +169,10 @@ export function getAllTemplates(): NotificationTemplate[] {
 // Camada 2 — título + mensagem por evento de tarefa (mesma mensagem p/ todos os canais por ora;
 // refinamento por canal/tom pode vir depois). Variáveis: {nome} {ref} {label} {date} {progress}.
 const TASK_TEMPLATES: Record<string, { title: string; message: string }> = {
-    assigned:          { title: 'Nova tarefa atribuída', message: 'Olá {nome}, você é responsável pela tarefa {ref} — {label}.' },
-    deadline_reminder: { title: 'Prazo se aproximando', message: 'Olá {nome}, a tarefa {ref} — {label} vence em {date}.' },
+    assigned:           { title: 'Nova tarefa atribuída', message: 'Olá {nome}, você é responsável pela tarefa {ref} — {label}.' },
+    acceptance_pending: { title: 'Confirme o recebimento', message: 'Olá {nome}, você recebeu a delegação {ref} — {label}. Confirme se aceita (até {date}).' },
+    acceptance_overdue: { title: 'Delegação sem aceite', message: 'A delegação {ref} — {label} não foi aceita pelo responsável no prazo. Convém acompanhar.' },
+    deadline_reminder:  { title: 'Prazo se aproximando', message: 'Olá {nome}, a tarefa {ref} — {label} vence em {date}.' },
     overdue:           { title: 'Tarefa atrasada', message: 'Olá {nome}, a tarefa {ref} — {label} venceu em {date}. Finalize ou informe o status, por favor.' },
     stalled:           { title: 'Tarefa parada', message: 'Olá {nome}, a tarefa {ref} — {label} está sem progresso. Consegue atualizar?' },
     completed:         { title: 'Tarefa concluída', message: 'A tarefa {ref} — {label} foi concluída.' },

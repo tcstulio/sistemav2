@@ -225,3 +225,34 @@ export const removeTaskContact = async (config: DolibarrConfig, taskId: string, 
     const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/contacts/${rowid}`;
     return request(url, { method: 'DELETE', headers: getHeaders(config.apiKey) });
 };
+
+// -- Delegação: ciclo de vida (aceite) --
+// Subconjunto da tarefa que o backend usa para notificar (resolve solicitante/responsável).
+const taskRefFields = (task: any) => ({
+    id: task?.id,
+    fk_user_creat: task?.fk_user_creat,
+    label: task?.label,
+    ref: task?.ref,
+    date_end: task?.date_end,
+    progress: task?.progress,
+});
+
+export const getDelegation = async (config: DolibarrConfig, taskId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/delegation`;
+    return request(url, { method: 'GET', headers: getHeaders(config.apiKey) });
+};
+
+export const requestDelegationAcceptance = async (config: DolibarrConfig, taskId: string, task: any, prazoDeAceiteDays?: number, by?: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/delegation/request-acceptance`;
+    return request(url, { method: 'POST', headers: getHeaders(config.apiKey), body: JSON.stringify({ task: taskRefFields(task), prazoDeAceiteDays, by }) });
+};
+
+export const acceptDelegation = async (config: DolibarrConfig, taskId: string, by: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/delegation/accept`;
+    return request(url, { method: 'POST', headers: getHeaders(config.apiKey), body: JSON.stringify({ by }) });
+};
+
+export const declineDelegation = async (config: DolibarrConfig, taskId: string, by: string, reason: string, task: any) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/delegation/decline`;
+    return request(url, { method: 'POST', headers: getHeaders(config.apiKey), body: JSON.stringify({ by, reason, task: taskRefFields(task) }) });
+};

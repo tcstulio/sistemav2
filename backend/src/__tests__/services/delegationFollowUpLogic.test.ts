@@ -106,7 +106,7 @@ describe('decideFollowUp', () => {
     });
 
     it('respeita uma cadência customizada', () => {
-        const cadence = { reminderDaysBefore: 3, recobrancaIntervalDays: 1, escalateAfterCobrancas: 1 };
+        const cadence = { reminderDaysBefore: 3, recobrancaIntervalDays: 1, escalateAfterCobrancas: 1, prazoDeAceiteDays: 1 };
         // lembrete com janela de 3 dias
         const base: TaskTracking = { cobrancas: 0, escalated: false, reportedDone: false, progressAtLastCobranca: 0 };
         expect(decideFollowUp(task({ date_end: dueSec(10), progress: 0 }), base, noon(8), cadence).event).toBe('deadline_reminder');
@@ -116,6 +116,43 @@ describe('decideFollowUp', () => {
     });
 
     it('usa a cadência padrão quando não informada', () => {
-        expect(DEFAULT_CADENCE).toEqual({ reminderDaysBefore: 1, recobrancaIntervalDays: 2, escalateAfterCobrancas: 3 });
+        expect(DEFAULT_CADENCE).toEqual({ reminderDaysBefore: 1, recobrancaIntervalDays: 2, escalateAfterCobrancas: 3, prazoDeAceiteDays: 1 });
+    });
+});
+
+describe('decideFollowUp — fase de aceite', () => {
+    const prev: TaskTracking = { cobrancas: 0, escalated: false, reportedDone: false, progressAtLastCobranca: 0 };
+
+    it('com aceite pendente e dentro do prazo: nenhuma ação de entrega (aguarda)', () => {
+        const d = decideFollowUp(task({ date_end: dueSec(5), progress: 0 }), prev, noon(11), DEFAULT_CADENCE, {
+            status: 'pending', deadlineDay: 12,
+        });
+        // tarefa já atrasada, mas como ainda não foi aceita, NÃO cobra a entrega
+        expect(d.event).toBeNull();
+    });
+
+    it('aceite pendente com prazo estourado: escala ao solicitante (uma vez)', () => {
+        const d = decideFollowUp(task({ progress: 0 }), prev, noon(13), DEFAULT_CADENCE, {
+            status: 'pending', deadlineDay: 12,
+        });
+        expect(d.event).toBe('acceptance_overdue');
+        expect(d.tracking.acceptanceEscalated).toBe(true);
+        // não re-escala
+        expect(decideFollowUp(task({ progress: 0 }), d.tracking, noon(14), DEFAULT_CADENCE, { status: 'pending', deadlineDay: 12 }).event).toBeNull();
+    });
+
+    it('aceite recusado: sem ação no tick (a escalação imediata é feita na rota)', () => {
+        const d = decideFollowUp(task({ date_end: dueSec(5), progress: 0 }), prev, noon(20), DEFAULT_CADENCE, { status: 'declined' });
+        expect(d.event).toBeNull();
+    });
+
+    it('aceito: volta a rodar a cadência de entrega normalmente', () => {
+        const d = decideFollowUp(task({ date_end: dueSec(10), progress: 0 }), prev, noon(11), DEFAULT_CADENCE, { status: 'accepted' });
+        expect(d.event).toBe('overdue'); // atrasada e aceita -> cobra a entrega
+    });
+
+    it('sem registro de aceite: comporta-se como tarefa comum (cadência de entrega)', () => {
+        const d = decideFollowUp(task({ date_end: dueSec(10), progress: 0 }), prev, noon(11));
+        expect(d.event).toBe('overdue');
     });
 });
