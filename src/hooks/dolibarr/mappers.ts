@@ -269,6 +269,7 @@ export const mapTask = (raw: RawDolibarrRecord): Task => ({
     duration_effective: toNumber(raw.duration_effective),
     fk_user_assign: raw.fk_user_assign ? toString(raw.fk_user_assign) : undefined,
     fk_user_creat: raw.fk_user_creat ? toString(raw.fk_user_creat) : undefined,
+    fk_parent: (raw.fk_parent ?? raw.fk_task_parent) ? toString(raw.fk_parent ?? raw.fk_task_parent) : undefined,
     date_creation: toTimestamp(raw.datec),
     date_modification: toTimestamp(raw.tms),
     project_ref: raw.project_ref || undefined,

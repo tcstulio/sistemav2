@@ -7,12 +7,13 @@ import { ChevronLeft, Calendar as CalendarIcon, Clock, User, FolderKanban, FileT
 import { RichTextEditor } from './common/RichTextEditor';
 import { LinkedObjects } from './common/LinkedObjects';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
-import { useTaskTimeLogs, useUsers, useTaskContacts } from '../hooks/dolibarr';
+import { useTaskTimeLogs, useUsers, useTaskContacts, useTasks } from '../hooks/dolibarr';
 import { DolibarrService } from '../services/dolibarrService';
 import { ChatInterface } from './Chat/ChatInterface';
 import { TaskContactsManager } from './Tasks/TaskContactsManager';
 import { DelegationPanel } from './Tasks/DelegationPanel';
 import { DelegationDocPanel } from './Tasks/DelegationDocPanel';
+import { DelegationStepsPanel } from './Tasks/DelegationStepsPanel';
 import { logger } from '../utils/logger';
 
 const log = logger.child('TaskDetail');
@@ -35,6 +36,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
     const { data: timeLogs = [] } = useTaskTimeLogs(config);
     const { data: users = [] } = useUsers(config);
     const { data: taskContacts = [] } = useTaskContacts(config);
+    const { data: allTasks = [], refetch: refetchTasks } = useTasks(config);
 
     const [isTimeModalOpen, setIsTimeModalOpen] = useState(false);
     const [timeForm, setTimeForm] = useState({
@@ -352,6 +354,17 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                         {/* Delegação: documentação oficial (objetivo + critério de pronto) */}
                         {initialItemId && (
                             <DelegationDocPanel config={config} taskId={initialItemId} />
+                        )}
+
+                        {/* Delegação: passos (sub-tarefas) + barra de progresso */}
+                        {initialItemId && task && (
+                            <DelegationStepsPanel
+                                config={config}
+                                taskId={initialItemId}
+                                projectId={task.project_id}
+                                tasks={allTasks}
+                                onChanged={() => refetchTasks()}
+                            />
                         )}
 
                         {/* Gestão de Responsável/Intervenientes (camada 2f) — ao vivo via custom_sync #72 */}

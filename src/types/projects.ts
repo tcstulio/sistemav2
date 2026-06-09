@@ -33,6 +33,7 @@ export interface Task {
     duration_effective?: number; // seconds
     fk_user_assign?: string;
     fk_user_creat?: string; // Creator ID
+    fk_parent?: string; // tarefa-pai (fk_task_parent) — usada p/ sub-tarefas/passos da delegação
     array_options?: Record<string, any>;
     raw?: any;
     date_creation?: number;
