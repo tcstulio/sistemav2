@@ -32,6 +32,7 @@ describe('uiConfigService', () => {
         expect(cfg.taskNotifications.overdue.responsavel).toEqual(['in-app', 'whatsapp', 'email']);
         expect(cfg.taskNotifications.completed.criador).toContain('in-app');
         expect(cfg.taskNotifications.overdue.interveniente).toEqual([]);
+        expect(cfg.taskNotificationsExternalEnabled).toBe(false); // canais externos travados por padrão
     });
 
     it('update sanitiza taskNotifications (canais válidos, respeita desligamento, default p/ ausente)', () => {

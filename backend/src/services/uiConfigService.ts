@@ -84,6 +84,7 @@ export interface UiConfig {
     screenPermissions: ScreenPermissions;  // #112 — permissões de tela por pessoa/grupo
     customPages: CustomPage[];        // #113 — telas customizadas por grupo
     taskNotifications: TaskNotificationsConfig;  // camada 2 — quem recebe o quê por papel em cada evento de tarefa
+    taskNotificationsExternalEnabled: boolean;   // trava: WhatsApp/e-mail só saem quando o admin ligar (in-app sempre passa)
 }
 
 // Entrada de update: branding parcial + prefs/permissões/páginas parciais (sanitizadas em update()).
@@ -114,6 +115,7 @@ const DEFAULTS: UiConfig = {
     screenPermissions: { groups: {}, users: {} },
     customPages: [],
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
+    taskNotificationsExternalEnabled: false,  // começa travado: só in-app até o admin habilitar WhatsApp/e-mail
 };
 
 // Sanitiza um array de ids vindo do cliente (string curta, sem duplicatas, limite de tamanho).
@@ -284,6 +286,7 @@ export class UiConfigService {
                     screenPermissions: sanitizeScreenPermissions(parsed.screenPermissions),
                     customPages: sanitizeCustomPages(parsed.customPages),
                     taskNotifications: sanitizeTaskNotifications(parsed.taskNotifications),
+                    taskNotificationsExternalEnabled: parsed.taskNotificationsExternalEnabled === true,
                 };
             }
         } catch (error) {
@@ -328,6 +331,9 @@ export class UiConfigService {
         }
         if (partial.taskNotifications !== undefined) {
             next.taskNotifications = sanitizeTaskNotifications(partial.taskNotifications);
+        }
+        if (typeof partial.taskNotificationsExternalEnabled === 'boolean') {
+            next.taskNotificationsExternalEnabled = partial.taskNotificationsExternalEnabled;
         }
         this.data = next;
         this.save();
