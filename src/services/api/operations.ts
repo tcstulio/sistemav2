@@ -256,3 +256,9 @@ export const declineDelegation = async (config: DolibarrConfig, taskId: string, 
     const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/delegation/decline`;
     return request(url, { method: 'POST', headers: getHeaders(config.apiKey), body: JSON.stringify({ by, reason, task: taskRefFields(task) }) });
 };
+
+// Documentação oficial da delegação (objetivo + critério de pronto)
+export const setDelegationDoc = async (config: DolibarrConfig, taskId: string, doc: { objetivo?: string; criterio?: string }) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/delegation/doc`;
+    return request(url, { method: 'PUT', headers: getHeaders(config.apiKey), body: JSON.stringify(doc) });
+};

@@ -215,6 +215,18 @@ router.get('/tasks/:id/delegation', async (req, res) => {
     }
 });
 
+// Documentação oficial (objetivo + critério de pronto) — visível a todos os envolvidos.
+router.put('/tasks/:id/delegation/doc',
+    validate(z.object({ objetivo: z.string().max(2000).optional(), criterio: z.string().max(2000).optional() })),
+    async (req, res) => {
+        try {
+            const rec = delegationService.setDoc(req.params.id, { objetivo: req.body.objetivo, criterio: req.body.criterio });
+            res.json({ success: true, delegation: rec });
+        } catch (error: any) {
+            res.status(error.status || 500).json({ error: error.message });
+        }
+    });
+
 // Solicita o aceite: marca pending com prazo e avisa o responsável (acceptance_pending).
 router.post('/tasks/:id/delegation/request-acceptance',
     validate(z.object({ task: TaskRef, prazoDeAceiteDays: z.number().int().positive().optional(), by: z.string().optional() })),

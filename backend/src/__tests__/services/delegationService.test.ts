@@ -50,4 +50,13 @@ describe('DelegationService', () => {
         const rec = svc.requestAcceptance('50', { nowMs: noon(10) });
         expect(rec.aceite?.deadlineDay).toBe(11); // DEFAULT_CADENCE.prazoDeAceiteDays = 1
     });
+
+    it('setDoc grava objetivo + critério sem apagar o aceite', () => {
+        const svc = newSvc();
+        svc.requestAcceptance('50', { nowMs: noon(10) });
+        const rec = svc.setDoc('50', { objetivo: 'Contar bebidas', criterio: 'Planilha enviada' });
+        expect(rec.objetivo).toBe('Contar bebidas');
+        expect(rec.criterio).toBe('Planilha enviada');
+        expect(rec.aceite?.status).toBe('pending'); // preservado
+    });
 });

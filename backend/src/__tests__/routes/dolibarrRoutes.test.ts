@@ -21,6 +21,7 @@ const mockDolibarrService = vi.hoisted(() => ({
 const mockDelegation = vi.hoisted(() => ({
     get: vi.fn(() => ({ taskId: '50', aceite: { status: 'pending', deadlineDay: 100 } })),
     requestAcceptance: vi.fn(() => ({ taskId: '50', aceite: { status: 'pending' } })),
+    setDoc: vi.fn(() => ({ taskId: '50', objetivo: 'Obj', criterio: 'Crit' })),
     accept: vi.fn(() => ({ taskId: '50', aceite: { status: 'accepted' } })),
     decline: vi.fn(() => ({ taskId: '50', aceite: { status: 'declined' } })),
 }));
@@ -269,6 +270,15 @@ describe('dolibarrRoutes', () => {
             const res = await request(app).post('/api/dolibarr/tasks/50/delegation/accept').send({});
             expect(res.status).toBe(400);
             expect(mockDelegation.accept).not.toHaveBeenCalled();
+        });
+
+        it('PUT delegation/doc grava objetivo + critério', async () => {
+            const res = await request(app)
+                .put('/api/dolibarr/tasks/50/delegation/doc')
+                .send({ objetivo: 'Contar bebidas', criterio: 'Planilha enviada' });
+            expect(res.status).toBe(200);
+            expect(mockDelegation.setDoc).toHaveBeenCalledWith('50', { objetivo: 'Contar bebidas', criterio: 'Planilha enviada' });
+            expect(mockDolibarrService.proxyRequest).not.toHaveBeenCalled();
         });
 
         it('POST decline recusa e escala imediatamente ao solicitante', async () => {
