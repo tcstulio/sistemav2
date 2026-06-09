@@ -33,7 +33,7 @@ export const BATCH_ENTITIES: Record<string, BatchEntityDef> = {
     task: { label: 'Tarefa', create: async (c, it) => {
         const task = await DolibarrService.createTask(c, { ...it, date_start: toUnix(it.date_start), date_end: toUnix(it.date_end) });
         if (task?.id && it.fk_user_assign) {
-            try { await DolibarrService.addTaskParticipant(c, task.id, it.fk_user_assign); } catch {}
+            try { await DolibarrService.setTaskContact(c, task.id, it.fk_user_assign, 'TASKEXECUTIVE'); } catch {}
         }
         return task;
     }},

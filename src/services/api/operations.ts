@@ -195,12 +195,33 @@ export const validateIntervention = async (config: DolibarrConfig, id: string) =
     });
 };
 
-export const addTaskParticipant = async (config: DolibarrConfig, taskId: string, userId: string) => {
-    // Falls back to /tasks/{id}/contact or similar custom endpoint
-    const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/participants`;
+export type TaskContactType = 'TASKEXECUTIVE' | 'TASKCONTRIBUTOR';
+
+// Atribui Responsável (TASKEXECUTIVE) ou Interveniente (TASKCONTRIBUTOR) à tarefa.
+// Usa a rota backend /tasks/{id}/contacts → custom_sync (issue #72), o único canal
+// que de fato grava o vínculo (a REST padrão não tem /participants e não persiste o responsável).
+export const setTaskContact = async (
+    config: DolibarrConfig,
+    taskId: string,
+    userId: string,
+    typeCode: TaskContactType = 'TASKEXECUTIVE'
+) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/contacts`;
     return request(url, {
         method: 'POST',
         headers: getHeaders(config.apiKey),
-        body: JSON.stringify({ id: userId })
+        body: JSON.stringify({ userId, typeCode })
     });
+};
+
+// Lista os contatos (papéis) de uma tarefa: [{ id, task_id, user_id, type_id }]
+export const getTaskContacts = async (config: DolibarrConfig, taskId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/contacts`;
+    return request(url, { method: 'GET', headers: getHeaders(config.apiKey) });
+};
+
+// Remove um vínculo de contato (rowid de element_contact)
+export const removeTaskContact = async (config: DolibarrConfig, taskId: string, rowid: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/tasks/${taskId}/contacts/${rowid}`;
+    return request(url, { method: 'DELETE', headers: getHeaders(config.apiKey) });
 };

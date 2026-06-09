@@ -11,6 +11,9 @@ const mockDolibarrService = vi.hoisted(() => ({
     validateSupplierOrder: vi.fn(() => ({})),
     closeProposal: vi.fn(() => ({})),
     addTimeSpent: vi.fn(() => ({})),
+    setTaskContact: vi.fn(() => true),
+    getTaskContacts: vi.fn(() => [{ id: '7', task_id: '123', user_id: '45', type_id: '45' }]),
+    removeTaskContact: vi.fn(() => true),
     proxyCustomSync: vi.fn(() => ({ status: 200, data: {} })),
     proxyRequest: vi.fn(() => ({ status: 200, data: {} })),
 }));
@@ -148,6 +151,81 @@ describe('dolibarrRoutes', () => {
                 .send({ hours: 2 });
 
             expect(res.status).toBe(200);
+        });
+    });
+
+    describe('Task contacts (Responsável/Interveniente) via custom_sync #72', () => {
+        it('POST /tasks/:id/contacts grava via setTaskContact (não cai no wildcard)', async () => {
+            const res = await request(app)
+                .post('/api/dolibarr/tasks/123/contacts')
+                .send({ userId: '45', typeCode: 'TASKEXECUTIVE' });
+
+            expect(res.status).toBe(200);
+            expect(mockDolibarrService.setTaskContact).toHaveBeenCalledWith('123', '45', 'TASKEXECUTIVE');
+            // não deve ter caído no proxy genérico (REST /tasks/{id}/contacts não existe)
+            expect(mockDolibarrService.proxyRequest).not.toHaveBeenCalled();
+        });
+
+        it('POST /tasks/:id/contacts usa TASKEXECUTIVE como padrão quando typeCode ausente', async () => {
+            const res = await request(app)
+                .post('/api/dolibarr/tasks/123/contacts')
+                .send({ userId: '45' });
+
+            expect(res.status).toBe(200);
+            expect(mockDolibarrService.setTaskContact).toHaveBeenCalledWith('123', '45', 'TASKEXECUTIVE');
+        });
+
+        it('POST /tasks/:id/contacts aceita TASKCONTRIBUTOR (Interveniente)', async () => {
+            const res = await request(app)
+                .post('/api/dolibarr/tasks/123/contacts')
+                .send({ userId: '46', typeCode: 'TASKCONTRIBUTOR' });
+
+            expect(res.status).toBe(200);
+            expect(mockDolibarrService.setTaskContact).toHaveBeenCalledWith('123', '46', 'TASKCONTRIBUTOR');
+        });
+
+        it('POST /tasks/:id/contacts retorna 400 quando userId ausente', async () => {
+            const res = await request(app)
+                .post('/api/dolibarr/tasks/123/contacts')
+                .send({ typeCode: 'TASKEXECUTIVE' });
+
+            expect(res.status).toBe(400);
+            expect(mockDolibarrService.setTaskContact).not.toHaveBeenCalled();
+        });
+
+        it('POST /tasks/:id/contacts retorna 400 quando typeCode inválido', async () => {
+            const res = await request(app)
+                .post('/api/dolibarr/tasks/123/contacts')
+                .send({ userId: '45', typeCode: 'BOSS' });
+
+            expect(res.status).toBe(400);
+            expect(mockDolibarrService.setTaskContact).not.toHaveBeenCalled();
+        });
+
+        it('POST /tasks/:id/contacts retorna 502 quando a gravação falha', async () => {
+            mockDolibarrService.setTaskContact.mockResolvedValueOnce(false as any);
+            const res = await request(app)
+                .post('/api/dolibarr/tasks/123/contacts')
+                .send({ userId: '45', typeCode: 'TASKEXECUTIVE' });
+
+            expect(res.status).toBe(502);
+        });
+
+        it('GET /tasks/:id/contacts lista os contatos via getTaskContacts', async () => {
+            const res = await request(app).get('/api/dolibarr/tasks/123/contacts');
+
+            expect(res.status).toBe(200);
+            expect(mockDolibarrService.getTaskContacts).toHaveBeenCalledWith('123');
+            expect(res.body).toEqual([{ id: '7', task_id: '123', user_id: '45', type_id: '45' }]);
+            expect(mockDolibarrService.proxyRequest).not.toHaveBeenCalled();
+        });
+
+        it('DELETE /tasks/:id/contacts/:rowid remove via removeTaskContact', async () => {
+            const res = await request(app).delete('/api/dolibarr/tasks/123/contacts/7');
+
+            expect(res.status).toBe(200);
+            expect(mockDolibarrService.removeTaskContact).toHaveBeenCalledWith('123', '7');
+            expect(mockDolibarrService.proxyRequest).not.toHaveBeenCalled();
         });
     });
 

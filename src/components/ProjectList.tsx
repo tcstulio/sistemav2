@@ -663,21 +663,26 @@ const ProjectList: React.FC<{
             if (taskForm.date_start) payload.date_start = Math.floor(new Date(taskForm.date_start).getTime() / 1000);
             if (taskForm.date_end) payload.date_end = Math.floor(new Date(taskForm.date_end).getTime() / 1000);
 
+            // Grava o Responsável (TASKEXECUTIVE) via custom_sync #72 — canal que de fato persiste.
+            const assignResponsible = async (taskId: string) => {
+                if (!taskForm.fk_user_assign) return true;
+                try {
+                    await DolibarrService.setTaskContact(config, taskId, taskForm.fk_user_assign, 'TASKEXECUTIVE');
+                    return true;
+                } catch (assignErr: any) {
+                    log.warn('Failed to assign responsible to task', assignErr);
+                    return false;
+                }
+            };
+
             if (editingTaskId) {
                 await DolibarrService.updateTask(config, editingTaskId, payload);
-                toast.success("Tarefa atualizada");
+                const ok = await assignResponsible(editingTaskId);
+                toast.success(ok ? "Tarefa atualizada" : "Tarefa atualizada, mas falha ao atribuir responsável");
             } else {
                 const createdTask = await DolibarrService.createTask(config, payload);
-                if (createdTask?.id && taskForm.fk_user_assign) {
-                    try {
-                        await DolibarrService.addTaskParticipant(config, createdTask.id, taskForm.fk_user_assign);
-                    } catch (assignErr: any) {
-                        log.warn('Failed to assign user to task', assignErr);
-                        toast.success("Tarefa criada, mas falha ao atribuir responsável");
-                    }
-                } else {
-                    toast.success("Tarefa criada");
-                }
+                const ok = createdTask?.id ? await assignResponsible(createdTask.id) : true;
+                toast.success(ok ? "Tarefa criada" : "Tarefa criada, mas falha ao atribuir responsável");
             }
             setIsTaskModalOpen(false);
             if (refreshData) refreshData();

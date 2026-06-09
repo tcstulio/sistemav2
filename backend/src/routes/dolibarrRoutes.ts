@@ -33,6 +33,12 @@ const ThirdPartySchema = z.object({
     fournisseur: z.enum(['0', '1']).optional(), // 0=No, 1=Yes
 });
 
+const TaskContactSchema = z.object({
+    userId: z.union([z.string().min(1), z.number()]),
+    // TASKEXECUTIVE = Responsável | TASKCONTRIBUTOR = Interveniente (element_contact, issue #72)
+    typeCode: z.enum(['TASKEXECUTIVE', 'TASKCONTRIBUTOR']).optional(),
+});
+
 const InvoiceSchema = z.object({
     socid: z.string().min(1), // ThirdParty ID is required
     date: z.number().or(z.string()), // Timestamp or Date string
@@ -145,6 +151,47 @@ router.post('/tasks/:id/addtimespent', async (req, res) => {
     }
 });
 
+
+// --- Task Contacts (Responsável/Interveniente) via custom_sync (issue #72) ---
+// O canal confiável de atribuição: a REST padrão NÃO grava responsável de tarefa
+// (não existe /tasks/{id}/participants); o vínculo vive em element_contact.
+// Estas rotas precisam vir ANTES do wildcard '/*' abaixo.
+
+// Listar os contatos (papéis) de uma tarefa
+router.get('/tasks/:id/contacts', async (req, res) => {
+    try {
+        const contacts = await dolibarrService.getTaskContacts(req.params.id);
+        res.json(contacts);
+    } catch (error: any) {
+        const status = error.status || 500;
+        res.status(status).json({ error: error.message });
+    }
+});
+
+// Atribuir Responsável (TASKEXECUTIVE) ou Interveniente (TASKCONTRIBUTOR)
+router.post('/tasks/:id/contacts', validate(TaskContactSchema), async (req, res) => {
+    try {
+        const typeCode = req.body.typeCode || 'TASKEXECUTIVE';
+        const ok = await dolibarrService.setTaskContact(req.params.id, String(req.body.userId), typeCode);
+        if (!ok) return res.status(502).json({ error: 'Falha ao gravar o contato da tarefa no Dolibarr' });
+        res.json({ success: true });
+    } catch (error: any) {
+        const status = error.status || 500;
+        res.status(status).json({ error: error.message });
+    }
+});
+
+// Remover um vínculo de contato (rowid de element_contact)
+router.delete('/tasks/:id/contacts/:rowid', async (req, res) => {
+    try {
+        const ok = await dolibarrService.removeTaskContact(req.params.id, req.params.rowid);
+        if (!ok) return res.status(502).json({ error: 'Falha ao remover o contato da tarefa no Dolibarr' });
+        res.json({ success: true });
+    } catch (error: any) {
+        const status = error.status || 500;
+        res.status(status).json({ error: error.message });
+    }
+});
 
 // --- Delta Sync Custom Endpoint ---
 // Routes to custom_sync.php at Dolibarr root (not /api/index.php)
