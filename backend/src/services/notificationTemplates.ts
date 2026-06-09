@@ -165,3 +165,20 @@ export function renderTemplate(event: string, channel: 'in-app' | 'whatsapp' | '
 export function getAllTemplates(): NotificationTemplate[] {
     return TEMPLATES;
 }
+
+// Camada 2 — título + mensagem por evento de tarefa (mesma mensagem p/ todos os canais por ora;
+// refinamento por canal/tom pode vir depois). Variáveis: {nome} {ref} {label} {date} {progress}.
+const TASK_TEMPLATES: Record<string, { title: string; message: string }> = {
+    assigned:          { title: 'Nova tarefa atribuída', message: 'Olá {nome}, você é responsável pela tarefa {ref} — {label}.' },
+    deadline_reminder: { title: 'Prazo se aproximando', message: 'Olá {nome}, a tarefa {ref} — {label} vence em {date}.' },
+    overdue:           { title: 'Tarefa atrasada', message: 'Olá {nome}, a tarefa {ref} — {label} venceu em {date}. Finalize ou informe o status, por favor.' },
+    stalled:           { title: 'Tarefa parada', message: 'Olá {nome}, a tarefa {ref} — {label} está sem progresso. Consegue atualizar?' },
+    completed:         { title: 'Tarefa concluída', message: 'A tarefa {ref} — {label} foi concluída.' },
+    comment:           { title: 'Atualização em tarefa', message: 'Houve uma atualização na tarefa {ref} — {label}.' },
+};
+
+export function renderTaskTemplate(event: string, vars: Record<string, string>): { title: string; message: string } {
+    const sub = (s: string) => s.replace(/\{(\w+)\}/g, (_, k) => (vars[k] ?? ''));
+    const t = TASK_TEMPLATES[event] || { title: 'Tarefa', message: '{ref} — {label}' };
+    return { title: sub(t.title), message: sub(t.message) };
+}

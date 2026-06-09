@@ -123,6 +123,45 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
         }
     }
 
+    /** Contatos (pessoas) de UMA tarefa via custom_sync (type=task_contacts): [{id, task_id, user_id, type_id}]. */
+    async getTaskContacts(taskId: string): Promise<any[]> {
+        try {
+            const res = await this.proxyCustomSync({ type: 'task_contacts', last_modified: 0, limit: 5000 }, this.getHeaders());
+            return this.extractSyncRows(res).filter((c) => String(c.task_id) === String(taskId));
+        } catch (error: any) {
+            log.error(`getTaskContacts Error task=${taskId}`, error?.message || error);
+            return [];
+        }
+    }
+
+    /** Define contato da tarefa (TASKEXECUTIVE=Responsável | TASKCONTRIBUTOR=Interveniente) via custom_sync (issue #72). */
+    async setTaskContact(taskId: string, userId: string, typeCode: 'TASKEXECUTIVE' | 'TASKCONTRIBUTOR' = 'TASKEXECUTIVE'): Promise<boolean> {
+        try {
+            const res = await this.proxyCustomSync(
+                { action: 'set_task_contact', task_id: taskId, user_id: userId, type_code: typeCode, source: 'internal' },
+                this.getHeaders()
+            );
+            return (res as any)?.data?.success === true;
+        } catch (error: any) {
+            log.error(`setTaskContact Error task=${taskId} user=${userId}`, error?.message || error);
+            return false;
+        }
+    }
+
+    /** Remove um vínculo de contato da tarefa (rowid de element_contact). */
+    async removeTaskContact(taskId: string, contactRowid: string): Promise<boolean> {
+        try {
+            const res = await this.proxyCustomSync(
+                { action: 'remove_task_contact', task_id: taskId, contact_rowid: contactRowid },
+                this.getHeaders()
+            );
+            return (res as any)?.data?.success === true;
+        } catch (error: any) {
+            log.error(`removeTaskContact Error task=${taskId} contact=${contactRowid}`, error?.message || error);
+            return false;
+        }
+    }
+
     async listTickets(params: { search?: string, limit?: number } = {}): Promise<any[]> {
         try {
             const headers = this.getHeaders();
