@@ -101,7 +101,7 @@ const DEFAULT_TASK_NOTIFICATIONS: TaskNotificationsConfig = {
     assigned:          { responsavel: ['in-app', 'whatsapp'],          interveniente: ['in-app'], criador: [] },
     deadline_reminder: { responsavel: ['in-app', 'whatsapp'],          interveniente: [],         criador: [] },
     overdue:           { responsavel: ['in-app', 'whatsapp', 'email'], interveniente: [],         criador: [] },
-    stalled:           { responsavel: ['whatsapp'],                    interveniente: [],         criador: [] },
+    stalled:           { responsavel: ['whatsapp'],                    interveniente: [],         criador: ['in-app', 'whatsapp'] },
     completed:         { responsavel: [],                              interveniente: ['in-app'], criador: ['in-app'] },
     comment:           { responsavel: ['in-app'],                      interveniente: ['in-app'], criador: [] },
 };
