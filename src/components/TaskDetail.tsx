@@ -7,9 +7,10 @@ import { ChevronLeft, Calendar as CalendarIcon, Clock, User, FolderKanban, FileT
 import { RichTextEditor } from './common/RichTextEditor';
 import { LinkedObjects } from './common/LinkedObjects';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
-import { useTaskTimeLogs, useUsers, useTaskContacts, useContacts } from '../hooks/dolibarr';
+import { useTaskTimeLogs, useUsers, useTaskContacts } from '../hooks/dolibarr';
 import { DolibarrService } from '../services/dolibarrService';
 import { ChatInterface } from './Chat/ChatInterface';
+import { TaskContactsManager } from './Tasks/TaskContactsManager';
 import { logger } from '../utils/logger';
 
 const log = logger.child('TaskDetail');
@@ -32,7 +33,6 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
     const { data: timeLogs = [] } = useTaskTimeLogs(config);
     const { data: users = [] } = useUsers(config);
     const { data: taskContacts = [] } = useTaskContacts(config);
-    const { data: contacts = [] } = useContacts(config);
 
     const [isTimeModalOpen, setIsTimeModalOpen] = useState(false);
     const [timeForm, setTimeForm] = useState({
@@ -94,17 +94,6 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
         return u ? (u.firstname + ' ' + (u.lastname || '')).trim() : userId;
     };
 
-    const resolveContactName = (contactId?: string) => {
-        if (!contactId) return '-';
-        const c = contacts.find(c => String(c.id) === String(contactId));
-        return c ? (c.firstname + ' ' + (c.lastname || '')).trim() : contactId;
-    };
-
-    const resolveParticipantName = (p: { user_id?: string, contact_id?: string }) => {
-        if (p.user_id) return resolveUserName(p.user_id) + ' (Usuário)';
-        if (p.contact_id) return resolveContactName(p.contact_id) + ' (Contato)';
-        return 'Desconhecido';
-    };
 
     const handleAddTime = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -353,26 +342,9 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                             )}
                         </div>
 
-                        {/* Participants Detail Section */}
-                        {participants.length > 0 && (
-                            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
-                                <h2 className="text-lg font-semibold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-                                    <Users size={18} className="text-indigo-500" /> Outros Envolvidos
-                                </h2>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                    {participants.map(p => (
-                                        <div key={p.id} className="flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
-                                            <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/50 flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-bold text-xs">
-                                                {(resolveParticipantName(p)[0] || '?').toUpperCase()}
-                                            </div>
-                                            <div>
-                                                <p className="text-sm font-medium text-slate-900 dark:text-white">{resolveParticipantName(p)}</p>
-                                                <p className="text-xs text-slate-500 capitalize">{p.type_id}</p>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
+                        {/* Gestão de Responsável/Intervenientes (camada 2f) — ao vivo via custom_sync #72 */}
+                        {initialItemId && (
+                            <TaskContactsManager config={config} taskId={initialItemId} users={users} />
                         )}
 
                         {/* Parent Project */}
