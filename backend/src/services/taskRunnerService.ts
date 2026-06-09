@@ -251,13 +251,19 @@ class TaskRunnerService {
                 this.emitLog(issueNumber, 'warn', `opencode erro: ${String(e.message || e).substring(0, 300)}`);
             }
 
-            // FAIL-FAST: produziu mudança de código?
+            // FAIL-FAST: sem mudança de código → tenta de novo (transiente/cold-start) e só
+            // aborta na última tentativa. Nunca cria PR vazio.
             const changes = await this.worktreeChanges();
             if (changes.length === 0) {
+                if (attempt < MAX_IMPL) {
+                    this.emitLog(issueNumber, 'warn', 'Nenhuma mudança gerada — repetindo...');
+                    task.feedbackHistory.push('A tentativa anterior não gerou mudanças. Implemente os arquivos pedidos agora.');
+                    continue;
+                }
                 task.status = 'failed';
-                task.error = 'O agente não produziu nenhuma mudança de arquivo.';
+                task.error = 'O agente não produziu nenhuma mudança após as tentativas.';
                 task.updatedAt = new Date().toISOString();
-                this.emitLog(issueNumber, 'warn', 'Nenhuma mudança gerada — abortando (sem PR).');
+                this.emitLog(issueNumber, 'warn', 'Nenhuma mudança após as tentativas — abortando (sem PR).');
                 this.save();
                 this.emitStatus(task);
                 return;
