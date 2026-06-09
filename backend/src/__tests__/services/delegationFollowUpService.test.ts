@@ -12,6 +12,7 @@ const mockDelegation = vi.hoisted(() => ({ getAceite: vi.fn(() => undefined as a
 vi.mock('../../services/dolibarr', () => ({ dolibarrService: mockDoli }));
 vi.mock('../../services/taskNotificationService', () => ({ dispatchTaskNotification: mockDispatch }));
 vi.mock('../../services/delegationService', () => ({ delegationService: mockDelegation }));
+vi.mock('../../services/delegationEventsService', () => ({ delegationEventsService: { logEvent: vi.fn() } }));
 vi.mock('../../utils/atomicWrite', () => ({ atomicWriteSync: vi.fn() }));
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),

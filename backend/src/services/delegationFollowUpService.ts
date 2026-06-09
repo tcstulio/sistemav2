@@ -17,7 +17,18 @@ import { createLogger } from '../utils/logger';
 import { dolibarrService } from './dolibarr';
 import { dispatchTaskNotification } from './taskNotificationService';
 import { delegationService } from './delegationService';
-import { decideFollowUp, Cadence, DEFAULT_CADENCE, TaskTracking } from './delegationFollowUpLogic';
+import { delegationEventsService, DelegationEventType } from './delegationEventsService';
+import { decideFollowUp, Cadence, DEFAULT_CADENCE, TaskTracking, FollowUpEvent } from './delegationFollowUpLogic';
+
+// Evento do motor -> tipo no log da delegação (linha do tempo). by=sistema (undefined).
+const EVENT_TO_LOG: Record<FollowUpEvent, DelegationEventType> = {
+    acceptance_pending: 'requested',
+    acceptance_overdue: 'escalated',
+    deadline_reminder: 'reminder',
+    overdue: 'cobranca',
+    stalled: 'escalated',
+    completed: 'completed',
+};
 
 const log = createLogger('DelegationFollowUp');
 
@@ -107,6 +118,7 @@ export class DelegationFollowUpService {
                 dispatches++;
                 result[event]++;
                 await dispatchTaskNotification(event, task, { taskContacts: contactsByTask.get(id) || [] });
+                delegationEventsService.logEvent(id, EVENT_TO_LOG[event], { atMs: nowMs }); // by=sistema
             }
 
             this.save();

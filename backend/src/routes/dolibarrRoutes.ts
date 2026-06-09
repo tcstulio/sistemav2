@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { dolibarrService } from '../services/dolibarrService';
 import { delegationService } from '../services/delegationService';
+import { delegationEventsService } from '../services/delegationEventsService';
 import { dispatchTaskNotification } from '../services/taskNotificationService';
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
@@ -215,12 +216,22 @@ router.get('/tasks/:id/delegation', async (req, res) => {
     }
 });
 
+// Linha do tempo (histórico) da delegação — quem/quando/o quê.
+router.get('/tasks/:id/delegation/events', async (req, res) => {
+    try {
+        res.json(delegationEventsService.getEvents(req.params.id));
+    } catch (error: any) {
+        res.status(error.status || 500).json({ error: error.message });
+    }
+});
+
 // Documentação oficial (objetivo + critério de pronto) — visível a todos os envolvidos.
 router.put('/tasks/:id/delegation/doc',
     validate(z.object({ objetivo: z.string().max(2000).optional(), criterio: z.string().max(2000).optional() })),
     async (req, res) => {
         try {
             const rec = delegationService.setDoc(req.params.id, { objetivo: req.body.objetivo, criterio: req.body.criterio });
+            delegationEventsService.logEvent(req.params.id, 'doc_updated');
             res.json({ success: true, delegation: rec });
         } catch (error: any) {
             res.status(error.status || 500).json({ error: error.message });
@@ -233,6 +244,7 @@ router.put('/tasks/:id/delegation/template',
     async (req, res) => {
         try {
             const rec = delegationService.setTemplate(req.params.id, req.body.template, req.body.templateConfig);
+            delegationEventsService.logEvent(req.params.id, 'template_set', { note: req.body.template });
             res.json({ success: true, delegation: rec });
         } catch (error: any) {
             res.status(error.status || 500).json({ error: error.message });
@@ -248,6 +260,7 @@ router.post('/tasks/:id/delegation/request-acceptance',
                 prazoDeAceiteDays: req.body.prazoDeAceiteDays,
                 by: req.body.by,
             });
+            delegationEventsService.logEvent(req.params.id, 'requested', { by: req.body.by });
             await dispatchTaskNotification('acceptance_pending', req.body.task);
             res.json({ success: true, delegation: rec });
         } catch (error: any) {
@@ -260,7 +273,9 @@ router.post('/tasks/:id/delegation/accept',
     validate(z.object({ by: z.string().min(1) })),
     async (req, res) => {
         try {
-            res.json({ success: true, delegation: delegationService.accept(req.params.id, req.body.by) });
+            const rec = delegationService.accept(req.params.id, req.body.by);
+            delegationEventsService.logEvent(req.params.id, 'accepted', { by: req.body.by });
+            res.json({ success: true, delegation: rec });
         } catch (error: any) {
             res.status(error.status || 500).json({ error: error.message });
         }
@@ -272,6 +287,7 @@ router.post('/tasks/:id/delegation/decline',
     async (req, res) => {
         try {
             const rec = delegationService.decline(req.params.id, req.body.by, req.body.reason);
+            delegationEventsService.logEvent(req.params.id, 'declined', { by: req.body.by, note: req.body.reason });
             await dispatchTaskNotification('acceptance_overdue', req.body.task);
             res.json({ success: true, delegation: rec });
         } catch (error: any) {

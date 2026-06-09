@@ -245,6 +245,29 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
         }
     }
 
+    /** Cria um evento de agenda (actioncomm) — usado p/ espelhar a trilha da delegação no Dolibarr. */
+    async createAgendaEvent(data: {
+        label: string;
+        note?: string;
+        type_code?: string;
+        datep?: number;        // unix (segundos)
+        fk_element?: string | number;
+        elementtype?: string;  // ex.: 'project_task'
+        userownerid?: string | number;
+    }, userKey?: string): Promise<any> {
+        const url = `${this.baseUrl}agendaevents`;
+        const payload: any = {
+            type_code: data.type_code || 'AC_OTH',
+            label: data.label,
+            note_private: data.note || '',
+            datep: data.datep || Math.floor(Date.now() / 1000),
+            percentage: 100,
+            userownerid: data.userownerid ? Number(data.userownerid) : 1,
+        };
+        if (data.fk_element) { payload.fk_element = Number(data.fk_element); payload.elementtype = data.elementtype || 'project_task'; }
+        return this.requestWithAuth('POST', url, payload, userKey);
+    }
+
     async listInterventions(search?: string): Promise<any[]> {
         try {
             const headers = this.getHeaders();
