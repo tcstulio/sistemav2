@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { dolibarrService } from '../services/dolibarrService';
+import { delegationService } from '../services/delegationService';
+import { dispatchTaskNotification } from '../services/taskNotificationService';
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
 import { createLogger } from '../utils/logger';
@@ -192,6 +194,66 @@ router.delete('/tasks/:id/contacts/:rowid', async (req, res) => {
         res.status(status).json({ error: error.message });
     }
 });
+
+// --- Delegação: ciclo de vida (aceite) sobre a tarefa (Fase 1.5) ---
+// Metadados do ciclo vivem no delegationService (store backend); estas rotas vêm ANTES do wildcard.
+const TaskRef = z.object({
+    id: z.union([z.string(), z.number()]),
+    fk_user_creat: z.union([z.string(), z.number()]).optional(),
+    label: z.string().optional(),
+    ref: z.string().optional(),
+    date_end: z.union([z.string(), z.number()]).optional().nullable(),
+    progress: z.union([z.string(), z.number()]).optional().nullable(),
+}).passthrough();
+
+// Estado atual da delegação (aceite/critério). null se a tarefa ainda não é uma delegação.
+router.get('/tasks/:id/delegation', async (req, res) => {
+    try {
+        res.json(delegationService.get(req.params.id) || null);
+    } catch (error: any) {
+        res.status(error.status || 500).json({ error: error.message });
+    }
+});
+
+// Solicita o aceite: marca pending com prazo e avisa o responsável (acceptance_pending).
+router.post('/tasks/:id/delegation/request-acceptance',
+    validate(z.object({ task: TaskRef, prazoDeAceiteDays: z.number().int().positive().optional(), by: z.string().optional() })),
+    async (req, res) => {
+        try {
+            const rec = delegationService.requestAcceptance(req.params.id, {
+                prazoDeAceiteDays: req.body.prazoDeAceiteDays,
+                by: req.body.by,
+            });
+            await dispatchTaskNotification('acceptance_pending', req.body.task);
+            res.json({ success: true, delegation: rec });
+        } catch (error: any) {
+            res.status(error.status || 500).json({ error: error.message });
+        }
+    });
+
+// Responsável ACEITA a delegação.
+router.post('/tasks/:id/delegation/accept',
+    validate(z.object({ by: z.string().min(1) })),
+    async (req, res) => {
+        try {
+            res.json({ success: true, delegation: delegationService.accept(req.params.id, req.body.by) });
+        } catch (error: any) {
+            res.status(error.status || 500).json({ error: error.message });
+        }
+    });
+
+// Responsável RECUSA -> escala imediatamente ao solicitante (acceptance_overdue).
+router.post('/tasks/:id/delegation/decline',
+    validate(z.object({ by: z.string().min(1), reason: z.string().optional(), task: TaskRef })),
+    async (req, res) => {
+        try {
+            const rec = delegationService.decline(req.params.id, req.body.by, req.body.reason);
+            await dispatchTaskNotification('acceptance_overdue', req.body.task);
+            res.json({ success: true, delegation: rec });
+        } catch (error: any) {
+            res.status(error.status || 500).json({ error: error.message });
+        }
+    });
 
 // --- Delta Sync Custom Endpoint ---
 // Routes to custom_sync.php at Dolibarr root (not /api/index.php)

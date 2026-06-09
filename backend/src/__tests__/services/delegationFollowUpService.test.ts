@@ -7,9 +7,11 @@ const mockDoli = vi.hoisted(() => ({
     getAllTaskContacts: vi.fn(() => []),
 }));
 const mockDispatch = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+const mockDelegation = vi.hoisted(() => ({ getAceite: vi.fn(() => undefined as any) }));
 
 vi.mock('../../services/dolibarr', () => ({ dolibarrService: mockDoli }));
 vi.mock('../../services/taskNotificationService', () => ({ dispatchTaskNotification: mockDispatch }));
+vi.mock('../../services/delegationService', () => ({ delegationService: mockDelegation }));
 vi.mock('../../utils/atomicWrite', () => ({ atomicWriteSync: vi.fn() }));
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -28,6 +30,7 @@ describe('DelegationFollowUpService.runTick', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockDoli.getAllTaskContacts.mockReturnValue([]);
+        mockDelegation.getAceite.mockReturnValue(undefined);
     });
 
     it('1º tick: só cria baseline, NÃO dispara nada', async () => {
@@ -89,6 +92,26 @@ describe('DelegationFollowUpService.runTick', () => {
         const svc = newSvc();
         const r = await svc.runTick(noon(11));
         expect(r.tasks).toBe(0);
+        expect(mockDispatch).not.toHaveBeenCalled();
+    });
+
+    it('aceite pendente com prazo estourado: escala ao solicitante (acceptance_overdue)', async () => {
+        mockDoli.listTasksFull.mockResolvedValue([{ id: '50', progress: 0, fk_user_creat: '9' }]);
+        mockDelegation.getAceite.mockReturnValue({ status: 'pending', deadlineDay: 12 });
+        const svc = newSvc();
+        await svc.runTick(noon(11)); // baseline (dentro do prazo de aceite)
+        const r = await svc.runTick(noon(13)); // prazo estourado -> escala
+        expect(r.acceptance_overdue).toBe(1);
+        expect(mockDispatch).toHaveBeenCalledWith('acceptance_overdue', expect.objectContaining({ id: '50' }), expect.anything());
+    });
+
+    it('aceite pendente dentro do prazo: não cobra a entrega', async () => {
+        mockDoli.listTasksFull.mockResolvedValue([{ id: '50', date_end: dueSec(5), progress: 0, fk_user_creat: '9' }]);
+        mockDelegation.getAceite.mockReturnValue({ status: 'pending', deadlineDay: 99 });
+        const svc = newSvc();
+        await svc.runTick(noon(11)); // baseline
+        const r = await svc.runTick(noon(12)); // atrasada na entrega, mas aguardando aceite
+        expect(r.overdue).toBe(0);
         expect(mockDispatch).not.toHaveBeenCalled();
     });
 });

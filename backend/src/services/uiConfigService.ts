@@ -65,7 +65,7 @@ export interface CustomPage {
 }
 
 // ---- Camada 2 — Notificações de tarefa por papel (matriz evento × papel × canal) ----
-export const TASK_NOTIF_EVENTS = ['assigned', 'deadline_reminder', 'overdue', 'stalled', 'completed', 'comment'] as const;
+export const TASK_NOTIF_EVENTS = ['assigned', 'acceptance_pending', 'acceptance_overdue', 'deadline_reminder', 'overdue', 'stalled', 'completed', 'comment'] as const;
 export const TASK_NOTIF_ROLES = ['responsavel', 'interveniente', 'criador'] as const;
 export const NOTIF_CHANNELS = ['in-app', 'whatsapp', 'email'] as const;
 export type TaskNotifEvent = typeof TASK_NOTIF_EVENTS[number];
@@ -98,8 +98,10 @@ export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'scre
 
 // Padrão aprovado: Responsável leva a cobrança; Interveniente acompanha; Criador é avisado do desfecho.
 const DEFAULT_TASK_NOTIFICATIONS: TaskNotificationsConfig = {
-    assigned:          { responsavel: ['in-app', 'whatsapp'],          interveniente: ['in-app'], criador: [] },
-    deadline_reminder: { responsavel: ['in-app', 'whatsapp'],          interveniente: [],         criador: [] },
+    assigned:           { responsavel: ['in-app', 'whatsapp'],          interveniente: ['in-app'], criador: [] },
+    acceptance_pending: { responsavel: ['in-app', 'whatsapp'],          interveniente: [],         criador: [] },
+    acceptance_overdue: { responsavel: [],                              interveniente: [],         criador: ['in-app', 'whatsapp'] },
+    deadline_reminder:  { responsavel: ['in-app', 'whatsapp'],          interveniente: [],         criador: [] },
     overdue:           { responsavel: ['in-app', 'whatsapp', 'email'], interveniente: [],         criador: [] },
     stalled:           { responsavel: ['whatsapp'],                    interveniente: [],         criador: ['in-app', 'whatsapp'] },
     completed:         { responsavel: [],                              interveniente: ['in-app'], criador: ['in-app'] },
