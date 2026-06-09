@@ -18,7 +18,8 @@ describe('uiConfigService', () => {
 
     it('retorna defaults quando não há arquivo', () => {
         const svc = new UiConfigService('ui.json');
-        expect(svc.get()).toEqual({
+        const cfg = svc.get();
+        expect(cfg).toMatchObject({
             companyName: 'CoolGroove',
             logoText: 'D',
             themeColor: 'indigo',
@@ -27,6 +28,23 @@ describe('uiConfigService', () => {
             screenPermissions: { groups: {}, users: {} },
             customPages: [],
         });
+        // camada 2: matriz de notificações de tarefa com o padrão aprovado
+        expect(cfg.taskNotifications.overdue.responsavel).toEqual(['in-app', 'whatsapp', 'email']);
+        expect(cfg.taskNotifications.completed.criador).toContain('in-app');
+        expect(cfg.taskNotifications.overdue.interveniente).toEqual([]);
+    });
+
+    it('update sanitiza taskNotifications (canais válidos, respeita desligamento, default p/ ausente)', () => {
+        const svc = new UiConfigService('ui.json');
+        const out = svc.update({
+            taskNotifications: {
+                overdue: { responsavel: ['whatsapp', 'invalido', 'whatsapp'], interveniente: [] },
+            },
+        } as any);
+        expect(out.taskNotifications.overdue.responsavel).toEqual(['whatsapp']); // inválido/duplicado removido
+        expect(out.taskNotifications.overdue.interveniente).toEqual([]);          // desligamento respeitado
+        expect(out.taskNotifications.overdue.criador).toEqual([]);                // papel ausente no evento -> default
+        expect(out.taskNotifications.completed.criador).toContain('in-app');      // evento ausente -> default mantido
     });
 
     it('update aplica e persiste campos válidos', () => {

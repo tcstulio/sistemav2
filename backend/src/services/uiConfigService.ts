@@ -64,6 +64,16 @@ export interface CustomPage {
     blocks: CustomBlock[];
 }
 
+// ---- Camada 2 — Notificações de tarefa por papel (matriz evento × papel × canal) ----
+export const TASK_NOTIF_EVENTS = ['assigned', 'deadline_reminder', 'overdue', 'stalled', 'completed', 'comment'] as const;
+export const TASK_NOTIF_ROLES = ['responsavel', 'interveniente', 'criador'] as const;
+export const NOTIF_CHANNELS = ['in-app', 'whatsapp', 'email'] as const;
+export type TaskNotifEvent = typeof TASK_NOTIF_EVENTS[number];
+export type TaskNotifRole = typeof TASK_NOTIF_ROLES[number];
+export type NotifChannel = typeof NOTIF_CHANNELS[number];
+// Para cada evento, quais canais cada papel recebe.
+export type TaskNotificationsConfig = Record<TaskNotifEvent, Record<TaskNotifRole, NotifChannel[]>>;
+
 export interface UiConfig {
     companyName: string;   // nome exibido no app (antes era hardcoded "CoolGroove")
     logoText: string;      // texto curto/inicial do bloco de logo
@@ -73,14 +83,26 @@ export interface UiConfig {
     dashboard: OrderVisibilityPrefs;  // #111 — ordem/visibilidade dos widgets do painel (padrão da org)
     screenPermissions: ScreenPermissions;  // #112 — permissões de tela por pessoa/grupo
     customPages: CustomPage[];        // #113 — telas customizadas por grupo
+    taskNotifications: TaskNotificationsConfig;  // camada 2 — quem recebe o quê por papel em cada evento de tarefa
 }
 
 // Entrada de update: branding parcial + prefs/permissões/páginas parciais (sanitizadas em update()).
-export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions' | 'customPages'>> & {
+export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions' | 'customPages' | 'taskNotifications'>> & {
     menu?: Partial<OrderVisibilityPrefs>;
     dashboard?: Partial<OrderVisibilityPrefs>;
     screenPermissions?: unknown;
     customPages?: unknown;
+    taskNotifications?: unknown;
+};
+
+// Padrão aprovado: Responsável leva a cobrança; Interveniente acompanha; Criador é avisado do desfecho.
+const DEFAULT_TASK_NOTIFICATIONS: TaskNotificationsConfig = {
+    assigned:          { responsavel: ['in-app', 'whatsapp'],          interveniente: ['in-app'], criador: [] },
+    deadline_reminder: { responsavel: ['in-app', 'whatsapp'],          interveniente: [],         criador: [] },
+    overdue:           { responsavel: ['in-app', 'whatsapp', 'email'], interveniente: [],         criador: [] },
+    stalled:           { responsavel: ['whatsapp'],                    interveniente: [],         criador: [] },
+    completed:         { responsavel: [],                              interveniente: ['in-app'], criador: ['in-app'] },
+    comment:           { responsavel: ['in-app'],                      interveniente: ['in-app'], criador: [] },
 };
 
 const DEFAULTS: UiConfig = {
@@ -91,6 +113,7 @@ const DEFAULTS: UiConfig = {
     dashboard: { hidden: [], order: [] },
     screenPermissions: { groups: {}, users: {} },
     customPages: [],
+    taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
 };
 
 // Sanitiza um array de ids vindo do cliente (string curta, sem duplicatas, limite de tamanho).
@@ -200,6 +223,34 @@ function sanitizeScreenPermissions(v: unknown): ScreenPermissions {
     return out;
 }
 
+function sanitizeChannels(v: unknown): NotifChannel[] {
+    if (!Array.isArray(v)) return [];
+    const out: NotifChannel[] = [];
+    for (const x of v) {
+        if (typeof x === 'string' && (NOTIF_CHANNELS as readonly string[]).includes(x) && !out.includes(x as NotifChannel)) {
+            out.push(x as NotifChannel);
+        }
+    }
+    return out;
+}
+
+// Matriz evento×papel×canal: usa o que o admin enviou (respeitando desligamentos) e cai no
+// default para eventos/papéis ausentes — assim a config sobrevive a versões antigas do arquivo.
+function sanitizeTaskNotifications(v: unknown): TaskNotificationsConfig {
+    const p = (v && typeof v === 'object') ? (v as Record<string, any>) : {};
+    const out = {} as TaskNotificationsConfig;
+    for (const event of TASK_NOTIF_EVENTS) {
+        const ev = (p[event] && typeof p[event] === 'object') ? p[event] as Record<string, unknown> : undefined;
+        out[event] = {} as Record<TaskNotifRole, NotifChannel[]>;
+        for (const role of TASK_NOTIF_ROLES) {
+            out[event][role] = (ev && role in ev)
+                ? sanitizeChannels(ev[role])
+                : [...DEFAULT_TASK_NOTIFICATIONS[event][role]];
+        }
+    }
+    return out;
+}
+
 // Allowlist das cores do Tailwind usadas no tema (evita injeção de classe arbitrária).
 export const ALLOWED_THEME_COLORS = [
     'slate', 'gray', 'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald',
@@ -232,6 +283,7 @@ export class UiConfigService {
                     dashboard: { ...DEFAULTS.dashboard, ...(parsed.dashboard || {}) },
                     screenPermissions: sanitizeScreenPermissions(parsed.screenPermissions),
                     customPages: sanitizeCustomPages(parsed.customPages),
+                    taskNotifications: sanitizeTaskNotifications(parsed.taskNotifications),
                 };
             }
         } catch (error) {
@@ -273,6 +325,9 @@ export class UiConfigService {
         }
         if (partial.customPages !== undefined) {
             next.customPages = sanitizeCustomPages(partial.customPages);
+        }
+        if (partial.taskNotifications !== undefined) {
+            next.taskNotifications = sanitizeTaskNotifications(partial.taskNotifications);
         }
         this.data = next;
         this.save();
