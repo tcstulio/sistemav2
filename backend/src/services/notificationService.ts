@@ -13,7 +13,7 @@ export type NotificationEvent =
     | 'order.validated' | 'order.created'
     | 'proposal.sent' | 'proposal.accepted'
     | 'ticket.created' | 'ticket.assigned'
-    | 'task.completed'
+    | 'task.assigned' | 'task.deadline_reminder' | 'task.overdue' | 'task.stalled' | 'task.completed' | 'task.comment'
     | 'agent.action'
     | 'stock.low'
     | 'payment.received'
