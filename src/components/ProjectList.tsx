@@ -436,6 +436,9 @@ const ProjectList: React.FC<{
     const [createPrefill, setCreatePrefill] = useState<Record<string, string> | undefined>(undefined);
 
     const [taskForm, setTaskForm] = useState({ label: '', description: '', planned_workload: 0, date_start: '', date_end: '', fk_user_assign: '' });
+    // Quando a criação em andamento é uma DELEGAÇÃO (deeplink create_delegation): carrega o critério
+    // e, ao confirmar, grava a doc + pede o aceite do responsável (Fase 1.5).
+    const [delegationDraft, setDelegationDraft] = useState<{ criterio?: string } | null>(null);
     const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
     const [ticketForm, setTicketForm] = useState({ subject: '', message: '', type_code: 'ISSUE', severity_code: 'NORMAL' });
@@ -491,6 +494,24 @@ const ProjectList: React.FC<{
             });
             setIsTaskModalOpen(true);
             toast.info('Revise os dados e confirme a criação da tarefa.');
+        } else if (prefill.kind === 'create_delegation') {
+            if (projects.length === 0) return; // aguarda os projetos carregarem
+            const project = projects.find(p => String(p.id) === String(prefill.data.project_id));
+            if (!project) { toast.error('Projeto não encontrado para a delegação.'); return; }
+            appliedPrefillRef.current = prefill;
+            setSelectedProject(project);
+            setEditingTaskId(null);
+            setTaskForm({
+                label: prefill.data.label || '',
+                description: prefill.data.description || '',
+                planned_workload: 0,
+                date_start: '',
+                date_end: prefill.data.date_end || '',
+                fk_user_assign: prefill.data.fk_user_assign || '',
+            });
+            setDelegationDraft({ criterio: prefill.data.criterio || '' });
+            setIsTaskModalOpen(true);
+            toast.info('Revise a delegação e confirme. O responsável receberá o pedido de aceite.');
         } else if (prefill.kind === 'edit_task') {
             if (tasks.length === 0) return; // aguarda as tarefas carregarem
             const { id, ...changes } = prefill.data;
@@ -632,6 +653,7 @@ const ProjectList: React.FC<{
 
     // Task & Ticket Handlers
     const openTaskModal = (task?: any) => {
+        setDelegationDraft(null); // criação/edição manual não é uma delegação do agente
         if (task) {
             setEditingTaskId(task.id);
             setTaskForm({
@@ -682,7 +704,27 @@ const ProjectList: React.FC<{
             } else {
                 const createdTask = await DolibarrService.createTask(config, payload);
                 const ok = createdTask?.id ? await assignResponsible(createdTask.id) : true;
-                toast.success(ok ? "Tarefa criada" : "Tarefa criada, mas falha ao atribuir responsável");
+                if (delegationDraft && createdTask?.id) {
+                    // Delegação: grava o critério e pede o aceite ao responsável (solicitante = usuário atual).
+                    const currentUserId = (config as any).currentUser?.id;
+                    try {
+                        if (delegationDraft.criterio) {
+                            await DolibarrService.setDelegationDoc(config, createdTask.id, { criterio: delegationDraft.criterio });
+                        }
+                        await DolibarrService.requestDelegationAcceptance(
+                            config, createdTask.id,
+                            { id: createdTask.id, label: taskForm.label, fk_user_creat: currentUserId },
+                            undefined, currentUserId,
+                        );
+                        toast.success('Delegação criada — aguardando aceite do responsável.');
+                    } catch (delErr: any) {
+                        log.warn('Delegação criada parcialmente', delErr);
+                        toast.success('Tarefa criada, mas falha ao iniciar a delegação.');
+                    }
+                    setDelegationDraft(null);
+                } else {
+                    toast.success(ok ? "Tarefa criada" : "Tarefa criada, mas falha ao atribuir responsável");
+                }
             }
             setIsTaskModalOpen(false);
             if (refreshData) refreshData();
