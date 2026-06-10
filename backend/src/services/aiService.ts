@@ -867,7 +867,7 @@ export class LocalProvider implements AIProvider {
                     temperature: 0.5
                 }, {
                     headers: this.getHeaders(),
-                    timeout: 120000
+                    timeout: 180000
                 });
 
                 accumulate(response.data.usage);
@@ -931,7 +931,7 @@ export class LocalProvider implements AIProvider {
                 model: options?.model || this.modelName,
                 messages: finalMessages,
                 temperature: 0.3,
-            }, { headers: this.getHeaders(), timeout: 120000 });
+            }, { headers: this.getHeaders(), timeout: 180000 });
             accumulate(finalResp.data?.usage);
             const finalText = finalResp.data?.choices?.[0]?.message?.content;
             if (finalText) return { text: finalText, usage: accUsage, contextWindow: ctxWindow };
@@ -1065,7 +1065,7 @@ export class LocalProvider implements AIProvider {
                     },
                 ],
                 temperature: 0.1,
-            }, { headers: this.getHeaders(), timeout: 120000 });
+            }, { headers: this.getHeaders(), timeout: 180000 });
 
             const raw = response.data?.choices?.[0]?.message?.content || "{}";
             const cleanJson = raw.replace(/```json|```/g, '').trim();
@@ -1176,7 +1176,7 @@ export class LocalProvider implements AIProvider {
                 { role: 'user', content: userPrompt },
             ],
             temperature,
-        }, { headers: this.getHeaders(), timeout: 120000 });
+        }, { headers: this.getHeaders(), timeout: 180000 });
         return response.data?.choices?.[0]?.message?.content || '';
     }
 

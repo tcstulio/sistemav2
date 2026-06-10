@@ -20,7 +20,7 @@ export const socketService = {
             cors: {
                 // PROTÓTIPO: libera o túnel do cloudflared (espelha o CORS do Express).
                 origin: (origin, callback) => {
-                    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.trycloudflare.com')) {
+                    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.trycloudflare.com') || origin.endsWith('.coolgroove.com.br')) {
                         callback(null, true);
                     } else {
                         callback(new Error('Not allowed by CORS'));
@@ -28,7 +28,10 @@ export const socketService = {
                 },
                 methods: ["GET", "POST"],
                 credentials: true
-            }
+            },
+            // Heartbeat tolerante: conexões via túnel/lentas não caem em operações longas (issue #320).
+            pingInterval: 25000,
+            pingTimeout: 60000,
         });
 
         // Authentication Middleware
