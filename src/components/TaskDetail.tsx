@@ -121,12 +121,12 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
             const dateTs = new Date(timeForm.date).getTime() / 1000;
 
             await DolibarrService.addTaskTimeLog(config, task.id, durationSec, dateTs, timeForm.note, config.currentUser?.id);
-            alert("Tempo registrado!");
+            toast.success("Tempo registrado!");
             setIsTimeModalOpen(false);
             setTimeForm({ date: new Date().toISOString().split('T')[0], duration_h: 0, duration_m: 0, note: '' });
             // Ideally trigger refresh or rely on eventual sync
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            notifyError('Registrar tempo', e);
         } finally {
             setIsSubmittingTime(false);
         }
@@ -140,8 +140,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
             setTask(prev => prev ? { ...prev, description: descriptionContent } : null);
             setIsEditingDesc(false);
         } catch (error) {
-            log.error("Failed to save description", error);
-            alert('Erro ao salvar descrição');
+            notifyError('Salvar descrição', error);
         } finally {
             setIsSavingDesc(false);
         }
@@ -346,11 +345,6 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                             )}
                         </div>
 
-                        {/* Debug Info */}
-                        <details className="bg-slate-100 dark:bg-slate-900 rounded p-2 text-xs text-slate-500">
-                            <summary className="cursor-pointer font-bold mb-2">Debug Data (Temporary)</summary>
-                            <pre className="whitespace-pre-wrap">{JSON.stringify(task, null, 2)}</pre>
-                        </details>
 
                         {/* Info Grid */}
                         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
