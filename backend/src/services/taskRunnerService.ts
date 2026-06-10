@@ -445,24 +445,47 @@ class TaskRunnerService {
 
         const branch = task.branch || `fix-${issueNumber}`;
         task.branch = branch;
-        task.status = 'running';
-        task.startedAt = new Date().toISOString();
-        task.updatedAt = new Date().toISOString();
         task.error = undefined;
-        this.recordEvent(task, 'task_started', `Task iniciada no branch ${branch}`, { branch });
-        this.emitStatus(task);
+        // Serializa: roda agora se livre, senão entra na FILA.
+        this.scheduleExec(task, branch, 'running');
+        this.save();
+        return task;
+    }
 
-        this.executeTask(task, branch).catch(e => {
-            log.error(`Task #${issueNumber} failed`, e);
+    // Fila serial de execução (1 task por vez). O worktree (sistemav2-taskrunner-wt) é COMPARTILHADO,
+    // então rodar duas execuções ao mesmo tempo corromperia o git. Tasks extras ficam 'pending' até a vez.
+    private pendingExecs = 0;
+    private execChain: Promise<void> = Promise.resolve();
+
+    private scheduleExec(task: Task, branch: string, activeStatus: TaskStatus = 'running'): void {
+        const willQueue = this.pendingExecs > 0;
+        this.pendingExecs++;
+        if (willQueue) {
+            task.status = 'pending';
+            task.updatedAt = new Date().toISOString();
+            this.recordEvent(task, 'task_started', 'Na fila — aguardando a task em execução terminar', { queued: true });
+            this.save();
+            this.emitStatus(task);
+        }
+        this.execChain = this.execChain.catch(() => { /* isola falha anterior da cadeia */ }).then(async () => {
+            task.status = activeStatus;
+            task.startedAt = new Date().toISOString();
+            task.updatedAt = new Date().toISOString();
+            this.recordEvent(task, 'task_started', `Execução iniciada no branch ${branch}`, { branch });
+            this.save();
+            this.emitStatus(task);
+            await this.executeTask(task, branch);
+        }).catch((e: any) => {
+            log.error(`Task #${task.issueNumber} failed`, e);
             task.status = 'failed';
             task.error = e.message;
             task.updatedAt = new Date().toISOString();
             this.recordEvent(task, 'task_failed', `Falha: ${e.message}`, { error: e.message });
             this.save();
             this.emitStatus(task);
+        }).finally(() => {
+            this.pendingExecs--;
         });
-
-        return task;
     }
 
     /** Garante um worktree git ISOLADO, limpo, no branch fix-N a partir de origin/main. */
@@ -734,12 +757,7 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         this.recordEvent(task, 'feedback_received', `Feedback recebido: ${feedback.substring(0, 200)}`, { length: feedback.length });
         this.save();
 
-        this.executeTask(task, task.branch || `fix-${task.issueNumber}`).catch(e => {
-            task.status = 'failed';
-            task.error = e.message;
-            this.recordEvent(task, 'task_failed', `Falha: ${e.message}`, { error: e.message });
-            this.save();
-        });
+        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing');
 
         return task;
     }
@@ -767,12 +785,7 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         this.recordEvent(task, 'task_started', `Task refeita${instruction ? `: ${instruction.substring(0, 200)}` : ''}`, { redo: true, instruction });
         this.save();
 
-        this.executeTask(task, task.branch || `fix-${task.issueNumber}`).catch(e => {
-            task.status = 'failed';
-            task.error = e.message;
-            this.recordEvent(task, 'task_failed', `Falha: ${e.message}`, { error: e.message });
-            this.save();
-        });
+        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'running');
 
         return task;
     }
@@ -831,8 +844,14 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
 
-        if (task.status === 'running' || task.status === 'fixing') {
-            throw new Error(`Cannot delete task #${issueNumber} while ${task.status}`);
+        // Se estiver em execução (ou presa em 'running'/'fixing'/'cancelling' por um run morto),
+        // mata o processo (árvore) antes de deletar — em vez de recusar. Cobre tasks travadas.
+        if (task.status === 'running' || task.status === 'fixing' || task.status === 'cancelling') {
+            task.killRequested = true;
+            if (task.childPid && isAlive(task.childPid)) {
+                try { await killTree(task.childPid); } catch { /* ignore */ }
+            }
+            task.childPid = undefined;
         }
 
         if (task.prNumber) {
