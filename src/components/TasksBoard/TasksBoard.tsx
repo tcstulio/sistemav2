@@ -264,9 +264,10 @@ const TasksBoard: React.FC = () => {
         }
     };
 
+    const TERMINAL_STATUSES = ['merged', 'rejected', 'cancelled', 'failed'];
     const filteredTasks = tasks.filter(t => {
-        if (tab === 'active') return !['merged', 'rejected'].includes(t.status);
-        if (tab === 'done') return ['merged', 'rejected'].includes(t.status);
+        if (tab === 'active') return !TERMINAL_STATUSES.includes(t.status);
+        if (tab === 'done') return TERMINAL_STATUSES.includes(t.status);
         return true;
     });
 
