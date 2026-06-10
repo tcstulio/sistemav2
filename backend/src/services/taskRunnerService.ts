@@ -54,6 +54,41 @@ function bash(command: string, cwd: string, timeout: number) {
 
 export type TaskStatus = 'pending' | 'running' | 'reviewing' | 'approved' | 'fixing' | 'merged' | 'rejected' | 'failed';
 
+export type TaskEventType =
+    | 'task_created'
+    | 'task_started'
+    | 'task_completed'
+    | 'task_failed'
+    | 'task_rejected'
+    | 'task_killed'
+    | 'task_watchdog_timeout'
+    | 'worktree_setup_started'
+    | 'worktree_setup_completed'
+    | 'worktree_cleanup'
+    | 'attempt_started'
+    | 'attempt_no_changes'
+    | 'typecheck_started'
+    | 'typecheck_ok'
+    | 'typecheck_failed'
+    | 'git_committed'
+    | 'git_pushed'
+    | 'pr_created'
+    | 'pr_creation_failed'
+    | 'pr_closed'
+    | 'pr_merged'
+    | 'judge_started'
+    | 'judge_score'
+    | 'judge_error'
+    | 'feedback_received'
+    | 'error';
+
+export interface TaskEvent {
+    ts: string;             // ISO 8601
+    type: TaskEventType;
+    message: string;        // human-readable (pt-BR)
+    meta?: Record<string, any>;
+}
+
 export interface Task {
     issueNumber: number;
     title: string;
@@ -71,6 +106,7 @@ export interface Task {
     updatedAt: string;
     completedAt?: string;
     error?: string;
+    events: TaskEvent[];        // timeline persistida (issue #306)
 }
 
 interface TaskStore {
@@ -109,6 +145,27 @@ class TaskRunnerService {
         });
     }
 
+    /**
+     * Persiste um evento na timeline da task e emite via socket. Single source of
+     * truth para logs estruturados (resolve o "falta um historico melhor" #306).
+     */
+    private recordEvent(task: Task, type: TaskEventType, message: string, meta?: Record<string, any>) {
+        if (!Array.isArray(task.events)) task.events = [];
+        const evt: TaskEvent = { ts: new Date().toISOString(), type, message, meta };
+        task.events.push(evt);
+        this.save();
+        // Mapeia para os tipos visuais que a UI ja conhece (info/success/warn/error/ai).
+        const uiType =
+            type === 'task_failed' || type === 'error' || type === 'judge_error' ||
+            type === 'pr_creation_failed' || type === 'typecheck_failed' || type === 'attempt_no_changes' ||
+            type === 'task_watchdog_timeout' ? 'warn'
+            : type === 'task_killed' ? 'warn'
+            : type === 'typecheck_ok' || type === 'pr_created' || type === 'pr_merged' || type === 'task_completed' ? 'success'
+            : type === 'judge_score' || type === 'judge_started' ? 'ai'
+            : 'info';
+        this.emitLog(task.issueNumber, uiType, message);
+    }
+
     private load() {
         try {
             const dir = path.dirname(STORE_PATH);
@@ -116,6 +173,10 @@ class TaskRunnerService {
             if (fs.existsSync(STORE_PATH)) {
                 const parsed = JSON.parse(fs.readFileSync(STORE_PATH, 'utf-8'));
                 this.store = { tasks: parsed.tasks || {} };
+                // Compat: tasks antigas (pre #306) nao tem events[].
+                for (const t of Object.values(this.store.tasks)) {
+                    if (!Array.isArray(t.events)) t.events = [];
+                }
             }
         } catch (e) {
             log.error('Load error', e);
@@ -159,6 +220,7 @@ class TaskRunnerService {
                     labels: (issue.labels || []).map((l: any) => l.name || l),
                     status: 'pending',
                     feedbackHistory: [],
+                    events: [],
                     updatedAt: new Date().toISOString(),
                 };
             } else if (issue.state === 'CLOSED' && this.store.tasks[num].status === 'pending') {
@@ -248,14 +310,17 @@ class TaskRunnerService {
         task.startedAt = new Date().toISOString();
         task.updatedAt = new Date().toISOString();
         task.error = undefined;
-        this.save();
+        this.recordEvent(task, 'task_started', `Task iniciada no branch ${branch}`, { branch });
+        this.emitStatus(task);
 
         this.executeTask(task, branch).catch(e => {
             log.error(`Task #${issueNumber} failed`, e);
             task.status = 'failed';
             task.error = e.message;
             task.updatedAt = new Date().toISOString();
+            this.recordEvent(task, 'task_failed', `Falha: ${e.message}`, { error: e.message });
             this.save();
+            this.emitStatus(task);
         });
 
         return task;
@@ -315,11 +380,12 @@ class TaskRunnerService {
     private async executeTask(task: Task, branch: string): Promise<void> {
         const { issueNumber } = task;
         log.info(`Starting task #${issueNumber} on branch ${branch} (worktree isolado)`);
-        this.emitLog(issueNumber, 'info', `Iniciando #${issueNumber} em worktree isolado (branch ${branch})`);
+        this.recordEvent(task, 'task_started', `Iniciando #${issueNumber} em worktree isolado (branch ${branch})`, { branch });
 
         // 1) Worktree limpo e isolado (nunca toca o dev/main)
-        this.emitLog(issueNumber, 'info', 'Preparando worktree a partir de origin/main...');
+        this.recordEvent(task, 'worktree_setup_started', 'Preparando worktree a partir de origin/main...');
         await this.ensureWorktree(branch);
+        this.recordEvent(task, 'worktree_setup_completed', 'Worktree pronto', { path: WT_ROOT });
 
         // 2) Lê a issue
         this.emitLog(issueNumber, 'info', 'Lendo issue do GitHub...');
@@ -332,12 +398,12 @@ class TaskRunnerService {
         const MAX_IMPL = 2;
         for (let attempt = 1; attempt <= MAX_IMPL; attempt++) {
             fs.writeFileSync(promptPath, this.buildPrompt(task, issueData));
-            this.emitLog(issueNumber, 'info', `Implementando com opencode (tentativa ${attempt}/${MAX_IMPL})...`);
+            this.recordEvent(task, 'attempt_started', `Implementando com opencode (tentativa ${attempt}/${MAX_IMPL})`, { attempt, maxAttempts: MAX_IMPL });
             try {
                 const { stdout } = await bash(`opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`, WT_ROOT, OPENCODE_TIMEOUT_MS);
                 this.emitLog(issueNumber, 'ai', String(stdout).substring(0, 1500));
             } catch (e: any) {
-                this.emitLog(issueNumber, 'warn', `opencode erro: ${String(e.message || e).substring(0, 300)}`);
+                this.recordEvent(task, 'error', `opencode erro: ${String(e.message || e).substring(0, 300)}`, { attempt, error: e.message });
             }
 
             // FAIL-FAST: sem mudança de código → tenta de novo (transiente/cold-start) e só
@@ -345,42 +411,49 @@ class TaskRunnerService {
             const changes = await this.worktreeChanges();
             if (changes.length === 0) {
                 if (attempt < MAX_IMPL) {
-                    this.emitLog(issueNumber, 'warn', 'Nenhuma mudança gerada — repetindo...');
+                    this.recordEvent(task, 'attempt_no_changes', 'Nenhuma mudança gerada — repetindo...', { attempt });
                     task.feedbackHistory.push('A tentativa anterior não gerou mudanças. Implemente os arquivos pedidos agora.');
                     continue;
                 }
                 task.status = 'failed';
                 task.error = 'O agente não produziu nenhuma mudança após as tentativas.';
                 task.updatedAt = new Date().toISOString();
-                this.emitLog(issueNumber, 'warn', 'Nenhuma mudança após as tentativas — abortando (sem PR).');
+                this.recordEvent(task, 'task_failed', 'Nenhuma mudança após as tentativas — abortando (sem PR).');
                 this.save();
                 this.emitStatus(task);
                 return;
             }
 
             // GATE: typecheck
-            this.emitLog(issueNumber, 'info', 'Verificando (typecheck back+front)...');
+            this.recordEvent(task, 'typecheck_started', 'Verificando (typecheck back+front)...');
             verify = await this.verify();
-            if (verify.ok) { this.emitLog(issueNumber, 'success', 'Typecheck OK'); break; }
-            this.emitLog(issueNumber, 'warn', `Typecheck falhou${attempt < MAX_IMPL ? ' — pedindo correção ao opencode...' : ' (vai no PR marcado p/ revisão).'}`);
+            if (verify.ok) {
+                this.recordEvent(task, 'typecheck_ok', 'Typecheck OK', { attempt });
+                break;
+            }
+            this.recordEvent(task, 'typecheck_failed', `Typecheck falhou${attempt < MAX_IMPL ? ' — pedindo correção ao opencode...' : ' (vai no PR marcado p/ revisão).'}`, { attempt, output: verify.output.substring(0, 1000) });
             if (attempt < MAX_IMPL) task.feedbackHistory.push(`O typecheck falhou. Corrija estes erros:\n${verify.output}`);
         }
 
         // 4) Commit + push (remove o arquivo de prompt antes de commitar)
         fs.rmSync(promptPath, { force: true });
         await git(['add', '-A'], { timeout: 15000, cwd: WT_ROOT });
+        let commitSha: string | undefined;
         try {
-            await git(['commit', '-m', `feat(#${issueNumber}): ${String(issueData.title).substring(0, 72)}`], { timeout: 20000, cwd: WT_ROOT });
-            this.emitLog(issueNumber, 'success', 'Mudanças commitadas');
+            const { stdout: commitOut } = await git(['commit', '-m', `feat(#${issueNumber}): ${String(issueData.title).substring(0, 72)}`], { timeout: 20000, cwd: WT_ROOT });
+            const shaMatch = commitOut.match(/\[[\w\-/]+ ([a-f0-9]+)\]/);
+            commitSha = shaMatch?.[1];
+            this.recordEvent(task, 'git_committed', 'Mudanças commitadas', { sha: commitSha });
         } catch {
             task.status = 'failed';
             task.error = 'Nada a commitar após a implementação.';
+            this.recordEvent(task, 'task_failed', 'Nada a commitar após a implementação.');
             this.save();
             this.emitStatus(task);
             return;
         }
         await git(['push', 'origin', branch, '--force'], { timeout: 60000, cwd: WT_ROOT });
-        this.emitLog(issueNumber, 'info', 'Push realizado. Criando PR...');
+        this.recordEvent(task, 'git_pushed', 'Push realizado. Criando PR...', { branch });
 
         // 5) PR (marca o resultado da verificação; NUNCA faz merge — portão humano)
         const verifyTag = verify.ok ? '✅ typecheck OK' : '⚠️ typecheck FALHOU — revisar com atenção';
@@ -395,14 +468,15 @@ class TaskRunnerService {
             const match = prOut.match(/\/pull\/(\d+)/);
             if (match) prNumber = parseInt(match[1]);
             prUrl = prOut.trim();
-            this.emitLog(issueNumber, 'success', `PR #${prNumber} criado: ${prUrl}`);
+            this.recordEvent(task, 'pr_created', `PR #${prNumber} criado: ${prUrl}`, { prNumber, prUrl, verifyOk: verify.ok });
         } catch (e: any) {
             if (e.message?.includes('already exists')) {
                 const { stdout: existingPr } = await gh(['pr', 'list', '--repo', REPO, '--head', branch, '--json', 'number,url', '--limit', '1'], { timeout: 15000 });
                 const prs = JSON.parse(existingPr);
                 if (prs.length) { prNumber = prs[0].number; prUrl = prs[0].url; }
+                this.recordEvent(task, 'pr_created', `PR #${prNumber} ja existia: ${prUrl}`, { prNumber, prUrl, reused: true });
             } else {
-                this.emitLog(issueNumber, 'warn', `Falha ao criar PR: ${String(e.message).substring(0, 300)}`);
+                this.recordEvent(task, 'pr_creation_failed', `Falha ao criar PR: ${String(e.message).substring(0, 300)}`, { error: e.message });
             }
         }
 
@@ -426,7 +500,7 @@ class TaskRunnerService {
         log.info(`Judging PR #${task.prNumber} for task #${task.issueNumber}`);
         task.status = 'reviewing';
         this.emitStatus(task);
-        this.emitLog(task.issueNumber, 'info', `Judge: avaliando PR #${task.prNumber}...`);
+        this.recordEvent(task, 'judge_started', `Judge: avaliando PR #${task.prNumber}...`, { prNumber: task.prNumber });
 
         try {
             const { stdout: diff } = await gh([
@@ -464,6 +538,13 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
                 task.judgeReview = result.review;
                 task.judgeAttempts = (task.judgeAttempts || 0) + 1;
 
+                this.recordEvent(task, 'judge_score', `Judge: ${result.score}/10 — ${result.review?.substring(0, 200) || ''}`, {
+                    score: result.score,
+                    approved: !!result.approved,
+                    review: result.review,
+                    attempt: task.judgeAttempts,
+                });
+
                 if (result.score >= 7 || task.judgeAttempts >= 3) {
                     task.status = 'approved';
                     this.emitLog(task.issueNumber, 'success', `Judge aprovou com score ${result.score}/10`);
@@ -480,11 +561,13 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
             } else {
                 task.status = 'reviewing';
                 task.judgeReview = 'Judge failed to evaluate';
+                this.recordEvent(task, 'judge_error', 'Judge failed to evaluate (no JSON in reply)');
             }
         } catch (e: any) {
             log.error(`Judge error for #${task.issueNumber}`, e);
             task.status = 'reviewing';
             task.judgeReview = `Judge error: ${e.message}`;
+            this.recordEvent(task, 'judge_error', `Judge error: ${e.message}`, { error: e.message });
         }
 
         task.updatedAt = new Date().toISOString();
@@ -499,11 +582,13 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         task.feedbackHistory.push(feedback);
         task.status = 'fixing';
         task.updatedAt = new Date().toISOString();
+        this.recordEvent(task, 'feedback_received', `Feedback recebido: ${feedback.substring(0, 200)}`, { length: feedback.length });
         this.save();
 
         this.executeTask(task, task.branch || `fix-${task.issueNumber}`).catch(e => {
             task.status = 'failed';
             task.error = e.message;
+            this.recordEvent(task, 'task_failed', `Falha: ${e.message}`, { error: e.message });
             this.save();
         });
 
@@ -517,6 +602,7 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         if (task.prNumber) {
             try {
                 await gh(['pr', 'close', String(task.prNumber), '--repo', REPO, '--comment', 'Redoing task'], { timeout: 15000 });
+                this.recordEvent(task, 'pr_closed', `PR #${task.prNumber} fechado para redo`, { prNumber: task.prNumber, reason: 'redo' });
             } catch { /* PR might not exist */ }
         }
 
@@ -529,11 +615,13 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         task.status = 'running';
         task.error = undefined;
         task.updatedAt = new Date().toISOString();
+        this.recordEvent(task, 'task_started', `Task refeita${instruction ? `: ${instruction.substring(0, 200)}` : ''}`, { redo: true, instruction });
         this.save();
 
         this.executeTask(task, task.branch || `fix-${task.issueNumber}`).catch(e => {
             task.status = 'failed';
             task.error = e.message;
+            this.recordEvent(task, 'task_failed', `Falha: ${e.message}`, { error: e.message });
             this.save();
         });
 
@@ -547,13 +635,16 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         if (task.prNumber) {
             try {
                 await gh(['pr', 'close', String(task.prNumber), '--repo', REPO, '--comment', 'Rejected'], { timeout: 15000 });
+                this.recordEvent(task, 'pr_closed', `PR #${task.prNumber} rejeitado`, { prNumber: task.prNumber, reason: 'rejected' });
             } catch { /* ignore */ }
         }
 
         task.status = 'rejected';
         task.completedAt = new Date().toISOString();
         task.updatedAt = new Date().toISOString();
+        this.recordEvent(task, 'task_rejected', 'Task rejeitada pelo administrador');
         this.save();
+        this.emitStatus(task);
         return task;
     }
 
@@ -568,7 +659,10 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         task.status = 'merged';
         task.completedAt = new Date().toISOString();
         task.updatedAt = new Date().toISOString();
+        this.recordEvent(task, 'pr_merged', `PR #${task.prNumber} merged com sucesso`, { prNumber: task.prNumber });
+        this.recordEvent(task, 'task_completed', `Task concluída (PR #${task.prNumber} merged)`);
         this.save();
+        this.emitStatus(task);
         return task;
     }
 
