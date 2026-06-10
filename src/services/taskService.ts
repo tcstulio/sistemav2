@@ -29,6 +29,14 @@ export interface Task {
     updatedAt: string;
     completedAt?: string;
     error?: string;
+    events?: TaskEvent[];
+}
+
+export interface TaskEvent {
+    ts: string;
+    type: string;
+    message: string;
+    meta?: Record<string, any>;
 }
 
 export const TaskService = {
@@ -45,6 +53,11 @@ export const TaskService = {
     getDiff: async (issueNumber: number): Promise<string> => {
         const response = await axios.get(`${API_URL}/${issueNumber}/diff`, getAuthHeaders());
         return response.data.diff;
+    },
+
+    listEvents: async (issueNumber: number): Promise<TaskEvent[]> => {
+        const response = await axios.get(`${API_URL}/${issueNumber}/events`, getAuthHeaders());
+        return response.data.events;
     },
 
     start: async (issueNumber: number): Promise<Task> => {
