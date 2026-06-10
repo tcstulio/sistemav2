@@ -98,8 +98,11 @@ const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) =>
                 {isActive && (
                     <Button variant="ghost" size="sm" icon={<Terminal size={12} />} onClick={() => onConsole(task)} className="text-indigo-500 hover:text-indigo-700">Console</Button>
                 )}
-                {isAdmin && task.status !== 'running' && task.status !== 'fixing' && (
-                    <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500 hover:text-red-700" />
+                {isAdmin && isActive && (
+                    <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('kill', task)} className="text-amber-600 hover:text-amber-700">Cancelar</Button>
+                )}
+                {isAdmin && (
+                    <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500 hover:text-red-700" title="Deletar (mata o processo se estiver rodando)" />
                 )}
             </div>
 
@@ -219,6 +222,10 @@ const TasksBoard: React.FC = () => {
                     break;
                 case 'fix':
                     toast.info('Enviando correção...');
+                    break;
+                case 'kill':
+                    await TaskService.kill(task.issueNumber);
+                    toast.info('Cancelando task...');
                     break;
             }
             load();
