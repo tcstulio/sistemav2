@@ -14,7 +14,7 @@ function notifySessionExpired() {
     const now = Date.now();
     if (now - lastSessionToast < 15000) return;
     lastSessionToast = now;
-    toast.error('Sessão expirada. Faça login novamente.', { duration: 8000 });
+    toast.error('Sessão expirada. Faça login novamente.', { id: 'session-expired', duration: 8000 });
 }
 
 // Safe UUID Generator

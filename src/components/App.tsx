@@ -126,7 +126,7 @@ const App: React.FC = () => {
 
     return (
         <>
-            <Toaster richColors position="top-right" />
+            <Toaster richColors position="bottom-center" visibleToasts={3} duration={4000} closeButton />
             <BrowserRouter>
                 <ErrorBoundary componentName="CoolGroove Sistema">
                 <Suspense fallback={
