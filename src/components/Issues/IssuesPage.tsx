@@ -108,6 +108,7 @@ const IssuesPage: React.FC = () => {
                 case 'merge': await TaskService.merge(task.issueNumber); toast.success('PR merged!'); break;
                 case 'reject': await TaskService.reject(task.issueNumber); toast.info('Rejeitada'); break;
                 case 'redo': await TaskService.redo(task.issueNumber); toast.info('Refazendo...'); break;
+                case 'kill': await TaskService.kill(task.issueNumber); toast.info('Cancelando...'); break;
             }
             loadTasks();
         } catch (e: any) { toast.error(e.response?.data?.error || e.message); }
@@ -374,9 +375,10 @@ const TaskCard: React.FC<{ task: Task; onAction: (a: string, t: Task) => void; o
                 )}
                 {task.status === 'failed' && <Button variant="primary" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Tentar Novamente</Button>}
                 {isActive && <Button variant="ghost" size="sm" icon={<Terminal size={12} />} onClick={() => onConsole(task)} className="text-indigo-500">Console</Button>}
+                {isActive && <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('kill', task)} className="text-amber-600 hover:text-amber-700">Cancelar</Button>}
                 <Button variant="ghost" size="sm" icon={<Eye size={12} />} onClick={() => setExpanded(!expanded)}>{expanded ? 'Fechar' : 'Detalhes'}</Button>
                 <Button variant="ghost" size="sm" icon={<Pencil size={12} />} onClick={() => onEdit(task)}>Editar</Button>
-                {!isActive && <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500 hover:text-red-700" />}
+                <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500 hover:text-red-700" title="Deletar (mata o processo se estiver rodando)" />
             </div>
             {showFeedback && (
                 <div className="mt-3 flex gap-2">
