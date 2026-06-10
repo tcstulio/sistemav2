@@ -84,6 +84,13 @@ class TaskRunnerService {
 
     constructor() {
         this.load();
+        // Reconcilia com o GitHub no boot. Fire-and-forget: nao bloqueia startup.
+        // Falhas transientes (gh offline) sao resolvidas no proximo request.
+        setImmediate(() => {
+            this.syncWithGitHub().catch((e) => {
+                log.warn(`syncWithGitHub no boot falhou: ${e?.message || e}`);
+            });
+        });
     }
 
     private emitLog(issueNumber: number, type: string, message: string) {
@@ -123,15 +130,15 @@ class TaskRunnerService {
         }
     }
 
-    async listIssues(): Promise<any[]> {
+    async listIssues(state: 'open' | 'closed' | 'all' = 'open'): Promise<any[]> {
         try {
             const { stdout } = await gh([
                 'issue', 'list',
                 '--repo', REPO,
                 '--label', 'opencode-task',
-                '--state', 'open',
+                '--state', state,
                 '--limit', '50',
-                '--json', 'number,title,body,labels,createdAt'
+                '--json', 'number,title,body,labels,createdAt,state,closedAt'
             ], { timeout: 15000 });
             return JSON.parse(stdout);
         } catch (e: any) {
@@ -140,8 +147,8 @@ class TaskRunnerService {
         }
     }
 
-    async syncTasks(): Promise<Task[]> {
-        const issues = await this.listIssues();
+    async syncTasks(state: 'open' | 'closed' | 'all' = 'open'): Promise<Task[]> {
+        const issues = await this.listIssues(state);
         for (const issue of issues) {
             const num = issue.number;
             if (!this.store.tasks[num]) {
@@ -154,10 +161,72 @@ class TaskRunnerService {
                     feedbackHistory: [],
                     updatedAt: new Date().toISOString(),
                 };
+            } else if (issue.state === 'CLOSED' && this.store.tasks[num].status === 'pending') {
+                this.store.tasks[num].startedAt = undefined;
             }
         }
         this.save();
         return Object.values(this.store.tasks).sort((a, b) => b.issueNumber - a.issueNumber);
+    }
+
+    private isTerminalStatus(s: TaskStatus): boolean {
+        return s === 'approved' || s === 'merged' || s === 'rejected' || s === 'failed';
+    }
+
+    /**
+     * Reconcilia o store local com o estado real do GitHub.
+     * - Tasks em estado terminal NAO sao tocadas.
+     * - Tasks em running/fixing/reviewing/pending: busca issue e PR.
+     *   * Issue CLOSED + PR mergeado  -> merged
+     *   * Issue CLOSED + PR fechado    -> rejected
+     *   * Issue CLOSED + sem PR        -> failed
+     *   * Issue OPEN                    -> mantem (mas limpa startedAt em pending)
+     * Idempotente: rodar 2x nao muda estado.
+     */
+    async syncWithGitHub(): Promise<{ reconciled: number[] }> {
+        const reconciled: number[] = [];
+        for (const [numStr, task] of Object.entries(this.store.tasks)) {
+            const num = Number(numStr);
+            if (this.isTerminalStatus(task.status)) continue;
+
+            let issueData: any;
+            try {
+                const { stdout } = await gh(['issue', 'view', String(num), '--repo', REPO, '--json', 'state,closedAt'], { timeout: 10000 });
+                issueData = JSON.parse(stdout);
+            } catch {
+                continue; // erro transiente, tenta no proximo boot
+            }
+
+            // Issue ainda aberta: garante coerencia local
+            if (issueData.state !== 'CLOSED') {
+                if (task.status === 'pending' && task.startedAt) {
+                    task.startedAt = undefined;
+                    reconciled.push(num);
+                }
+                continue;
+            }
+
+            // Issue fechada: deriva status terminal pelo PR
+            if (task.prNumber) {
+                try {
+                    const { stdout: prOut } = await gh(['pr', 'view', String(task.prNumber), '--repo', REPO, '--json', 'state,merged'], { timeout: 10000 });
+                    const pr = JSON.parse(prOut);
+                    task.status = pr.merged ? 'merged' : 'rejected';
+                } catch {
+                    task.status = 'failed';
+                }
+            } else {
+                task.status = 'failed';
+            }
+            task.completedAt = task.completedAt || new Date().toISOString();
+            task.updatedAt = new Date().toISOString();
+            reconciled.push(num);
+        }
+        if (reconciled.length) {
+            this.save();
+            log.info(`syncWithGitHub: reconciliou ${reconciled.length} task(s) -> [${reconciled.join(', ')}]`);
+        }
+        return { reconciled };
     }
 
     getTask(issueNumber: number): Task | null {
