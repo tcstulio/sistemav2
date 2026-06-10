@@ -1,7 +1,9 @@
 /// <reference types="vite/client" />
 
-declare const __APP_VERSION__: string;
-declare const __GIT_HASH__: string;
+declare module 'virtual:app-version' {
+    export const APP_VERSION: string;
+    export const GIT_HASH: string;
+}
 
 interface ImportMetaEnv {
     readonly PROD: boolean;

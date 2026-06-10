@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useModules } from '../../hooks/dolibarr';
 import { useOrgBranding } from '../../hooks/useOrgBranding';
+import { APP_VERSION, GIT_HASH } from 'virtual:app-version';
 import { safeStorage } from '../../utils/safeStorage';
 import { MENU_REGISTRY } from '../../config/menuRegistry';
 import { applyOrderVisibility, getUserPrefs } from '../../utils/orderVisibility';
@@ -304,7 +305,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
                     <LogOut size={16} /> Desconectar
                 </button>
                 <p className="mt-2 text-center text-[10px] text-slate-600 font-mono select-none">
-                    v{__APP_VERSION__}-{__GIT_HASH__}
+                    v{APP_VERSION}-{GIT_HASH}
                 </p>
             </div>
         </aside>
