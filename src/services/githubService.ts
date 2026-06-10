@@ -53,5 +53,17 @@ export const GithubService = {
             log.error('Failed to fetch issue stats', e);
             return null;
         }
+    },
+
+    // Cria uma issue no GitHub a partir de um report in-app (botão "Reportar problema").
+    createIssue: async (payload: { title: string; description?: string; context?: any; labels?: string[] }): Promise<{ ok: boolean; url?: string; number?: number; error?: string }> => {
+        try {
+            const res = await axios.post('/api/github/issues', payload, getAuthHeaders());
+            return res.data;
+        } catch (e: any) {
+            const error = e?.response?.data?.error || e?.message || 'Falha ao criar issue';
+            log.error('Failed to create issue', e);
+            return { ok: false, error };
+        }
     }
 };

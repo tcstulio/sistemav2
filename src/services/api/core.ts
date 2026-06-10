@@ -2,6 +2,7 @@
 import { dbService } from '../dbService';
 import { config as AppConfig } from '../../config';
 import { logger } from '../../utils/logger';
+import { pushFailedRequest } from '../../utils/reportContext';
 
 const log = logger.child('ApiCore');
 
@@ -89,6 +90,7 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
                 }
 
                 log.error(`Proxy error: ${errorMsg}`);
+                pushFailedRequest(method, path, response.status, errorMsg);
 
                 dbService.add('api_logs', {
                     id: generateUUID(),
@@ -130,6 +132,7 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
 
     } catch (error: any) {
         log.error('Network/System Error', error);
+        pushFailedRequest(method, path, 'network', error?.message);
         throw error;
     }
 };
