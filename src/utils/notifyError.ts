@@ -14,5 +14,6 @@ export function notifyError(context: string, error: any): void {
     const msg = error?.response?.data?.message || error?.message || String(error || '');
     log.warn(`${context}: ${msg}`, error);
     if (status === 401 || /\b401\b|unauthor/i.test(String(msg))) return; // sessão expirada já é avisada centralmente
-    toast.error(`${context} falhou.`, { description: String(msg).slice(0, 160) });
+    // id estável por contexto: erros repetidos da mesma ação colapsam num toast só (não empilham).
+    toast.error(`${context} falhou.`, { id: `err:${context}`, description: String(msg).slice(0, 160) });
 }
