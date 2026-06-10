@@ -7,6 +7,9 @@ import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { User, Camera, Trash2, RefreshCw, Save, Smartphone } from 'lucide-react';
 import { logger } from '../../utils/logger';
+import { notifyError } from '../../utils/notifyError';
+import { toast } from 'sonner';
+import { useConfirm } from '../../hooks/useConfirm';
 
 const log = logger.child('WhatsAppProfileSettings');
 
@@ -17,6 +20,7 @@ interface WhatsAppProfileSettingsProps {
 export const WhatsAppProfileSettings: React.FC<WhatsAppProfileSettingsProps> = ({ sessionId = 'default' }) => {
     const [profile, setProfile] = useState<WhatsAppProfile | null>(null);
     const [loading, setLoading] = useState(true);
+    const confirm = useConfirm();
     const [saving, setSaving] = useState(false);
 
     // Form States (buffered)
@@ -59,7 +63,7 @@ export const WhatsAppProfileSettings: React.FC<WhatsAppProfileSettingsProps> = (
     };
 
     const handleDeletePicture = async () => {
-        if (!confirm('Tem certeza que deseja remover a foto de perfil?')) return;
+        if (!(await confirm('Tem certeza que deseja remover a foto de perfil?'))) return;
         try {
             setSaving(true);
             await WhatsAppService.deleteProfilePicture(sessionId);
@@ -77,10 +81,9 @@ export const WhatsAppProfileSettings: React.FC<WhatsAppProfileSettingsProps> = (
             await WhatsAppService.setDisplayName(nameDraft, sessionId);
             // Update local state to reflect saved
             setProfile(prev => prev ? { ...prev, name: nameDraft } : null);
-            alert('Nome atualizado com sucesso!');
+            toast.success('Nome atualizado com sucesso!');
         } catch (error) {
-            log.error("Failed to update name", error);
-            alert('Erro ao atualizar nome.');
+            notifyError('Atualizar nome', error);
         } finally {
             setSaving(false);
         }
@@ -91,10 +94,9 @@ export const WhatsAppProfileSettings: React.FC<WhatsAppProfileSettingsProps> = (
             setSaving(true);
             await WhatsAppService.setAbout(aboutDraft, sessionId);
             setProfile(prev => prev ? { ...prev, about: aboutDraft } : null);
-            alert('Recado atualizado com sucesso!');
+            toast.success('Recado atualizado com sucesso!');
         } catch (error) {
-            log.error("Failed to update status", error);
-            alert('Erro ao atualizar recado.');
+            notifyError('Atualizar recado', error);
         } finally {
             setSaving(false);
         }
@@ -103,7 +105,7 @@ export const WhatsAppProfileSettings: React.FC<WhatsAppProfileSettingsProps> = (
     const handlePresence = async (presence: 'online' | 'offline') => {
         try {
             await WhatsAppService.setPresence(presence, sessionId);
-            alert(`Definido como ${presence === 'online' ? 'Online' : 'Offline'}`);
+            toast.success(`Definido como ${presence === 'online' ? 'Online' : 'Offline'}`);
         } catch (error) {
             log.error("Failed to set presence", error);
         }
