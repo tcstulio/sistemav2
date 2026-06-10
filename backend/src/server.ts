@@ -93,13 +93,18 @@ const globalLimiter = rateLimit({
     skip: (req) => req.path === '/health' // Skip health checks
 });
 
-// Strict limiter for AI endpoints (expensive operations)
+// Strict limiter for AI endpoints (expensive operations).
+// Só limita os POSTs caros (generate-reply*, analyze): os GETs em /ai/* são leves e
+// FREQUENTES — polling do job (GET /jobs/:id a cada 2.5s) e do feed (GET /agent/activity).
+// Sem o skip, um job longo estoura 20/min e derruba o chat com 429 (issue #320).
+// O limiter global (500/15min) continua cobrindo os GETs como backstop.
 const aiLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
     max: 20, // 20 AI requests per minute
     message: { error: 'AI rate limit exceeded. Please wait before trying again.' },
     standardHeaders: true,
-    legacyHeaders: false
+    legacyHeaders: false,
+    skip: (req) => req.method === 'GET'
 });
 
 // Banking limiter (sensitive operations)
