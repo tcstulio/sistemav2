@@ -55,6 +55,18 @@ export const GithubService = {
         }
     },
 
+    // Fecha/reabre uma issue (gestão in-app). reason='not planned' p/ duplicadas/wontfix.
+    setIssueState: async (issueNumber: number, state: 'open' | 'closed', reason?: string): Promise<{ ok: boolean; error?: string }> => {
+        try {
+            const res = await axios.post(`/api/github/issues/${issueNumber}/state`, { state, reason }, getAuthHeaders());
+            return res.data;
+        } catch (e: any) {
+            const error = e?.response?.data?.error || e?.message || 'Falha ao alterar estado da issue';
+            log.error('Failed to set issue state', e);
+            return { ok: false, error };
+        }
+    },
+
     // Adiciona um label a uma issue (#315 "Virar Task" → opencode-task).
     addLabel: async (issueNumber: number, label: string): Promise<{ ok: boolean; error?: string }> => {
         try {

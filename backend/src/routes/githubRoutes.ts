@@ -100,6 +100,29 @@ router.post('/issues/:number/labels', async (req: Request, res: Response) => {
     }
 });
 
+// Fechar/reabrir uma issue pela tela (gestão in-app). reason='not planned' p/ duplicadas/wontfix.
+router.post('/issues/:number/state', async (req: Request, res: Response) => {
+    try {
+        const num = Number(req.params.number);
+        const { state, reason } = req.body || {};
+        if (!num || !['open', 'closed'].includes(state)) {
+            return res.status(400).json({ error: "number e state ('open'|'closed') são obrigatórios" });
+        }
+        if (state === 'closed') {
+            const args = ['issue', 'close', String(num), '--repo', REPO];
+            if (reason === 'not planned') args.push('--reason', 'not planned');
+            await runGh(args);
+        } else {
+            await runGh(['issue', 'reopen', String(num), '--repo', REPO]);
+        }
+        log.info('Issue state alterado', { number: num, state, reason });
+        res.json({ ok: true, number: num, state });
+    } catch (error: any) {
+        log.error('Failed to set issue state', { error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+});
+
 router.get('/issues', async (req: Request, res: Response) => {
     try {
         const { state, label, limit } = req.query;
