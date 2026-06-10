@@ -4,6 +4,7 @@ import { DolibarrConfig, UserGroup } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { logger } from '../../utils/logger';
+import { notifyError } from '../../utils/notifyError';
 import {
     PageLayout,
     PageHeader,
@@ -95,8 +96,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
             setIsCreateOpen(false);
             await loadGroups();
         } catch (err) {
-            log.error('Falha ao criar grupo', err);
-            alert('Erro ao criar grupo.');
+            notifyError('Criar grupo', err);
         } finally {
             setIsSaving(false);
         }
@@ -110,8 +110,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
             setGroupToDelete(null);
             await loadGroups();
         } catch (err) {
-            log.error('Falha ao excluir grupo', err);
-            alert('Erro ao excluir grupo.');
+            notifyError('Excluir grupo', err);
         } finally {
             setIsDeleting(false);
         }
