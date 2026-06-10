@@ -3,6 +3,8 @@ import { Boxes, Loader2, ClipboardList, Check } from 'lucide-react';
 import { DolibarrConfig } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
 import { logger } from '../../utils/logger';
+import { notifyError } from '../../utils/notifyError';
+import { toast } from 'sonner';
 import { allCountsValid, buildMovements, CountRow } from './stockCount';
 
 const log = logger.child('StockCountPanel');
@@ -53,7 +55,7 @@ export const StockCountPanel: React.FC<Props> = ({ config, taskId, products, war
         try {
             await DolibarrService.setDelegationTemplate(config, taskId, TEMPLATE, { warehouseId: warehouseSel });
             await reload();
-        } catch (e) { log.warn('Falha ao iniciar contagem', e); }
+        } catch (e) { notifyError('Iniciar contagem', e); }
         finally { setSaving(false); }
     };
 
@@ -62,7 +64,7 @@ export const StockCountPanel: React.FC<Props> = ({ config, taskId, products, war
             ...it,
             counted: counts[it.productId] === undefined || counts[it.productId] === '' ? null : Number(counts[it.productId]),
         }));
-        if (!allCountsValid(rows)) { log.warn('Contagem incompleta/invalida'); return; }
+        if (!allCountsValid(rows)) { toast.warning('Preencha todas as contagens (quantidade ≥ 0) antes de enviar.'); return; }
         setSaving(true);
         try {
             for (const mv of buildMovements(rows)) {
@@ -76,7 +78,7 @@ export const StockCountPanel: React.FC<Props> = ({ config, taskId, products, war
             }
             await DolibarrService.updateTask(config, taskId, { progress: 100 });
             onChanged?.();
-        } catch (e) { log.warn('Falha ao registrar a contagem', e); }
+        } catch (e) { notifyError('Registrar a contagem', e); }
         finally { setSaving(false); }
     };
 

@@ -3,6 +3,7 @@ import { Users, X, Loader2, Plus, Crown } from 'lucide-react';
 import { DolibarrConfig } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
 import { logger } from '../../utils/logger';
+import { notifyError } from '../../utils/notifyError';
 
 const log = logger.child('TaskContactsManager');
 
@@ -90,7 +91,7 @@ export const TaskContactsManager: React.FC<Props> = ({ config, taskId, users, on
             await reload();
             onChange?.();
         } catch (e) {
-            log.warn('Falha ao definir responsável', e);
+            notifyError('Definir responsável', e);
         } finally {
             setSaving(false);
         }
@@ -105,7 +106,7 @@ export const TaskContactsManager: React.FC<Props> = ({ config, taskId, users, on
             await reload();
             onChange?.();
         } catch (e) {
-            log.warn('Falha ao adicionar interveniente', e);
+            notifyError('Adicionar interveniente', e);
         } finally {
             setSaving(false);
         }
@@ -119,7 +120,7 @@ export const TaskContactsManager: React.FC<Props> = ({ config, taskId, users, on
             await reload();
             onChange?.();
         } catch (e) {
-            log.warn('Falha ao remover contato', e);
+            notifyError('Remover contato', e);
         } finally {
             setSaving(false);
         }

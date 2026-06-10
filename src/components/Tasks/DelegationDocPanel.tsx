@@ -3,6 +3,7 @@ import { FileText, Edit, Save, Loader2, X } from 'lucide-react';
 import { DolibarrConfig } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
 import { logger } from '../../utils/logger';
+import { notifyError } from '../../utils/notifyError';
 
 const log = logger.child('DelegationDocPanel');
 
@@ -44,7 +45,7 @@ export const DelegationDocPanel: React.FC<Props> = ({ config, taskId }) => {
             setEditing(false);
             await reload();
         } catch (e) {
-            log.warn('Falha ao salvar documentação', e);
+            notifyError('Salvar documentação', e);
         } finally {
             setSaving(false);
         }

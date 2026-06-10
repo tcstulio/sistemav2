@@ -3,6 +3,7 @@ import { ClipboardCheck, Check, X, Loader2, Clock, Send } from 'lucide-react';
 import { DolibarrConfig } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
 import { logger } from '../../utils/logger';
+import { notifyError } from '../../utils/notifyError';
 
 const log = logger.child('DelegationPanel');
 const DAY_MS = 86400000;
@@ -59,7 +60,7 @@ export const DelegationPanel: React.FC<Props> = ({ config, taskId, task, current
     const run = async (fn: () => Promise<any>) => {
         setSaving(true);
         try { await fn(); await reload(); }
-        catch (e) { log.warn('Ação de delegação falhou', e); }
+        catch (e) { notifyError('Ação de delegação', e); }
         finally { setSaving(false); }
     };
 
