@@ -1,6 +1,6 @@
 import path from 'path';
 import { execSync } from 'child_process';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig, loadEnv, Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
 function getGitHash(): string {
@@ -8,13 +8,28 @@ function getGitHash(): string {
   catch { return 'dev'; }
 }
 
+function versionPlugin(): Plugin {
+  const version = process.env.npm_package_version || '0.0.0';
+  const hash = getGitHash();
+  const virtualModuleId = 'virtual:app-version';
+  const resolvedVirtualModuleId = '\0' + virtualModuleId;
+
+  return {
+    name: 'app-version',
+    resolveId(id) {
+      if (id === virtualModuleId) return resolvedVirtualModuleId;
+    },
+    load(id) {
+      if (id === resolvedVirtualModuleId) {
+        return `export const APP_VERSION = ${JSON.stringify(version)}; export const GIT_HASH = ${JSON.stringify(hash)};`;
+      }
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
-    define: {
-      __APP_VERSION__: JSON.stringify(process.env.npm_package_version || '0.0.0'),
-      __GIT_HASH__: JSON.stringify(getGitHash()),
-    },
     server: {
       port: 3003,
       host: '0.0.0.0',
@@ -37,7 +52,7 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    plugins: [react()],
+    plugins: [react(), versionPlugin()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
