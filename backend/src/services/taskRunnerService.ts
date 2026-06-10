@@ -1,4 +1,4 @@
-import { execFile, exec } from 'child_process';
+import { execFile, exec, ChildProcess, spawn } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
@@ -6,6 +6,7 @@ import { atomicWriteSync } from '../utils/atomicWrite';
 import { logger } from '../utils/logger';
 import { aiService } from './aiService';
 import { socketService } from './socketService';
+import { killTree, isAlive } from '../utils/processTree';
 
 const log = logger.child('TaskRunner');
 const execFileAsync = promisify(execFile);
@@ -52,7 +53,68 @@ function bash(command: string, cwd: string, timeout: number) {
     return execFileAsync(GIT_BASH, ['-lc', command], { cwd, timeout, maxBuffer: BIG, windowsHide: true });
 }
 
-export type TaskStatus = 'pending' | 'running' | 'reviewing' | 'approved' | 'fixing' | 'merged' | 'rejected' | 'failed';
+/**
+ * Roda o opencode com tracking de PID e observador de kill (issue #304).
+ * - Salva childPid na task para que killTask consiga localizar o processo.
+ * - Polling a cada 500ms: se task.killRequested virar true, mata a arvore e rejeita.
+ * - No Unix usa detached:true para criar novo process group (necessario p/ kill -pid).
+ */
+function runOpencode(command: string, cwd: string, task: Task, timeoutMs: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const child: ChildProcess = spawn(GIT_BASH, ['-lc', command], {
+            cwd,
+            detached: process.platform !== 'win32',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+        });
+        task.childPid = child.pid;
+
+        let stdout = '';
+        let stderr = '';
+        let killed = false;
+        child.stdout?.on('data', (b) => { stdout += b.toString(); });
+        child.stderr?.on('data', (b) => { stderr += b.toString(); });
+
+        const watcher = setInterval(() => {
+            if (task.killRequested && !killed) {
+                killed = true;
+                const pid = child.pid;
+                if (pid) {
+                    killTree(pid).catch(() => { /* logged inside */ });
+                }
+            }
+        }, 500);
+
+        const finish = (err?: Error) => {
+            clearInterval(watcher);
+            if (task.childPid === child.pid) task.childPid = undefined;
+            if (err) reject(err);
+            else resolve(stdout);
+        };
+
+        const killTimer = setTimeout(() => {
+            finish(new Error(`opencode timeout (${Math.round(timeoutMs / 1000)}s)`));
+            if (child.pid) killTree(child.pid).catch(() => { /* ignore */ });
+        }, timeoutMs);
+
+        child.on('exit', (code, signal) => {
+            clearTimeout(killTimer);
+            if (killed) {
+                finish(new Error(`opencode killed (signal=${signal}, code=${code})`));
+            } else if (code === 0) {
+                finish();
+            } else {
+                finish(new Error(`opencode exited code=${code} signal=${signal}: ${(stderr || stdout).substring(0, 2000)}`));
+            }
+        });
+        child.on('error', (err) => {
+            clearTimeout(killTimer);
+            finish(err);
+        });
+    });
+}
+
+export type TaskStatus = 'pending' | 'running' | 'reviewing' | 'approved' | 'fixing' | 'cancelling' | 'cancelled' | 'merged' | 'rejected' | 'failed';
 
 export type TaskEventType =
     | 'task_created'
@@ -107,6 +169,9 @@ export interface Task {
     completedAt?: string;
     error?: string;
     events: TaskEvent[];        // timeline persistida (issue #306)
+    childPid?: number;          // PID do opencode em execucao (issue #304)
+    killRequested?: boolean;    // flag de cancelamento solicitado
+    killedAt?: string;          // quando o kill foi processado
 }
 
 interface TaskStore {
@@ -174,8 +239,18 @@ class TaskRunnerService {
                 const parsed = JSON.parse(fs.readFileSync(STORE_PATH, 'utf-8'));
                 this.store = { tasks: parsed.tasks || {} };
                 // Compat: tasks antigas (pre #306) nao tem events[].
+                // Cleanup: killRequested=true de um restart anterior (child morreu junto).
                 for (const t of Object.values(this.store.tasks)) {
                     if (!Array.isArray(t.events)) t.events = [];
+                    if (t.killRequested) {
+                        t.killRequested = false;
+                        t.childPid = undefined;
+                        if (t.status === 'running' || t.status === 'fixing' || t.status === 'cancelling') {
+                            t.status = 'failed';
+                            t.error = 'Backend reiniciou durante a execução (child morto).';
+                            t.completedAt = new Date().toISOString();
+                        }
+                    }
                 }
             }
         } catch (e) {
@@ -232,7 +307,7 @@ class TaskRunnerService {
     }
 
     private isTerminalStatus(s: TaskStatus): boolean {
-        return s === 'approved' || s === 'merged' || s === 'rejected' || s === 'failed';
+        return s === 'approved' || s === 'merged' || s === 'rejected' || s === 'failed' || s === 'cancelled';
     }
 
     /**
@@ -400,9 +475,19 @@ class TaskRunnerService {
             fs.writeFileSync(promptPath, this.buildPrompt(task, issueData));
             this.recordEvent(task, 'attempt_started', `Implementando com opencode (tentativa ${attempt}/${MAX_IMPL})`, { attempt, maxAttempts: MAX_IMPL });
             try {
-                const { stdout } = await bash(`opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`, WT_ROOT, OPENCODE_TIMEOUT_MS);
+                // runOpencode faz tracking de PID e mata a arvore se killRequested for setado
+                // durante a execucao (#304).
+                const stdout = await runOpencode(
+                    `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
+                    WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+                );
                 this.emitLog(issueNumber, 'ai', String(stdout).substring(0, 1500));
             } catch (e: any) {
+                // Se foi kill solicitado, sai do loop silenciosamente.
+                if (task.killRequested) {
+                    this.recordEvent(task, 'task_killed', `Task cancelada durante opencode`, { attempt, pid: task.childPid });
+                    return;
+                }
                 this.recordEvent(task, 'error', `opencode erro: ${String(e.message || e).substring(0, 300)}`, { attempt, error: e.message });
             }
 
@@ -713,6 +798,53 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         } catch {
             return 'Unable to fetch diff';
         }
+    }
+
+    /**
+     * Cancela uma task em execucao (issue #304).
+     * - Seta killRequested=true (o runOpencode watcher mata a arvore em <=500ms).
+     * - Tambem mata diretamente o PID atual via processTree (defesa em profundidade).
+     * - Idempotente: chamar 2x nao quebra.
+     * - Recusa task em estado terminal (merged/rejected/failed/cancelled).
+     */
+    async killTask(issueNumber: number, reason = 'user requested'): Promise<Task> {
+        const task = this.store.tasks[issueNumber];
+        if (!task) throw new Error(`Task #${issueNumber} not found`);
+
+        if (this.isTerminalStatus(task.status) || task.status === 'cancelled') {
+            throw new Error(`Task #${issueNumber} is already ${task.status}`);
+        }
+        if (task.status === 'cancelling') {
+            return task; // idempotente
+        }
+
+        const pid = task.childPid;
+        task.killRequested = true;
+        task.status = 'cancelling';
+        task.updatedAt = new Date().toISOString();
+        this.recordEvent(task, 'task_killed', `Cancelamento solicitado: ${reason}`, { pid, reason });
+        this.emitStatus(task);
+
+        // Mata direto (nao espera o watcher) + aguarda ate 5s.
+        let killResult: { ok: boolean; signal: string; durationMs: number; alreadyDead: boolean } | null = null;
+        if (pid && isAlive(pid)) {
+            killResult = await killTree(pid);
+            this.recordEvent(task, 'task_killed',
+                `Process tree killed via ${killResult.signal}${killResult.alreadyDead ? ' (ja estava morto)' : ''}`,
+                { pid, ...killResult });
+        }
+
+        task.status = 'cancelled';
+        task.killedAt = new Date().toISOString();
+        task.completedAt = task.killedAt;
+        task.error = reason;
+        task.childPid = undefined;
+        task.killRequested = false;
+        task.updatedAt = task.killedAt;
+        this.save();
+        this.emitStatus(task);
+        log.info(`Task #${issueNumber} cancelled (pid=${pid}, signal=${killResult?.signal || 'noop'})`);
+        return task;
     }
 }
 

@@ -16,6 +16,8 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.Rea
     merged: { color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', icon: <GitMerge size={14} />, label: 'Merged' },
     rejected: { color: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', icon: <XCircle size={14} />, label: 'Rejeitado' },
     failed: { color: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', icon: <AlertCircle size={14} />, label: 'Falhou' },
+    cancelling: { color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-900/20', icon: <Loader2 size={14} className="animate-spin" />, label: 'Cancelando...' },
+    cancelled: { color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-900/20', icon: <XCircle size={14} />, label: 'Cancelada' },
 };
 
 const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) => void; polling: boolean; onReview: (task: Task) => void; onEdit: (task: Task) => void; onDelete: (task: Task) => void; onConsole: (task: Task) => void; isAdmin: boolean }> = ({ task, onAction, polling, onReview, onEdit, onDelete, onConsole, isAdmin }) => {
@@ -23,7 +25,7 @@ const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) =>
     const [feedback, setFeedback] = useState('');
     const [showFeedback, setShowFeedback] = useState(false);
     const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
-    const isActive = ['running', 'fixing'].includes(task.status);
+    const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
 
     return (
         <Card className="relative overflow-hidden">
@@ -261,7 +263,7 @@ const TasksBoard: React.FC = () => {
         return true;
     });
 
-    const hasActive = tasks.some(t => ['running', 'fixing'].includes(t.status));
+    const hasActive = tasks.some(t => ['running', 'fixing', 'cancelling'].includes(t.status));
 
     if (loading) {
         return (
