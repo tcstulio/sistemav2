@@ -112,6 +112,19 @@ router.post('/:issueNumber/merge', requireDolibarrAdmin, async (req, res) => {
     }
 });
 
+// Kill/cancel (issue #304). Admin only. Seta killRequested no service que mata
+// o processo do opencode (e filhos) e marca status como cancelled.
+router.post('/:issueNumber/kill', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const reason = (req.body && typeof req.body.reason === 'string') ? req.body.reason : 'admin request';
+        const task = await taskRunnerService.killTask(Number(req.params.issueNumber), reason);
+        res.json(task);
+    } catch (error: any) {
+        log.error('Kill task error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
 router.put('/:issueNumber', requireDolibarrAdmin, async (req, res) => {
     try {
         const { title, body, labels } = req.body;

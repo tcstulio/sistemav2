@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { X, Terminal, Loader2 } from 'lucide-react';
+import { X, Terminal, Loader2, Skull } from 'lucide-react';
 import { Button } from '../ui';
 import { TaskService } from '../../services/taskService';
+import { useDolibarr } from '../../context/DolibarrContext';
+import { toast } from 'sonner';
 
 interface LogEntry {
     type: 'info' | 'success' | 'warn' | 'error' | 'ai';
@@ -49,12 +51,29 @@ const TYPE_PREFIX: Record<string, string> = {
 };
 
 const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
+    const { currentUser } = useDolibarr();
+    const isAdmin = currentUser?.admin === 1 || currentUser?.admin === '1' || (currentUser?.admin as unknown) === true;
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [status, setStatus] = useState<TaskStatus | null>(null);
     const [connected, setConnected] = useState(false);
     const [historyLoaded, setHistoryLoaded] = useState(false);
+    const [killing, setKilling] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const socketRef = useRef<Socket | null>(null);
+
+    const handleKill = async () => {
+        if (!isAdmin) { toast.error('Apenas administradores podem matar tasks.'); return; }
+        if (!confirm(`Matar a task #${issueNumber}? O processo do opencode e seus filhos serao encerrados (SIGKILL). Esta acao nao pode ser desfeita.`)) return;
+        setKilling(true);
+        try {
+            await TaskService.kill(issueNumber, 'user kill from TaskConsole');
+            toast.success('Task cancelada. O processo foi encerrado.');
+        } catch (e: any) {
+            toast.error(e.response?.data?.error || e.message);
+        } finally {
+            setKilling(false);
+        }
+    };
 
     // Carrega historico persistido (#306) antes de abrir socket.
     useEffect(() => {
@@ -132,7 +151,7 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
         }
     }, [logs]);
 
-    const isActive = status?.status === 'running' || status?.status === 'fixing';
+    const isActive = status?.status === 'running' || status?.status === 'fixing' || status?.status === 'cancelling';
 
     return (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-4" onClick={onClose}>
@@ -145,7 +164,21 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
                         <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} title={connected ? 'Conectado' : 'Desconectado'} />
                         {historyLoaded && <span className="text-[10px] text-slate-500">histórico carregado</span>}
                     </div>
-                    <Button variant="ghost" size="sm" onClick={onClose}><X size={14} /></Button>
+                    <div className="flex items-center gap-1">
+                        {isAdmin && isActive && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={handleKill}
+                                disabled={killing}
+                                className="text-red-400 hover:text-red-300 hover:bg-red-950/30"
+                                title="Matar o processo do opencode (SIGKILL no Unix, taskkill /F /T no Windows)"
+                            >
+                                <Skull size={14} className="mr-1" /> {killing ? 'Matando...' : 'Matar task'}
+                            </Button>
+                        )}
+                        <Button variant="ghost" size="sm" onClick={onClose}><X size={14} /></Button>
+                    </div>
                 </div>
 
                 {status && (
