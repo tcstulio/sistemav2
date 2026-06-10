@@ -7,6 +7,9 @@ import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useWarehouses, useStockMovements, useProducts, useUsers } from '../hooks/dolibarr';
 import { logger } from '../utils/logger';
+import { notifyError } from '../utils/notifyError';
+import { toast } from 'sonner';
+import { useConfirm } from '../hooks/useConfirm';
 
 const log = logger.child('InventoryView');
 
@@ -24,6 +27,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
 
     const isLoading = isLoadingWarehouses || isLoadingMovements || isLoadingProducts || isLoadingUsers;
 
+    const confirm = useConfirm();
     const [activeTab, setActiveTab] = useState<'warehouses' | 'movements'>('warehouses');
     const [searchTerm, setSearchTerm] = useState('');
 
@@ -87,16 +91,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
         try {
             if (editingWarehouseId) {
                 await DolibarrService.updateWarehouse(config, editingWarehouseId, warehouseForm);
-                alert("Armazém atualizado com sucesso");
+                toast.success("Armazém atualizado com sucesso");
             } else {
                 await DolibarrService.createWarehouse(config, warehouseForm);
-                alert("Armazém criado com sucesso");
+                toast.success("Armazém criado com sucesso");
             }
             setIsWarehouseModalOpen(false);
             refreshData();
         } catch (e: any) {
-            log.error("Failed to save warehouse", e);
-            alert(`Falha ao salvar armazém: ${e.message}`);
+            notifyError('Salvar armazém', e);
         } finally {
             setIsSubmittingWarehouse(false);
         }
@@ -104,14 +107,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
 
     const handleDeleteWarehouse = async (id: string) => {
         if (!config) return;
-        if (!confirm("Tem certeza? Isso não pode ser desfeito.")) return;
+        if (!(await confirm({ message: "Excluir este armazém? Isso não pode ser desfeito.", danger: true, confirmText: 'Excluir' }))) return;
         try {
             await DolibarrService.deleteWarehouse(config, id);
-            alert("Armazém excluído");
+            toast.success("Armazém excluído");
             refreshData();
         } catch (e: any) {
-            log.error("Failed to delete warehouse", e);
-            alert(`Falha ao excluir armazém: ${e.message}`);
+            notifyError('Excluir armazém', e);
         }
     };
 
@@ -119,7 +121,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
         e.preventDefault();
         if (!config) return;
         if (!transferForm.productId || !transferForm.sourceWarehouse || !transferForm.targetWarehouse) {
-            alert("Por favor selecione produto e armazéns");
+            toast.warning("Por favor selecione produto e armazéns");
             return;
         }
 
@@ -132,13 +134,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
                 transferForm.targetWarehouse,
                 transferForm.qty
             );
-            alert("Transferência de Estoque Criada com Sucesso");
+            toast.success("Transferência de estoque criada com sucesso");
             setIsTransferModalOpen(false);
             setTransferForm({ productId: '', sourceWarehouse: '', targetWarehouse: '', qty: 1 });
             refreshData();
         } catch (err: any) {
-            log.error("Failed to transfer stock", err);
-            alert(`Falha na transferência: ${err.message}`);
+            notifyError('Transferência de estoque', err);
         } finally {
             setIsSubmitting(false);
         }
@@ -148,7 +149,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
         e.preventDefault();
         if (!config) return;
         if (!correctionForm.productId || !correctionForm.warehouseId) {
-            alert("Por favor selecione produto e armazém");
+            toast.warning("Por favor selecione produto e armazém");
             return;
         }
 
@@ -161,13 +162,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
                 qty: finalQty,
                 label: correctionForm.label
             });
-            alert("Estoque Ajustado com Sucesso");
+            toast.success("Estoque ajustado com sucesso");
             setIsCorrectionModalOpen(false);
             setCorrectionForm({ productId: '', warehouseId: '', qty: 1, type: 'add', label: 'Correção de Inventário' });
             refreshData();
         } catch (err: any) {
-            log.error("Failed to correct stock", err);
-            alert(`Falha no ajuste: ${err.message}`);
+            notifyError('Ajuste de estoque', err);
         } finally {
             setIsSubmitting(false);
         }
