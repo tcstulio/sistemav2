@@ -6,6 +6,7 @@ import { Breadcrumbs } from '../ui/Breadcrumbs';
 import NotificationPanel from '../NotificationPanel';
 import GlobalSearch from '../GlobalSearch';
 import VirtualAssistant from '../VirtualAssistant';
+import { ReportButton } from '../ReportButton';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useNotifications, useNotificationActions } from '../../hooks/useNotifications';
 
@@ -52,6 +53,7 @@ export const MainLayout: React.FC = () => {
                 </div>
 
                 <VirtualAssistant />
+                <ReportButton />
 
                 <NotificationPanel
                     isOpen={isNotificationPanelOpen}

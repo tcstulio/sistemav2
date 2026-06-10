@@ -8,6 +8,10 @@ import { DolibarrProvider } from './context/DolibarrContext';
 import { WhatsAppProvider } from './contexts/WhatsAppContext';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { installReportCapture } from './utils/reportContext';
+
+// Captura global de erros/falhas p/ o botão "Reportar problema" (instala cedo).
+installReportCapture();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
