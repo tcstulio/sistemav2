@@ -303,6 +303,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
                 >
                     <LogOut size={16} /> Desconectar
                 </button>
+                <p className="mt-2 text-center text-[10px] text-slate-600 font-mono select-none">
+                    v{__APP_VERSION__}-{__GIT_HASH__}
+                </p>
             </div>
         </aside>
     );
