@@ -274,7 +274,10 @@ export const AiService = {
             // Append current message
             backendHistory.push({ role: 'user', parts: msg });
 
-            const response = await axios.post(`${API_URL}/generate-reply`, {
+            // Assíncrono: enfileira o job e faz POLLING do resultado. Não segura a conexão,
+            // então jobs longos não caem no timeout de borda (524) do túnel. O agente roda
+            // em background até concluir, demore o que demorar.
+            const start = await axios.post(`${API_URL}/generate-reply-async`, {
                 history: backendHistory,
                 context: dataContext,
                 image: userImage,
@@ -282,12 +285,33 @@ export const AiService = {
                 sessionId
             }, getAuthHeaders());
 
-            return {
-                reply: response.data.reply,
-                sessionId: response.data.sessionId,
-                usage: response.data.usage,
-                contextWindow: response.data.contextWindow
-            };
+            const jobId = start.data?.jobId;
+            if (!jobId) throw new Error('Falha ao enfileirar o job do assistente.');
+
+            const POLL_MS = 2500;
+            const MAX_WAIT_MS = 20 * 60 * 1000; // generoso; o job conclui em background
+            const startedAt = Date.now();
+            while (Date.now() - startedAt < MAX_WAIT_MS) {
+                await new Promise((r) => setTimeout(r, POLL_MS));
+                let job: any;
+                try {
+                    const st = await axios.get(`${API_URL}/jobs/${jobId}`, getAuthHeaders());
+                    job = st.data;
+                } catch (pollErr: any) {
+                    if (pollErr?.response?.status === 404) {
+                        throw new Error('O processamento foi interrompido (job expirado). Tente novamente.');
+                    }
+                    throw pollErr;
+                }
+                if (job.status === 'done') {
+                    return { reply: job.reply, sessionId: job.sessionId, usage: job.usage, contextWindow: job.contextWindow };
+                }
+                if (job.status === 'error') {
+                    throw new Error(job.error || 'O assistente falhou ao processar.');
+                }
+                // queued/running → segue o polling
+            }
+            throw new Error('Tempo limite do assistente excedido (20 min).');
 
         } catch (error: any) {
             handleAiError('Chat', error);

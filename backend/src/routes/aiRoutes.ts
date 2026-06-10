@@ -5,6 +5,7 @@ import { setToolCallListener } from '../services/agentTools';
 import { extractToolCall } from '../services/aiService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { agentActivityService } from '../services/agentActivityService';
+import { aiJobService } from '../services/aiJobService';
 import { createLogger } from '../utils/logger';
 import { verifyDeeplink } from '../utils/deeplinkToken';
 
@@ -52,11 +53,11 @@ const AnalyzeSystemSchema = z.object({
     query: z.string()
 });
 
-router.post('/generate-reply', async (req, res) => {
-    try {
-        const { history, context, image, module, sessionId } = GenerateReplySchema.parse(req.body);
+// Núcleo do chat: enriquece o contexto, roda o agente (com tool-calls) e salva a sessão.
+// Usado pela rota síncrona E pela assíncrona (job em background). Lança em erro; quem chama trata.
+async function runChatReply(body: any, user: any): Promise<{ reply: string; sessionId?: string; usage?: any; contextWindow?: any }> {
+        const { history, context, image, module, sessionId } = GenerateReplySchema.parse(body);
 
-        const user = (req as any).user;
         let enrichedContext = context || '';
         if (user) {
             const userIdentity = [
@@ -86,7 +87,7 @@ router.post('/generate-reply', async (req, res) => {
             setToolCallListener((tool, args, result, duration) => {
                 toolCalls.push({ tool, args, result: result.slice(0, 2000), duration });
                 try {
-                    const userData = (req as any).user?.userData;
+                    const userData = user?.userData;
                     agentActivityService.record({
                         userId: userData?.id || 'unknown',
                         userName: userData?.name || userData?.login || 'unknown',
@@ -124,26 +125,57 @@ router.post('/generate-reply', async (req, res) => {
             }
         }
 
-        res.json({ reply: result.text, sessionId, usage: result.usage, contextWindow: result.contextWindow });
-    } catch (error: any) {
-        log.error('Generate Reply Error', { error: error.message, stack: error.stack });
+        return { reply: result.text, sessionId, usage: result.usage, contextWindow: result.contextWindow };
+}
 
-        // Handle Validation Errors
+// Mapeia erros do agente para a resposta HTTP (compartilhado pelas rotas).
+function mapAiError(error: any, res: any) {
+    log.error('Generate Reply Error', { error: error.message, stack: error.stack });
+    if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+    }
+    const fullMessage = `${error?.message || ''} ${error?.response?.data?.error?.message || ''}`;
+    if (fullMessage.includes('API key expired') || fullMessage.includes('API_KEY_INVALID')) {
+        return res.status(401).json({ error: 'A chave da API do Google Gemini expirou. Por favor, atualize o arquivo .env com uma nova chave.' });
+    }
+    res.status(500).json({ error: error.message });
+}
+
+// Síncrono (compat): segura a conexão até o agente terminar. Sujeito ao timeout de borda (524)
+// em jobs longos via túnel — por isso o chat usa a versão assíncrona abaixo.
+router.post('/generate-reply', async (req, res) => {
+    try {
+        const out = await runChatReply(req.body, (req as any).user);
+        res.json(out);
+    } catch (error: any) {
+        mapAiError(error, res);
+    }
+});
+
+// ASSÍNCRONO: enfileira o job e responde NA HORA com jobId (mata o 524). O agente roda em
+// background até concluir, sem limite de tempo; o cliente faz polling de GET /jobs/:id.
+router.post('/generate-reply-async', (req, res) => {
+    try {
+        GenerateReplySchema.parse(req.body); // valida cedo → 400 imediato
+        const user = (req as any).user;
+        const body = req.body;
+        const jobId = aiJobService.enqueue(() => runChatReply(body, user), body?.module || 'chat');
+        res.status(202).json({ jobId, status: 'queued' });
+    } catch (error: any) {
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
         }
-
-        // Handle Google API Errors
-        const errorMessage = error?.message || '';
-        const errorBody = error?.response?.data?.error?.message || ''; // Axios style
-        const fullMessage = `${errorMessage} ${errorBody}`;
-
-        if (fullMessage.includes('API key expired') || fullMessage.includes('API_KEY_INVALID')) {
-            return res.status(401).json({ error: 'A chave da API do Google Gemini expirou. Por favor, atualize o arquivo .env com uma nova chave.' });
-        }
-
         res.status(500).json({ error: error.message });
     }
+});
+
+// Polling do status/resultado de um job do assistente.
+router.get('/jobs/:id', (req, res) => {
+    const job = aiJobService.get(req.params.id);
+    if (!job) return res.status(404).json({ error: 'Job não encontrado ou expirado.' });
+    if (job.status === 'done') return res.json({ status: 'done', ...(job.result || {}) });
+    if (job.status === 'error') return res.json({ status: 'error', error: job.error });
+    res.json({ status: job.status, queueAhead: job.queueAhead });
 });
 
 // Resolve um deeplink de prefill (HITL #57 Peça 2/3): o frontend manda o token, o backend
