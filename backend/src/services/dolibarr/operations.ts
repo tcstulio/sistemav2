@@ -70,23 +70,29 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
     }
 
     async listTasks(projectId?: string): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}tasks`;
-            let sqlfilters = undefined;
-            if (projectId) {
-                sqlfilters = `(${buildSqlFilter('t.fk_projet', ':=', projectId)})`;
-            }
+        const url = `${this.baseUrl}tasks`;
+        const sqlfilters = projectId ? `(${buildSqlFilter('t.fk_projet', ':=', projectId)})` : undefined;
+        // Dolibarr devolve 404 quando NÃO há tarefas (não é erro) → tratamos como vazio.
+        const attempt = async (params: any): Promise<any[]> => {
             const response = await axios.get(url, {
-                headers,
-                params: { sqlfilters, limit: 10, sortfield: 't.dateo', sortorder: 'DESC' },
+                headers: this.getHeaders(),
+                params,
                 httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
+                validateStatus: (s) => s === 200 || s === 404,
             });
+            if (response.status === 404) return [];
             return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listTasks Error', error);
-            return [];
+        };
+        try {
+            return await attempt({ sqlfilters, limit: 10, sortfield: 't.dateo', sortorder: 'DESC' });
+        } catch (error: any) {
+            // Alguns campos de ordenação dão 400 no /tasks → tenta de novo SEM sort antes de desistir.
+            try {
+                return await attempt({ sqlfilters, limit: 10 });
+            } catch (error2: any) {
+                log.warn('listTasks falhou (com e sem sort)', error2?.message || error?.message);
+                return [];
+            }
         }
     }
 
