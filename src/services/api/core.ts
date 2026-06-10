@@ -3,8 +3,19 @@ import { dbService } from '../dbService';
 import { config as AppConfig } from '../../config';
 import { logger } from '../../utils/logger';
 import { pushFailedRequest } from '../../utils/reportContext';
+import { toast } from 'sonner';
 
 const log = logger.child('ApiCore');
+
+// Surface de sessão expirada: o 401 era invisível (catches silenciosos) e dava a impressão
+// de "botão que não faz nada". Mostra um aviso, com debounce p/ não repetir em rajada.
+let lastSessionToast = 0;
+function notifySessionExpired() {
+    const now = Date.now();
+    if (now - lastSessionToast < 15000) return;
+    lastSessionToast = now;
+    toast.error('Sessão expirada. Faça login novamente.', { duration: 8000 });
+}
 
 // Safe UUID Generator
 export const generateUUID = () => {
@@ -91,6 +102,7 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
 
                 log.error(`Proxy error: ${errorMsg}`);
                 pushFailedRequest(method, path, response.status, errorMsg);
+                if (response.status === 401) notifySessionExpired();
 
                 dbService.add('api_logs', {
                     id: generateUUID(),

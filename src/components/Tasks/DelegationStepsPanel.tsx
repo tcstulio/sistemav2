@@ -3,6 +3,7 @@ import { ListChecks, Plus, Check, Loader2 } from 'lucide-react';
 import { DolibarrConfig } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
 import { logger } from '../../utils/logger';
+import { notifyError } from '../../utils/notifyError';
 import { childrenOf, aggregateProgress } from './taskProgress';
 
 const log = logger.child('DelegationStepsPanel');
@@ -28,7 +29,7 @@ export const DelegationStepsPanel: React.FC<Props> = ({ config, taskId, projectI
     const run = async (fn: () => Promise<any>) => {
         setSaving(true);
         try { await fn(); onChanged?.(); }
-        catch (e) { log.warn('Ação de passo falhou', e); }
+        catch (e) { notifyError('Ação de passo', e); }
         finally { setSaving(false); }
     };
 
