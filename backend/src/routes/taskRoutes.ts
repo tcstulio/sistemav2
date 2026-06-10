@@ -10,6 +10,8 @@ router.use(requireDolibarrLogin);
 
 router.get('/', async (req, res) => {
     try {
+        // Reconcilia com GitHub antes de devolver (idempotente, resolve tasks orfas).
+        await taskRunnerService.syncWithGitHub();
         const tasks = await taskRunnerService.syncTasks();
         res.json(tasks);
     } catch (error: any) {
