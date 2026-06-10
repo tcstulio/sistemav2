@@ -12,6 +12,7 @@ import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { toast } from 'sonner';
 import { logger } from '../utils/logger';
+import { notifyError } from '../utils/notifyError';
 
 const log = logger.child('SupplierList');
 
@@ -160,7 +161,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
     const handleReceptionSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!receptionForm.warehouseId || !receptionForm.productId) {
-            alert("Por favor, selecione armazém e produto");
+            toast.warning("Por favor, selecione armazém e produto");
             return;
         }
         setIsSubmittingReception(true);
@@ -173,12 +174,11 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                 label: `Recebimento do Pedido de Fornecedor ${receptionForm.orderId}`
             });
 
-            alert("Itens Recebidos no Estoque com sucesso!");
+            toast.success("Itens recebidos no estoque com sucesso!");
             setIsReceptionModalOpen(false);
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            log.error("Failed to receive items", e);
-            alert(`Falha ao receber itens: ${e.message}`);
+            notifyError('Receber itens', e);
         } finally {
             setIsSubmittingReception(false);
         }
@@ -189,10 +189,10 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
         setIsProcessingOrder(true);
         try {
             await DolibarrService.validateSupplierOrder(config, selectedOrderId);
-            alert("Pedido Validado!");
+            toast.success("Pedido validado!");
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            notifyError('Validar pedido', e);
         } finally {
             setIsProcessingOrder(false);
         }
@@ -203,10 +203,10 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
         setIsProcessingOrder(true);
         try {
             await DolibarrService.approveSupplierOrder(config, selectedOrderId);
-            alert("Pedido Aprovado!");
+            toast.success("Pedido aprovado!");
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            notifyError('Aprovar pedido', e);
         } finally {
             setIsProcessingOrder(false);
         }
