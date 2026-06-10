@@ -55,6 +55,18 @@ export const GithubService = {
         }
     },
 
+    // Adiciona um label a uma issue (#315 "Virar Task" → opencode-task).
+    addLabel: async (issueNumber: number, label: string): Promise<{ ok: boolean; error?: string }> => {
+        try {
+            const res = await axios.post(`/api/github/issues/${issueNumber}/labels`, { label }, getAuthHeaders());
+            return res.data;
+        } catch (e: any) {
+            const error = e?.response?.data?.error || e?.message || 'Falha ao adicionar label';
+            log.error('Failed to add label', e);
+            return { ok: false, error };
+        }
+    },
+
     // Cria uma issue no GitHub a partir de um report in-app (botão "Reportar problema").
     createIssue: async (payload: { title: string; description?: string; context?: any; labels?: string[] }): Promise<{ ok: boolean; url?: string; number?: number; error?: string }> => {
         try {

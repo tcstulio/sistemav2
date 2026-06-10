@@ -84,6 +84,22 @@ router.post('/issues', async (req: Request, res: Response) => {
     }
 });
 
+// Adiciona um label a uma issue (#315 "Virar Task": label opencode-task). Só rotula — não executa.
+router.post('/issues/:number/labels', async (req: Request, res: Response) => {
+    try {
+        const num = Number(req.params.number);
+        const { label } = req.body || {};
+        if (!num || !label) return res.status(400).json({ error: 'number e label são obrigatórios' });
+        await ensureLabel(String(label));
+        await runGh(['issue', 'edit', String(num), '--repo', REPO, '--add-label', String(label)]);
+        log.info('Label adicionado à issue', { number: num, label });
+        res.json({ ok: true, number: num, label });
+    } catch (error: any) {
+        log.error('Failed to add label', { error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+});
+
 router.get('/issues', async (req: Request, res: Response) => {
     try {
         const { state, label, limit } = req.query;
