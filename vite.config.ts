@@ -1,10 +1,20 @@
 import path from 'path';
+import { execSync } from 'child_process';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+
+function getGitHash(): string {
+  try { return execSync('git rev-parse --short HEAD').toString().trim(); }
+  catch { return 'dev'; }
+}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
+    define: {
+      __APP_VERSION__: JSON.stringify(process.env.npm_package_version || '0.0.0'),
+      __GIT_HASH__: JSON.stringify(getGitHash()),
+    },
     server: {
       port: 3003,
       host: '0.0.0.0',
@@ -28,7 +38,6 @@ export default defineConfig(({ mode }) => {
       },
     },
     plugins: [react()],
-    // Gemini API key is only used on backend (/api/ai) - never expose in frontend bundle
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
