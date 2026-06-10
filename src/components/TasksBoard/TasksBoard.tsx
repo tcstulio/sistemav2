@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { TaskService, Task } from '../../services/taskService';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
-import { Play, CheckCircle, XCircle, RotateCcw, GitMerge, MessageSquare, Loader2, AlertCircle, Clock, Eye, RefreshCw, ExternalLink, ThumbsUp, Star, Trash2, Pencil, Terminal } from 'lucide-react';
+import { Play, CheckCircle, XCircle, RotateCcw, GitMerge, MessageSquare, Loader2, AlertCircle, Clock, Eye, RefreshCw, ExternalLink, ThumbsUp, Star, Trash2, Pencil, Terminal, ShieldOff } from 'lucide-react';
 import { toast } from 'sonner';
 import DiffViewer from './DiffViewer';
 import TaskConsole from './TaskConsole';
+import { useDolibarr } from '../../context/DolibarrContext';
 
 const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
     pending: { color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800', icon: <Clock size={14} />, label: 'Pendente' },
@@ -17,7 +18,7 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.Rea
     failed: { color: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', icon: <AlertCircle size={14} />, label: 'Falhou' },
 };
 
-const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) => void; polling: boolean; onReview: (task: Task) => void; onEdit: (task: Task) => void; onDelete: (task: Task) => void; onConsole: (task: Task) => void }> = ({ task, onAction, polling, onReview, onEdit, onDelete, onConsole }) => {
+const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) => void; polling: boolean; onReview: (task: Task) => void; onEdit: (task: Task) => void; onDelete: (task: Task) => void; onConsole: (task: Task) => void; isAdmin: boolean }> = ({ task, onAction, polling, onReview, onEdit, onDelete, onConsole, isAdmin }) => {
     const [expanded, setExpanded] = useState(false);
     const [feedback, setFeedback] = useState('');
     const [showFeedback, setShowFeedback] = useState(false);
@@ -64,19 +65,23 @@ const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) =>
             )}
 
             <div className="flex items-center gap-2 mt-3 flex-wrap">
-                {task.status === 'pending' && (
+                {isAdmin && task.status === 'pending' && (
                     <Button variant="primary" size="sm" icon={<Play size={12} />} onClick={() => onAction('start', task)}>Iniciar</Button>
                 )}
                 {(task.status === 'reviewing' || task.status === 'approved') && (
                     <>
                         <Button variant="primary" size="sm" icon={<Eye size={12} />} onClick={() => onReview(task)}>Revisar</Button>
-                        <Button variant="primary" size="sm" icon={<CheckCircle size={12} />} onClick={() => onAction('merge', task)}>Merge</Button>
-                        <Button variant="ghost" size="sm" icon={<MessageSquare size={12} />} onClick={() => setShowFeedback(!showFeedback)}>Corrigir</Button>
-                        <Button variant="ghost" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Refazer</Button>
-                        <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('reject', task)}>Rejeitar</Button>
+                        {isAdmin && (
+                            <>
+                                <Button variant="primary" size="sm" icon={<CheckCircle size={12} />} onClick={() => onAction('merge', task)}>Merge</Button>
+                                <Button variant="ghost" size="sm" icon={<MessageSquare size={12} />} onClick={() => setShowFeedback(!showFeedback)}>Corrigir</Button>
+                                <Button variant="ghost" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Refazer</Button>
+                                <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('reject', task)}>Rejeitar</Button>
+                            </>
+                        )}
                     </>
                 )}
-                {task.status === 'failed' && (
+                {isAdmin && task.status === 'failed' && (
                     <Button variant="primary" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Tentar Novamente</Button>
                 )}
                 {task.status === 'merged' && (
@@ -85,16 +90,18 @@ const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) =>
                 <Button variant="ghost" size="sm" icon={<Eye size={12} />} onClick={() => setExpanded(!expanded)}>
                     {expanded ? 'Fechar' : 'Detalhes'}
                 </Button>
-                <Button variant="ghost" size="sm" icon={<Pencil size={12} />} onClick={() => onEdit(task)}>Editar</Button>
+                {isAdmin && (
+                    <Button variant="ghost" size="sm" icon={<Pencil size={12} />} onClick={() => onEdit(task)}>Editar</Button>
+                )}
                 {isActive && (
                     <Button variant="ghost" size="sm" icon={<Terminal size={12} />} onClick={() => onConsole(task)} className="text-indigo-500 hover:text-indigo-700">Console</Button>
                 )}
-                {task.status !== 'running' && task.status !== 'fixing' && (
+                {isAdmin && task.status !== 'running' && task.status !== 'fixing' && (
                     <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500 hover:text-red-700" />
                 )}
             </div>
 
-            {showFeedback && (
+            {isAdmin && showFeedback && (
                 <div className="mt-3 flex gap-2">
                     <input
                         type="text"
@@ -142,6 +149,8 @@ const TaskCard: React.FC<{ task: Task; onAction: (action: string, task: Task) =>
 };
 
 const TasksBoard: React.FC = () => {
+    const { currentUser } = useDolibarr();
+    const isAdmin = currentUser?.admin === 1 || currentUser?.admin === '1' || (currentUser?.admin as unknown) === true;
     const [tasks, setTasks] = useState<Task[]>([]);
     const [loading, setLoading] = useState(true);
     const [tab, setTab] = useState<'active' | 'done' | 'all'>('active');
@@ -184,6 +193,10 @@ const TasksBoard: React.FC = () => {
     };
 
     const handleAction = async (action: string, task: Task) => {
+        if (!isAdmin) {
+            toast.error('Apenas administradores podem executar ações em tasks.');
+            return;
+        }
         try {
             switch (action) {
                 case 'start':
@@ -278,6 +291,13 @@ const TasksBoard: React.FC = () => {
                 }
             />
 
+            {!isAdmin && (
+                <div className="mt-4 flex items-center gap-2 px-4 py-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-300">
+                    <ShieldOff size={14} />
+                    <span>Modo somente leitura. Apenas administradores podem iniciar, corrigir, mesclar ou deletar tasks.</span>
+                </div>
+            )}
+
             <div className="mt-6 space-y-4">
                 {filteredTasks.length === 0 && (
                     <Card>
@@ -288,7 +308,7 @@ const TasksBoard: React.FC = () => {
                     </Card>
                 )}
                 {filteredTasks.map(task => (
-                    <TaskCard key={task.issueNumber} task={task} onAction={handleAction} polling={hasActive} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} />
+                    <TaskCard key={task.issueNumber} task={task} onAction={handleAction} polling={hasActive} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} isAdmin={isAdmin} />
                 ))}
             </div>
 
@@ -307,9 +327,9 @@ const TasksBoard: React.FC = () => {
                         judgeReview={reviewTask.judgeReview}
                         prUrl={reviewTask.prUrl}
                         onClose={() => setReviewTask(null)}
-                        onMerge={async () => { await TaskService.merge(reviewTask.issueNumber); setReviewTask(null); toast.success('PR merged!'); load(); }}
+                        onMerge={async () => { if (!isAdmin) { toast.error('Apenas administradores.'); return; } await TaskService.merge(reviewTask.issueNumber); setReviewTask(null); toast.success('PR merged!'); load(); }}
                         onFix={() => setReviewTask(null)}
-                        onReject={async () => { await TaskService.reject(reviewTask.issueNumber); setReviewTask(null); toast.info('Task rejeitada'); load(); }}
+                        onReject={async () => { if (!isAdmin) { toast.error('Apenas administradores.'); return; } await TaskService.reject(reviewTask.issueNumber); setReviewTask(null); toast.info('Task rejeitada'); load(); }}
                     />
                 )
             )}
