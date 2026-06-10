@@ -17,7 +17,7 @@ export interface Task {
     title: string;
     body: string;
     labels: string[];
-    status: 'pending' | 'running' | 'reviewing' | 'approved' | 'fixing' | 'merged' | 'rejected' | 'failed';
+    status: 'pending' | 'running' | 'reviewing' | 'approved' | 'fixing' | 'cancelling' | 'cancelled' | 'merged' | 'rejected' | 'failed';
     branch?: string;
     prNumber?: number;
     prUrl?: string;
@@ -30,6 +30,9 @@ export interface Task {
     completedAt?: string;
     error?: string;
     events?: TaskEvent[];
+    childPid?: number;
+    killRequested?: boolean;
+    killedAt?: string;
 }
 
 export interface TaskEvent {
@@ -82,6 +85,11 @@ export const TaskService = {
 
     merge: async (issueNumber: number): Promise<Task> => {
         const response = await axios.post(`${API_URL}/${issueNumber}/merge`, {}, getAuthHeaders());
+        return response.data;
+    },
+
+    kill: async (issueNumber: number, reason?: string): Promise<Task> => {
+        const response = await axios.post(`${API_URL}/${issueNumber}/kill`, { reason: reason || 'admin request' }, getAuthHeaders());
         return response.data;
     },
 
