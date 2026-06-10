@@ -59,6 +59,7 @@ const IssuesPage: React.FC = () => {
     const [editBody, setEditBody] = useState('');
     const [deleteConfirm, setDeleteConfirm] = useState<Task | null>(null);
     const [consoleTask, setConsoleTask] = useState<Task | null>(null);
+    const [labelingIssue, setLabelingIssue] = useState<number | null>(null);
 
     const loadIssues = useCallback(async () => {
         setIssuesLoading(true);
@@ -124,6 +125,21 @@ const IssuesPage: React.FC = () => {
         catch (e: any) { toast.error(e.response?.data?.error || e.message); }
     };
 
+    // #315: "Virar Task" — adiciona a label opencode-task à issue (não dispara execução; o admin inicia).
+    const virarTask = async (e: React.MouseEvent, issue: GitHubIssue) => {
+        e.preventDefault(); e.stopPropagation();
+        setLabelingIssue(issue.number);
+        const r = await GithubService.addLabel(issue.number, 'opencode-task');
+        if (r.ok) { toast.success(`#${issue.number} virou task (opencode-task)`); await loadIssues(); }
+        else toast.error(r.error || 'Falha ao virar task');
+        setLabelingIssue(null);
+    };
+
+    const hasOpencodeLabel = (issue: GitHubIssue) => (issue.labels || []).some((l: any) => l.name === 'opencode-task');
+    const sortedIssues = [...filteredIssues].sort((a, b) => (a.state === 'OPEN' ? 0 : 1) - (b.state === 'OPEN' ? 0 : 1));
+    const openCount = filteredIssues.filter(i => i.state === 'OPEN').length;
+    const closedCount = filteredIssues.length - openCount;
+
     return (
         <PageLayout title="Issues & Tasks">
             <PageHeader
@@ -168,7 +184,14 @@ const IssuesPage: React.FC = () => {
                             {filteredIssues.length === 0 && (
                                 <Card><div className="text-center py-8 text-slate-400 text-sm">Nenhuma issue encontrada</div></Card>
                             )}
-                            {filteredIssues.map(issue => (
+                            {filteredIssues.length > 0 && (
+                                <div className="flex items-center gap-2 px-1 pb-1 text-xs text-slate-500">
+                                    <span className="font-medium text-green-600 dark:text-green-400">{openCount} abertas</span>
+                                    <span>·</span>
+                                    <span>{closedCount} fechadas</span>
+                                </div>
+                            )}
+                            {sortedIssues.map(issue => (
                                 <a key={issue.number} href={issue.url} target="_blank" rel="noopener noreferrer" className="flex items-start gap-3 p-3 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
                                     <span className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${issue.state === 'OPEN' ? 'bg-green-500' : 'bg-slate-400'}`} />
                                     <div className="flex-1 min-w-0">
@@ -184,6 +207,16 @@ const IssuesPage: React.FC = () => {
                                             <span className="text-[10px] text-slate-400">{new Date(issue.createdAt).toLocaleDateString('pt-BR')}</span>
                                         </div>
                                     </div>
+                                    {issue.state === 'OPEN' && (
+                                        hasOpencodeLabel(issue) ? (
+                                            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 mt-0.5"><Terminal size={11} /> Task</span>
+                                        ) : (
+                                            <button type="button" onClick={(e) => virarTask(e, issue)} disabled={labelingIssue === issue.number}
+                                                className="shrink-0 inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 mt-0.5">
+                                                {labelingIssue === issue.number ? <Loader2 size={11} className="animate-spin" /> : <Tag size={11} />} Virar Task
+                                            </button>
+                                        )
+                                    )}
                                     <ExternalLink size={14} className="text-slate-300 group-hover:text-indigo-400 shrink-0 mt-1" />
                                 </a>
                             ))}
