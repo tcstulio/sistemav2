@@ -147,6 +147,7 @@ export const requireDolibarrAdmin = async (req: Request, res: Response, next: Ne
     // é admin no Dolibarr (acesso a /setup/company).
     const protoSession = getProtoSession(userKey);
     if (protoSession) {
+        if (protoSession.userData?.admin) return next();
         const { dolibarrService } = require('../services/dolibarrService');
         const isAdmin = await dolibarrService.verifyAdminStatus(protoSession.dolapikey);
         if (isAdmin) return next();
