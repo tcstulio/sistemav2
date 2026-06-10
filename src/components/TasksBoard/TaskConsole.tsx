@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { X, Terminal, Loader2 } from 'lucide-react';
 import { Button } from '../ui';
+import { TaskService } from '../../services/taskService';
 
 interface LogEntry {
     type: 'info' | 'success' | 'warn' | 'error' | 'ai';
@@ -17,6 +18,13 @@ interface TaskStatus {
     prUrl?: string;
     error?: string;
     updatedAt: string;
+}
+
+interface TaskEvent {
+    ts: string;
+    type: string;
+    message: string;
+    meta?: Record<string, any>;
 }
 
 interface TaskConsoleProps {
@@ -44,8 +52,43 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [status, setStatus] = useState<TaskStatus | null>(null);
     const [connected, setConnected] = useState(false);
+    const [historyLoaded, setHistoryLoaded] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const socketRef = useRef<Socket | null>(null);
+
+    // Carrega historico persistido (#306) antes de abrir socket.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const eventList = await TaskService.listEvents(issueNumber);
+                if (cancelled) return;
+                const seen = new Set<string>();
+                const entries: LogEntry[] = [];
+                for (const e of eventList as TaskEvent[]) {
+                    const key = `${e.ts}|${e.message}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    const t = e.type;
+                    const uiType =
+                        t === 'task_failed' || t === 'error' || t === 'judge_error' ||
+                        t === 'pr_creation_failed' || t === 'typecheck_failed' ||
+                        t === 'attempt_no_changes' || t === 'task_killed' ||
+                        t === 'task_watchdog_timeout' ? 'warn'
+                        : t === 'typecheck_ok' || t === 'pr_created' || t === 'pr_merged' || t === 'task_completed' ? 'success'
+                        : t === 'judge_score' || t === 'judge_started' ? 'ai'
+                        : 'info';
+                    entries.push({ type: uiType, message: e.message, timestamp: e.ts });
+                }
+                setLogs(entries);
+            } catch {
+                // silencioso: se falhar, vai pegar tudo do socket ao vivo
+            } finally {
+                if (!cancelled) setHistoryLoaded(true);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [issueNumber]);
 
     useEffect(() => {
         const token = (() => {
@@ -67,7 +110,11 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
         socket.on('disconnect', () => setConnected(false));
 
         socket.on(`task:${issueNumber}:log`, (entry: LogEntry) => {
-            setLogs(prev => [...prev, entry]);
+            setLogs(prev => {
+                // Dedup: evento persistido pode ser re-emitido pelo socket
+                const dup = prev.some(p => p.timestamp === entry.timestamp && p.message === entry.message);
+                return dup ? prev : [...prev, entry];
+            });
         });
 
         socket.on(`task:${issueNumber}:status`, (s: TaskStatus) => {
@@ -96,6 +143,7 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
                         <span className="text-sm font-mono text-white">Task #{issueNumber}</span>
                         {isActive && <Loader2 size={14} className="animate-spin text-blue-400" />}
                         <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} title={connected ? 'Conectado' : 'Desconectado'} />
+                        {historyLoaded && <span className="text-[10px] text-slate-500">histórico carregado</span>}
                     </div>
                     <Button variant="ghost" size="sm" onClick={onClose}><X size={14} /></Button>
                 </div>
@@ -121,7 +169,7 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
                         <p className="text-slate-500">Aguardando eventos da task #{issueNumber}...</p>
                     )}
                     {logs.map((log, i) => (
-                        <div key={i} className={`${TYPE_COLORS[log.type] || 'text-slate-300'} flex gap-2`}>
+                        <div key={`${log.timestamp}-${i}`} className={`${TYPE_COLORS[log.type] || 'text-slate-300'} flex gap-2`}>
                             <span className="text-slate-600 shrink-0">{new Date(log.timestamp).toLocaleTimeString('pt-BR')}</span>
                             <span className="shrink-0">{TYPE_PREFIX[log.type] || '•'}</span>
                             <span className="whitespace-pre-wrap break-all">{log.message}</span>

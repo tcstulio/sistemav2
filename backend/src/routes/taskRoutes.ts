@@ -40,6 +40,19 @@ router.get('/:issueNumber/diff', requireDolibarrLogin, async (req, res) => {
     }
 });
 
+// Timeline persistida (#306). Retorna eventos ordenados por timestamp.
+router.get('/:issueNumber/events', requireDolibarrLogin, async (req, res) => {
+    try {
+        const task = taskRunnerService.getTask(Number(req.params.issueNumber));
+        if (!task) return res.status(404).json({ error: 'Task not found' });
+        const events = (task.events || []).slice().sort((a, b) => a.ts.localeCompare(b.ts));
+        res.json({ events });
+    } catch (error: any) {
+        log.error('Get events error', { error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Escrita: somente admin (#307). Acoes destrutivas (start, merge, kill, delete) e
 // mutacoes de estado exigem isAdmin=true (verificado via Dolibarr).
 router.post('/:issueNumber/start', requireDolibarrAdmin, async (req, res) => {
