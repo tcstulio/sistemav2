@@ -4,6 +4,7 @@ import { TaskService, Task } from '../../services/taskService';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
 import { AlertCircle, Bug, Sparkles, Shield, Wrench, TestTube, GitMerge, Loader2, Eye, CheckCircle, XCircle, RotateCcw, MessageSquare, Trash2, Pencil, Terminal, ExternalLink, Search, Tag } from 'lucide-react';
 import { toast } from 'sonner';
+import { useDolibarr } from '../../context/DolibarrContext';
 import DiffViewer from '../TasksBoard/DiffViewer';
 import TaskConsole from '../TasksBoard/TaskConsole';
 
@@ -39,6 +40,8 @@ const LABEL_ICONS: Record<string, React.ReactNode> = {
 };
 
 const IssuesPage: React.FC = () => {
+    const { currentUser } = useDolibarr();
+    const isAdmin = currentUser?.admin === 1 || currentUser?.admin === '1' || (currentUser?.admin as unknown) === true;
     const [tab, setTab] = useState<'issues' | 'tasks' | 'stats'>('issues');
     const [issueFilter, setIssueFilter] = useState<'all' | 'open' | 'closed'>('all');
     const [labelFilter, setLabelFilter] = useState<string>('');
@@ -87,9 +90,10 @@ const IssuesPage: React.FC = () => {
         ? issues.filter(i => i.title.toLowerCase().includes(searchQuery.toLowerCase()) || String(i.number).includes(searchQuery))
         : issues;
 
+    const TERMINAL_STATUSES = ['merged', 'rejected', 'cancelled', 'failed'];
     const filteredTasks = tasks.filter(t => {
-        if (taskTab === 'active') return !['merged', 'rejected'].includes(t.status);
-        if (taskTab === 'done') return ['merged', 'rejected'].includes(t.status);
+        if (taskTab === 'active') return !TERMINAL_STATUSES.includes(t.status);
+        if (taskTab === 'done') return TERMINAL_STATUSES.includes(t.status);
         return true;
     });
 
@@ -133,6 +137,16 @@ const IssuesPage: React.FC = () => {
         const r = await GithubService.addLabel(issue.number, 'opencode-task');
         if (r.ok) { toast.success(`#${issue.number} virou task (opencode-task)`); await loadIssues(); }
         else toast.error(r.error || 'Falha ao virar task');
+        setLabelingIssue(null);
+    };
+
+    // Fechar/reabrir issue pela tela. Fechar usa 'not planned' (bom p/ duplicadas/wontfix).
+    const changeIssueState = async (e: React.MouseEvent, issue: GitHubIssue, state: 'open' | 'closed') => {
+        e.preventDefault(); e.stopPropagation();
+        setLabelingIssue(issue.number);
+        const r = await GithubService.setIssueState(issue.number, state, state === 'closed' ? 'not planned' : undefined);
+        if (r.ok) { toast.success(`#${issue.number} ${state === 'closed' ? 'fechada' : 'reaberta'}`); await loadIssues(); }
+        else toast.error(r.error || 'Falha ao alterar a issue');
         setLabelingIssue(null);
     };
 
@@ -236,7 +250,7 @@ const IssuesPage: React.FC = () => {
                                 Ativas ({tasks.filter(t => !['merged','rejected'].includes(t.status)).length})
                             </button>
                             <button onClick={() => setTaskTab('done')} className={`px-3 py-1.5 rounded-full ${taskTab === 'done' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
-                                Concluídas ({tasks.filter(t => ['merged','rejected'].includes(t.status)).length})
+                                Concluídas ({tasks.filter(t => ['merged','rejected','cancelled','failed'].includes(t.status)).length})
                             </button>
                         </div>
                     </div>
@@ -246,7 +260,7 @@ const IssuesPage: React.FC = () => {
                             {filteredTasks.length === 0 && (
                                 <Card><div className="text-center py-8 text-slate-400 text-sm">Nenhuma task. Crie issues com label "opencode-task" no GitHub.</div></Card>
                             )}
-                            {filteredTasks.map(task => <TaskCard key={task.issueNumber} task={task} onAction={handleTaskAction} onReview={openReview} onEdit={t => { setEditTask(t); setEditTitle(t.title); setEditBody(t.body); }} onDelete={setDeleteConfirm} onConsole={setConsoleTask} />)}
+                            {filteredTasks.map(task => <TaskCard key={task.issueNumber} task={task} onAction={handleTaskAction} onReview={openReview} onEdit={t => { setEditTask(t); setEditTitle(t.title); setEditBody(t.body); }} onDelete={setDeleteConfirm} onConsole={setConsoleTask} isAdmin={isAdmin} />)}
                         </div>
                     )}
                 </div>
@@ -341,7 +355,7 @@ const IssuesPage: React.FC = () => {
     );
 };
 
-const TaskCard: React.FC<{ task: Task; onAction: (a: string, t: Task) => void; onReview: (t: Task) => void; onEdit: (t: Task) => void; onDelete: (t: Task) => void; onConsole: (t: Task) => void }> = ({ task, onAction, onReview, onEdit, onDelete, onConsole }) => {
+const TaskCard: React.FC<{ task: Task; onAction: (a: string, t: Task) => void; onReview: (t: Task) => void; onEdit: (t: Task) => void; onDelete: (t: Task) => void; onConsole: (t: Task) => void; isAdmin: boolean }> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, isAdmin }) => {
     const [expanded, setExpanded] = useState(false);
     const [showFeedback, setShowFeedback] = useState(false);
     const [feedback, setFeedback] = useState('');
@@ -375,10 +389,10 @@ const TaskCard: React.FC<{ task: Task; onAction: (a: string, t: Task) => void; o
                 )}
                 {task.status === 'failed' && <Button variant="primary" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Tentar Novamente</Button>}
                 {isActive && <Button variant="ghost" size="sm" icon={<Terminal size={12} />} onClick={() => onConsole(task)} className="text-indigo-500">Console</Button>}
-                {isActive && <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('kill', task)} className="text-amber-600 hover:text-amber-700">Cancelar</Button>}
+                {isAdmin && isActive && <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('kill', task)} className="text-amber-600 hover:text-amber-700">Cancelar</Button>}
                 <Button variant="ghost" size="sm" icon={<Eye size={12} />} onClick={() => setExpanded(!expanded)}>{expanded ? 'Fechar' : 'Detalhes'}</Button>
-                <Button variant="ghost" size="sm" icon={<Pencil size={12} />} onClick={() => onEdit(task)}>Editar</Button>
-                <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500 hover:text-red-700" title="Deletar (mata o processo se estiver rodando)" />
+                {isAdmin && <Button variant="ghost" size="sm" icon={<Pencil size={12} />} onClick={() => onEdit(task)}>Editar</Button>}
+                {isAdmin && <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500 hover:text-red-700" title="Deletar (mata o processo se estiver rodando)" />}
             </div>
             {showFeedback && (
                 <div className="mt-3 flex gap-2">
