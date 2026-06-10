@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { MessageSquare, Trash2, RefreshCw, ChevronRight, Bot, User, Wrench, Clock, ArrowLeft, Search } from 'lucide-react';
 import { AiService, ChatSessionInfo } from '../services/aiService';
 import { logger } from '../utils/logger';
+import { useConfirm } from '../hooks/useConfirm';
 
 const log = logger.child('ChatSessionsView');
 
@@ -43,6 +44,7 @@ const ChatSessionsView: React.FC = () => {
     const [selectedSession, setSelectedSession] = useState<SessionDetail | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
+    const confirm = useConfirm();
 
     const fetchSessions = useCallback(async () => {
         setIsLoading(true);
@@ -87,7 +89,7 @@ const ChatSessionsView: React.FC = () => {
 
     const deleteSession = async (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
-        if (!confirm('Excluir esta sessão?')) return;
+        if (!(await confirm('Excluir esta sessão?'))) return;
         const ok = await AiService.deleteChatSession(id);
         if (ok) {
             toast.success('Sessão excluída');

@@ -9,6 +9,7 @@ import { WhatsAppProvider } from './contexts/WhatsAppContext';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { installReportCapture } from './utils/reportContext';
+import { ConfirmProvider } from './hooks/useConfirm';
 
 // Captura global de erros/falhas p/ o botão "Reportar problema" (instala cedo).
 installReportCapture();
@@ -28,7 +29,9 @@ root.render(
     <QueryClientProvider client={queryClient}>
       <DolibarrProvider>
         <WhatsAppProvider>
-          {isMonitor ? <AdminApp /> : <App />}
+          <ConfirmProvider>
+            {isMonitor ? <AdminApp /> : <App />}
+          </ConfirmProvider>
         </WhatsAppProvider>
       </DolibarrProvider>
     </QueryClientProvider>

@@ -9,6 +9,8 @@ import { LinkedObjects } from './common/LinkedObjects';
 import { useListControls } from '../hooks/useListControls';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
+import { notifyError } from '../utils/notifyError';
+import { toast } from 'sonner';
 
 const log = logger.child('ShipmentList');
 
@@ -97,11 +99,10 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
         setIsProcessing(true);
         try {
             await new Promise(r => setTimeout(r, 1000));
-            alert("Fatura criada a partir do Envio (Ação Mock)!");
+            toast.success("Fatura criada a partir do Envio (Ação Mock)!");
             if (onNavigate) onNavigate('orders', selectedShipment.fk_commande);
         } catch (e) {
-            log.error(e);
-            alert("Falha ao criar fatura");
+            notifyError('Criar fatura', e);
         } finally {
             setIsProcessing(false);
         }
