@@ -318,6 +318,10 @@ import { alertCronService } from './services/alertCronService';
 alertCronService.start();
 log.info('AlertCronService started');
 
+// Start TaskRunner polling (sync GitHub issues com label "opencode-task")
+import { taskRunnerService } from './services/taskRunnerService';
+taskRunnerService.startPolling();
+
 // Initialize Banking Services
 import { interApiService } from './services/interApiService';
 import { itauApiService } from './services/itauApiService';

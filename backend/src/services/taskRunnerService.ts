@@ -180,18 +180,82 @@ interface TaskStore {
 
 const REPO = 'tcstulio/sistemav2';
 
+const POLL_INTERVAL_MS = 5 * 60 * 1000;
+
 class TaskRunnerService {
     private store: TaskStore = { tasks: {} };
+    private pollTimer: NodeJS.Timeout | null = null;
+    private polling = false;
+    private notifiedTasks = new Set<number>();
 
     constructor() {
         this.load();
-        // Reconcilia com o GitHub no boot. Fire-and-forget: nao bloqueia startup.
-        // Falhas transientes (gh offline) sao resolvidas no proximo request.
+        for (const t of Object.values(this.store.tasks)) {
+            if (t.events?.some((e) => e.type === 'task_created')) {
+                this.notifiedTasks.add(t.issueNumber);
+            }
+        }
         setImmediate(() => {
             this.syncWithGitHub().catch((e) => {
                 log.warn(`syncWithGitHub no boot falhou: ${e?.message || e}`);
             });
         });
+    }
+
+    startPolling() {
+        if (this.polling) return;
+        this.polling = true;
+        const tick = () => {
+            this.pollSync().catch((e) => {
+                log.warn(`pollSync falhou: ${e?.message || e}`);
+            });
+        };
+        setTimeout(tick, 60 * 1000);
+        this.pollTimer = setInterval(tick, POLL_INTERVAL_MS);
+        log.info(`TaskRunner polling started (a cada ${POLL_INTERVAL_MS / 60000}min)`);
+    }
+
+    stopPolling() {
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+        }
+        this.polling = false;
+        log.info('TaskRunner polling stopped');
+    }
+
+    private async pollSync() {
+        const before = new Set(Object.keys(this.store.tasks).map(Number));
+        await this.syncWithGitHub();
+        const tasks = await this.syncTasks();
+        const newTaskNumbers = tasks
+            .filter((t) => !before.has(t.issueNumber) && !this.notifiedTasks.has(t.issueNumber))
+            .map((t) => t.issueNumber);
+
+        if (newTaskNumbers.length > 0) {
+            log.info(`pollSync: ${newTaskNumbers.length} task(s) nova(s) detectada(s): [${newTaskNumbers.join(', ')}]`);
+            for (const num of newTaskNumbers) {
+                const task = this.store.tasks[num];
+                if (!task) continue;
+                this.notifiedTasks.add(num);
+                this.recordEvent(task, 'task_created', `Nova task detectada via polling: #${num} — ${task.title}`);
+                try {
+                    const { notificationService } = require('./notificationService');
+                    await notificationService.create({
+                        event: 'agent.action',
+                        title: `Nova task #${num}: ${task.title}`,
+                        message: `Issue #${num} com label "opencode-task" detectada. Acesse /tasks para iniciar a execução automática.`,
+                        channels: ['in-app'],
+                        priority: 'medium',
+                        entityType: 'opencode-task',
+                        entityId: String(num),
+                        senderName: 'TaskRunner',
+                    });
+                } catch {
+                    // notificacao é best-effort
+                }
+            }
+        }
     }
 
     private emitLog(issueNumber: number, type: string, message: string) {
