@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3003,
       host: '0.0.0.0',
-      allowedHosts: ['.trycloudflare.com', 'localhost'],
+      allowedHosts: ['.trycloudflare.com', '.coolgroove.com.br', 'localhost'],
       hmr: false,
       watch: {
         ignored: ['**/.wwebjs_auth/**', '**/.wwebjs_cache/**', '**/backend/**']
