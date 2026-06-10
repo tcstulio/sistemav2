@@ -2,9 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { GithubService, GitHubIssue, IssueStats } from '../../services/githubService';
 import { TaskService, Task } from '../../services/taskService';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
-import { AlertCircle, Bug, Sparkles, Shield, Wrench, TestTube, GitMerge, Loader2, Eye, CheckCircle, XCircle, RotateCcw, MessageSquare, Trash2, Pencil, Terminal, ExternalLink, Search, Tag } from 'lucide-react';
+import { AlertCircle, Bug, Sparkles, Shield, Wrench, TestTube, GitMerge, Loader2, Eye, CheckCircle, XCircle, RotateCcw, MessageSquare, Trash2, Pencil, Terminal, ExternalLink, Search, Tag, CircleDot } from 'lucide-react';
 import { toast } from 'sonner';
 import { useDolibarr } from '../../context/DolibarrContext';
+import { useConfirm } from '../../hooks/useConfirm';
 import DiffViewer from '../TasksBoard/DiffViewer';
 import TaskConsole from '../TasksBoard/TaskConsole';
 
@@ -41,6 +42,7 @@ const LABEL_ICONS: Record<string, React.ReactNode> = {
 
 const IssuesPage: React.FC = () => {
     const { currentUser } = useDolibarr();
+    const confirm = useConfirm();
     const isAdmin = currentUser?.admin === 1 || currentUser?.admin === '1' || (currentUser?.admin as unknown) === true;
     const [tab, setTab] = useState<'issues' | 'tasks' | 'stats'>('issues');
     const [issueFilter, setIssueFilter] = useState<'all' | 'open' | 'closed'>('all');
@@ -143,6 +145,8 @@ const IssuesPage: React.FC = () => {
     // Fechar/reabrir issue pela tela. Fechar usa 'not planned' (bom p/ duplicadas/wontfix).
     const changeIssueState = async (e: React.MouseEvent, issue: GitHubIssue, state: 'open' | 'closed') => {
         e.preventDefault(); e.stopPropagation();
+        const label = state === 'closed' ? 'fechar' : 'reabrir';
+        if (!(await confirm({ title: `${label.charAt(0).toUpperCase() + label.slice(1)} issue #${issue.number}?`, message: `Tem certeza que dese ${label} "${issue.title}"?`, confirmText: label.charAt(0).toUpperCase() + label.slice(1), danger: state === 'closed' }))) return;
         setLabelingIssue(issue.number);
         const r = await GithubService.setIssueState(issue.number, state, state === 'closed' ? 'not planned' : undefined);
         if (r.ok) { toast.success(`#${issue.number} ${state === 'closed' ? 'fechada' : 'reaberta'}`); await loadIssues(); }
@@ -229,6 +233,19 @@ const IssuesPage: React.FC = () => {
                                             <button type="button" onClick={(e) => virarTask(e, issue)} disabled={labelingIssue === issue.number}
                                                 className="shrink-0 inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 mt-0.5">
                                                 {labelingIssue === issue.number ? <Loader2 size={11} className="animate-spin" /> : <Tag size={11} />} Virar Task
+                                            </button>
+                                        )
+                                    )}
+                                    {isAdmin && (
+                                        issue.state === 'OPEN' ? (
+                                            <button type="button" onClick={(e) => changeIssueState(e, issue, 'closed')} disabled={labelingIssue === issue.number}
+                                                className="shrink-0 inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 mt-0.5">
+                                                <XCircle size={11} /> Fechar
+                                            </button>
+                                        ) : (
+                                            <button type="button" onClick={(e) => changeIssueState(e, issue, 'open')} disabled={labelingIssue === issue.number}
+                                                className="shrink-0 inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg text-slate-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 disabled:opacity-50 mt-0.5">
+                                                <CircleDot size={11} /> Reabrir
                                             </button>
                                         )
                                     )}
