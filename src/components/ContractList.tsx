@@ -11,6 +11,8 @@ import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
+import { notifyError } from '../utils/notifyError';
+import { useConfirm } from '../hooks/useConfirm';
 
 const log = logger.child('ContractList');
 
@@ -42,6 +44,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
 
     if (!config) return null;
 
+    const confirm = useConfirm();
     const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'draft' | 'closed'>('all');
     const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
     const [activeTab, setActiveTab] = useState<'overview' | 'invoices'>('overview');
@@ -167,8 +170,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
             setNewContractForm({ socid: '', date_contrat: new Date().toISOString().split('T')[0], date_fin_validite: '', note_public: '' });
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            log.error("Failed to save contract", e);
-            alert(`Falha: ${e.message}`);
+            notifyError('Salvar contrato', e);
         } finally {
             setIsSubmitting(false);
         }
@@ -176,15 +178,15 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
 
     const handleValidate = async () => {
         if (!selectedContract) return;
-        if (!confirm("Validar este contrato?")) return;
+        if (!(await confirm("Validar este contrato?"))) return;
         setProcessingId(selectedContract.id);
         try {
             await DolibarrService.validateContract(config, selectedContract.id);
-            alert("Contrato Validado");
+            toast.success("Contrato validado");
             if (onRefresh) onRefresh();
             setSelectedContract(null);
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            notifyError('Validar contrato', e);
         } finally {
             setProcessingId(null);
         }
@@ -192,15 +194,15 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
 
     const handleClose = async () => {
         if (!selectedContract) return;
-        if (!confirm("Fechar este contrato?")) return;
+        if (!(await confirm("Fechar este contrato?"))) return;
         setProcessingId(selectedContract.id);
         try {
             await DolibarrService.closeContract(config, selectedContract.id);
-            alert("Contrato Fechado");
+            toast.success("Contrato fechado");
             if (onRefresh) onRefresh();
             setSelectedContract(null);
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            notifyError('Fechar contrato', e);
         } finally {
             setProcessingId(null);
         }
