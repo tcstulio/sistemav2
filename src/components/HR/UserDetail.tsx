@@ -10,6 +10,8 @@ import * as HRAdmin from '../../services/api/hrAdmin';
 import { PermissionManager } from './PermissionManager';
 import { ExpenseDetailModal } from './modals/ExpenseDetailModal';
 import { logger } from '../../utils/logger';
+import { notifyError } from '../../utils/notifyError';
+import { toast } from 'sonner';
 
 const log = logger.child('UserDetail');
 
@@ -50,7 +52,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
 
     // Hooks for Groups Management
     const { data: allGroups } = useGroups(config);
-    const { data: allGroupLinks } = useGroupUsers(config);
+    const { data: allGroupLinks, refetch: refetchGroupLinks } = useGroupUsers(config);
 
     // Derived Groups Data,
     const userGroupIds = useMemo(() => {
@@ -78,13 +80,12 @@ export const UserDetail: React.FC<UserDetailProps> = ({
         if (!selectedGroupToAdd) return;
         try {
             await HRAdmin.addUserToGroup(config, selectedGroupToAdd, user.id);
-            // Ideally trigger refresh, but we rely on re-fetch or manual refresh for now
-            alert("Usuário adicionado ao grupo (sync necessário para atualizar lista)");
+            await refetchGroupLinks?.();
+            toast.success('Usuário adicionado ao grupo.');
             setIsAddingGroup(false);
             setSelectedGroupToAdd('');
         } catch (e) {
-            log.error("Failed to add user to group", e);
-            alert("Erro ao adicionar ao grupo");
+            notifyError('Adicionar ao grupo', e);
         }
     };
 
@@ -92,10 +93,10 @@ export const UserDetail: React.FC<UserDetailProps> = ({
         if (!confirm('Remover usuário deste grupo?')) return;
         try {
             await HRAdmin.removeUserFromGroup(config, groupId, user.id);
-            alert("Usuário removido do grupo (sync necessário para atualizar lista)");
+            await refetchGroupLinks?.();
+            toast.success('Usuário removido do grupo.');
         } catch (e) {
-            log.error("Failed to remove user from group", e);
-            alert("Erro ao remover do grupo");
+            notifyError('Remover do grupo', e);
         }
     };
 
@@ -174,8 +175,8 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                             <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
                                 <h4 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2"><CreditCard size={18} className="text-indigo-500" /> Informações Bancárias</h4>
                                 <div className="space-y-3">
-                                    <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700 flex justify-between items-center"><span className="text-sm text-slate-600 dark:text-slate-400">Salário</span><span className="font-bold text-slate-800 dark:text-white">$---</span></div>
-                                    <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700 flex justify-between items-center"><span className="text-sm text-slate-600 dark:text-slate-400">IBAN</span><span className="font-mono text-xs text-slate-800 dark:text-white">XXXX-XXXX-XXXX</span></div>
+                                    <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700 flex justify-between items-center"><span className="text-sm text-slate-600 dark:text-slate-400">Salário</span><span className="font-bold text-slate-800 dark:text-white">{(user as any).salary ? `R$ ${Number((user as any).salary).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Não informado'}</span></div>
+                                    <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700 flex justify-between items-center"><span className="text-sm text-slate-600 dark:text-slate-400">IBAN</span><span className="font-mono text-xs text-slate-800 dark:text-white">{(user as any).iban || (user as any).bank || 'Não informado'}</span></div>
                                 </div>
                             </div>
                             <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">

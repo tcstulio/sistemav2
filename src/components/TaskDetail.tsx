@@ -17,6 +17,8 @@ import { DelegationStepsPanel } from './Tasks/DelegationStepsPanel';
 import { StockCountPanel } from './Tasks/StockCountPanel';
 import { DelegationTimelinePanel } from './Tasks/DelegationTimelinePanel';
 import { logger } from '../utils/logger';
+import { notifyError } from '../utils/notifyError';
+import { toast } from 'sonner';
 
 const log = logger.child('TaskDetail');
 
@@ -55,6 +57,11 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
     const [isEditingDesc, setIsEditingDesc] = useState(false);
     const [descriptionContent, setDescriptionContent] = useState('');
     const [isSavingDesc, setIsSavingDesc] = useState(false);
+
+    // Schedule Edit State (início/término/carga/progresso)
+    const [isEditingSchedule, setIsEditingSchedule] = useState(false);
+    const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+    const [scheduleForm, setScheduleForm] = useState({ date_start: '', date_end: '', planned_workload_h: 0, progress: 0 });
 
     const [activeTab, setActiveTab] = useState<'overview' | 'time' | 'chat' | 'contacts' | 'documents'>('overview');
 
@@ -137,6 +144,51 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
             alert('Erro ao salvar descrição');
         } finally {
             setIsSavingDesc(false);
+        }
+    };
+
+    // task.date_* estão em ms (mapTask→toTimestamp); o input datetime-local usa hora local.
+    const tsToInput = (ms?: number) => {
+        if (!ms) return '';
+        const d = new Date(ms);
+        const pad = (n: number) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
+    const openScheduleEdit = () => {
+        if (!task) return;
+        setScheduleForm({
+            date_start: tsToInput(task.date_start),
+            date_end: tsToInput(task.date_end),
+            planned_workload_h: task.planned_workload ? Math.round((task.planned_workload / 3600) * 100) / 100 : 0,
+            progress: Number(task.progress) || 0,
+        });
+        setIsEditingSchedule(true);
+    };
+
+    const handleSaveSchedule = async () => {
+        if (!task) return;
+        setIsSavingSchedule(true);
+        try {
+            const startMs = scheduleForm.date_start ? new Date(scheduleForm.date_start).getTime() : 0;
+            const endMs = scheduleForm.date_end ? new Date(scheduleForm.date_end).getTime() : 0;
+            const workloadSec = Math.round((Number(scheduleForm.planned_workload_h) || 0) * 3600);
+            const progress = Math.max(0, Math.min(100, Number(scheduleForm.progress) || 0));
+
+            // Dolibarr grava datas em segundos; planned_workload em segundos; progress 0-100.
+            const payload: Record<string, unknown> = { planned_workload: workloadSec, progress };
+            if (startMs) payload.date_start = Math.floor(startMs / 1000);
+            if (endMs) payload.date_end = Math.floor(endMs / 1000);
+
+            await DolibarrService.updateTask(config, task.id, payload);
+            // Atualiza o estado local mantendo a unidade ms (display) p/ datas.
+            setTask(prev => prev ? { ...prev, date_start: startMs, date_end: endMs, planned_workload: workloadSec, progress } as Task : null);
+            setIsEditingSchedule(false);
+            toast.success('Datas e prazo atualizados.');
+        } catch (error) {
+            notifyError('Salvar datas e prazo', error);
+        } finally {
+            setIsSavingSchedule(false);
         }
     };
 
@@ -345,6 +397,85 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                                     <div className="min-w-0">
                                         <p className="text-[10px] sm:text-xs text-slate-500 uppercase font-bold truncate">Realizado</p>
                                         <p className="text-xs sm:text-sm font-medium text-slate-900 dark:text-white truncate">{(task.duration_effective / 3600).toFixed(1)}h</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Datas e prazo (editável) */}
+                        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
+                            <div className="flex justify-between items-center mb-4">
+                                <h2 className="text-lg font-semibold text-slate-800 dark:text-white flex items-center gap-2">
+                                    <CalendarIcon size={18} className="text-indigo-500" /> Datas e prazo
+                                </h2>
+                                {!isEditingSchedule && (
+                                    <button
+                                        onClick={openScheduleEdit}
+                                        className="p-3 sm:p-2 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                                        title="Editar datas e prazo"
+                                    >
+                                        <Edit size={16} />
+                                    </button>
+                                )}
+                            </div>
+
+                            {isEditingSchedule ? (
+                                <div className="space-y-3">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Início</label>
+                                            <input type="datetime-local" value={scheduleForm.date_start}
+                                                onChange={(e) => setScheduleForm(f => ({ ...f, date_start: e.target.value }))}
+                                                className="w-full text-sm p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Término / prazo</label>
+                                            <input type="datetime-local" value={scheduleForm.date_end}
+                                                onChange={(e) => setScheduleForm(f => ({ ...f, date_end: e.target.value }))}
+                                                className="w-full text-sm p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Carga horária (h)</label>
+                                            <input type="number" min={0} step={0.5} value={scheduleForm.planned_workload_h}
+                                                onChange={(e) => setScheduleForm(f => ({ ...f, planned_workload_h: parseFloat(e.target.value) || 0 }))}
+                                                className="w-full text-sm p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs uppercase font-bold text-slate-500 mb-1">Progresso (%)</label>
+                                            <input type="number" min={0} max={100} value={scheduleForm.progress}
+                                                onChange={(e) => setScheduleForm(f => ({ ...f, progress: parseInt(e.target.value) || 0 }))}
+                                                className="w-full text-sm p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" />
+                                        </div>
+                                    </div>
+                                    <div className="flex justify-end gap-2">
+                                        <button onClick={() => setIsEditingSchedule(false)} disabled={isSavingSchedule}
+                                            className="px-4 py-3 sm:px-3 sm:py-1.5 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 rounded text-sm font-medium min-h-[44px] sm:min-h-0">
+                                            Cancelar
+                                        </button>
+                                        <button onClick={handleSaveSchedule} disabled={isSavingSchedule}
+                                            className="px-4 py-3 sm:px-3 sm:py-1.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded text-sm font-medium flex items-center gap-2 min-h-[44px] sm:min-h-0 disabled:opacity-50">
+                                            {isSavingSchedule ? <Loader2 className="animate-spin h-4 w-4" /> : <Save className="h-4 w-4" />}
+                                            Salvar
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
+                                    <div>
+                                        <p className="text-xs uppercase font-bold text-slate-500 mb-1">Início</p>
+                                        <p className="text-slate-800 dark:text-slate-200">{task.date_start ? formatDate(task.date_start) : '—'}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs uppercase font-bold text-slate-500 mb-1">Término / prazo</p>
+                                        <p className="text-slate-800 dark:text-slate-200">{task.date_end ? formatDate(task.date_end) : '—'}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs uppercase font-bold text-slate-500 mb-1">Carga horária</p>
+                                        <p className="text-slate-800 dark:text-slate-200">{task.planned_workload ? (task.planned_workload / 3600).toFixed(1) + 'h' : '—'}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs uppercase font-bold text-slate-500 mb-1">Progresso</p>
+                                        <p className="text-slate-800 dark:text-slate-200">{task.progress ?? 0}%</p>
                                     </div>
                                 </div>
                             )}
