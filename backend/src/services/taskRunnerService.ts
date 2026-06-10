@@ -17,6 +17,9 @@ const REPO_ROOT = path.resolve(__dirname, '../../../');
 // Worktree ISOLADO do TaskRunner — o agente nunca toca o diretório do dev/main.
 const WT_ROOT = path.resolve(REPO_ROOT, '..', 'sistemav2-taskrunner-wt');
 const PROMPT_FILE = '.taskrunner-prompt.md';
+// Timeout por tentativa do opencode. Num repo grande o 1º run (cold start: conexão do modelo +
+// indexação do contexto) chega a passar de 15min; 30min cobre o cold start com folga.
+const OPENCODE_TIMEOUT_MS = 30 * 60 * 1000;
 
 function git(args: string[], opts?: { timeout?: number; cwd?: string }) {
     return execFileAsync('git', args, { cwd: opts?.cwd || REPO_ROOT, timeout: opts?.timeout, maxBuffer: BIG });
@@ -26,10 +29,27 @@ function gh(args: string[], opts?: { timeout?: number; cwd?: string }) {
     return execFileAsync('gh', args, { cwd: opts?.cwd || REPO_ROOT, timeout: opts?.timeout, maxBuffer: BIG });
 }
 
-// opencode/npm/npx rodam via shell (resolvem o .cmd no Windows). Os comandos são strings
+// npm/npx rodam via shell padrão (resolvem o .cmd no Windows). Os comandos são strings
 // CONTROLADAS (sem conteúdo do usuário) — o prompt detalhado vai num arquivo no worktree.
 function sh(command: string, cwd: string, timeout: number) {
     return execAsync(command, { cwd, timeout, maxBuffer: BIG, windowsHide: true });
+}
+
+// O opencode lançado via cmd.exe TRAVA no repo grande (ele aninha tsc/vitest no cmd.exe e
+// fica ~15min até o timeout); no git-bash roda normal (<5min). Por isso o opencode — e só
+// ele — vai por aqui. `-lc` carrega o profile p/ ter o PATH do npm global (onde está o bin).
+function resolveBash(): string {
+    if (process.platform !== 'win32') return 'bash';
+    const candidates = [
+        process.env.TASKRUNNER_BASH,
+        'C:\\Program Files\\Git\\bin\\bash.exe',
+        'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+    ].filter(Boolean) as string[];
+    return candidates.find((p) => fs.existsSync(p)) || 'bash';
+}
+const GIT_BASH = resolveBash();
+function bash(command: string, cwd: string, timeout: number) {
+    return execFileAsync(GIT_BASH, ['-lc', command], { cwd, timeout, maxBuffer: BIG, windowsHide: true });
 }
 
 export type TaskStatus = 'pending' | 'running' | 'reviewing' | 'approved' | 'fixing' | 'merged' | 'rejected' | 'failed';
@@ -245,7 +265,7 @@ class TaskRunnerService {
             fs.writeFileSync(promptPath, this.buildPrompt(task, issueData));
             this.emitLog(issueNumber, 'info', `Implementando com opencode (tentativa ${attempt}/${MAX_IMPL})...`);
             try {
-                const { stdout } = await sh(`opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`, WT_ROOT, 900000);
+                const { stdout } = await bash(`opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`, WT_ROOT, OPENCODE_TIMEOUT_MS);
                 this.emitLog(issueNumber, 'ai', String(stdout).substring(0, 1500));
             } catch (e: any) {
                 this.emitLog(issueNumber, 'warn', `opencode erro: ${String(e.message || e).substring(0, 300)}`);
