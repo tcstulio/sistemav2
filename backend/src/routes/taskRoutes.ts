@@ -181,4 +181,48 @@ router.delete('/:issueNumber', requireDolibarrAdmin, async (req, res) => {
     }
 });
 
+router.post('/planner/analyze/:issueNumber', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const { taskPlannerService } = require('../services/taskPlannerService');
+        const task = taskRunnerService.getTask(Number(req.params.issueNumber));
+        if (!task) return res.status(404).json({ error: 'Task not found' });
+        const decision = await taskPlannerService.analyzeTask(task);
+        res.json(decision);
+    } catch (error: any) {
+        log.error('Planner analyze error', { error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/planner/reevaluate', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const { taskPlannerService } = require('../services/taskPlannerService');
+        const results = await taskPlannerService.reevaluateWaiting();
+        res.json({ reevaluated: results.length, decisions: results });
+    } catch (error: any) {
+        log.error('Planner reevaluate error', { error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/:issueNumber/preview', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const preview = await taskRunnerService.startPreview(Number(req.params.issueNumber));
+        res.json(preview);
+    } catch (error: any) {
+        log.error('Preview task error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.delete('/:issueNumber/preview', requireDolibarrAdmin, async (req, res) => {
+    try {
+        await taskRunnerService.stopPreview(Number(req.params.issueNumber));
+        res.json({ ok: true });
+    } catch (error: any) {
+        log.error('Stop preview error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
 export default router;

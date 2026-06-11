@@ -143,6 +143,8 @@ export type TaskEventType =
     | 'judge_score'
     | 'judge_error'
     | 'feedback_received'
+    | 'planner_started'
+    | 'planner_decision'
     | 'error';
 
 export interface TaskEvent {
@@ -294,7 +296,7 @@ class TaskRunnerService {
             type === 'task_watchdog_timeout' ? 'warn'
             : type === 'task_killed' ? 'warn'
             : type === 'typecheck_ok' || type === 'pr_created' || type === 'pr_merged' || type === 'task_completed' ? 'success'
-            : type === 'judge_score' || type === 'judge_started' ? 'ai'
+            : type === 'judge_score' || type === 'judge_started' || type === 'planner_decision' ? 'ai'
             : 'info';
         this.emitLog(task.issueNumber, uiType, message);
     }
@@ -477,6 +479,42 @@ class TaskRunnerService {
             this.emitStatus(task);
         }
         this.execChain = this.execChain.catch(() => { /* isola falha anterior da cadeia */ }).then(async () => {
+            try {
+                const { taskPlannerService } = require('./taskPlannerService');
+                this.recordEvent(task, 'planner_started', 'Planner: analisando viabilidade...');
+                this.emitLog(task.issueNumber, 'info', 'Planner: analisando viabilidade da task...');
+                const decision = await taskPlannerService.analyzeTask(task);
+
+                task.queuePriority = decision.priority;
+                task.planReason = decision.reason;
+                this.recordEvent(task, 'planner_decision', `Planner: ${decision.action} — ${decision.reason}`, {
+                    action: decision.action,
+                    priority: decision.priority,
+                    alreadyResolved: decision.alreadyResolved,
+                    overlappingFiles: decision.overlappingFiles,
+                    blockedBy: decision.blockedBy,
+                });
+
+                if (decision.action === 'skip') {
+                    await taskPlannerService.skipAndClose(task, decision.reason);
+                    this.recordEvent(task, 'task_killed', `Task cancelada pelo Planner: ${decision.reason}`);
+                    this.save();
+                    this.emitStatus(task);
+                    return;
+                }
+
+                if (decision.action === 'wait') {
+                    task.status = 'pending';
+                    task.updatedAt = new Date().toISOString();
+                    this.emitLog(task.issueNumber, 'warn', `Planner: aguardando — ${decision.reason}`);
+                    this.save();
+                    this.emitStatus(task);
+                    return;
+                }
+            } catch (plannerErr: any) {
+                log.warn(`Planner error for #${task.issueNumber}, proceeding without planner: ${plannerErr.message}`);
+            }
+
             task.status = activeStatus;
             task.startedAt = new Date().toISOString();
             task.updatedAt = new Date().toISOString();
@@ -1125,6 +1163,54 @@ The first element should be the task to execute first.`;
         this.save();
 
         return { order, reasons };
+    }
+
+    private activePreviews: Map<number, { pid: number; port: number; startedAt: string }> = new Map();
+
+    async startPreview(issueNumber: number): Promise<{ port: number; frontendUrl: string; backendUrl: string }> {
+        const task = this.store.tasks[issueNumber];
+        if (!task) throw new Error(`Task #${issueNumber} not found`);
+        if (!task.branch) throw new Error('Task não tem branch. Execute a task primeiro.');
+
+        const existing = this.activePreviews.get(issueNumber);
+        if (existing && isAlive(existing.pid)) {
+            return { port: existing.port, frontendUrl: `http://localhost:${existing.port}`, backendUrl: `http://localhost:${existing.port + 1}` };
+        }
+
+        await this.ensureWorktree(task.branch);
+        await git(['checkout', task.branch], { timeout: 15000, cwd: WT_ROOT });
+
+        const previewPort = 5174 + (issueNumber % 10);
+        const backendPort = 3014 + (issueNumber % 10);
+
+        const previewRoot = WT_ROOT;
+        const envContent = `PORT=${backendPort}\nVITE_API_URL=http://localhost:${backendPort}\n`;
+        const fsExtra = await import('fs');
+        fsExtra.writeFileSync(path.join(previewRoot, 'backend', '.env.preview'), envContent);
+
+        const child = spawn(GIT_BASH, ['-lc', `cd backend && npx nodemon --port ${backendPort} & npx vite --port ${previewPort} --host`], {
+            cwd: previewRoot,
+            detached: process.platform !== 'win32',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+        });
+
+        this.activePreviews.set(issueNumber, { pid: child.pid!, port: previewPort, startedAt: new Date().toISOString() });
+
+        child.unref();
+
+        this.recordEvent(task, 'task_started', `Preview iniciado na porta ${previewPort} (branch ${task.branch})`, { port: previewPort, backendPort, branch: task.branch });
+
+        return { port: previewPort, frontendUrl: `http://localhost:${previewPort}`, backendUrl: `http://localhost:${backendPort}` };
+    }
+
+    async stopPreview(issueNumber: number): Promise<void> {
+        const preview = this.activePreviews.get(issueNumber);
+        if (!preview) return;
+        if (isAlive(preview.pid)) {
+            await killTree(preview.pid);
+        }
+        this.activePreviews.delete(issueNumber);
     }
 }
 
