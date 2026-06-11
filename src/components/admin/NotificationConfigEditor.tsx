@@ -20,7 +20,7 @@ const EVENTS: { key: TaskNotifEvent; label: string }[] = [
 
 const ROLES: { key: TaskNotifRole; label: string }[] = [
     { key: 'responsavel', label: 'Responsável' },
-    { key: 'interveniente', label: 'Interveniente' },
+    { key: 'interveniente', label: 'Colaborador' },
     { key: 'criador', label: 'Criador' },
 ];
 
