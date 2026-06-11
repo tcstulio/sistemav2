@@ -192,7 +192,7 @@ export const TOOLS_PROMPT = `
         93. get_screen_help(route) - Retorna a descrição completa de uma tela do sistema (label, descrição, ações, campos, dicas). Use quando o usuário perguntar "o que essa tela faz?", "como uso essa tela?" ou "onde faço X?". route = caminho da tela (ex.: '/customers', '/invoices').
 
         FERRAMENTAS DE TASK RUNNER (automação opencode):
-        94. create_opencode_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada.
+        94. create_opencode_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada. IMPORTANTE: antes de criar, SEMPRE use list_github_issues ou list_opencode_tasks para verificar se já existe um issue/task similar aberto. NÃO crie duplicatas. Chame esta ferramenta NO MÁXIMO UMA VEZ por solicitação do usuário.
         95. list_opencode_tasks(status?) - Lista tasks do board opencode. status: 'pending', 'running', 'reviewing', 'approved', 'merged', 'rejected', 'failed'. Sem status = todas. Retorna número, título, status, score do judge e PR.
         96. start_opencode_task(issueNumber) - Inicia a execução automática de uma task (opencode implementa e abre PR). Use quando o usuário disser "iniciar task", "executar" ou "começar". Retorna status atualizado.
         97. opencode_task_feedback(issueNumber, feedback) - Envia instrução adicional para corrigir uma task em andamento. Use quando o usuário disser para ajustar algo na task.
@@ -1138,6 +1138,23 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             if (!tLabels.includes('opencode-task')) tLabels.push('opencode-task');
             const labelArgs = ([] as string[]).concat(...tLabels.map((l: string) => ['--label', l]));
             try {
+                const { stdout: searchOut } = await execFileAsync('gh', [
+                    'issue', 'list',
+                    '--repo', 'tcstulio/sistemav2',
+                    '--state', 'open',
+                    '--limit', '30',
+                    '--json', 'number,title'
+                ], { timeout: 15000 });
+                const existing: Array<{ number: number; title: string }> = JSON.parse(searchOut);
+                const normalized = tTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
+                const dupe = existing.find(e => {
+                    const eNorm = e.title.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    return eNorm === normalized || (eNorm.length > 20 && normalized.length > 20 && (eNorm.includes(normalized.substring(0, 20)) || normalized.includes(eNorm.substring(0, 20))));
+                });
+                if (dupe) {
+                    return `Já existe um issue aberto com título similar: #${dupe.number} "${dupe.title}". NÃO criei duplicata. Use start_opencode_task para executar a task existente.`;
+                }
+
                 const { stdout } = await execFileAsync('gh', [
                     'issue', 'create', '--repo', 'tcstulio/sistemav2',
                     '--title', tTitle, '--body', tBody,
