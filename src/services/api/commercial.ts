@@ -430,6 +430,15 @@ export const createOrderFromProposal = async (config: DolibarrConfig, proposalId
     });
 };
 
+export const createInvoiceFromOrder = async (config: DolibarrConfig, orderId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/invoices`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({ origin: 'commande', origin_id: orderId })
+    });
+};
+
 // -- Orders --
 export const createOrder = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/orders`;

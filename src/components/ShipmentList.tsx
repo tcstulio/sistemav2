@@ -98,8 +98,8 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
         if (!selectedShipment || !selectedShipment.fk_commande) return;
         setIsProcessing(true);
         try {
-            await new Promise(r => setTimeout(r, 1000));
-            toast.success("Fatura criada a partir do Envio (Ação Mock)!");
+            await DolibarrService.createInvoiceFromOrder(config, String(selectedShipment.fk_commande));
+            toast.success(`Fatura criada a partir do pedido #${selectedShipment.fk_commande}`);
             if (onNavigate) onNavigate('orders', selectedShipment.fk_commande);
         } catch (e) {
             notifyError('Criar fatura', e);

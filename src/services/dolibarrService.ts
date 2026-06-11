@@ -28,6 +28,7 @@ export const DolibarrService = {
 
     // Invoice Lines
     updateInvoice: Commercial.updateInvoice,
+    createInvoiceFromOrder: Commercial.createInvoiceFromOrder,
     addInvoiceLine: Commercial.addInvoiceLine,
     updateInvoiceLine: Commercial.updateInvoiceLine,
     deleteInvoiceLine: Commercial.deleteInvoiceLine,
