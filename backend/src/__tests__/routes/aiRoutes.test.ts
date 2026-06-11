@@ -73,6 +73,7 @@ vi.mock('../../services/chatSessionService', () => ({
         getSession: vi.fn(),
         getSessions: vi.fn(() => []),
         deleteSession: vi.fn(),
+        deleteAllSessions: vi.fn(() => 0),
         getStats: vi.fn(() => ({ totalSessions: 0 })),
     },
 }));
@@ -439,6 +440,84 @@ describe('aiRoutes', () => {
                 .send({});
 
             expect(res.status).toBe(200);
+        });
+    });
+
+    describe('POST /api/sessions', () => {
+        it('creates a new chat session', async () => {
+            const res = await request(app)
+                .post('/api/sessions')
+                .send({ firstMessage: 'Hello' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data).toBeDefined();
+        });
+    });
+
+    describe('GET /api/sessions', () => {
+        it('returns list of sessions', async () => {
+            const res = await request(app)
+                .get('/api/sessions');
+
+            expect(res.status).toBe(200);
+            expect(res.body.data).toBeDefined();
+        });
+
+        it('accepts limit query param', async () => {
+            const res = await request(app)
+                .get('/api/sessions?limit=10');
+
+            expect(res.status).toBe(200);
+        });
+    });
+
+    describe('DELETE /api/sessions (bulk)', () => {
+        it('deletes all sessions and returns count', async () => {
+            const { chatSessionService } = await import('../../services/chatSessionService');
+            (chatSessionService.deleteAllSessions as ReturnType<typeof vi.fn>).mockReturnValue(5);
+
+            const res = await request(app)
+                .delete('/api/sessions');
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.deletedCount).toBe(5);
+        });
+
+        it('returns 500 when service throws', async () => {
+            const { chatSessionService } = await import('../../services/chatSessionService');
+            (chatSessionService.deleteAllSessions as ReturnType<typeof vi.fn>).mockImplementation(() => {
+                throw new Error('Disk error');
+            });
+
+            const res = await request(app)
+                .delete('/api/sessions');
+
+            expect(res.status).toBe(500);
+        });
+    });
+
+    describe('DELETE /api/sessions/:id', () => {
+        it('deletes a single session', async () => {
+            const { chatSessionService } = await import('../../services/chatSessionService');
+            (chatSessionService.deleteSession as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+            const res = await request(app)
+                .delete('/api/sessions/chat_123');
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+        });
+
+        it('returns 404 when session not found', async () => {
+            const { chatSessionService } = await import('../../services/chatSessionService');
+            (chatSessionService.deleteSession as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+            const res = await request(app)
+                .delete('/api/sessions/nonexistent');
+
+            expect(res.status).toBe(404);
         });
     });
 });

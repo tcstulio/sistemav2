@@ -169,7 +169,10 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     return () => window.removeEventListener('open-virtual-assistant', handler);
   }, []);
 
-  const clearHistory = () => {
+  const clearHistory = async () => {
+    if (currentSessionId) {
+      await AiService.deleteChatSession(currentSessionId);
+    }
     setMessages([WELCOME_MESSAGE]);
     safeStorage.removeItem(VA_HISTORY_KEY);
     safeStorage.removeItem(VA_SESSION_ID_KEY);
@@ -395,16 +398,36 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
                 <p className="text-xs text-slate-400 text-center py-4">Nenhuma conversa anterior</p>
               )}
               {sessions.map(s => (
-                <button
-                  key={s.id}
-                  onClick={() => switchSession(s.id)}
-                  className={`w-full text-left p-2.5 rounded-lg transition-colors text-sm ${s.id === currentSessionId ? 'bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}
-                >
-                  <div className="font-medium text-slate-700 dark:text-slate-300 truncate">{s.title}</div>
-                  <div className="text-[10px] text-slate-400 mt-0.5">
-                    {new Date(s.updatedAt).toLocaleString('pt-BR')} · {s.messageCount} msgs
-                  </div>
-                </button>
+                <div key={s.id} className="flex items-center gap-1 group">
+                  <button
+                    onClick={() => switchSession(s.id)}
+                    className={`flex-1 text-left p-2.5 rounded-lg transition-colors text-sm ${s.id === currentSessionId ? 'bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                  >
+                    <div className="font-medium text-slate-700 dark:text-slate-300 truncate">{s.title}</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">
+                      {new Date(s.updatedAt).toLocaleString('pt-BR')} · {s.messageCount} msgs
+                    </div>
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const ok = await AiService.deleteChatSession(s.id);
+                      if (ok) {
+                        setSessions(prev => prev.filter(x => x.id !== s.id));
+                        if (s.id === currentSessionId) {
+                          setMessages([WELCOME_MESSAGE]);
+                          setCurrentSessionId(null);
+                          safeStorage.removeItem(VA_SESSION_ID_KEY);
+                          safeStorage.removeItem(VA_HISTORY_KEY);
+                        }
+                      }
+                    }}
+                    className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-50 dark:hover:bg-red-900/20 text-slate-300 hover:text-red-500 transition-opacity shrink-0"
+                    title="Excluir sessão"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               ))}
             </div>
           )}
