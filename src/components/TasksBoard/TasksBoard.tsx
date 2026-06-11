@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { TaskService, Task } from '../../services/taskService';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
-import { Play, CheckCircle, XCircle, RotateCcw, GitMerge, MessageSquare, Loader2, AlertCircle, Clock, Eye, RefreshCw, ExternalLink, ThumbsUp, Star, Trash2, Pencil, Terminal, ShieldOff, Plus, Search, Filter, LayoutGrid, List, Sparkles, GripVertical } from 'lucide-react';
+import { Play, CheckCircle, XCircle, RotateCcw, GitMerge, MessageSquare, Loader2, AlertCircle, Clock, Eye, RefreshCw, ExternalLink, ThumbsUp, Star, Trash2, Pencil, Terminal, ShieldOff, Plus, Search, Filter, LayoutGrid, List, Sparkles, GripVertical, Monitor, ShieldCheck, ShieldAlert, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 import DiffViewer from './DiffViewer';
 import TaskConsole from './TaskConsole';
@@ -22,6 +22,13 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.Rea
 
 const TERMINAL_STATUSES = ['merged', 'rejected', 'cancelled', 'failed'];
 
+const PLANNER_CONFIG: Record<string, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
+    go: { color: 'text-green-600', bg: 'bg-green-50 dark:bg-green-900/20', icon: <ShieldCheck size={9} />, label: 'GO' },
+    skip: { color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-900/20', icon: <ShieldAlert size={9} />, label: 'SKIP' },
+    wait: { color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', icon: <Clock size={9} />, label: 'WAIT' },
+    reorder: { color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20', icon: <Shield size={9} />, label: 'PLAN' },
+};
+
 const PIPELINE_COLUMNS = [
     { key: 'queue', label: 'Fila', statuses: ['pending'] },
     { key: 'active', label: 'Em Execução', statuses: ['running', 'fixing', 'cancelling'] },
@@ -36,16 +43,22 @@ const MiniCard: React.FC<{
     onEdit: (task: Task) => void;
     onDelete: (task: Task) => void;
     onConsole: (task: Task) => void;
+    onPreview: (task: Task) => void;
+    onStopPreview: (issueNumber: number) => void;
+    previewUrl?: string;
     isAdmin: boolean;
     queuePosition?: number;
-}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, isAdmin, queuePosition }) => {
+}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onPreview, onStopPreview, previewUrl, isAdmin, queuePosition }) => {
     const [showFeedback, setShowFeedback] = useState(false);
     const [feedback, setFeedback] = useState('');
     const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
-    const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
+    const isMiniActive = ['running', 'fixing', 'cancelling'].includes(task.status);
+
+    const plannerAction = task.events?.filter(e => e.type === 'planner_decision').pop()?.meta?.action;
+    const plannerCfg = plannerAction ? PLANNER_CONFIG[plannerAction] : null;
 
     return (
-        <div className={`p-3 rounded-lg border ${isActive ? 'border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-900/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'} transition-all hover:shadow-sm`}>
+        <div className={`p-3 rounded-lg border ${isMiniActive ? 'border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-900/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'} transition-all hover:shadow-sm`}>
             <div className="flex items-center gap-2 mb-1">
                 {queuePosition !== undefined && (
                     <span className="flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold">{queuePosition}</span>
@@ -57,6 +70,11 @@ const MiniCard: React.FC<{
                 {task.judgeScore !== undefined && (
                     <span className={`text-[9px] font-medium ${task.judgeScore >= 7 ? 'text-green-600' : 'text-amber-600'}`}>
                         <Star size={8} className="inline" /> {task.judgeScore}/10
+                    </span>
+                )}
+                {plannerCfg && (
+                    <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-bold ${plannerCfg.color} ${plannerCfg.bg}`} title={task.planReason}>
+                        {plannerCfg.icon} {plannerCfg.label}
                     </span>
                 )}
             </div>
@@ -78,6 +96,17 @@ const MiniCard: React.FC<{
                         <button onClick={() => onReview(task)} className="text-[10px] px-2 py-0.5 rounded bg-purple-500 text-white hover:bg-purple-600 transition-colors">
                             <Eye size={10} className="inline mr-0.5" /> Revisar
                         </button>
+                        {task.branch && (
+                            previewUrl ? (
+                                <button onClick={() => onStopPreview(task.issueNumber)} className="text-[10px] px-2 py-0.5 rounded bg-red-500 text-white hover:bg-red-600 transition-colors">
+                                    <Monitor size={10} className="inline mr-0.5" /> Parar
+                                </button>
+                            ) : (
+                                <button onClick={() => onPreview(task)} className="text-[10px] px-2 py-0.5 rounded bg-teal-500 text-white hover:bg-teal-600 transition-colors">
+                                    <Monitor size={10} className="inline mr-0.5" /> Testar
+                                </button>
+                            )
+                        )}
                         {isAdmin && (
                             <>
                                 <button onClick={() => onAction('merge', task)} className="text-[10px] px-2 py-0.5 rounded bg-emerald-500 text-white hover:bg-emerald-600 transition-colors">
@@ -98,12 +127,12 @@ const MiniCard: React.FC<{
                         <RotateCcw size={10} className="inline mr-0.5" /> Retry
                     </button>
                 )}
-                {isActive && (
+                {isMiniActive && (
                     <button onClick={() => onConsole(task)} className="text-[10px] px-1.5 py-0.5 rounded text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
                         <Terminal size={10} />
                     </button>
                 )}
-                {isAdmin && isActive && (
+                {isAdmin && isMiniActive && (
                     <button onClick={() => onAction('kill', task)} className="text-[10px] px-1.5 py-0.5 rounded text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
                         <XCircle size={10} />
                     </button>
@@ -209,14 +238,20 @@ const TaskCard: React.FC<{
     onEdit: (task: Task) => void;
     onDelete: (task: Task) => void;
     onConsole: (task: Task) => void;
+    onPreview: (task: Task) => void;
+    onStopPreview: (issueNumber: number) => void;
+    previewUrl?: string;
     isAdmin: boolean;
     queuePosition?: number;
-}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, isAdmin, queuePosition }) => {
+}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onPreview, onStopPreview, previewUrl, isAdmin, queuePosition }) => {
     const [expanded, setExpanded] = useState(false);
     const [feedback, setFeedback] = useState('');
     const [showFeedback, setShowFeedback] = useState(false);
     const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
     const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
+
+    const plannerAction = task.events?.filter(e => e.type === 'planner_decision').pop()?.meta?.action;
+    const plannerCfg = plannerAction ? PLANNER_CONFIG[plannerAction] : null;
 
     return (
         <Card className="relative overflow-hidden">
@@ -236,6 +271,11 @@ const TaskCard: React.FC<{
                         {task.judgeScore !== undefined && (
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${task.judgeScore >= 7 ? 'text-green-600 bg-green-50' : 'text-amber-600 bg-amber-50'}`}>
                                 <Star size={10} /> {task.judgeScore}/10
+                            </span>
+                        )}
+                        {plannerCfg && (
+                            <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold ${plannerCfg.color} ${plannerCfg.bg}`} title={task.planReason}>
+                                {plannerCfg.icon} {plannerCfg.label}
                             </span>
                         )}
                         {task.labels.filter(l => l !== 'opencode-task').map(l => (
@@ -276,6 +316,13 @@ const TaskCard: React.FC<{
                 {(task.status === 'reviewing' || task.status === 'approved') && (
                     <>
                         <Button variant="primary" size="sm" icon={<Eye size={12} />} onClick={() => onReview(task)}>Revisar</Button>
+                        {task.branch && (
+                            previewUrl ? (
+                                <Button variant="ghost" size="sm" icon={<Monitor size={12} />} onClick={() => onStopPreview(task.issueNumber)} className="text-red-500">Parar Preview</Button>
+                            ) : (
+                                <Button variant="primary" size="sm" icon={<Monitor size={12} />} onClick={() => onPreview(task)} className="bg-teal-600 hover:bg-teal-700">Testar</Button>
+                            )
+                        )}
                         {isAdmin && (
                             <>
                                 <Button variant="primary" size="sm" icon={<CheckCircle size={12} />} onClick={() => onAction('merge', task)}>Merge</Button>
@@ -350,6 +397,7 @@ const TasksBoard: React.FC = () => {
     const [editBody, setEditBody] = useState('');
     const [deleteConfirm, setDeleteConfirm] = useState<Task | null>(null);
     const [consoleTask, setConsoleTask] = useState<Task | null>(null);
+    const [previewUrls, setPreviewUrls] = useState<Record<number, string>>({});
 
     const load = useCallback(async () => {
         try {
@@ -414,6 +462,27 @@ const TasksBoard: React.FC = () => {
         if (!deleteConfirm) return;
         try { await TaskService.delete(deleteConfirm.issueNumber); toast.success('Deletada'); setDeleteConfirm(null); load(); }
         catch (e: any) { toast.error(e.response?.data?.error || e.message); }
+    };
+
+    const handlePreview = async (task: Task) => {
+        try {
+            const result = await TaskService.startPreview(task.issueNumber);
+            setPreviewUrls(prev => ({ ...prev, [task.issueNumber]: result.frontendUrl }));
+            toast.success(`Preview rodando em ${result.frontendUrl}`);
+            window.open(result.frontendUrl, '_blank');
+        } catch (e: any) {
+            toast.error(e.response?.data?.error || e.message);
+        }
+    };
+
+    const handleStopPreview = async (issueNumber: number) => {
+        try {
+            await TaskService.stopPreview(issueNumber);
+            setPreviewUrls(prev => { const next = { ...prev }; delete next[issueNumber]; return next; });
+            toast.info('Preview parado');
+        } catch (e: any) {
+            toast.error(e.response?.data?.error || e.message);
+        }
     };
 
     const queueOrder = useMemo(() => {
@@ -558,6 +627,9 @@ const TasksBoard: React.FC = () => {
                                             onEdit={openEdit}
                                             onDelete={setDeleteConfirm}
                                             onConsole={setConsoleTask}
+                                            onPreview={handlePreview}
+                                            onStopPreview={handleStopPreview}
+                                            previewUrl={previewUrls[task.issueNumber]}
                                             isAdmin={isAdmin}
                                             queuePosition={getQueuePosition(task)}
                                         />
@@ -580,7 +652,7 @@ const TasksBoard: React.FC = () => {
                         </Card>
                     )}
                     {filteredTasks.map(task => (
-                        <TaskCard key={task.issueNumber} task={task} onAction={handleAction} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} isAdmin={isAdmin} queuePosition={getQueuePosition(task)} />
+                        <TaskCard key={task.issueNumber} task={task} onAction={handleAction} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} onPreview={handlePreview} onStopPreview={handleStopPreview} previewUrl={previewUrls[task.issueNumber]} isAdmin={isAdmin} queuePosition={getQueuePosition(task)} />
                     ))}
                 </div>
             )}
