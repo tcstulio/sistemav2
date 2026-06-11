@@ -494,7 +494,12 @@ class TaskRunnerService {
         if (!fs.existsSync(WT_ROOT)) {
             await git(['worktree', 'add', '--force', WT_ROOT, 'origin/main'], { timeout: 120000 });
         }
-        // branch fresco do main mais recente + remove restos não-rastreados de runs anteriores
+        // Limpa restos de execuções anteriores ANTES de trocar de branch. Sem isto, se uma task
+        // anterior deixou o worktree sujo (mudanças não commitadas / arquivos novos), o checkout
+        // aborta com "local changes would be overwritten" e a task falha no setup.
+        await git(['reset', '--hard'], { timeout: 30000, cwd: WT_ROOT });
+        await git(['clean', '-fd'], { timeout: 30000, cwd: WT_ROOT });
+        // branch fresco do main mais recente
         await git(['checkout', '-B', branch, 'origin/main'], { timeout: 30000, cwd: WT_ROOT });
         await git(['clean', '-fd'], { timeout: 30000, cwd: WT_ROOT }); // preserva node_modules (ignorado)
         // dependências (uma vez; o worktree persiste entre tasks)
@@ -858,6 +863,16 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
             try {
                 await gh(['pr', 'close', String(task.prNumber), '--repo', REPO, '--comment', 'Task deleted'], { timeout: 15000 });
             } catch { /* ignore */ }
+        }
+
+        // Remove o label "opencode-task" da issue — senao o syncTasks() recria a task no proximo
+        // GET /tasks (ele reconstroi o board a partir das issues abertas com esse label). A issue
+        // em si e' mantida no GitHub; ela apenas sai do pipeline do opencode. Sem isto, "deletar"
+        // so removia do store e a task reaparecia no sync seguinte ("diz que deletou mas volta").
+        try {
+            await gh(['issue', 'edit', String(issueNumber), '--repo', REPO, '--remove-label', 'opencode-task'], { timeout: 15000 });
+        } catch (e: any) {
+            log.warn(`deleteTask #${issueNumber}: falha ao remover label opencode-task (a task pode reaparecer no sync): ${e?.message || e}`);
         }
 
         delete this.store.tasks[issueNumber];
