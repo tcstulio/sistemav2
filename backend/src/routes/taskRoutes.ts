@@ -55,6 +55,29 @@ router.get('/:issueNumber/events', requireDolibarrLogin, async (req, res) => {
 
 // Escrita: somente admin (#307). Acoes destrutivas (start, merge, kill, delete) e
 // mutacoes de estado exigem isAdmin=true (verificado via Dolibarr).
+// Fila e planejamento (#331)
+router.post('/plan', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const result = await taskRunnerService.planWithLLM();
+        res.json(result);
+    } catch (error: any) {
+        log.error('Plan tasks error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.put('/reorder', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const { order } = req.body;
+        if (!Array.isArray(order)) return res.status(400).json({ error: 'order must be an array of issue numbers' });
+        taskRunnerService.reorderTasks(order);
+        res.json({ ok: true });
+    } catch (error: any) {
+        log.error('Reorder tasks error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
 router.post('/', requireDolibarrAdmin, async (req, res) => {
     try {
         const { title, body, labels } = req.body;

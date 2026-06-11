@@ -35,6 +35,8 @@ export interface Task {
     childPid?: number;
     killRequested?: boolean;
     killedAt?: string;
+    queuePriority?: number;
+    planReason?: string;
 }
 
 export interface TaskEvent {
@@ -107,5 +109,14 @@ export const TaskService = {
 
     delete: async (issueNumber: number): Promise<void> => {
         await axios.delete(`${API_URL}/${issueNumber}`, getAuthHeaders());
+    },
+
+    plan: async (): Promise<{ order: number[]; reasons: Record<number, string> }> => {
+        const response = await axios.post(`${API_URL}/plan`, {}, getAuthHeaders());
+        return response.data;
+    },
+
+    reorder: async (order: number[]): Promise<void> => {
+        await axios.put(`${API_URL}/reorder`, { order }, getAuthHeaders());
     },
 };
