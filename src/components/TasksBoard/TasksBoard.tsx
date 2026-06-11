@@ -294,8 +294,8 @@ const TasksBoard: React.FC = () => {
                 }
                 tabs={
                     <Tabs value={tab} onChange={v => setTab(v as any)}>
-                        <Tab value="active">Ativas ({tasks.filter(t => !['merged', 'rejected'].includes(t.status)).length})</Tab>
-                        <Tab value="done">Concluídas ({tasks.filter(t => ['merged', 'rejected'].includes(t.status)).length})</Tab>
+                        <Tab value="active">Ativas ({tasks.filter(t => !TERMINAL_STATUSES.includes(t.status)).length})</Tab>
+                        <Tab value="done">Concluídas ({tasks.filter(t => TERMINAL_STATUSES.includes(t.status)).length})</Tab>
                         <Tab value="all">Todas ({tasks.length})</Tab>
                     </Tabs>
                 }
@@ -378,7 +378,7 @@ const TasksBoard: React.FC = () => {
                 <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setDeleteConfirm(null)}>
                     <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 w-full max-w-sm space-y-4" onClick={e => e.stopPropagation()}>
                         <h2 className="text-lg font-bold text-slate-800 dark:text-white">Deletar Task #{deleteConfirm.issueNumber}?</h2>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">Essa ação não pode ser desfeita. A task será removida do board (o issue no GitHub será mantido).</p>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">A task sai do board e o label <span className="font-mono text-xs">opencode-task</span> é removido da issue — a issue em si é mantida no GitHub. Sem o label, ela não volta ao board no próximo sync.</p>
                         <div className="flex justify-end gap-2">
                             <Button variant="ghost" size="sm" onClick={() => setDeleteConfirm(null)}>Cancelar</Button>
                             <Button variant="primary" size="sm" onClick={confirmDelete} className="bg-red-600 hover:bg-red-700">Deletar</Button>

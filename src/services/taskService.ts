@@ -9,7 +9,9 @@ const API_URL = '/api/tasks';
 const getAuthHeaders = () => {
     const savedConfigObj = safeStorage.getJSON<Record<string, any>>('coolgroove_config', {});
     const token = savedConfigObj.apiKey || '';
-    return { headers: { 'Authorization': 'Bearer ' + token } };
+    // timeout p/ não pendurar a UI silenciosamente se o backend travar (ex.: verificação de
+    // admin via Dolibarr lenta/sem resposta). Sem isso, um delete que falha fica "mudo". (#323)
+    return { headers: { 'Authorization': 'Bearer ' + token }, timeout: 30000 };
 };
 
 export interface Task {
