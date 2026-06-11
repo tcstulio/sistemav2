@@ -153,6 +153,7 @@ class GoogleProvider implements AIProvider {
         let currentContext = context;
         let iterations = 0;
         const MAX_ITERATIONS = 5;
+        const seenToolCalls = new Set<string>();
         const accUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
         while (iterations < MAX_ITERATIONS) {
@@ -218,6 +219,13 @@ class GoogleProvider implements AIProvider {
             if (toolCall) {
                 try {
                     log.info(`Tool Call: ${toolCall.tool}`, toolCall.args);
+
+                    const callSig = `${toolCall.tool}:${JSON.stringify(toolCall.args || {})}`;
+                    if (seenToolCalls.has(callSig)) {
+                        log.warn(`GoogleProvider: tool call duplicada bloqueada: ${callSig}`);
+                        break;
+                    }
+                    seenToolCalls.add(callSig);
 
                     const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
