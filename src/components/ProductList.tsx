@@ -34,6 +34,7 @@ import {
     ConfirmDeleteButton
 } from './ui';
 import { SafeHtml } from '../utils/sanitizeHtml';
+import { notifyError } from '../utils/notifyError';
 
 // ============================================
 // Types
@@ -363,7 +364,7 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
             setProductForm({ type: '0', price: 0 });
             onRefresh?.();
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            notifyError('Criar produto', e);
         } finally {
             setIsSubmitting(false);
         }
@@ -378,7 +379,7 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
             setSelectedProduct({ ...selectedProduct, ...productForm } as Product);
             onRefresh?.();
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            notifyError('Atualizar produto', e);
         } finally {
             setIsSubmitting(false);
         }

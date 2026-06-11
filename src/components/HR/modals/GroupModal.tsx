@@ -3,6 +3,7 @@ import { DolibarrConfig, UserGroup } from '../../../types';
 import * as HRAdmin from '../../../services/api/hrAdmin';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { logger } from '../../../utils/logger';
+import { notifyError } from '../../../utils/notifyError';
 
 const log = logger.child('GroupModal');
 
@@ -56,7 +57,7 @@ export const GroupModal: React.FC<GroupModalProps> = ({
             onClose();
         } catch (e) {
             log.error(e);
-            alert('Erro ao salvar grupo.');
+            notifyError('Salvar grupo', e);
         } finally {
             setIsSubmitting(false);
         }

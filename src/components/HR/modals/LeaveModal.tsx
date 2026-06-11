@@ -3,6 +3,7 @@ import { DolibarrConfig, DolibarrUser } from '../../../types';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { Plane, X, Loader2, CheckCircle2 } from 'lucide-react';
 import { logger } from '../../../utils/logger';
+import { toast } from 'sonner';
 
 const log = logger.child('LeaveModal');
 
@@ -55,7 +56,7 @@ export const LeaveModal: React.FC<LeaveModalProps> = ({ isOpen, onClose, config,
             }
             onClose();
             setLeaveForm({ fk_user: '', date_debut: '', date_fin: '', type: 'Paid Vacation', description: '' });
-            alert(isEdit ? "Licença Atualizada com Sucesso" : "Solicitação de Licença Criada com Sucesso");
+            toast.success(isEdit ? "Licença Atualizada com Sucesso" : "Solicitação de Licença Criada com Sucesso");
             if (onRefresh) onRefresh();
         } catch (e) { log.error(e); } finally { setIsSubmittingLeave(false); }
     };

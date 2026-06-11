@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+import { notifyError } from '../utils/notifyError';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { SupplierProposal, DolibarrConfig, AppView, Product, SupplierProposalLine } from '../types';
@@ -190,7 +191,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
     // Save (Create or Update)
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!formData.socid) return alert("Selecione um fornecedor.");
+        if (!formData.socid) { toast.error("Selecione um fornecedor."); return; }
 
         setIsSubmitting(true);
         try {
@@ -211,7 +212,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                 };
 
                 await DolibarrService.createSupplierProposal(config, payload);
-                alert("Solicitação Criada!");
+                toast.success("Solicitação Criada!");
             }
             // 2. UPDATE FLOW
             else {
@@ -256,7 +257,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                     });
                 }
 
-                alert("Solicitação Atualizada!");
+                toast.success("Solicitação Atualizada!");
             }
 
             setIsFormOpen(false);
@@ -270,7 +271,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
 
         } catch (err: any) {
             log.error("Failed to save supplier proposal", err);
-            alert("Erro ao salvar: " + (err.message || 'Erro desconhecido'));
+            notifyError('Salvar solicitação', err)
         } finally {
             setIsSubmitting(false);
         }
@@ -324,13 +325,13 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
         setProcessingId(selectedProposal.id);
         try {
             await DolibarrService.closeSupplierProposal(config, selectedProposal.id, parseInt(status) as 2 | 3);
-            alert(status === '2' ? "Solicitação Assinada!" : "Solicitação Recusada.");
+            toast.success(status === '2' ? "Solicitação Assinada!" : "Solicitação Recusada.");
             setSelectedProposal(null);
             if (onRefresh) onRefresh();
             refetchProposals();
         } catch (e: any) {
             log.error("Failed to close supplier proposal", e);
-            alert("Ação falhou: " + e.message);
+            notifyError('Responder solicitação', e)
         } finally {
             setProcessingId(null);
         }

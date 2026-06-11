@@ -12,6 +12,8 @@ import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
+import { useConfirm } from '../hooks/useConfirm';
+import { notifyError } from '../utils/notifyError';
 
 const log = logger.child('InterventionList');
 
@@ -31,6 +33,7 @@ interface InterventionListProps {
 }
 
 const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefresh }) => {
+    const confirm = useConfirm();
     const { config } = useDolibarr();
     const { id: urlId } = useParams<{ id: string }>();
     const { data: interventionsData, refetch: refetchInterventions } = useInterventions(config);
@@ -178,7 +181,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
             if (onRefresh) onRefresh();
         } catch (e: any) {
             log.error("Failed to save intervention", e);
-            alert(`Falha: ${e.message}`);
+            notifyError('Salvar intervenção', e);
         } finally {
             setIsSubmitting(false);
         }
@@ -186,15 +189,15 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
 
     const handleValidate = async () => {
         if (!selectedIntervention) return;
-        if (!confirm("Validar esta intervenção?")) return;
+        if (!(await confirm("Validar esta intervenção?"))) return;
         setProcessingId(selectedIntervention.id);
         try {
             await DolibarrService.validateIntervention(config, selectedIntervention.id);
-            alert("Intervenção Validada");
+            toast.success("Intervenção Validada");
             if (onRefresh) onRefresh();
             setSelectedIntervention(null);
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            notifyError('Validar intervenção', e);
         } finally {
             setProcessingId(null);
         }

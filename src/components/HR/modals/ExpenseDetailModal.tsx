@@ -8,6 +8,8 @@ import { formatCurrency } from '../../../utils/formatUtils';
 import { getUserName } from '../utils';
 import { toast } from 'sonner';
 import { logger } from '../../../utils/logger';
+import { notifyError } from '../../../utils/notifyError';
+import { useConfirm } from '../../../hooks/useConfirm';
 
 const log = logger.child('ExpenseDetailModal');
 
@@ -34,6 +36,7 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
     onNavigate,
     variant = 'center'
 }) => {
+    const confirm = useConfirm();
     const [activeTab, setActiveTab] = useState<'details' | 'documents'>('details');
     const [documents, setDocuments] = useState<any[]>([]);
     const [isLoadingDocs, setIsLoadingDocs] = useState(false);
@@ -155,13 +158,13 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
                         {expense.statut === '0' && (
                             <button
                                 onClick={async () => {
-                                    if (!window.confirm('Confirma/Submete este relatório de despesas?')) return;
+                                    if (!(await confirm('Confirma/Submete este relatório de despesas?'))) return;
                                     try {
                                         await DolibarrService.approveExpenseReport(config, expense.id);
                                         onClose();
                                     } catch (e) {
                                         log.error("Failed to approve expense report", e);
-                                        alert('Erro ao validar despesa.');
+                                        notifyError('Validar despesa', e);
                                     }
                                 }}
                                 className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
@@ -172,13 +175,13 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
                         {(expense.statut === '1' || expense.statut === '2' || expense.statut === '4') && (
                             <button
                                 onClick={async () => {
-                                    if (!window.confirm('Marcar despesa como Paga?')) return;
+                                    if (!(await confirm('Marcar despesa como Paga?'))) return;
                                     try {
                                         await DolibarrService.markExpenseReportAsPaid(config, expense.id);
                                         onClose();
                                     } catch (e) {
                                         log.error("Failed to mark expense as paid", e);
-                                        alert('Erro ao marcar despesa como paga.');
+                                        notifyError('Marcar como paga', e);
                                     }
                                 }}
                                 className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-1"

@@ -3,6 +3,7 @@ import { DolibarrConfig, Project, Product } from '../../../types';
 import { Loader2, CheckCircle2, X } from 'lucide-react';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { logger } from '../../../utils/logger';
+import { toast } from 'sonner';
 
 const log = logger.child('CreateMOModal');
 
@@ -54,10 +55,10 @@ export const CreateMOModal: React.FC<CreateMOModalProps> = ({ isOpen, onClose, c
                     label: moForm.label,
                     qty: moForm.qty,
                 });
-                alert("Ordem de Produção Atualizada com Sucesso");
+                toast.success("Ordem de Produção Atualizada com Sucesso");
             } else {
                 await DolibarrService.createManufacturingOrder(config, moForm);
-                alert("Ordem de Produção Criada com Sucesso");
+                toast.success("Ordem de Produção Criada com Sucesso");
             }
             onSuccess();
             onClose();

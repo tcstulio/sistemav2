@@ -12,6 +12,8 @@ import { DashboardConfigEditor } from './admin/DashboardConfigEditor';
 import { ScreenPermissionsEditor } from './admin/ScreenPermissionsEditor';
 import { PageLayout, PageHeader, Card, Button, Input, Modal } from './ui';
 import { logger } from '../utils/logger';
+import { useConfirm } from '../hooks/useConfirm';
+import { notifyError } from '../utils/notifyError';
 
 const log = logger.child('Settings');
 
@@ -24,6 +26,7 @@ interface SettingsProps {
 }
 
 const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
+    const confirm = useConfirm();
     const { logout, setConfig } = useDolibarr();
     const [localConfig, setLocalConfig] = useState<DolibarrConfig | null>(config);
 
@@ -129,11 +132,11 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                 onSave?.(updatedConfig); // Persist to storage
 
                 setIsEditModalOpen(false);
-                alert("Perfil atualizado com sucesso!");
+                toast.success("Perfil atualizado com sucesso!");
             }
         } catch (e: any) {
             log.error(e);
-            alert(`Falha ao atualizar perfil: ${e.message}`);
+            notifyError('Atualizar perfil', e);
         } finally {
             setIsSavingProfile(false);
         }
@@ -209,8 +212,8 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                             <Button
                                 type="button"
                                 variant="danger"
-                                onClick={() => {
-                                    if (confirm("Tem certeza que deseja sair?")) {
+                                onClick={async () => {
+                                    if (await confirm("Tem certeza que deseja sair?")) {
                                         logout();
                                     }
                                 }}
@@ -303,10 +306,10 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                         type="button"
                         variant="secondary"
                         onClick={async () => {
-                            if (confirm('Isso irá apagar todas as tarefas locais e baixar novamente. Continuar?')) {
+                            if (await confirm('Isso irá apagar todas as tarefas locais e baixar novamente. Continuar?')) {
                                 const allTasks = await dbService.getAll('tasks');
                                 await dbService.saveAll('tasks', []);
-                                alert('Tarefas limpas. O sistema irá sincronizar novamente em instantes.');
+                                toast.success('Tarefas limpas. O sistema irá sincronizar novamente em instantes.');
                                 window.location.reload();
                             }
                         }}

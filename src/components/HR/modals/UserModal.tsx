@@ -3,6 +3,7 @@ import { DolibarrConfig, DolibarrUser } from '../../../types';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { Loader2 } from 'lucide-react';
 import { logger } from '../../../utils/logger';
+import { toast } from 'sonner';
 
 const log = logger.child('UserModal');
 
@@ -65,10 +66,10 @@ export const UserModal: React.FC<UserModalProps> = ({
         try {
             if (userToEdit && userToEdit.id) {
                 await DolibarrService.updateUser(config, userToEdit.id, payload);
-                alert("Usuário atualizado com sucesso");
+                toast.success("Usuário atualizado com sucesso");
             } else {
                 await DolibarrService.createUser(config, payload);
-                alert("Usuário criado com sucesso");
+                toast.success("Usuário criado com sucesso");
             }
             onClose();
             if (onRefresh) onRefresh();

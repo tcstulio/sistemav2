@@ -4,6 +4,8 @@ import { X, Plus, Trash2, ArrowRight, Save, Wand2, Sparkles, Import, Users, Load
 import { DolibarrService } from '../../services/dolibarrService';
 import { AiService } from '../../services/aiService';
 import { logger } from '../../utils/logger';
+import { toast } from 'sonner';
+import { notifyError } from '../../utils/notifyError';
 
 const log = logger.child('TaskWizard');
 
@@ -264,7 +266,7 @@ export const TaskWizard: React.FC<TaskWizardProps> = ({ isOpen, onClose, project
             }
         } catch (e) {
             log.error("Failed to generate AI suggestions", e);
-            alert('Erro ao gerar sugestões com IA.');
+            notifyError('Gerar sugestões IA', e)
         } finally {
             setIsAiLoading(false);
         }
@@ -274,7 +276,7 @@ export const TaskWizard: React.FC<TaskWizardProps> = ({ isOpen, onClose, project
         if (!projectId) return;
         const sourceTasks = allTasks.filter(t => String(t.project_id) === String(projectId));
         if (sourceTasks.length === 0) {
-            alert('Projeto selecionado não possui tarefas.');
+            toast.info('Projeto selecionado não possui tarefas.');
             return;
         }
 
@@ -300,7 +302,7 @@ export const TaskWizard: React.FC<TaskWizardProps> = ({ isOpen, onClose, project
         // Validation
         const validRows = rows.filter(r => r.label.trim());
         if (validRows.length === 0) {
-            alert('Adicione pelo menos uma tarefa com título.');
+            toast.error('Adicione pelo menos uma tarefa com título.');
             return;
         }
 
@@ -343,7 +345,7 @@ export const TaskWizard: React.FC<TaskWizardProps> = ({ isOpen, onClose, project
             onClose();
         } catch (e) {
             log.error("Failed to create tasks", e);
-            alert('Erro ao criar tarefas.');
+            notifyError('Criar tarefas', e)
         } finally {
             setIsSubmitting(false);
         }

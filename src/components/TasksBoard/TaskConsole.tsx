@@ -5,6 +5,7 @@ import { Button } from '../ui';
 import { TaskService } from '../../services/taskService';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { toast } from 'sonner';
+import { useConfirm } from '../../hooks/useConfirm';
 
 interface LogEntry {
     type: 'info' | 'success' | 'warn' | 'error' | 'ai';
@@ -51,6 +52,7 @@ const TYPE_PREFIX: Record<string, string> = {
 };
 
 const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
+    const confirm = useConfirm();
     const { currentUser } = useDolibarr();
     const isAdmin = currentUser?.admin === 1 || currentUser?.admin === '1' || (currentUser?.admin as unknown) === true;
     const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -63,7 +65,7 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
 
     const handleKill = async () => {
         if (!isAdmin) { toast.error('Apenas administradores podem matar tasks.'); return; }
-        if (!confirm(`Matar a task #${issueNumber}? O processo do opencode e seus filhos serao encerrados (SIGKILL). Esta acao nao pode ser desfeita.`)) return;
+        if (!(await confirm(`Matar a task #${issueNumber}? O processo do opencode e seus filhos serao encerrados (SIGKILL). Esta acao nao pode ser desfeita.`))) return;
         setKilling(true);
         try {
             await TaskService.kill(issueNumber, 'user kill from TaskConsole');

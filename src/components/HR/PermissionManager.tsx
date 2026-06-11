@@ -4,6 +4,7 @@ import { usePermissions, useGroupRights, useUserRights, useGroups, useGroupUsers
 import * as HRAdmin from '../../services/api/hrAdmin';
 import { Lock, Check, Search, AlertCircle, Loader2, Users, CheckSquare, Square } from 'lucide-react';
 import { logger } from '../../utils/logger';
+import { notifyError } from '../../utils/notifyError';
 
 const log = logger.child('PermissionManager');
 
@@ -133,7 +134,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
             }
         } catch (e) {
             log.error("Failed to toggle permission", e);
-            alert("Erro ao alterar permissão via API.");
+            notifyError('Alterar permissão', e);
         } finally {
             setProcessingId(null);
         }
@@ -172,7 +173,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
             }, 1000);
         } catch (e) {
             log.error("Bulk action failed", e);
-            alert("Erro na atualização em massa.");
+            notifyError('Atualização em massa', e);
         } finally {
             setBulkProcessingModule(null);
         }

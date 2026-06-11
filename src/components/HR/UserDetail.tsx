@@ -12,6 +12,7 @@ import { ExpenseDetailModal } from './modals/ExpenseDetailModal';
 import { logger } from '../../utils/logger';
 import { notifyError } from '../../utils/notifyError';
 import { toast } from 'sonner';
+import { useConfirm } from '../../hooks/useConfirm';
 
 const log = logger.child('UserDetail');
 
@@ -48,6 +49,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
     expenseReportLines = [],
     expenseReportPayments = []
 }) => {
+    const confirm = useConfirm();
     const [detailTab, setDetailTab] = useState<'overview' | 'time' | 'expenses' | 'leaves' | 'team' | 'groups' | 'permissions'>('overview');
 
     // Hooks for Groups Management
@@ -90,7 +92,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
     };
 
     const handleRemoveFromGroup = async (groupId: string) => {
-        if (!confirm('Remover usuário deste grupo?')) return;
+        if (!(await confirm('Remover usuário deste grupo?'))) return;
         try {
             await HRAdmin.removeUserFromGroup(config, groupId, user.id);
             await refetchGroupLinks?.();
