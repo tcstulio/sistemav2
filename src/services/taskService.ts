@@ -119,4 +119,27 @@ export const TaskService = {
     reorder: async (order: number[]): Promise<void> => {
         await axios.put(`${API_URL}/reorder`, { order }, getAuthHeaders());
     },
+
+    analyze: async (issueNumber: number): Promise<{
+        action: string; reason: string; priority: number;
+        blockedBy: number[]; overlappingFiles: string[];
+        alreadyResolved: boolean; filesEstimate: string[];
+    }> => {
+        const response = await axios.post(`${API_URL}/planner/analyze/${issueNumber}`, {}, getAuthHeaders());
+        return response.data;
+    },
+
+    reevaluate: async (): Promise<{ reevaluated: number; decisions: any[] }> => {
+        const response = await axios.post(`${API_URL}/planner/reevaluate`, {}, getAuthHeaders());
+        return response.data;
+    },
+
+    startPreview: async (issueNumber: number): Promise<{ port: number; frontendUrl: string; backendUrl: string }> => {
+        const response = await axios.post(`${API_URL}/${issueNumber}/preview`, {}, getAuthHeaders());
+        return response.data;
+    },
+
+    stopPreview: async (issueNumber: number): Promise<void> => {
+        await axios.delete(`${API_URL}/${issueNumber}/preview`, getAuthHeaders());
+    },
 };
