@@ -227,7 +227,7 @@ const TaskListCard: React.FC<{
                             <span key={l} className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">{l}</span>
                         ))}
                     </div>
-                    <h3 className="font-semibold text-sm text-slate-800 dark:text-white truncate">{task.title}</h3>
+                    <h3 className="font-semibold text-sm text-slate-800 dark:text-white line-clamp-3">{task.title}</h3>
                     {task.planReason && (
                         <p className="text-[10px] text-indigo-500 dark:text-indigo-400 mt-0.5 line-clamp-1">{task.planReason}</p>
                     )}
@@ -622,7 +622,7 @@ const IssuesPage: React.FC = () => {
                                 <a key={issue.number} href={issue.url} target="_blank" rel="noopener noreferrer" className="flex items-start gap-3 p-3 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
                                     <span className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${issue.state === 'OPEN' ? 'bg-green-500' : 'bg-slate-400'}`} />
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-sm text-slate-700 dark:text-slate-300 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate">
+                                        <p className="text-sm text-slate-700 dark:text-slate-300 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 line-clamp-3">
                                             <span className="text-slate-400 mr-1">#{issue.number}</span>{issue.title}
                                         </p>
                                         <div className="flex items-center gap-2 mt-1">
@@ -839,7 +839,7 @@ const IssuesPage: React.FC = () => {
                                             <a key={i.number} href={i.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 text-sm text-slate-600 dark:text-slate-400 group">
                                                 <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
                                                 <span className="text-slate-400">#{i.number}</span>
-                                                <span className="truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400">{i.title}</span>
+                                                <span className="line-clamp-2 group-hover:text-indigo-600 dark:group-hover:text-indigo-400">{i.title}</span>
                                             </a>
                                         ))}
                                     </div>
