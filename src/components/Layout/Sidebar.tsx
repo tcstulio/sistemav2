@@ -237,7 +237,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
     if (!config) return null;
 
     return (
-        <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 lg:static lg:inset-auto flex flex-col`}>
+        <>
+            {/* #330 — Backdrop escuro ao abrir sidebar em mobile */}
+            {isOpen && (
+                <div
+                    className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm lg:hidden"
+                    onClick={() => setIsOpen(false)}
+                />
+            )}
+            <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 lg:static lg:inset-auto flex flex-col`}>
             {/* Header / Logo */}
             <div className="p-4 flex items-center gap-3 border-b border-slate-800 shrink-0">
                 <div className={`w-8 h-8 rounded-lg bg-gradient-to-br from-${config.themeColor}-500 to-${config.themeColor}-700 flex items-center justify-center font-bold text-lg shadow-lg`}>{logoText}</div>
@@ -309,5 +317,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
                 </p>
             </div>
         </aside>
+        </>
     );
 };

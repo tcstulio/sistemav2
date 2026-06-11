@@ -688,7 +688,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                 {/* Create Order Button for Signed Proposals */}
                 {selectedProposal.statut === '2' && (
                     <div className="flex items-center justify-between p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-100 dark:border-emerald-900/30 mb-6">
-                        <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                             <CheckCircle size={18} className="text-emerald-600 dark:text-emerald-400" />
                             <span className="text-sm font-medium text-emerald-800 dark:text-emerald-300">Proposta Assinada. Pronta para processamento.</span>
                         </div>
@@ -769,8 +769,8 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                             <h4 className="font-bold text-slate-800 dark:text-white mb-3 flex items-center gap-2">
                                 <List size={18} /> Itens da Proposta
                             </h4>
-                            <div className="border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden shadow-sm">
-                                <table className="w-full text-sm text-left">
+                            <div className="border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden shadow-sm overflow-x-auto">
+                                <table className="w-full text-sm text-left min-w-[500px]">
                                     <thead className="bg-slate-50 dark:bg-slate-800/80 text-xs text-slate-500 uppercase font-semibold">
                                         <tr>
                                             <th className="px-4 py-3">Descrição</th>
