@@ -693,24 +693,82 @@ class TaskRunnerService {
                 '--repo', REPO,
             ], { timeout: 30000 });
 
-            const judgePrompt = `You are a code reviewer (LLM Judge). Evaluate this PR against the original issue.
+            const changedFiles = diff.split('\n')
+                .filter(l => l.startsWith('diff --git '))
+                .map(l => l.replace(/^diff --git a\/.+ b\//, ''))
+                .filter(Boolean);
 
-Issue #${task.issueNumber}: ${task.title}
-${task.body.substring(0, 1000)}
+            const issueBody = task.body || '';
+            const mentionedFiles = issueBody.match(/[\w/.-]+\.(ts|tsx|js|jsx|json|css|md|sql)/g) || [];
+            const missingFiles = mentionedFiles.filter(f => !changedFiles.some(cf => cf.includes(f)));
 
-PR Diff:
-${diff.substring(0, 15000)}
+            let agentsMd = '';
+            try {
+                agentsMd = fs.readFileSync(path.join(REPO_ROOT, 'AGENTS.md'), 'utf8');
+            } catch { /* não encontrado, segue sem */ }
 
-Rate this PR on a scale of 0-10 based on:
-1. Does it solve the issue? (0-4 points)
-2. Code quality and patterns? (0-2 points)  
-3. Error handling? (0-2 points)
-4. Tests? (0-2 points)
+            const coverageNote = missingFiles.length > 0
+                ? `\n**ATENÇÃO:** Arquivos mencionados na issue que NÃO foram modificados: ${missingFiles.join(', ')}. Verifique se a implementação está completa.`
+                : '';
 
-Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief review in Portuguese>"}`;
+            const diffContent = diff.length > 50000
+                ? diff.substring(0, 50000) + '\n\n[... diff truncado após 50KB ...]'
+                : diff;
+
+            const judgePrompt = `You are a strict senior code reviewer (LLM Judge) for a production system.
+Evaluate this PR against the original issue and project conventions.
+
+## Projeto
+- Backend: Express + TypeScript (porta 3004), Dolibarr ERP como backend de dados
+- Frontend: React + Vite (porta 5173)
+- Repo: tcstulio/sistemav2
+
+## Convenções (AGENTS.md)
+${agentsMd || 'Não disponível'}
+
+## Issue #${task.issueNumber}: ${task.title}
+${issueBody.substring(0, 3000)}
+${task.feedbackHistory.length ? `\n## Feedback anterior a atender\n${task.feedbackHistory.map(fb => `- ${fb}`).join('\n')}` : ''}
+
+## Arquivos modificados (${changedFiles.length})
+${changedFiles.join('\n')}
+${coverageNote}
+
+## PR Diff
+${diffContent}
+
+## Rubrica de avaliação (0-10)
+
+### 1. Completude (0-3 pontos)
+- Resolve TODOS os itens da issue?
+- Todos os arquivos mencionados na issue foram tocados?
+- Todos os critérios de aceite foram atendidos?
+
+### 2. Qualidade do código (0-2 pontos)
+- Segue padrões existentes (TypeScript, convenções do projeto)?
+- Sem duplicação, nomes descritivos, tipos corretos?
+- Usa bibliotecas já presentes no projeto (não inventa deps)?
+
+### 3. Robustez (0-2 pontos)
+- Error handling adequado (try/catch, fallbacks)?
+- Edge cases cobertos?
+- Não introduz vazamentos de memória, secrets ou XSS?
+
+### 4. Testes e verificação (0-2 pontos)
+- Testes foram escritos ou atualizados?
+- tsc --noEmit passaria?
+- Lint passaria?
+
+### 5. Convenções do projeto (0-1 ponto)
+- Commit message segue padrão "tipo(#issue): descrição"?
+- Sem .env ou credenciais no diff?
+- Imports e estrutura consistentes?
+
+Return ONLY a JSON:
+{"score": <number>, "approved": <boolean>, "review": "<revisão detalhada em português, listando pontos positivos e negativos>", "missing_coverage": ["<arquivo ou critério não atendido>"]}`;
 
             const history = [
-                { role: 'system' as const, parts: 'You are a strict code reviewer. Be objective.' },
+                { role: 'system' as const, parts: 'You are a strict senior code reviewer. Be thorough and objective. Evaluate against ALL criteria. Do not inflate scores.' },
                 { role: 'user' as const, parts: judgePrompt },
             ];
 
@@ -727,16 +785,24 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
                     score: result.score,
                     approved: !!result.approved,
                     review: result.review,
+                    missingCoverage: result.missing_coverage || [],
                     attempt: task.judgeAttempts,
                 });
 
-                if (result.score >= 7 || task.judgeAttempts >= 3) {
-                    task.status = 'approved';
-                    this.emitLog(task.issueNumber, 'success', `Judge aprovou com score ${result.score}/10`);
+                if (result.score >= 8 || task.judgeAttempts >= 3) {
+                    task.status = result.score >= 6 ? 'approved' : 'reviewing';
+                    this.emitLog(task.issueNumber, 'success', `Judge: ${result.score}/10 — ${result.score >= 8 ? 'auto-aprovado' : result.score >= 6 ? 'aprovado (múltiplas tentativas)' : 'requer revisão humana'}`);
+                } else if (result.score >= 6) {
+                    task.status = 'reviewing';
+                    this.emitLog(task.issueNumber, 'info', `Judge: ${result.score}/10 — aguardando revisão humana`);
                 } else {
                     log.info(`Judge score ${result.score}/10, auto-fixing (attempt ${task.judgeAttempts})`);
                     this.emitLog(task.issueNumber, 'warn', `Judge reprovou (${result.score}/10). Auto-corrigindo (tentativa ${task.judgeAttempts})...`);
-                    task.feedbackHistory.push(`Judge (score ${result.score}/10): ${result.review}`);
+                    const fixContext = [
+                        `Judge (score ${result.score}/10): ${result.review}`,
+                        ...(result.missing_coverage?.length ? [`Cobertura faltando: ${result.missing_coverage.join(', ')}`] : []),
+                    ].join('\n');
+                    task.feedbackHistory.push(fixContext);
                     task.status = 'fixing';
                     this.save();
 
