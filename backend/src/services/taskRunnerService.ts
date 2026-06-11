@@ -397,9 +397,26 @@ class TaskRunnerService {
      */
     async syncWithGitHub(): Promise<{ reconciled: number[] }> {
         const reconciled: number[] = [];
+        const now = Date.now();
         for (const [numStr, task] of Object.entries(this.store.tasks)) {
             const num = Number(numStr);
             if (this.isTerminalStatus(task.status)) continue;
+
+            // #323: resolve tasks presas em 'cancelling' ha mais de 60s (processo morreu sem completar)
+            if (task.status === 'cancelling') {
+                const updatedMs = new Date(task.updatedAt).getTime();
+                if (now - updatedMs > 60_000) {
+                    task.status = 'cancelled';
+                    task.error = task.error || 'Auto-resolvido: stuck em cancelling (>60s)';
+                    task.completedAt = new Date().toISOString();
+                    task.childPid = undefined;
+                    task.killRequested = false;
+                    this.recordEvent(task, 'task_killed', 'Auto-resolvido: stuck em cancelling (>60s)');
+                    reconciled.push(num);
+                    log.warn(`Task #${num} auto-resolvida de cancelling -> cancelled`);
+                }
+                continue;
+            }
 
             let issueData: any;
             try {
