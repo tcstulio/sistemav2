@@ -16,6 +16,7 @@ import { useDolibarr } from '../../context/DolibarrContext';
 import { useUsers, useCustomers, useInvoices, useOrders, useTickets } from '../../hooks/dolibarr';
 import { toast } from 'sonner';
 import { logger } from '../../utils/logger';
+import { useConfirm } from '../../hooks/useConfirm';
 
 const log = logger.child('EmailView');
 
@@ -28,6 +29,7 @@ const POLL_OPTIONS = [
 ];
 
 const EmailView: React.FC = () => {
+    const confirm = useConfirm();
     // State
     const [accounts, setAccounts] = useState<EmailAccount[]>([]);
     const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
@@ -425,7 +427,7 @@ const EmailView: React.FC = () => {
 
     const handleBulkDelete = async () => {
         if (!selectedAccountId || selectedUids.size === 0) return;
-        if (!window.confirm(`Excluir ${selectedUids.size} mensagem(ns)?`)) return;
+        if (!(await confirm(`Excluir ${selectedUids.size} mensagem(ns)?`))) return;
         try {
             await EmailService.deleteMessages(selectedAccountId, selectedFolder, Array.from(selectedUids));
             toast.success(`${selectedUids.size} mensagem(ns) excluída(s)`);

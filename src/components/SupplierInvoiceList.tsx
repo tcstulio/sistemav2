@@ -30,6 +30,8 @@ import { ReceiptWizard } from './Finance/ReceiptWizard';
 import { RichTextEditor } from './common/RichTextEditor';
 import { SupplierPaymentModal } from './Modals/SupplierPaymentModal';
 import { toast } from 'sonner';
+import { useConfirm } from '../hooks/useConfirm';
+import { notifyError } from '../utils/notifyError';
 
 interface SupplierInvoiceListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -37,6 +39,7 @@ interface SupplierInvoiceListProps {
 
 const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate }) => {
     const { config, refreshData } = useDolibarr();
+    const confirm = useConfirm();
 
     // Data Hooks
     const { data: invoices = [], refetch: refetchInvoices } = useSupplierInvoices(config);
@@ -107,7 +110,8 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
     };
 
     const handleDeleteDocument = async (filename: string) => {
-        if (!selectedInvoice || !config || !confirm(`Excluir ${filename}?`)) return;
+        if (!selectedInvoice || !config) return;
+        if (!(await confirm(`Excluir ${filename}?`))) return;
         try {
             await DolibarrService.deleteDocument(config, 'supplier_invoice', `${selectedInvoice.ref}/${filename}`);
             loadDocuments();
@@ -504,7 +508,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                         )}
                         {selectedInvoice.statut === '0' && (
                             <Button size="sm" icon={<CheckCircle size={14} />} onClick={async () => {
-                                if (!window.confirm('Confirma a validação desta fatura?')) return;
+                                if (!(await confirm('Confirma a validação desta fatura?'))) return;
                                 try {
                                     await DolibarrService.validateSupplierInvoice(config, selectedInvoice.id);
                                     refreshData();
@@ -527,7 +531,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                         )}
                         {(selectedInvoice.statut === '1' || selectedInvoice.statut === '2') && (
                             <Button variant="ghost" size="sm" onClick={async () => {
-                                if (!confirm("Reabrir fatura de fornecedor (voltar para rascunho)?")) return;
+                                if (!(await confirm("Reabrir fatura de fornecedor (voltar para rascunho)?"))) return;
                                 try {
                                     await DolibarrService.setSupplierInvoiceToDraft(config, selectedInvoice.id);
                                     refreshData();
@@ -800,7 +804,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                                             await DolibarrService.downloadDocument(config, 'supplier_invoice', `${selectedInvoice.ref}/${doc.name}`);
                                                         } catch (err) {
                                                             log.error("Failed to download document", err);
-                                                            alert("Erro ao baixar arquivo");
+                                                            notifyError('Baixar arquivo', err)
                                                         }
                                                     }}
                                                     className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg"

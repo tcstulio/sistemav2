@@ -1,6 +1,7 @@
 import React from 'react';
 import { EmailAccount } from '../../types/email';
 import { Mail, Plus, Trash2, Settings } from 'lucide-react';
+import { useConfirm } from '../../hooks/useConfirm';
 
 interface EmailAccountListProps {
     accounts: EmailAccount[];
@@ -21,6 +22,7 @@ export const EmailAccountList: React.FC<EmailAccountListProps> = ({
     onDeleteAccount,
     unreadCounts = {}
 }) => {
+    const confirm = useConfirm();
     return (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-900 border-r border-slate-200 dark:border-slate-700">
             <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
@@ -76,9 +78,9 @@ export const EmailAccountList: React.FC<EmailAccountListProps> = ({
                                     <Settings size={15} />
                                 </button>
                                 <button
-                                    onClick={(e) => {
+                                    onClick={async (e) => {
                                         e.stopPropagation();
-                                        if (window.confirm('Remover conta?')) onDeleteAccount(account.id);
+                                        if (await confirm('Remover conta?')) onDeleteAccount(account.id);
                                     }}
                                     className="p-1.5 text-slate-400 hover:text-red-500"
                                     title="Remover conta"

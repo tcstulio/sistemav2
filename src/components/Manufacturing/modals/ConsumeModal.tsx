@@ -3,6 +3,8 @@ import { DolibarrConfig, Product, Warehouse, AppView } from '../../../types';
 import { Loader2, ArrowDownCircle, X } from 'lucide-react';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { logger } from '../../../utils/logger';
+import { toast } from 'sonner';
+import { notifyError } from '../../../utils/notifyError';
 
 const log = logger.child('ConsumeModal');
 
@@ -46,7 +48,7 @@ export const ConsumeModal: React.FC<ConsumeModalProps> = ({
     const handleExecuteMovement = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!executionForm.warehouseId || !executionForm.productId) {
-            alert("Por favor, verifique todos os campos.");
+            toast.error("Por favor, verifique todos os campos.");
             return;
         }
 
@@ -63,7 +65,7 @@ export const ConsumeModal: React.FC<ConsumeModalProps> = ({
                 label: label
             });
 
-            alert(`Movimentação de estoque criada com sucesso`);
+            toast.success("Movimentação de estoque criada com sucesso");
             onClose();
             if (onNavigate) {
                 onNavigate('inventory', '');
@@ -71,7 +73,7 @@ export const ConsumeModal: React.FC<ConsumeModalProps> = ({
 
         } catch (err: any) {
             log.error(err);
-            alert(`Falha: ${err.message}`);
+            notifyError('Criar movimentação', err);
         } finally {
             setIsExecuting(false);
         }

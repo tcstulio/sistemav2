@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Server, Database, Activity, RefreshCw, Power, Lock, Key } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
+import { toast } from 'sonner';
+import { useConfirm } from '../hooks/useConfirm';
 
 const AdminApp: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'backend'>('backend');
     const [backendStatus, setBackendStatus] = useState<any>(null);
     const { config } = useDolibarr();
+    const confirm = useConfirm();
 
     // Auth State
     const [adminKey, setAdminKey] = useState('');
@@ -54,20 +57,20 @@ const AdminApp: React.FC = () => {
     };
 
     const handleRestart = async () => {
-        if (!confirm("Isso tentará reiniciar a conexão do WhatsApp. Confirmar?")) return;
+        if (!(await confirm("Isso tentará reiniciar a conexão do WhatsApp. Confirmar?"))) return;
         try {
             const res = await fetch('/api/admin/restart', {
                 method: 'POST',
                 headers: { 'x-admin-key': adminKey }
             });
             if (res.status === 403) {
-                alert("Acesso Negado: Chave Inválida");
+                toast.error("Acesso Negado: Chave Inválida");
                 return;
             }
-            alert("Comando enviado.");
+            toast.success("Comando enviado.");
             fetchBackendStatus();
         } catch (e) {
-            alert("Erro ao enviar comando.");
+            toast.error("Erro ao enviar comando.");
         }
     };
 

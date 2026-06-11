@@ -12,6 +12,8 @@ import { Project, DolibarrUser } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
 import { logger } from '../../utils/logger';
 import { SafeHtml, stripHtml, sanitizeHtml } from '../../utils/sanitizeHtml';
+import { toast } from 'sonner';
+import { notifyError } from '../../utils/notifyError';
 
 const log = logger.child('ChatInterface');
 
@@ -125,11 +127,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
 
                 setNewMessage(prev => prev + fileLink);
             } else {
-                alert('Upload não suportado neste contexto (falta referência "Ref").');
+                toast.error('Upload não suportado neste contexto (falta referência "Ref").');
             }
         } catch (err) {
             log.error('Upload failed', err);
-            alert('Falha no upload do arquivo.');
+            notifyError('Upload arquivo', err);
         } finally {
             setIsUploading(false);
             if (fileInputRef.current) fileInputRef.current.value = '';

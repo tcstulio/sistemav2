@@ -28,6 +28,7 @@ import * as HRAdmin from '../services/api/hrAdmin';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useUsers, useExpenseReports, useLeaveRequests, useJobPositions, useCandidates, useTasks, useTickets, useProjects, useGroups, useExpenseReportLines, useExpenseReportPayments } from '../hooks/dolibarr';
 import { logger } from '../utils/logger';
+import { useConfirm } from '../hooks/useConfirm';
 
 const log = logger.child('HRList');
 
@@ -43,6 +44,7 @@ const HRList: React.FC<HRListProps> = ({
     initialItemId,
     onRefresh
 }) => {
+    const confirm = useConfirm();
     const { config, currentUser } = useDolibarr();
 
     const { data: usersData } = useUsers(config);
@@ -354,11 +356,9 @@ const HRList: React.FC<HRListProps> = ({
     };
 
     const handleDeleteUser = async (id: string) => {
-        if (confirm("Tem certeza que deseja excluir este usuário?")) {
+        if (await confirm("Tem certeza que deseja excluir este usuário?")) {
             try {
-                // Not implemented in Service? Assuming it exists or mocking alert
-                // await DolibarrService.deleteUser(config, id); 
-                alert("Funcionalidade de exclusão pendente de implementação na API.");
+                toast.info("Funcionalidade de exclusão pendente de implementação na API.");
             } catch (e) { log.error("Failed to delete user", e); }
         }
     };
@@ -558,9 +558,8 @@ const HRList: React.FC<HRListProps> = ({
                                 setIsGroupModalOpen(true);
                             }}
                             onDeleteGroup={async (id) => {
-                                if (confirm("Excluir Grupo?")) {
+                                if (await confirm("Excluir Grupo?")) {
                                     await HRAdmin.deleteGroup(config, id);
-                                    // Refresh logic ideally handled via onRefresh or query invalidation
                                     onRefresh?.();
                                 }
                             }}

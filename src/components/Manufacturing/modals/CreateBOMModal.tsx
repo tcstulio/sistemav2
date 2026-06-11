@@ -3,6 +3,7 @@ import { DolibarrConfig, Product } from '../../../types';
 import { Loader2, CheckCircle2, X } from 'lucide-react';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { logger } from '../../../utils/logger';
+import { toast } from 'sonner';
 
 const log = logger.child('CreateBOMModal');
 
@@ -52,10 +53,10 @@ export const CreateBOMModal: React.FC<CreateBOMModalProps> = ({ isOpen, onClose,
                     qty: bomForm.qty,
                     duration: bomForm.duration,
                 });
-                alert("BOM Atualizada com Sucesso");
+                toast.success("BOM Atualizada com Sucesso");
             } else {
                 await DolibarrService.createBOM(config, bomForm);
-                alert("BOM Criada com Sucesso");
+                toast.success("BOM Criada com Sucesso");
             }
             onSuccess();
             onClose();

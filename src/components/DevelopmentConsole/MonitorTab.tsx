@@ -5,10 +5,13 @@ import { useDolibarr } from '../../context/DolibarrContext';
 import { dbService } from '../../services/dbService';
 import { runBackgroundSync } from '../../services/backgroundSyncService';
 import { logger } from '../../utils/logger';
+import { useConfirm } from '../../hooks/useConfirm';
+import { notifyError } from '../../utils/notifyError';
 
 const log = logger.child('MonitorTab');
 
 export const MonitorTab: React.FC = () => {
+    const confirm = useConfirm();
     const { config, refreshData, isLoading: isSyncLoading, isSyncPaused, toggleSyncPause } = useDolibarr();
     const [stats, setStats] = useState<Record<string, number>>({});
     const [storageUsage, setStorageUsage] = useState<number>(0);
@@ -44,15 +47,13 @@ export const MonitorTab: React.FC = () => {
     const handleDeleteData = async () => {
         if (isDeleting) return;
 
-        const confirmed = window.confirm(
+        if (!(await confirm(
             '⚠️ ATENÇÃO: Esta ação irá DELETAR COMPLETAMENTE o banco de dados local.\n\n' +
             'Isso inclui todos os registros sincronizados (clientes, faturas, propostas, etc.).\n\n' +
             'A página será recarregada para recriar o banco com todas as tabelas.\n\n' +
             'Você precisará sincronizar novamente após deletar.\n\n' +
             'Deseja continuar?'
-        );
-
-        if (!confirmed) return;
+        ))) return;
 
         setIsDeleting(true);
         try {
@@ -64,7 +65,7 @@ export const MonitorTab: React.FC = () => {
             window.location.reload();
         } catch (e) {
             log.error('Failed to delete local database:', e);
-            alert('Erro ao deletar banco de dados local. Verifique o console para mais detalhes.');
+            notifyError('Deletar banco local', e);
             setIsDeleting(false);
         }
         // Note: no finally/setIsDeleting(false) needed as page will reload

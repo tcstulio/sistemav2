@@ -7,6 +7,7 @@ import { useCustomerMutations } from '../../hooks/useMutations';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { toast } from 'sonner';
 import { logger } from '../../utils/logger';
+import { useConfirm } from '../../hooks/useConfirm';
 
 const log = logger.child('ChatWindow');
 
@@ -37,6 +38,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
     isContextOpen,
     onRetry
 }) => {
+    const confirm = useConfirm();
     const chatContainerRef = useRef<HTMLDivElement>(null);
 
     const scrollToBottom = () => {
@@ -269,8 +271,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                                         <span className="max-w-[100px] truncate">{assignee?.login || 'Outro Agente'}</span>
                                     </div>
                                     <button
-                                        onClick={() => {
-                                            if (confirm(`Esta conversa está com ${assignee?.login || 'outro agente'}. Deseja assumir mesmo assim?`)) {
+                                        onClick={async () => {
+                                            if (await confirm(`Esta conversa está com ${assignee?.login || 'outro agente'}. Deseja assumir mesmo assim?`)) {
                                                 onAssign(currentUser.id);
                                             }
                                         }}

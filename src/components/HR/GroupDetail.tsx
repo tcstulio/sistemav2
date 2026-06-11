@@ -6,6 +6,8 @@ import * as HRAdmin from '../../services/api/hrAdmin';
 import { UserAvatar } from './UserAvatar';
 import { PermissionManager } from './PermissionManager';
 import { logger } from '../../utils/logger';
+import { notifyError } from '../../utils/notifyError';
+import { useConfirm } from '../../hooks/useConfirm';
 
 const log = logger.child('GroupDetail');
 
@@ -24,6 +26,7 @@ export const GroupDetail: React.FC<GroupDetailProps> = ({
     onClose,
     onRefresh
 }) => {
+    const confirm = useConfirm();
     const { data: groupUsersLinks } = useGroupUsers(currentConfig);
     const { data: groups } = useGroups(currentConfig); // To check latest state if needed
 
@@ -61,21 +64,21 @@ export const GroupDetail: React.FC<GroupDetailProps> = ({
             setSelectedUserIdToAdd('');
         } catch (e) {
             log.error(e);
-            alert('Erro ao adicionar membro.');
+            notifyError('Adicionar membro', e);
         } finally {
             setIsSaving(false);
         }
     };
 
     const handleRemoveMember = async (userId: string) => {
-        if (!confirm('Remover usuário do grupo?')) return;
+        if (!(await confirm('Remover usuário do grupo?'))) return;
         setIsSaving(true);
         try {
             await HRAdmin.removeUserFromGroup(currentConfig, group.id, userId);
             onRefresh();
         } catch (e) {
             log.error(e);
-            alert('Erro ao remover membro.');
+            notifyError('Remover membro', e);
         } finally {
             setIsSaving(false);
         }

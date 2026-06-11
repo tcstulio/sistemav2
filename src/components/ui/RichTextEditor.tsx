@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bold, Italic, List, Link as LinkIcon } from 'lucide-react';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
+import { usePrompt } from '../../hooks/usePrompt';
 
 interface RichTextEditorProps {
     /** Current HTML value (will be sanitized before being rendered into the editor). */
@@ -40,6 +41,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
 }) => {
     const editorRef = useRef<HTMLDivElement>(null);
     const [isFocused, setIsFocused] = useState(false);
+    const promptDialog = usePrompt();
 
     // Sync external value into the editor. We sanitize before assigning innerHTML
     // so stored/untrusted HTML can't run scripts. Skip while focused to avoid
@@ -65,8 +67,8 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
         editorRef.current?.focus();
     };
 
-    const insertLink = () => {
-        const url = window.prompt('URL do link:', 'https://');
+    const insertLink = async () => {
+        const url = await promptDialog({ message: 'URL do link:', defaultValue: 'https://' });
         if (!url) return;
         execCmd('createLink', url);
     };

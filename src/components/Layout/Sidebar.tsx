@@ -15,6 +15,7 @@ import {
     Calculator, Building2, ChevronDown, ChevronRight, Music, ShieldCheck, Warehouse,
     Zap
 } from 'lucide-react';
+import { useConfirm } from '../../hooks/useConfirm';
 
 interface SidebarProps {
     isOpen: boolean;
@@ -88,6 +89,7 @@ const MENU_ICONS: Record<string, React.ElementType> = {
 };
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
+    const confirm = useConfirm();
     const { config, setConfig, canAccess } = useDolibarr();
     const { data: modules } = useModules(config);
     const navigate = useNavigate();
@@ -219,8 +221,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
         );
     }, [location.pathname]);
 
-    const handleLogout = () => {
-        if (confirm("Deseja desconectar do ERP?")) {
+    const handleLogout = async () => {
+        if (await confirm("Deseja desconectar do ERP?")) {
             setConfig(null);
             navigate('/');
         }
