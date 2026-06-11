@@ -362,6 +362,16 @@ export const AiService = {
         }
     },
 
+    deleteAllChatSessions: async (): Promise<number> => {
+        try {
+            const response = await axios.delete(`${API_URL}/sessions`, getAuthHeaders());
+            return response.data.deletedCount || 0;
+        } catch (error: any) {
+            handleAiError('Deletar todas as sessões', error);
+            return 0;
+        }
+    },
+
     analyzeSystemLogs: async (logs: any[]) => {
         try {
             const response = await axios.post(`${API_URL}/analyze/logs`, {

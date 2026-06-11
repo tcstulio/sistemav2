@@ -535,6 +535,15 @@ router.get('/sessions/:id', (req, res) => {
     }
 });
 
+router.delete('/sessions', (req, res) => {
+    try {
+        const count = chatSessionService.deleteAllSessions();
+        res.json({ success: true, deletedCount: count });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 router.delete('/sessions/:id', (req, res) => {
     try {
         const success = chatSessionService.deleteSession(req.params.id);
