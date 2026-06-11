@@ -73,7 +73,7 @@ export class DolibarrHRService extends DolibarrServiceBase {
     async listLeaveRequests(status?: string): Promise<any[]> {
         try {
             const headers = this.getHeaders();
-            const url = `${this.baseUrl}leaves`;
+            const url = `${this.baseUrl}holidays`;
             const params: any = { limit: 10 };
             if (status === 'approved') params.sqlfilters = "(t.status:=:'3')";
             if (status === 'pending') params.sqlfilters = "(t.status:=:'2')";

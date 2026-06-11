@@ -199,7 +199,7 @@ export const SmartQuotationWizard: React.FC = () => {
                             isNewSupplier: !supplierMatch,
                             supplierDraft: !supplierMatch ? {
                                 name: o.source,
-                                email: `contato@${o.source.toLowerCase().replace(/\s/g, '')}.com` // Mock
+                                email: ''
                             } : undefined
                         });
                     });
