@@ -56,7 +56,7 @@ class NotificationService {
         proposal: 'proposals',
         ticket: 'tickets',
         product: 'products',
-        task: 'my-tasks',
+        task: 'tasks',
         project: 'projects',
         supplier_order: 'suppliers',
         supplier_invoice: 'supplier_invoices',
