@@ -30,15 +30,35 @@ const ScreenPermissionsSchema = z.object({
 // #113 — telas customizadas; sanitização final fica no service (sanitizeCustomPages).
 const CustomPagesSchema = z.array(z.any()).optional();
 
+// #348 — matriz de notificações de tarefa (evento × papel × canais)
+const NotifChannelsSchema = z.array(z.enum(['in-app', 'whatsapp', 'email'])).optional();
+const TaskNotifRoleSchema = z.object({
+    responsavel: NotifChannelsSchema,
+    interveniente: NotifChannelsSchema,
+    criador: NotifChannelsSchema,
+}).optional();
+const TaskNotificationsSchema = z.object({
+    assigned: TaskNotifRoleSchema,
+    acceptance_pending: TaskNotifRoleSchema,
+    acceptance_overdue: TaskNotifRoleSchema,
+    deadline_reminder: TaskNotifRoleSchema,
+    overdue: TaskNotifRoleSchema,
+    stalled: TaskNotifRoleSchema,
+    completed: TaskNotifRoleSchema,
+    comment: TaskNotifRoleSchema,
+}).optional();
+
 const UpdateSchema = z.object({
     companyName: z.string().min(1).max(100).optional(),
     logoText: z.string().min(1).max(8).optional(),
     logoUrl: z.string().max(500).optional(),
     themeColor: z.string().optional(),
-    menu: PrefsSchema,         // #110 — ordem/visibilidade do menu
-    dashboard: PrefsSchema,    // #111 — ordem/visibilidade dos widgets
-    screenPermissions: ScreenPermissionsSchema,  // #112 — permissões de tela por pessoa/grupo
-    customPages: CustomPagesSchema,              // #113 — telas customizadas por grupo
+    menu: PrefsSchema,
+    dashboard: PrefsSchema,
+    screenPermissions: ScreenPermissionsSchema,
+    customPages: CustomPagesSchema,
+    taskNotifications: TaskNotificationsSchema,
+    taskNotificationsExternalEnabled: z.boolean().optional(),
 });
 
 // Leitura: qualquer usuário logado (p/ renderizar branding/tema da org).

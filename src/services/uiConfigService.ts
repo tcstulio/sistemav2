@@ -7,16 +7,22 @@ import { CustomPage } from '../config/customPages';
 
 const log = logger.child('UiConfigService');
 
-// Config de UI da ORGANIZAÇÃO (branding/tema/menu/dashboard/permissões), definida pelo admin no backend.
+export type NotifChannel = 'in-app' | 'whatsapp' | 'email';
+export type TaskNotifEvent = 'assigned' | 'acceptance_pending' | 'acceptance_overdue' | 'deadline_reminder' | 'overdue' | 'stalled' | 'completed' | 'comment';
+export type TaskNotifRole = 'responsavel' | 'interveniente' | 'criador';
+export type TaskNotificationsConfig = Record<TaskNotifEvent, Record<TaskNotifRole, NotifChannel[]>>;
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
     logoUrl?: string;
     themeColor: string;
-    menu?: OrderVisibilityPrefs;       // #110 — padrão da org p/ o menu lateral
-    dashboard?: OrderVisibilityPrefs;  // #111 — padrão da org p/ os widgets do painel
-    screenPermissions?: ScreenPermissions;  // #112 — permissões de tela por pessoa/grupo
-    customPages?: CustomPage[];        // #113 — telas customizadas por grupo
+    menu?: OrderVisibilityPrefs;
+    dashboard?: OrderVisibilityPrefs;
+    screenPermissions?: ScreenPermissions;
+    customPages?: CustomPage[];
+    taskNotifications?: TaskNotificationsConfig;
+    taskNotificationsExternalEnabled?: boolean;
 }
 
 const API_URL = '/api/ui-config';
