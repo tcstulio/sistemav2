@@ -25,7 +25,7 @@ export function ListToolbar<T>({ controls, searchPlaceholder = 'Buscar...', clas
                     value={controls.search}
                     onChange={(e) => controls.setSearch(e.target.value)}
                     icon={<Search size={16} />}
-                    className="w-48"
+                    className="w-full sm:w-48"
                     fullWidth={false}
                 />
             )}
