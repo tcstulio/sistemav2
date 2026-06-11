@@ -170,6 +170,14 @@ class ChatSessionService {
         return false;
     }
 
+    deleteAllSessions(): number {
+        const count = this.data.sessions.length;
+        this.data.sessions = [];
+        this.save();
+        log.info(`Deleted all sessions (${count})`);
+        return count;
+    }
+
     getStats() {
         return {
             totalSessions: this.data.sessions.length,

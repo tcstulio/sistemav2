@@ -590,4 +590,48 @@ describe('AiService', () => {
             expect(result).toBeNull();
         });
     });
+
+    describe('deleteChatSession', () => {
+        it('deletes a single session', async () => {
+            mockAxios.delete.mockResolvedValue({ data: { success: true } });
+
+            const result = await AiService.deleteChatSession('chat_123');
+
+            expect(result).toBe(true);
+            expect(mockAxios.delete).toHaveBeenCalledWith(
+                expect.stringContaining('/sessions/chat_123'),
+                expect.any(Object)
+            );
+        });
+
+        it('returns false on error', async () => {
+            mockAxios.delete.mockRejectedValue(new Error('Delete failed'));
+
+            const result = await AiService.deleteChatSession('chat_123');
+
+            expect(result).toBe(false);
+        });
+    });
+
+    describe('deleteAllChatSessions', () => {
+        it('deletes all sessions and returns count', async () => {
+            mockAxios.delete.mockResolvedValue({ data: { success: true, deletedCount: 7 } });
+
+            const result = await AiService.deleteAllChatSessions();
+
+            expect(result).toBe(7);
+            expect(mockAxios.delete).toHaveBeenCalledWith(
+                expect.stringContaining('/sessions'),
+                expect.any(Object)
+            );
+        });
+
+        it('returns 0 on error', async () => {
+            mockAxios.delete.mockRejectedValue(new Error('Delete all failed'));
+
+            const result = await AiService.deleteAllChatSessions();
+
+            expect(result).toBe(0);
+        });
+    });
 });
