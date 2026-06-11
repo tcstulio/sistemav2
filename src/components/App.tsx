@@ -1,5 +1,5 @@
 import React, { Suspense } from 'react';
-import { BrowserRouter, Routes, Route, useParams, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useParams, useNavigate, Navigate } from 'react-router-dom';
 import { useDolibarr } from '../context/DolibarrContext';
 import { Loader2 } from 'lucide-react';
 import { RestrictedAccess } from './RestrictedAccess';
@@ -63,7 +63,7 @@ const ChatConversation = React.lazy(() => import('../pages/ChatPage').then(m => 
 const Simulator = React.lazy(() => import('../pages/Simulator'));
 const CentroVibeManager = React.lazy(() => import('./CentroVibe/CentroVibeManager'));
 const GroupManager = React.lazy(() => import('./admin/GroupManager').then(m => ({ default: m.GroupManager })));
-const TasksBoard = React.lazy(() => import('./TasksBoard/TasksBoard'));
+const TasksBoard = React.lazy(() => import('./TasksBoard/TasksBoard').then(m => ({ default: m.default })));
 const IssuesPage = React.lazy(() => import('./Issues/IssuesPage'));
 
 interface ViewWrapperProps {
@@ -281,7 +281,7 @@ const App: React.FC = () => {
 
                         <Route path="/settings" element={<ViewWrapper Component={SettingsView} viewId="settings" />} />
                         <Route path="/admin/groups" element={<ViewWrapper Component={GroupManager} viewId="settings" />} />
-                        <Route path="/opencode-tasks" element={<ViewWrapper Component={TasksBoard} viewId="development" />} />
+                        <Route path="/opencode-tasks" element={<Navigate to="/issues?tab=tasks" replace />} />
                         <Route path="/issues" element={<ViewWrapper Component={IssuesPage} viewId="development" />} />
 
                         <Route path="/chat" element={<ViewWrapper Component={ChatPage} viewId="chat" />}>

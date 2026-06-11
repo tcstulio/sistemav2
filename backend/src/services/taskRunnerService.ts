@@ -178,6 +178,7 @@ export interface Task {
 
 interface TaskStore {
     tasks: Record<number, Task>;
+    _migrations?: string[];
 }
 
 const REPO = 'tcstulio/sistemav2';
@@ -193,6 +194,7 @@ class TaskRunnerService {
 
     constructor() {
         this.load();
+        this.runMigrations();
         for (const t of Object.values(this.store.tasks)) {
             if (t.events?.some((e) => e.type === 'task_created')) {
                 this.notifiedTasks.add(t.issueNumber);
@@ -331,6 +333,25 @@ class TaskRunnerService {
         } catch (e) {
             log.error('Save error', e);
         }
+    }
+
+    private runMigrations() {
+        const done = this.store._migrations || [];
+        if (done.includes('cleanup-dupes-316-318')) return;
+        const dupes = [316, 317, 318];
+        let cleaned = 0;
+        for (const num of dupes) {
+            if (this.store.tasks[num]) {
+                delete this.store.tasks[num];
+                cleaned++;
+            }
+        }
+        if (cleaned > 0) {
+            log.info(`Migration cleanup-dupes-316-318: removed ${cleaned} duplicate task(s)`);
+        }
+        if (!this.store._migrations) this.store._migrations = [];
+        this.store._migrations.push('cleanup-dupes-316-318');
+        this.save();
     }
 
     async listIssues(state: 'open' | 'closed' | 'all' = 'open'): Promise<any[]> {
