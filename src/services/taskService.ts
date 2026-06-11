@@ -55,6 +55,11 @@ export const TaskService = {
         return response.data;
     },
 
+    create: async (title: string, body: string, labels?: string[]): Promise<Task> => {
+        const response = await axios.post(API_URL, { title, body, labels }, getAuthHeaders());
+        return response.data;
+    },
+
     getDiff: async (issueNumber: number): Promise<string> => {
         const response = await axios.get(`${API_URL}/${issueNumber}/diff`, getAuthHeaders());
         return response.data.diff;

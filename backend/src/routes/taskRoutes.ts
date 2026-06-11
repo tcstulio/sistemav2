@@ -55,6 +55,18 @@ router.get('/:issueNumber/events', requireDolibarrLogin, async (req, res) => {
 
 // Escrita: somente admin (#307). Acoes destrutivas (start, merge, kill, delete) e
 // mutacoes de estado exigem isAdmin=true (verificado via Dolibarr).
+router.post('/', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const { title, body, labels } = req.body;
+        if (!title) return res.status(400).json({ error: 'Title is required' });
+        const task = await taskRunnerService.createTask(title, body || '', labels);
+        res.json(task);
+    } catch (error: any) {
+        log.error('Create task error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
 router.post('/:issueNumber/start', requireDolibarrAdmin, async (req, res) => {
     try {
         const issueNumber = Number(req.params.issueNumber);
