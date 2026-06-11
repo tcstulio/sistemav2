@@ -187,6 +187,7 @@ class TaskRunnerService {
     private pollTimer: NodeJS.Timeout | null = null;
     private polling = false;
     private notifiedTasks = new Set<number>();
+    private deletedIssueNumbers = new Map<number, number>();
 
     constructor() {
         this.load();
@@ -348,9 +349,14 @@ class TaskRunnerService {
     }
 
     async syncTasks(state: 'open' | 'closed' | 'all' = 'open'): Promise<Task[]> {
+        const now = Date.now();
+        for (const [num, ts] of this.deletedIssueNumbers) {
+            if (now - ts > 10 * 60 * 1000) this.deletedIssueNumbers.delete(num);
+        }
         const issues = await this.listIssues(state);
         for (const issue of issues) {
             const num = issue.number;
+            if (this.deletedIssueNumbers.has(num)) continue;
             if (!this.store.tasks[num]) {
                 this.store.tasks[num] = {
                     issueNumber: num,
@@ -845,6 +851,34 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         return task;
     }
 
+    async createTask(title: string, body: string, labels: string[] = []): Promise<Task> {
+        const allLabels = Array.from(new Set(['opencode-task', ...labels]));
+        const { stdout } = await gh([
+            'issue', 'create',
+            '--repo', REPO,
+            '--title', title,
+            '--body', body || ' ',
+            '--label', allLabels.join(','),
+        ], { timeout: 30000 });
+        const match = stdout.trim().match(/\/issues\/(\d+)/);
+        if (!match) throw new Error('Falha ao criar issue');
+        const issueNumber = parseInt(match[1]);
+        const task: Task = {
+            issueNumber,
+            title,
+            body,
+            labels: allLabels,
+            status: 'pending',
+            feedbackHistory: [],
+            events: [],
+            updatedAt: new Date().toISOString(),
+        };
+        this.store.tasks[issueNumber] = task;
+        this.recordEvent(task, 'task_created', `Task criada via board: #${issueNumber} — ${title}`);
+        this.save();
+        return task;
+    }
+
     async deleteTask(issueNumber: number): Promise<void> {
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
@@ -876,6 +910,7 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         }
 
         delete this.store.tasks[issueNumber];
+        this.deletedIssueNumbers.set(issueNumber, Date.now());
         this.save();
     }
 
