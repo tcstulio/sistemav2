@@ -185,7 +185,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
         setIsCreating(true);
         try {
             await DolibarrService.createBankAccount(config, newAccountForm);
-            toast.success("Conta criada com sucesso (Mock)");
+            toast.success("Conta criada com sucesso");
             setIsCreateModalOpen(false);
             setNewAccountForm({ currency_code: 'BRL', solde: 0 });
             if (onRefresh) onRefresh();
@@ -263,10 +263,25 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
         setCashFlowData(chartData);
     }, [selectedAccount, accountLines]);
 
-    const handleImport = (transactions: any[], accountNumber?: string) => {
-
-        // TODO: Add transactions to local state or sync with Dolibarr
-        toast.success(`${transactions.length} transações importadas com sucesso!`);
+    const handleImport = async (transactions: any[], accountNumber?: string) => {
+        if (!config || !selectedAccount) return;
+        try {
+            let imported = 0;
+            for (const tx of transactions) {
+                await DolibarrService.addBankLine(
+                    config,
+                    String(selectedAccount.id),
+                    tx.date || Math.floor(Date.now() / 1000),
+                    tx.type || '',
+                    tx.description || tx.label || '',
+                    Number(tx.amount) || 0,
+                );
+                imported++;
+            }
+            toast.success(`${imported} transações importadas com sucesso`);
+        } catch (e: any) {
+            toast.error(`Erro ao importar: ${e?.message || e}`);
+        }
         setIsImportModalOpen(false);
         if (onRefresh) onRefresh();
     };
