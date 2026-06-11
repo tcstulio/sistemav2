@@ -98,6 +98,16 @@ const ChatSessionsView: React.FC = () => {
         }
     };
 
+    const deleteAllSessions = async () => {
+        if (!(await confirm(`Excluir todas as ${sessions.length} sessões? Esta ação não pode ser desfeita.`))) return;
+        const count = await AiService.deleteAllChatSessions();
+        if (count > 0) {
+            toast.success(`${count} sessão(ões) excluída(s)`);
+            setSessions([]);
+            setSelectedSession(null);
+        }
+    };
+
     const filtered = sessions.filter(s =>
         s.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
         s.lastPreview.toLowerCase().includes(searchTerm.toLowerCase())
@@ -179,6 +189,11 @@ const ChatSessionsView: React.FC = () => {
                 <button onClick={fetchSessions} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500" title="Atualizar">
                     <RefreshCw size={16} />
                 </button>
+                {sessions.length > 0 && (
+                    <button onClick={deleteAllSessions} className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-slate-400 hover:text-red-500 transition-colors" title="Apagar todas as sessões">
+                        <Trash2 size={16} />
+                    </button>
+                )}
             </div>
 
             <div className="flex-1 overflow-y-auto">
@@ -197,7 +212,7 @@ const ChatSessionsView: React.FC = () => {
                             <button
                                 key={session.id}
                                 onClick={() => openSession(session.id)}
-                                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left"
+                                className="group w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left"
                             >
                                 <div className="w-9 h-9 rounded-full bg-indigo-50 dark:bg-indigo-900/30 flex items-center justify-center shrink-0">
                                     <MessageSquare size={16} className="text-indigo-600 dark:text-indigo-400" />
@@ -210,7 +225,7 @@ const ChatSessionsView: React.FC = () => {
                                     <p className="text-[10px] text-slate-400">{formatDate(session.updatedAt)}</p>
                                     <p className="text-[10px] text-slate-400">{session.messageCount} msgs</p>
                                 </div>
-                                <button onClick={e => deleteSession(session.id, e)} className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onClick={e => deleteSession(session.id, e)} className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity" title="Excluir sessão">
                                     <Trash2 size={14} />
                                 </button>
                                 <ChevronRight size={16} className="text-slate-300" />
