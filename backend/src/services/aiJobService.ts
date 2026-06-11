@@ -70,6 +70,27 @@ export const aiJobService = {
         return id;
     },
 
+    /**
+     * Enfileira e AGUARDA o resultado (mesma fila serial). Para chamadores internos
+     * que precisam do valor (ex.: Judge do TaskRunner) sem colidir com jobs de chat —
+     * o listener de tool-calls do aiService é global, então toda chamada LLM de longa
+     * duração deve passar por aqui.
+     */
+    runAndWait<T>(fn: () => Promise<T>, label?: string): Promise<T> {
+        return new Promise<T>((resolve, reject) => {
+            this.enqueue(async () => {
+                try {
+                    const result = await fn();
+                    resolve(result);
+                    return result;
+                } catch (e) {
+                    reject(e);
+                    throw e;
+                }
+            }, label);
+        });
+    },
+
     /** Estado atual do job (inclui posição aproximada na fila). */
     get(id: string): (AiJob & { queueAhead: number }) | undefined {
         const job = jobs.get(id);
