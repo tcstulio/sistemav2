@@ -67,6 +67,17 @@ export const GithubService = {
         }
     },
 
+    setIssueState: async (issueNumber: number, state: 'open' | 'closed', reason?: string): Promise<{ ok: boolean; error?: string }> => {
+        try {
+            const res = await axios.patch(`/api/github/issues/${issueNumber}/state`, { state, reason }, getAuthHeaders());
+            return res.data;
+        } catch (e: any) {
+            const error = e?.response?.data?.error || e?.message || 'Falha ao alterar estado da issue';
+            log.error('Failed to set issue state', e);
+            return { ok: false, error };
+        }
+    },
+
     // Cria uma issue no GitHub a partir de um report in-app (botão "Reportar problema").
     createIssue: async (payload: { title: string; description?: string; context?: any; labels?: string[] }): Promise<{ ok: boolean; url?: string; number?: number; error?: string }> => {
         try {
