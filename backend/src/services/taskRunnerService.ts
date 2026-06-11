@@ -5,6 +5,7 @@ import path from 'path';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { logger } from '../utils/logger';
 import { aiService } from './aiService';
+import { aiJobService } from './aiJobService';
 import { socketService } from './socketService';
 import { killTree, isAlive } from '../utils/processTree';
 
@@ -772,7 +773,13 @@ Return ONLY a JSON:
                 { role: 'user' as const, parts: judgePrompt },
             ];
 
-            const judgeResult = await aiService.generateReply(history, '', undefined, 'chat');
+            // Roteia pela fila serial do aiJobService (#320 item 3): o listener de
+            // tool-calls do aiService é global, então o Judge não pode rodar em
+            // paralelo com um job de chat — aqui ele espera a vez dele na fila.
+            const judgeResult = await aiJobService.runAndWait(
+                () => aiService.generateReply(history, '', undefined, 'chat'),
+                `judge-pr-${task.prNumber}`,
+            );
             const reply = judgeResult.text;
             const jsonMatch = reply.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
