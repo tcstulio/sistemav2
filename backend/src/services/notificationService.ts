@@ -57,6 +57,7 @@ class NotificationService {
         ticket: 'tickets',
         product: 'products',
         task: 'tasks',
+        'opencode-task': 'tasks',
         project: 'projects',
         supplier_order: 'suppliers',
         supplier_invoice: 'supplier_invoices',
