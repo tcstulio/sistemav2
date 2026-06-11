@@ -172,6 +172,8 @@ export interface Task {
     childPid?: number;          // PID do opencode em execucao (issue #304)
     killRequested?: boolean;    // flag de cancelamento solicitado
     killedAt?: string;          // quando o kill foi processado
+    queuePriority?: number;     // ordem na fila (menor = primeiro) — issue #331
+    planReason?: string;        // justificativa do LLM Planner — issue #331
 }
 
 interface TaskStore {
@@ -978,6 +980,78 @@ Return ONLY a JSON: {"score": <number>, "approved": <boolean>, "review": "<brief
         this.emitStatus(task);
         log.info(`Task #${issueNumber} cancelled (pid=${pid}, signal=${killResult?.signal || 'noop'})`);
         return task;
+    }
+
+    reorderTasks(order: number[]): void {
+        for (let i = 0; i < order.length; i++) {
+            const task = this.store.tasks[order[i]];
+            if (task) task.queuePriority = i + 1;
+        }
+        this.save();
+    }
+
+    getQueuedTasks(): Task[] {
+        return Object.values(this.store.tasks)
+            .filter(t => t.status === 'pending' && !this.isTerminalStatus(t.status))
+            .sort((a, b) => (a.queuePriority ?? 999) - (b.queuePriority ?? 999));
+    }
+
+    async planWithLLM(): Promise<{ order: number[]; reasons: Record<number, string> }> {
+        const queued = this.getQueuedTasks();
+        if (queued.length === 0) return { order: [], reasons: {} };
+        if (queued.length === 1) return { order: [queued[0].issueNumber], reasons: { [queued[0].issueNumber]: 'Unica task na fila.' } };
+
+        const taskList = queued.map((t, i) => ({
+            issueNumber: t.issueNumber,
+            title: t.title,
+            body: (t.body || '').substring(0, 500),
+            labels: t.labels.filter(l => l !== 'opencode-task'),
+            currentPriority: i + 1,
+        }));
+
+        const prompt = `You are a task planning assistant. Analyze these ${taskList.length} pending tasks and suggest the OPTIMAL execution order.
+
+Tasks (current order):
+${taskList.map(t => `#${t.issueNumber}: ${t.title}\n  Labels: ${t.labels.join(', ') || 'none'}\n  Body: ${t.body.substring(0, 200)}`).join('\n\n')}
+
+Consider:
+1. Dependencies between tasks (e.g., refactor before feature that depends on it)
+2. Risk and complexity (simpler/safer tasks first to unblock)
+3. Impact and urgency
+4. Potential merge conflicts if done in sequence
+
+Return ONLY a JSON array of objects with this exact format:
+[{"issueNumber": <number>, "reason": "<brief reason in Portuguese for this position>"}]
+
+The first element should be the task to execute first.`;
+
+        const history = [
+            { role: 'system' as const, parts: 'You are a software project planning expert. Be concise and practical.' },
+            { role: 'user' as const, parts: prompt },
+        ];
+
+        const result = await aiService.generateReply(history, '', undefined, 'chat');
+        const reply = result.text;
+        const jsonMatch = reply.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) throw new Error('LLM retornou formato invalido');
+
+        const plan: Array<{ issueNumber: number; reason: string }> = JSON.parse(jsonMatch[0]);
+        const order = plan.map(p => p.issueNumber);
+        const reasons: Record<number, string> = {};
+        for (const p of plan) {
+            reasons[p.issueNumber] = p.reason;
+        }
+
+        for (let i = 0; i < order.length; i++) {
+            const task = this.store.tasks[order[i]];
+            if (task) {
+                task.queuePriority = i + 1;
+                task.planReason = reasons[order[i]];
+            }
+        }
+        this.save();
+
+        return { order, reasons };
     }
 }
 
