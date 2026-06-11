@@ -130,6 +130,23 @@ router.get('/issues', async (req: Request, res: Response) => {
     }
 });
 
+router.patch('/issues/:number/state', async (req: Request, res: Response) => {
+    try {
+        const num = Number(req.params.number);
+        const { state, reason } = req.body || {};
+        if (!num || !state) return res.status(400).json({ error: 'number e state são obrigatórios' });
+        const action = state === 'closed' ? 'close' : 'reopen';
+        const args = ['issue', action, String(num), '--repo', REPO];
+        if (state === 'closed' && reason) args.push('--reason', String(reason));
+        await runGh(args);
+        log.info('Issue state alterada', { number: num, state });
+        res.json({ ok: true, number: num, state });
+    } catch (error: any) {
+        log.error('Failed to set issue state', { error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+});
+
 router.get('/issues/stats', async (req: Request, res: Response) => {
     try {
         const [openRaw, closedRaw] = await Promise.all([

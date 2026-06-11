@@ -12,6 +12,7 @@ import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
 import { useOrgBranding } from '../hooks/useOrgBranding';
 import { applyOrderVisibility, getUserPrefs, OrderVisibilityPrefs } from '../utils/orderVisibility';
+import { buildCashFlowBuckets } from '../utils/cashFlowBuckets';
 import { DASHBOARD_WIDGETS } from '../config/dashboardWidgets';
 import { GithubService, GitHubIssue, IssueStats } from '../services/githubService';
 import { AgentActivityFeed } from './Agent/AgentActivityFeed';
@@ -67,6 +68,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
     const [forecast, setForecast] = useState<ForecastData | null>(null);
     const [loadingForecast, setLoadingForecast] = useState(false);
+    const [cashFlowMonths, setCashFlowMonths] = useState(12);
 
     const formatCurrency = (value: number) => {
         return new Intl.NumberFormat('pt-BR', {
@@ -116,54 +118,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         return { totalRevenue, totalExpense, totalCash, unpaidInvoices };
     }, [invoices, supplierInvoices, bankAccounts, bankLines]);
 
-    const cashFlowData = useMemo(() => {
-        // Generate last 12 months keys
-        const monthsMap = new Map<string, { month: string, income: number, expense: number, date: Date }>();
-        const today = new Date();
-
-        // Create 12 buckets (current month - 11 months backwards)
-        for (let i = 11; i >= 0; i--) {
-            const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-            const year = d.getFullYear();
-            const month = d.getMonth();
-            const key = `${year}-${month}`;
-            const monthLabel = d.toLocaleDateString('pt-BR', { month: 'short' });
-            // For Jan/25 style label if years differ, or just Month if same year? 
-            // Better: 'Jan/26' explicitly to avoid confusion in rolling window
-            const label = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
-
-            monthsMap.set(key, {
-                month: label,
-                income: 0,
-                expense: 0,
-                date: d
-            });
-        }
-
-        // Process Bank Lines
-        bankLines.forEach(line => {
-            const dateVal = line.date_operation;
-            if (!dateVal) return;
-
-            const timestamp = dateVal < 100000000000 ? dateVal * 1000 : dateVal;
-            const d = new Date(timestamp);
-            const key = `${d.getFullYear()}-${d.getMonth()}`;
-
-            if (monthsMap.has(key)) {
-                const bucket = monthsMap.get(key)!;
-                if (line.amount > 0) {
-                    bucket.income += line.amount;
-                } else {
-                    bucket.expense += Math.abs(line.amount);
-                }
-            }
-        });
-
-        // Convert Map to Array sorted by date
-        return Array.from(monthsMap.values())
-            .sort((a, b) => a.date.getTime() - b.date.getTime())
-            .map(({ month, income, expense }) => ({ month, income, expense }));
-    }, [bankLines]);
+    const cashFlowData = useMemo(() => buildCashFlowBuckets(bankLines, cashFlowMonths), [bankLines, cashFlowMonths]);
 
     const recentActivityData = useMemo(() => {
         return invoices.slice(0, 5).map(inv => ({
@@ -362,7 +317,24 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 {/* Cash Flow Chart */}
                 {canAccess('bank_accounts') && (
                         <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col transition-colors min-w-0">
-                            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-6">Fluxo de Caixa (Receita vs Despesas)</h3>
+                            <div className="flex items-center justify-between mb-6">
+                                <h3 className="text-lg font-bold text-slate-800 dark:text-white">Fluxo de Caixa — últimos {cashFlowMonths} meses</h3>
+                                <div className="flex gap-1">
+                                    {[6, 12, 24].map(m => (
+                                        <button
+                                            key={m}
+                                            onClick={() => setCashFlowMonths(m)}
+                                            className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                                                cashFlowMonths === m
+                                                    ? 'bg-blue-600 text-white'
+                                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                                            }`}
+                                        >
+                                            {m} meses
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
                             <div className="w-full h-[300px] min-w-0" style={{ width: '100%', height: 300 }}>
                                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                                     <AreaChart data={cashFlowData}>
