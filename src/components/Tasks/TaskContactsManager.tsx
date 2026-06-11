@@ -178,13 +178,13 @@ export const TaskContactsManager: React.FC<Props> = ({ config, taskId, users, on
                 </div>
             </div>
 
-            {/* Intervenientes */}
+            {/* Colaboradores */}
             <div>
                 <p className="text-xs uppercase font-bold text-slate-500 mb-2 flex items-center gap-1">
-                    <Users size={13} className="text-indigo-500" /> Intervenientes
+                    <Users size={13} className="text-indigo-500" /> Colaboradores
                 </p>
                 {intervenientes.length === 0 ? (
-                    <p className="text-sm text-slate-400 italic mb-2">Nenhum interveniente</p>
+                    <p className="text-sm text-slate-400 italic mb-2">Nenhum colaborador</p>
                 ) : (
                     <div className="flex flex-wrap gap-2 mb-2">
                         {intervenientes.map((c) => (
@@ -208,7 +208,7 @@ export const TaskContactsManager: React.FC<Props> = ({ config, taskId, users, on
                 )}
                 <div className="flex items-center gap-2">
                     <select
-                        aria-label="Adicionar interveniente"
+                        aria-label="Adicionar colaborador"
                         value={addUserId}
                         disabled={saving}
                         onChange={(e) => setAddUserId(e.target.value)}
