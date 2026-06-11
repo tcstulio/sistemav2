@@ -122,7 +122,7 @@ export class DolibarrServiceBase {
     }
 
     protected async requestWithAuth<T>(method: string, endpointUrl: string, data: any, userKey?: string): Promise<T> {
-        const key = userKey;
+        const key = userKey || this.apiKey;
 
         if (!key) {
             throw {
