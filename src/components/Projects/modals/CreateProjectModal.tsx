@@ -24,7 +24,13 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     // ao abrir, sincroniza com o prefill (vazio se não houver) — deeplink HITL do agente.
     useEffect(() => {
         if (isOpen) {
-            setForm({ ref: initialForm?.ref || '', title: initialForm?.title || '', socid: initialForm?.socid || '' });
+            if (initialForm?.ref) {
+                setForm({ ref: initialForm.ref, title: initialForm?.title || '', socid: initialForm?.socid || '' });
+            } else {
+                const year = new Date().getFullYear();
+                const nextNum = String(Math.floor(Math.random() * 999) + 1).padStart(3, '0');
+                setForm({ ref: `PROJ-${year}-${nextNum}`, title: '', socid: '' });
+            }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
