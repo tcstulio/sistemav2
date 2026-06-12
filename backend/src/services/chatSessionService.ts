@@ -170,6 +170,17 @@ class ChatSessionService {
         return false;
     }
 
+    deleteSessionsByUser(userId: string): number {
+        const before = this.data.sessions.length;
+        this.data.sessions = this.data.sessions.filter(s => s.userId !== userId);
+        const deleted = before - this.data.sessions.length;
+        if (deleted > 0) {
+            this.save();
+            log.info(`Deleted ${deleted} sessions for user ${userId}`);
+        }
+        return deleted;
+    }
+
     deleteAllSessions(): number {
         const count = this.data.sessions.length;
         this.data.sessions = [];

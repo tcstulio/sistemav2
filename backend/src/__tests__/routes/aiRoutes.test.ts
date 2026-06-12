@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
-const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
+const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, _res: any, next: any) => {
+    req.user = { id: '1', login: 'testadmin', admin: '1' };
+    next();
+}));
 
 const mockAiService = vi.hoisted(() => ({
     generateReply: vi.fn(() => ({ text: 'Generated reply text' })),
@@ -55,6 +58,7 @@ vi.mock('../../services/dolibarrService', () => ({
 
 vi.mock('../../services/agentTools', () => ({
     setToolCallListener: vi.fn(),
+    runWithToolContext: (_ctx: any, fn: () => Promise<any>) => fn(),
     TOOLS_PROMPT: '',
     executeTool: vi.fn(),
 }));
@@ -74,7 +78,15 @@ vi.mock('../../services/chatSessionService', () => ({
         getSessions: vi.fn(() => []),
         deleteSession: vi.fn(),
         deleteAllSessions: vi.fn(() => 0),
+        deleteSessionsByUser: vi.fn(() => 0),
         getStats: vi.fn(() => ({ totalSessions: 0 })),
+    },
+}));
+
+vi.mock('../../services/userPermissionsService', () => ({
+    userPermissionsService: {
+        getProfile: vi.fn(() => Promise.resolve({ role: 'admin', agent: { canCreate: ['all'], canEdit: ['all'], canValidate: ['all'], canDelete: [], canSendEmail: true, canSendWhatsapp: true, canAccessFinancial: true, canAccessAccounting: true, canAccessHR: true, canManageWebhooks: true, canCreateIssues: true, canStartTasks: true, canMergePRs: true, maxInvoiceAmount: null, maxOrderAmount: null, restrictedCustomers: [], restrictedProjects: [] } })),
+        getProfileForContext: vi.fn(() => Promise.resolve('Admin profile')),
     },
 }));
 
@@ -501,6 +513,7 @@ describe('aiRoutes', () => {
     describe('DELETE /api/sessions/:id', () => {
         it('deletes a single session', async () => {
             const { chatSessionService } = await import('../../services/chatSessionService');
+            (chatSessionService.getSession as ReturnType<typeof vi.fn>).mockReturnValue({ id: 'chat_123', userId: '1' });
             (chatSessionService.deleteSession as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
             const res = await request(app)
@@ -512,6 +525,7 @@ describe('aiRoutes', () => {
 
         it('returns 404 when session not found', async () => {
             const { chatSessionService } = await import('../../services/chatSessionService');
+            (chatSessionService.getSession as ReturnType<typeof vi.fn>).mockReturnValue(null);
             (chatSessionService.deleteSession as ReturnType<typeof vi.fn>).mockReturnValue(false);
 
             const res = await request(app)
