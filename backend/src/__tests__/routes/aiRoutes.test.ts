@@ -58,7 +58,12 @@ vi.mock('../../services/dolibarrService', () => ({
 
 vi.mock('../../services/agentTools', () => ({
     setToolCallListener: vi.fn(),
-    runWithToolContext: (_ctx: any, fn: () => Promise<any>) => fn(),
+    runWithToolContext: (ctx: any, fn: () => Promise<any>) => {
+        if (ctx?.listener) {
+            ctx.listener('mock_tool', { test: true }, 'mock result', 50);
+        }
+        return fn();
+    },
     TOOLS_PROMPT: '',
     executeTool: vi.fn(),
 }));
@@ -66,6 +71,7 @@ vi.mock('../../services/agentTools', () => ({
 vi.mock('../../services/agentActivityService', () => ({
     agentActivityService: {
         logActivity: vi.fn(),
+        record: vi.fn(),
         getActivities: vi.fn(() => []),
     },
 }));
@@ -507,6 +513,110 @@ describe('aiRoutes', () => {
                 .delete('/api/sessions');
 
             expect(res.status).toBe(500);
+        });
+    });
+
+    describe('toolListener userName resolution (#358)', () => {
+        it('formats userName as firstname + lastname when both present', () => {
+            const user = { id: '1', login: 'jdoe', firstname: 'John', lastname: 'Doe', email: 'j@t.com' };
+            const userName = [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'unknown';
+            expect(userName).toBe('John Doe');
+        });
+
+        it('formats userName as firstname only when lastname missing', () => {
+            const user = { id: '1', login: 'jdoe', firstname: 'John', email: 'j@t.com' } as any;
+            const userName = [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'unknown';
+            expect(userName).toBe('John');
+        });
+
+        it('falls back to login when no firstname/lastname', () => {
+            const user = { id: '1', login: 'jdoe', email: 'j@t.com' } as any;
+            const userName = [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'unknown';
+            expect(userName).toBe('jdoe');
+        });
+
+        it('falls back to unknown when nothing is available', () => {
+            const user = {} as any;
+            const userId = user?.id || 'unknown';
+            const userName = [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'unknown';
+            expect(userId).toBe('unknown');
+            expect(userName).toBe('unknown');
+        });
+
+        it('uses user.id directly as userId', () => {
+            const user = { id: '99', login: 'admin' } as any;
+            const userId = user?.id || 'unknown';
+            expect(userId).toBe('99');
+        });
+    });
+
+    describe('toolListener integration: record is called with real user data (#358)', () => {
+        it('records userId and userName from user directly (not userData)', async () => {
+            mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+                req.user = { id: '42', login: 'jdoe', firstname: 'John', lastname: 'Doe', admin: '0' };
+                next();
+            });
+
+            await request(app)
+                .post('/api/generate-reply')
+                .send({ sessionId: 'sess_123', module: 'chat', context: 'test' });
+
+            const { agentActivityService } = await import('../../services/agentActivityService');
+            expect(agentActivityService.record).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    userId: '42',
+                    userName: 'John Doe',
+                })
+            );
+        });
+
+        it('falls back to login when firstname/lastname are absent', async () => {
+            mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+                req.user = { id: '7', login: 'admin', admin: '1' };
+                next();
+            });
+
+            await request(app)
+                .post('/api/generate-reply')
+                .send({ sessionId: 'sess_456', module: 'chat', context: 'test' });
+
+            const { agentActivityService } = await import('../../services/agentActivityService');
+            expect(agentActivityService.record).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    userId: '7',
+                    userName: 'admin',
+                })
+            );
+        });
+
+        it('falls back to unknown when user is null', async () => {
+            mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+                req.user = null;
+                next();
+            });
+
+            await request(app)
+                .post('/api/generate-reply')
+                .send({ sessionId: 'sess_789', module: 'chat', context: 'test' });
+
+            const { agentActivityService } = await import('../../services/agentActivityService');
+            expect(agentActivityService.record).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    userId: 'unknown',
+                    userName: 'unknown',
+                })
+            );
+        });
+
+        it('does not call record when sessionId is absent (listener is null)', async () => {
+            const { agentActivityService } = await import('../../services/agentActivityService');
+            (agentActivityService.record as ReturnType<typeof vi.fn>).mockClear();
+
+            await request(app)
+                .post('/api/generate-reply')
+                .send({ context: 'test' });
+
+            expect(agentActivityService.record).not.toHaveBeenCalled();
         });
     });
 
