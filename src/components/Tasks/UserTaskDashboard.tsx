@@ -36,6 +36,16 @@ interface UserTaskDashboardProps {
     onNavigate: (view: string, id: string) => void;
 }
 
+function canLogTimeOnTask(task: Task, userId: string | undefined, taskContacts: TaskContact[] | undefined): boolean {
+    if (!userId) return false;
+    if (Number(task.status || task.statut || 0) >= 2) return false;
+    if (task.fk_user_assign === userId) return true;
+    return !!taskContacts?.some((tc: TaskContact) =>
+        tc.task_id === task.id &&
+        (tc.user_id === userId || (tc.contact_id && tc.contact_id === userId))
+    );
+}
+
 const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => {
     const { config, currentUser: user } = useDolibarr(); // Get config & currentUser
     const { data: tasks } = useTasks(config); // Fetch Tasks
@@ -187,6 +197,10 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
 
             return true;
         }).sort((a, b) => {
+            const aCanLog = canLogTimeOnTask(a, user?.id, taskContacts);
+            const bCanLog = canLogTimeOnTask(b, user?.id, taskContacts);
+            if (aCanLog !== bCanLog) return aCanLog ? -1 : 1;
+
             const prioA = Number(a.priority || 0);
             const prioB = Number(b.priority || 0);
             if (prioA !== prioB) return prioB - prioA;
@@ -224,16 +238,7 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
     };
 
     const canLogTime = (task: Task) => {
-        if (!user?.id) return false;
-        // 1. Assigned
-        if (task.fk_user_assign === user.id) return true;
-        // 2. Direct Participant
-        const isParticipant = taskContacts?.some((tc: TaskContact) =>
-            tc.task_id === task.id &&
-            (tc.user_id === user.id || (tc.contact_id && tc.contact_id === user.id))
-        );
-        return isParticipant;
-        // NOTE: Project Members (who are not assigned/participants) CANNOT log time.
+        return canLogTimeOnTask(task, user?.id, taskContacts);
     };
 
     // Helper functions for badges
@@ -350,6 +355,12 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                                     )}
                                     {task.project_id && isMyProjectMember(task.project_id) && (
                                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 font-medium">Equipe do Projeto</span>
+                                    )}
+                                    {canLogTime(task) && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 font-medium flex items-center gap-0.5">
+                                            <Clock className="h-2.5 w-2.5" />
+                                            Lançamento Disponível
+                                        </span>
                                     )}
                                 </div>
                             </div>
