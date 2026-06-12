@@ -73,6 +73,13 @@ const MiniCard: React.FC<{
                         <Star size={8} className="inline" /> {task.judgeScore}/10
                     </span>
                 )}
+                {task.phase && task.phase !== 'done' && (
+                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded-full text-[8px] font-medium bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400">
+                        {task.phase === 'exploring' ? `🔍 ${task.attempts?.filter(a => a.phase === 'exploring').length || 0}/3` :
+                         task.phase === 'synthesizing' ? `🧪 ${task.synthesisAttempt || 0}/3` :
+                         task.phase === 'judging' ? '⚖️' : ''}
+                    </span>
+                )}
                 {plannerCfg && (
                     <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-bold ${plannerCfg.color} ${plannerCfg.bg}`} title={task.planReason}>
                         {plannerCfg.icon} {plannerCfg.label}

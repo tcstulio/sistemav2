@@ -131,6 +131,11 @@ export type TaskEventType =
     | 'worktree_cleanup'
     | 'attempt_started'
     | 'attempt_no_changes'
+    | 'attempt_completed'
+    | 'exploration_completed'
+    | 'synthesis_started'
+    | 'synthesis_completed'
+    | 'attempt_no_changes'
     | 'typecheck_started'
     | 'typecheck_ok'
     | 'typecheck_failed'
@@ -155,6 +160,18 @@ export interface TaskEvent {
     meta?: Record<string, any>;
 }
 
+export type TaskPhase = 'exploring' | 'synthesizing' | 'judging' | 'done';
+
+export interface AttemptResult {
+    index: number;
+    phase: TaskPhase;
+    diff: string;
+    typecheckOk: boolean;
+    typecheckErrors?: string;
+    filesChanged: string[];
+    summary?: string;
+}
+
 export interface Task {
     issueNumber: number;
     title: string;
@@ -174,12 +191,15 @@ export interface Task {
     updatedAt: string;
     completedAt?: string;
     error?: string;
-    events: TaskEvent[];        // timeline persistida (issue #306)
-    childPid?: number;          // PID do opencode em execucao (issue #304)
-    killRequested?: boolean;    // flag de cancelamento solicitado
-    killedAt?: string;          // quando o kill foi processado
-    queuePriority?: number;     // ordem na fila (menor = primeiro) — issue #331
-    planReason?: string;        // justificativa do LLM Planner — issue #331
+    events: TaskEvent[];
+    childPid?: number;
+    killRequested?: boolean;
+    killedAt?: string;
+    queuePriority?: number;
+    planReason?: string;
+    phase: TaskPhase;
+    attempts: AttemptResult[];
+    synthesisAttempt?: number;
 }
 
 interface TaskStore {
@@ -317,6 +337,8 @@ class TaskRunnerService {
                 // Cleanup: killRequested=true de um restart anterior (child morreu junto).
                 for (const t of Object.values(this.store.tasks)) {
                     if (!Array.isArray(t.events)) t.events = [];
+                    if (!t.phase) t.phase = 'done';
+                    if (!Array.isArray(t.attempts)) t.attempts = [];
                     if (t.killRequested) {
                         t.killRequested = false;
                         t.childPid = undefined;
@@ -377,6 +399,8 @@ class TaskRunnerService {
                     feedbackHistory: [],
                     events: [],
                     updatedAt: new Date().toISOString(),
+                    phase: 'done',
+                    attempts: [],
                 };
             } else if (issue.state === 'CLOSED' && this.store.tasks[num].status === 'pending') {
                 this.store.tasks[num].startedAt = undefined;
@@ -635,6 +659,61 @@ class TaskRunnerService {
         return p;
     }
 
+    private buildSynthesisPrompt(task: Task, issueData: any): string {
+        let p = `# Tarefa (issue #${task.issueNumber}): ${issueData.title}\n\n${issueData.body || ''}\n`;
+        if (issueData.comments?.length) {
+            p += '\n## Comentários\n';
+            for (const c of issueData.comments) p += `- **${c.author?.login || 'user'}**: ${c.body}\n`;
+        }
+
+        const exploreAttempts = task.attempts.filter(a => a.phase === 'exploring');
+        if (exploreAttempts.length > 0) {
+            p += `\n## Tentativas anteriores de exploração (${exploreAttempts.length})\n`;
+            p += 'Foram feitas múltiplas tentativas independentes de implementação. Analise cada uma abaixo e combine os melhores aspectos.\n\n';
+            for (const att of exploreAttempts) {
+                p += `### Tentativa ${att.index}\n`;
+                p += `- **Arquivos modificados** (${att.filesChanged.length}): ${att.filesChanged.join(', ')}\n`;
+                p += `- **Typecheck**: ${att.typecheckOk ? '✅ Passou' : '❌ Falhou'}\n`;
+                if (att.typecheckErrors) {
+                    p += `- **Erros**: \`\`\`\n${att.typecheckErrors.substring(0, 2000)}\n\`\`\`\n`;
+                }
+                if (att.diff) {
+                    const diffPreview = att.diff.length > 8000 ? att.diff.substring(0, 8000) + '\n[... truncado]' : att.diff;
+                    p += `- **Diff**:\n\`\`\`diff\n${diffPreview}\n\`\`\`\n`;
+                }
+                p += '\n';
+            }
+
+            p += '## Análise para Síntese\n';
+            const okAttempts = exploreAttempts.filter(a => a.typecheckOk);
+            const failAttempts = exploreAttempts.filter(a => !a.typecheckOk);
+            if (okAttempts.length > 0) {
+                p += `- ${okAttempts.length} tentativa(s) passaram no typecheck — priorize as soluções delas.\n`;
+            }
+            if (failAttempts.length > 0) {
+                p += `- ${failAttempts.length} tentativa(s) falharam no typecheck — evite repetir os mesmos erros.\n`;
+            }
+            p += '\n';
+        }
+
+        if (task.feedbackHistory.length) {
+            p += '## Feedback / correções a ATENDER\n';
+            for (const fb of task.feedbackHistory) p += `- ${fb}\n`;
+        }
+
+        p += `\n## Instruções de Síntese\n`;
+        p += `Você está na FASE DE SÍNTESE. Foram feitas ${exploreAttempts.length} tentativas de exploração.\n`;
+        p += `Combine os MELHORES aspectos de cada tentativa numa implementação final que:\n`;
+        p += `1. Resolva TODOS os itens da issue\n`;
+        p += `2. Passe no typecheck (tsc --noEmit)\n`;
+        p += `3. Siga as convenções do projeto (TypeScript, Express+React+Vite)\n`;
+        p += `4. Não repita erros de typecheck das tentativas anteriores\n`;
+        p += `5. Inclua testes quando aplicável\n`;
+        p += `NÃO altere o arquivo ${PROMPT_FILE}.`;
+
+        return p;
+    }
+
     private async executeTask(task: Task, branch: string): Promise<void> {
         const { issueNumber } = task;
         log.info(`Starting task #${issueNumber} on branch ${branch} (worktree isolado)`);
@@ -650,57 +729,155 @@ class TaskRunnerService {
         const { stdout: issueBody } = await gh(['issue', 'view', String(issueNumber), '--repo', REPO, '--json', 'title,body,labels,comments'], { timeout: 15000 });
         const issueData = JSON.parse(issueBody);
 
-        // 3) Implementa com opencode (com 1 retry guiado pelo typecheck)
+        // 3) Multi-Attempt Synthesis: Fase 1 (exploração 3x) + Fase 2 (síntese 3x)
         const promptPath = path.join(WT_ROOT, PROMPT_FILE);
         let verify = { ok: false, output: 'não verificado' };
-        const MAX_IMPL = 2;
-        for (let attempt = 1; attempt <= MAX_IMPL; attempt++) {
+
+        if (!task.attempts) task.attempts = [];
+        task.phase = 'exploring';
+        this.save();
+
+        // === FASE 1: Exploração (3 tentativas independentes) ===
+        const MAX_EXPLORE = 3;
+        for (let attempt = 1; attempt <= MAX_EXPLORE; attempt++) {
+            if (task.killRequested) return;
             fs.writeFileSync(promptPath, this.buildPrompt(task, issueData));
-            this.recordEvent(task, 'attempt_started', `Implementando com opencode (tentativa ${attempt}/${MAX_IMPL})`, { attempt, maxAttempts: MAX_IMPL });
+            this.recordEvent(task, 'attempt_started', `Fase 1 — Exploração ${attempt}/${MAX_EXPLORE}`, { attempt, phase: 'exploring', maxAttempts: MAX_EXPLORE });
+
             try {
-                // runOpencode faz tracking de PID e mata a arvore se killRequested for setado
-                // durante a execucao (#304).
                 const stdout = await runOpencode(
                     `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
                     WT_ROOT, task, OPENCODE_TIMEOUT_MS,
                 );
                 this.emitLog(issueNumber, 'ai', String(stdout).substring(0, 1500));
             } catch (e: any) {
-                // Se foi kill solicitado, sai do loop silenciosamente.
                 if (task.killRequested) {
-                    this.recordEvent(task, 'task_killed', `Task cancelada durante opencode`, { attempt, pid: task.childPid });
+                    this.recordEvent(task, 'task_killed', 'Task cancelada durante opencode', { attempt, phase: 'exploring' });
                     return;
                 }
-                this.recordEvent(task, 'error', `opencode erro: ${String(e.message || e).substring(0, 300)}`, { attempt, error: e.message });
+                this.recordEvent(task, 'error', `opencode erro: ${String(e.message || e).substring(0, 300)}`, { attempt, phase: 'exploring', error: e.message });
             }
 
-            // FAIL-FAST: sem mudança de código → tenta de novo (transiente/cold-start) e só
-            // aborta na última tentativa. Nunca cria PR vazio.
             const changes = await this.worktreeChanges();
             if (changes.length === 0) {
-                if (attempt < MAX_IMPL) {
-                    this.recordEvent(task, 'attempt_no_changes', 'Nenhuma mudança gerada — repetindo...', { attempt });
+                this.recordEvent(task, 'attempt_no_changes', `Exploração ${attempt}: nenhuma mudança`, { attempt, phase: 'exploring' });
+                if (attempt < MAX_EXPLORE) {
                     task.feedbackHistory.push('A tentativa anterior não gerou mudanças. Implemente os arquivos pedidos agora.');
                     continue;
                 }
                 task.status = 'failed';
                 task.error = 'O agente não produziu nenhuma mudança após as tentativas.';
                 task.updatedAt = new Date().toISOString();
-                this.recordEvent(task, 'task_failed', 'Nenhuma mudança após as tentativas — abortando (sem PR).');
+                this.recordEvent(task, 'task_failed', 'Nenhuma mudança após exploração — abortando (sem PR).');
                 this.save();
                 this.emitStatus(task);
                 return;
             }
 
-            // GATE: typecheck
-            this.recordEvent(task, 'typecheck_started', 'Verificando (typecheck back+front)...');
+            // Captura diff e typecheck desta tentativa
+            this.recordEvent(task, 'typecheck_started', `Typecheck exploração ${attempt}...`);
             verify = await this.verify();
+            const { stdout: diffOut } = await git(['diff'], { timeout: 30000, cwd: WT_ROOT });
+
+            const attemptResult: AttemptResult = {
+                index: task.attempts.length + 1,
+                phase: 'exploring',
+                diff: diffOut.substring(0, 30000),
+                typecheckOk: verify.ok,
+                typecheckErrors: verify.ok ? undefined : verify.output.substring(0, 4000),
+                filesChanged: changes,
+            };
+            task.attempts.push(attemptResult);
+
+            this.recordEvent(task, 'attempt_completed', `Exploração ${attempt}/${MAX_EXPLORE} — typecheck ${verify.ok ? 'OK' : 'FALHOU'} (${changes.length} arquivos)`, {
+                attempt, phase: 'exploring', typecheckOk: verify.ok, filesCount: changes.length,
+            });
+
+            // Reset worktree para próxima tentativa (se não for a última)
+            if (attempt < MAX_EXPLORE) {
+                await git(['checkout', '--', '.'], { timeout: 15000, cwd: WT_ROOT });
+                await git(['clean', '-fd', '--', 'src/', 'backend/src/'], { timeout: 15000, cwd: WT_ROOT });
+                task.feedbackHistory = [];
+            }
+        }
+
+        this.recordEvent(task, 'exploration_completed', `${MAX_EXPLORE} tentativas de exploração completas (${task.attempts.filter(a => a.typecheckOk).length}/${MAX_EXPLORE} typecheck OK)`, {
+            totalAttempts: task.attempts.length, typecheckOkCount: task.attempts.filter(a => a.typecheckOk).length,
+        });
+
+        // === FASE 2: Síntese (até 3 tentativas) ===
+        task.phase = 'synthesizing';
+        task.synthesisAttempt = 0;
+        task.feedbackHistory = [];
+        this.save();
+
+        const MAX_SYNTH = 3;
+        for (let synthAttempt = 1; synthAttempt <= MAX_SYNTH; synthAttempt++) {
+            if (task.killRequested) return;
+            task.synthesisAttempt = synthAttempt;
+            fs.writeFileSync(promptPath, this.buildSynthesisPrompt(task, issueData));
+            this.recordEvent(task, 'synthesis_started', `Fase 2 — Síntese ${synthAttempt}/${MAX_SYNTH}`, { synthAttempt, maxSynth: MAX_SYNTH });
+
+            try {
+                const stdout = await runOpencode(
+                    `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
+                    WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+                );
+                this.emitLog(issueNumber, 'ai', String(stdout).substring(0, 1500));
+            } catch (e: any) {
+                if (task.killRequested) {
+                    this.recordEvent(task, 'task_killed', 'Task cancelada durante síntese', { synthAttempt });
+                    return;
+                }
+                this.recordEvent(task, 'error', `opencode erro na síntese: ${String(e.message || e).substring(0, 300)}`, { synthAttempt, error: e.message });
+            }
+
+            const changes = await this.worktreeChanges();
+            if (changes.length === 0) {
+                if (synthAttempt < MAX_SYNTH) {
+                    this.recordEvent(task, 'attempt_no_changes', `Síntese ${synthAttempt}: nenhuma mudança`, { synthAttempt });
+                    task.feedbackHistory.push('A síntese não gerou mudanças. Tente novamente combinando as tentativas anteriores.');
+                    continue;
+                }
+                task.status = 'failed';
+                task.error = 'Síntese não produziu mudanças após 3 tentativas.';
+                task.updatedAt = new Date().toISOString();
+                this.recordEvent(task, 'task_failed', 'Síntese sem mudanças — abortando.');
+                this.save();
+                this.emitStatus(task);
+                return;
+            }
+
+            // Typecheck gate
+            this.recordEvent(task, 'typecheck_started', `Typecheck síntese ${synthAttempt}...`);
+            verify = await this.verify();
+            const { stdout: synthDiff } = await git(['diff'], { timeout: 30000, cwd: WT_ROOT });
+
+            const synthResult: AttemptResult = {
+                index: task.attempts.length + 1,
+                phase: 'synthesizing',
+                diff: synthDiff.substring(0, 30000),
+                typecheckOk: verify.ok,
+                typecheckErrors: verify.ok ? undefined : verify.output.substring(0, 4000),
+                filesChanged: changes,
+            };
+            task.attempts.push(synthResult);
+
+            this.recordEvent(task, 'attempt_completed', `Síntese ${synthAttempt}/${MAX_SYNTH} — typecheck ${verify.ok ? 'OK' : 'FALHOU'} (${changes.length} arquivos)`, {
+                synthAttempt, typecheckOk: verify.ok, filesCount: changes.length,
+            });
+
             if (verify.ok) {
-                this.recordEvent(task, 'typecheck_ok', 'Typecheck OK', { attempt });
+                this.recordEvent(task, 'synthesis_completed', `Síntese aprovada no typecheck (tentativa ${synthAttempt})`, { synthAttempt, typecheckOk: true });
                 break;
             }
-            this.recordEvent(task, 'typecheck_failed', `Typecheck falhou${attempt < MAX_IMPL ? ' — pedindo correção ao opencode...' : ' (vai no PR marcado p/ revisão).'}`, { attempt, output: verify.output.substring(0, 1000) });
-            if (attempt < MAX_IMPL) task.feedbackHistory.push(`O typecheck falhou. Corrija estes erros:\n${verify.output}`);
+
+            if (synthAttempt < MAX_SYNTH) {
+                this.recordEvent(task, 'typecheck_failed', `Typecheck falhou na síntese ${synthAttempt} — corrigindo...`, { synthAttempt, output: verify.output.substring(0, 1000) });
+                task.feedbackHistory.push(`Síntese: typecheck falhou. Corrija:\n${verify.output}`);
+            } else {
+                this.recordEvent(task, 'typecheck_failed', `Typecheck falhou na síntese final (vai no PR marcado p/ revisão)`, { synthAttempt, output: verify.output.substring(0, 1000) });
+            }
         }
 
         // 4) Commit + push (remove o arquivo de prompt antes de commitar)
@@ -725,13 +902,16 @@ class TaskRunnerService {
 
         // 5) PR (marca o resultado da verificação; NUNCA faz merge — portão humano)
         const verifyTag = verify.ok ? '✅ typecheck OK' : '⚠️ typecheck FALHOU — revisar com atenção';
+        const exploreCount = task.attempts.filter(a => a.phase === 'exploring').length;
+        const synthCount = task.attempts.filter(a => a.phase === 'synthesizing').length;
+        const prBody = `Closes #${issueNumber}\n\nImplementado pelo TaskRunner com Multi-Attempt Synthesis.\n\n**Exploração:** ${exploreCount} tentativas | **Síntese:** ${synthCount} tentativa(s)\n**Verificação:** ${verifyTag}\n\n⚠️ Requer revisão humana antes do merge.`;
         let prNumber: number | undefined;
         let prUrl: string | undefined;
         try {
             const { stdout: prOut } = await gh([
                 'pr', 'create', '--repo', REPO, '--head', branch, '--base', 'main',
                 '--title', `feat(#${issueNumber}): ${issueData.title}`,
-                '--body', `Closes #${issueNumber}\n\nImplementado pelo TaskRunner (opencode) em worktree isolado.\n\n**Verificação:** ${verifyTag}\n\n⚠️ Requer revisão humana antes do merge.`,
+                '--body', prBody,
             ], { timeout: 30000 });
             const match = prOut.match(/\/pull\/(\d+)/);
             if (match) prNumber = parseInt(match[1]);
@@ -750,6 +930,7 @@ class TaskRunnerService {
 
         task.prNumber = prNumber;
         task.prUrl = prUrl;
+        task.phase = 'judging';
         task.updatedAt = new Date().toISOString();
         this.emitStatus(task);
 
@@ -879,9 +1060,11 @@ Return ONLY a JSON:
                 });
 
                 if (result.score >= 8 || task.judgeAttempts >= 3) {
+                    task.phase = 'done';
                     task.status = result.score >= 6 ? 'approved' : 'reviewing';
                     this.emitLog(task.issueNumber, 'success', `Judge: ${result.score}/10 — ${result.score >= 8 ? 'auto-aprovado' : result.score >= 6 ? 'aprovado (múltiplas tentativas)' : 'requer revisão humana'}`);
                 } else if (result.score >= 6) {
+                    task.phase = 'done';
                     task.status = 'reviewing';
                     this.emitLog(task.issueNumber, 'info', `Judge: ${result.score}/10 — aguardando revisão humana`);
                 } else {
@@ -1165,6 +1348,9 @@ Return ONLY a JSON:
         task.judgeAttempts = 0;
         task.visualScore = undefined;
         task.visualReview = undefined;
+        task.phase = 'exploring';
+        task.attempts = [];
+        task.synthesisAttempt = undefined;
         task.status = 'running';
         task.error = undefined;
         task.updatedAt = new Date().toISOString();
@@ -1247,6 +1433,8 @@ Return ONLY a JSON:
             feedbackHistory: [],
             events: [],
             updatedAt: new Date().toISOString(),
+            phase: 'done',
+            attempts: [],
         };
         this.store.tasks[issueNumber] = task;
         this.recordEvent(task, 'task_created', `Task criada via board: #${issueNumber} — ${title}`);
