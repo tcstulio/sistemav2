@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
-import { X, FileText, Monitor, Terminal, Eye, Star, ExternalLink, GitMerge, MessageSquare, RotateCcw, XCircle, Play, Square, CheckCircle } from 'lucide-react';
+import { X, FileText, Monitor, Terminal, Eye, Star, ExternalLink, GitMerge, MessageSquare, RotateCcw, XCircle, Play, Square, CheckCircle, Camera } from 'lucide-react';
 import { Button } from '../ui';
 import { TaskService, Task, TaskEvent } from '../../services/taskService';
 import DiffViewer from './DiffViewer';
@@ -18,7 +18,7 @@ interface TaskReviewPanelProps {
     themeColor?: string;
 }
 
-type Tab = 'diff' | 'preview' | 'console';
+type Tab = 'diff' | 'preview' | 'visual' | 'console';
 
 interface LogEntry {
     type: 'info' | 'success' | 'warn' | 'error' | 'ai';
@@ -42,6 +42,7 @@ export const TaskReviewPanel: React.FC<TaskReviewPanelProps> = ({
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [feedback, setFeedback] = useState('');
     const [showFeedback, setShowFeedback] = useState(false);
+    const [screenshots, setScreenshots] = useState<{ before: string | null; after: string | null }>({ before: null, after: null });
     const consoleRef = useRef<HTMLDivElement>(null);
     const socketRef = useRef<Socket | null>(null);
 
@@ -89,6 +90,12 @@ export const TaskReviewPanel: React.FC<TaskReviewPanelProps> = ({
             consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
         }
     }, [logs]);
+
+    useEffect(() => {
+        TaskService.getScreenshots(task.issueNumber)
+            .then(setScreenshots)
+            .catch(() => setScreenshots({ before: null, after: null }));
+    }, [task.issueNumber]);
 
     const handleStartPreview = async () => {
         setPreviewLoading(true);
@@ -182,9 +189,24 @@ export const TaskReviewPanel: React.FC<TaskReviewPanelProps> = ({
                     </div>
                 )}
 
+                {task.visualScore != null && (
+                    <div className="px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center gap-4 bg-purple-50 dark:bg-purple-900/10">
+                        <div className="flex items-center gap-2">
+                            <Camera size={16} className="text-purple-500" />
+                            <span className={`text-lg font-bold ${task.visualScore >= 8 ? 'text-purple-600 dark:text-purple-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                                Visual: {task.visualScore}/10
+                            </span>
+                        </div>
+                        {task.visualReview && (
+                            <p className="text-xs text-slate-600 dark:text-slate-300 flex-1 min-w-0 truncate">{task.visualReview}</p>
+                        )}
+                    </div>
+                )}
+
                 {/* Tabs */}
                 <div className="flex border-b border-slate-200 dark:border-slate-700 shrink-0">
                     <TabBtn active={tab === 'diff'} onClick={() => setTab('diff')} icon={<FileText size={14} />} label="Diff" />
+                    <TabBtn active={tab === 'visual'} onClick={() => setTab('visual')} icon={<Camera size={14} />} label="Visual" badge={screenshots.after ? '✓' : undefined} />
                     <TabBtn active={tab === 'preview'} onClick={() => setTab('preview')} icon={<Monitor size={14} />} label="Preview" />
                     <TabBtn active={tab === 'console'} onClick={() => setTab('console')} icon={<Terminal size={14} />} label="Console" badge={logs.length > 0 ? String(logs.length) : undefined} />
                 </div>
@@ -250,6 +272,50 @@ export const TaskReviewPanel: React.FC<TaskReviewPanelProps> = ({
                                     <Monitor size={48} className="mb-3 opacity-30" />
                                     <p className="text-sm">Clique "Iniciar Preview" para ver o app rodando</p>
                                     <p className="text-xs mt-1 text-slate-400">Sobe Vite + Backend na branch da task</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {tab === 'visual' && (
+                        <div className="h-full overflow-y-auto p-4">
+                            {screenshots.before && screenshots.after ? (
+                                <div className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <h4 className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider">Antes (main)</h4>
+                                            <img
+                                                src={screenshots.before}
+                                                alt="Before"
+                                                className="w-full border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm"
+                                            />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider">Depois (branch)</h4>
+                                            <img
+                                                src={screenshots.after}
+                                                alt="After"
+                                                className="w-full border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm"
+                                            />
+                                        </div>
+                                    </div>
+                                    {task.visualReview && (
+                                        <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <Camera size={14} className="text-purple-500" />
+                                                <span className="text-sm font-medium text-purple-700 dark:text-purple-300">
+                                                    Judge Visual: {task.visualScore}/10
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-slate-600 dark:text-slate-300 whitespace-pre-wrap">{task.visualReview}</p>
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center h-64 text-slate-400">
+                                    <Camera size={48} className="mb-3 opacity-30" />
+                                    <p className="text-sm">Nenhum screenshot disponível</p>
+                                    <p className="text-xs mt-1 text-slate-400">Screenshots são gerados automaticamente quando o Judge Visual detecta mudanças no frontend</p>
                                 </div>
                             )}
                         </div>
