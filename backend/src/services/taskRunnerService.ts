@@ -1169,13 +1169,14 @@ Return ONLY a JSON:
                 this.recordEvent(task, 'judge_started', 'Screenshots capturados. Executando Judge Visual via opencode + MCPs...');
                 this.emitLog(issueNumber, 'info', 'Screenshots OK. Enviando para analise visual (zai-vision + minimax)...');
             } catch (e: any) {
-                this.recordEvent(task, 'judge_error', `Screenshot falhou: ${e.message}`, { error: e.message });
-                this.emitLog(issueNumber, 'warn', `Screenshot falhou (${e.message}). Pulando Judge Visual.`);
-                task.visualScore = 0;
-                task.visualReview = `Screenshot failed: ${e.message}`;
-                task.status = 'reviewing';
-                this.save();
-                this.emitStatus(task);
+                this.recordEvent(task, 'judge_error', `Screenshot falhou: ${e.message} — pulando Judge Visual (não bloqueia auto-merge)`, { error: e.message });
+                this.emitLog(issueNumber, 'warn', `Screenshot falhou (${e.message}). Pulando Judge Visual — task pode seguir para merge.`);
+                task.visualReview = `Screenshot failed (skipped): ${e.message}`;
+                if (task.status === 'approved') {
+                    this.tryAutoMerge(task).catch((e2: any) => {
+                        log.warn(`Auto-merge após skip visual falhou para #${issueNumber}: ${e2?.message || e2}`);
+                    });
+                }
                 return;
             }
 
@@ -1227,14 +1228,12 @@ Return ONLY a JSON:
                     task.status = 'reviewing';
                 }
             } else {
-                task.visualScore = 0;
                 task.visualReview = 'Judge Visual failed to evaluate (no JSON in output)';
                 task.status = 'reviewing';
                 this.recordEvent(task, 'judge_error', 'Judge Visual: failed to parse response');
             }
         } catch (e: any) {
             log.error(`Visual Judge error for #${issueNumber}`, e);
-            task.visualScore = 0;
             task.visualReview = `Visual Judge error: ${e.message}`;
             task.status = 'reviewing';
             this.recordEvent(task, 'judge_error', `Visual Judge error: ${e.message}`, { error: e.message });
