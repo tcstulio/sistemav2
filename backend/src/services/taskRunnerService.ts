@@ -8,6 +8,7 @@ import { aiService } from './aiService';
 import { aiJobService } from './aiJobService';
 import { socketService } from './socketService';
 import { killTree, isAlive } from '../utils/processTree';
+import { screenshotService } from './screenshotService';
 
 const log = logger.child('TaskRunner');
 const execFileAsync = promisify(execFile);
@@ -166,6 +167,8 @@ export interface Task {
     judgeScore?: number;
     judgeReview?: string;
     judgeAttempts?: number;
+    visualScore?: number;
+    visualReview?: string;
     feedbackHistory: string[];
     startedAt?: string;
     updatedAt: string;
@@ -273,6 +276,8 @@ class TaskRunnerService {
             status: task.status,
             judgeScore: task.judgeScore,
             judgeReview: task.judgeReview,
+            visualScore: task.visualScore,
+            visualReview: task.visualReview,
             prNumber: task.prNumber,
             prUrl: task.prUrl,
             error: task.error,
@@ -910,6 +915,136 @@ Return ONLY a JSON:
         this.emitStatus(task);
 
         if (task.status === 'approved') {
+            const hasFrontend = await this.hasFrontendChanges(task);
+            if (hasFrontend && (task.judgeScore || 0) >= 6) {
+                this.recordEvent(task, 'judge_started', 'Frontend detectado — executando Judge Visual...');
+                this.runVisualJudge(task).catch((e: any) => {
+                    log.warn(`Visual Judge falhou para #${task.issueNumber}: ${e?.message || e}`);
+                    task.status = 'reviewing';
+                    task.visualReview = `Visual Judge failed: ${e?.message || e}`;
+                    this.save();
+                    this.emitStatus(task);
+                });
+            } else {
+                this.tryAutoMerge(task).catch((e: any) => {
+                    log.warn(`Auto-merge falhou para #${task.issueNumber}: ${e?.message || e}`);
+                });
+            }
+        }
+    }
+
+    private async hasFrontendChanges(task: Task): Promise<boolean> {
+        if (!task.prNumber) return false;
+        try {
+            const { stdout: files } = await gh([
+                'pr', 'diff', String(task.prNumber), '--repo', REPO, '--name-only',
+            ], { timeout: 30000 });
+            const FRONTEND_PATTERNS = ['src/', '.tsx', '.css', '.scss', 'index.html', 'vite.config', 'tailwind.config'];
+            return files.split('\n').filter(Boolean).some(file =>
+                FRONTEND_PATTERNS.some(p => file.includes(p))
+            );
+        } catch {
+            return false;
+        }
+    }
+
+    private async runVisualJudge(task: Task): Promise<void> {
+        const issueNumber = task.issueNumber;
+        log.info(`Visual Judge: starting for task #${issueNumber}`);
+        this.recordEvent(task, 'judge_started', 'Judge Visual: capturando screenshots...');
+        this.emitLog(issueNumber, 'info', 'Judge Visual: capturando screenshots antes/depois...');
+
+        try {
+            const previewPort = 3000 + (issueNumber % 1000);
+            const afterUrl = `http://localhost:${previewPort}`;
+
+            const beforeUrl = 'http://localhost:3003';
+
+            let beforePath: string;
+            let afterPath: string;
+            try {
+                const result = await screenshotService.captureForTask(issueNumber, beforeUrl, afterUrl);
+                beforePath = result.beforePath;
+                afterPath = result.afterPath;
+                this.recordEvent(task, 'judge_started', 'Screenshots capturados. Executando Judge Visual via opencode + MCPs...');
+                this.emitLog(issueNumber, 'info', 'Screenshots OK. Enviando para analise visual (zai-vision + minimax)...');
+            } catch (e: any) {
+                this.recordEvent(task, 'judge_error', `Screenshot falhou: ${e.message}`, { error: e.message });
+                this.emitLog(issueNumber, 'warn', `Screenshot falhou (${e.message}). Pulando Judge Visual.`);
+                task.visualScore = 0;
+                task.visualReview = `Screenshot failed: ${e.message}`;
+                task.status = 'reviewing';
+                this.save();
+                this.emitStatus(task);
+                return;
+            }
+
+            const prompt = [
+                'Voce e um Judge Visual de interfaces de usuario. Analise os screenshots antes/depois de uma mudanca no frontend.',
+                '',
+                'INSTRUCOES:',
+                `1. Use a ferramenta zai-vision_ui_diff_check para comparar os dois screenshots:`,
+                `   - Expected (ANTES): ${beforePath}`,
+                `   - Actual (DEPOIS): ${afterPath}`,
+                `2. Use a ferramenta minimax_understand_image para analisar o screenshot DEPOIS em detalhes: ${afterPath}`,
+                '',
+                'CRITERIOS DE AVALIACAO (0-10):',
+                '- Layout esta correto e alinhado?',
+                '- Nenhum texto cortado ou sobreposto?',
+                '- Dark mode preservado (se aplicavel)?',
+                '- Responsividade mantida?',
+                '- Nenhum componente quebrado ou faltando?',
+                '- Cores e estilos consistentes com o antes?',
+                '',
+                'Se os screenshots parecerem identicos ou com mudancas minimas visuais (apenas texto/dados), de score alto (9-10).',
+                'Se houver quebras visuais claras (componentes faltando, layout quebrado), de score baixo (0-4).',
+                '',
+                'Retorne APENAS um JSON:',
+                '{"visual_score": <0-10>, "issues": ["lista de problemas visuais"], "summary": "resumo em portugues das mudancas visuais"}',
+            ].join('\n');
+
+            const stdout = await runOpencode(
+                `opencode run "${prompt.replace(/"/g, '\\"')}"`,
+                REPO_ROOT, task, 120_000,
+            );
+
+            this.emitLog(issueNumber, 'ai', String(stdout).substring(0, 1500));
+
+            const jsonMatch = String(stdout).match(/\{[\s\S]*"visual_score"[\s\S]*\}/);
+            if (jsonMatch) {
+                const result = JSON.parse(jsonMatch[0]);
+                task.visualScore = result.visual_score;
+                task.visualReview = result.summary || '';
+                this.recordEvent(task, 'judge_score', `Judge Visual: ${result.visual_score}/10 — ${(result.summary || '').substring(0, 200)}`, {
+                    visualScore: result.visual_score,
+                    issues: result.issues || [],
+                });
+                this.emitLog(issueNumber, 'success', `Judge Visual: ${result.visual_score}/10 — ${(result.summary || '').substring(0, 150)}`);
+
+                if ((task.visualScore || 0) >= 8 && (task.judgeScore || 0) >= 8) {
+                    task.status = 'approved';
+                } else {
+                    task.status = 'reviewing';
+                }
+            } else {
+                task.visualScore = 0;
+                task.visualReview = 'Judge Visual failed to evaluate (no JSON in output)';
+                task.status = 'reviewing';
+                this.recordEvent(task, 'judge_error', 'Judge Visual: failed to parse response');
+            }
+        } catch (e: any) {
+            log.error(`Visual Judge error for #${issueNumber}`, e);
+            task.visualScore = 0;
+            task.visualReview = `Visual Judge error: ${e.message}`;
+            task.status = 'reviewing';
+            this.recordEvent(task, 'judge_error', `Visual Judge error: ${e.message}`, { error: e.message });
+        }
+
+        task.updatedAt = new Date().toISOString();
+        this.save();
+        this.emitStatus(task);
+
+        if (task.status === 'approved') {
             this.tryAutoMerge(task).catch((e: any) => {
                 log.warn(`Auto-merge falhou para #${task.issueNumber}: ${e?.message || e}`);
             });
@@ -920,6 +1055,10 @@ Return ONLY a JSON:
         const config = this.getAutomationConfig();
         if (!config.autoMerge) return;
         if ((task.judgeScore || 0) < config.minMergeScore) return;
+        if (task.visualScore !== undefined && task.visualScore < config.minMergeScore) {
+            this.recordEvent(task, 'task_failed', `Auto-merge bloqueado: visual score ${task.visualScore} < ${config.minMergeScore}`);
+            return;
+        }
 
         const issueNumber = task.issueNumber;
         log.info(`Auto-merge: testando gates para #${issueNumber}`);
@@ -1024,6 +1163,8 @@ Return ONLY a JSON:
         task.judgeScore = undefined;
         task.judgeReview = undefined;
         task.judgeAttempts = 0;
+        task.visualScore = undefined;
+        task.visualReview = undefined;
         task.status = 'running';
         task.error = undefined;
         task.updatedAt = new Date().toISOString();
