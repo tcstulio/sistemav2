@@ -26,6 +26,20 @@ export interface AttemptResult {
     summary?: string;
 }
 
+export interface SubTaskPlan {
+    title: string;
+    body: string;
+    filesEstimate: string[];
+    dependsOn: number[];
+    complexity: 'low' | 'medium' | 'high';
+}
+
+export interface DecompositionPlan {
+    subTasks: SubTaskPlan[];
+    createdAt: string;
+    approvedAt?: string;
+}
+
 export interface Task {
     issueNumber: number;
     title: string;
@@ -54,6 +68,10 @@ export interface Task {
     phase?: TaskPhase;
     attempts?: AttemptResult[];
     synthesisAttempt?: number;
+    kind?: 'task' | 'epic';
+    subTasks?: number[];
+    decompositionPlan?: DecompositionPlan;
+    parentEpic?: number;
 }
 
 export interface TaskEvent {
@@ -167,5 +185,20 @@ export const TaskService = {
 
     stopPreview: async (issueNumber: number): Promise<void> => {
         await axios.delete(`${API_URL}/${issueNumber}/preview`, getAuthHeaders());
+    },
+
+    markAsEpic: async (issueNumber: number): Promise<Task> => {
+        const response = await axios.post(`${API_URL}/${issueNumber}/mark-epic`, {}, getAuthHeaders());
+        return response.data;
+    },
+
+    decomposeEpic: async (issueNumber: number): Promise<Task> => {
+        const response = await axios.post(`${API_URL}/${issueNumber}/decompose`, {}, getAuthHeaders());
+        return response.data;
+    },
+
+    approveDecomposition: async (issueNumber: number): Promise<Task> => {
+        const response = await axios.post(`${API_URL}/${issueNumber}/approve-decomposition`, {}, getAuthHeaders());
+        return response.data;
     },
 };

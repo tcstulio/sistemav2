@@ -168,6 +168,37 @@ router.post('/:issueNumber/reject', requireDolibarrAdmin, async (req, res) => {
     }
 });
 
+// Epic routes
+router.post('/:issueNumber/mark-epic', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const task = await taskRunnerService.markAsEpic(Number(req.params.issueNumber));
+        res.json(task);
+    } catch (error: any) {
+        log.error('Mark epic error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.post('/:issueNumber/decompose', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const task = await taskRunnerService.decomposeEpic(Number(req.params.issueNumber));
+        res.json(task);
+    } catch (error: any) {
+        log.error('Decompose epic error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.post('/:issueNumber/approve-decomposition', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const task = await taskRunnerService.approveDecomposition(Number(req.params.issueNumber));
+        res.json(task);
+    } catch (error: any) {
+        log.error('Approve decomposition error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
 router.post('/:issueNumber/merge', requireDolibarrAdmin, async (req, res) => {
     try {
         const task = await taskRunnerService.mergeTask(Number(req.params.issueNumber));

@@ -264,4 +264,78 @@ Rules:
 
         return results;
     },
+
+    async decomposeEpic(task: Task): Promise<import('./taskRunnerService').DecompositionPlan> {
+        log.info(`Decomposing epic #${task.issueNumber}: ${task.title}`);
+
+        const prompt = `You are a senior software architect decomposing an epic into small, independent sub-tasks.
+
+## Epic #${task.issueNumber}: ${task.title}
+
+${task.body}
+
+## Project Context
+- Backend: Express + TypeScript (backend/)
+- Frontend: React + Vite (src/)
+- Database: Dolibarr ERP (REST API)
+
+## Rules
+1. Each sub-task should be completable in ONE opencode run (max 1-2 files changed)
+2. Sub-tasks must have clear, testable acceptance criteria
+3. List specific files to modify
+4. Define dependencies between sub-tasks (which must finish before which)
+5. Keep it practical — don't over-decompose. 2-5 sub-tasks is ideal.
+6. Write everything in Portuguese (Brazilian)
+
+Return ONLY valid JSON:
+{
+  "subTasks": [
+    {
+      "title": "Short descriptive title",
+      "body": "Detailed description with acceptance criteria",
+      "filesEstimate": ["path/to/file.ts"],
+      "dependsOn": [0],
+      "complexity": "low"
+    }
+  ]
+}
+
+dependsOn uses 0-based indices (0 = first sub-task, empty array = no dependencies).`;
+
+        try {
+            const history = [
+                { role: 'system' as const, parts: 'You are a senior software architect. Decompose epics into small, independent sub-tasks. Return ONLY valid JSON.' },
+                { role: 'user' as const, parts: prompt },
+            ];
+            const result = await aiJobService.runAndWait(
+                () => aiService.generateReply(history, '', undefined, 'chat'),
+                `epic-decompose-${task.issueNumber}`,
+            );
+            const reply = result.text;
+            const jsonMatch = reply.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) throw new Error('LLM did not return valid JSON');
+
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (!Array.isArray(parsed.subTasks) || parsed.subTasks.length === 0) {
+                throw new Error('No sub-tasks generated');
+            }
+
+            const plan: import('./taskRunnerService').DecompositionPlan = {
+                subTasks: parsed.subTasks.map((st: any, i: number) => ({
+                    title: String(st.title || `Sub-task ${i + 1}`),
+                    body: String(st.body || ''),
+                    filesEstimate: Array.isArray(st.filesEstimate) ? st.filesEstimate : [],
+                    dependsOn: Array.isArray(st.dependsOn) ? st.dependsOn : [],
+                    complexity: ['low', 'medium', 'high'].includes(st.complexity) ? st.complexity : 'medium',
+                })),
+                createdAt: new Date().toISOString(),
+            };
+
+            log.info(`Decomposed epic #${task.issueNumber} into ${plan.subTasks.length} sub-tasks`);
+            return plan;
+        } catch (e: any) {
+            log.error(`Decompose epic #${task.issueNumber} failed: ${e.message}`);
+            throw e;
+        }
+    },
 };

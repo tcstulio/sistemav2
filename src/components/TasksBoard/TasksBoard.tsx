@@ -105,13 +105,18 @@ const MiniCard: React.FC<{
     const plannerAction = task.events?.filter(e => e.type === 'planner_decision').pop()?.meta?.action;
     const plannerCfg = plannerAction ? PLANNER_CONFIG[plannerAction] : null;
 
+    const isEpic = task.kind === 'epic';
+
     return (
-        <div className={`p-3 rounded-lg border ${isMiniActive ? 'border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-900/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'} transition-all hover:shadow-sm`}>
+        <div className={`p-3 rounded-lg border ${isEpic ? 'border-purple-300 dark:border-purple-700 bg-purple-50/30 dark:bg-purple-900/10' : isMiniActive ? 'border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-900/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'} transition-all hover:shadow-sm`}>
             <div className="flex items-center gap-2 mb-1">
                 {queuePosition !== undefined && (
                     <span className="flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold">{queuePosition}</span>
                 )}
                 <span className="text-[10px] font-mono text-slate-400">#{task.issueNumber}</span>
+                {isEpic && (
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[8px] font-bold bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">📦 ÉPICA</span>
+                )}
                 <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${cfg.color} ${cfg.bg}`}>
                     {cfg.icon} {cfg.label}
                 </span>
@@ -144,10 +149,36 @@ const MiniCard: React.FC<{
             {task.error && (
                 <p className="text-[10px] text-red-500 mb-1 truncate">{task.error}</p>
             )}
+            {isEpic && task.decompositionPlan && (
+                <div className="mt-1 space-y-0.5">
+                    {task.decompositionPlan.subTasks.map((st, i) => (
+                        <div key={i} className="text-[9px] text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                            <span className="shrink-0">{task.subTasks?.[i] ? (task.kind === 'epic' ? '✅' : '⏳') : '○'}</span>
+                            <span className="truncate">{st.title}</span>
+                            {task.subTasks?.[i] && <span className="text-[8px] text-slate-400">#{task.subTasks[i]}</span>}
+                        </div>
+                    ))}
+                </div>
+            )}
             <div className="flex items-center gap-1 mt-2 flex-wrap">
-                {isAdmin && task.status === 'pending' && (
-                    <button onClick={() => onAction('start', task)} className="text-[10px] px-2 py-0.5 rounded bg-indigo-500 text-white hover:bg-indigo-600 transition-colors">
-                        <Play size={10} className="inline mr-0.5" /> Iniciar
+                {isAdmin && !isEpic && task.status === 'pending' && (
+                    <>
+                        <button onClick={() => onAction('start', task)} className="text-[10px] px-2 py-0.5 rounded bg-indigo-500 text-white hover:bg-indigo-600 transition-colors">
+                            <Play size={10} className="inline mr-0.5" /> Iniciar
+                        </button>
+                        <button onClick={() => onAction('mark-epic', task)} className="text-[10px] px-2 py-0.5 rounded bg-purple-500 text-white hover:bg-purple-600 transition-colors">
+                            📦 Épica
+                        </button>
+                    </>
+                )}
+                {isAdmin && isEpic && !task.decompositionPlan && (
+                    <button onClick={() => onAction('decompose', task)} className="text-[10px] px-2 py-0.5 rounded bg-violet-500 text-white hover:bg-violet-600 transition-colors">
+                        🧩 Decompor
+                    </button>
+                )}
+                {isAdmin && isEpic && task.decompositionPlan && !task.decompositionPlan.approvedAt && (
+                    <button onClick={() => onAction('approve-decomposition', task)} className="text-[10px] px-2 py-0.5 rounded bg-emerald-500 text-white hover:bg-emerald-600 transition-colors">
+                        ✅ Aprovar Plano
                     </button>
                 )}
                 {(task.status === 'reviewing' || task.status === 'approved' || task.status === 'failed' || task.status === 'rejected') && (
@@ -508,6 +539,9 @@ const TasksBoard: React.FC = () => {
                 case 'merge': await TaskService.merge(task.issueNumber); toast.success('PR merged!'); break;
                 case 'reject': await TaskService.reject(task.issueNumber); toast.info('Rejeitada'); break;
                 case 'redo': await TaskService.redo(task.issueNumber); toast.info('Refazendo...'); break;
+                case 'mark-epic': await TaskService.markAsEpic(task.issueNumber); toast.info('Marcada como épica'); break;
+                case 'decompose': toast.info('Decompondo épica...'); await TaskService.decomposeEpic(task.issueNumber); toast.success('Decomposição gerada!'); break;
+                case 'approve-decomposition': toast.info('Aprovando e criando sub-tasks...'); await TaskService.approveDecomposition(task.issueNumber); toast.success('Sub-tasks criadas!'); break;
                 case 'fix':
                     if (!extra) { toast.error('Informe a correção.'); return; }
                     toast.info('Enviando correção...');

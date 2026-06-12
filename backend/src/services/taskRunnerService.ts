@@ -173,6 +173,20 @@ export interface AttemptResult {
     summary?: string;
 }
 
+export interface SubTaskPlan {
+    title: string;
+    body: string;
+    filesEstimate: string[];
+    dependsOn: number[];
+    complexity: 'low' | 'medium' | 'high';
+}
+
+export interface DecompositionPlan {
+    subTasks: SubTaskPlan[];
+    createdAt: string;
+    approvedAt?: string;
+}
+
 export interface Task {
     issueNumber: number;
     title: string;
@@ -201,6 +215,10 @@ export interface Task {
     phase: TaskPhase;
     attempts: AttemptResult[];
     synthesisAttempt?: number;
+    kind: 'task' | 'epic';
+    subTasks?: number[];
+    decompositionPlan?: DecompositionPlan;
+    parentEpic?: number;
 }
 
 interface TaskStore {
@@ -340,6 +358,7 @@ class TaskRunnerService {
                     if (!Array.isArray(t.events)) t.events = [];
                     if (!t.phase) t.phase = 'done';
                     if (!Array.isArray(t.attempts)) t.attempts = [];
+                    if (!t.kind) t.kind = 'task';
                     if (t.killRequested) {
                         t.killRequested = false;
                         t.childPid = undefined;
@@ -402,6 +421,7 @@ class TaskRunnerService {
                     updatedAt: new Date().toISOString(),
                     phase: 'done',
                     attempts: [],
+                    kind: 'task',
                 };
             } else if (issue.state === 'CLOSED' && this.store.tasks[num].status === 'pending') {
                 this.store.tasks[num].startedAt = undefined;
@@ -1406,6 +1426,107 @@ Return ONLY a JSON:
         return task;
     }
 
+    async markAsEpic(issueNumber: number): Promise<Task> {
+        const task = this.store.tasks[issueNumber];
+        if (!task) throw new Error(`Task #${issueNumber} not found`);
+        task.kind = 'epic';
+        task.updatedAt = new Date().toISOString();
+        this.recordEvent(task, 'task_created', `Task marcada como épica`);
+        this.save();
+        this.emitStatus(task);
+        return task;
+    }
+
+    async decomposeEpic(issueNumber: number): Promise<Task> {
+        const task = this.store.tasks[issueNumber];
+        if (!task) throw new Error(`Task #${issueNumber} not found`);
+        if (task.kind !== 'epic') throw new Error('Task não é uma épica');
+
+        const { taskPlannerService } = require('./taskPlannerService');
+        const plan = await taskPlannerService.decomposeEpic(task);
+
+        task.decompositionPlan = plan;
+        task.updatedAt = new Date().toISOString();
+        this.recordEvent(task, 'task_created', `Épica decomposta em ${plan.subTasks.length} sub-tasks`);
+        this.save();
+        this.emitStatus(task);
+        return task;
+    }
+
+    async approveDecomposition(issueNumber: number): Promise<Task> {
+        const task = this.store.tasks[issueNumber];
+        if (!task) throw new Error(`Task #${issueNumber} not found`);
+        if (task.kind !== 'epic') throw new Error('Task não é uma épica');
+        if (!task.decompositionPlan) throw new Error('Épica não tem plano de decomposição');
+
+        const plan = task.decompositionPlan;
+        plan.approvedAt = new Date().toISOString();
+        const subTaskNumbers: number[] = [];
+
+        for (let i = 0; i < plan.subTasks.length; i++) {
+            const st = plan.subTasks[i];
+            const dependsNote = st.dependsOn.length > 0
+                ? `\n\nDepende de: ${st.dependsOn.map(d => `sub-task ${d + 1}`).join(', ')}`
+                : '';
+            const body = `${st.body}${dependsNote}\n\nParent Epic: #${issueNumber}\nComplexidade: ${st.complexity}\nArquivos estimados: ${st.filesEstimate.join(', ') || 'N/A'}`;
+
+            const { stdout: issueOut } = await gh([
+                'issue', 'create', '--repo', REPO,
+                '--title', st.title,
+                '--body', body,
+                '--label', 'opencode-task',
+            ], { timeout: 15000 });
+            const match = issueOut.match(/\/issues\/(\d+)/);
+            if (match) {
+                const subNum = parseInt(match[1]);
+                subTaskNumbers.push(subNum);
+                this.store.tasks[subNum] = {
+                    issueNumber: subNum,
+                    title: st.title,
+                    body,
+                    labels: ['opencode-task'],
+                    status: 'pending',
+                    feedbackHistory: [],
+                    events: [],
+                    updatedAt: new Date().toISOString(),
+                    phase: 'done',
+                    attempts: [],
+                    kind: 'task',
+                    parentEpic: issueNumber,
+                    queuePriority: st.dependsOn.length > 0 ? 200 + i : i,
+                };
+            }
+        }
+
+        task.subTasks = subTaskNumbers;
+        task.updatedAt = new Date().toISOString();
+        this.recordEvent(task, 'task_created', `Decomposição aprovada: ${subTaskNumbers.length} sub-tasks criadas (${subTaskNumbers.map(n => `#${n}`).join(', ')})`);
+        this.save();
+        this.emitStatus(task);
+        return task;
+    }
+
+    private checkEpicCompletion(task: Task): void {
+        if (task.parentEpic) {
+            const epic = this.store.tasks[task.parentEpic];
+            if (epic && epic.kind === 'epic' && epic.subTasks?.length) {
+                const allMerged = epic.subTasks.every(subNum => {
+                    const sub = this.store.tasks[subNum];
+                    return sub && sub.status === 'merged';
+                });
+                if (allMerged) {
+                    epic.status = 'merged';
+                    epic.completedAt = new Date().toISOString();
+                    epic.updatedAt = new Date().toISOString();
+                    this.recordEvent(epic, 'task_completed', `Épica completa — todas ${epic.subTasks.length} sub-tasks merged`);
+                    this.save();
+                    this.emitStatus(epic);
+                    gh(['issue', 'close', String(epic.issueNumber), '--repo', REPO, '--comment', `Épica completa. Todas as sub-tasks foram merged: ${epic.subTasks.map(n => `#${n}`).join(', ')}`], { timeout: 15000 }).catch(() => {});
+                }
+            }
+        }
+    }
+
     async mergeTask(issueNumber: number): Promise<Task> {
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
@@ -1421,6 +1542,9 @@ Return ONLY a JSON:
         this.recordEvent(task, 'task_completed', `Task concluída (PR #${task.prNumber} merged)`);
         this.save();
         this.emitStatus(task);
+
+        this.checkEpicCompletion(task);
+
         return task;
     }
 
@@ -1459,6 +1583,7 @@ Return ONLY a JSON:
             updatedAt: new Date().toISOString(),
             phase: 'done',
             attempts: [],
+            kind: 'task',
         };
         this.store.tasks[issueNumber] = task;
         this.recordEvent(task, 'task_created', `Task criada via board: #${issueNumber} — ${title}`);
