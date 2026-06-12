@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { TaskService, Task } from '../../services/taskService';
+import { getUiConfig } from '../../services/uiConfigService';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
 import { Play, CheckCircle, XCircle, RotateCcw, GitMerge, MessageSquare, Loader2, AlertCircle, Clock, Eye, RefreshCw, ExternalLink, ThumbsUp, Star, Trash2, Pencil, Terminal, ShieldOff, Plus, Search, Filter, LayoutGrid, List, Sparkles, GripVertical, Monitor, ShieldCheck, ShieldAlert, Shield } from 'lucide-react';
 import { toast } from 'sonner';
@@ -37,6 +38,52 @@ const PIPELINE_COLUMNS = [
     { key: 'done', label: 'Concluído', statuses: ['merged', 'rejected', 'cancelled', 'failed'] },
 ] as const;
 
+type PipelinePhase = 'exploring' | 'synthesizing' | 'judging' | 'done';
+
+const PIPELINE_STEPS: { key: PipelinePhase; label: string; icon: string }[] = [
+    { key: 'exploring', label: 'Explorar', icon: '🔍' },
+    { key: 'synthesizing', label: 'Síntese', icon: '🧪' },
+    { key: 'judging', label: 'Judge', icon: '⚖️' },
+];
+
+const PipelineBar: React.FC<{
+    phase: PipelinePhase;
+    attempts?: any[];
+    synthesisAttempt?: number;
+    judgeAttempts?: number;
+}> = ({ phase, attempts, synthesisAttempt, judgeAttempts }) => {
+    const phaseIdx = PIPELINE_STEPS.findIndex(s => s.key === phase);
+    const exploreDone = attempts?.filter((a: any) => a.phase === 'exploring').length || 0;
+
+    return (
+        <div className="flex items-center gap-0.5 mb-1">
+            {PIPELINE_STEPS.map((step, i) => {
+                const isDone = i < phaseIdx;
+                const isCurrent = i === phaseIdx;
+                const isPending = i > phaseIdx;
+                let detail = '';
+                if (step.key === 'exploring') detail = `${exploreDone}/3`;
+                if (step.key === 'synthesizing') detail = `${synthesisAttempt || 0}/3`;
+                if (step.key === 'judging') detail = judgeAttempts ? `${judgeAttempts}/3` : '';
+
+                return (
+                    <React.Fragment key={step.key}>
+                        {i > 0 && <div className={`w-2 h-[2px] ${isDone ? 'bg-indigo-500' : 'bg-slate-200 dark:bg-slate-700'}`} />}
+                        <div className={`flex items-center gap-0.5 px-1 py-0 rounded text-[7px] font-medium ${
+                            isCurrent ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400' :
+                            isDone ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400' :
+                            'bg-slate-50 dark:bg-slate-800 text-slate-400'
+                        }`}>
+                            <span>{step.icon}</span>
+                            {detail && <span>{detail}</span>}
+                        </div>
+                    </React.Fragment>
+                );
+            })}
+        </div>
+    );
+};
+
 const MiniCard: React.FC<{
     task: Task;
     onAction: (action: string, task: Task, extra?: string) => void;
@@ -73,13 +120,6 @@ const MiniCard: React.FC<{
                         <Star size={8} className="inline" /> {task.judgeScore}/10
                     </span>
                 )}
-                {task.phase && task.phase !== 'done' && (
-                    <span className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded-full text-[8px] font-medium bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400">
-                        {task.phase === 'exploring' ? `🔍 ${task.attempts?.filter(a => a.phase === 'exploring').length || 0}/3` :
-                         task.phase === 'synthesizing' ? `🧪 ${task.synthesisAttempt || 0}/3` :
-                         task.phase === 'judging' ? '⚖️' : ''}
-                    </span>
-                )}
                 {plannerCfg && (
                     <span className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[8px] font-bold ${plannerCfg.color} ${plannerCfg.bg}`} title={task.planReason}>
                         {plannerCfg.icon} {plannerCfg.label}
@@ -87,6 +127,17 @@ const MiniCard: React.FC<{
                 )}
             </div>
             <h4 className="text-xs font-medium text-slate-800 dark:text-white leading-tight mb-1 line-clamp-2">{task.title}</h4>
+            {task.phase && task.phase !== 'done' && (
+                <PipelineBar phase={task.phase} attempts={task.attempts} synthesisAttempt={task.synthesisAttempt} judgeAttempts={task.judgeAttempts} />
+            )}
+            {task.phase === 'done' && task.judgeScore !== undefined && (
+                <div className="flex items-center gap-1 mb-1">
+                    <div className="flex-1 h-1 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                        <div className={`h-full rounded-full ${task.judgeScore >= 8 ? 'bg-emerald-500' : task.judgeScore >= 6 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${task.judgeScore * 10}%` }} />
+                    </div>
+                    <span className="text-[8px] text-slate-400">{task.judgeScore}/10</span>
+                </div>
+            )}
             {task.planReason && (
                 <p className="text-[10px] text-indigo-500 dark:text-indigo-400 mb-1 line-clamp-2">{task.planReason}</p>
             )}
@@ -99,7 +150,7 @@ const MiniCard: React.FC<{
                         <Play size={10} className="inline mr-0.5" /> Iniciar
                     </button>
                 )}
-                {(task.status === 'reviewing' || task.status === 'approved') && (
+                {(task.status === 'reviewing' || task.status === 'approved' || task.status === 'failed' || task.status === 'rejected') && (
                     <>
                         <button onClick={() => onReview(task)} className="text-[10px] px-2 py-0.5 rounded bg-purple-500 text-white hover:bg-purple-600 transition-colors">
                             <Eye size={10} className="inline mr-0.5" /> Revisar
@@ -115,7 +166,7 @@ const MiniCard: React.FC<{
                                 </button>
                             )
                         )}
-                        {isAdmin && (
+                        {isAdmin && (task.status === 'reviewing' || task.status === 'approved') && (
                             <>
                                 <button onClick={() => onAction('merge', task)} className="text-[10px] px-2 py-0.5 rounded bg-emerald-500 text-white hover:bg-emerald-600 transition-colors">
                                     <GitMerge size={10} className="inline mr-0.5" /> Merge
@@ -341,8 +392,18 @@ const TaskCard: React.FC<{
                         )}
                     </>
                 )}
-                {isAdmin && task.status === 'failed' && (
-                    <Button variant="primary" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Tentar Novamente</Button>
+                {(task.status === 'failed' || task.status === 'rejected') && (
+                    <>
+                        <Button variant="ghost" size="sm" icon={<Eye size={12} />} onClick={() => onReview(task)} className="text-purple-500">Revisar</Button>
+                        {task.branch && (
+                            previewUrl ? (
+                                <Button variant="ghost" size="sm" icon={<Monitor size={12} />} onClick={() => onStopPreview(task.issueNumber)} className="text-red-500">Parar</Button>
+                            ) : (
+                                <Button variant="ghost" size="sm" icon={<Monitor size={12} />} onClick={() => onPreview(task)} className="text-teal-600">Testar</Button>
+                            )
+                        )}
+                        {isAdmin && <Button variant="primary" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Tentar Novamente</Button>}
+                    </>
                 )}
                 {task.status === 'merged' && (
                     <span className="text-xs text-emerald-600 flex items-center gap-1"><CheckCircle size={12} /> Concluído</span>
@@ -404,6 +465,7 @@ const TasksBoard: React.FC = () => {
     const [editTitle, setEditTitle] = useState('');
     const [editBody, setEditBody] = useState('');
     const [deleteConfirm, setDeleteConfirm] = useState<Task | null>(null);
+    const [autoPlay, setAutoPlay] = useState(false);
     const [consoleTask, setConsoleTask] = useState<Task | null>(null);
     const [previewUrls, setPreviewUrls] = useState<Record<number, string>>({});
 
@@ -411,6 +473,10 @@ const TasksBoard: React.FC = () => {
         try {
             const data = await TaskService.list();
             setTasks(data);
+            try {
+                const cfg = await getUiConfig();
+                setAutoPlay(cfg?.taskAutomation?.autoPlay === true);
+            } catch {}
         } catch { toast.error('Erro ao carregar tasks'); }
         setLoading(false);
     }, []);
@@ -544,6 +610,7 @@ const TasksBoard: React.FC = () => {
                 subtitle="Issues → opencode automático"
                 actions={
                     <div className="flex items-center gap-2">
+                        {autoPlay && <span className="flex items-center gap-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-1 rounded-full" title="Auto-play ativo — tasks pendentes iniciam automaticamente"><Play size={10} /> Auto</span>}
                         {hasActive && <span className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 dark:bg-blue-900/20 px-3 py-1.5 rounded-full"><Loader2 size={12} className="animate-spin" /> Executando</span>}
                         {isAdmin && metrics.pending > 1 && (
                             <Button variant="ghost" size="sm" icon={<Sparkles size={14} />} onClick={handlePlan} disabled={planning} className="text-indigo-500">

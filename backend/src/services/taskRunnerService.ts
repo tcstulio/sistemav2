@@ -151,6 +151,7 @@ export type TaskEventType =
     | 'feedback_received'
     | 'planner_started'
     | 'planner_decision'
+    | 'opencode_output'
     | 'error';
 
 export interface TaskEvent {
@@ -634,14 +635,20 @@ class TaskRunnerService {
             .filter((l) => l && !l.includes('node_modules') && !l.includes('package-lock') && !l.includes(PROMPT_FILE));
     }
 
-    /** Gate de verificação: typecheck backend + frontend no worktree. */
+    /** Gate de verificação: typecheck backend + frontend + vite build no worktree. */
     private async verify(): Promise<{ ok: boolean; output: string }> {
         try {
             await sh('npx tsc --noEmit -p backend/tsconfig.json', WT_ROOT, 240000);
             await sh('npx tsc --noEmit -p tsconfig.json', WT_ROOT, 240000);
-            return { ok: true, output: 'typecheck OK (backend + frontend)' };
+            await sh('npx vite build', WT_ROOT, 300000);
+            return { ok: true, output: 'typecheck OK + build OK (backend + frontend)' };
         } catch (e: any) {
-            return { ok: false, output: ((e.stdout || '') + '\n' + (e.stderr || e.message || '')).substring(0, 4000) };
+            const raw = ((e.stdout || '') + '\n' + (e.stderr || e.message || ''));
+            const output = raw.substring(0, 4000);
+            if (raw.includes('vite build') || raw.includes('vite v')) {
+                return { ok: false, output: 'typecheck OK, mas vite build FALHOU:\n' + output };
+            }
+            return { ok: false, output };
         }
     }
 
@@ -734,11 +741,14 @@ class TaskRunnerService {
         let verify = { ok: false, output: 'não verificado' };
 
         if (!task.attempts) task.attempts = [];
-        task.phase = 'exploring';
+        const hasExploration = task.attempts.filter(a => a.phase === 'exploring').length >= 3;
+        task.phase = hasExploration ? 'synthesizing' : 'exploring';
         this.save();
 
         // === FASE 1: Exploração (3 tentativas independentes) ===
+        // Skip se já temos 3 tentativas de exploração (retry inteligente)
         const MAX_EXPLORE = 3;
+        if (!hasExploration) {
         for (let attempt = 1; attempt <= MAX_EXPLORE; attempt++) {
             if (task.killRequested) return;
             fs.writeFileSync(promptPath, this.buildPrompt(task, issueData));
@@ -749,7 +759,9 @@ class TaskRunnerService {
                     `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
                     WT_ROOT, task, OPENCODE_TIMEOUT_MS,
                 );
-                this.emitLog(issueNumber, 'ai', String(stdout).substring(0, 1500));
+                const output = String(stdout);
+                this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
+                this.recordEvent(task, 'opencode_output', `Exploração ${attempt} — output`, { attempt, phase: 'exploring', output: output.substring(0, 5000) });
             } catch (e: any) {
                 if (task.killRequested) {
                     this.recordEvent(task, 'task_killed', 'Task cancelada durante opencode', { attempt, phase: 'exploring' });
@@ -804,6 +816,9 @@ class TaskRunnerService {
         this.recordEvent(task, 'exploration_completed', `${MAX_EXPLORE} tentativas de exploração completas (${task.attempts.filter(a => a.typecheckOk).length}/${MAX_EXPLORE} typecheck OK)`, {
             totalAttempts: task.attempts.length, typecheckOkCount: task.attempts.filter(a => a.typecheckOk).length,
         });
+        } else {
+            this.recordEvent(task, 'exploration_completed', `Exploração pulada (retry — ${task.attempts.filter(a => a.phase === 'exploring').length} tentativas anteriores reutilizadas)`, { reused: true });
+        }
 
         // === FASE 2: Síntese (até 3 tentativas) ===
         task.phase = 'synthesizing';
@@ -823,7 +838,9 @@ class TaskRunnerService {
                     `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
                     WT_ROOT, task, OPENCODE_TIMEOUT_MS,
                 );
-                this.emitLog(issueNumber, 'ai', String(stdout).substring(0, 1500));
+                const output = String(stdout);
+                this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
+                this.recordEvent(task, 'opencode_output', `Síntese ${synthAttempt} — output`, { synthAttempt, phase: 'synthesizing', output: output.substring(0, 5000) });
             } catch (e: any) {
                 if (task.killRequested) {
                     this.recordEvent(task, 'task_killed', 'Task cancelada durante síntese', { synthAttempt });
