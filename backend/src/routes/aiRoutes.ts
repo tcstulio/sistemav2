@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { aiService } from '../services/aiService';
 import { chatSessionService } from '../services/chatSessionService';
-import { setToolCallListener } from '../services/agentTools';
+import { runWithToolContext } from '../services/agentTools';
 import { extractToolCall } from '../services/aiService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { agentActivityService } from '../services/agentActivityService';
@@ -59,6 +59,9 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
         const { history, context, image, module, sessionId } = GenerateReplySchema.parse(body);
 
         let enrichedContext = context || '';
+        let permissionProfile: import('../services/userPermissionsService').UserPermissionProfile | null = null;
+        const isAdmin = user?.admin === '1' || user?.admin === 1 || user?.admin === true;
+
         if (user) {
             const userIdentity = [
                 `\n[SISTEMA] Identidade do usuário:`,
@@ -66,7 +69,7 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
                 `- Nome: ${[user.firstname, user.lastname].filter(Boolean).join(' ') || user.login || 'desconhecido'}`,
                 `- Email: ${user.email || 'não informado'}`,
                 `- Cargo: ${user.job || 'não informado'}`,
-                `- Admin: ${user.admin ? 'Sim' : 'Não'}`,
+                `- Admin: ${isAdmin ? 'Sim' : 'Não'}`,
                 `- ID Dolibarr: ${user.id || 'não informado'}`,
             ].join('\n');
             enrichedContext += userIdentity;
@@ -74,6 +77,7 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
             if (user.id) {
                 try {
                     const { userPermissionsService } = require('../services/userPermissionsService');
+                    permissionProfile = await userPermissionsService.getProfile(String(user.id));
                     const permContext = await userPermissionsService.getProfileForContext(String(user.id));
                     enrichedContext += '\n\n' + permContext;
                 } catch (e: any) {
@@ -83,27 +87,31 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
         }
 
         const toolCalls: Array<{ tool: string; args: Record<string, any>; result: string; duration: number }> = [];
-        if (sessionId && module === 'chat') {
-            setToolCallListener((tool, args, result, duration) => {
-                toolCalls.push({ tool, args, result: result.slice(0, 2000), duration });
-                try {
-                    const userData = user?.userData;
-                    agentActivityService.record({
-                        userId: userData?.id || 'unknown',
-                        userName: userData?.name || userData?.login || 'unknown',
-                        tool,
-                        args,
-                        result: result.slice(0, 500),
-                        durationMs: duration,
-                        isError: result.toLowerCase().includes('error') || result.toLowerCase().includes('erro'),
-                    });
-                } catch { /* ignore activity logging errors */ }
-            });
-        }
+        const toolListener = (tool: string, args: Record<string, any>, result: string, duration: number) => {
+            toolCalls.push({ tool, args, result: result.slice(0, 2000), duration });
+            try {
+                const userData = user?.userData;
+                agentActivityService.record({
+                    userId: userData?.id || 'unknown',
+                    userName: userData?.name || userData?.login || 'unknown',
+                    tool,
+                    args,
+                    result: result.slice(0, 500),
+                    durationMs: duration,
+                    isError: result.toLowerCase().includes('error') || result.toLowerCase().includes('erro'),
+                });
+            } catch { /* ignore activity logging errors */ }
+        };
 
-        const result = await aiService.generateReply(history as any || [], enrichedContext, image, module);
-
-        setToolCallListener(null);
+        const result = await runWithToolContext({
+            listener: sessionId && module === 'chat' ? toolListener : null,
+            userId: String(user?.id || ''),
+            userLogin: user?.login || 'unknown',
+            isAdmin,
+            permissionProfile,
+        }, async () => {
+            return aiService.generateReply(history as any || [], enrichedContext, image, module);
+        });
 
         if (sessionId && module === 'chat') {
             try {
@@ -503,9 +511,9 @@ router.post('/analyze/monthly-report', async (req, res) => {
 
 router.post('/sessions', (req, res) => {
     try {
-        const userLogin = (req as any).user?.login || 'unknown';
+        const userId = String((req as any).user?.id || (req as any).user?.login || 'unknown');
         const { firstMessage } = req.body;
-        const session = chatSessionService.createSession(userLogin, firstMessage);
+        const session = chatSessionService.createSession(userId, firstMessage);
         res.json({ success: true, data: session });
     } catch (error: any) {
         log.error('Create session error', { error: error.message });
@@ -516,7 +524,9 @@ router.post('/sessions', (req, res) => {
 router.get('/sessions', (req, res) => {
     try {
         const { limit } = req.query;
-        const sessions = chatSessionService.getSessions(undefined, limit ? parseInt(limit as string) : 50);
+        const isAdmin = (req as any).user?.admin === '1' || (req as any).user?.admin === 1;
+        const userId = String((req as any).user?.id || (req as any).user?.login || 'unknown');
+        const sessions = chatSessionService.getSessions(isAdmin ? undefined : userId, limit ? parseInt(limit as string) : 50);
         res.json({ count: sessions.length, data: sessions });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -529,6 +539,11 @@ router.get('/sessions/:id', (req, res) => {
         if (!session) {
             return res.status(404).json({ error: 'Session not found' });
         }
+        const isAdmin = (req as any).user?.admin === '1' || (req as any).user?.admin === 1;
+        const userId = String((req as any).user?.id || (req as any).user?.login || 'unknown');
+        if (!isAdmin && session.userId !== userId) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
         res.json({ data: session });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -537,7 +552,11 @@ router.get('/sessions/:id', (req, res) => {
 
 router.delete('/sessions', (req, res) => {
     try {
-        const count = chatSessionService.deleteAllSessions();
+        const isAdmin = (req as any).user?.admin === '1' || (req as any).user?.admin === 1;
+        const userId = String((req as any).user?.id || (req as any).user?.login || 'unknown');
+        const count = isAdmin
+            ? chatSessionService.deleteAllSessions()
+            : chatSessionService.deleteSessionsByUser(userId);
         res.json({ success: true, deletedCount: count });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -546,12 +565,17 @@ router.delete('/sessions', (req, res) => {
 
 router.delete('/sessions/:id', (req, res) => {
     try {
-        const success = chatSessionService.deleteSession(req.params.id);
-        if (success) {
-            res.json({ success: true });
-        } else {
-            res.status(404).json({ error: 'Session not found' });
+        const session = chatSessionService.getSession(req.params.id);
+        if (!session) {
+            return res.status(404).json({ error: 'Session not found' });
         }
+        const isAdmin = (req as any).user?.admin === '1' || (req as any).user?.admin === 1;
+        const userId = String((req as any).user?.id || (req as any).user?.login || 'unknown');
+        if (!isAdmin && session.userId !== userId) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        const success = chatSessionService.deleteSession(req.params.id);
+        res.json({ success });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }

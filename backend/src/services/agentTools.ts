@@ -2,6 +2,7 @@
 // Antes, GoogleProvider e LocalProvider tinham switches separados (Gemini: 32 tools;
 // GLM/Ollama: 5 "Lite"). Agora ambos usam TOOLS_PROMPT + executeTool daqui — então
 // qualquer provider tem o mesmo conjunto completo de ferramentas.
+import { AsyncLocalStorage } from 'async_hooks';
 import { dolibarrService } from './dolibarrService';
 import { ScraperService } from './scraperService';
 import { isValidExternalUrl } from '../utils/urlValidation';
@@ -29,10 +30,35 @@ export class AskUserInterrupt extends Error {
 }
 
 type ToolCallListener = (tool: string, args: Record<string, any>, result: string, durationMs: number) => void;
-let activeToolCallListener: ToolCallListener | null = null;
+
+interface ToolContext {
+    listener: ToolCallListener | null;
+    userId?: string;
+    userLogin?: string;
+    isAdmin?: boolean;
+    permissionProfile?: import('./userPermissionsService').UserPermissionProfile | null;
+}
+
+const toolContextStore = new AsyncLocalStorage<ToolContext>();
+
+const DEFAULT_TOOL_CONTEXT: ToolContext = { listener: null };
 
 export function setToolCallListener(fn: ToolCallListener | null) {
-    activeToolCallListener = fn;
+    const store = toolContextStore.getStore();
+    if (store) {
+        store.listener = fn;
+    } else {
+        DEFAULT_TOOL_CONTEXT.listener = fn;
+    }
+}
+
+export function runWithToolContext<T>(ctx: Partial<ToolContext>, fn: () => Promise<T>): Promise<T> {
+    const merged: ToolContext = { ...DEFAULT_TOOL_CONTEXT, ...ctx };
+    return toolContextStore.run(merged, fn);
+}
+
+export function getToolContext(): ToolContext {
+    return toolContextStore.getStore() || DEFAULT_TOOL_CONTEXT;
 }
 
 export const TOOLS_PROMPT = `
@@ -604,6 +630,53 @@ const TOOL_ALIASES: Record<string, string> = {
     confirmar: 'ask_user',
 };
 
+const WRITE_TOOLS: Record<string, string> = {
+    prepare_create: 'canCreate',
+    prepare_edit: 'canEdit',
+    validate_invoice: 'canValidate',
+    validate_order: 'canValidate',
+    validate_proposal: 'canValidate',
+    notify_team: 'canSendEmail',
+    notify_person: 'canSendEmail',
+    send_whatsapp: 'canSendWhatsapp',
+    get_financial_summary: 'canAccessFinancial',
+    get_bank_balance: 'canAccessFinancial',
+    get_accounts_receivable: 'canAccessFinancial',
+    get_accounts_payable: 'canAccessFinancial',
+    get_cash_flow_forecast: 'canAccessFinancial',
+    create_github_issue: 'canCreateIssues',
+    list_github_issues: 'canCreateIssues',
+    create_bug_report: 'canCreateIssues',
+    create_opencode_task: 'canStartTasks',
+    start_opencode_task: 'canStartTasks',
+    merge_opencode_task: 'canMergePRs',
+};
+
+function getWritePermissionKey(tool: string): string | null {
+    if (WRITE_TOOLS[tool]) return WRITE_TOOLS[tool];
+    for (const prefix of ['prepare_create_', 'prepare_edit_']) {
+        if (tool.startsWith(prefix)) return WRITE_TOOLS[prefix.slice(0, -1)];
+    }
+    return null;
+}
+
+const ENTITY_MAP: Record<string, string> = {
+    ticket: 'ticket', customer: 'customer', supplier: 'supplier', project: 'project',
+    task: 'task', delegation: 'task', category: 'category', event: 'event',
+    intervention: 'intervention', job: 'job', leave: 'leave', contact: 'contact',
+    candidate: 'candidate', invoice: 'invoice', proposal: 'proposal',
+    supplier_invoice: 'invoice', supplier_proposal: 'proposal', order: 'order',
+    mo: 'mo', bom: 'bom', product: 'product', user: 'user', group: 'user',
+    contract: 'contract', expense: 'expense',
+};
+
+function getEntityFromTool(tool: string): string | null {
+    const createMatch = tool.match(/^prepare_create_(.+)$/);
+    const editMatch = tool.match(/^prepare_edit_(.+)$/);
+    const key = createMatch?.[1] || editMatch?.[1];
+    return key ? (ENTITY_MAP[key] || null) : null;
+}
+
 export async function executeTool(tool: string, args: any = {}): Promise<string> {
     const resolvedTool = TOOL_ALIASES[tool] || tool;
     log.info(`Tool Call: ${tool}${resolvedTool !== tool ? ` -> ${resolvedTool}` : ''}`, args);
@@ -614,10 +687,33 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
         return msg;
     }
 
+    const ctx = getToolContext();
+    if (ctx.permissionProfile && !ctx.isAdmin) {
+        const permKey = getWritePermissionKey(resolvedTool);
+        if (permKey && !ctx.permissionProfile.agent[permKey as keyof typeof ctx.permissionProfile.agent]) {
+            log.warn(`Permission denied: user=${ctx.userLogin} tool=${resolvedTool} required=${permKey}`);
+            return `Você não tem permissão para usar a ferramenta "${resolvedTool}". Solicite ao administrador.`;
+        }
+        const entity = getEntityFromTool(resolvedTool);
+        if (entity) {
+            const isCreate = resolvedTool.startsWith('prepare_create_');
+            const isEdit = resolvedTool.startsWith('prepare_edit_');
+            if (isCreate && !ctx.permissionProfile.agent.canCreate.includes(entity) && !ctx.permissionProfile.agent.canCreate.includes('all')) {
+                log.warn(`Permission denied: user=${ctx.userLogin} cannot create ${entity}`);
+                return `Você não tem permissão para criar ${entity}. Solicite ao administrador.`;
+            }
+            if (isEdit && !ctx.permissionProfile.agent.canEdit.includes(entity) && !ctx.permissionProfile.agent.canEdit.includes('all')) {
+                log.warn(`Permission denied: user=${ctx.userLogin} cannot edit ${entity}`);
+                return `Você não tem permissão para editar ${entity}. Solicite ao administrador.`;
+            }
+        }
+    }
+
     const t0 = Date.now();
     const result = await executeToolInner(resolvedTool, args);
-    if (activeToolCallListener) {
-        try { activeToolCallListener(tool, args, result, Date.now() - t0); } catch { /* ignore */ }
+    const listener = ctx.listener || DEFAULT_TOOL_CONTEXT.listener;
+    if (listener) {
+        try { listener(tool, args, result, Date.now() - t0); } catch { /* ignore */ }
     }
     return result;
 }

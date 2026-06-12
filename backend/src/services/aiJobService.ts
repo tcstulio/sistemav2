@@ -7,10 +7,9 @@ const log = createLogger('AiJob');
 // (não segura a conexão → mata o 524 do Cloudflare em jobs longos). O agente roda em background
 // até concluir, SEM limite de tempo; o cliente faz polling de GET /jobs/:id.
 //
-// Concorrência SERIAL (MAX=1) de propósito: o listener de tool-calls do aiService é GLOBAL,
-// então rodar dois jobs ao mesmo tempo embaralharia o log de atividade. Serial preserva a
-// correção; o POST responde imediatamente ("queued"/"running"), então nenhuma sessão congela.
-// Paralelismo real = follow-up (listener por-job via AsyncLocalStorage).
+// Concorrência PARALELA (MAX=3): cada job roda dentro de AsyncLocalStorage (runWithToolContext),
+// isolando o listener de tool-calls e o contexto de permissões por job. Isso permite N usuários
+// conversando simultaneamente sem competir pela mesma vaga.
 
 export type AiJobStatus = 'queued' | 'running' | 'done' | 'error';
 
@@ -26,7 +25,7 @@ interface AiJob {
 
 const jobs = new Map<string, AiJob>();
 const TTL_MS = 30 * 60 * 1000; // mantém o resultado 30min p/ o cliente buscar
-const MAX_CONCURRENT = 1;
+const MAX_CONCURRENT = 3;
 
 let running = 0;
 const queue: Array<() => void> = [];
