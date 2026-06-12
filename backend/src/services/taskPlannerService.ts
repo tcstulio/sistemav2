@@ -133,9 +133,9 @@ export const taskPlannerService = {
                 const plannerPrompt = this.buildPlannerPrompt(task, fileContext, openPRs, decision.overlappingFiles);
                 const llmDecision = await this.queryLLM(plannerPrompt);
                 if (llmDecision) {
-                    decision.action = llmDecision.action;
-                    decision.reason = llmDecision.reason;
-                    decision.alreadyResolved = llmDecision.alreadyResolved;
+                    if (llmDecision.action) decision.action = llmDecision.action;
+                    if (llmDecision.reason) decision.reason = llmDecision.reason;
+                    if (llmDecision.alreadyResolved !== undefined) decision.alreadyResolved = llmDecision.alreadyResolved;
                     if (llmDecision.priority !== undefined) decision.priority = llmDecision.priority;
                     if (llmDecision.blockedBy?.length) decision.blockedBy = llmDecision.blockedBy;
                 }

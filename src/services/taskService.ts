@@ -14,6 +14,18 @@ const getAuthHeaders = () => {
     return { headers: { 'Authorization': 'Bearer ' + token }, timeout: 30000 };
 };
 
+export type TaskPhase = 'exploring' | 'synthesizing' | 'judging' | 'done';
+
+export interface AttemptResult {
+    index: number;
+    phase: TaskPhase;
+    diff: string;
+    typecheckOk: boolean;
+    typecheckErrors?: string;
+    filesChanged: string[];
+    summary?: string;
+}
+
 export interface Task {
     issueNumber: number;
     title: string;
@@ -39,6 +51,9 @@ export interface Task {
     killedAt?: string;
     queuePriority?: number;
     planReason?: string;
+    phase?: TaskPhase;
+    attempts?: AttemptResult[];
+    synthesisAttempt?: number;
 }
 
 export interface TaskEvent {
