@@ -56,6 +56,7 @@ export interface Task {
     visualReview?: string;
     feedbackHistory: string[];
     startedAt?: string;
+    arrivedAt?: string;
     updatedAt: string;
     completedAt?: string;
     error?: string;

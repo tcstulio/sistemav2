@@ -84,6 +84,70 @@ const PipelineBar: React.FC<{
     );
 };
 
+const TaskMeta: React.FC<{ task: Task }> = ({ task }) => {
+    const fmt = (iso?: string) => {
+        if (!iso) return null;
+        const d = new Date(iso);
+        const now = Date.now();
+        const diff = (now - d.getTime()) / 1000;
+        if (diff < 60) return 'agora';
+        if (diff < 3600) return `${Math.floor(diff / 60)}min`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+        if (diff < 604800) return `${Math.floor(diff / 86400)}d`;
+        return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    };
+    const fmtFull = (iso?: string) => {
+        if (!iso) return null;
+        return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    };
+    const calcDuration = () => {
+        if (!task.startedAt) return null;
+        const end = task.completedAt || (['running', 'fixing', 'cancelling'].includes(task.status) ? new Date().toISOString() : null);
+        if (!end) return null;
+        const ms = new Date(end).getTime() - new Date(task.startedAt).getTime();
+        if (ms < 1000) return null;
+        const s = Math.floor(ms / 1000);
+        if (s < 60) return `${s}s`;
+        const m = Math.floor(s / 60);
+        if (m < 60) return `${m}min`;
+        return `${Math.floor(m / 60)}h${m % 60}min`;
+    };
+    const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
+    const dur = calcDuration();
+    return (
+        <div className="flex items-center gap-2 mb-1 text-[9px] text-slate-400 flex-wrap" title={
+            [
+                task.arrivedAt ? `Chegada: ${fmtFull(task.arrivedAt)}` : null,
+                task.startedAt ? `Última execução: ${fmtFull(task.startedAt)}` : null,
+                task.completedAt ? `Concluído: ${fmtFull(task.completedAt)}` : null,
+                dur ? `Duração: ${dur}` : null,
+            ].filter(Boolean).join('\n')
+        }>
+            {task.arrivedAt && (
+                <span className="flex items-center gap-0.5" title={`Chegou em ${fmtFull(task.arrivedAt)}`}>
+                    <Clock size={8} /> chegou {fmt(task.arrivedAt)}
+                </span>
+            )}
+            {task.startedAt && (
+                <span className="flex items-center gap-0.5" title={`Última execução: ${fmtFull(task.startedAt)}`}>
+                    <Play size={8} /> rodou {fmt(task.startedAt)}
+                </span>
+            )}
+            {dur && (
+                <span className="flex items-center gap-0.5 text-indigo-500" title={`Duração: ${dur}`}>
+                    <Clock size={8} /> {dur}
+                    {isActive && <Loader2 size={8} className="animate-spin" />}
+                </span>
+            )}
+            {task.events && task.events.length > 0 && (
+                <span className="flex items-center gap-0.5" title={`${task.events.length} evento(s)`}>
+                    · {task.events.length} ev
+                </span>
+            )}
+        </div>
+    );
+};
+
 const MiniCard: React.FC<{
     task: Task;
     onAction: (action: string, task: Task, extra?: string) => void;
@@ -132,6 +196,7 @@ const MiniCard: React.FC<{
                 )}
             </div>
             <h4 className="text-xs font-medium text-slate-800 dark:text-white leading-tight mb-1 line-clamp-2">{task.title}</h4>
+            <TaskMeta task={task} />
             {task.phase && task.phase !== 'done' && (
                 <PipelineBar phase={task.phase} attempts={task.attempts} synthesisAttempt={task.synthesisAttempt} judgeAttempts={task.judgeAttempts} />
             )}
@@ -378,6 +443,7 @@ const TaskCard: React.FC<{
                         ))}
                     </div>
                     <h3 className="font-semibold text-sm text-slate-800 dark:text-white truncate">{task.title}</h3>
+                    <TaskMeta task={task} />
                     {task.planReason && (
                         <p className="text-[10px] text-indigo-500 dark:text-indigo-400 mt-0.5 line-clamp-1">{task.planReason}</p>
                     )}

@@ -203,6 +203,7 @@ export interface Task {
     visualReview?: string;
     feedbackHistory: string[];
     startedAt?: string;
+    arrivedAt?: string;
     updatedAt: string;
     completedAt?: string;
     error?: string;
@@ -243,11 +244,38 @@ class TaskRunnerService {
                 this.notifiedTasks.add(t.issueNumber);
             }
         }
+        this.recoverStuckTasksOnBoot();
         setImmediate(() => {
             this.syncWithGitHub().catch((e) => {
                 log.warn(`syncWithGitHub no boot falhou: ${e?.message || e}`);
             });
         });
+    }
+
+    /**
+     * Detecta e marca tasks que ficaram em estado intermediário (running/fixing/cancelling)
+     * durante um restart do backend (ex: nodemon). Sem isto, a task ficaria travada indefinidamente.
+     * Não é recovery automático — marca como 'failed' e registra evento, permitindo retry manual.
+     */
+    private recoverStuckTasksOnBoot(): void {
+        const activeStatuses: TaskStatus[] = ['running', 'fixing', 'cancelling'];
+        const stuck: Task[] = [];
+        for (const t of Object.values(this.store.tasks)) {
+            if (activeStatuses.includes(t.status)) stuck.push(t);
+        }
+        if (stuck.length === 0) return;
+        log.warn(`Boot: ${stuck.length} task(s) em estado intermediário detectada(s) — marcando como failed`);
+        for (const t of stuck) {
+            const prev = t.status;
+            t.status = 'failed';
+            t.error = `Backend reiniciou durante execução (status era: ${prev})`;
+            t.updatedAt = new Date().toISOString();
+            t.childPid = undefined;
+            t.killRequested = false;
+            this.recordEvent(t, 'task_failed', `⚠️ Backend reiniciou durante execução (status=${prev}). Task marcada como failed — use Retry para reiniciar.`, { recovery: true, previousStatus: prev });
+        }
+        this.pendingExecs = 0;
+        this.save();
     }
 
     startPolling() {
@@ -418,6 +446,7 @@ class TaskRunnerService {
                     status: 'pending',
                     feedbackHistory: [],
                     events: [],
+                    arrivedAt: issue.createdAt || new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
                     phase: 'done',
                     attempts: [],
@@ -428,6 +457,7 @@ class TaskRunnerService {
             }
         }
         this.save();
+        this.scheduleAutoPlan();
         return Object.values(this.store.tasks).sort((a, b) => b.issueNumber - a.issueNumber);
     }
 
@@ -1544,6 +1574,7 @@ Return ONLY a JSON:
         this.emitStatus(task);
 
         this.checkEpicCompletion(task);
+        this.pullMainRepo(task);
 
         return task;
     }
@@ -1580,6 +1611,7 @@ Return ONLY a JSON:
             status: 'pending',
             feedbackHistory: [],
             events: [],
+            arrivedAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             phase: 'done',
             attempts: [],
@@ -1588,6 +1620,7 @@ Return ONLY a JSON:
         this.store.tasks[issueNumber] = task;
         this.recordEvent(task, 'task_created', `Task criada via board: #${issueNumber} — ${title}`);
         this.save();
+        this.scheduleAutoPlan();
         return task;
     }
 
@@ -1765,6 +1798,42 @@ The first element should be the task to execute first.`;
     }
 
     private activePreviews: Map<number, { pid: number; port: number; startedAt: string }> = new Map();
+
+    private pullMainRepo(task: Task): void {
+        git(['pull', 'origin', 'main'], { timeout: 60000 })
+            .then(({ stdout }) => {
+                const changed = stdout.includes('files changed') || stdout.includes('Fast-forward');
+                log.info(`Repo local atualizado após merge #${task.issueNumber}: ${stdout.trim().substring(0, 200)}`);
+                this.recordEvent(task, 'task_completed', changed
+                    ? `Repo local atualizado (nodemon reiniciará o backend automaticamente)`
+                    : `Repo local já estava atualizado`);
+                this.save();
+            })
+            .catch((e: any) => {
+                log.warn(`git pull após merge #${task.issueNumber} falhou: ${e?.message || e}`);
+                this.recordEvent(task, 'task_failed', `git pull falhou: ${e?.message || e}`);
+                this.save();
+            });
+    }
+
+    private autoPlanTimer: ReturnType<typeof setTimeout> | null = null;
+
+    private scheduleAutoPlan(): void {
+        if (this.autoPlanTimer) clearTimeout(this.autoPlanTimer);
+        this.autoPlanTimer = setTimeout(() => {
+            this.autoPlanTimer = null;
+            const queued = this.getQueuedTasks();
+            if (queued.length < 2) return;
+            log.info(`Auto-plan: ${queued.length} tasks pending, planejando ordem...`);
+            this.planWithLLM().then((result) => {
+                if (result.order.length > 0) {
+                    log.info(`Auto-plan: ordem sugerida: ${result.order.map(n => `#${n}`).join(' → ')}`);
+                }
+            }).catch((e: any) => {
+                log.warn(`Auto-plan falhou: ${e?.message || e}`);
+            });
+        }, 5000);
+    }
 
     async startPreview(issueNumber: number): Promise<{ port: number; frontendUrl: string; backendUrl: string }> {
         const task = this.store.tasks[issueNumber];
