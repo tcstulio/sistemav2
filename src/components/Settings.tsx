@@ -11,6 +11,7 @@ import { MenuConfigEditor } from './admin/MenuConfigEditor';
 import { DashboardConfigEditor } from './admin/DashboardConfigEditor';
 import { ScreenPermissionsEditor } from './admin/ScreenPermissionsEditor';
 import { NotificationConfigEditor } from './admin/NotificationConfigEditor';
+import { TaskAutomationEditor } from './admin/TaskAutomationEditor';
 import { PageLayout, PageHeader, Card, Button, Input, Modal } from './ui';
 import { logger } from '../utils/logger';
 
@@ -295,8 +296,11 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                 {/* Permissões de tela por pessoa/grupo (#112) — só admin */}
                 {isAdmin && <ScreenPermissionsEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
-                {/* Notificações de tarefas (#348) — só admin */}
+                {/* Notificacoes de tarefas (#348) — so admin */}
                 {isAdmin && <NotificationConfigEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
+
+                {/* Automacoes do TaskRunner (#351) — so admin */}
+                {isAdmin && <TaskAutomationEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
                 {/* Maintenance Section */}
                 <Card header={<h3 className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider"><ShieldCheck size={16} /> Manutenção</h3>}>

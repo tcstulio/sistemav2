@@ -74,17 +74,24 @@ export type NotifChannel = typeof NOTIF_CHANNELS[number];
 // Para cada evento, quais canais cada papel recebe.
 export type TaskNotificationsConfig = Record<TaskNotifEvent, Record<TaskNotifRole, NotifChannel[]>>;
 
+export interface TaskAutomationConfig {
+    autoPlay: boolean;
+    autoMerge: boolean;
+    minMergeScore: number;
+}
+
 export interface UiConfig {
-    companyName: string;   // nome exibido no app (antes era hardcoded "CoolGroove")
-    logoText: string;      // texto curto/inicial do bloco de logo
-    logoUrl?: string;      // URL opcional de imagem de logo
-    themeColor: string;    // cor padrão da organização (Tailwind color)
-    menu: OrderVisibilityPrefs;       // #110 — ordem/visibilidade do menu lateral (padrão da org)
-    dashboard: OrderVisibilityPrefs;  // #111 — ordem/visibilidade dos widgets do painel (padrão da org)
-    screenPermissions: ScreenPermissions;  // #112 — permissões de tela por pessoa/grupo
-    customPages: CustomPage[];        // #113 — telas customizadas por grupo
-    taskNotifications: TaskNotificationsConfig;  // camada 2 — quem recebe o quê por papel em cada evento de tarefa
-    taskNotificationsExternalEnabled: boolean;   // trava: WhatsApp/e-mail só saem quando o admin ligar (in-app sempre passa)
+    companyName: string;
+    logoText: string;
+    logoUrl?: string;
+    themeColor: string;
+    menu: OrderVisibilityPrefs;
+    dashboard: OrderVisibilityPrefs;
+    screenPermissions: ScreenPermissions;
+    customPages: CustomPage[];
+    taskNotifications: TaskNotificationsConfig;
+    taskNotificationsExternalEnabled: boolean;
+    taskAutomation: TaskAutomationConfig;
 }
 
 // Entrada de update: branding parcial + prefs/permissões/páginas parciais (sanitizadas em update()).
@@ -94,6 +101,7 @@ export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'scre
     screenPermissions?: unknown;
     customPages?: unknown;
     taskNotifications?: unknown;
+    taskAutomation?: unknown;
 };
 
 // Padrão aprovado: Responsável leva a cobrança; Interveniente acompanha; Criador é avisado do desfecho.
@@ -117,7 +125,8 @@ const DEFAULTS: UiConfig = {
     screenPermissions: { groups: {}, users: {} },
     customPages: [],
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
-    taskNotificationsExternalEnabled: false,  // começa travado: só in-app até o admin habilitar WhatsApp/e-mail
+    taskNotificationsExternalEnabled: false,
+    taskAutomation: { autoPlay: false, autoMerge: false, minMergeScore: 8 },
 };
 
 // Sanitiza um array de ids vindo do cliente (string curta, sem duplicatas, limite de tamanho).
@@ -255,6 +264,18 @@ function sanitizeTaskNotifications(v: unknown): TaskNotificationsConfig {
     return out;
 }
 
+function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
+    const d = DEFAULTS.taskAutomation;
+    if (!v || typeof v !== 'object') return { ...d };
+    const a = v as Record<string, unknown>;
+    const minScore = typeof a.minMergeScore === 'number' ? Math.max(1, Math.min(10, Math.round(a.minMergeScore))) : d.minMergeScore;
+    return {
+        autoPlay: a.autoPlay === true,
+        autoMerge: a.autoMerge === true,
+        minMergeScore: minScore,
+    };
+}
+
 // Allowlist das cores do Tailwind usadas no tema (evita injeção de classe arbitrária).
 export const ALLOWED_THEME_COLORS = [
     'slate', 'gray', 'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald',
@@ -289,6 +310,7 @@ export class UiConfigService {
                     customPages: sanitizeCustomPages(parsed.customPages),
                     taskNotifications: sanitizeTaskNotifications(parsed.taskNotifications),
                     taskNotificationsExternalEnabled: parsed.taskNotificationsExternalEnabled === true,
+                    taskAutomation: sanitizeTaskAutomation(parsed.taskAutomation),
                 };
             }
         } catch (error) {
@@ -336,6 +358,9 @@ export class UiConfigService {
         }
         if (typeof partial.taskNotificationsExternalEnabled === 'boolean') {
             next.taskNotificationsExternalEnabled = partial.taskNotificationsExternalEnabled;
+        }
+        if (partial.taskAutomation !== undefined) {
+            next.taskAutomation = sanitizeTaskAutomation(partial.taskAutomation);
         }
         this.data = next;
         this.save();

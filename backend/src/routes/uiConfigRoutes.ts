@@ -59,6 +59,11 @@ const UpdateSchema = z.object({
     customPages: CustomPagesSchema,
     taskNotifications: TaskNotificationsSchema,
     taskNotificationsExternalEnabled: z.boolean().optional(),
+    taskAutomation: z.object({
+        autoPlay: z.boolean().optional(),
+        autoMerge: z.boolean().optional(),
+        minMergeScore: z.number().min(1).max(10).optional(),
+    }).optional(),
 });
 
 // Leitura: qualquer usuário logado (p/ renderizar branding/tema da org).
@@ -70,7 +75,7 @@ router.get('/', requireDolibarrLogin, (_req: Request, res: Response) => {
 router.put('/', requireDolibarrAdmin, (req: Request, res: Response) => {
     try {
         const data = UpdateSchema.parse(req.body);
-        const updated = uiConfigService.update(data);
+        const updated = uiConfigService.update(data as any);
         log.info('UI config da organização atualizado por admin');
         res.json(updated);
     } catch (e: any) {
