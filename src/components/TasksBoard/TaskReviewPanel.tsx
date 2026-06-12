@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
-import { X, FileText, Monitor, Terminal, Eye, Star, ExternalLink, GitMerge, MessageSquare, RotateCcw, XCircle, Play, Square, CheckCircle, Camera } from 'lucide-react';
+import { X, FileText, Monitor, Terminal, Eye, Star, ExternalLink, GitMerge, MessageSquare, RotateCcw, XCircle, Play, Square, CheckCircle, Camera, AlertCircle } from 'lucide-react';
 import { Button } from '../ui';
 import { TaskService, Task, TaskEvent } from '../../services/taskService';
 import DiffViewer from './DiffViewer';
@@ -142,7 +142,7 @@ export const TaskReviewPanel: React.FC<TaskReviewPanelProps> = ({
         onClose();
     };
 
-    const isReviewable = task.status === 'reviewing' || task.status === 'approved';
+    const isReviewable = task.status === 'reviewing' || task.status === 'approved' || task.status === 'failed' || task.status === 'rejected';
     const scoreColor = !task.judgeScore ? 'slate' : task.judgeScore >= 8 ? 'emerald' : task.judgeScore >= 6 ? 'amber' : 'red';
 
     return (
@@ -156,9 +156,11 @@ export const TaskReviewPanel: React.FC<TaskReviewPanelProps> = ({
                             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                                 task.status === 'approved' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
                                 task.status === 'reviewing' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                                task.status === 'failed' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                                task.status === 'rejected' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
                                 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
                             }`}>
-                                {task.status === 'approved' ? 'Aprovado' : task.status === 'reviewing' ? 'Revisão' : task.status}
+                                {task.status === 'approved' ? 'Aprovado' : task.status === 'reviewing' ? 'Revisão' : task.status === 'failed' ? 'Falhou' : task.status === 'rejected' ? 'Rejeitado' : task.status}
                             </span>
                             {task.prUrl && (
                                 <a href={task.prUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-500 hover:underline flex items-center gap-0.5">
@@ -279,24 +281,24 @@ export const TaskReviewPanel: React.FC<TaskReviewPanelProps> = ({
 
                     {tab === 'visual' && (
                         <div className="h-full overflow-y-auto p-4">
-                            {screenshots.before && screenshots.after ? (
+                            {task.visualScore !== undefined ? (
                                 <div className="space-y-4">
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <h4 className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider">Antes (main)</h4>
-                                            <img
-                                                src={screenshots.before}
-                                                alt="Before"
-                                                className="w-full border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm"
-                                            />
+                                            {screenshots.before ? (
+                                                <img src={screenshots.before} alt="Before" className="w-full border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm" />
+                                            ) : (
+                                                <div className="w-full h-32 flex items-center justify-center border border-slate-200 dark:border-slate-700 rounded-lg text-slate-400 text-xs">Screenshot não disponível</div>
+                                            )}
                                         </div>
                                         <div>
                                             <h4 className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider">Depois (branch)</h4>
-                                            <img
-                                                src={screenshots.after}
-                                                alt="After"
-                                                className="w-full border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm"
-                                            />
+                                            {screenshots.after ? (
+                                                <img src={screenshots.after} alt="After" className="w-full border border-slate-200 dark:border-slate-700 rounded-lg shadow-sm" />
+                                            ) : (
+                                                <div className="w-full h-32 flex items-center justify-center border border-slate-200 dark:border-slate-700 rounded-lg text-slate-400 text-xs">Screenshot não disponível</div>
+                                            )}
                                         </div>
                                     </div>
                                     {task.visualReview && (
@@ -311,11 +313,18 @@ export const TaskReviewPanel: React.FC<TaskReviewPanelProps> = ({
                                         </div>
                                     )}
                                 </div>
+                            ) : task.visualReview ? (
+                                <div className="flex flex-col items-center justify-center h-64">
+                                    <AlertCircle size={48} className="mb-3 text-amber-400" />
+                                    <p className="text-sm text-amber-600 dark:text-amber-400 font-medium">Judge Visual não avaliou</p>
+                                    <p className="text-xs mt-1 text-slate-400 max-w-md text-center">{task.visualReview}</p>
+                                    <p className="text-xs mt-2 text-slate-500">Clique em "Testar" para abrir o preview e verificar manualmente.</p>
+                                </div>
                             ) : (
                                 <div className="flex flex-col items-center justify-center h-64 text-slate-400">
                                     <Camera size={48} className="mb-3 opacity-30" />
                                     <p className="text-sm">Nenhum screenshot disponível</p>
-                                    <p className="text-xs mt-1 text-slate-400">Screenshots são gerados automaticamente quando o Judge Visual detecta mudanças no frontend</p>
+                                    <p className="text-xs mt-1 text-slate-400">Clique em "Testar" para abrir o preview e verificar manualmente.</p>
                                 </div>
                             )}
                         </div>

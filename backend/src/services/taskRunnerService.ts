@@ -1254,9 +1254,17 @@ Return ONLY a JSON:
         const config = this.getAutomationConfig();
         if (!config.autoMerge) return;
         if ((task.judgeScore || 0) < config.minMergeScore) return;
-        if (task.visualScore !== undefined && task.visualScore < config.minMergeScore) {
-            this.recordEvent(task, 'task_failed', `Auto-merge bloqueado: visual score ${task.visualScore} < ${config.minMergeScore}`);
-            return;
+
+        const hasFrontend = await this.hasFrontendChanges(task).catch(() => false);
+        if (hasFrontend) {
+            if (task.visualScore === undefined) {
+                this.recordEvent(task, 'task_failed', 'Auto-merge bloqueado: frontend detectado mas Judge Visual não avaliou (screenshot falhou ou não rodou)');
+                return;
+            }
+            if (task.visualScore < config.minMergeScore) {
+                this.recordEvent(task, 'task_failed', `Auto-merge bloqueado: visual score ${task.visualScore} < ${config.minMergeScore}`);
+                return;
+            }
         }
 
         const issueNumber = task.issueNumber;
@@ -1650,9 +1658,19 @@ The first element should be the task to execute first.`;
         const backendPort = 3014 + (issueNumber % 10);
 
         const previewRoot = WT_ROOT;
-        const envContent = `PORT=${backendPort}\nVITE_API_URL=http://localhost:${backendPort}\n`;
+
+        const mainEnvPath = path.join(REPO_ROOT, 'backend', '.env');
+        const previewEnvPath = path.join(previewRoot, 'backend', '.env');
         const fsExtra = await import('fs');
-        fsExtra.writeFileSync(path.join(previewRoot, 'backend', '.env.preview'), envContent);
+        if (fsExtra.existsSync(mainEnvPath)) {
+            let envContent = fsExtra.readFileSync(mainEnvPath, 'utf8');
+            envContent = envContent.replace(/^PORT=.*$/m, `PORT=${backendPort}`);
+            envContent += `\nVITE_API_URL=http://localhost:${backendPort}\n`;
+            fsExtra.writeFileSync(previewEnvPath, envContent);
+        } else {
+            const envContent = `PORT=${backendPort}\nVITE_API_URL=http://localhost:${backendPort}\n`;
+            fsExtra.writeFileSync(previewEnvPath, envContent);
+        }
 
         const child = spawn(GIT_BASH, ['-lc', `cd backend && npx nodemon --port ${backendPort} & npx vite --port ${previewPort} --host`], {
             cwd: previewRoot,
