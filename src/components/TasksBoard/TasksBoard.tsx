@@ -5,6 +5,7 @@ import { Play, CheckCircle, XCircle, RotateCcw, GitMerge, MessageSquare, Loader2
 import { toast } from 'sonner';
 import DiffViewer from './DiffViewer';
 import TaskConsole from './TaskConsole';
+import { TaskReviewPanel } from './TaskReviewPanel';
 import { useDolibarr } from '../../context/DolibarrContext';
 
 const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
@@ -660,20 +661,14 @@ const TasksBoard: React.FC = () => {
             {showCreate && <CreateTaskModal onClose={() => setShowCreate(false)} onCreated={load} />}
 
             {reviewTask && (
-                diffLoading ? (
-                    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">
-                        <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 flex flex-col items-center gap-3">
-                            <Loader2 size={24} className="animate-spin text-indigo-500" />
-                            <p className="text-sm text-slate-500">Carregando diff...</p>
-                        </div>
-                    </div>
-                ) : (
-                    <DiffViewer diff={diffText} judgeScore={reviewTask.judgeScore} judgeReview={reviewTask.judgeReview} prUrl={reviewTask.prUrl}
-                        onClose={() => setReviewTask(null)}
-                        onMerge={async () => { if (!isAdmin) { toast.error('Apenas administradores.'); return; } await TaskService.merge(reviewTask.issueNumber); setReviewTask(null); toast.success('PR merged!'); load(); }}
-                        onFix={() => setReviewTask(null)}
-                        onReject={async () => { if (!isAdmin) { toast.error('Apenas administradores.'); return; } await TaskService.reject(reviewTask.issueNumber); setReviewTask(null); toast.info('Rejeitada'); load(); }} />
-                )
+                <TaskReviewPanel
+                    task={reviewTask}
+                    isAdmin={isAdmin}
+                    onClose={() => setReviewTask(null)}
+                    onAction={handleAction}
+                    onRefresh={load}
+                    themeColor="indigo"
+                />
             )}
 
             {editTask && (
