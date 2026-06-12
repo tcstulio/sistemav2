@@ -549,6 +549,28 @@ class TaskRunnerService {
             this.emitStatus(task);
         }).finally(() => {
             this.pendingExecs--;
+            this.autoPlayNext();
+        });
+    }
+
+    private getAutomationConfig() {
+        try {
+            const { uiConfigService } = require('./uiConfigService');
+            return uiConfigService.get().taskAutomation;
+        } catch {
+            return { autoPlay: false, autoMerge: false, minMergeScore: 8 };
+        }
+    }
+
+    private autoPlayNext() {
+        const config = this.getAutomationConfig();
+        if (!config.autoPlay) return;
+        const queued = this.getQueuedTasks();
+        if (queued.length === 0) return;
+        const next = queued[0];
+        log.info(`Auto-play: iniciando #${next.issueNumber} automaticamente`);
+        this.startTask(next.issueNumber).catch((e: any) => {
+            log.warn(`Auto-play falhou para #${next.issueNumber}: ${e?.message || e}`);
         });
     }
 
@@ -886,6 +908,88 @@ Return ONLY a JSON:
         task.updatedAt = new Date().toISOString();
         this.save();
         this.emitStatus(task);
+
+        if (task.status === 'approved') {
+            this.tryAutoMerge(task).catch((e: any) => {
+                log.warn(`Auto-merge falhou para #${task.issueNumber}: ${e?.message || e}`);
+            });
+        }
+    }
+
+    private async tryAutoMerge(task: Task): Promise<void> {
+        const config = this.getAutomationConfig();
+        if (!config.autoMerge) return;
+        if ((task.judgeScore || 0) < config.minMergeScore) return;
+
+        const issueNumber = task.issueNumber;
+        log.info(`Auto-merge: testando gates para #${issueNumber}`);
+
+        try {
+            if (task.branch) {
+                this.recordEvent(task, 'task_started', 'Auto-merge: rebaseando com main...');
+                await git(['fetch', 'origin', 'main'], { timeout: 30000 });
+                await git(['checkout', task.branch], { timeout: 15000, cwd: WT_ROOT });
+                await git(['rebase', 'origin/main'], { timeout: 60000, cwd: WT_ROOT });
+                await git(['push', 'origin', task.branch, '--force'], { timeout: 30000, cwd: WT_ROOT });
+                this.recordEvent(task, 'task_started', 'Auto-merge: rebase OK');
+            }
+
+            if (task.prNumber) {
+                this.recordEvent(task, 'task_started', 'Auto-merge: testando merge (dry-run)...');
+                const { stdout: mergeCheck } = await gh(['pr', 'merge', String(task.prNumber), '--repo', REPO, '--squash', '--delete-branch', '--dry-run'], { timeout: 30000 }).catch((e: any) => {
+                    throw new Error(`Merge test falhou: ${e?.message || e}`);
+                });
+                this.recordEvent(task, 'task_started', 'Auto-merge: dry-run OK');
+            }
+
+            this.recordEvent(task, 'task_started', 'Auto-merge: rodando typecheck...');
+            const verifyOk = await this.verify();
+            if (!verifyOk) {
+                this.recordEvent(task, 'task_failed', 'Auto-merge abortado: typecheck falhou apos rebase');
+                task.status = 'reviewing';
+                this.save();
+                this.emitStatus(task);
+                return;
+            }
+
+            this.recordEvent(task, 'task_started', 'Auto-merge: todos os gates passaram. Mergeando...');
+            await this.mergeTask(issueNumber);
+
+            const { notificationService } = require('./notificationService');
+            await notificationService.create({
+                event: 'agent.action',
+                title: `Task #${issueNumber} merged automaticamente`,
+                message: `Score ${task.judgeScore}/10, todos os gates passaram.`,
+                channels: ['in-app'],
+                priority: 'low',
+                entityType: 'opencode-task',
+                entityId: String(issueNumber),
+                senderName: 'TaskRunner',
+            });
+
+            this.reevaluateAfterMerge();
+        } catch (e: any) {
+            this.recordEvent(task, 'task_failed', `Auto-merge abortado: ${e?.message || e}`);
+            task.status = 'reviewing';
+            this.save();
+            this.emitStatus(task);
+        }
+    }
+
+    private reevaluateAfterMerge() {
+        try {
+            const { taskPlannerService } = require('./taskPlannerService');
+            taskPlannerService.reevaluateWaiting().then((results: any[]) => {
+                const unblocked = results.filter((r: any) => r.action === 'go');
+                if (unblocked.length > 0) {
+                    log.info(`Reevaluate: ${unblocked.length} task(s) desbloqueada(s) apos merge`);
+                    this.save();
+                    this.autoPlayNext();
+                }
+            }).catch((e: any) => {
+                log.warn(`Reevaluate after merge falhou: ${e?.message || e}`);
+            });
+        } catch { /* planner not available */ }
     }
 
     async addFeedback(issueNumber: number, feedback: string): Promise<Task> {

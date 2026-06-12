@@ -12,6 +12,12 @@ export type TaskNotifEvent = 'assigned' | 'acceptance_pending' | 'acceptance_ove
 export type TaskNotifRole = 'responsavel' | 'interveniente' | 'criador';
 export type TaskNotificationsConfig = Record<TaskNotifEvent, Record<TaskNotifRole, NotifChannel[]>>;
 
+export interface TaskAutomationConfig {
+    autoPlay: boolean;
+    autoMerge: boolean;
+    minMergeScore: number;
+}
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
@@ -23,6 +29,7 @@ export interface UiConfig {
     customPages?: CustomPage[];
     taskNotifications?: TaskNotificationsConfig;
     taskNotificationsExternalEnabled?: boolean;
+    taskAutomation?: TaskAutomationConfig;
 }
 
 const API_URL = '/api/ui-config';
