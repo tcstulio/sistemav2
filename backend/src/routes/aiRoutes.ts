@@ -90,10 +90,9 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
         const toolListener = (tool: string, args: Record<string, any>, result: string, duration: number) => {
             toolCalls.push({ tool, args, result: result.slice(0, 2000), duration });
             try {
-                const userData = user?.userData;
                 agentActivityService.record({
-                    userId: userData?.id || 'unknown',
-                    userName: userData?.name || userData?.login || 'unknown',
+                    userId: user?.id || 'unknown',
+                    userName: [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'unknown',
                     tool,
                     args,
                     result: result.slice(0, 500),
