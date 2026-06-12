@@ -7,7 +7,7 @@ import { useDolibarr } from '../../context/DolibarrContext';
 import { toast } from 'sonner';
 
 interface LogEntry {
-    type: 'info' | 'success' | 'warn' | 'error' | 'ai';
+    type: 'info' | 'success' | 'warn' | 'error' | 'ai' | 'output';
     message: string;
     timestamp: string;
 }
@@ -40,6 +40,7 @@ const TYPE_COLORS: Record<string, string> = {
     warn: 'text-amber-400',
     error: 'text-red-400',
     ai: 'text-indigo-300',
+    output: 'text-cyan-300',
 };
 
 const TYPE_PREFIX: Record<string, string> = {
@@ -48,6 +49,7 @@ const TYPE_PREFIX: Record<string, string> = {
     warn: '⚠',
     error: '✗',
     ai: '🤖',
+    output: '📋',
 };
 
 const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
@@ -96,8 +98,12 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
                         t === 'task_watchdog_timeout' ? 'warn'
                         : t === 'typecheck_ok' || t === 'pr_created' || t === 'pr_merged' || t === 'task_completed' ? 'success'
                         : t === 'judge_score' || t === 'judge_started' ? 'ai'
+                        : t === 'opencode_output' ? 'output'
                         : 'info';
-                    entries.push({ type: uiType, message: e.message, timestamp: e.ts });
+                    const msg = t === 'opencode_output' && e.meta?.output
+                        ? `📋 Output do opencode:\n${String(e.meta.output).substring(0, 3000)}`
+                        : e.message;
+                    entries.push({ type: uiType, message: msg, timestamp: e.ts });
                 }
                 setLogs(entries);
             } catch {
@@ -159,7 +165,7 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
                 <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900">
                     <div className="flex items-center gap-2">
                         <Terminal size={16} className="text-indigo-400" />
-                        <span className="text-sm font-mono text-white">Task #{issueNumber}</span>
+                        <span className="text-sm font-mono text-white">{isActive ? 'Console' : 'Histórico'} — Task #{issueNumber}</span>
                         {isActive && <Loader2 size={14} className="animate-spin text-blue-400" />}
                         <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} title={connected ? 'Conectado' : 'Desconectado'} />
                         {historyLoaded && <span className="text-[10px] text-slate-500">histórico carregado</span>}
@@ -199,7 +205,7 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
 
                 <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-0.5 min-h-[200px]" style={{ maxHeight: '60vh' }}>
                     {logs.length === 0 && (
-                        <p className="text-slate-500">Aguardando eventos da task #{issueNumber}...</p>
+                        <p className="text-slate-500">{isActive ? `Aguardando eventos da task #${issueNumber}...` : `Nenhum evento registrado para a task #${issueNumber}.`}</p>
                     )}
                     {logs.map((log, i) => (
                         <div key={`${log.timestamp}-${i}`} className={`${TYPE_COLORS[log.type] || 'text-slate-300'} flex gap-2`}>

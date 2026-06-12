@@ -188,7 +188,12 @@ const MiniCard: React.FC<{
                 )}
                 {isMiniActive && (
                     <button onClick={() => onConsole(task)} className="text-[10px] px-1.5 py-0.5 rounded text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
-                        <Terminal size={10} />
+                        <Terminal size={10} className="inline mr-0.5" /> Console
+                    </button>
+                )}
+                {!isMiniActive && (task.events?.length || 0) > 0 && (
+                    <button onClick={() => onConsole(task)} className="text-[10px] px-1.5 py-0.5 rounded text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                        <Terminal size={10} className="inline mr-0.5" /> Histórico
                     </button>
                 )}
                 {isAdmin && isMiniActive && (
@@ -413,6 +418,7 @@ const TaskCard: React.FC<{
                 </Button>
                 {isAdmin && <Button variant="ghost" size="sm" icon={<Pencil size={12} />} onClick={() => onEdit(task)}>Editar</Button>}
                 {isActive && <Button variant="ghost" size="sm" icon={<Terminal size={12} />} onClick={() => onConsole(task)} className="text-indigo-500">Console</Button>}
+                {!isActive && (task.events?.length || 0) > 0 && <Button variant="ghost" size="sm" icon={<Terminal size={12} />} onClick={() => onConsole(task)} className="text-slate-400">Histórico</Button>}
                 {isAdmin && isActive && <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('kill', task)} className="text-amber-600">Cancelar</Button>}
                 {isAdmin && <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500" />}
             </div>
