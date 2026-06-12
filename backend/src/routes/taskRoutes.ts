@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
 import { taskRunnerService } from '../services/taskRunnerService';
+import { screenshotService } from '../services/screenshotService';
 import { createLogger } from '../utils/logger';
+import fs from 'fs';
+import path from 'path';
 
 const log = createLogger('TaskRunner');
 const router = Router();
@@ -49,6 +52,34 @@ router.get('/:issueNumber/events', requireDolibarrLogin, async (req, res) => {
         res.json({ events });
     } catch (error: any) {
         log.error('Get events error', { error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.get('/:issueNumber/screenshots', requireDolibarrLogin, async (req, res) => {
+    try {
+        const issueNumber = Number(req.params.issueNumber);
+        const beforePath = screenshotService.getScreenshotPath(issueNumber, 'before');
+        const afterPath = screenshotService.getScreenshotPath(issueNumber, 'after');
+        res.json({
+            before: fs.existsSync(beforePath) ? `/api/tasks/${issueNumber}/screenshots/before` : null,
+            after: fs.existsSync(afterPath) ? `/api/tasks/${issueNumber}/screenshots/after` : null,
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.get('/:issueNumber/screenshots/:type', requireDolibarrLogin, async (req, res) => {
+    try {
+        const issueNumber = Number(req.params.issueNumber);
+        const type = req.params.type as 'before' | 'after';
+        if (type !== 'before' && type !== 'after') return res.status(400).json({ error: 'Invalid type' });
+        const filePath = screenshotService.getScreenshotPath(issueNumber, type);
+        if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Screenshot not found' });
+        res.setHeader('Content-Type', 'image/png');
+        fs.createReadStream(filePath).pipe(res);
+    } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
 });

@@ -26,6 +26,8 @@ export interface Task {
     judgeScore?: number;
     judgeReview?: string;
     judgeAttempts?: number;
+    visualScore?: number;
+    visualReview?: string;
     feedbackHistory: string[];
     startedAt?: string;
     updatedAt: string;
@@ -70,6 +72,15 @@ export const TaskService = {
     listEvents: async (issueNumber: number): Promise<TaskEvent[]> => {
         const response = await axios.get(`${API_URL}/${issueNumber}/events`, getAuthHeaders());
         return response.data.events;
+    },
+
+    getScreenshots: async (issueNumber: number): Promise<{ before: string | null; after: string | null }> => {
+        try {
+            const response = await axios.get(`${API_URL}/${issueNumber}/screenshots`, getAuthHeaders());
+            return response.data;
+        } catch {
+            return { before: null, after: null };
+        }
     },
 
     start: async (issueNumber: number): Promise<Task> => {
