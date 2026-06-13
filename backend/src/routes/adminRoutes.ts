@@ -13,10 +13,13 @@ const log = createLogger('Admin');
 // or if we implement file logging later.
 
 import { requireDolibarrAdmin } from '../middleware/authMiddleware';
+import { z } from 'zod';
 import { FEATURES, getAllFeatures, isUsingMoltbot, isTulipaActive, logFeatures } from '../config/features';
 import { channelRouter } from '../services/channelRouter';
 import { moltbotGateway } from '../services/moltbotGateway';
 import { tulipaService } from '../services/tulipaService';
+import { userPermissionsService } from '../services/userPermissionsService';
+import { dolibarrService } from '../services/dolibarrService';
 
 const router = express.Router();
 
@@ -611,6 +614,90 @@ router.get('/integration/brain/stats', async (req, res) => {
             checkedAt: Date.now()
         });
     } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ====== Permissões do agente por usuário (admin edita o perfil) ======
+// Fecha o elo do enforcement: o executeTool já aplica o perfil (canCreate/maxInvoiceAmount/etc.),
+// mas até aqui só dava para editá-lo como JSON cru num extrafield do Dolibarr. Estes endpoints
+// permitem ler e salvar o perfil; o write persiste no extrafield e invalida o cache de 10min.
+
+const ModulePermSchema = z.object({
+    read: z.boolean(),
+    create: z.boolean(),
+    edit: z.boolean(),
+    delete: z.boolean().optional(),
+    validate: z.boolean().optional(),
+});
+
+const AgentPermsSchema = z.object({
+    canCreate: z.array(z.string()),
+    canEdit: z.array(z.string()),
+    canValidate: z.array(z.string()),
+    canDelete: z.array(z.string()),
+    canSendEmail: z.boolean(),
+    canSendWhatsapp: z.boolean(),
+    canAccessFinancial: z.boolean(),
+    canAccessAccounting: z.boolean(),
+    canAccessHR: z.boolean(),
+    canManageWebhooks: z.boolean(),
+    canCreateIssues: z.boolean(),
+    canStartTasks: z.boolean(),
+    canMergePRs: z.boolean(),
+    maxInvoiceAmount: z.number().nonnegative().nullable(),
+    maxOrderAmount: z.number().nonnegative().nullable(),
+    restrictedCustomers: z.array(z.string()),
+    restrictedProjects: z.array(z.string()),
+}).partial();
+
+const UpdatePermsSchema = z.object({
+    role: z.string().optional(),
+    dolibarrModules: z.record(z.string(), ModulePermSchema).optional(),
+    frontendScreens: z.record(z.string(), z.boolean()).optional(),
+    agent: AgentPermsSchema.optional(),
+});
+
+// GET /api/admin/users/:userId/permissions — perfil editável (defaults + overrides).
+router.get('/users/:userId/permissions', async (req, res) => {
+    try {
+        const profile = await userPermissionsService.getProfile(String(req.params.userId));
+        res.json(profile);
+    } catch (e: any) {
+        log.error('Get user permissions error', { error: e.message });
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// PUT /api/admin/users/:userId/permissions — merge sobre o perfil atual, persiste e invalida cache.
+router.put('/users/:userId/permissions', async (req, res) => {
+    try {
+        const userId = String(req.params.userId);
+        const patch = UpdatePermsSchema.parse(req.body);
+
+        const current = await userPermissionsService.getProfile(userId);
+        const merged = {
+            ...current,
+            ...patch,
+            // merge profundo do bloco agent para não perder campos ausentes no patch
+            agent: { ...current.agent, ...(patch.agent || {}) },
+            computedAt: new Date().toISOString(),
+        };
+
+        await dolibarrService.setUserPermissionProfile(userId, merged);
+        userPermissionsService.invalidateCache(userId);
+
+        const adminId = (req as any).user?.id || 'unknown';
+        log.info(`Permissões do agente atualizadas: admin=${adminId} alvo=${userId}`, {
+            canCreate: merged.agent.canCreate,
+            maxInvoiceAmount: merged.agent.maxInvoiceAmount,
+            restrictedCustomers: merged.agent.restrictedCustomers,
+        });
+
+        res.json(merged);
+    } catch (e: any) {
+        if (e.name === 'ZodError') return res.status(400).json({ error: 'Validation Error', details: e.errors });
+        log.error('Update user permissions error', { error: e.message });
         res.status(500).json({ error: e.message });
     }
 });

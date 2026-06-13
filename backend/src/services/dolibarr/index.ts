@@ -92,6 +92,8 @@ export class DolibarrService extends DolibarrServiceBase {
 
     // === HR ===
     getUserById = (id: string) => this.hr.getUserById(id);
+    updateUser = (id: string, payload: Record<string, any>) => this.hr.updateUser(id, payload);
+    setUserPermissionProfile = (id: string, profile: unknown) => this.hr.setUserPermissionProfile(id, profile);
     listUsers = (search?: string) => this.hr.listUsers(search);
     listExpenseReports = (status?: string) => this.hr.listExpenseReports(status);
     listLeaveRequests = (status?: string) => this.hr.listLeaveRequests(status);
