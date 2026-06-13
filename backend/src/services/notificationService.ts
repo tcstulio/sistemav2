@@ -3,6 +3,7 @@ import { socketService } from './socketService';
 import { channelRouter } from './channelRouter';
 import * as fs from 'fs';
 import * as path from 'path';
+import { atomicWriteSync } from '../utils/atomicWrite';
 
 const log = createLogger('Notification');
 
@@ -102,7 +103,7 @@ class NotificationService {
         try {
             const dir = path.dirname(STORE_PATH);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-            fs.writeFileSync(STORE_PATH, JSON.stringify(this.data, null, 2));
+            atomicWriteSync(STORE_PATH, this.data); // escrita atômica: evita arquivo truncado em crash
         } catch (e) {
             log.error('Save error', e);
         }
