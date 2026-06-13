@@ -2,6 +2,7 @@ import { execFile, exec, ChildProcess, spawn } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
+import pidusage from 'pidusage';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { logger } from '../utils/logger';
 import { aiService } from './aiService';
@@ -9,6 +10,7 @@ import { aiJobService } from './aiJobService';
 import { socketService } from './socketService';
 import { killTree, isAlive } from '../utils/processTree';
 import { screenshotService } from './screenshotService';
+import { recordUsage, getUsageForTask } from './taskUsageTracker';
 
 const log = logger.child('TaskRunner');
 const execFileAsync = promisify(execFile);
@@ -60,8 +62,15 @@ function bash(command: string, cwd: string, timeout: number) {
  * - Salva childPid na task para que killTask consiga localizar o processo.
  * - Polling a cada 500ms: se task.killRequested virar true, mata a arvore e rejeita.
  * - No Unix usa detached:true para criar novo process group (necessario p/ kill -pid).
+ * - onSample (issue #305): a cada 2s amostra CPU/memória via pidusage (cross-platform).
  */
-function runOpencode(command: string, cwd: string, task: Task, timeoutMs: number): Promise<string> {
+function runOpencode(
+    command: string,
+    cwd: string,
+    task: Task,
+    timeoutMs: number,
+    onSample?: (sample: CpuMemSample) => void,
+): Promise<string> {
     return new Promise((resolve, reject) => {
         const child: ChildProcess = spawn(GIT_BASH, ['-lc', command], {
             cwd,
@@ -87,8 +96,24 @@ function runOpencode(command: string, cwd: string, task: Task, timeoutMs: number
             }
         }, 500);
 
+        // Sampling CPU/mem (#305): poll a cada 2s enquanto o processo está vivo.
+        // pidusage é cross-platform (Windows: Get-Process / ps; Unix: /proc).
+        const sampler = onSample ? setInterval(() => {
+            const pid = child.pid;
+            if (!pid || killed) return;
+            pidusage(pid, (err, stats) => {
+                if (err || !stats) return;
+                onSample({
+                    ts: new Date().toISOString(),
+                    cpuPercent: Math.round((stats.cpu || 0) * 10) / 10,
+                    rssMb: Math.round((stats.memory / (1024 * 1024)) * 10) / 10,
+                });
+            });
+        }, 2000) : null;
+
         const finish = (err?: Error) => {
             clearInterval(watcher);
+            if (sampler) clearInterval(sampler);
             if (task.childPid === child.pid) task.childPid = undefined;
             if (err) reject(err);
             else resolve(stdout);
@@ -187,6 +212,53 @@ export interface DecompositionPlan {
     approvedAt?: string;
 }
 
+// === Métricas de recursos (#305) ===
+
+/** Amostra de CPU/memória coletada via pidusage a cada 2s durante o opencode. */
+export interface CpuMemSample {
+    ts: string;
+    cpuPercent: number;
+    rssMb: number;
+}
+
+/** Duração de cada fase, derivada da timeline de events (issue #305). */
+export interface PhaseDurations {
+    worktreeSetupMs: number;
+    opencodeRunMs: number;
+    typecheckMs: number;
+    judgeMs: number;
+    prCreationMs: number;
+}
+
+/** Estatísticas agregadas das amostras de CPU/memória do processo opencode. */
+export interface OpencodeMetrics {
+    cpuPercentAvg: number;
+    cpuPercentMax: number;
+    rssMbAvg: number;
+    rssMbMax: number;
+    samples: number;
+}
+
+/** Métricas das chamadas do Judge (LLM-as-judge) por task. */
+export interface JudgeMetrics {
+    attempts: number;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    costUsd: number;
+    models: string[];
+}
+
+/** Métricas agregadas por task (issue #305). */
+export interface TaskMetrics {
+    metricsAvailable: boolean;
+    wallTimeMs: number;
+    phaseDurationsMs: PhaseDurations;
+    opencode: OpencodeMetrics | null;
+    judge: JudgeMetrics | null;
+    attempts: number;
+}
+
 export interface Task {
     issueNumber: number;
     title: string;
@@ -220,6 +292,10 @@ export interface Task {
     subTasks?: number[];
     decompositionPlan?: DecompositionPlan;
     parentEpic?: number;
+    // Métricas (#305): preencho em background após task finalizar.
+    // cpuMemSamples guarda o RAW das amostras; metrics é a versão agregada.
+    cpuMemSamples?: CpuMemSample[];
+    metrics?: TaskMetrics;
 }
 
 interface TaskStore {
@@ -623,7 +699,9 @@ class TaskRunnerService {
             log.error(`Task #${task.issueNumber} failed`, e);
             task.status = 'failed';
             task.error = e.message;
-            task.updatedAt = new Date().toISOString();
+            task.completedAt = new Date().toISOString();
+            task.updatedAt = task.completedAt;
+            this.finalizeTaskMetrics(task);
             this.recordEvent(task, 'task_failed', `Falha: ${e.message}`, { error: e.message });
             this.save();
             this.emitStatus(task);
@@ -791,6 +869,7 @@ class TaskRunnerService {
         let verify = { ok: false, output: 'não verificado' };
 
         if (!task.attempts) task.attempts = [];
+        if (!task.cpuMemSamples) task.cpuMemSamples = [];
         const hasExploration = task.attempts.filter(a => a.phase === 'exploring').length >= 3;
         task.phase = hasExploration ? 'synthesizing' : 'exploring';
         this.save();
@@ -808,6 +887,7 @@ class TaskRunnerService {
                 const stdout = await runOpencode(
                     `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
                     WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+                    (sample) => { task.cpuMemSamples?.push(sample); },
                 );
                 const output = String(stdout);
                 this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
@@ -831,6 +911,7 @@ class TaskRunnerService {
                 task.error = 'O agente não produziu nenhuma mudança após as tentativas.';
                 task.updatedAt = new Date().toISOString();
                 this.recordEvent(task, 'task_failed', 'Nenhuma mudança após exploração — abortando (sem PR).');
+                this.finalizeTaskMetrics(task);
                 this.save();
                 this.emitStatus(task);
                 return;
@@ -887,6 +968,7 @@ class TaskRunnerService {
                 const stdout = await runOpencode(
                     `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
                     WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+                    (sample) => { task.cpuMemSamples?.push(sample); },
                 );
                 const output = String(stdout);
                 this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
@@ -910,6 +992,7 @@ class TaskRunnerService {
                 task.error = 'Síntese não produziu mudanças após 3 tentativas.';
                 task.updatedAt = new Date().toISOString();
                 this.recordEvent(task, 'task_failed', 'Síntese sem mudanças — abortando.');
+                this.finalizeTaskMetrics(task);
                 this.save();
                 this.emitStatus(task);
                 return;
@@ -959,6 +1042,9 @@ class TaskRunnerService {
         } catch {
             task.status = 'failed';
             task.error = 'Nada a commitar após a implementação.';
+            task.completedAt = new Date().toISOString();
+            task.updatedAt = task.completedAt;
+            this.finalizeTaskMetrics(task);
             this.recordEvent(task, 'task_failed', 'Nada a commitar após a implementação.');
             this.save();
             this.emitStatus(task);
@@ -1110,6 +1196,13 @@ Return ONLY a JSON:
                 () => aiService.generateReply(history, '', undefined, 'chat'),
                 `judge-pr-${task.prNumber}`,
             );
+            // Métricas de Judge (#305): registra tokens e custo USD por task.
+            // O modelName vem do GenerateReplyResult (TODO backend ainda não retorna,
+            // mas calcCostUsd retorna 0 para modelo desconhecido — não bloqueia).
+            try {
+                const modelName = (judgeResult as any).model || (judgeResult as any).modelUsed;
+                recordUsage(task.issueNumber, judgeResult.usage, modelName);
+            } catch { /* não bloqueia Judge se tracker falhar */ }
             const reply = judgeResult.text;
             const jsonMatch = reply.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
@@ -1161,6 +1254,8 @@ Return ONLY a JSON:
         }
 
         task.updatedAt = new Date().toISOString();
+        // Métricas (#305): consolida após Judge completar.
+        this.finalizeTaskMetrics(task);
         this.save();
         this.emitStatus(task);
 
@@ -1449,7 +1544,8 @@ Return ONLY a JSON:
 
         task.status = 'rejected';
         task.completedAt = new Date().toISOString();
-        task.updatedAt = new Date().toISOString();
+        task.updatedAt = task.completedAt;
+        this.finalizeTaskMetrics(task);
         this.recordEvent(task, 'task_rejected', 'Task rejeitada pelo administrador');
         this.save();
         this.emitStatus(task);
@@ -1567,7 +1663,8 @@ Return ONLY a JSON:
 
         task.status = 'merged';
         task.completedAt = new Date().toISOString();
-        task.updatedAt = new Date().toISOString();
+        task.updatedAt = task.completedAt;
+        this.finalizeTaskMetrics(task);
         this.recordEvent(task, 'pr_merged', `PR #${task.prNumber} merged com sucesso`, { prNumber: task.prNumber });
         this.recordEvent(task, 'task_completed', `Task concluída (PR #${task.prNumber} merged)`);
         this.save();
@@ -1719,6 +1816,7 @@ Return ONLY a JSON:
         task.childPid = undefined;
         task.killRequested = false;
         task.updatedAt = task.killedAt;
+        this.finalizeTaskMetrics(task);
         this.save();
         this.emitStatus(task);
         log.info(`Task #${issueNumber} cancelled (pid=${pid}, signal=${killResult?.signal || 'noop'})`);
@@ -1798,6 +1896,114 @@ The first element should be the task to execute first.`;
     }
 
     private activePreviews: Map<number, { pid: number; port: number; startedAt: string }> = new Map();
+
+    /**
+     * Calcula e persiste as métricas (#305) de uma task.
+     * - wallTimeMs: startedAt → completedAt
+     * - phaseDurationsMs: derivado da timeline (events)
+     * - opencode: agrega cpuMemSamples
+     * - judge: tokens do taskUsageTracker
+     * Idempotente: pode ser chamado em vários pontos de finalização.
+     */
+    private finalizeTaskMetrics(task: Task): void {
+        try {
+            const metrics = this.computeMetrics(task);
+            task.metrics = metrics;
+        } catch (e: any) {
+            log.warn(`finalizeTaskMetrics falhou para #${task.issueNumber}: ${e?.message || e}`);
+        }
+    }
+
+    private computeMetrics(task: Task): TaskMetrics {
+        const events = task.events || [];
+        const start = task.startedAt;
+        const end = task.completedAt || task.updatedAt;
+        const wallTimeMs = (start && end) ? Math.max(0, new Date(end).getTime() - new Date(start).getTime()) : 0;
+
+        // phaseDurations: soma de janelas (eventA.ts -> eventB.ts) por tipo de fase.
+        const phaseDurationsMs: PhaseDurations = {
+            worktreeSetupMs: 0,
+            opencodeRunMs: 0,
+            typecheckMs: 0,
+            judgeMs: 0,
+            prCreationMs: 0,
+        };
+        const eventTs = (t: string) => { try { return new Date(t).getTime(); } catch { return 0; } };
+        const findNext = (fromIdx: number, type: TaskEventType) => events.find((e, i) => i > fromIdx && e.type === type);
+
+        // worktree_setup_started -> worktree_setup_completed
+        events.forEach((e, i) => {
+            if (e.type === 'worktree_setup_started') {
+                const end = findNext(i, 'worktree_setup_completed');
+                if (end) phaseDurationsMs.worktreeSetupMs += eventTs(end.ts) - eventTs(e.ts);
+            }
+        });
+        // attempt_started (opencode run) -> typecheck_started (próxima fase de verificação).
+        // Heurística: a duração do opencode = (typecheck_started - attempt_started) do mesmo attempt.
+        const attemptStarts = events.map((e, i) => e.type === 'attempt_started' || e.type === 'synthesis_started' ? { idx: i, ts: e.ts, type: e.type } : null).filter(Boolean) as Array<{ idx: number; ts: string; type: string }>;
+        for (const a of attemptStarts) {
+            const tcStart = findNext(a.idx, 'typecheck_started');
+            if (tcStart) phaseDurationsMs.opencodeRunMs += eventTs(tcStart.ts) - eventTs(a.ts);
+        }
+        // typecheck_started -> typecheck_ok OR typecheck_failed
+        events.forEach((e, i) => {
+            if (e.type === 'typecheck_started') {
+                const end = findNext(i, 'typecheck_ok') || findNext(i, 'typecheck_failed');
+                if (end) phaseDurationsMs.typecheckMs += eventTs(end.ts) - eventTs(e.ts);
+            }
+        });
+        // judge_started (apenas o com meta "avaliando PR") -> judge_score / judge_error
+        events.forEach((e, i) => {
+            if (e.type === 'judge_started' && e.meta?.prNumber) {
+                const end = findNext(i, 'judge_score') || findNext(i, 'judge_error');
+                if (end) phaseDurationsMs.judgeMs += eventTs(end.ts) - eventTs(e.ts);
+            }
+        });
+        // pr_creation não tem evento "started" explícito — derivado de git_pushed -> pr_created/pr_creation_failed
+        events.forEach((e, i) => {
+            if (e.type === 'git_pushed') {
+                const end = findNext(i, 'pr_created') || findNext(i, 'pr_creation_failed');
+                if (end) phaseDurationsMs.prCreationMs += eventTs(end.ts) - eventTs(e.ts);
+            }
+        });
+
+        // opencode: agrega cpuMemSamples
+        const samples = task.cpuMemSamples || [];
+        let opencode: OpencodeMetrics | null = null;
+        if (samples.length > 0) {
+            const cpuSum = samples.reduce((s, x) => s + (x.cpuPercent || 0), 0);
+            const rssSum = samples.reduce((s, x) => s + (x.rssMb || 0), 0);
+            const cpuMax = samples.reduce((m, x) => Math.max(m, x.cpuPercent || 0), 0);
+            const rssMax = samples.reduce((m, x) => Math.max(m, x.rssMb || 0), 0);
+            opencode = {
+                cpuPercentAvg: Math.round((cpuSum / samples.length) * 10) / 10,
+                cpuPercentMax: Math.round(cpuMax * 10) / 10,
+                rssMbAvg: Math.round((rssSum / samples.length) * 10) / 10,
+                rssMbMax: Math.round(rssMax * 10) / 10,
+                samples: samples.length,
+            };
+        }
+
+        // judge: tokens do taskUsageTracker
+        const usage = getUsageForTask(task.issueNumber);
+        const judge: JudgeMetrics | null = usage ? {
+            attempts: usage.calls,
+            promptTokens: usage.promptTokens,
+            completionTokens: usage.completionTokens,
+            totalTokens: usage.totalTokens,
+            costUsd: usage.costUsd,
+            models: usage.models,
+        } : null;
+
+        return {
+            metricsAvailable: true,
+            wallTimeMs,
+            phaseDurationsMs,
+            opencode,
+            judge,
+            attempts: (task.attempts || []).length,
+        };
+    }
 
     private pullMainRepo(task: Task): void {
         git(['pull', 'origin', 'main'], { timeout: 60000 })

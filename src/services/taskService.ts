@@ -82,6 +82,34 @@ export interface TaskEvent {
     meta?: Record<string, any>;
 }
 
+export interface TaskMetrics {
+    metricsAvailable: boolean;
+    wallTimeMs?: number;
+    phaseDurationsMs?: {
+        worktreeSetupMs: number;
+        opencodeRunMs: number;
+        typecheckMs: number;
+        judgeMs: number;
+        prCreationMs: number;
+    };
+    opencode?: {
+        cpuPercentAvg: number;
+        cpuPercentMax: number;
+        rssMbAvg: number;
+        rssMbMax: number;
+        samples: number;
+    } | null;
+    judge?: {
+        attempts: number;
+        promptTokens: number;
+        completionTokens: number;
+        totalTokens: number;
+        costUsd: number;
+        models: string[];
+    } | null;
+    attempts?: number;
+}
+
 export const TaskService = {
     list: async (): Promise<Task[]> => {
         const response = await axios.get(API_URL, getAuthHeaders());
@@ -115,6 +143,11 @@ export const TaskService = {
         } catch {
             return { before: null, after: null };
         }
+    },
+
+    getMetrics: async (issueNumber: number): Promise<TaskMetrics> => {
+        const response = await axios.get(`${API_URL}/${issueNumber}/metrics`, getAuthHeaders());
+        return response.data;
     },
 
     start: async (issueNumber: number): Promise<Task> => {
