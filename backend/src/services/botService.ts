@@ -1,5 +1,6 @@
 import { messageService } from './legacy/messageService';
 import { aiService } from './aiService';
+import { runWithToolContext } from './agentTools';
 import { storeService } from './storeService';
 import { dolibarrService } from './dolibarrService';
 import { sessionService } from './legacy/sessionService';
@@ -294,9 +295,12 @@ class BotService {
                 log.warn('Failed to send typing indicator');
             }
 
-            // Generate reply with retry on failure
+            // Generate reply with retry on failure.
+            // Mensagem de WhatsApp de entrada é input NÃO-CONFIÁVEL e não há usuário autenticado,
+            // então o agente roda em modo somente-leitura: o loop de tools não pode validar
+            // documentos, enviar mensagens ou disparar ações externas a partir do texto recebido.
             let replyResult = await retryWithBackoff(
-                () => aiService.generateReply(history, context),
+                () => runWithToolContext({ readOnly: true }, () => aiService.generateReply(history, context)),
                 3,
                 1000
             );
