@@ -106,6 +106,9 @@ router.post('/webhook/pix', async (req: Request, res: Response) => {
                 log.warn('Invalid signature for Pix webhook');
                 return res.status(401).json({ error: 'Invalid webhook signature' });
             }
+        } else if (process.env.NODE_ENV === 'production') {
+            log.error('Pix webhook rejeitado: INTER_WEBHOOK_SECRET não configurado em produção');
+            return res.status(503).json({ error: 'Webhook signature verification not configured' });
         }
 
         const webhookPayload: PixWebhookPayload = req.body;
@@ -141,6 +144,9 @@ router.post('/webhook/boleto', async (req: Request, res: Response) => {
                 log.warn('Invalid signature for Boleto webhook');
                 return res.status(401).json({ error: 'Invalid webhook signature' });
             }
+        } else if (process.env.NODE_ENV === 'production') {
+            log.error('Boleto webhook rejeitado: INTER_WEBHOOK_SECRET não configurado em produção');
+            return res.status(503).json({ error: 'Webhook signature verification not configured' });
         }
 
         const webhookPayload: BoletoWebhookPayload = req.body;
