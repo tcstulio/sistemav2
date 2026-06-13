@@ -14,6 +14,7 @@ vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrAdmin: mockRequireDolibarrAdmin,
 }));
 vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfigService }));
+vi.mock('../../services/adminAuditService', () => ({ adminAuditService: { record: vi.fn(), list: vi.fn(() => []) } }));
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn() }),
 }));

@@ -20,6 +20,7 @@ import { moltbotGateway } from '../services/moltbotGateway';
 import { tulipaService } from '../services/tulipaService';
 import { userPermissionsService } from '../services/userPermissionsService';
 import { dolibarrService } from '../services/dolibarrService';
+import { adminAuditService } from '../services/adminAuditService';
 
 const router = express.Router();
 
@@ -687,17 +688,38 @@ router.put('/users/:userId/permissions', async (req, res) => {
         await dolibarrService.setUserPermissionProfile(userId, merged);
         userPermissionsService.invalidateCache(userId);
 
-        const adminId = (req as any).user?.id || 'unknown';
-        log.info(`Permissões do agente atualizadas: admin=${adminId} alvo=${userId}`, {
+        const adminUser = (req as any).user || {};
+        log.info(`Permissões do agente atualizadas: admin=${adminUser.id} alvo=${userId}`, {
             canCreate: merged.agent.canCreate,
             maxInvoiceAmount: merged.agent.maxInvoiceAmount,
             restrictedCustomers: merged.agent.restrictedCustomers,
+        });
+        adminAuditService.record({
+            adminId: String(adminUser.id || 'unknown'),
+            adminLogin: String(adminUser.login || 'unknown'),
+            action: 'user.permissions.update',
+            target: userId,
+            summary: `Permissões do agente do usuário ${userId} atualizadas`,
+            changes: { agent: { before: current.agent, after: merged.agent } },
         });
 
         res.json(merged);
     } catch (e: any) {
         if (e.name === 'ZodError') return res.status(400).json({ error: 'Validation Error', details: e.errors });
         log.error('Update user permissions error', { error: e.message });
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/admin/audit — trilho de auditoria de ações administrativas (mais recentes primeiro).
+router.get('/audit', (req, res) => {
+    try {
+        const limit = req.query.limit ? Number(req.query.limit) : 100;
+        const action = typeof req.query.action === 'string' ? req.query.action : undefined;
+        const target = typeof req.query.target === 'string' ? req.query.target : undefined;
+        res.json({ entries: adminAuditService.list({ limit, action, target }) });
+    } catch (e: any) {
+        log.error('Get audit error', { error: e.message });
         res.status(500).json({ error: e.message });
     }
 });
