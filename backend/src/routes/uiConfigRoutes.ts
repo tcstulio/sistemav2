@@ -7,6 +7,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { uiConfigService } from '../services/uiConfigService';
 import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
+import { adminAuditService } from '../services/adminAuditService';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('UiConfig');
@@ -77,6 +78,13 @@ router.put('/', requireDolibarrAdmin, (req: Request, res: Response) => {
         const data = UpdateSchema.parse(req.body);
         const updated = uiConfigService.update(data as any);
         log.info('UI config da organização atualizado por admin');
+        const adminUser = (req as any).user || {};
+        adminAuditService.record({
+            adminId: String(adminUser.id || 'unknown'),
+            adminLogin: String(adminUser.login || 'unknown'),
+            action: 'ui-config.update',
+            summary: `Config de UI da organização atualizada (${Object.keys(data).join(', ') || 'sem alterações'})`,
+        });
         res.json(updated);
     } catch (e: any) {
         res.status(400).json({ error: e?.message || 'Dados inválidos' });

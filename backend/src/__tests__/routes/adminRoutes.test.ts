@@ -72,6 +72,11 @@ const mockDolibarrSvc = vi.hoisted(() => ({
     setUserPermissionProfile: vi.fn(async () => ({ id: '5' })),
 }));
 
+const mockAdminAudit = vi.hoisted(() => ({
+    record: vi.fn(() => ({ id: 'a1', ts: 0 })),
+    list: vi.fn(() => [{ id: 'a1', ts: 1, adminId: '1', adminLogin: 'admin', action: 'user.permissions.update', target: '5' }]),
+}));
+
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrAdmin: mockRequireDolibarrAdmin,
 }));
@@ -106,6 +111,10 @@ vi.mock('../../services/userPermissionsService', () => ({
 
 vi.mock('../../services/dolibarrService', () => ({
     dolibarrService: mockDolibarrSvc,
+}));
+
+vi.mock('../../services/adminAuditService', () => ({
+    adminAuditService: mockAdminAudit,
 }));
 
 vi.mock('../../services/legacy/sessionService', () => ({
@@ -223,6 +232,22 @@ describe('adminRoutes', () => {
             expect(res.status).toBe(400);
             expect(res.body.error).toBe('Validation Error');
             expect(mockDolibarrSvc.setUserPermissionProfile).not.toHaveBeenCalled();
+        });
+
+        it('PUT registra uma entrada de auditoria', async () => {
+            await request(app)
+                .put('/api/admin/users/5/permissions')
+                .send({ agent: { maxInvoiceAmount: 1000 } });
+            expect(mockAdminAudit.record).toHaveBeenCalledWith(
+                expect.objectContaining({ action: 'user.permissions.update', target: '5' }),
+            );
+        });
+
+        it('GET /api/admin/audit retorna as entradas', async () => {
+            const res = await request(app).get('/api/admin/audit');
+            expect(res.status).toBe(200);
+            expect(Array.isArray(res.body.entries)).toBe(true);
+            expect(mockAdminAudit.list).toHaveBeenCalled();
         });
     });
 
