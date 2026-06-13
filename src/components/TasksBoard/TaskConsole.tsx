@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { X, Terminal, Loader2, Skull } from 'lucide-react';
+import { X, Terminal, Loader2, Skull, Cpu, Coins, Clock, Zap } from 'lucide-react';
 import { Button } from '../ui';
-import { TaskService } from '../../services/taskService';
+import { TaskService, TaskMetrics } from '../../services/taskService';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { toast } from 'sonner';
 
@@ -60,6 +60,7 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
     const [connected, setConnected] = useState(false);
     const [historyLoaded, setHistoryLoaded] = useState(false);
     const [killing, setKilling] = useState(false);
+    const [metrics, setMetrics] = useState<TaskMetrics | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const socketRef = useRef<Socket | null>(null);
 
@@ -115,6 +116,25 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
         return () => { cancelled = true; };
     }, [issueNumber]);
 
+    // Métricas (#305): carrega após historyLoaded. Recarrega periodicamente se task ainda
+    // rodando (Judge pode estar em andamento). Para tasks finalizadas, fixa após 1 fetch.
+    useEffect(() => {
+        let cancelled = false;
+        const fetchMetrics = async () => {
+            try {
+                const m = await TaskService.getMetrics(issueNumber);
+                if (!cancelled) setMetrics(m);
+            } catch { /* silencioso: 404 etc */ }
+        };
+        fetchMetrics();
+        const isActive = status?.status === 'running' || status?.status === 'fixing' || status?.status === 'cancelling' || status?.status === 'reviewing';
+        if (isActive) {
+            const t = setInterval(fetchMetrics, 10000);
+            return () => { cancelled = true; clearInterval(t); };
+        }
+        return () => { cancelled = true; };
+    }, [issueNumber, status?.status]);
+
     useEffect(() => {
         const token = (() => {
             try {
@@ -159,6 +179,18 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
 
     const isActive = status?.status === 'running' || status?.status === 'fixing' || status?.status === 'cancelling';
 
+    const formatDuration = (ms: number): string => {
+        if (!ms || ms < 0) return '–';
+        const s = Math.floor(ms / 1000);
+        if (s < 60) return `${s}s`;
+        const m = Math.floor(s / 60);
+        const rs = s % 60;
+        if (m < 60) return `${m}m${rs}s`;
+        const h = Math.floor(m / 60);
+        const rm = m % 60;
+        return `${h}h${rm}m`;
+    };
+
     return (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-4" onClick={onClose}>
             <div className="bg-slate-950 rounded-2xl w-full max-w-2xl flex flex-col overflow-hidden shadow-2xl border border-slate-800" style={{ maxHeight: '80vh' }} onClick={e => e.stopPropagation()}>
@@ -199,6 +231,33 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
                             <a href={status.prUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">
                                 PR #{status.prNumber}
                             </a>
+                        )}
+                    </div>
+                )}
+
+                {metrics?.metricsAvailable && (
+                    <div className="px-4 py-2 bg-slate-900/30 border-b border-slate-800 flex items-center gap-4 text-[11px] flex-wrap font-mono">
+                        <span className="flex items-center gap-1 text-slate-300" title="Wall-clock total (startedAt → completedAt)">
+                            <Clock size={12} className="text-cyan-400" />
+                            {formatDuration(metrics.wallTimeMs || 0)}
+                        </span>
+                        {metrics.opencode && (
+                            <span className="flex items-center gap-1 text-slate-300" title={`CPU avg/max · RSS avg/max (${metrics.opencode.samples} amostras a cada 2s)`}>
+                                <Cpu size={12} className="text-amber-400" />
+                                CPU {metrics.opencode.cpuPercentAvg}/{metrics.opencode.cpuPercentMax}% · RAM {metrics.opencode.rssMbAvg}/{metrics.opencode.rssMbMax} MB
+                            </span>
+                        )}
+                        {metrics.judge && (
+                            <>
+                                <span className="flex items-center gap-1 text-slate-300" title={`${metrics.judge.attempts} chamada(s) do Judge`}>
+                                    <Zap size={12} className="text-indigo-400" />
+                                    {metrics.judge.totalTokens.toLocaleString('pt-BR')} tokens
+                                </span>
+                                <span className="flex items-center gap-1 text-slate-300" title={`Custo estimado: ${metrics.judge.models.join(', ') || 'modelo desconhecido'}`}>
+                                    <Coins size={12} className="text-yellow-400" />
+                                    ${metrics.judge.costUsd.toFixed(4)}
+                                </span>
+                            </>
                         )}
                     </div>
                 )}
