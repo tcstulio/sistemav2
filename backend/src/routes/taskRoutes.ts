@@ -84,6 +84,24 @@ router.get('/:issueNumber/screenshots/:type', requireDolibarrLogin, async (req, 
     }
 });
 
+// Métricas de recursos por task (#305).
+// Tasks pré-#305 (sem o campo `metrics`) retornam metricsAvailable: false.
+router.get('/:issueNumber/metrics', requireDolibarrLogin, async (req, res) => {
+    try {
+        const issueNumber = Number(req.params.issueNumber);
+        const task = taskRunnerService.getTask(issueNumber);
+        if (!task) return res.status(404).json({ error: 'Task not found' });
+        if (task.metrics) {
+            res.json({ ...task.metrics, samples: task.cpuMemSamples?.length || 0 });
+        } else {
+            res.json({ metricsAvailable: false, attempts: (task.attempts || []).length });
+        }
+    } catch (error: any) {
+        log.error('Get metrics error', { error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Escrita: somente admin (#307). Acoes destrutivas (start, merge, kill, delete) e
 // mutacoes de estado exigem isAdmin=true (verificado via Dolibarr).
 // Fila e planejamento (#331)
