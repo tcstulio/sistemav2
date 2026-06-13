@@ -184,7 +184,15 @@ describe('DolibarrServiceBase', () => {
     });
 
     describe('requestWithAuth', () => {
-        it('throws 401 when no userKey provided', async () => {
+        it('usa apiKey do sistema como fallback quando sem userKey (#347)', async () => {
+            mockAxios.mockResolvedValue({ data: { ok: true } });
+            const result = await (service as any).requestWithAuth('GET', 'https://test.com/api', null, undefined);
+            expect(result).toEqual({ ok: true });
+            expect(mockAxios.mock.calls[0][0].headers.DOLAPIKEY).toBe('test-api-key-1234567890');
+        });
+
+        it('throws 401 quando não há userKey NEM apiKey do sistema', async () => {
+            (service as any).apiKey = '';
             await expect(
                 (service as any).requestWithAuth('GET', 'https://test.com/api', null, undefined)
             ).rejects.toEqual({

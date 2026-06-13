@@ -44,10 +44,10 @@ describe('DolibarrCommercialService', () => {
             expect(result).toBe(1);
         });
 
-        it('throws when no userKey', async () => {
-            await expect(service.createInvoice({ socid: 1 } as any)).rejects.toEqual(
-                expect.objectContaining({ status: 401 })
-            );
+        it('usa apiKey do sistema quando sem userKey (fallback #347)', async () => {
+            mockAxios.mockResolvedValue({ data: 1 });
+            await service.createInvoice({ socid: 1 } as any);
+            expect(mockAxios.mock.calls[0][0].headers.DOLAPIKEY).toBe('test-api-key-1234567890');
         });
     });
 
@@ -58,10 +58,10 @@ describe('DolibarrCommercialService', () => {
             expect(result).toEqual({ success: true });
         });
 
-        it('throws when no userKey', async () => {
-            await expect(service.closeProposal('1', {} as any)).rejects.toEqual(
-                expect.objectContaining({ status: 401 })
-            );
+        it('usa apiKey do sistema quando sem userKey (fallback #347)', async () => {
+            mockAxios.mockResolvedValue({ data: { success: true } });
+            await service.closeProposal('1', {} as any);
+            expect(mockAxios.mock.calls[0][0].headers.DOLAPIKEY).toBe('test-api-key-1234567890');
         });
     });
 

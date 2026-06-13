@@ -219,7 +219,8 @@ router.post('/:issueNumber/approve-decomposition', requireDolibarrAdmin, async (
 
 router.post('/:issueNumber/merge', requireDolibarrAdmin, async (req, res) => {
     try {
-        const task = await taskRunnerService.mergeTask(Number(req.params.issueNumber));
+        // Admin verificado server-side aprovando manualmente: override humano do piso de score.
+        const task = await taskRunnerService.mergeTask(Number(req.params.issueNumber), { force: true });
         res.json(task);
     } catch (error: any) {
         log.error('Merge task error', { error: error.message });
