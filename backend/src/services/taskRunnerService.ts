@@ -1339,9 +1339,9 @@ Return ONLY a JSON:
             }
 
             this.recordEvent(task, 'task_started', 'Auto-merge: rodando typecheck...');
-            const verifyOk = await this.verify();
-            if (!verifyOk) {
-                this.recordEvent(task, 'task_failed', 'Auto-merge abortado: typecheck falhou apos rebase');
+            const verify = await this.verify();
+            if (!verify.ok) {
+                this.recordEvent(task, 'task_failed', `Auto-merge abortado: typecheck/build falhou apos rebase. ${verify.output.slice(-500)}`);
                 task.status = 'reviewing';
                 this.save();
                 this.emitStatus(task);
@@ -1557,10 +1557,21 @@ Return ONLY a JSON:
         }
     }
 
-    async mergeTask(issueNumber: number): Promise<Task> {
+    async mergeTask(issueNumber: number, opts: { force?: boolean } = {}): Promise<Task> {
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
         if (!task.prNumber) throw new Error('No PR to merge');
+
+        // Gate de qualidade independente de quem chama: salvo override humano explícito (force),
+        // exige judgeScore >= minMergeScore antes de mergear na main. Protege contra merge sem
+        // revisão — em particular pela tool merge_opencode_task do agente LLM, que NUNCA passa
+        // force e portanto não pode ser induzida (prompt injection) a mergear um PR de baixa nota.
+        if (!opts.force) {
+            const minScore = this.getAutomationConfig().minMergeScore;
+            if ((task.judgeScore ?? 0) < minScore) {
+                throw new Error(`Merge bloqueado: judgeScore ${task.judgeScore ?? 'n/a'} < mínimo ${minScore}. Aprovação humana (force) é necessária para sobrepor.`);
+            }
+        }
 
         await gh(['pr', 'merge', String(task.prNumber), '--repo', REPO, '--squash', '--delete-branch'], { timeout: 30000 });
         await gh(['issue', 'close', String(issueNumber), '--repo', REPO, '--comment', `Merged via PR #${task.prNumber}`], { timeout: 15000 });

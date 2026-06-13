@@ -288,18 +288,26 @@ describe('AiService', () => {
 
     describe('chatWithData', () => {
         it('sends chat message with history', async () => {
-            const reply = 'Here is the information you requested';
-            const response = { data: { reply, sessionId: 'chat_123' } };
-            mockAxios.post.mockResolvedValue(response);
+            vi.useFakeTimers();
+            try {
+                const reply = 'Here is the information you requested';
+                // Fluxo assíncrono: POST enfileira o job (jobId) e GET faz polling até status 'done'.
+                mockAxios.post.mockResolvedValue({ data: { jobId: 'job-123' } });
+                mockAxios.get.mockResolvedValue({ data: { status: 'done', reply, sessionId: 'chat_123' } });
 
-            const history = [
-                { role: 'user' as const, text: 'Hello' },
-                { role: 'model' as const, text: 'Hi!' }
-            ];
-            const result = await AiService.chatWithData('Show my invoices', history);
+                const history = [
+                    { role: 'user' as const, text: 'Hello' },
+                    { role: 'model' as const, text: 'Hi!' }
+                ];
+                const promise = AiService.chatWithData('Show my invoices', history);
+                await vi.advanceTimersByTimeAsync(2500); // pula o primeiro intervalo de polling
+                const result = await promise;
 
-            expect(result.reply).toBe(reply);
-            expect(result.sessionId).toBe('chat_123');
+                expect(result.reply).toBe(reply);
+                expect(result.sessionId).toBe('chat_123');
+            } finally {
+                vi.useRealTimers();
+            }
         });
 
         it('includes date context in request', async () => {

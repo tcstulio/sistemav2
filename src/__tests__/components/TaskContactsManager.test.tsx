@@ -78,7 +78,7 @@ describe('TaskContactsManager', () => {
     it('adicionar interveniente grava como TASKCONTRIBUTOR', async () => {
         render(<TaskContactsManager config={config} taskId="50" users={users} />);
         await screen.findByText('Ana Lima');
-        fireEvent.change(screen.getByLabelText('Adicionar interveniente'), { target: { value: '30' } });
+        fireEvent.change(screen.getByLabelText('Adicionar colaborador'), { target: { value: '30' } });
         fireEvent.click(screen.getByRole('button', { name: /adicionar/i }));
         await waitFor(() =>
             expect(mockSvc.setTaskContact).toHaveBeenCalledWith(config, '50', '30', 'TASKCONTRIBUTOR'),

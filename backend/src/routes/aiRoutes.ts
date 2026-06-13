@@ -3,7 +3,7 @@ import { aiService } from '../services/aiService';
 import { chatSessionService } from '../services/chatSessionService';
 import { runWithToolContext } from '../services/agentTools';
 import { extractToolCall } from '../services/aiService';
-import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
 import { agentActivityService } from '../services/agentActivityService';
 import { aiJobService } from '../services/aiJobService';
 import { createLogger } from '../utils/logger';
@@ -12,15 +12,16 @@ import { verifyDeeplink } from '../utils/deeplinkToken';
 const log = createLogger('AI');
 const router = Router();
 
-// Debug routes (no auth required)
-router.post('/debug/extract-tool', (req, res) => {
+// Debug routes — exigem login; execute-tool exige admin (executa ferramentas arbitrárias).
+// Antes ficavam ANTES do requireDolibarrLogin global = expostas sem autenticação (furo de segurança).
+router.post('/debug/extract-tool', requireDolibarrLogin, (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: 'Missing text' });
     const result = extractToolCall(text);
     res.json({ extracted: result, input: text });
 });
 
-router.post('/debug/execute-tool', async (req, res) => {
+router.post('/debug/execute-tool', requireDolibarrLogin, requireDolibarrAdmin, async (req, res) => {
     const { tool, args } = req.body;
     if (!tool) return res.status(400).json({ error: 'Missing tool' });
     try {

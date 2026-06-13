@@ -7,6 +7,8 @@ const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, _res: any, ne
     next();
 }));
 
+const mockRequireDolibarrAdmin = vi.hoisted(() => vi.fn((_req: any, _res: any, next: any) => next()));
+
 const mockAiService = vi.hoisted(() => ({
     generateReply: vi.fn(() => ({ text: 'Generated reply text' })),
     analyzeSystem: vi.fn(() => 'System analysis result'),
@@ -28,6 +30,7 @@ const mockAiService = vi.hoisted(() => ({
 
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrLogin: mockRequireDolibarrLogin,
+    requireDolibarrAdmin: mockRequireDolibarrAdmin,
 }));
 
 vi.mock('../../services/aiService', () => ({
