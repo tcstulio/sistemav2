@@ -19,7 +19,10 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: backend/package-lock.json
-      - run: npm ci
+      # npm install (não ci): o lockfile é gerado em dev Windows e o CI é Linux;
+      # deps opcionais por plataforma (ex.: @emnapi/runtime) faltam no lock e
+      # quebram `npm ci`. `npm install` reconcilia na instalação.
+      - run: npm install --no-audit --no-fund
       - run: npm run build
       - run: npm test
 
@@ -32,7 +35,7 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: package-lock.json
-      - run: npm ci
+      - run: npm install --no-audit --no-fund
       - run: npx tsc --noEmit
       - run: npm run test:unit
       - run: npm run build
