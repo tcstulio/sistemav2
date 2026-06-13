@@ -16,11 +16,15 @@ const log = createLogger('DeeplinkToken');
 const DEV_FALLBACK = 'dev-insecure-deeplink-secret-troque-em-producao';
 
 function secret(): string {
-    const s = config.deeplinkSecret || DEV_FALLBACK;
-    if (s === DEV_FALLBACK) {
+    if (!config.deeplinkSecret) {
+        // Em produção, recusar o fallback conhecido (qualquer um assinaria deeplinks de escrita).
+        if (process.env.NODE_ENV === 'production') {
+            throw new Error('DEEPLINK_TOKEN_SECRET (ou ADMIN_KEY) é obrigatório em produção — recusando usar fallback inseguro.');
+        }
         log.warn('Usando segredo de DEV para deeplink. Defina DEEPLINK_TOKEN_SECRET (ou ADMIN_KEY) no .env.');
+        return DEV_FALLBACK;
     }
-    return s;
+    return config.deeplinkSecret;
 }
 
 function b64url(buf: Buffer): string {

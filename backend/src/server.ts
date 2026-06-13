@@ -64,8 +64,10 @@ app.use(cors({
         // Allow requests with no origin (mobile apps, Postman, etc.)
         if (!origin) return callback(null, true);
 
-        // PROTÓTIPO: libera o túnel do cloudflared (URL muda a cada restart).
-        if (allowedOrigins.includes(origin) || origin.endsWith('.trycloudflare.com')) {
+        // Túnel cloudflared (URL muda a cada restart) só é liberado FORA de produção.
+        // Em produção use os domínios fixos em allowedOrigins (app/sistema.coolgroove.com.br).
+        const allowTunnel = process.env.NODE_ENV !== 'production';
+        if (allowedOrigins.includes(origin) || (allowTunnel && origin.endsWith('.trycloudflare.com'))) {
             callback(null, true);
         } else {
             log.warn(`CORS blocked request from origin: ${origin}`);

@@ -80,7 +80,15 @@ function verifyWebhookSignature(payload: string, signature: string | undefined, 
  * Retorna true se OK, ou já responde 401 e retorna false.
  */
 function ensureWebhookAuthentic(req: Request, res: Response, label: string): boolean {
-    if (!config.itauWebhookSecret) return true; // verificação opcional (compat)
+    if (!config.itauWebhookSecret) {
+        // Em produção, falhar fechado: sem secret não há como autenticar o webhook.
+        if (process.env.NODE_ENV === 'production') {
+            log.error(`${label} webhook rejeitado: ITAU_WEBHOOK_SECRET não configurado em produção`);
+            res.status(503).json({ error: 'Webhook signature verification not configured' });
+            return false;
+        }
+        return true; // dev/test: segue sem verificação (compat)
+    }
     const signature = req.headers['x-webhook-signature'] as string | undefined;
     const payload = JSON.stringify(req.body);
     if (!verifyWebhookSignature(payload, signature, config.itauWebhookSecret)) {

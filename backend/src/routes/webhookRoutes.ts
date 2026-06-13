@@ -27,7 +27,14 @@ function safeEqual(a: string, b: string): boolean {
  * chamadas anônimas (qualquer um podia disparar WhatsApp via /trigger).
  */
 function requireWebhookSecret(req: Request, res: Response, next: NextFunction) {
-    if (!config.webhookSecret) return next();
+    if (!config.webhookSecret) {
+        // Em produção, falhar fechado: endpoint público sem secret aceitaria chamadas anônimas.
+        if (process.env.NODE_ENV === 'production') {
+            log.warn('Webhook bloqueado: WEBHOOK_SECRET não configurado em produção');
+            return res.status(503).json({ error: 'Webhook secret not configured' });
+        }
+        return next(); // dev/test: compat
+    }
     const provided = (req.headers['x-webhook-secret'] as string) || '';
     if (!safeEqual(provided, config.webhookSecret)) {
         log.warn('Webhook bloqueado: x-webhook-secret ausente/inválido');
