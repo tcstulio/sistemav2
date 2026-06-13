@@ -42,6 +42,7 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
         );
     }
     const [isSaved, setIsSaved] = useState(false);
+    const [settingsTab, setSettingsTab] = useState<'profile' | 'admin'>('profile');
 
     // --- Identidade da empresa (org-wide, só admin) ---
     const isAdmin = localConfig.currentUser?.admin === 1 || localConfig.currentUser?.admin === '1' || localConfig.currentUser?.admin === true;
@@ -158,7 +159,20 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
 
             <form onSubmit={handleSubmit} className="space-y-6 mt-6">
 
+                {/* Abas Meu Perfil / Administração — #280 */}
+                <div className="flex border-b border-slate-200 dark:border-slate-800">
+                    <button type="button" onClick={() => setSettingsTab('profile')} className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${settingsTab === 'profile' ? `border-${localConfig.themeColor}-600 text-${localConfig.themeColor}-600 dark:text-${localConfig.themeColor}-400` : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
+                        <User size={16} /> Meu Perfil
+                    </button>
+                    {isAdmin && (
+                        <button type="button" onClick={() => setSettingsTab('admin')} className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${settingsTab === 'admin' ? `border-${localConfig.themeColor}-600 text-${localConfig.themeColor}-600 dark:text-${localConfig.themeColor}-400` : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
+                            <ShieldCheck size={16} /> Administração
+                        </button>
+                    )}
+                </div>
+
                 {/* User Profile Card */}
+                {settingsTab === 'profile' && (
                 <div className={`bg-gradient-to-r from-${localConfig.themeColor}-600 to-${localConfig.themeColor}-800 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden transition-colors`}>
                     {/* Background decoration */}
                     <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
@@ -225,8 +239,10 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                         </div>
                     </div>
                 </div>
+                )}
 
                 {/* Customization Section */}
+                {settingsTab === 'profile' && (
                 <Card header={<h3 className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider"><Palette size={16} /> Personalização</h3>}>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         {/* Color Picker */}
@@ -267,9 +283,10 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                         </div>
                     </div>
                 </Card>
+                )}
 
                 {/* Identidade da Empresa (org-wide, só admin) */}
-                {isAdmin && (
+                {isAdmin && settingsTab === 'admin' && (
                     <Card header={<h3 className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider"><Building2 size={16} /> Identidade da Empresa (Admin)</h3>}>
                         <p className="text-sm text-slate-500 mb-4">Define o nome e o logo exibidos para <strong>todos</strong> os usuários do sistema.</p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -289,22 +306,22 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                 )}
 
                 {/* Menu lateral configurável (#110) — admin define padrão; usuário personaliza */}
-                <MenuConfigEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />
+                {settingsTab === 'profile' && <MenuConfigEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
                 {/* Painel configurável (#111) — admin define padrão; usuário personaliza */}
-                <DashboardConfigEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />
+                {settingsTab === 'profile' && <DashboardConfigEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
                 {/* Permissões de tela por pessoa/grupo (#112) — só admin */}
-                {isAdmin && <ScreenPermissionsEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
+                {isAdmin && settingsTab === 'admin' && <ScreenPermissionsEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
                 {/* Notificacoes de tarefas (#348) — so admin */}
-                {isAdmin && <NotificationConfigEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
+                {isAdmin && settingsTab === 'admin' && <NotificationConfigEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
                 {/* Automacoes do TaskRunner (#351) — so admin */}
-                {isAdmin && <TaskAutomationEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
+                {isAdmin && settingsTab === 'admin' && <TaskAutomationEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
                 {/* Administração — atalhos (só admin) */}
-                {isAdmin && (
+                {isAdmin && settingsTab === 'admin' && (
                     <Card header={<h3 className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider"><ShieldCheck size={16} /> Administração</h3>}>
                         <div className="flex flex-wrap gap-3">
                             <Link to="/admin/audit" className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800">
@@ -318,6 +335,7 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                 )}
 
                 {/* Maintenance Section */}
+                {settingsTab === 'profile' && (
                 <Card header={<h3 className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider"><ShieldCheck size={16} /> Manutenção</h3>}>
                     <p className="text-sm text-slate-500 mb-4">
                         Ferramentas para diagnosticar e corrigir problemas com o aplicativo local.
@@ -340,6 +358,7 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                         Forçar Ressincronização de Tarefas
                     </Button>
                 </Card>
+                )}
 
                 {/* Sticky Save Action */}
                 <div className="sticky bottom-0 bg-slate-50 dark:bg-slate-950 p-4 border-t border-slate-200 dark:border-slate-800 flex justify-end z-20 backdrop-blur-sm bg-opacity-90 -mx-4 -mb-4 md:rounded-t-xl">
