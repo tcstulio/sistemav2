@@ -7,8 +7,25 @@ vi.mock('../../services/dolibarrService', () => ({ dolibarrService: {} }));
 vi.mock('../../services/scraperService', () => ({ ScraperService: {} }));
 vi.mock('../../utils/urlValidation', () => ({ isValidExternalUrl: () => true }));
 
-import { executeTool } from '../../services/agentTools';
+import { executeTool, runWithToolContext } from '../../services/agentTools';
 import { verifyDeeplink } from '../../utils/deeplinkToken';
+
+/** Profile de teste com caps do agente sobrescrevíveis. */
+function profileWith(agentOverrides: Record<string, any>) {
+    return {
+        role: 'test', dolibarrModules: {}, frontendScreens: {},
+        agent: {
+            canCreate: ['all'], canEdit: ['all'], canValidate: [], canDelete: [],
+            canSendEmail: false, canSendWhatsapp: false, canAccessFinancial: false,
+            canAccessAccounting: false, canAccessHR: false, canManageWebhooks: false,
+            canCreateIssues: false, canStartTasks: false, canMergePRs: false,
+            maxInvoiceAmount: null, maxOrderAmount: null,
+            restrictedCustomers: [], restrictedProjects: [],
+            ...agentOverrides,
+        },
+        computedAt: 'now',
+    } as any;
+}
 
 describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
     it('prepare_create_customer gera /customers/new com kind create_customer', async () => {
@@ -637,5 +654,58 @@ describe('agentTools — ações HITL via deeplink (#57 Peça 2/3)', () => {
             const out = await executeTool('prepare_batch_create', { entity: 'inexistente', items: [{ name: 'X' }] });
             expect(out).toContain('não suporta criação');
         });
+    });
+});
+
+describe('agentTools — caps configuráveis do agente (não-admin)', () => {
+    it('bloqueia fatura acima do maxInvoiceAmount', async () => {
+        const out = await runWithToolContext(
+            { permissionProfile: profileWith({ maxInvoiceAmount: 1000 }), isAdmin: false },
+            () => executeTool('prepare_create_invoice', { socid: '5', lines: [{ qty: 2, subprice: 800 }] }),
+        );
+        expect(out).toMatch(/excede o limite/);
+    });
+
+    it('permite fatura dentro do maxInvoiceAmount (gera deeplink)', async () => {
+        const out = await runWithToolContext(
+            { permissionProfile: profileWith({ maxInvoiceAmount: 5000 }), isAdmin: false },
+            () => executeTool('prepare_create_invoice', { socid: '5', lines: [{ qty: 2, subprice: 800 }] }),
+        );
+        expect(out).not.toMatch(/excede o limite/);
+        expect(out).toMatch(/prefill=/);
+    });
+
+    it('aplica desconto (remise_percent) no cálculo do total', async () => {
+        // 2×800 = 1600, com 50% de desconto = 800 < 1000 → permitido
+        const out = await runWithToolContext(
+            { permissionProfile: profileWith({ maxInvoiceAmount: 1000 }), isAdmin: false },
+            () => executeTool('prepare_create_invoice', { socid: '5', lines: [{ qty: 2, subprice: 800, remise_percent: 50 }] }),
+        );
+        expect(out).not.toMatch(/excede o limite/);
+    });
+
+    it('bloqueia cliente fora da allowlist (restrictedCustomers)', async () => {
+        const out = await runWithToolContext(
+            { permissionProfile: profileWith({ restrictedCustomers: ['5'] }), isAdmin: false },
+            () => executeTool('prepare_create_invoice', { socid: '9', lines: [{ qty: 1, subprice: 10 }] }),
+        );
+        expect(out).toMatch(/cliente 9/);
+    });
+
+    it('permite cliente na allowlist', async () => {
+        const out = await runWithToolContext(
+            { permissionProfile: profileWith({ restrictedCustomers: ['5'] }), isAdmin: false },
+            () => executeTool('prepare_create_invoice', { socid: '5', lines: [{ qty: 1, subprice: 10 }] }),
+        );
+        expect(out).toMatch(/prefill=/);
+    });
+
+    it('admin ignora os caps', async () => {
+        const out = await runWithToolContext(
+            { permissionProfile: profileWith({ maxInvoiceAmount: 1, restrictedCustomers: ['999'] }), isAdmin: true },
+            () => executeTool('prepare_create_invoice', { socid: '5', lines: [{ qty: 2, subprice: 800 }] }),
+        );
+        expect(out).not.toMatch(/excede o limite/);
+        expect(out).toMatch(/prefill=/);
     });
 });
