@@ -50,3 +50,20 @@ export async function updateUserPermissions(
     const res = await axios.put(`${API}/users/${userId}/permissions`, patch, authHeaders());
     return res.data;
 }
+
+export interface AdminAuditEntry {
+    id: string;
+    ts: number;
+    adminId: string;
+    adminLogin: string;
+    action: string;
+    target?: string;
+    summary?: string;
+    changes?: Record<string, { before: unknown; after: unknown }>;
+}
+
+/** Lê o trilho de auditoria de ações administrativas (admin). */
+export async function getAuditLog(opts: { limit?: number; action?: string; target?: string } = {}): Promise<AdminAuditEntry[]> {
+    const res = await axios.get(`${API}/audit`, { ...authHeaders(), params: opts });
+    return res.data?.entries || [];
+}

@@ -63,6 +63,7 @@ const ChatConversation = React.lazy(() => import('../pages/ChatPage').then(m => 
 const Simulator = React.lazy(() => import('../pages/Simulator'));
 const CentroVibeManager = React.lazy(() => import('./CentroVibe/CentroVibeManager'));
 const GroupManager = React.lazy(() => import('./admin/GroupManager').then(m => ({ default: m.GroupManager })));
+const AuditLog = React.lazy(() => import('./admin/AuditLog').then(m => ({ default: m.AuditLog })));
 const IssuesPage = React.lazy(() => import('./Issues/IssuesPage'));
 
 interface ViewWrapperProps {
@@ -280,6 +281,7 @@ const App: React.FC = () => {
 
                         <Route path="/settings" element={<ViewWrapper Component={SettingsView} viewId="settings" />} />
                         <Route path="/admin/groups" element={<ViewWrapper Component={GroupManager} viewId="settings" />} />
+                        <Route path="/admin/audit" element={<ViewWrapper Component={AuditLog} viewId="settings" />} />
                         <Route path="/opencode-tasks" element={<Navigate to="/issues" replace />} />
                         <Route path="/issues" element={<ViewWrapper Component={IssuesPage} viewId="development" />} />
 

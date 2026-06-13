@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { DolibarrConfig } from '../types';
-import { Save, CheckCircle, Palette, Moon, Sun, User, ShieldCheck, LogOut, RefreshCw, Smartphone, Key, Mail, Building2 } from 'lucide-react';
+import { Save, CheckCircle, Palette, Moon, Sun, User, ShieldCheck, LogOut, RefreshCw, Smartphone, Key, Mail, Building2, History, Users } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useDolibarr } from '../context/DolibarrContext';
 import { DolibarrService } from '../services/dolibarrService';
 import { dbService } from '../services/dbService';
@@ -301,6 +302,20 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
 
                 {/* Automacoes do TaskRunner (#351) — so admin */}
                 {isAdmin && <TaskAutomationEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
+
+                {/* Administração — atalhos (só admin) */}
+                {isAdmin && (
+                    <Card header={<h3 className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider"><ShieldCheck size={16} /> Administração</h3>}>
+                        <div className="flex flex-wrap gap-3">
+                            <Link to="/admin/audit" className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800">
+                                <History size={16} /> Auditoria de Administração
+                            </Link>
+                            <Link to="/admin/groups" className="flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800">
+                                <Users size={16} /> Grupos de Usuários
+                            </Link>
+                        </div>
+                    </Card>
+                )}
 
                 {/* Maintenance Section */}
                 <Card header={<h3 className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider"><ShieldCheck size={16} /> Manutenção</h3>}>
