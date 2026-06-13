@@ -699,6 +699,17 @@ function getEntityFromTool(tool: string): string | null {
     return key ? (ENTITY_MAP[key] || null) : null;
 }
 
+/** Soma o total de um array de linhas de documento: Σ qty × subprice × (1 − desconto%). */
+function computeLinesTotal(lines: any): number {
+    if (!Array.isArray(lines)) return 0;
+    return lines.reduce((sum: number, l: any) => {
+        const qty = Number(l?.qty) || 0;
+        const subprice = Number(l?.subprice) || 0;
+        const remise = Number(l?.remise_percent) || 0;
+        return sum + qty * subprice * (1 - remise / 100);
+    }, 0);
+}
+
 export async function executeTool(tool: string, args: any = {}): Promise<string> {
     const resolvedTool = TOOL_ALIASES[tool] || tool;
     log.info(`Tool Call: ${tool}${resolvedTool !== tool ? ` -> ${resolvedTool}` : ''}`, args);
@@ -733,6 +744,34 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             if (isEdit && !ctx.permissionProfile.agent.canEdit.includes(entity) && !ctx.permissionProfile.agent.canEdit.includes('all')) {
                 log.warn(`Permission denied: user=${ctx.userLogin} cannot edit ${entity}`);
                 return `Você não tem permissão para editar ${entity}. Solicite ao administrador.`;
+            }
+        }
+
+        // Caps configuráveis pelo admin (opt-in: default null/[] = sem efeito).
+        const agent = ctx.permissionProfile.agent;
+
+        // Allowlist de cliente: se configurada, só permite agir sobre esses socids.
+        if (agent.restrictedCustomers?.length > 0 && args?.socid != null
+            && !agent.restrictedCustomers.includes(String(args.socid))) {
+            log.warn(`Permission denied: user=${ctx.userLogin} cliente ${args.socid} fora da allowlist`);
+            return `Você não tem permissão para agir sobre o cliente ${args.socid}. Solicite ao administrador.`;
+        }
+        // Allowlist de projeto.
+        const projectId = args?.project_id ?? args?.fk_project;
+        if (agent.restrictedProjects?.length > 0 && projectId != null
+            && !agent.restrictedProjects.includes(String(projectId))) {
+            log.warn(`Permission denied: user=${ctx.userLogin} projeto ${projectId} fora da allowlist`);
+            return `Você não tem permissão para agir sobre o projeto ${projectId}. Solicite ao administrador.`;
+        }
+        // Teto de valor em faturas/pedidos (create/edit). O valor vem de total_ttc ou da soma das linhas.
+        const isInvoiceTool = /(?:create|edit)_(?:supplier_)?invoice$/.test(resolvedTool);
+        const isOrderTool = /(?:create|edit)_order$/.test(resolvedTool);
+        const amountLimit = isInvoiceTool ? agent.maxInvoiceAmount : isOrderTool ? agent.maxOrderAmount : null;
+        if (amountLimit != null) {
+            const total = args?.total_ttc != null ? Number(args.total_ttc) : computeLinesTotal(args?.lines);
+            if (total > amountLimit) {
+                log.warn(`Permission denied: user=${ctx.userLogin} valor ${total} > limite ${amountLimit} (${resolvedTool})`);
+                return `Valor (R$ ${total.toFixed(2)}) excede o limite permitido (R$ ${amountLimit.toFixed(2)}). Solicite a um administrador.`;
             }
         }
     }
