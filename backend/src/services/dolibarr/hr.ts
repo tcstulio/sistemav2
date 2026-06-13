@@ -28,6 +28,28 @@ export class DolibarrHRService extends DolibarrServiceBase {
         }
     }
 
+    /**
+     * Atualiza campos de um usuário no Dolibarr (PUT /users/:id). Aceita payload parcial;
+     * para extrafields use { array_options: { options_xxx: ... } }.
+     */
+    async updateUser(id: string, payload: Record<string, any>): Promise<any> {
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}users/${id}`;
+        const response = await axios.put(url, payload, {
+            headers,
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200,
+        });
+        return response.data;
+    }
+
+    /** Persiste o perfil de permissões do agente no extrafield options_entrevista_inicial (JSON). */
+    async setUserPermissionProfile(id: string, profile: unknown): Promise<any> {
+        return this.updateUser(id, {
+            array_options: { options_entrevista_inicial: JSON.stringify(profile) },
+        });
+    }
+
     async listUsers(search?: string): Promise<any[]> {
         try {
             const headers = this.getHeaders();

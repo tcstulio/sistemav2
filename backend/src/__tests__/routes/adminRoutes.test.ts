@@ -50,6 +50,28 @@ const mockAiService = vi.hoisted(() => ({
     analyzeSystem: vi.fn(() => 'AI response'),
 }));
 
+const mockUserPermsService = vi.hoisted(() => {
+    const sample = {
+        role: 'usuario', dolibarrModules: {}, frontendScreens: {},
+        agent: {
+            canCreate: [], canEdit: [], canValidate: [], canDelete: [],
+            canSendEmail: false, canSendWhatsapp: false, canAccessFinancial: false,
+            canAccessAccounting: false, canAccessHR: false, canManageWebhooks: false,
+            canCreateIssues: false, canStartTasks: false, canMergePRs: false,
+            maxInvoiceAmount: null, maxOrderAmount: null, restrictedCustomers: [], restrictedProjects: [],
+        },
+        computedAt: '2026-01-01T00:00:00.000Z',
+    };
+    return {
+        getProfile: vi.fn(async () => JSON.parse(JSON.stringify(sample))),
+        invalidateCache: vi.fn(),
+    };
+});
+
+const mockDolibarrSvc = vi.hoisted(() => ({
+    setUserPermissionProfile: vi.fn(async () => ({ id: '5' })),
+}));
+
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrAdmin: mockRequireDolibarrAdmin,
 }));
@@ -76,6 +98,14 @@ vi.mock('../../services/tulipaService', () => ({
 
 vi.mock('../../services/aiService', () => ({
     aiService: mockAiService,
+}));
+
+vi.mock('../../services/userPermissionsService', () => ({
+    userPermissionsService: mockUserPermsService,
+}));
+
+vi.mock('../../services/dolibarrService', () => ({
+    dolibarrService: mockDolibarrSvc,
 }));
 
 vi.mock('../../services/legacy/sessionService', () => ({
@@ -161,6 +191,38 @@ describe('adminRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.services.waha).toBe('UNREACHABLE');
+        });
+    });
+
+    describe('permissões do agente por usuário', () => {
+        it('GET /api/admin/users/:id/permissions retorna o perfil', async () => {
+            const res = await request(app).get('/api/admin/users/5/permissions');
+            expect(res.status).toBe(200);
+            expect(res.body.agent).toBeDefined();
+            expect(mockUserPermsService.getProfile).toHaveBeenCalledWith('5');
+        });
+
+        it('PUT mescla o patch no agent, persiste, invalida cache e retorna o merged', async () => {
+            const res = await request(app)
+                .put('/api/admin/users/5/permissions')
+                .send({ agent: { maxInvoiceAmount: 1000, canCreate: ['invoice'] } });
+            expect(res.status).toBe(200);
+            expect(res.body.agent.maxInvoiceAmount).toBe(1000);
+            expect(res.body.agent.canCreate).toEqual(['invoice']);
+            expect(res.body.agent.canEdit).toEqual([]); // campo ausente no patch é preservado (merge)
+            expect(mockDolibarrSvc.setUserPermissionProfile).toHaveBeenCalledWith(
+                '5', expect.objectContaining({ agent: expect.objectContaining({ maxInvoiceAmount: 1000 }) }),
+            );
+            expect(mockUserPermsService.invalidateCache).toHaveBeenCalledWith('5');
+        });
+
+        it('PUT rejeita valor negativo com 400 (Validation Error)', async () => {
+            const res = await request(app)
+                .put('/api/admin/users/5/permissions')
+                .send({ agent: { maxInvoiceAmount: -50 } });
+            expect(res.status).toBe(400);
+            expect(res.body.error).toBe('Validation Error');
+            expect(mockDolibarrSvc.setUserPermissionProfile).not.toHaveBeenCalled();
         });
     });
 
