@@ -2,12 +2,13 @@ import React, { useState, useMemo } from 'react';
 import { DolibarrUser, Task, ExpenseReport, LeaveRequest, Project, DolibarrConfig, AppView, GroupUser as DolibarrGroupUser, ExpenseReportLine, ExpenseReportPayment } from '../../types';
 import { UserAvatar } from './UserAvatar';
 import { formatDuration, getProjectName, getLeaveIcon, getLeaveStatusBadge, getExpenseStatusBadge } from './utils';
-import { UserCheck, Clock, Receipt, Plane, Shield, Edit2, Trash2, X, ArrowLeft, CreditCard, Fingerprint, Mail, Phone, Users, Plus, Calendar } from 'lucide-react';
+import { UserCheck, Clock, Receipt, Plane, Shield, Edit2, Trash2, X, ArrowLeft, CreditCard, Fingerprint, Mail, Phone, Users, Plus, Calendar, Bot } from 'lucide-react';
 import { formatDateOnly } from '../../utils/dateUtils';
 import { useGroups, useGroupUsers } from '../../hooks/dolibarr';
 import * as HRAdmin from '../../services/api/hrAdmin';
 
 import { PermissionManager } from './PermissionManager';
+import { UserPermissionsEditor } from '../admin/UserPermissionsEditor';
 import { ExpenseDetailModal } from './modals/ExpenseDetailModal';
 import { logger } from '../../utils/logger';
 import { notifyError } from '../../utils/notifyError';
@@ -48,7 +49,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
     expenseReportLines = [],
     expenseReportPayments = []
 }) => {
-    const [detailTab, setDetailTab] = useState<'overview' | 'time' | 'expenses' | 'leaves' | 'team' | 'groups' | 'permissions'>('overview');
+    const [detailTab, setDetailTab] = useState<'overview' | 'time' | 'expenses' | 'leaves' | 'team' | 'groups' | 'permissions' | 'agent'>('overview');
 
     // Hooks for Groups Management
     const { data: allGroups } = useGroups(config);
@@ -129,7 +130,8 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                     { id: 'time', label: 'Logs', icon: Clock },
                     { id: 'expenses', label: 'Despesas', icon: Receipt },
                     { id: 'leaves', label: 'Licenças', icon: Plane },
-                    { id: 'permissions', label: 'Permissões', icon: Shield }
+                    { id: 'permissions', label: 'Permissões', icon: Shield },
+                    { id: 'agent', label: 'Agente IA', icon: Bot }
                 ].map(tab => (
                     <button
                         key={tab.id}
@@ -346,6 +348,10 @@ export const UserDetail: React.FC<UserDetailProps> = ({
 
                 {detailTab === 'permissions' && (
                     <PermissionManager targetId={user.id} targetType="user" config={config} />
+                )}
+
+                {detailTab === 'agent' && (
+                    <UserPermissionsEditor userId={user.id} />
                 )}
             </div>
         </div>
