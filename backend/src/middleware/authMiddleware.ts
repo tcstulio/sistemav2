@@ -128,9 +128,11 @@ export const requireDolibarrAdmin = async (req: Request, res: Response, next: Ne
 
     log.debug(`Admin auth check: ${req.method} ${req.path}`);
 
-    // 2. Fallback to System Admin Key (if provided directly)
+    // 2. Fallback to System Admin Key (break-glass). Atribui identidade de sistema (para o
+    // audit trail não registrar 'unknown') e loga em warn — uso da master key é evento sensível.
     if (userKey && userKey === config.adminKey) {
-        log.debug('System admin key used');
+        log.warn(`System admin key used for ${req.method} ${req.path}`);
+        (req as any).user = { id: 'system', login: 'system-admin-key', admin: '1' };
         return next();
     }
 
