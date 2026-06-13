@@ -85,7 +85,9 @@ describe('ProjectPurchasesTab', () => {
         const orders = [createMockSupplierOrder('1', { total_ttc: 5000 })];
         render(<ProjectPurchasesTab supplierOrders={orders} />);
         expect(screen.getByText('PO-1')).toBeInTheDocument();
-        expect(screen.getByText(/\$5\.000/)).toBeInTheDocument();
+        // Locale/ICU-independente: símbolo e separador (R$ 5.000,00 vs $5,000.00) e o
+        // espaço entre símbolo e valor variam por versão de ICU; basta o valor agrupado.
+        expect(screen.getByText(/5[.,]000/)).toBeInTheDocument();
     });
 
     it('renders multiple orders', () => {
