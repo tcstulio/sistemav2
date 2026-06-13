@@ -26,6 +26,11 @@ const PROMPT_FILE = '.taskrunner-prompt.md';
 // indexação do contexto) chega a passar de 15min; 30min cobre o cold start com folga.
 const OPENCODE_TIMEOUT_MS = 30 * 60 * 1000;
 
+// Watchdog de tempo TOTAL por task (backstop). O auto-fix do Judge pode reexecutar a task
+// (exploração + síntese, vários runs de opencode), então sem um teto global uma task pode rodar
+// horas. 3h cobre o pior caso legítimo (até 6 runs de 30min) e corta runaways além disso.
+const MAX_TASK_WALL_MS = 3 * 60 * 60 * 1000;
+
 function git(args: string[], opts?: { timeout?: number; cwd?: string }) {
     return execFileAsync('git', args, { cwd: opts?.cwd || REPO_ROOT, timeout: opts?.timeout, maxBuffer: BIG });
 }
@@ -641,6 +646,24 @@ class TaskRunnerService {
     private pendingExecs = 0;
     private execChain: Promise<void> = Promise.resolve();
 
+    // Mutex único cobrindo TODA operação que toca o worktree compartilhado (WT_ROOT):
+    // executeTask, tryAutoMerge e startPreview. Sem ele, o tryAutoMerge (fire-and-forget) ou um
+    // preview disparado por API podem rodar checkout/rebase/reset concorrente com a próxima task
+    // da fila e corromper o git. A execChain serializa só os executeTask; este lock serializa
+    // os três caminhos entre si.
+    private worktreeLock: Promise<void> = Promise.resolve();
+    private async withWorktreeLock<T>(label: string, fn: () => Promise<T>): Promise<T> {
+        const prev = this.worktreeLock;
+        let release!: () => void;
+        this.worktreeLock = new Promise<void>((r) => { release = r; });
+        await prev;
+        try {
+            return await fn();
+        } finally {
+            release();
+        }
+    }
+
     private scheduleExec(task: Task, branch: string, activeStatus: TaskStatus = 'running'): void {
         const willQueue = this.pendingExecs > 0;
         this.pendingExecs++;
@@ -690,11 +713,27 @@ class TaskRunnerService {
 
             task.status = activeStatus;
             task.startedAt = new Date().toISOString();
+            task.killRequested = false; // limpa flag de kill de execução anterior (watchdog/cancel) p/ não pré-matar um retry
             task.updatedAt = new Date().toISOString();
             this.recordEvent(task, 'task_started', `Execução iniciada no branch ${branch}`, { branch });
             this.save();
             this.emitStatus(task);
-            await this.executeTask(task, branch);
+
+            // Watchdog de tempo total: se a task estourar MAX_TASK_WALL_MS, sinaliza kill (o
+            // runOpencode mata o processo em <=500ms) e registra o evento. O reject resultante
+            // cai no .catch da execChain, que marca a task como failed.
+            const watchdog = setTimeout(() => {
+                task.killRequested = true;
+                const min = Math.round(MAX_TASK_WALL_MS / 60000);
+                this.recordEvent(task, 'task_watchdog_timeout', `Watchdog: task excedeu ${min}min — abortando`, { maxMinutes: min });
+                this.emitLog(task.issueNumber, 'warn', `Watchdog: task excedeu ${min}min, abortando.`);
+            }, MAX_TASK_WALL_MS);
+            try {
+                // Lock do worktree: serializa com tryAutoMerge/startPreview de outras tasks.
+                await this.withWorktreeLock(`exec #${task.issueNumber}`, () => this.executeTask(task, branch));
+            } finally {
+                clearTimeout(watchdog);
+            }
         }).catch((e: any) => {
             log.error(`Task #${task.issueNumber} failed`, e);
             task.status = 'failed';
@@ -1443,25 +1482,30 @@ Return ONLY a JSON:
         log.info(`Auto-merge: testando gates para #${issueNumber}`);
 
         try {
-            if (task.branch) {
-                this.recordEvent(task, 'task_started', 'Auto-merge: rebaseando com main...');
-                await git(['fetch', 'origin', 'main'], { timeout: 30000 });
-                await git(['checkout', task.branch], { timeout: 15000, cwd: WT_ROOT });
-                await git(['rebase', 'origin/main'], { timeout: 60000, cwd: WT_ROOT });
-                await git(['push', 'origin', task.branch, '--force'], { timeout: 30000, cwd: WT_ROOT });
-                this.recordEvent(task, 'task_started', 'Auto-merge: rebase OK');
-            }
+            // Todas as operações que tocam o worktree (rebase/push/verify) rodam sob o lock,
+            // serializadas com a execução de outras tasks e com previews.
+            let verify: { ok: boolean; output: string } = { ok: true, output: '' };
+            await this.withWorktreeLock(`auto-merge #${issueNumber}`, async () => {
+                if (task.branch) {
+                    this.recordEvent(task, 'task_started', 'Auto-merge: rebaseando com main...');
+                    await git(['fetch', 'origin', 'main'], { timeout: 30000 });
+                    await git(['checkout', task.branch], { timeout: 15000, cwd: WT_ROOT });
+                    await git(['rebase', 'origin/main'], { timeout: 60000, cwd: WT_ROOT });
+                    await git(['push', 'origin', task.branch, '--force'], { timeout: 30000, cwd: WT_ROOT });
+                    this.recordEvent(task, 'task_started', 'Auto-merge: rebase OK');
+                }
 
-            if (task.prNumber) {
-                this.recordEvent(task, 'task_started', 'Auto-merge: testando merge (dry-run)...');
-                const { stdout: mergeCheck } = await gh(['pr', 'merge', String(task.prNumber), '--repo', REPO, '--squash', '--delete-branch', '--dry-run'], { timeout: 30000 }).catch((e: any) => {
-                    throw new Error(`Merge test falhou: ${e?.message || e}`);
-                });
-                this.recordEvent(task, 'task_started', 'Auto-merge: dry-run OK');
-            }
+                if (task.prNumber) {
+                    this.recordEvent(task, 'task_started', 'Auto-merge: testando merge (dry-run)...');
+                    await gh(['pr', 'merge', String(task.prNumber), '--repo', REPO, '--squash', '--delete-branch', '--dry-run'], { timeout: 30000 }).catch((e: any) => {
+                        throw new Error(`Merge test falhou: ${e?.message || e}`);
+                    });
+                    this.recordEvent(task, 'task_started', 'Auto-merge: dry-run OK');
+                }
 
-            this.recordEvent(task, 'task_started', 'Auto-merge: rodando typecheck...');
-            const verify = await this.verify();
+                this.recordEvent(task, 'task_started', 'Auto-merge: rodando typecheck...');
+                verify = await this.verify();
+            });
             if (!verify.ok) {
                 this.recordEvent(task, 'task_failed', `Auto-merge abortado: typecheck/build falhou apos rebase. ${verify.output.slice(-500)}`);
                 task.status = 'reviewing';
@@ -2089,8 +2133,12 @@ The first element should be the task to execute first.`;
             return { port: existing.port, frontendUrl: `http://localhost:${existing.port}`, backendUrl: `http://localhost:${existing.port + 1}` };
         }
 
-        await this.ensureWorktree(task.branch);
-        await git(['checkout', task.branch], { timeout: 15000, cwd: WT_ROOT });
+        // Setup do worktree sob o lock: serializa com execução de tasks e auto-merge, evitando
+        // que um reset/checkout concorrente corrompa o git do worktree compartilhado.
+        await this.withWorktreeLock(`preview #${issueNumber}`, async () => {
+            await this.ensureWorktree(task.branch!);
+            await git(['checkout', task.branch!], { timeout: 15000, cwd: WT_ROOT });
+        });
 
         const previewPort = 5174 + (issueNumber % 10);
         const backendPort = 3014 + (issueNumber % 10);
