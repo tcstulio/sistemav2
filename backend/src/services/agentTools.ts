@@ -37,6 +37,12 @@ interface ToolContext {
     userLogin?: string;
     isAdmin?: boolean;
     permissionProfile?: import('./userPermissionsService').UserPermissionProfile | null;
+    /**
+     * Quando true, bloqueia TODA ferramenta que escreve ou tem efeito externo, independente
+     * de profile/admin. Usado para entrada não-confiável (ex.: bot de WhatsApp respondendo a
+     * mensagens externas), onde o agente deve ser estritamente somente-leitura.
+     */
+    readOnly?: boolean;
 }
 
 const toolContextStore = new AsyncLocalStorage<ToolContext>();
@@ -660,6 +666,22 @@ function getWritePermissionKey(tool: string): string | null {
     return null;
 }
 
+// Ferramentas que escrevem ou têm efeito externo — bloqueadas em contexto read-only.
+const MUTATING_TOOLS = new Set([
+    'validate_invoice', 'validate_order', 'validate_proposal',
+    'notify_team', 'notify_person', 'send_whatsapp',
+    'create_github_issue', 'create_bug_report',
+    'create_opencode_task', 'start_opencode_task', 'merge_opencode_task',
+]);
+
+/** True se a ferramenta escreve/dispara efeito externo (deve ser bloqueada em read-only). */
+function isMutatingTool(tool: string): boolean {
+    return MUTATING_TOOLS.has(tool)
+        || tool.startsWith('prepare_create')
+        || tool.startsWith('prepare_edit')
+        || tool.startsWith('prepare_batch');
+}
+
 const ENTITY_MAP: Record<string, string> = {
     ticket: 'ticket', customer: 'customer', supplier: 'supplier', project: 'project',
     task: 'task', delegation: 'task', category: 'category', event: 'event',
@@ -688,6 +710,12 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
     }
 
     const ctx = getToolContext();
+    // Contexto somente-leitura (ex.: bot WhatsApp com entrada externa): bloqueia escrita/efeito
+    // externo antes de qualquer checagem de profile — vale inclusive sem profile e para admin.
+    if (ctx.readOnly && isMutatingTool(resolvedTool)) {
+        log.warn(`Read-only context blocked mutating tool: ${resolvedTool}`);
+        return `A ferramenta "${resolvedTool}" não está disponível neste contexto (somente leitura).`;
+    }
     if (ctx.permissionProfile && !ctx.isAdmin) {
         const permKey = getWritePermissionKey(resolvedTool);
         if (permKey && !ctx.permissionProfile.agent[permKey as keyof typeof ctx.permissionProfile.agent]) {
