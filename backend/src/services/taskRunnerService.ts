@@ -9,7 +9,7 @@ import { logger } from '../utils/logger';
 import { aiService } from './aiService';
 import { aiJobService } from './aiJobService';
 import { socketService } from './socketService';
-import { killTree, isAlive, killProcessesByCommandLine } from '../utils/processTree';
+import { killTree, isAlive, killOpencodeOrphans } from '../utils/processTree';
 import { screenshotService } from './screenshotService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
 
@@ -803,22 +803,22 @@ class TaskRunnerService {
      * (sem holder vivo, é stale com certeza — mesmo com mtime < 30s, ex.: restart rápido).
      */
     private async sweepOrphanedOpencode(reason: string, excludePids: number[] = []): Promise<boolean> {
-        // Varre os DOIS entrypoints de opencode do TaskRunner: o run principal (PROMPT_FILE,
-        // em WT_ROOT) e o Judge Visual (VISUAL_JUDGE_MARKER, em REPO_ROOT). Ambos compartilham
-        // o mesmo projectID do opencode, então um órfão de qualquer um trava o outro.
-        let allGone = true;
-        for (const needle of [PROMPT_FILE, VISUAL_JUDGE_MARKER]) {
-            try {
-                const { killed, errors, confirmedGone } = await killProcessesByCommandLine(needle, excludePids);
-                if (killed.length) log.warn(`Varredura de órfãos (${reason}/${needle}): matou ${killed.length} [${killed.join(', ')}]`);
-                if (errors.length) log.warn(`Varredura de órfãos (${reason}/${needle}): erros: ${errors.join('; ')}`);
-                if (!confirmedGone) { allGone = false; log.warn(`Varredura de órfãos (${reason}/${needle}): processos ainda vivos após timeout`); }
-            } catch (e: any) {
-                allGone = false;
-                log.warn(`Varredura de órfãos (${reason}/${needle}) falhou: ${e?.message || e}`);
-            }
+        // Mata opencode ÓRFÃO dos DOIS entrypoints do TaskRunner — run principal (PROMPT_FILE,
+        // em WT_ROOT) e Judge Visual (VISUAL_JUDGE_MARKER, em REPO_ROOT) — que compartilham o
+        // mesmo projectID; um órfão de qualquer um trava o outro. Enumera opencode.exe por nome
+        // (rápido) e discrimina pelos needles (não mata opencode manual de outro projeto).
+        try {
+            const { killed, errors, confirmedGone, discriminated } = await killOpencodeOrphans(
+                'opencode', [PROMPT_FILE, VISUAL_JUDGE_MARKER], excludePids,
+            );
+            if (killed.length) log.warn(`Varredura de órfãos (${reason}): matou ${killed.length} opencode [${killed.join(', ')}]${discriminated ? '' : ' (fallback sem discriminação)'}`);
+            if (errors.length) log.warn(`Varredura de órfãos (${reason}): ${errors.join('; ')}`);
+            if (!confirmedGone) log.warn(`Varredura de órfãos (${reason}): NÃO confirmou limpeza dos órfãos`);
+            return confirmedGone;
+        } catch (e: any) {
+            log.warn(`Varredura de órfãos (${reason}) falhou: ${e?.message || e}`);
+            return false;
         }
-        return allGone;
     }
 
     /** Resolve o gitdir real do worktree (em worktree, `.git` é um arquivo que aponta p/ ele). */

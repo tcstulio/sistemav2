@@ -49,80 +49,118 @@ export async function killTree(pid: number): Promise<{ ok: boolean; signal: stri
 }
 
 /**
- * Lista os PIDs cujos comandos contêm `needle` (substring LITERAL, não regex).
- * Windows: Get-CimInstance Win32_Process (exclui o próprio powershell da consulta,
- * que naturalmente contém o needle no script). Unix: `ps -eo pid,args`.
- * `excludePids` remove PIDs conhecidos (ex.: o run vivo atual). Nunca lança — em
- * qualquer erro retorna [].
+ * Lista os PIDs de processos com o image name `imageName` (com ou sem `.exe`).
+ * RÁPIDO (~400ms): Get-Process (toolhelp) no Windows, pgrep no Unix — NÃO usa WMI, pois
+ * `Get-CimInstance Win32_Process` custa 5-9s nesta máquina (overhead fixo do provider, mesmo
+ * direcionado a poucos PIDs) e estourava o timeout sob carga → a varredura achava "nada" e os
+ * órfãos sobreviviam (2ª fase do bug #335, pega só no canário ao vivo). LANÇA em falha de query.
  */
-export async function findProcessesByCommandLine(needle: string, excludePids: number[] = []): Promise<number[]> {
-    const skip = new Set([process.pid, ...excludePids]);
+export async function listPidsByName(imageName: string): Promise<number[]> {
+    const base = imageName.replace(/\.exe$/i, '');
     if (process.platform === 'win32') {
-        const safe = needle.replace(/'/g, "''"); // escapa aspas simples p/ string PS
-        const script =
-            `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${safe}*' ` +
-            `-and $_.Name -ne 'powershell.exe' } | Select-Object -ExpandProperty ProcessId`;
+        const { stdout } = await execFileAsync(
+            'powershell',
+            ['-NoProfile', '-NonInteractive', '-Command',
+                // `exit 0`: Get-Process -Name sai com código 1 quando não há match (mesmo com
+                // SilentlyContinue) → execFile rejeitaria. Força exit 0 (sem match = lista vazia).
+                `Get-Process -Name '${base.replace(/'/g, "''")}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id; exit 0`],
+            { windowsHide: true, timeout: 15000 },
+        );
+        return stdout.split(/\r?\n/).map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isFinite(n) && n > 0);
+    }
+    try {
+        const { stdout } = await execAsync(`pgrep -x ${base.replace(/[^\w.-]/g, '')}`, { timeout: 15000 });
+        return stdout.split(/\r?\n/).map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isFinite(n) && n > 0);
+    } catch { return []; } // pgrep sai com 1 quando não encontra
+}
+
+/** Lê a CommandLine de PIDs específicos. Retorna null se a query falhar (NÃO confundir com vazio). */
+async function tryGetCommandLines(pids: number[]): Promise<Map<number, string> | null> {
+    if (pids.length === 0) return new Map();
+    if (process.platform === 'win32') {
+        const filter = pids.map((p) => `ProcessId=${p}`).join(' OR ');
         try {
             const { stdout } = await execFileAsync(
                 'powershell',
-                ['-NoProfile', '-NonInteractive', '-Command', script],
-                { windowsHide: true, timeout: 15000 },
+                ['-NoProfile', '-NonInteractive', '-Command',
+                    `Get-CimInstance Win32_Process -Filter "${filter}" | ForEach-Object { "$($_.ProcessId)\`t$($_.CommandLine)" }; exit 0`],
+                { windowsHide: true, timeout: 20000 },
             );
-            return stdout.split(/\r?\n/)
-                .map((s) => parseInt(s.trim(), 10))
-                .filter((n) => Number.isFinite(n) && n > 0 && !skip.has(n));
-        } catch {
-            return [];
-        }
+            const m = new Map<number, string>();
+            for (const line of stdout.split(/\r?\n/)) {
+                const i = line.indexOf('\t');
+                if (i <= 0) continue;
+                const pid = parseInt(line.slice(0, i), 10);
+                if (Number.isFinite(pid)) m.set(pid, line.slice(i + 1));
+            }
+            return m;
+        } catch { return null; }
     }
     try {
         const { stdout } = await execAsync('ps -eo pid,args', { timeout: 15000 });
-        const out: number[] = [];
+        const m = new Map<number, string>();
         for (const line of stdout.split('\n')) {
-            if (!line.includes(needle)) continue;
-            const pid = parseInt(line.trim().split(/\s+/)[0], 10);
-            if (Number.isFinite(pid) && pid > 0 && !skip.has(pid)) out.push(pid);
+            const t = line.trim(); const sp = t.indexOf(' ');
+            const pid = parseInt(sp > 0 ? t.slice(0, sp) : t, 10);
+            if (pids.includes(pid)) m.set(pid, sp > 0 ? t.slice(sp + 1) : '');
         }
-        return out;
-    } catch {
-        return [];
-    }
+        return m;
+    } catch { return null; }
 }
 
 /**
- * Mata (árvore inteira) todos os processos cujo comando contém `needle`.
- * Usado para varrer opencode ÓRFÃO do TaskRunner: no Windows, um restart do backend
- * (nodemon) NÃO reapeia os filhos — o opencode sobrevive segurando o lock de git do
- * projeto, e a próxima task colide. Varrer por linha de comando pega o órfão mesmo
- * sem PID em memória. Idempotente; nunca lança.
- *
- * BARREIRA pós-kill: `taskkill /F` retorna ANTES de o SO finalizar a árvore e soltar os
- * file handles (ex.: o index.lock do snapshot). Por isso, após matar, re-varre até a lista
- * esvaziar (ou timeout curto) — só então é seguro limpar locks e spawnar o novo opencode.
+ * Mata (árvore) os processos `imageName` ÓRFÃOS do TaskRunner. Estratégia:
+ * 1) enumera por NOME (rápido, sem WMI);
+ * 2) discrimina pela CommandLine conter QUALQUER `needle` — p/ não matar um opencode manual do
+ *    usuário em OUTRO projeto. Se a leitura da CommandLine falhar (WMI lento/indisponível), faz
+ *    FALLBACK matando todos os candidatos do nome: pré-spawn é mais seguro over-matar opencode
+ *    do que deixar um órfão segurando o lock do projectID (a 2ª fase do bug #335).
+ * 3) barreira pós-kill via isAlive (instantânea) — `taskkill /F` retorna antes de o SO finalizar
+ *    a árvore e soltar os handles (ex.: index.lock do snapshot).
+ * Nunca lança internamente; em falha total de enumeração reporta confirmedGone=false.
  */
-export async function killProcessesByCommandLine(
-    needle: string,
+export async function killOpencodeOrphans(
+    imageName: string,
+    needles: string[],
     excludePids: number[] = [],
-): Promise<{ killed: number[]; errors: string[]; confirmedGone: boolean }> {
-    const killed: number[] = [];
+): Promise<{ killed: number[]; errors: string[]; confirmedGone: boolean; discriminated: boolean }> {
+    const skip = new Set([process.pid, ...excludePids]);
     const errors: string[] = [];
-    const pids = await findProcessesByCommandLine(needle, excludePids);
-    for (const pid of pids) {
+    let pids: number[];
+    try {
+        pids = (await listPidsByName(imageName)).filter((p) => !skip.has(p));
+    } catch (e: any) {
+        return { killed: [], errors: [`enum falhou: ${String(e?.message || e).slice(0, 150)}`], confirmedGone: false, discriminated: false };
+    }
+    if (pids.length === 0) return { killed: [], errors, confirmedGone: true, discriminated: true };
+
+    const cls = await tryGetCommandLines(pids);
+    let targets: number[];
+    let discriminated: boolean;
+    if (cls) {
+        targets = pids.filter((p) => { const cl = cls.get(p) || ''; return needles.some((n) => cl.includes(n)); });
+        discriminated = true;
+    } else {
+        targets = pids; // WMI indisponível → over-kill seguro pré-spawn
+        discriminated = false;
+        errors.push('CommandLine indisponível — fallback: matando todos os candidatos do nome');
+    }
+
+    const killed: number[] = [];
+    for (const pid of targets) {
         const r = await killTree(pid);
-        // Unix: PIDs vindos de varredura nem sempre são líderes de grupo (o líder bash já
-        // morreu no caso órfão), então o process.kill(-pid) do killTree pode dar ESRCH.
-        // Reforça matando o PID direto.
+        // Unix: PID de varredura nem sempre é líder de grupo (o bash líder já morreu no caso
+        // órfão), então o process.kill(-pid) do killTree pode dar ESRCH. Reforça o PID direto.
         if (process.platform !== 'win32') { try { process.kill(pid, 'SIGKILL'); } catch { /* já morto */ } }
         if (r.ok && !r.alreadyDead) killed.push(pid);
         else if (!r.ok) errors.push(`pid ${pid}: ${r.signal}`);
     }
-    if (pids.length === 0) return { killed, errors, confirmedGone: true };
-    let remaining = await findProcessesByCommandLine(needle, excludePids);
-    for (let i = 0; i < 30 && remaining.length; i++) {
+    let alive = targets.filter((p) => isAlive(p));
+    for (let i = 0; i < 30 && alive.length; i++) {
         await new Promise((r) => setTimeout(r, 100));
-        remaining = await findProcessesByCommandLine(needle, excludePids);
+        alive = targets.filter((p) => isAlive(p));
     }
-    return { killed, errors, confirmedGone: remaining.length === 0 };
+    return { killed, errors, confirmedGone: alive.length === 0, discriminated };
 }
 
 /** Verifica se o processo existe (signal 0 = ping). */
