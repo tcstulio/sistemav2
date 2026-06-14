@@ -4,7 +4,8 @@
 # Uso:  powershell -ExecutionPolicy Bypass -File .\start-app-fixo.ps1
 
 Write-Host "1/2  Subindo webapp (npm run dev:all)..." -ForegroundColor Cyan
-Start-Process -FilePath "npm" -ArgumentList "run","dev:all" -WorkingDirectory $PSScriptRoot -WindowStyle Minimized
+# cmd /c resolve o npm.cmd no Windows; Start-Process "npm" direto nao resolvia e abortava.
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c","npm run dev:all" -WorkingDirectory $PSScriptRoot -WindowStyle Minimized
 
 Write-Host "2/2  Subindo tunel nomeado (carnaval-tunnel -> app.coolgroove.com.br)..." -ForegroundColor Cyan
 $cfg = Join-Path $env:USERPROFILE ".cloudflared\coolgroove-app-tunnel.yml"

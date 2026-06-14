@@ -171,10 +171,10 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
     const filteredInvoices = controls.result;
     const searchTerm = controls.search;
 
-    // Reset page on search
+    // Reset page on search or filter change
     useEffect(() => {
         setPage(0);
-    }, [searchTerm]);
+    }, [searchTerm, filterStatus]);
 
     const invoiceLines = useMemo(() => {
         if (!selectedInvoice) return [];
@@ -425,7 +425,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                 <EmptyState icon={FileText} title="Nenhuma fatura encontrada" description="Nenhuma fatura encontrada com estes critérios." />
             ) : (
                 <div className="grid grid-cols-1 gap-3">
-                    {filteredInvoices.map((inv) => {
+                    {filteredInvoices.slice(page * limit, (page + 1) * limit).map((inv) => {
                         const projectName = getProjectName(inv.project_id);
                         return (
                             <Card
@@ -840,7 +840,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                 limit={limit}
                                 onPageChange={setPage}
                                 onLimitChange={setLimit}
-                                hasNext={filteredInvoices.length >= limit}
+                                hasNext={(page + 1) * limit < filteredInvoices.length}
                                 hasPrev={page > 0}
                             />
                         </>
