@@ -898,11 +898,20 @@ class TaskRunnerService {
     private async runOpencodeIsolated(task: Task): Promise<string> {
         const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`);
         this.cleanStaleLocks(gone);
-        return runOpencode(
-            `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
-            WT_ROOT, task, OPENCODE_TIMEOUT_MS,
-            (sample) => { task.cpuMemSamples?.push(sample); },
-        );
+        try {
+            return await runOpencode(
+                `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
+                WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+                (sample) => { task.cpuMemSamples?.push(sample); },
+            );
+        } finally {
+            // O timeout-kill (killTree do bash) pode falhar e deixar o opencode ÓRFÃO VIVO — ele
+            // segura CPU/disco e faz o `git status` seguinte estourar o timeout de 15s (foi a
+            // falha exata do canário: "Command failed: git status --porcelain"). Reapeia AQUI,
+            // antes de a fase de verificação (worktreeChanges/typecheck) tocar o git do worktree.
+            const goneAfter = await this.sweepOrphanedOpencode(`post-run #${task.issueNumber}`);
+            this.cleanStaleLocks(goneAfter);
+        }
     }
 
     /** Garante um worktree git ISOLADO, limpo, no branch fix-N a partir de origin/main. */
@@ -932,7 +941,18 @@ class TaskRunnerService {
 
     /** Mudanças de CÓDIGO no worktree (ignora node_modules / lock / o arquivo de prompt). */
     private async worktreeChanges(): Promise<string[]> {
-        const { stdout } = await git(['status', '--porcelain'], { timeout: 15000, cwd: WT_ROOT });
+        // Retry tolerante: logo após o opencode, um lock/carga transiente pode fazer o git status
+        // estourar o timeout (foi a falha do canário). Timeout maior + 1 retry após pausa curta.
+        let stdout = '';
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            try {
+                ({ stdout } = await git(['status', '--porcelain'], { timeout: 30000, cwd: WT_ROOT }));
+                break;
+            } catch (e) {
+                if (attempt === 2) throw e;
+                await new Promise((r) => setTimeout(r, 1500));
+            }
+        }
         return stdout.split('\n')
             .map((l) => l.trim())
             .filter((l) => l && !l.includes('node_modules') && !l.includes('package-lock') && !l.includes(PROMPT_FILE));
