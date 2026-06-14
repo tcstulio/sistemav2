@@ -1,6 +1,7 @@
 import { execFile, exec, ChildProcess, spawn } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import pidusage from 'pidusage';
 import { atomicWriteSync } from '../utils/atomicWrite';
@@ -8,7 +9,7 @@ import { logger } from '../utils/logger';
 import { aiService } from './aiService';
 import { aiJobService } from './aiJobService';
 import { socketService } from './socketService';
-import { killTree, isAlive } from '../utils/processTree';
+import { killTree, isAlive, killProcessesByCommandLine } from '../utils/processTree';
 import { screenshotService } from './screenshotService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
 
@@ -22,6 +23,10 @@ const REPO_ROOT = path.resolve(__dirname, '../../../');
 // Worktree ISOLADO do TaskRunner — o agente nunca toca o diretório do dev/main.
 const WT_ROOT = path.resolve(REPO_ROOT, '..', 'sistemav2-taskrunner-wt');
 const PROMPT_FILE = '.taskrunner-prompt.md';
+// Marcador único injetado no prompt do Judge Visual (que roda opencode em REPO_ROOT, sem o
+// PROMPT_FILE). Permite que a varredura de órfãos reconheça e mate TAMBÉM um Judge Visual
+// órfão — senão ele sobreviveria a um restart segurando o lock do projectID compartilhado.
+const VISUAL_JUDGE_MARKER = 'taskrunner-visual-judge';
 // Timeout por tentativa do opencode. Num repo grande o 1º run (cold start: conexão do modelo +
 // indexação do contexto) chega a passar de 15min; 30min cobre o cold start com folga.
 const OPENCODE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -326,6 +331,11 @@ class TaskRunnerService {
             }
         }
         this.recoverStuckTasksOnBoot();
+        // Varre opencode órfão que sobreviveu a um restart do backend (Windows não reapeia
+        // filhos): sem isto, o órfão segura o lock do projeto e a próxima task colide (#335).
+        setImmediate(() => {
+            this.sweepOrphanedOpencode('boot').catch(() => { /* logado dentro */ });
+        });
         setImmediate(() => {
             this.syncWithGitHub().catch((e) => {
                 log.warn(`syncWithGitHub no boot falhou: ${e?.message || e}`);
@@ -646,11 +656,19 @@ class TaskRunnerService {
     private pendingExecs = 0;
     private execChain: Promise<void> = Promise.resolve();
 
-    // Mutex único cobrindo TODA operação que toca o worktree compartilhado (WT_ROOT):
-    // executeTask, tryAutoMerge e startPreview. Sem ele, o tryAutoMerge (fire-and-forget) ou um
-    // preview disparado por API podem rodar checkout/rebase/reset concorrente com a próxima task
-    // da fila e corromper o git. A execChain serializa só os executeTask; este lock serializa
-    // os três caminhos entre si.
+    // Mutex único cobrindo TODA operação que toca o worktree compartilhado (WT_ROOT) ou o
+    // projectID compartilhado do opencode: executeTask, tryAutoMerge, startPreview e o Judge
+    // Visual. Sem ele, qualquer um (vários fire-and-forget) pode rodar checkout/rebase/reset ou
+    // um 2º opencode concorrente com a próxima task da fila e corromper o git / colidir no
+    // index.lock (causa do #335). A execChain serializa só os executeTask; este lock serializa
+    // todos os caminhos entre si.
+    //
+    // ⚠️ INVARIANTE (NÃO-REENTRANTE): nunca chame withWorktreeLock de forma SÍNCRONA de dentro de
+    // um fn() que já segura o lock — `await prev` nunca resolveria (auto-deadlock permanente da
+    // fila). É seguro hoje porque runVisualJudge/tryAutoMerge são disparados FIRE-AND-FORGET (sem
+    // await) e cedem o controle (1º await real) ANTES de pedir o lock, então o lock do exec já
+    // liberou. Se for aguardar um desses dentro do lock, tire o withWorktreeLock interno ou torne
+    // este mutex reentrante (token de dono via AsyncLocalStorage).
     private worktreeLock: Promise<void> = Promise.resolve();
     private async withWorktreeLock<T>(label: string, fn: () => Promise<T>): Promise<T> {
         const prev = this.worktreeLock;
@@ -771,8 +789,126 @@ class TaskRunnerService {
         });
     }
 
+    /**
+     * Mata qualquer processo opencode ÓRFÃO do TaskRunner (linha de comando contém o
+     * PROMPT_FILE, discriminador único — nunca atinge um opencode manual do usuário).
+     * Causa-raiz do #335: no Windows, um restart do backend (nodemon) ou um kill que
+     * falha deixa o opencode vivo segurando o lock de git do projeto (opencode agrupa
+     * todos os worktrees do mesmo repo sob 1 projectID compartilhado). A próxima execução
+     * colide (index.lock: File exists) ou trava no `init`. Chamado antes de CADA run.
+     */
+    /**
+     * Retorna `true` se confirmou que NENHUM opencode do TaskRunner está vivo (barreira pós-kill
+     * limpa para os dois needles). Esse retorno autoriza apagar o index.lock do snapshot à força
+     * (sem holder vivo, é stale com certeza — mesmo com mtime < 30s, ex.: restart rápido).
+     */
+    private async sweepOrphanedOpencode(reason: string, excludePids: number[] = []): Promise<boolean> {
+        // Varre os DOIS entrypoints de opencode do TaskRunner: o run principal (PROMPT_FILE,
+        // em WT_ROOT) e o Judge Visual (VISUAL_JUDGE_MARKER, em REPO_ROOT). Ambos compartilham
+        // o mesmo projectID do opencode, então um órfão de qualquer um trava o outro.
+        let allGone = true;
+        for (const needle of [PROMPT_FILE, VISUAL_JUDGE_MARKER]) {
+            try {
+                const { killed, errors, confirmedGone } = await killProcessesByCommandLine(needle, excludePids);
+                if (killed.length) log.warn(`Varredura de órfãos (${reason}/${needle}): matou ${killed.length} [${killed.join(', ')}]`);
+                if (errors.length) log.warn(`Varredura de órfãos (${reason}/${needle}): erros: ${errors.join('; ')}`);
+                if (!confirmedGone) { allGone = false; log.warn(`Varredura de órfãos (${reason}/${needle}): processos ainda vivos após timeout`); }
+            } catch (e: any) {
+                allGone = false;
+                log.warn(`Varredura de órfãos (${reason}/${needle}) falhou: ${e?.message || e}`);
+            }
+        }
+        return allGone;
+    }
+
+    /** Resolve o gitdir real do worktree (em worktree, `.git` é um arquivo que aponta p/ ele). */
+    private worktreeGitDir(): string | null {
+        try {
+            const dotgit = path.join(WT_ROOT, '.git');
+            if (!fs.existsSync(dotgit)) return null;
+            if (fs.statSync(dotgit).isDirectory()) return dotgit;
+            const m = fs.readFileSync(dotgit, 'utf8').match(/gitdir:\s*(.+)/);
+            return m ? m[1].trim() : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Apaga um lock. Com `force`, apaga incondicionalmente (use quando a varredura JÁ confirmou
+     * que nenhum holder está vivo). Sem `force`, só apaga se STALE (mtime > 30s) — um git/opencode
+     * ativo segura o index.lock por sub-segundo, então um lock antigo é seguramente abandonado.
+     */
+    private rmStaleLock(lockPath: string, label: string, force = false): void {
+        try {
+            if (!fs.existsSync(lockPath)) return;
+            if (!force && Date.now() - fs.statSync(lockPath).mtimeMs <= 30_000) return; // pode estar vivo
+            fs.rmSync(lockPath, { force: true });
+            log.warn(`Removido lock ${force ? '(holder confirmado morto)' : 'stale'} (${label}): ${lockPath}`);
+        } catch { /* ignore */ }
+    }
+
+    /**
+     * Apaga o index.lock do snapshot do opencode cujo `config` aponta exatamente para
+     * `worktreePath`. ESCOPO ESTRITO: nunca toca snapshots de OUTROS worktrees/projetos
+     * (REPO_ROOT quando alvo é WT_ROOT, dolibarr, tulipa-v4 etc.) — apagar um index.lock VIVO
+     * de outra sessão a corromperia. Sem config legível → pula. `force` (vindo de uma varredura
+     * com confirmedGone) apaga mesmo com mtime < 30s — cobre o restart rápido do #335.
+     */
+    private cleanSnapshotLockFor(worktreePath: string, force = false): void {
+        try {
+            const snapRoot = path.join(os.homedir(), '.local', 'share', 'opencode', 'snapshot');
+            if (!fs.existsSync(snapRoot)) return;
+            const target = path.resolve(worktreePath).toLowerCase().replace(/\\/g, '/');
+            for (const proj of fs.readdirSync(snapRoot)) {
+                const projDir = path.join(snapRoot, proj);
+                let snaps: string[] = [];
+                try { snaps = fs.readdirSync(projDir); } catch { continue; }
+                for (const snap of snaps) {
+                    const snapDir = path.join(projDir, snap);
+                    try {
+                        const cfg = fs.readFileSync(path.join(snapDir, 'config'), 'utf8');
+                        const m = cfg.match(/worktree\s*=\s*(.+)/);
+                        if (!m || m[1].trim().toLowerCase().replace(/\\/g, '/') !== target) continue;
+                    } catch { continue; }
+                    this.rmStaleLock(path.join(snapDir, 'index.lock'), `snapshot ${proj}/${snap}`, force);
+                }
+            }
+        } catch { /* ignore */ }
+    }
+
+    /**
+     * Remove locks STALE que sobram de um git/opencode interrompido, ANTES de um run no
+     * worktree isolado. Só age sobre o índice do PRÓPRIO worktree (WT_ROOT) e seu snapshot.
+     * `opencodeGone` = a varredura confirmou que nenhum opencode vive → apaga o lock do snapshot
+     * à força (sem holder), cobrindo o restart rápido (<30s) que o guard de mtime senão pularia.
+     * O gitdir mantém o guard de 30s (a barreira de opencode não cobre processos `git`).
+     */
+    private cleanStaleLocks(opencodeGone = false): void {
+        const gitDir = this.worktreeGitDir();
+        if (gitDir) this.rmStaleLock(path.join(gitDir, 'index.lock'), 'worktree gitdir');
+        this.cleanSnapshotLockFor(WT_ROOT, opencodeGone);
+    }
+
+    /**
+     * Run de opencode ISOLADO: varre órfãos + limpa locks stale ANTES de spawnar. Garante
+     * que nunca há 2 opencode no mesmo projectID — nem entre tasks, nem entre as 6 tentativas
+     * (3 exploração + 3 síntese) de uma mesma task. Este é o fix central do #335.
+     */
+    private async runOpencodeIsolated(task: Task): Promise<string> {
+        const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`);
+        this.cleanStaleLocks(gone);
+        return runOpencode(
+            `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
+            WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+            (sample) => { task.cpuMemSamples?.push(sample); },
+        );
+    }
+
     /** Garante um worktree git ISOLADO, limpo, no branch fix-N a partir de origin/main. */
     private async ensureWorktree(branch: string): Promise<void> {
+        const gone = await this.sweepOrphanedOpencode('ensureWorktree');
+        this.cleanStaleLocks(gone);
         await git(['fetch', 'origin', 'main'], { timeout: 60000 });
         if (!fs.existsSync(WT_ROOT)) {
             await git(['worktree', 'add', '--force', WT_ROOT, 'origin/main'], { timeout: 120000 });
@@ -943,11 +1079,7 @@ class TaskRunnerService {
             this.recordEvent(task, 'attempt_started', `Fase 1 — Exploração ${attempt}/${MAX_EXPLORE}`, { attempt, phase: 'exploring', maxAttempts: MAX_EXPLORE });
 
             try {
-                const stdout = await runOpencode(
-                    `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
-                    WT_ROOT, task, OPENCODE_TIMEOUT_MS,
-                    (sample) => { task.cpuMemSamples?.push(sample); },
-                );
+                const stdout = await this.runOpencodeIsolated(task);
                 const output = String(stdout);
                 this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
                 this.recordEvent(task, 'opencode_output', `Exploração ${attempt} — output`, { attempt, phase: 'exploring', output: output.substring(0, 5000) });
@@ -1024,11 +1156,7 @@ class TaskRunnerService {
             this.recordEvent(task, 'synthesis_started', `Fase 2 — Síntese ${synthAttempt}/${MAX_SYNTH}`, { synthAttempt, maxSynth: MAX_SYNTH });
 
             try {
-                const stdout = await runOpencode(
-                    `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
-                    WT_ROOT, task, OPENCODE_TIMEOUT_MS,
-                    (sample) => { task.cpuMemSamples?.push(sample); },
-                );
+                const stdout = await this.runOpencodeIsolated(task);
                 const output = String(stdout);
                 this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
                 this.recordEvent(task, 'opencode_output', `Síntese ${synthAttempt} — output`, { synthAttempt, phase: 'synthesizing', output: output.substring(0, 5000) });
@@ -1392,6 +1520,7 @@ Return ONLY a JSON:
             }
 
             const prompt = [
+                `[${VISUAL_JUDGE_MARKER}]`, // discriminador p/ a varredura de órfãos reconhecer este run
                 'Voce e um Judge Visual de interfaces de usuario. Analise os screenshots antes/depois de uma mudanca no frontend.',
                 '',
                 'INSTRUCOES:',
@@ -1415,10 +1544,19 @@ Return ONLY a JSON:
                 '{"visual_score": <0-10>, "issues": ["lista de problemas visuais"], "summary": "resumo em portugues das mudancas visuais"}',
             ].join('\n');
 
-            const stdout = await runOpencode(
-                `opencode run "${prompt.replace(/"/g, '\\"')}"`,
-                REPO_ROOT, task, 120_000,
-            );
+            // O Judge Visual roda opencode em REPO_ROOT, que compartilha o MESMO projectID do
+            // worktree isolado. Para não coexistir com o opencode da próxima task (colisão de
+            // index.lock / deadlock no init — a causa do #335), serializa sob o worktreeLock e
+            // varre/limpa órfãos antes. cleanSnapshotLockFor(REPO_ROOT) só toca o snapshot
+            // deste checkout (nunca o .git real do dev nem outros projetos).
+            const stdout = await this.withWorktreeLock(`visual-judge #${issueNumber}`, async () => {
+                const gone = await this.sweepOrphanedOpencode(`visual-judge #${issueNumber}`);
+                this.cleanSnapshotLockFor(REPO_ROOT, gone);
+                return runOpencode(
+                    `opencode run "${prompt.replace(/"/g, '\\"')}"`,
+                    REPO_ROOT, task, 120_000,
+                );
+            });
 
             this.emitLog(issueNumber, 'ai', String(stdout).substring(0, 1500));
 
