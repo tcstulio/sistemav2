@@ -1595,8 +1595,27 @@ Return ONLY a JSON:
             } catch { /* não bloqueia Judge se tracker falhar */ }
             const reply = judgeResult.text;
             const jsonMatch = reply.match(/\{[\s\S]*\}/);
+            let result: any = null;
             if (jsonMatch) {
-                const result = JSON.parse(jsonMatch[0]);
+                try {
+                    result = JSON.parse(jsonMatch[0]);
+                } catch {
+                    // JSON malformado (ex.: aspas/quebra de linha não-escapadas no texto do review).
+                    // Fallback robusto: recupera o score por regex (e o review que der) — senão uma
+                    // falha de FORMATAÇÃO do LLM bloquearia o auto-merge de um PR válido (foi o que
+                    // travou o canário de frontend #399/#400).
+                    const scoreM = reply.match(/"score"\s*:\s*(\d+(?:\.\d+)?)/);
+                    if (scoreM) {
+                        result = {
+                            score: Number(scoreM[1]),
+                            review: (reply.match(/"review"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1] || 'Review recuperado de JSON malformado.').slice(0, 2000),
+                            approved: /"approved"\s*:\s*true/.test(reply),
+                        };
+                        this.recordEvent(task, 'judge_score', `Judge: JSON malformado — score ${result.score} recuperado por fallback (regex)`, { score: result.score, recovered: true });
+                    }
+                }
+            }
+            if (result && typeof result.score === 'number') {
                 task.judgeScore = result.score;
                 task.judgeReview = result.review;
                 task.judgeAttempts = (task.judgeAttempts || 0) + 1;
@@ -1634,7 +1653,7 @@ Return ONLY a JSON:
             } else {
                 task.status = 'reviewing';
                 task.judgeReview = 'Judge failed to evaluate';
-                this.recordEvent(task, 'judge_error', 'Judge failed to evaluate (no JSON in reply)');
+                this.recordEvent(task, 'judge_error', 'Judge failed to evaluate (sem JSON / score irrecuperável)');
             }
         } catch (e: any) {
             log.error(`Judge error for #${task.issueNumber}`, e);
