@@ -1668,9 +1668,12 @@ Return ONLY a JSON:
             const { stdout: files } = await gh([
                 'pr', 'diff', String(task.prNumber), '--repo', REPO, '--name-only',
             ], { timeout: 30000 });
-            const FRONTEND_PATTERNS = ['src/', '.tsx', '.css', '.scss', 'index.html', 'vite.config', 'tailwind.config'];
+            // O 'src/' do FRONTEND é a RAIZ do repo (src/...). Não casar via includes(): senão
+            // 'backend/src/...' (qualquer PR só-de-backend) vira falso-positivo, dispara o Judge
+            // Visual indevidamente e — sem o frontend na :3003 — BLOQUEIA o auto-merge da task.
+            const FRONTEND_PATTERNS = ['.tsx', '.css', '.scss', 'index.html', 'vite.config', 'tailwind.config'];
             return files.split('\n').filter(Boolean).some(file =>
-                FRONTEND_PATTERNS.some(p => file.includes(p))
+                file.startsWith('src/') || FRONTEND_PATTERNS.some(p => file.includes(p))
             );
         } catch {
             return false;
