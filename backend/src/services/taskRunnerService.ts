@@ -808,7 +808,7 @@ class TaskRunnerService {
      * limpa para os dois needles). Esse retorno autoriza apagar o index.lock do snapshot à força
      * (sem holder vivo, é stale com certeza — mesmo com mtime < 30s, ex.: restart rápido).
      */
-    private async sweepOrphanedOpencode(reason: string, excludePids: number[] = []): Promise<boolean> {
+    private async sweepOrphanedOpencode(reason: string, excludePids: number[] = [], task?: Task): Promise<boolean> {
         // Mata opencode ÓRFÃO dos DOIS entrypoints do TaskRunner — run principal (PROMPT_FILE,
         // em WT_ROOT) e Judge Visual (VISUAL_JUDGE_MARKER, em REPO_ROOT) — que compartilham o
         // mesmo projectID; um órfão de qualquer um trava o outro. Enumera opencode.exe por nome
@@ -820,9 +820,15 @@ class TaskRunnerService {
             if (killed.length) log.warn(`Varredura de órfãos (${reason}): matou ${killed.length} opencode [${killed.join(', ')}]${discriminated ? '' : ' (fallback sem discriminação)'}`);
             if (errors.length) log.warn(`Varredura de órfãos (${reason}): ${errors.join('; ')}`);
             if (!confirmedGone) log.warn(`Varredura de órfãos (${reason}): NÃO confirmou limpeza dos órfãos`);
+            // Instrumentação visível em tasks.json (o log.warn vai só p/ stdout): registra quando
+            // matou órfão ou não confirmou limpeza — diagnóstico do reaping sob carga.
+            if (task && (killed.length || !confirmedGone || errors.length)) {
+                this.recordEvent(task, 'worktree_cleanup', `Varredura (${reason}): matou ${killed.length}, gone=${confirmedGone}${discriminated ? '' : ', fallback'}${errors.length ? `, erros: ${errors.join('; ').substring(0, 150)}` : ''}`, { reason, killed: killed.length, confirmedGone, discriminated });
+            }
             return confirmedGone;
         } catch (e: any) {
             log.warn(`Varredura de órfãos (${reason}) falhou: ${e?.message || e}`);
+            if (task) this.recordEvent(task, 'worktree_cleanup', `Varredura (${reason}) FALHOU: ${String(e?.message || e).substring(0, 150)}`, { reason, failed: true });
             return false;
         }
     }
@@ -902,7 +908,7 @@ class TaskRunnerService {
      * (3 exploração + 3 síntese) de uma mesma task. Este é o fix central do #335.
      */
     private async runOpencodeIsolated(task: Task): Promise<string> {
-        const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`);
+        const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`, [], task);
         this.cleanStaleLocks(gone);
         try {
             return await runOpencode(
@@ -915,7 +921,7 @@ class TaskRunnerService {
             // segura CPU/disco e faz o `git status` seguinte estourar o timeout de 15s (foi a
             // falha exata do canário: "Command failed: git status --porcelain"). Reapeia AQUI,
             // antes de a fase de verificação (worktreeChanges/typecheck) tocar o git do worktree.
-            const goneAfter = await this.sweepOrphanedOpencode(`post-run #${task.issueNumber}`);
+            const goneAfter = await this.sweepOrphanedOpencode(`post-run #${task.issueNumber}`, [], task);
             this.cleanStaleLocks(goneAfter);
         }
     }
@@ -1169,10 +1175,19 @@ class TaskRunnerService {
             // CONVERGÊNCIA: o diff acumulado não mudou vs o round anterior → opencode não tem mais o que fazer.
             if (round > 1 && diffHash === lastDiffHash) {
                 this.recordEvent(task, 'exploration_completed', `Convergiu no round ${round} (sem mudanças novas)`, { rounds: round, converged: true });
-                verify = await this.verify();
+                if (anyChange) verify = await this.verify(); // só revalida se há algo a entregar
                 break;
             }
             lastDiffHash = diffHash;
+
+            if (changes.length === 0) {
+                // Round improdutivo (ex.: throttling severo do provedor): NÃO roda verify (tsc+build
+                // ~9min) à toa; pede implementação e segue. 2 rounds vazios seguidos → convergência → falha limpa.
+                this.recordEvent(task, 'attempt_no_changes', `Round ${round}: opencode não produziu mudanças`, { attempt: round });
+                task.feedbackHistory = ['O round anterior não gerou nenhuma mudança. Comece/continue implementando os arquivos da spec AGORA.'];
+                this.save();
+                continue;
+            }
 
             this.recordEvent(task, 'typecheck_started', `Typecheck round ${round} (${changes.length} arquivos acumulados)...`);
             verify = await this.verify();

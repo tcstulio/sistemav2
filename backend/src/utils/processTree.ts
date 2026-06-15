@@ -138,7 +138,12 @@ export async function killOpencodeOrphans(
     let targets: number[];
     let discriminated: boolean;
     if (cls) {
-        targets = pids.filter((p) => { const cl = cls.get(p) || ''; return needles.some((n) => cl.includes(n)); });
+        // Mata se a CommandLine casa um needle OU se está vazia/desconhecida. O WMI às vezes
+        // devolve CommandLine vazia p/ um processo sob carga; sem isto, o órfão escaparia da
+        // discriminação e sobreviveria (foi o que aconteceu no teste cumulativo throttled). Como
+        // é um opencode.exe vivo no momento do sweep (pré/pós run do TaskRunner), errar p/ matar é
+        // seguro — só pouparíamos um opencode com CommandLine CONHECIDA e que não casa nenhum needle.
+        targets = pids.filter((p) => { const cl = cls.get(p); return !cl || needles.some((n) => cl.includes(n)); });
         discriminated = true;
     } else {
         targets = pids; // WMI indisponível → over-kill seguro pré-spawn
