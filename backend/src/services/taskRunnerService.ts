@@ -1827,11 +1827,22 @@ Return ONLY a JSON:
                 }
 
                 if (task.prNumber) {
-                    this.recordEvent(task, 'task_started', 'Auto-merge: testando merge (dry-run)...');
-                    await gh(['pr', 'merge', String(task.prNumber), '--repo', REPO, '--squash', '--delete-branch', '--dry-run'], { timeout: 30000 }).catch((e: any) => {
-                        throw new Error(`Merge test falhou: ${e?.message || e}`);
-                    });
-                    this.recordEvent(task, 'task_started', 'Auto-merge: dry-run OK');
+                    // `gh pr merge` NÃO tem --dry-run (a flag não existe) — usar isso fazia o teste
+                    // falhar SEMPRE com "unknown flag" e abortar todo auto-merge. Em vez disso,
+                    // consultamos o status de mergeabilidade do GitHub: após o rebase em origin/main
+                    // acima, um PR limpo fica MERGEABLE; só CONFLICTING (conflito real) bloqueia.
+                    // UNKNOWN é transiente (GitHub computa async) → segue, e o merge real abaixo
+                    // falharia alto se houvesse problema.
+                    this.recordEvent(task, 'task_started', 'Auto-merge: checando mergeabilidade...');
+                    let mergeable = 'UNKNOWN';
+                    try {
+                        const { stdout: mOut } = await gh(['pr', 'view', String(task.prNumber), '--repo', REPO, '--json', 'mergeable'], { timeout: 30000 });
+                        mergeable = JSON.parse(mOut).mergeable || 'UNKNOWN';
+                    } catch { /* deixa UNKNOWN — não bloqueia */ }
+                    if (mergeable === 'CONFLICTING') {
+                        throw new Error('PR com conflitos (mergeable=CONFLICTING)');
+                    }
+                    this.recordEvent(task, 'task_started', `Auto-merge: mergeabilidade OK (${mergeable})`);
                 }
 
                 this.recordEvent(task, 'task_started', 'Auto-merge: rodando typecheck...');
