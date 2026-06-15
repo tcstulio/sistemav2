@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import crypto from 'crypto';
 import pidusage from 'pidusage';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { logger } from '../utils/logger';
@@ -283,6 +284,10 @@ export interface Task {
     judgeAttempts?: number;
     visualScore?: number;
     visualReview?: string;
+    // 'synthesis' (padrão): 3 explorações do zero + 3 sínteses — bom p/ tasks pequenas/criativas.
+    // 'cumulative': loop incremental gated (não reseta; constrói sobre o progresso parcial até
+    // convergir) — bom p/ tasks grandes/mecânicas (refactor em massa). Ver runCumulativeImplementation.
+    executionMode?: 'synthesis' | 'cumulative';
     feedbackHistory: string[];
     startedAt?: string;
     arrivedAt?: string;
@@ -637,7 +642,7 @@ class TaskRunnerService {
         return Object.values(this.store.tasks).sort((a, b) => b.issueNumber - a.issueNumber);
     }
 
-    async startTask(issueNumber: number): Promise<Task> {
+    async startTask(issueNumber: number, opts?: { mode?: 'synthesis' | 'cumulative' }): Promise<Task> {
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
         if (task.status === 'running' || task.status === 'fixing') throw new Error(`Task #${issueNumber} is already ${task.status}`);
@@ -645,6 +650,7 @@ class TaskRunnerService {
         const branch = task.branch || `fix-${issueNumber}`;
         task.branch = branch;
         task.error = undefined;
+        if (opts?.mode) task.executionMode = opts.mode;
         // Serializa: roda agora se livre, senão entra na FILA.
         this.scheduleExec(task, branch, 'running');
         this.save();
@@ -1064,6 +1070,137 @@ class TaskRunnerService {
         return p;
     }
 
+    /** Prompt do modo cumulativo: spec + progresso já feito + instrução de CONTINUAR o restante. */
+    private buildCumulativePrompt(task: Task, issueData: any, changedSoFar: string[]): string {
+        // Guard ANTES do conteúdo + TODO o spec (título+corpo+comentários) envolto como dado
+        // não-confiável — mesmo padrão de buildPrompt/buildSynthesisPrompt (anti prompt-injection).
+        let spec = `Título: ${issueData.title}\n\n${issueData.body || ''}\n`;
+        if (issueData.comments?.length) {
+            spec += '\n## Comentários\n' + issueData.comments.map((c: any) => c.body).join('\n---\n');
+        }
+        let p = `# Tarefa (issue #${task.issueNumber})\n${this.UNTRUSTED_GUARD}\n`;
+        p += this.wrapUntrusted('issue e comentários', spec);
+        p += `\n## Progresso até agora (modo INCREMENTAL)\n`;
+        if (changedSoFar.length) {
+            p += `Estes arquivos JÁ foram modificados em rounds anteriores — NÃO os desfaça, apenas continue de onde parou:\n${changedSoFar.map((c) => `- ${c}`).join('\n')}\n`;
+        } else {
+            p += `Nenhum arquivo modificado ainda — comece a implementar.\n`;
+        }
+        if (task.feedbackHistory?.length) {
+            p += this.wrapUntrusted('correções a ATENDER antes de continuar', task.feedbackHistory.map((f) => `- ${f}`).join('\n'));
+        }
+        p += `\n## Instruções\nImplemente a spec acima de forma INCREMENTAL, em rounds. NESTE round: avance o trabalho que ainda FALTA (modifique mais arquivos pendentes conforme a spec). NÃO refaça o que já está pronto. Faça quantos arquivos conseguir — outro round continua de onde você parar. Mantenha o estado acumulado passando em \`tsc --noEmit\`. Quando TODA a spec estiver implementada, NÃO altere mais nada (isso sinaliza conclusão). Backend: Express+TS em backend/; frontend: React+Vite em src/. NÃO altere o arquivo ${PROMPT_FILE}.`;
+        return p;
+    }
+
+    /**
+     * Modo CUMULATIVO (incrementalismo gated). Resolve o desperdício do modo synthesis em tasks
+     * grandes: NÃO reseta entre rounds — cada round do opencode constrói sobre o progresso parcial
+     * dos anteriores, até CONVERGIR (um round não muda mais nada) ou bater o teto de rounds.
+     * Gate por round: typecheck do estado acumulado; erros viram feedback p/ o próximo round.
+     * Deixa as mudanças acumuladas no worktree (uncommitted) — o tail de executeTask commita tudo
+     * num PR só. Retorna `aborted=true` (status já setado) se nada foi produzido / cancelado.
+     */
+    private async runCumulativeImplementation(
+        task: Task, issueData: any, promptPath: string,
+    ): Promise<{ verify: { ok: boolean; output: string }; aborted: boolean }> {
+        task.phase = 'exploring';
+        if (!task.attempts) task.attempts = [];
+        this.save();
+
+        const MAX_ROUNDS = 8; // teto de rounds
+        // Budget do LOOP com folga > pior caso de UM round (opencode 30min + verify ~13min) antes
+        // do watchdog (MAX_TASK_WALL_MS): a margem precisa cobrir um round inteiro, senão um round
+        // iniciado logo abaixo do budget terminaria DEPOIS do watchdog → kill no meio → descarte.
+        // Ancorado em task.startedAt (o zero do watchdog), não num Date.now() local pós-setup.
+        const CUMULATIVE_BUDGET_MS = MAX_TASK_WALL_MS - (OPENCODE_TIMEOUT_MS + 20 * 60 * 1000);
+        const watchdogZero = task.startedAt ? new Date(task.startedAt).getTime() : Date.now();
+        // Distingue cancelamento do USUÁRIO (killTask seta status cancelling/cancelled → aborta de
+        // verdade) do disparo do WATCHDOG (só seta killRequested → PARA e preserva o progresso).
+        const userCancelled = () => task.status === 'cancelling' || task.status === 'cancelled';
+        let verify = { ok: false, output: 'não verificado' };
+        let lastDiffHash = '';
+        let anyChange = false;
+
+        for (let round = 1; round <= MAX_ROUNDS; round++) {
+            if (task.killRequested) {
+                if (userCancelled()) return { verify, aborted: true };
+                this.recordEvent(task, 'exploration_completed', `Watchdog no round ${round} — finalizando com o progresso acumulado`, { rounds: round - 1, watchdog: true });
+                break;
+            }
+            if (Date.now() - watchdogZero > CUMULATIVE_BUDGET_MS) {
+                this.recordEvent(task, 'exploration_completed', `Budget de tempo atingido no round ${round} — finalizando com o progresso atual`, { rounds: round - 1, budgetReached: true });
+                verify = await this.verify();
+                break;
+            }
+
+            let changedSoFar: string[] = [];
+            try { changedSoFar = await this.worktreeChanges(); } catch { /* ignore */ }
+            fs.writeFileSync(promptPath, this.buildCumulativePrompt(task, issueData, changedSoFar));
+            this.recordEvent(task, 'attempt_started', `Cumulativo — round ${round}/${MAX_ROUNDS}`, { attempt: round, phase: 'exploring', maxAttempts: MAX_ROUNDS });
+
+            try {
+                const stdout = await this.runOpencodeIsolated(task);
+                this.recordEvent(task, 'opencode_output', `Round ${round} — output`, { attempt: round, phase: 'exploring', output: String(stdout).substring(0, 5000) });
+            } catch (e: any) {
+                if (task.killRequested) {
+                    if (userCancelled()) { this.recordEvent(task, 'task_killed', 'Cancelada pelo usuário durante round cumulativo', { attempt: round }); return { verify, aborted: true }; }
+                    // Watchdog matou o opencode no meio do round: PRESERVA o progresso parcial e
+                    // cai no commit (em vez de descartar tudo). break sai do loop p/ o tail.
+                    this.recordEvent(task, 'error', `Round ${round}: watchdog interrompeu o opencode — preservando progresso e finalizando`, { attempt: round, watchdog: true });
+                    break;
+                }
+                // timeout/erro: o progresso parcial é PRESERVADO (não reseta) — registra e segue.
+                this.recordEvent(task, 'error', `Round ${round}: opencode ${String(e.message || e).substring(0, 200)} (progresso parcial mantido)`, { attempt: round, error: e.message });
+            }
+
+            // Stage TUDO (qualquer dir, inclui arquivos novos), exceto o PROMPT_FILE — assim a
+            // convergência (diff --cached) e o commit enxergam o MESMO conjunto (tests/, scripts/,
+            // configs etc., não só src/). Sem isso, um round que só mexe fora de src/ daria falso "convergiu".
+            try {
+                await git(['add', '-A'], { timeout: 15000, cwd: WT_ROOT });
+                await git(['reset', '-q', '--', PROMPT_FILE], { timeout: 15000, cwd: WT_ROOT });
+            } catch { /* ignore */ }
+            const changes = await this.worktreeChanges();
+            const { stdout: diff } = await git(['diff', '--cached'], { timeout: 30000, cwd: WT_ROOT });
+            const diffHash = crypto.createHash('sha1').update(diff).digest('hex');
+            if (changes.length > 0) anyChange = true;
+
+            // CONVERGÊNCIA: o diff acumulado não mudou vs o round anterior → opencode não tem mais o que fazer.
+            if (round > 1 && diffHash === lastDiffHash) {
+                this.recordEvent(task, 'exploration_completed', `Convergiu no round ${round} (sem mudanças novas)`, { rounds: round, converged: true });
+                verify = await this.verify();
+                break;
+            }
+            lastDiffHash = diffHash;
+
+            this.recordEvent(task, 'typecheck_started', `Typecheck round ${round} (${changes.length} arquivos acumulados)...`);
+            verify = await this.verify();
+            task.attempts.push({
+                index: task.attempts.length + 1, phase: 'exploring',
+                diff: diff.substring(0, 30000), typecheckOk: verify.ok,
+                typecheckErrors: verify.ok ? undefined : verify.output.substring(0, 4000),
+                filesChanged: changes,
+            });
+            this.recordEvent(task, 'attempt_completed', `Round ${round}/${MAX_ROUNDS} — typecheck ${verify.ok ? 'OK' : 'FALHOU'} (${changes.length} arquivos acumulados)`, { attempt: round, typecheckOk: verify.ok, filesCount: changes.length });
+
+            // Feedback gated: se quebrou o typecheck, o próximo round corrige ANTES de avançar.
+            task.feedbackHistory = verify.ok ? [] : [`O estado acumulado tem erros de typecheck — corrija ANTES de implementar mais:\n${verify.output.substring(0, 2000)}`];
+            this.save();
+        }
+
+        if (!anyChange) {
+            task.status = 'failed';
+            task.error = 'Modo cumulativo: nenhuma mudança produzida.';
+            task.updatedAt = new Date().toISOString();
+            this.finalizeTaskMetrics(task);
+            this.recordEvent(task, 'task_failed', 'Cumulativo sem mudanças — abortando (sem PR).');
+            this.save(); this.emitStatus(task);
+            return { verify, aborted: true };
+        }
+        return { verify, aborted: false };
+    }
+
     private async executeTask(task: Task, branch: string): Promise<void> {
         const { issueNumber } = task;
         log.info(`Starting task #${issueNumber} on branch ${branch} (worktree isolado)`);
@@ -1085,6 +1222,14 @@ class TaskRunnerService {
 
         if (!task.attempts) task.attempts = [];
         if (!task.cpuMemSamples) task.cpuMemSamples = [];
+
+        if (task.executionMode === 'cumulative') {
+            // Modo CUMULATIVO: loop incremental gated (substitui exploração+síntese). Não reseta
+            // entre rounds — constrói sobre o progresso parcial até convergir. Bom p/ tasks grandes.
+            const result = await this.runCumulativeImplementation(task, issueData, promptPath);
+            if (result.aborted) return;
+            verify = result.verify;
+        } else {
         const hasExploration = task.attempts.filter(a => a.phase === 'exploring').length >= 3;
         task.phase = hasExploration ? 'synthesizing' : 'exploring';
         this.save();
@@ -1236,6 +1381,8 @@ class TaskRunnerService {
                 this.recordEvent(task, 'typecheck_failed', `Typecheck falhou na síntese final (vai no PR marcado p/ revisão)`, { synthAttempt, output: verify.output.substring(0, 1000) });
             }
         }
+
+        } // fim do modo synthesis (exploração + síntese)
 
         // 4) Commit + push (remove o arquivo de prompt antes de commitar)
         fs.rmSync(promptPath, { force: true });
