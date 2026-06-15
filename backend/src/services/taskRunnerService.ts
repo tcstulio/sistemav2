@@ -586,6 +586,12 @@ class TaskRunnerService {
             const num = Number(numStr);
             if (this.isTerminalStatus(task.status)) continue;
 
+            // Não reconciliar uma task em EXECUÇÃO ATIVA: o run vivo é a fonte da verdade do estado.
+            // Reconciliar com o GitHub aqui (ex.: derivar status terminal de um PR fechado) chegava a
+            // sobrescrever um run em andamento com prNumber/estado defasado → split-brain (visto ao
+            // re-rodar a mesma task). 'cancelling' segue tratado abaixo.
+            if (task.status === 'running' || task.status === 'fixing') continue;
+
             // #323: resolve tasks presas em 'cancelling' ha mais de 60s (processo morreu sem completar)
             if (task.status === 'cancelling') {
                 const updatedMs = new Date(task.updatedAt).getTime();
