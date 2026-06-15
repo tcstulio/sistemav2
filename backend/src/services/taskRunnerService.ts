@@ -10,7 +10,7 @@ import { logger } from '../utils/logger';
 import { aiService } from './aiService';
 import { aiJobService } from './aiJobService';
 import { socketService } from './socketService';
-import { killTree, isAlive, killOpencodeOrphans } from '../utils/processTree';
+import { killTree, isAlive, killOpencodeOrphans, killByImageName } from '../utils/processTree';
 import { screenshotService } from './screenshotService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
 
@@ -104,6 +104,9 @@ function runOpencode(
                 if (pid) {
                     killTree(pid).catch(() => { /* logged inside */ });
                 }
+                // Backstop sem-enumeração: garante a morte do opencode mesmo se a árvore do bash já
+                // se quebrou (órfão) ou se o Get-Process/WMI falha sob carga. Run é serializado.
+                killByImageName('opencode.exe').catch(() => { /* ignore */ });
             }
         }, 500);
 
@@ -133,6 +136,9 @@ function runOpencode(
         const killTimer = setTimeout(() => {
             finish(new Error(`opencode timeout (${Math.round(timeoutMs / 1000)}s)`));
             if (child.pid) killTree(child.pid).catch(() => { /* ignore */ });
+            // Backstop: mata o opencode na FONTE do timeout p/ não virar órfão (causa do ciclo
+            // vicioso no #335). taskkill /IM não enumera, então funciona mesmo sob carga.
+            killByImageName('opencode.exe').catch(() => { /* ignore */ });
         }, timeoutMs);
 
         child.on('exit', (code, signal) => {

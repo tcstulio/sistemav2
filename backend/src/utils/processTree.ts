@@ -130,6 +130,13 @@ export async function killOpencodeOrphans(
     try {
         pids = (await listPidsByName(imageName)).filter((p) => !skip.has(p));
     } catch (e: any) {
+        // Enumeração falhou (Get-Process trava sob carga). BACKSTOP sem-enumeração: mata todo o
+        // image name via taskkill /IM. Quebra o ciclo vicioso (órfão → carga → enum falha → órfão).
+        // Só seguro se não houver excludePids a preservar (no kill do próprio run, não há).
+        if (skip.size <= 1) {
+            await killByImageName(imageName.endsWith('.exe') ? imageName : `${imageName}.exe`);
+            return { killed: [], errors: [`enum falhou (${String(e?.message || e).slice(0, 100)}) → backstop taskkill /IM`], confirmedGone: true, discriminated: false };
+        }
         return { killed: [], errors: [`enum falhou: ${String(e?.message || e).slice(0, 150)}`], confirmedGone: false, discriminated: false };
     }
     if (pids.length === 0) return { killed: [], errors, confirmedGone: true, discriminated: true };
@@ -166,6 +173,26 @@ export async function killOpencodeOrphans(
         alive = targets.filter((p) => isAlive(p));
     }
     return { killed, errors, confirmedGone: alive.length === 0, discriminated };
+}
+
+/**
+ * Mata (árvore) TODOS os processos com o image name dado, SEM enumeração: `taskkill /F /T /IM`
+ * no Windows, `pkill` no Unix. É o BACKSTOP para quando a varredura por enumeração
+ * (Get-Process/WMI) FALHA sob carga — foi o que vimos no #335: órfãos acumulavam, o sistema
+ * ficava pesado, o `Get-Process` passava a falhar e o reaping não matava nada → ciclo vicioso.
+ * NÃO discrimina por CommandLine (mata todo opencode), então use só no timeout/kill do PRÓPRIO
+ * run (a serialização garante que o alvo é o run que está morrendo + eventuais órfãos). Nunca lança.
+ */
+export async function killByImageName(imageName: string): Promise<void> {
+    try {
+        if (process.platform === 'win32') {
+            const safe = imageName.replace(/[^\w.-]/g, '');
+            await execAsync(`taskkill /F /T /IM ${safe}`, { windowsHide: true, timeout: 15000 });
+        } else {
+            const base = imageName.replace(/\.exe$/i, '').replace(/[^\w.-]/g, '');
+            await execAsync(`pkill -9 -x ${base}`, { timeout: 15000 });
+        }
+    } catch { /* taskkill/pkill saem !=0 quando não há processo — ok */ }
 }
 
 /** Verifica se o processo existe (signal 0 = ping). */
