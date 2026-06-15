@@ -28,14 +28,16 @@ const PROMPT_FILE = '.taskrunner-prompt.md';
 // PROMPT_FILE). Permite que a varredura de órfãos reconheça e mate TAMBÉM um Judge Visual
 // órfão — senão ele sobreviveria a um restart segurando o lock do projectID compartilhado.
 const VISUAL_JUDGE_MARKER = 'taskrunner-visual-judge';
-// Timeout por tentativa do opencode. Num repo grande o 1º run (cold start: conexão do modelo +
-// indexação do contexto) chega a passar de 15min; 30min cobre o cold start com folga.
-const OPENCODE_TIMEOUT_MS = 30 * 60 * 1000;
+// Timeout por tentativa do opencode. Num repo grande o 1º run (cold start) já passa de 15min;
+// e sob THROTTLING do provedor (steps de 4-22min) um round precisa de MUITO mais tempo p/
+// explorar + escrever + testar. Configurável via env (default 30min) — suba quando o provedor
+// estiver lento e o objetivo for "completar mesmo devagar". Ver memória taskrunner-prioriza-funcionar.
+const OPENCODE_TIMEOUT_MS = (Number(process.env.TASKRUNNER_OPENCODE_TIMEOUT_MIN) || 30) * 60 * 1000;
 
-// Watchdog de tempo TOTAL por task (backstop). O auto-fix do Judge pode reexecutar a task
-// (exploração + síntese, vários runs de opencode), então sem um teto global uma task pode rodar
-// horas. 3h cobre o pior caso legítimo (até 6 runs de 30min) e corta runaways além disso.
-const MAX_TASK_WALL_MS = 3 * 60 * 60 * 1000;
+// Watchdog de tempo TOTAL por task (backstop). Precisa cobrir vários runs de opencode (synthesis:
+// até 6; cumulativo: até MAX_ROUNDS). Configurável via env (default 3h) — suba junto com o timeout
+// por round, senão o watchdog mata antes de a task longa terminar.
+const MAX_TASK_WALL_MS = (Number(process.env.TASKRUNNER_MAX_TASK_WALL_MIN) || 180) * 60 * 1000;
 
 function git(args: string[], opts?: { timeout?: number; cwd?: string }) {
     return execFileAsync('git', args, { cwd: opts?.cwd || REPO_ROOT, timeout: opts?.timeout, maxBuffer: BIG });
