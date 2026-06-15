@@ -1109,7 +1109,7 @@ class TaskRunnerService {
         if (task.feedbackHistory?.length) {
             p += this.wrapUntrusted('correções a ATENDER antes de continuar', task.feedbackHistory.map((f) => `- ${f}`).join('\n'));
         }
-        p += `\n## Instruções\nImplemente a spec acima de forma INCREMENTAL, em rounds. NESTE round: avance o trabalho que ainda FALTA (modifique mais arquivos pendentes conforme a spec). NÃO refaça o que já está pronto. Faça quantos arquivos conseguir — outro round continua de onde você parar. Mantenha o estado acumulado passando em \`tsc --noEmit\`. Quando TODA a spec estiver implementada, NÃO altere mais nada (isso sinaliza conclusão). Backend: Express+TS em backend/; frontend: React+Vite em src/. NÃO altere o arquivo ${PROMPT_FILE}.`;
+        p += `\n## Instruções\nImplemente a spec acima de forma INCREMENTAL, em rounds. NESTE round: avance o trabalho que ainda FALTA (modifique mais arquivos pendentes conforme a spec). NÃO refaça o que já está pronto. Faça quantos arquivos conseguir — outro round continua de onde você parar. Mantenha o estado acumulado passando em \`tsc --noEmit\`. Quando TODA a spec estiver implementada, NÃO altere mais nada (isso sinaliza conclusão). Backend: Express+TS em backend/; frontend: React+Vite em src/. SEMPRE inclua TESTES junto do código: no backend, testes Vitest; se tocar o frontend (src/), testes de componente com Vitest + React Testing Library que renderizam o componente, simulam interação (\`userEvent.click\`/\`type\`) e verificam o DOM resultante — esses testes rodam na CI e são o PORTÃO de qualidade. NÃO altere o arquivo ${PROMPT_FILE}.`;
         return p;
     }
 
@@ -1595,8 +1595,27 @@ Return ONLY a JSON:
             } catch { /* não bloqueia Judge se tracker falhar */ }
             const reply = judgeResult.text;
             const jsonMatch = reply.match(/\{[\s\S]*\}/);
+            let result: any = null;
             if (jsonMatch) {
-                const result = JSON.parse(jsonMatch[0]);
+                try {
+                    result = JSON.parse(jsonMatch[0]);
+                } catch {
+                    // JSON malformado (ex.: aspas/quebra de linha não-escapadas no texto do review).
+                    // Fallback robusto: recupera o score por regex (e o review que der) — senão uma
+                    // falha de FORMATAÇÃO do LLM bloquearia o auto-merge de um PR válido (foi o que
+                    // travou o canário de frontend #399/#400).
+                    const scoreM = reply.match(/"score"\s*:\s*(\d+(?:\.\d+)?)/);
+                    if (scoreM) {
+                        result = {
+                            score: Number(scoreM[1]),
+                            review: (reply.match(/"review"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1] || 'Review recuperado de JSON malformado.').slice(0, 2000),
+                            approved: /"approved"\s*:\s*true/.test(reply),
+                        };
+                        this.recordEvent(task, 'judge_score', `Judge: JSON malformado — score ${result.score} recuperado por fallback (regex)`, { score: result.score, recovered: true });
+                    }
+                }
+            }
+            if (result && typeof result.score === 'number') {
                 task.judgeScore = result.score;
                 task.judgeReview = result.review;
                 task.judgeAttempts = (task.judgeAttempts || 0) + 1;
@@ -1634,7 +1653,7 @@ Return ONLY a JSON:
             } else {
                 task.status = 'reviewing';
                 task.judgeReview = 'Judge failed to evaluate';
-                this.recordEvent(task, 'judge_error', 'Judge failed to evaluate (no JSON in reply)');
+                this.recordEvent(task, 'judge_error', 'Judge failed to evaluate (sem JSON / score irrecuperável)');
             }
         } catch (e: any) {
             log.error(`Judge error for #${task.issueNumber}`, e);
@@ -1650,21 +1669,13 @@ Return ONLY a JSON:
         this.emitStatus(task);
 
         if (task.status === 'approved') {
-            const hasFrontend = await this.hasFrontendChanges(task);
-            if (hasFrontend && (task.judgeScore || 0) >= 6) {
-                this.recordEvent(task, 'judge_started', 'Frontend detectado — executando Judge Visual...');
-                this.runVisualJudge(task).catch((e: any) => {
-                    log.warn(`Visual Judge falhou para #${task.issueNumber}: ${e?.message || e}`);
-                    task.status = 'reviewing';
-                    task.visualReview = `Visual Judge failed: ${e?.message || e}`;
-                    this.save();
-                    this.emitStatus(task);
-                });
-            } else {
-                this.tryAutoMerge(task).catch((e: any) => {
-                    log.warn(`Auto-merge falhou para #${task.issueNumber}: ${e?.message || e}`);
-                });
-            }
+            // Nível A: o Juiz Visual com LLM (não-determinístico + sem preview confiável) NÃO entra
+            // no caminho de merge. O gate de frontend é a CI (tsc + testes de componente Vitest +
+            // build). Vai direto pro auto-merge; a regressão visual determinística + aprovação humana
+            // de baseline entram na Fase 2. (runVisualJudge fica disponível p/ uso advisory futuro.)
+            this.tryAutoMerge(task).catch((e: any) => {
+                log.warn(`Auto-merge falhou para #${task.issueNumber}: ${e?.message || e}`);
+            });
         }
     }
 
@@ -1824,16 +1835,13 @@ Return ONLY a JSON:
         if (!config.autoMerge) return;
         if ((task.judgeScore || 0) < config.minMergeScore) return;
 
+        // Juiz Visual com LLM é ADVISORY (não-determinístico — ver deep-research 2026): NUNCA
+        // bloqueia o auto-merge. Gate de frontend = CI (typecheck + testes de componente Vitest;
+        // regressão visual determinística + aprovação humana de baseline entram na Fase 2). Aqui
+        // só registramos o score visual, se existir, como sinal informativo.
         const hasFrontend = await this.hasFrontendChanges(task).catch(() => false);
-        if (hasFrontend) {
-            if (task.visualScore === undefined) {
-                this.recordEvent(task, 'task_failed', 'Auto-merge bloqueado: frontend detectado mas Judge Visual não avaliou (screenshot falhou ou não rodou)');
-                return;
-            }
-            if (task.visualScore < config.minMergeScore) {
-                this.recordEvent(task, 'task_failed', `Auto-merge bloqueado: visual score ${task.visualScore} < ${config.minMergeScore}`);
-                return;
-            }
+        if (hasFrontend && task.visualScore !== undefined && task.visualScore < config.minMergeScore) {
+            this.recordEvent(task, 'judge_score', `Judge Visual (advisory) ${task.visualScore}/10 — não bloqueia; gate é a CI.`);
         }
 
         const issueNumber = task.issueNumber;
