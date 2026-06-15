@@ -1680,6 +1680,27 @@ Return ONLY a JSON:
         }
     }
 
+    // Branch protection da main exige required status checks (backend/frontend) verdes antes do
+    // merge. Espera o PR ficar mergeável segundo o GitHub (mergeStateStatus), com timeout. Roda
+    // FORA do worktree lock (não trava a fila). CLEAN/UNSTABLE/HAS_HOOKS = pode mergear (UNSTABLE =
+    // mergeável apesar de check NÃO-obrigatória falhando); DIRTY/CONFLICTING = conflito real;
+    // BLOCKED/BEHIND/UNKNOWN = ainda aguardando CI/sync → continua esperando até o timeout.
+    private async waitForPrMergeable(prNumber: number, timeoutMs: number): Promise<{ ok: boolean; state: string }> {
+        const deadline = Date.now() + timeoutMs;
+        let state = 'UNKNOWN';
+        while (Date.now() < deadline) {
+            try {
+                const { stdout } = await gh(['pr', 'view', String(prNumber), '--repo', REPO, '--json', 'mergeStateStatus,mergeable'], { timeout: 20000 });
+                const j = JSON.parse(stdout);
+                state = j.mergeStateStatus || 'UNKNOWN';
+                if (j.mergeable === 'CONFLICTING' || state === 'DIRTY') return { ok: false, state };
+                if (state === 'CLEAN' || state === 'UNSTABLE' || state === 'HAS_HOOKS') return { ok: true, state };
+            } catch { /* transiente — tenta de novo */ }
+            await new Promise((res) => setTimeout(res, 10000));
+        }
+        return { ok: false, state: `timeout(${state})` };
+    }
+
     private async runVisualJudge(task: Task): Promise<void> {
         const issueNumber = task.issueNumber;
         log.info(`Visual Judge: starting for task #${issueNumber}`);
@@ -1854,6 +1875,23 @@ Return ONLY a JSON:
                 this.save();
                 this.emitStatus(task);
                 return;
+            }
+
+            if (task.prNumber) {
+                // A branch protection da main exige a CI (backend/frontend) verde antes do merge.
+                // Mergear ANTES de a CI terminar falha ("base branch policy prohibits the merge").
+                // Espera o PR ficar mergeável (FORA do worktree lock — não trava a fila).
+                const CHECKS_TIMEOUT_MS = (Number(process.env.TASKRUNNER_CHECKS_TIMEOUT_MIN) || 15) * 60 * 1000;
+                this.recordEvent(task, 'task_started', 'Auto-merge: aguardando CI (required checks) ficar verde...');
+                const checks = await this.waitForPrMergeable(task.prNumber, CHECKS_TIMEOUT_MS);
+                if (!checks.ok) {
+                    this.recordEvent(task, 'task_failed', `Auto-merge adiado: CI não ficou verde a tempo (mergeStateStatus=${checks.state}). PR pronto p/ merge assim que a CI passar.`);
+                    task.status = 'reviewing';
+                    this.save();
+                    this.emitStatus(task);
+                    return;
+                }
+                this.recordEvent(task, 'task_started', `Auto-merge: CI verde (${checks.state}).`);
             }
 
             this.recordEvent(task, 'task_started', 'Auto-merge: todos os gates passaram. Mergeando...');
