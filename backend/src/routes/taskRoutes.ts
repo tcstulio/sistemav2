@@ -145,7 +145,8 @@ router.post('/:issueNumber/start', requireDolibarrAdmin, async (req, res) => {
         if (!taskRunnerService.getTask(issueNumber)) {
             return res.status(404).json({ error: 'Task not found. Sync first.' });
         }
-        const task = await taskRunnerService.startTask(issueNumber);
+        const mode = req.body?.mode === 'cumulative' || req.body?.mode === 'synthesis' ? req.body.mode : undefined;
+        const task = await taskRunnerService.startTask(issueNumber, mode ? { mode } : undefined);
         res.json(task);
     } catch (error: any) {
         log.error('Start task error', { error: error.message });

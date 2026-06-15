@@ -1,14 +1,16 @@
 import { execFile, exec, ChildProcess, spawn } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import crypto from 'crypto';
 import pidusage from 'pidusage';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { logger } from '../utils/logger';
 import { aiService } from './aiService';
 import { aiJobService } from './aiJobService';
 import { socketService } from './socketService';
-import { killTree, isAlive } from '../utils/processTree';
+import { killTree, isAlive, killOpencodeOrphans, killByImageName } from '../utils/processTree';
 import { screenshotService } from './screenshotService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
 
@@ -22,14 +24,20 @@ const REPO_ROOT = path.resolve(__dirname, '../../../');
 // Worktree ISOLADO do TaskRunner — o agente nunca toca o diretório do dev/main.
 const WT_ROOT = path.resolve(REPO_ROOT, '..', 'sistemav2-taskrunner-wt');
 const PROMPT_FILE = '.taskrunner-prompt.md';
-// Timeout por tentativa do opencode. Num repo grande o 1º run (cold start: conexão do modelo +
-// indexação do contexto) chega a passar de 15min; 30min cobre o cold start com folga.
-const OPENCODE_TIMEOUT_MS = 30 * 60 * 1000;
+// Marcador único injetado no prompt do Judge Visual (que roda opencode em REPO_ROOT, sem o
+// PROMPT_FILE). Permite que a varredura de órfãos reconheça e mate TAMBÉM um Judge Visual
+// órfão — senão ele sobreviveria a um restart segurando o lock do projectID compartilhado.
+const VISUAL_JUDGE_MARKER = 'taskrunner-visual-judge';
+// Timeout por tentativa do opencode. Num repo grande o 1º run (cold start) já passa de 15min;
+// e sob THROTTLING do provedor (steps de 4-22min) um round precisa de MUITO mais tempo p/
+// explorar + escrever + testar. Configurável via env (default 30min) — suba quando o provedor
+// estiver lento e o objetivo for "completar mesmo devagar". Ver memória taskrunner-prioriza-funcionar.
+const OPENCODE_TIMEOUT_MS = (Number(process.env.TASKRUNNER_OPENCODE_TIMEOUT_MIN) || 30) * 60 * 1000;
 
-// Watchdog de tempo TOTAL por task (backstop). O auto-fix do Judge pode reexecutar a task
-// (exploração + síntese, vários runs de opencode), então sem um teto global uma task pode rodar
-// horas. 3h cobre o pior caso legítimo (até 6 runs de 30min) e corta runaways além disso.
-const MAX_TASK_WALL_MS = 3 * 60 * 60 * 1000;
+// Watchdog de tempo TOTAL por task (backstop). Precisa cobrir vários runs de opencode (synthesis:
+// até 6; cumulativo: até MAX_ROUNDS). Configurável via env (default 3h) — suba junto com o timeout
+// por round, senão o watchdog mata antes de a task longa terminar.
+const MAX_TASK_WALL_MS = (Number(process.env.TASKRUNNER_MAX_TASK_WALL_MIN) || 180) * 60 * 1000;
 
 function git(args: string[], opts?: { timeout?: number; cwd?: string }) {
     return execFileAsync('git', args, { cwd: opts?.cwd || REPO_ROOT, timeout: opts?.timeout, maxBuffer: BIG });
@@ -98,6 +106,9 @@ function runOpencode(
                 if (pid) {
                     killTree(pid).catch(() => { /* logged inside */ });
                 }
+                // Backstop sem-enumeração: garante a morte do opencode mesmo se a árvore do bash já
+                // se quebrou (órfão) ou se o Get-Process/WMI falha sob carga. Run é serializado.
+                killByImageName('opencode.exe').catch(() => { /* ignore */ });
             }
         }, 500);
 
@@ -127,6 +138,9 @@ function runOpencode(
         const killTimer = setTimeout(() => {
             finish(new Error(`opencode timeout (${Math.round(timeoutMs / 1000)}s)`));
             if (child.pid) killTree(child.pid).catch(() => { /* ignore */ });
+            // Backstop: mata o opencode na FONTE do timeout p/ não virar órfão (causa do ciclo
+            // vicioso no #335). taskkill /IM não enumera, então funciona mesmo sob carga.
+            killByImageName('opencode.exe').catch(() => { /* ignore */ });
         }, timeoutMs);
 
         child.on('exit', (code, signal) => {
@@ -278,6 +292,10 @@ export interface Task {
     judgeAttempts?: number;
     visualScore?: number;
     visualReview?: string;
+    // 'synthesis' (padrão): 3 explorações do zero + 3 sínteses — bom p/ tasks pequenas/criativas.
+    // 'cumulative': loop incremental gated (não reseta; constrói sobre o progresso parcial até
+    // convergir) — bom p/ tasks grandes/mecânicas (refactor em massa). Ver runCumulativeImplementation.
+    executionMode?: 'synthesis' | 'cumulative';
     feedbackHistory: string[];
     startedAt?: string;
     arrivedAt?: string;
@@ -326,6 +344,11 @@ class TaskRunnerService {
             }
         }
         this.recoverStuckTasksOnBoot();
+        // Varre opencode órfão que sobreviveu a um restart do backend (Windows não reapeia
+        // filhos): sem isto, o órfão segura o lock do projeto e a próxima task colide (#335).
+        setImmediate(() => {
+            this.sweepOrphanedOpencode('boot').catch(() => { /* logado dentro */ });
+        });
         setImmediate(() => {
             this.syncWithGitHub().catch((e) => {
                 log.warn(`syncWithGitHub no boot falhou: ${e?.message || e}`);
@@ -563,6 +586,12 @@ class TaskRunnerService {
             const num = Number(numStr);
             if (this.isTerminalStatus(task.status)) continue;
 
+            // Não reconciliar uma task em EXECUÇÃO ATIVA: o run vivo é a fonte da verdade do estado.
+            // Reconciliar com o GitHub aqui (ex.: derivar status terminal de um PR fechado) chegava a
+            // sobrescrever um run em andamento com prNumber/estado defasado → split-brain (visto ao
+            // re-rodar a mesma task). 'cancelling' segue tratado abaixo.
+            if (task.status === 'running' || task.status === 'fixing') continue;
+
             // #323: resolve tasks presas em 'cancelling' ha mais de 60s (processo morreu sem completar)
             if (task.status === 'cancelling') {
                 const updatedMs = new Date(task.updatedAt).getTime();
@@ -627,7 +656,7 @@ class TaskRunnerService {
         return Object.values(this.store.tasks).sort((a, b) => b.issueNumber - a.issueNumber);
     }
 
-    async startTask(issueNumber: number): Promise<Task> {
+    async startTask(issueNumber: number, opts?: { mode?: 'synthesis' | 'cumulative' }): Promise<Task> {
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
         if (task.status === 'running' || task.status === 'fixing') throw new Error(`Task #${issueNumber} is already ${task.status}`);
@@ -635,6 +664,7 @@ class TaskRunnerService {
         const branch = task.branch || `fix-${issueNumber}`;
         task.branch = branch;
         task.error = undefined;
+        if (opts?.mode) task.executionMode = opts.mode;
         // Serializa: roda agora se livre, senão entra na FILA.
         this.scheduleExec(task, branch, 'running');
         this.save();
@@ -646,11 +676,19 @@ class TaskRunnerService {
     private pendingExecs = 0;
     private execChain: Promise<void> = Promise.resolve();
 
-    // Mutex único cobrindo TODA operação que toca o worktree compartilhado (WT_ROOT):
-    // executeTask, tryAutoMerge e startPreview. Sem ele, o tryAutoMerge (fire-and-forget) ou um
-    // preview disparado por API podem rodar checkout/rebase/reset concorrente com a próxima task
-    // da fila e corromper o git. A execChain serializa só os executeTask; este lock serializa
-    // os três caminhos entre si.
+    // Mutex único cobrindo TODA operação que toca o worktree compartilhado (WT_ROOT) ou o
+    // projectID compartilhado do opencode: executeTask, tryAutoMerge, startPreview e o Judge
+    // Visual. Sem ele, qualquer um (vários fire-and-forget) pode rodar checkout/rebase/reset ou
+    // um 2º opencode concorrente com a próxima task da fila e corromper o git / colidir no
+    // index.lock (causa do #335). A execChain serializa só os executeTask; este lock serializa
+    // todos os caminhos entre si.
+    //
+    // ⚠️ INVARIANTE (NÃO-REENTRANTE): nunca chame withWorktreeLock de forma SÍNCRONA de dentro de
+    // um fn() que já segura o lock — `await prev` nunca resolveria (auto-deadlock permanente da
+    // fila). É seguro hoje porque runVisualJudge/tryAutoMerge são disparados FIRE-AND-FORGET (sem
+    // await) e cedem o controle (1º await real) ANTES de pedir o lock, então o lock do exec já
+    // liberou. Se for aguardar um desses dentro do lock, tire o withWorktreeLock interno ou torne
+    // este mutex reentrante (token de dono via AsyncLocalStorage).
     private worktreeLock: Promise<void> = Promise.resolve();
     private async withWorktreeLock<T>(label: string, fn: () => Promise<T>): Promise<T> {
         const prev = this.worktreeLock;
@@ -771,8 +809,141 @@ class TaskRunnerService {
         });
     }
 
+    /**
+     * Mata qualquer processo opencode ÓRFÃO do TaskRunner (linha de comando contém o
+     * PROMPT_FILE, discriminador único — nunca atinge um opencode manual do usuário).
+     * Causa-raiz do #335: no Windows, um restart do backend (nodemon) ou um kill que
+     * falha deixa o opencode vivo segurando o lock de git do projeto (opencode agrupa
+     * todos os worktrees do mesmo repo sob 1 projectID compartilhado). A próxima execução
+     * colide (index.lock: File exists) ou trava no `init`. Chamado antes de CADA run.
+     */
+    /**
+     * Retorna `true` se confirmou que NENHUM opencode do TaskRunner está vivo (barreira pós-kill
+     * limpa para os dois needles). Esse retorno autoriza apagar o index.lock do snapshot à força
+     * (sem holder vivo, é stale com certeza — mesmo com mtime < 30s, ex.: restart rápido).
+     */
+    private async sweepOrphanedOpencode(reason: string, excludePids: number[] = [], task?: Task): Promise<boolean> {
+        // Mata opencode ÓRFÃO dos DOIS entrypoints do TaskRunner — run principal (PROMPT_FILE,
+        // em WT_ROOT) e Judge Visual (VISUAL_JUDGE_MARKER, em REPO_ROOT) — que compartilham o
+        // mesmo projectID; um órfão de qualquer um trava o outro. Enumera opencode.exe por nome
+        // (rápido) e discrimina pelos needles (não mata opencode manual de outro projeto).
+        try {
+            const { killed, errors, confirmedGone, discriminated } = await killOpencodeOrphans(
+                'opencode', [PROMPT_FILE, VISUAL_JUDGE_MARKER], excludePids,
+            );
+            if (killed.length) log.warn(`Varredura de órfãos (${reason}): matou ${killed.length} opencode [${killed.join(', ')}]${discriminated ? '' : ' (fallback sem discriminação)'}`);
+            if (errors.length) log.warn(`Varredura de órfãos (${reason}): ${errors.join('; ')}`);
+            if (!confirmedGone) log.warn(`Varredura de órfãos (${reason}): NÃO confirmou limpeza dos órfãos`);
+            // Instrumentação visível em tasks.json (o log.warn vai só p/ stdout): registra quando
+            // matou órfão ou não confirmou limpeza — diagnóstico do reaping sob carga.
+            if (task && (killed.length || !confirmedGone || errors.length)) {
+                this.recordEvent(task, 'worktree_cleanup', `Varredura (${reason}): matou ${killed.length}, gone=${confirmedGone}${discriminated ? '' : ', fallback'}${errors.length ? `, erros: ${errors.join('; ').substring(0, 150)}` : ''}`, { reason, killed: killed.length, confirmedGone, discriminated });
+            }
+            return confirmedGone;
+        } catch (e: any) {
+            log.warn(`Varredura de órfãos (${reason}) falhou: ${e?.message || e}`);
+            if (task) this.recordEvent(task, 'worktree_cleanup', `Varredura (${reason}) FALHOU: ${String(e?.message || e).substring(0, 150)}`, { reason, failed: true });
+            return false;
+        }
+    }
+
+    /** Resolve o gitdir real do worktree (em worktree, `.git` é um arquivo que aponta p/ ele). */
+    private worktreeGitDir(): string | null {
+        try {
+            const dotgit = path.join(WT_ROOT, '.git');
+            if (!fs.existsSync(dotgit)) return null;
+            if (fs.statSync(dotgit).isDirectory()) return dotgit;
+            const m = fs.readFileSync(dotgit, 'utf8').match(/gitdir:\s*(.+)/);
+            return m ? m[1].trim() : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Apaga um lock. Com `force`, apaga incondicionalmente (use quando a varredura JÁ confirmou
+     * que nenhum holder está vivo). Sem `force`, só apaga se STALE (mtime > 30s) — um git/opencode
+     * ativo segura o index.lock por sub-segundo, então um lock antigo é seguramente abandonado.
+     */
+    private rmStaleLock(lockPath: string, label: string, force = false): void {
+        try {
+            if (!fs.existsSync(lockPath)) return;
+            if (!force && Date.now() - fs.statSync(lockPath).mtimeMs <= 30_000) return; // pode estar vivo
+            fs.rmSync(lockPath, { force: true });
+            log.warn(`Removido lock ${force ? '(holder confirmado morto)' : 'stale'} (${label}): ${lockPath}`);
+        } catch { /* ignore */ }
+    }
+
+    /**
+     * Apaga o index.lock do snapshot do opencode cujo `config` aponta exatamente para
+     * `worktreePath`. ESCOPO ESTRITO: nunca toca snapshots de OUTROS worktrees/projetos
+     * (REPO_ROOT quando alvo é WT_ROOT, dolibarr, tulipa-v4 etc.) — apagar um index.lock VIVO
+     * de outra sessão a corromperia. Sem config legível → pula. `force` (vindo de uma varredura
+     * com confirmedGone) apaga mesmo com mtime < 30s — cobre o restart rápido do #335.
+     */
+    private cleanSnapshotLockFor(worktreePath: string, force = false): void {
+        try {
+            const snapRoot = path.join(os.homedir(), '.local', 'share', 'opencode', 'snapshot');
+            if (!fs.existsSync(snapRoot)) return;
+            const target = path.resolve(worktreePath).toLowerCase().replace(/\\/g, '/');
+            for (const proj of fs.readdirSync(snapRoot)) {
+                const projDir = path.join(snapRoot, proj);
+                let snaps: string[] = [];
+                try { snaps = fs.readdirSync(projDir); } catch { continue; }
+                for (const snap of snaps) {
+                    const snapDir = path.join(projDir, snap);
+                    try {
+                        const cfg = fs.readFileSync(path.join(snapDir, 'config'), 'utf8');
+                        const m = cfg.match(/worktree\s*=\s*(.+)/);
+                        if (!m || m[1].trim().toLowerCase().replace(/\\/g, '/') !== target) continue;
+                    } catch { continue; }
+                    this.rmStaleLock(path.join(snapDir, 'index.lock'), `snapshot ${proj}/${snap}`, force);
+                }
+            }
+        } catch { /* ignore */ }
+    }
+
+    /**
+     * Remove locks STALE que sobram de um git/opencode interrompido, ANTES de um run no
+     * worktree isolado. Só age sobre o índice do PRÓPRIO worktree (WT_ROOT) e seu snapshot.
+     * `opencodeGone` = a varredura confirmou que nenhum opencode vive → apaga o lock do snapshot
+     * à força (sem holder), cobrindo o restart rápido (<30s) que o guard de mtime senão pularia.
+     * O gitdir mantém o guard de 30s (a barreira de opencode não cobre processos `git`).
+     */
+    private cleanStaleLocks(opencodeGone = false): void {
+        const gitDir = this.worktreeGitDir();
+        if (gitDir) this.rmStaleLock(path.join(gitDir, 'index.lock'), 'worktree gitdir');
+        this.cleanSnapshotLockFor(WT_ROOT, opencodeGone);
+    }
+
+    /**
+     * Run de opencode ISOLADO: varre órfãos + limpa locks stale ANTES de spawnar. Garante
+     * que nunca há 2 opencode no mesmo projectID — nem entre tasks, nem entre as 6 tentativas
+     * (3 exploração + 3 síntese) de uma mesma task. Este é o fix central do #335.
+     */
+    private async runOpencodeIsolated(task: Task): Promise<string> {
+        const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`, [], task);
+        this.cleanStaleLocks(gone);
+        try {
+            return await runOpencode(
+                `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
+                WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+                (sample) => { task.cpuMemSamples?.push(sample); },
+            );
+        } finally {
+            // O timeout-kill (killTree do bash) pode falhar e deixar o opencode ÓRFÃO VIVO — ele
+            // segura CPU/disco e faz o `git status` seguinte estourar o timeout de 15s (foi a
+            // falha exata do canário: "Command failed: git status --porcelain"). Reapeia AQUI,
+            // antes de a fase de verificação (worktreeChanges/typecheck) tocar o git do worktree.
+            const goneAfter = await this.sweepOrphanedOpencode(`post-run #${task.issueNumber}`, [], task);
+            this.cleanStaleLocks(goneAfter);
+        }
+    }
+
     /** Garante um worktree git ISOLADO, limpo, no branch fix-N a partir de origin/main. */
     private async ensureWorktree(branch: string): Promise<void> {
+        const gone = await this.sweepOrphanedOpencode('ensureWorktree');
+        this.cleanStaleLocks(gone);
         await git(['fetch', 'origin', 'main'], { timeout: 60000 });
         if (!fs.existsSync(WT_ROOT)) {
             await git(['worktree', 'add', '--force', WT_ROOT, 'origin/main'], { timeout: 120000 });
@@ -796,7 +967,18 @@ class TaskRunnerService {
 
     /** Mudanças de CÓDIGO no worktree (ignora node_modules / lock / o arquivo de prompt). */
     private async worktreeChanges(): Promise<string[]> {
-        const { stdout } = await git(['status', '--porcelain'], { timeout: 15000, cwd: WT_ROOT });
+        // Retry tolerante: logo após o opencode, um lock/carga transiente pode fazer o git status
+        // estourar o timeout (foi a falha do canário). Timeout maior + 1 retry após pausa curta.
+        let stdout = '';
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            try {
+                ({ stdout } = await git(['status', '--porcelain'], { timeout: 30000, cwd: WT_ROOT }));
+                break;
+            } catch (e) {
+                if (attempt === 2) throw e;
+                await new Promise((r) => setTimeout(r, 1500));
+            }
+        }
         return stdout.split('\n')
             .map((l) => l.trim())
             .filter((l) => l && !l.includes('node_modules') && !l.includes('package-lock') && !l.includes(PROMPT_FILE));
@@ -908,6 +1090,146 @@ class TaskRunnerService {
         return p;
     }
 
+    /** Prompt do modo cumulativo: spec + progresso já feito + instrução de CONTINUAR o restante. */
+    private buildCumulativePrompt(task: Task, issueData: any, changedSoFar: string[]): string {
+        // Guard ANTES do conteúdo + TODO o spec (título+corpo+comentários) envolto como dado
+        // não-confiável — mesmo padrão de buildPrompt/buildSynthesisPrompt (anti prompt-injection).
+        let spec = `Título: ${issueData.title}\n\n${issueData.body || ''}\n`;
+        if (issueData.comments?.length) {
+            spec += '\n## Comentários\n' + issueData.comments.map((c: any) => c.body).join('\n---\n');
+        }
+        let p = `# Tarefa (issue #${task.issueNumber})\n${this.UNTRUSTED_GUARD}\n`;
+        p += this.wrapUntrusted('issue e comentários', spec);
+        p += `\n## Progresso até agora (modo INCREMENTAL)\n`;
+        if (changedSoFar.length) {
+            p += `Estes arquivos JÁ foram modificados em rounds anteriores — NÃO os desfaça, apenas continue de onde parou:\n${changedSoFar.map((c) => `- ${c}`).join('\n')}\n`;
+        } else {
+            p += `Nenhum arquivo modificado ainda — comece a implementar.\n`;
+        }
+        if (task.feedbackHistory?.length) {
+            p += this.wrapUntrusted('correções a ATENDER antes de continuar', task.feedbackHistory.map((f) => `- ${f}`).join('\n'));
+        }
+        p += `\n## Instruções\nImplemente a spec acima de forma INCREMENTAL, em rounds. NESTE round: avance o trabalho que ainda FALTA (modifique mais arquivos pendentes conforme a spec). NÃO refaça o que já está pronto. Faça quantos arquivos conseguir — outro round continua de onde você parar. Mantenha o estado acumulado passando em \`tsc --noEmit\`. Quando TODA a spec estiver implementada, NÃO altere mais nada (isso sinaliza conclusão). Backend: Express+TS em backend/; frontend: React+Vite em src/. NÃO altere o arquivo ${PROMPT_FILE}.`;
+        return p;
+    }
+
+    /**
+     * Modo CUMULATIVO (incrementalismo gated). Resolve o desperdício do modo synthesis em tasks
+     * grandes: NÃO reseta entre rounds — cada round do opencode constrói sobre o progresso parcial
+     * dos anteriores, até CONVERGIR (um round não muda mais nada) ou bater o teto de rounds.
+     * Gate por round: typecheck do estado acumulado; erros viram feedback p/ o próximo round.
+     * Deixa as mudanças acumuladas no worktree (uncommitted) — o tail de executeTask commita tudo
+     * num PR só. Retorna `aborted=true` (status já setado) se nada foi produzido / cancelado.
+     */
+    private async runCumulativeImplementation(
+        task: Task, issueData: any, promptPath: string,
+    ): Promise<{ verify: { ok: boolean; output: string }; aborted: boolean }> {
+        task.phase = 'exploring';
+        if (!task.attempts) task.attempts = [];
+        this.save();
+
+        const MAX_ROUNDS = 8; // teto de rounds
+        // Budget do LOOP com folga > pior caso de UM round (opencode 30min + verify ~13min) antes
+        // do watchdog (MAX_TASK_WALL_MS): a margem precisa cobrir um round inteiro, senão um round
+        // iniciado logo abaixo do budget terminaria DEPOIS do watchdog → kill no meio → descarte.
+        // Ancorado em task.startedAt (o zero do watchdog), não num Date.now() local pós-setup.
+        const CUMULATIVE_BUDGET_MS = MAX_TASK_WALL_MS - (OPENCODE_TIMEOUT_MS + 20 * 60 * 1000);
+        const watchdogZero = task.startedAt ? new Date(task.startedAt).getTime() : Date.now();
+        // Distingue cancelamento do USUÁRIO (killTask seta status cancelling/cancelled → aborta de
+        // verdade) do disparo do WATCHDOG (só seta killRequested → PARA e preserva o progresso).
+        const userCancelled = () => task.status === 'cancelling' || task.status === 'cancelled';
+        let verify = { ok: false, output: 'não verificado' };
+        let lastDiffHash = '';
+        let anyChange = false;
+
+        for (let round = 1; round <= MAX_ROUNDS; round++) {
+            if (task.killRequested) {
+                if (userCancelled()) return { verify, aborted: true };
+                this.recordEvent(task, 'exploration_completed', `Watchdog no round ${round} — finalizando com o progresso acumulado`, { rounds: round - 1, watchdog: true });
+                break;
+            }
+            if (Date.now() - watchdogZero > CUMULATIVE_BUDGET_MS) {
+                this.recordEvent(task, 'exploration_completed', `Budget de tempo atingido no round ${round} — finalizando com o progresso atual`, { rounds: round - 1, budgetReached: true });
+                verify = await this.verify();
+                break;
+            }
+
+            let changedSoFar: string[] = [];
+            try { changedSoFar = await this.worktreeChanges(); } catch { /* ignore */ }
+            fs.writeFileSync(promptPath, this.buildCumulativePrompt(task, issueData, changedSoFar));
+            this.recordEvent(task, 'attempt_started', `Cumulativo — round ${round}/${MAX_ROUNDS}`, { attempt: round, phase: 'exploring', maxAttempts: MAX_ROUNDS });
+
+            try {
+                const stdout = await this.runOpencodeIsolated(task);
+                this.recordEvent(task, 'opencode_output', `Round ${round} — output`, { attempt: round, phase: 'exploring', output: String(stdout).substring(0, 5000) });
+            } catch (e: any) {
+                if (task.killRequested) {
+                    if (userCancelled()) { this.recordEvent(task, 'task_killed', 'Cancelada pelo usuário durante round cumulativo', { attempt: round }); return { verify, aborted: true }; }
+                    // Watchdog matou o opencode no meio do round: PRESERVA o progresso parcial e
+                    // cai no commit (em vez de descartar tudo). break sai do loop p/ o tail.
+                    this.recordEvent(task, 'error', `Round ${round}: watchdog interrompeu o opencode — preservando progresso e finalizando`, { attempt: round, watchdog: true });
+                    break;
+                }
+                // timeout/erro: o progresso parcial é PRESERVADO (não reseta) — registra e segue.
+                this.recordEvent(task, 'error', `Round ${round}: opencode ${String(e.message || e).substring(0, 200)} (progresso parcial mantido)`, { attempt: round, error: e.message });
+            }
+
+            // Stage TUDO (qualquer dir, inclui arquivos novos), exceto o PROMPT_FILE — assim a
+            // convergência (diff --cached) e o commit enxergam o MESMO conjunto (tests/, scripts/,
+            // configs etc., não só src/). Sem isso, um round que só mexe fora de src/ daria falso "convergiu".
+            try {
+                await git(['add', '-A'], { timeout: 15000, cwd: WT_ROOT });
+                await git(['reset', '-q', '--', PROMPT_FILE], { timeout: 15000, cwd: WT_ROOT });
+            } catch { /* ignore */ }
+            const changes = await this.worktreeChanges();
+            const { stdout: diff } = await git(['diff', '--cached'], { timeout: 30000, cwd: WT_ROOT });
+            const diffHash = crypto.createHash('sha1').update(diff).digest('hex');
+            if (changes.length > 0) anyChange = true;
+
+            // CONVERGÊNCIA: o diff acumulado não mudou vs o round anterior → opencode não tem mais o que fazer.
+            if (round > 1 && diffHash === lastDiffHash) {
+                this.recordEvent(task, 'exploration_completed', `Convergiu no round ${round} (sem mudanças novas)`, { rounds: round, converged: true });
+                if (anyChange) verify = await this.verify(); // só revalida se há algo a entregar
+                break;
+            }
+            lastDiffHash = diffHash;
+
+            if (changes.length === 0) {
+                // Round improdutivo (ex.: throttling severo do provedor): NÃO roda verify (tsc+build
+                // ~9min) à toa; pede implementação e segue. 2 rounds vazios seguidos → convergência → falha limpa.
+                this.recordEvent(task, 'attempt_no_changes', `Round ${round}: opencode não produziu mudanças`, { attempt: round });
+                task.feedbackHistory = ['O round anterior não gerou nenhuma mudança. Comece/continue implementando os arquivos da spec AGORA.'];
+                this.save();
+                continue;
+            }
+
+            this.recordEvent(task, 'typecheck_started', `Typecheck round ${round} (${changes.length} arquivos acumulados)...`);
+            verify = await this.verify();
+            task.attempts.push({
+                index: task.attempts.length + 1, phase: 'exploring',
+                diff: diff.substring(0, 30000), typecheckOk: verify.ok,
+                typecheckErrors: verify.ok ? undefined : verify.output.substring(0, 4000),
+                filesChanged: changes,
+            });
+            this.recordEvent(task, 'attempt_completed', `Round ${round}/${MAX_ROUNDS} — typecheck ${verify.ok ? 'OK' : 'FALHOU'} (${changes.length} arquivos acumulados)`, { attempt: round, typecheckOk: verify.ok, filesCount: changes.length });
+
+            // Feedback gated: se quebrou o typecheck, o próximo round corrige ANTES de avançar.
+            task.feedbackHistory = verify.ok ? [] : [`O estado acumulado tem erros de typecheck — corrija ANTES de implementar mais:\n${verify.output.substring(0, 2000)}`];
+            this.save();
+        }
+
+        if (!anyChange) {
+            task.status = 'failed';
+            task.error = 'Modo cumulativo: nenhuma mudança produzida.';
+            task.updatedAt = new Date().toISOString();
+            this.finalizeTaskMetrics(task);
+            this.recordEvent(task, 'task_failed', 'Cumulativo sem mudanças — abortando (sem PR).');
+            this.save(); this.emitStatus(task);
+            return { verify, aborted: true };
+        }
+        return { verify, aborted: false };
+    }
+
     private async executeTask(task: Task, branch: string): Promise<void> {
         const { issueNumber } = task;
         log.info(`Starting task #${issueNumber} on branch ${branch} (worktree isolado)`);
@@ -929,6 +1251,14 @@ class TaskRunnerService {
 
         if (!task.attempts) task.attempts = [];
         if (!task.cpuMemSamples) task.cpuMemSamples = [];
+
+        if (task.executionMode === 'cumulative') {
+            // Modo CUMULATIVO: loop incremental gated (substitui exploração+síntese). Não reseta
+            // entre rounds — constrói sobre o progresso parcial até convergir. Bom p/ tasks grandes.
+            const result = await this.runCumulativeImplementation(task, issueData, promptPath);
+            if (result.aborted) return;
+            verify = result.verify;
+        } else {
         const hasExploration = task.attempts.filter(a => a.phase === 'exploring').length >= 3;
         task.phase = hasExploration ? 'synthesizing' : 'exploring';
         this.save();
@@ -943,11 +1273,7 @@ class TaskRunnerService {
             this.recordEvent(task, 'attempt_started', `Fase 1 — Exploração ${attempt}/${MAX_EXPLORE}`, { attempt, phase: 'exploring', maxAttempts: MAX_EXPLORE });
 
             try {
-                const stdout = await runOpencode(
-                    `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
-                    WT_ROOT, task, OPENCODE_TIMEOUT_MS,
-                    (sample) => { task.cpuMemSamples?.push(sample); },
-                );
+                const stdout = await this.runOpencodeIsolated(task);
                 const output = String(stdout);
                 this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
                 this.recordEvent(task, 'opencode_output', `Exploração ${attempt} — output`, { attempt, phase: 'exploring', output: output.substring(0, 5000) });
@@ -1024,11 +1350,7 @@ class TaskRunnerService {
             this.recordEvent(task, 'synthesis_started', `Fase 2 — Síntese ${synthAttempt}/${MAX_SYNTH}`, { synthAttempt, maxSynth: MAX_SYNTH });
 
             try {
-                const stdout = await runOpencode(
-                    `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
-                    WT_ROOT, task, OPENCODE_TIMEOUT_MS,
-                    (sample) => { task.cpuMemSamples?.push(sample); },
-                );
+                const stdout = await this.runOpencodeIsolated(task);
                 const output = String(stdout);
                 this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
                 this.recordEvent(task, 'opencode_output', `Síntese ${synthAttempt} — output`, { synthAttempt, phase: 'synthesizing', output: output.substring(0, 5000) });
@@ -1088,6 +1410,8 @@ class TaskRunnerService {
                 this.recordEvent(task, 'typecheck_failed', `Typecheck falhou na síntese final (vai no PR marcado p/ revisão)`, { synthAttempt, output: verify.output.substring(0, 1000) });
             }
         }
+
+        } // fim do modo synthesis (exploração + síntese)
 
         // 4) Commit + push (remove o arquivo de prompt antes de commitar)
         fs.rmSync(promptPath, { force: true });
@@ -1350,13 +1674,37 @@ Return ONLY a JSON:
             const { stdout: files } = await gh([
                 'pr', 'diff', String(task.prNumber), '--repo', REPO, '--name-only',
             ], { timeout: 30000 });
-            const FRONTEND_PATTERNS = ['src/', '.tsx', '.css', '.scss', 'index.html', 'vite.config', 'tailwind.config'];
+            // O 'src/' do FRONTEND é a RAIZ do repo (src/...). Não casar via includes(): senão
+            // 'backend/src/...' (qualquer PR só-de-backend) vira falso-positivo, dispara o Judge
+            // Visual indevidamente e — sem o frontend na :3003 — BLOQUEIA o auto-merge da task.
+            const FRONTEND_PATTERNS = ['.tsx', '.css', '.scss', 'index.html', 'vite.config', 'tailwind.config'];
             return files.split('\n').filter(Boolean).some(file =>
-                FRONTEND_PATTERNS.some(p => file.includes(p))
+                file.startsWith('src/') || FRONTEND_PATTERNS.some(p => file.includes(p))
             );
         } catch {
             return false;
         }
+    }
+
+    // Branch protection da main exige required status checks (backend/frontend) verdes antes do
+    // merge. Espera o PR ficar mergeável segundo o GitHub (mergeStateStatus), com timeout. Roda
+    // FORA do worktree lock (não trava a fila). CLEAN/UNSTABLE/HAS_HOOKS = pode mergear (UNSTABLE =
+    // mergeável apesar de check NÃO-obrigatória falhando); DIRTY/CONFLICTING = conflito real;
+    // BLOCKED/BEHIND/UNKNOWN = ainda aguardando CI/sync → continua esperando até o timeout.
+    private async waitForPrMergeable(prNumber: number, timeoutMs: number): Promise<{ ok: boolean; state: string }> {
+        const deadline = Date.now() + timeoutMs;
+        let state = 'UNKNOWN';
+        while (Date.now() < deadline) {
+            try {
+                const { stdout } = await gh(['pr', 'view', String(prNumber), '--repo', REPO, '--json', 'mergeStateStatus,mergeable'], { timeout: 20000 });
+                const j = JSON.parse(stdout);
+                state = j.mergeStateStatus || 'UNKNOWN';
+                if (j.mergeable === 'CONFLICTING' || state === 'DIRTY') return { ok: false, state };
+                if (state === 'CLEAN' || state === 'UNSTABLE' || state === 'HAS_HOOKS') return { ok: true, state };
+            } catch { /* transiente — tenta de novo */ }
+            await new Promise((res) => setTimeout(res, 10000));
+        }
+        return { ok: false, state: `timeout(${state})` };
     }
 
     private async runVisualJudge(task: Task): Promise<void> {
@@ -1392,6 +1740,7 @@ Return ONLY a JSON:
             }
 
             const prompt = [
+                `[${VISUAL_JUDGE_MARKER}]`, // discriminador p/ a varredura de órfãos reconhecer este run
                 'Voce e um Judge Visual de interfaces de usuario. Analise os screenshots antes/depois de uma mudanca no frontend.',
                 '',
                 'INSTRUCOES:',
@@ -1415,10 +1764,19 @@ Return ONLY a JSON:
                 '{"visual_score": <0-10>, "issues": ["lista de problemas visuais"], "summary": "resumo em portugues das mudancas visuais"}',
             ].join('\n');
 
-            const stdout = await runOpencode(
-                `opencode run "${prompt.replace(/"/g, '\\"')}"`,
-                REPO_ROOT, task, 120_000,
-            );
+            // O Judge Visual roda opencode em REPO_ROOT, que compartilha o MESMO projectID do
+            // worktree isolado. Para não coexistir com o opencode da próxima task (colisão de
+            // index.lock / deadlock no init — a causa do #335), serializa sob o worktreeLock e
+            // varre/limpa órfãos antes. cleanSnapshotLockFor(REPO_ROOT) só toca o snapshot
+            // deste checkout (nunca o .git real do dev nem outros projetos).
+            const stdout = await this.withWorktreeLock(`visual-judge #${issueNumber}`, async () => {
+                const gone = await this.sweepOrphanedOpencode(`visual-judge #${issueNumber}`);
+                this.cleanSnapshotLockFor(REPO_ROOT, gone);
+                return runOpencode(
+                    `opencode run "${prompt.replace(/"/g, '\\"')}"`,
+                    REPO_ROOT, task, 120_000,
+                );
+            });
 
             this.emitLog(issueNumber, 'ai', String(stdout).substring(0, 1500));
 
@@ -1496,11 +1854,22 @@ Return ONLY a JSON:
                 }
 
                 if (task.prNumber) {
-                    this.recordEvent(task, 'task_started', 'Auto-merge: testando merge (dry-run)...');
-                    await gh(['pr', 'merge', String(task.prNumber), '--repo', REPO, '--squash', '--delete-branch', '--dry-run'], { timeout: 30000 }).catch((e: any) => {
-                        throw new Error(`Merge test falhou: ${e?.message || e}`);
-                    });
-                    this.recordEvent(task, 'task_started', 'Auto-merge: dry-run OK');
+                    // `gh pr merge` NÃO tem --dry-run (a flag não existe) — usar isso fazia o teste
+                    // falhar SEMPRE com "unknown flag" e abortar todo auto-merge. Em vez disso,
+                    // consultamos o status de mergeabilidade do GitHub: após o rebase em origin/main
+                    // acima, um PR limpo fica MERGEABLE; só CONFLICTING (conflito real) bloqueia.
+                    // UNKNOWN é transiente (GitHub computa async) → segue, e o merge real abaixo
+                    // falharia alto se houvesse problema.
+                    this.recordEvent(task, 'task_started', 'Auto-merge: checando mergeabilidade...');
+                    let mergeable = 'UNKNOWN';
+                    try {
+                        const { stdout: mOut } = await gh(['pr', 'view', String(task.prNumber), '--repo', REPO, '--json', 'mergeable'], { timeout: 30000 });
+                        mergeable = JSON.parse(mOut).mergeable || 'UNKNOWN';
+                    } catch { /* deixa UNKNOWN — não bloqueia */ }
+                    if (mergeable === 'CONFLICTING') {
+                        throw new Error('PR com conflitos (mergeable=CONFLICTING)');
+                    }
+                    this.recordEvent(task, 'task_started', `Auto-merge: mergeabilidade OK (${mergeable})`);
                 }
 
                 this.recordEvent(task, 'task_started', 'Auto-merge: rodando typecheck...');
@@ -1512,6 +1881,23 @@ Return ONLY a JSON:
                 this.save();
                 this.emitStatus(task);
                 return;
+            }
+
+            if (task.prNumber) {
+                // A branch protection da main exige a CI (backend/frontend) verde antes do merge.
+                // Mergear ANTES de a CI terminar falha ("base branch policy prohibits the merge").
+                // Espera o PR ficar mergeável (FORA do worktree lock — não trava a fila).
+                const CHECKS_TIMEOUT_MS = (Number(process.env.TASKRUNNER_CHECKS_TIMEOUT_MIN) || 15) * 60 * 1000;
+                this.recordEvent(task, 'task_started', 'Auto-merge: aguardando CI (required checks) ficar verde...');
+                const checks = await this.waitForPrMergeable(task.prNumber, CHECKS_TIMEOUT_MS);
+                if (!checks.ok) {
+                    this.recordEvent(task, 'task_failed', `Auto-merge adiado: CI não ficou verde a tempo (mergeStateStatus=${checks.state}). PR pronto p/ merge assim que a CI passar.`);
+                    task.status = 'reviewing';
+                    this.save();
+                    this.emitStatus(task);
+                    return;
+                }
+                this.recordEvent(task, 'task_started', `Auto-merge: CI verde (${checks.state}).`);
             }
 
             this.recordEvent(task, 'task_started', 'Auto-merge: todos os gates passaram. Mergeando...');
