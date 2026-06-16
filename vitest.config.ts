@@ -1,9 +1,25 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig, Plugin } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
+function versionPlugin(): Plugin {
+  const virtualModuleId = 'virtual:app-version';
+  const resolvedVirtualModuleId = '\0' + virtualModuleId;
+  return {
+    name: 'app-version',
+    resolveId(id) {
+      if (id === virtualModuleId) return resolvedVirtualModuleId;
+    },
+    load(id) {
+      if (id === resolvedVirtualModuleId) {
+        return `export const APP_VERSION = ${JSON.stringify('0.0.0')}; export const GIT_HASH = ${JSON.stringify('test')};`;
+      }
+    },
+  };
+}
+
 export default defineConfig({
-    plugins: [react()],
+    plugins: [react(), versionPlugin()],
     test: {
         globals: true,
         environment: 'jsdom',

@@ -5,6 +5,7 @@ import { useModules } from '../../hooks/dolibarr';
 import { useOrgBranding } from '../../hooks/useOrgBranding';
 import { APP_VERSION, GIT_HASH } from 'virtual:app-version';
 import { safeStorage } from '../../utils/safeStorage';
+import { useConfirm } from '../../hooks/useConfirm';
 import { MENU_REGISTRY } from '../../config/menuRegistry';
 import { applyOrderVisibility, getUserPrefs } from '../../utils/orderVisibility';
 import {
@@ -92,6 +93,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
     const { data: modules } = useModules(config);
     const navigate = useNavigate();
     const location = useLocation();
+    const confirm = useConfirm();
 
     const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() =>
         safeStorage.getJSON(COLLAPSED_GROUPS_KEY, {} as Record<string, boolean>)
@@ -219,11 +221,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, setIsOpen }) => {
         );
     }, [location.pathname]);
 
-    const handleLogout = () => {
-        if (confirm("Deseja desconectar do ERP?")) {
-            setConfig(null);
-            navigate('/');
-        }
+    const handleLogout = async () => {
+        if (!(await confirm('Deseja desconectar do ERP?'))) return;
+        setConfig(null);
+        navigate('/');
     };
 
     const handleNavigate = (path: string) => {
