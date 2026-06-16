@@ -22,6 +22,8 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useUsers, useCustomers, useInvoices, useOrders, useTickets, useContacts, useSuppliers } from '../hooks/dolibarr';
 import { AiService } from '../services/aiService';
 import { toast } from 'sonner';
+import { useConfirm } from '../hooks/useConfirm';
+import { notifyError } from '../utils/notifyError';
 
 interface WhatsAppViewProps {
     onNavigate?: (view: AppView, id?: string) => void;
@@ -29,6 +31,7 @@ interface WhatsAppViewProps {
 
 const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
     const { config, currentUser } = useDolibarr();
+    const confirm = useConfirm();
 
     // CRM Data
     const { data: users = [] } = useUsers(config || null, !!config);
@@ -145,7 +148,7 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
             await WhatsAppService.sendAudioMessage(selectedConversation.id, blob, sessionToUse);
         } catch (e: any) {
             log.error("Failed to send audio", e);
-            alert(`Erro ao enviar áudio: ${e.message}`);
+            notifyError('Enviar áudio', e);
         } finally {
             setIsSending(false);
         }
@@ -159,7 +162,7 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
             await WhatsAppService.sendFileMessage(selectedConversation.id, file, '', sessionToUse);
         } catch (e) {
             log.error("Failed to send file", e);
-            alert("Erro ao enviar arquivo");
+            notifyError('Enviar arquivo', e);
         } finally {
             setIsSending(false);
         }
@@ -173,9 +176,9 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
             setIsSending(true);
             try {
                 const result = await AiService.analyzeSystem(query);
-                alert(`ANÁLISE DO SISTEMA:\n\n${result}`);
+                toast.success('Análise do Sistema', { description: result, duration: 10000 });
             } catch (e) {
-                alert("Erro ao analisar sistema.");
+                notifyError('Analisar sistema', e);
             } finally {
                 setIsSending(false);
             }
@@ -297,9 +300,8 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
                     }}
                     onConnect={() => setIsConnectModalOpen(true)}
                     onDeleteSession={async (id) => {
-                        if (window.confirm('Excluir sessão?')) {
-                            await stopSession(id);
-                        }
+                        if (!(await confirm('Excluir sessão?'))) return;
+                        await stopSession(id);
                     }}
                     onRefresh={() => { refreshSessions(); refreshConversations(); }}
                     onCreateSession={() => setIsCreateSessionModalOpen(true)}
