@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { DolibarrConfig, DolibarrUser } from '../../../types';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { Banknote, X, Loader2, CheckCircle2 } from 'lucide-react';
-import { logger } from '../../../utils/logger';
-
-const log = logger.child('ExpenseModal');
+import { toast } from 'sonner';
+import { notifyError } from '../../../utils/notifyError';
 
 interface ExpenseModalProps {
     isOpen: boolean;
@@ -57,9 +56,9 @@ export const ExpenseModal: React.FC<ExpenseModalProps> = ({ isOpen, onClose, con
             }
             onClose();
             setForm(emptyForm);
-            alert(isEdit ? 'Despesa atualizada com sucesso' : 'Relatório de despesa criado com sucesso');
+            toast.success(isEdit ? 'Despesa atualizada com sucesso' : 'Relatório de despesa criado com sucesso');
             if (onRefresh) onRefresh();
-        } catch (err) { log.error(err); } finally { setIsSubmitting(false); }
+        } catch (err) { notifyError(isEdit ? 'Atualizar despesa' : 'Criar despesa', err); } finally { setIsSubmitting(false); }
     };
 
     if (!isOpen) return null;

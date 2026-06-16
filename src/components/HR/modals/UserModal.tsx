@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { DolibarrConfig, DolibarrUser } from '../../../types';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { Loader2 } from 'lucide-react';
-import { logger } from '../../../utils/logger';
-
-const log = logger.child('UserModal');
+import { toast } from 'sonner';
+import { notifyError } from '../../../utils/notifyError';
 
 interface UserModalProps {
     isOpen: boolean;
@@ -65,14 +64,14 @@ export const UserModal: React.FC<UserModalProps> = ({
         try {
             if (userToEdit && userToEdit.id) {
                 await DolibarrService.updateUser(config, userToEdit.id, payload);
-                alert("Usuário atualizado com sucesso");
+                toast.success("Usuário atualizado com sucesso");
             } else {
                 await DolibarrService.createUser(config, payload);
-                alert("Usuário criado com sucesso");
+                toast.success("Usuário criado com sucesso");
             }
             onClose();
             if (onRefresh) onRefresh();
-        } catch (e) { log.error(e); } finally { setIsSubmittingUser(false); }
+        } catch (e) { notifyError(userToEdit?.id ? 'Atualizar usuário' : 'Criar usuário', e); } finally { setIsSubmittingUser(false); }
     };
 
     if (!isOpen) return null;

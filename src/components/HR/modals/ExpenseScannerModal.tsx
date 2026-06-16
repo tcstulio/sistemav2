@@ -4,6 +4,8 @@ import { DolibarrService } from '../../../services/dolibarrService';
 import { AiService } from '../../../services/aiService';
 import { Scan, Upload, Loader2, CheckCircle, Info, X, Save } from 'lucide-react';
 import { logger } from '../../../utils/logger';
+import { toast } from 'sonner';
+import { notifyError } from '../../../utils/notifyError';
 
 const log = logger.child('ExpenseScannerModal');
 
@@ -90,7 +92,7 @@ export const ExpenseScannerModal: React.FC<ExpenseScannerModalProps> = ({
                 }
             }
 
-            alert("Despesa Salva e Recibo Anexado!");
+            toast.success("Despesa Salva e Recibo Anexado!");
             onClose();
             setScannedData(null);
             setScannedLogId(null);
@@ -98,8 +100,7 @@ export const ExpenseScannerModal: React.FC<ExpenseScannerModalProps> = ({
             if (onRefresh) onRefresh();
 
         } catch (e) {
-            log.error("Failed to save expense", e);
-            alert("Falha ao salvar relatório de despesas.");
+            notifyError('Salvar relatório de despesas', e);
         } finally {
             setIsSavingExpense(false);
         }
