@@ -3,13 +3,14 @@ import { toast } from 'sonner';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Proposal, AppView } from '../types';
-import { FileText, Search, PenTool, CheckCircle, XCircle, Send, Archive, Kanban, List, ShoppingCart, Download, Loader2, FileSignature, Scale, Plus, Trash2, FolderKanban, Ban, Save, Edit } from 'lucide-react';
+import { FileText, Search, PenTool, CheckCircle, XCircle, Send, Archive, Kanban, List, ShoppingCart, Download, Loader2, FileSignature, Scale, Plus, Trash2, FolderKanban, Ban, Save, Edit, Copy } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { AiService } from '../services/aiService';
 import { LinkedObjects } from './common/LinkedObjects';
 import { RichTextEditor } from './common/RichTextEditor';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
+import { useConfirm } from '../hooks/useConfirm';
 import { useProposals, useCustomers, useProducts, useProjects, useProposalLines, useUsers } from '../hooks/dolibarr';
 import { useListControls } from '../hooks/useListControls';
 import { logger } from '../utils/logger';
@@ -304,6 +305,23 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
     const filteredProposals = controls.result;
 
     const { openLink } = useDolibarrLink(config);
+    const confirm = useConfirm();
+
+    const handleDuplicate = async (proposalId: string) => {
+        const ok = await confirm({ message: 'Duplicar esta proposta como rascunho?' });
+        if (!ok) return;
+        setProcessingId(proposalId);
+        try {
+            await DolibarrService.cloneProposal(config, proposalId);
+            toast.success('Proposta duplicada com sucesso');
+            refetchProposals();
+        } catch (err: any) {
+            log.error('Failed to duplicate proposal', err);
+            toast.error('Erro ao duplicar proposta');
+        } finally {
+            setProcessingId(null);
+        }
+    };
 
     const handleAudit = async (e: React.MouseEvent, prop: Proposal) => {
         e.stopPropagation();
@@ -492,6 +510,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                         </div>
                         <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
                             <Button variant="ghost" size="sm" icon={<Edit size={18} />} onClick={(e) => { e.stopPropagation(); handleOpenEdit(prop); }} />
+                            <Button variant="ghost" size="sm" icon={<Copy size={18} />} onClick={(e) => { e.stopPropagation(); handleDuplicate(prop.id); }} title="Duplicar" aria-label="Duplicar" loading={processingId === prop.id} disabled={!!processingId} />
                             <ConfirmDeleteButton
                                 onDelete={() => DolibarrService.deleteProposal(config, prop.id)}
                                 onDeleted={() => {
@@ -639,6 +658,9 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                             <>
                                 <Button variant="secondary" size="sm" icon={<Edit size={16} />} onClick={() => handleOpenEdit(selectedProposal)}>
                                     Editar
+                                </Button>
+                                <Button variant="secondary" size="sm" icon={<Copy size={16} />} onClick={() => handleDuplicate(selectedProposal.id)} title="Duplicar" aria-label="Duplicar" loading={processingId === selectedProposal.id} disabled={!!processingId}>
+                                    Duplicar
                                 </Button>
                                 <ConfirmDeleteButton
                                     withLabel

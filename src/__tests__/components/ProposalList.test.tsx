@@ -1,0 +1,158 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { ConfirmProvider } from '../../hooks/useConfirm';
+import ProposalList from '../../components/ProposalList';
+import { DolibarrService } from '../../services/dolibarrService';
+
+const { toastMock } = vi.hoisted(() => ({
+    toastMock: {
+        success: vi.fn(),
+        error: vi.fn(),
+        info: vi.fn(),
+        warning: vi.fn(),
+    },
+}));
+vi.mock('sonner', () => ({ toast: toastMock }));
+
+vi.mock('../../context/DolibarrContext', () => ({
+    useDolibarr: vi.fn(() => ({ config: { apiUrl: 'http://test', apiKey: 'key' } })),
+}));
+
+const mockRefetch = vi.fn();
+vi.mock('../../hooks/dolibarr', () => ({
+    useProposals: vi.fn(() => ({
+        data: [
+            {
+                id: 'prop1',
+                ref: 'PR2501-0001',
+                socid: 'cust1',
+                date: 1700000000,
+                total_ht: 1000,
+                total_ttc: 1200,
+                statut: '1',
+                project_id: null,
+                fk_user_author: null,
+            },
+        ],
+        isRefetching: false,
+        refetch: mockRefetch,
+    })),
+    useCustomers: vi.fn(() => ({ data: [{ id: 'cust1', name: 'Cliente Teste' }] })),
+    useProducts: vi.fn(() => ({ data: [] })),
+    useProjects: vi.fn(() => ({ data: [] })),
+    useProposalLines: vi.fn(() => ({ data: [], refetch: mockRefetch })),
+    useUsers: vi.fn(() => ({ data: [] })),
+}));
+
+vi.mock('../../hooks/usePrefill', () => ({
+    usePrefill: vi.fn(() => null),
+}));
+
+vi.mock('../../hooks/useDolibarrLink', () => ({
+    useDolibarrLink: vi.fn(() => ({ openLink: vi.fn() })),
+}));
+
+vi.mock('../../services/dolibarrService', () => ({
+    DolibarrService: {
+        cloneProposal: vi.fn(),
+        deleteProposal: vi.fn(),
+        downloadDocument: vi.fn(),
+        createProposal: vi.fn(),
+        updateProposal: vi.fn(),
+    },
+}));
+
+vi.mock('../../services/aiService', () => ({
+    AiService: {
+        auditProposal: vi.fn(),
+    },
+}));
+
+vi.mock('react-virtualized-auto-sizer', () => ({
+    default: ({ children }: any) => children({ height: 600, width: 800 }),
+}));
+
+vi.mock('react-window', () => ({
+    FixedSizeList: ({ children, itemCount }: any) => (
+        <>
+            {Array.from({ length: itemCount }, (_, index) =>
+                children({ index, style: {} })
+            )}
+        </>
+    ),
+}));
+
+vi.mock('../../utils/sanitizeHtml', () => ({
+    sanitizeHtml: (html: string) => html,
+}));
+
+const mockConfig = { apiUrl: 'http://test', apiKey: 'key' };
+
+const renderComponent = (props?: Record<string, any>) =>
+    render(
+        <ConfirmProvider>
+            <ProposalList {...props} />
+        </ConfirmProvider>
+    );
+
+describe('ProposalList — Duplicate button', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.spyOn(window, 'alert').mockImplementation(() => {});
+        vi.spyOn(window, 'confirm').mockImplementation(() => false);
+    });
+
+    it('shows toast.success and refetches when duplicate succeeds', async () => {
+        vi.mocked(DolibarrService.cloneProposal).mockResolvedValue('new-id' as any);
+        const user = userEvent.setup();
+        renderComponent();
+
+        const dupBtn = await screen.findByLabelText('Duplicar');
+        await user.click(dupBtn);
+
+        const confirmBtn = await screen.findByText('Confirmar');
+        await user.click(confirmBtn);
+
+        await waitFor(() => {
+            expect(DolibarrService.cloneProposal).toHaveBeenCalledWith(mockConfig, 'prop1');
+            expect(toastMock.success).toHaveBeenCalledWith('Proposta duplicada com sucesso');
+            expect(mockRefetch).toHaveBeenCalled();
+        });
+        expect(window.confirm).not.toHaveBeenCalled();
+    });
+
+    it('shows toast.error when duplicate fails', async () => {
+        vi.mocked(DolibarrService.cloneProposal).mockRejectedValue(new Error('Network error'));
+        const user = userEvent.setup();
+        renderComponent();
+
+        const dupBtn = await screen.findByLabelText('Duplicar');
+        await user.click(dupBtn);
+
+        const confirmBtn = await screen.findByText('Confirmar');
+        await user.click(confirmBtn);
+
+        await waitFor(() => {
+            expect(DolibarrService.cloneProposal).toHaveBeenCalledWith(mockConfig, 'prop1');
+            expect(toastMock.error).toHaveBeenCalledWith('Erro ao duplicar proposta');
+        });
+    });
+
+    it('does NOT call cloneProposal when user cancels confirmation', async () => {
+        vi.mocked(DolibarrService.cloneProposal).mockResolvedValue('new-id' as any);
+        const user = userEvent.setup();
+        renderComponent();
+
+        const dupBtn = await screen.findByLabelText('Duplicar');
+        await user.click(dupBtn);
+
+        const cancelBtn = await screen.findByText('Cancelar');
+        await user.click(cancelBtn);
+
+        await waitFor(() => {
+            expect(DolibarrService.cloneProposal).not.toHaveBeenCalled();
+            expect(toastMock.success).not.toHaveBeenCalled();
+        });
+    });
+});
