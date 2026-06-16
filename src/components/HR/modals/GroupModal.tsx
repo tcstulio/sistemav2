@@ -2,9 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { DolibarrConfig, UserGroup } from '../../../types';
 import * as HRAdmin from '../../../services/api/hrAdmin';
 import { Loader2, CheckCircle2 } from 'lucide-react';
-import { logger } from '../../../utils/logger';
-
-const log = logger.child('GroupModal');
+import { notifyError } from '../../../utils/notifyError';
 
 interface GroupModalProps {
     isOpen: boolean;
@@ -55,8 +53,7 @@ export const GroupModal: React.FC<GroupModalProps> = ({
             if (onRefresh) onRefresh();
             onClose();
         } catch (e) {
-            log.error(e);
-            alert('Erro ao salvar grupo.');
+            notifyError('Salvar grupo', e);
         } finally {
             setIsSubmitting(false);
         }
