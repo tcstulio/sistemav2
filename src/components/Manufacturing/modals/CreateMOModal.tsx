@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { DolibarrConfig, Project, Product } from '../../../types';
 import { Loader2, CheckCircle2, X } from 'lucide-react';
 import { DolibarrService } from '../../../services/dolibarrService';
-import { logger } from '../../../utils/logger';
-
-const log = logger.child('CreateMOModal');
+import { toast } from 'sonner';
+import { notifyError } from '../../../utils/notifyError';
 
 interface CreateMOModalProps {
     isOpen: boolean;
@@ -54,15 +53,15 @@ export const CreateMOModal: React.FC<CreateMOModalProps> = ({ isOpen, onClose, c
                     label: moForm.label,
                     qty: moForm.qty,
                 });
-                alert("Ordem de Produção Atualizada com Sucesso");
+                toast.success("Ordem de Produção Atualizada com Sucesso");
             } else {
                 await DolibarrService.createManufacturingOrder(config, moForm);
-                alert("Ordem de Produção Criada com Sucesso");
+                toast.success("Ordem de Produção Criada com Sucesso");
             }
             onSuccess();
             onClose();
             setMoForm({ label: '', product_to_produce_id: '', qty: 1, project_id: '', date_start: new Date().toISOString().split('T')[0] });
-        } catch (e) { log.error(e); } finally { setIsSubmittingMo(false); }
+        } catch (e) { notifyError(isEdit ? 'Atualizar ordem de produção' : 'Criar ordem de produção', e); } finally { setIsSubmittingMo(false); }
     };
 
     if (!isOpen) return null;
