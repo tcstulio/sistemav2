@@ -11,9 +11,8 @@ import { useListControls } from '../hooks/useListControls';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
-import { logger } from '../utils/logger';
-
-const log = logger.child('InterventionList');
+import { notifyError } from '../utils/notifyError';
+import { useConfirm } from '../hooks/useConfirm';
 
 // Design System
 import { PageHeader, MasterDetailLayout, Card, Button, Modal, Tabs, Tab, EmptyState, StatusBadge, ListToolbar, ConfirmDeleteButton } from './ui';
@@ -41,6 +40,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
     const projects = projectsData || [];
     const { data: linesData } = useInterventionLines(config);
     const lines = linesData || [];
+    const confirm = useConfirm();
 
     const handleSelectIntervention = (intervention: Intervention) => {
         const linkedLines = lines.filter(l => String(l.parent_id) === String(intervention.id));
@@ -177,8 +177,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
             setNewIntervention({ socid: '', project_id: '', date: new Date().toISOString().split('T')[0], description: '' });
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            log.error("Failed to save intervention", e);
-            alert(`Falha: ${e.message}`);
+            notifyError('Salvar intervenção', e);
         } finally {
             setIsSubmitting(false);
         }
@@ -186,15 +185,15 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
 
     const handleValidate = async () => {
         if (!selectedIntervention) return;
-        if (!confirm("Validar esta intervenção?")) return;
+        if (!(await confirm('Validar esta intervenção?'))) return;
         setProcessingId(selectedIntervention.id);
         try {
             await DolibarrService.validateIntervention(config, selectedIntervention.id);
-            alert("Intervenção Validada");
+            toast.success("Intervenção Validada");
             if (onRefresh) onRefresh();
             setSelectedIntervention(null);
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            notifyError('Validar intervenção', e);
         } finally {
             setProcessingId(null);
         }
