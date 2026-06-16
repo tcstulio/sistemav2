@@ -952,7 +952,7 @@ class TaskRunnerService {
     }
 
     /** Garante um worktree git ISOLADO, limpo, no branch fix-N a partir de origin/main. */
-    private async ensureWorktree(branch: string): Promise<void> {
+    private async ensureWorktree(branch: string, opts?: { preserveBranch?: boolean }): Promise<void> {
         const gone = await this.sweepOrphanedOpencode('ensureWorktree');
         this.cleanStaleLocks(gone);
         await git(['fetch', 'origin', 'main'], { timeout: 60000 });
@@ -964,8 +964,22 @@ class TaskRunnerService {
         // aborta com "local changes would be overwritten" e a task falha no setup.
         await git(['reset', '--hard'], { timeout: 30000, cwd: WT_ROOT });
         await git(['clean', '-fd'], { timeout: 30000, cwd: WT_ROOT });
-        // branch fresco do main mais recente
-        await git(['checkout', '-B', branch, 'origin/main'], { timeout: 30000, cwd: WT_ROOT });
+        // Base do checkout. PADRÃO: branch fresco do main (run inicial — comportamento inalterado).
+        // preserveBranch (caminho /fix ou auto-fix do Judge, quando JÁ existe PR/trabalho): parte da
+        // branch remota existente e edita POR CIMA, em vez de regenerar do zero (não perde o feito).
+        // Fallback p/ main se a branch remota não existir.
+        let base = 'origin/main';
+        if (opts?.preserveBranch) {
+            try {
+                const { stdout } = await git(['ls-remote', '--heads', 'origin', branch], { timeout: 30000 });
+                if (stdout.trim()) {
+                    await git(['fetch', 'origin', branch], { timeout: 60000 });
+                    base = `origin/${branch}`;
+                    log.info(`ensureWorktree: preservando trabalho da branch ${branch} (correção incremental)`);
+                }
+            } catch { /* sem branch remota → cai no fresco do main */ }
+        }
+        await git(['checkout', '-B', branch, base], { timeout: 30000, cwd: WT_ROOT });
         await git(['clean', '-fd'], { timeout: 30000, cwd: WT_ROOT }); // preserva node_modules (ignorado)
         // dependências (uma vez; o worktree persiste entre tasks)
         if (!fs.existsSync(path.join(WT_ROOT, 'node_modules'))) {
@@ -1247,8 +1261,13 @@ class TaskRunnerService {
         this.recordEvent(task, 'task_started', `Iniciando #${issueNumber} em worktree isolado (branch ${branch})`, { branch });
 
         // 1) Worktree limpo e isolado (nunca toca o dev/main)
-        this.recordEvent(task, 'worktree_setup_started', 'Preparando worktree a partir de origin/main...');
-        await this.ensureWorktree(branch);
+        // preserveBranch quando JÁ existe PR (caminho /fix ou auto-fix do Judge): edita por cima do
+        // trabalho existente em vez de regenerar do zero. Run inicial (sem PR) → fresco do main.
+        const preserveBranch = !!task.prNumber;
+        this.recordEvent(task, 'worktree_setup_started', preserveBranch
+            ? `Preparando worktree preservando a branch ${branch} (correção incremental)...`
+            : 'Preparando worktree a partir de origin/main...');
+        await this.ensureWorktree(branch, { preserveBranch });
         this.recordEvent(task, 'worktree_setup_completed', 'Worktree pronto', { path: WT_ROOT });
 
         // 2) Lê a issue
