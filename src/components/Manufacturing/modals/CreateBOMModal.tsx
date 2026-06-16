@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { DolibarrConfig, Product } from '../../../types';
 import { Loader2, CheckCircle2, X } from 'lucide-react';
 import { DolibarrService } from '../../../services/dolibarrService';
-import { logger } from '../../../utils/logger';
-
-const log = logger.child('CreateBOMModal');
+import { toast } from 'sonner';
+import { notifyError } from '../../../utils/notifyError';
 
 interface CreateBOMModalProps {
     isOpen: boolean;
@@ -52,15 +51,15 @@ export const CreateBOMModal: React.FC<CreateBOMModalProps> = ({ isOpen, onClose,
                     qty: bomForm.qty,
                     duration: bomForm.duration,
                 });
-                alert("BOM Atualizada com Sucesso");
+                toast.success("BOM Atualizada com Sucesso");
             } else {
                 await DolibarrService.createBOM(config, bomForm);
-                alert("BOM Criada com Sucesso");
+                toast.success("BOM Criada com Sucesso");
             }
             onSuccess();
             onClose();
             setBomForm({ label: '', product_id: '', qty: 1, duration: 3600 });
-        } catch (e) { log.error(e); } finally { setIsSubmittingBom(false); }
+        } catch (e) { notifyError(isEdit ? 'Atualizar BOM' : 'Criar BOM', e); } finally { setIsSubmittingBom(false); }
     };
 
     if (!isOpen) return null;
