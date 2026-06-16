@@ -63,6 +63,7 @@ const UpdateSchema = z.object({
     taskAutomation: z.object({
         autoPlay: z.boolean().optional(),
         autoMerge: z.boolean().optional(),
+        autoDecompose: z.boolean().optional(),
         minMergeScore: z.number().min(1).max(10).optional(),
     }).optional(),
 });
