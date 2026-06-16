@@ -30,6 +30,7 @@ backend/.wwebjs_cache/
 # Environment files with secrets
 backend/.env
 .env
+.env.e2e
 *.env.local
 *.env.*.local
 

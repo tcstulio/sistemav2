@@ -1,0 +1,54 @@
+# Stack de E2E LOCAL (Modo B) — Dolibarr real + MariaDB, para validação profunda on-demand.
+# NÃO roda na CI (repo público): dados reais/PII ficam só na sua máquina.
+#
+# Uso:
+#   docker compose -f docker-compose.e2e.yml up -d        # sobe Dolibarr (8088) + MariaDB
+#   # 1ª vez: o auto-install cria o schema. Depois, carregue um dump SANITIZADO (ver docs/E2E_LOCAL.md).
+#   # então rode:  npm run test:e2e:local
+#   docker compose -f docker-compose.e2e.yml down          # derruba (use -v para apagar o volume/DB)
+#
+# Fonte do Dolibarr: usa a imagem oficial + monta os arquivos CUSTOM do nosso fork
+# (custom_sync.php e custom modules de C:\Projetos\dolibarr). Ajuste os mounts conforme o que é custom.
+services:
+  e2e-db:
+    image: mariadb:10.11
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: dolibarr
+      MARIADB_USER: dolibarr
+      MARIADB_PASSWORD: dolibarr
+    volumes:
+      - e2e-dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  e2e-dolibarr:
+    image: dolibarr/dolibarr:21
+    depends_on:
+      e2e-db:
+        condition: service_healthy
+    ports:
+      - "8088:80"
+    environment:
+      DOLI_DB_TYPE: mysqli
+      DOLI_DB_HOST: e2e-db
+      DOLI_DB_NAME: dolibarr
+      DOLI_DB_USER: dolibarr
+      DOLI_DB_PASSWORD: dolibarr
+      DOLI_ADMIN_LOGIN: admin
+      DOLI_ADMIN_PASSWORD: e2eadmin
+      DOLI_URL_ROOT: "http://localhost:8088"
+      DOLI_INSTALL_AUTO: "1"
+      DOLI_MODULES: "modApi,modSociete,modFacture,modProjet"
+      DOLI_INIT_DEMO: "0"
+    volumes:
+      # Sobrepõe os arquivos CUSTOM do nosso fork (ajuste conforme o que é custom no seu Dolibarr).
+      # custom_sync.php fica na raiz do htdocs; módulos custom em /var/www/html/custom.
+      - ../dolibarr/custom_sync.php:/var/www/html/custom_sync.php:ro
+      # - ../dolibarr/custom:/var/www/html/custom:ro   # descomente se tiver módulos custom
+
+volumes:
+  e2e-dbdata:
