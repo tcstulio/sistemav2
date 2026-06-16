@@ -12,9 +12,7 @@ import { RichTextEditor } from './common/RichTextEditor';
 import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { useListControls } from '../hooks/useListControls';
-import { logger } from '../utils/logger';
-
-const log = logger.child('SupplierProposalList');
+import { notifyError } from '../utils/notifyError';
 
 // Design System
 import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, StatusBadge, ListToolbar, ConfirmDeleteButton } from './ui';
@@ -190,7 +188,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
     // Save (Create or Update)
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!formData.socid) return alert("Selecione um fornecedor.");
+        if (!formData.socid) { toast.error("Selecione um fornecedor."); return; }
 
         setIsSubmitting(true);
         try {
@@ -211,7 +209,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                 };
 
                 await DolibarrService.createSupplierProposal(config, payload);
-                alert("Solicitação Criada!");
+                toast.success("Solicitação Criada!");
             }
             // 2. UPDATE FLOW
             else {
@@ -256,7 +254,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                     });
                 }
 
-                alert("Solicitação Atualizada!");
+                toast.success("Solicitação Atualizada!");
             }
 
             setIsFormOpen(false);
@@ -269,8 +267,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
             }
 
         } catch (err: any) {
-            log.error("Failed to save supplier proposal", err);
-            alert("Erro ao salvar: " + (err.message || 'Erro desconhecido'));
+            notifyError('Salvar solicitação', err);
         } finally {
             setIsSubmitting(false);
         }
@@ -324,13 +321,12 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
         setProcessingId(selectedProposal.id);
         try {
             await DolibarrService.closeSupplierProposal(config, selectedProposal.id, parseInt(status) as 2 | 3);
-            alert(status === '2' ? "Solicitação Assinada!" : "Solicitação Recusada.");
+            toast.success(status === '2' ? "Solicitação Assinada!" : "Solicitação Recusada.");
             setSelectedProposal(null);
             if (onRefresh) onRefresh();
             refetchProposals();
         } catch (e: any) {
-            log.error("Failed to close supplier proposal", e);
-            alert("Ação falhou: " + e.message);
+            notifyError('Fechar solicitação', e);
         } finally {
             setProcessingId(null);
         }
