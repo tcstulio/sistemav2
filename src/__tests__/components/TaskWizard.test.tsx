@@ -104,6 +104,8 @@ describe('TaskWizard', () => {
             expect(onSuccess).toHaveBeenCalledTimes(1);
             expect(onClose).toHaveBeenCalledTimes(1);
         });
+
+        expect(toast.success).toHaveBeenCalledWith('1 tarefa(s) criada(s) com sucesso!');
     });
 
     it('uses notifyError when createTask fails', async () => {
