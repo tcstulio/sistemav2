@@ -23,13 +23,11 @@ import { ExpenseModal } from './HR/modals/ExpenseModal';
 import { ExpenseScannerModal } from './HR/modals/ExpenseScannerModal';
 import { ExpenseDetailModal } from './HR/modals/ExpenseDetailModal';
 import { GroupModal } from './HR/modals/GroupModal';
-import { DolibarrService } from '../services/dolibarrService';
 import * as HRAdmin from '../services/api/hrAdmin';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useUsers, useExpenseReports, useLeaveRequests, useJobPositions, useCandidates, useTasks, useTickets, useProjects, useGroups, useExpenseReportLines, useExpenseReportPayments } from '../hooks/dolibarr';
-import { logger } from '../utils/logger';
-
-const log = logger.child('HRList');
+import { useConfirm } from '../hooks/useConfirm';
+import { notifyError } from '../utils/notifyError';
 
 
 interface HRListProps {
@@ -68,6 +66,7 @@ const HRList: React.FC<HRListProps> = ({
     const { data: expenseReportPaymentsData } = useExpenseReportPayments(config);
     const expenseReportPayments = expenseReportPaymentsData || [];
 
+    const confirm = useConfirm();
 
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
@@ -354,13 +353,10 @@ const HRList: React.FC<HRListProps> = ({
     };
 
     const handleDeleteUser = async (id: string) => {
-        if (confirm("Tem certeza que deseja excluir este usuário?")) {
-            try {
-                // Not implemented in Service? Assuming it exists or mocking alert
-                // await DolibarrService.deleteUser(config, id); 
-                alert("Funcionalidade de exclusão pendente de implementação na API.");
-            } catch (e) { log.error("Failed to delete user", e); }
-        }
+        if (!(await confirm('Tem certeza que deseja excluir este usuário?'))) return;
+        try {
+            toast.info('Funcionalidade de exclusão pendente de implementação na API.');
+        } catch (e) { notifyError('Excluir usuário', e); }
     };
 
     const getSortOptions = () => {
@@ -558,10 +554,12 @@ const HRList: React.FC<HRListProps> = ({
                                 setIsGroupModalOpen(true);
                             }}
                             onDeleteGroup={async (id) => {
-                                if (confirm("Excluir Grupo?")) {
+                                if (!(await confirm({ message: 'Excluir Grupo?', danger: true }))) return;
+                                try {
                                     await HRAdmin.deleteGroup(config, id);
-                                    // Refresh logic ideally handled via onRefresh or query invalidation
                                     onRefresh?.();
+                                } catch (e) {
+                                    notifyError('Excluir grupo', e);
                                 }
                             }}
                             setDisplayLimit={setDisplayLimit}
