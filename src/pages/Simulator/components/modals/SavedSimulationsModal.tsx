@@ -3,6 +3,9 @@ import React, { useState, useEffect } from 'react';
 import { X, Save, FolderOpen, Trash2, Clock, ArrowRight, Check, AlertCircle, Play, RefreshCcw, Lock } from 'lucide-react';
 import { money } from '../../utils';
 import { logger } from '../../../../utils/logger';
+import { notifyError } from '../../../../utils/notifyError';
+import { useConfirm } from '../../../../hooks/useConfirm';
+import { toast } from 'sonner';
 
 const log = logger.child('SavedSimulations');
 
@@ -32,6 +35,7 @@ interface Props {
 }
 
 const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, activeSnapshotId, isAdmin = true, userName = 'usuario', onClose, onLoad, initialView = 'list' }) => {
+    const confirm = useConfirm();
     const [snapshots, setSnapshots] = useState<SimulationSnapshot[]>([]);
     const [newName, setNewName] = useState('');
     const [view, setView] = useState<'list' | 'save'>(initialView);
@@ -85,6 +89,8 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
             // Re-filter for local state
             setSnapshots([...updatedSnapshots]);
 
+            toast.success(isUpdate ? 'Simulação atualizada com sucesso!' : 'Simulação salva com sucesso!');
+
             setStatus('success');
             setTimeout(() => {
                 setStatus('idle');
@@ -92,21 +98,20 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
                 setNewName('');
             }, 1200);
         } catch (e) {
-            alert("Erro ao salvar no armazenamento local. Limite de espaço atingido?");
+            notifyError('Salvar simulação', e);
         }
     };
 
-    const deleteSnapshot = (id: string, e: React.MouseEvent) => {
+    const deleteSnapshot = async (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
-        if (confirm('Tem certeza que deseja excluir este cenário permanentemente?')) {
-            const savedRaw = localStorage.getItem(STORAGE_KEY_SNAPSHOTS);
-            const fullList: SimulationSnapshot[] = savedRaw ? JSON.parse(savedRaw) : [];
-            const updated = fullList.filter(s => s.id !== id);
-            localStorage.setItem(STORAGE_KEY_SNAPSHOTS, JSON.stringify(updated));
+        if (!(await confirm('Tem certeza que deseja excluir este cenário permanentemente?'))) return;
+        const savedRaw = localStorage.getItem(STORAGE_KEY_SNAPSHOTS);
+        const fullList: SimulationSnapshot[] = savedRaw ? JSON.parse(savedRaw) : [];
+        const updated = fullList.filter(s => s.id !== id);
+        localStorage.setItem(STORAGE_KEY_SNAPSHOTS, JSON.stringify(updated));
 
-            // Update local filtered state
-            setSnapshots(snapshots.filter(s => s.id !== id));
-        }
+        // Update local filtered state
+        setSnapshots(snapshots.filter(s => s.id !== id));
     };
 
     const loadSnapshot = (snapshot: SimulationSnapshot) => {
