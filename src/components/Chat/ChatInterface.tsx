@@ -10,10 +10,9 @@ import { TaskWizard } from '../Projects/TaskWizard';
 import { useEvents, useProjects, useUsers } from '../../hooks/dolibarr';
 import { Project, DolibarrUser } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
-import { logger } from '../../utils/logger';
+import { toast } from 'sonner';
+import { notifyError } from '../../utils/notifyError';
 import { SafeHtml, stripHtml, sanitizeHtml } from '../../utils/sanitizeHtml';
-
-const log = logger.child('ChatInterface');
 
 interface ChatInterfaceProps {
     elementId: string;
@@ -125,11 +124,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
 
                 setNewMessage(prev => prev + fileLink);
             } else {
-                alert('Upload não suportado neste contexto (falta referência "Ref").');
+                toast.error('Upload não suportado neste contexto (falta referência "Ref").');
             }
         } catch (err) {
-            log.error('Upload failed', err);
-            alert('Falha no upload do arquivo.');
+            notifyError('Upload de arquivo', err);
         } finally {
             setIsUploading(false);
             if (fileInputRef.current) fileInputRef.current.value = '';
@@ -177,7 +175,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
             setTimeout(() => refetch(), 1500);
             refreshData();
         } catch (error) {
-            log.error("Failed to send message", error);
+            notifyError('Enviar mensagem', error);
         } finally {
             setIsSending(false);
         }
