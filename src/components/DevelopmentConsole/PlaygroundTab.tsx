@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Play, Loader2 } from 'lucide-react';
 import { DolibarrService } from '../../services/dolibarrService';
 import { DolibarrConfig } from '../../types';
+import { toast } from 'sonner';
 
 interface PlaygroundTabProps {
     config: DolibarrConfig;
@@ -34,7 +35,7 @@ export const PlaygroundTab: React.FC<PlaygroundTabProps> = ({ config, onSuccess 
                     JSON.parse(playBody); // Validate JSON
                     options.body = playBody;
                 } catch (e) {
-                    alert("JSON Inválido");
+                    toast.error("JSON Inválido");
                     setIsPlayLoading(false);
                     return;
                 }
