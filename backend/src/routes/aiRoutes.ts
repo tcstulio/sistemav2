@@ -61,7 +61,7 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
 
         let enrichedContext = context || '';
         let permissionProfile: import('../services/userPermissionsService').UserPermissionProfile | null = null;
-        const isAdmin = user?.admin === '1' || user?.admin === 0 || user?.admin === true;
+        const isAdmin = user?.admin === '1' || user?.admin === 1 || user?.admin === true;
 
         enrichedContext += `\n[SISTEMA] Data e hora atual: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
 

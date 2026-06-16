@@ -635,6 +635,51 @@ describe('aiRoutes', () => {
         });
     });
 
+    describe('isAdmin security (#417): non-admin must NOT be treated as admin', () => {
+        it('user with admin=0 is NOT admin (context shows "Admin: Não")', async () => {
+            mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+                req.user = { id: '2', login: 'regular', admin: 0 };
+                next();
+            });
+
+            await request(app)
+                .post('/api/generate-reply')
+                .send({ context: 'test' });
+
+            const contextArg = mockAiService.generateReply.mock.calls[0][1];
+            expect(contextArg).toContain('Admin: Não');
+            expect(contextArg).not.toContain('Admin: Sim');
+        });
+
+        it('user with admin="0" is NOT admin', async () => {
+            mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+                req.user = { id: '3', login: 'regular2', admin: '0' };
+                next();
+            });
+
+            await request(app)
+                .post('/api/generate-reply')
+                .send({ context: 'test' });
+
+            const contextArg = mockAiService.generateReply.mock.calls[0][1];
+            expect(contextArg).toContain('Admin: Não');
+        });
+
+        it('user with admin=1 IS admin (context shows "Admin: Sim")', async () => {
+            mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+                req.user = { id: '4', login: 'admin2', admin: 1 };
+                next();
+            });
+
+            await request(app)
+                .post('/api/generate-reply')
+                .send({ context: 'test' });
+
+            const contextArg = mockAiService.generateReply.mock.calls[0][1];
+            expect(contextArg).toContain('Admin: Sim');
+        });
+    });
+
     describe('DELETE /api/sessions/:id', () => {
         it('deletes a single session', async () => {
             const { chatSessionService } = await import('../../services/chatSessionService');
