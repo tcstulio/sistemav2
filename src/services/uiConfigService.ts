@@ -15,6 +15,7 @@ export type TaskNotificationsConfig = Record<TaskNotifEvent, Record<TaskNotifRol
 export interface TaskAutomationConfig {
     autoPlay: boolean;
     autoMerge: boolean;
+    autoDecompose: boolean;
     minMergeScore: number;
 }
 

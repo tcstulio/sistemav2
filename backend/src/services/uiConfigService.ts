@@ -77,6 +77,7 @@ export type TaskNotificationsConfig = Record<TaskNotifEvent, Record<TaskNotifRol
 export interface TaskAutomationConfig {
     autoPlay: boolean;
     autoMerge: boolean;
+    autoDecompose: boolean;
     minMergeScore: number;
 }
 
@@ -126,7 +127,7 @@ const DEFAULTS: UiConfig = {
     customPages: [],
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
     taskNotificationsExternalEnabled: false,
-    taskAutomation: { autoPlay: false, autoMerge: false, minMergeScore: 8 },
+    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8 },
 };
 
 // Sanitiza um array de ids vindo do cliente (string curta, sem duplicatas, limite de tamanho).
@@ -272,6 +273,7 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
     return {
         autoPlay: a.autoPlay === true,
         autoMerge: a.autoMerge === true,
+        autoDecompose: a.autoDecompose === true,
         minMergeScore: minScore,
     };
 }

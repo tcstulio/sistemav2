@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Play, GitMerge, ShieldCheck, Save } from 'lucide-react';
+import { Play, GitMerge, ShieldCheck, Save, Boxes } from 'lucide-react';
 import { Card, Button, Spinner } from '../ui';
 import { getUiConfig, updateUiConfig, TaskAutomationConfig } from '../../services/uiConfigService';
 import { logger } from '../../utils/logger';
@@ -15,7 +15,7 @@ export interface TaskAutomationEditorProps {
 export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAdmin, themeColor = 'indigo' }) => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [config, setConfig] = useState<TaskAutomationConfig>({ autoPlay: false, autoMerge: false, minMergeScore: 8 });
+    const [config, setConfig] = useState<TaskAutomationConfig>({ autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8 });
 
     useEffect(() => {
         if (!isAdmin) { setLoading(false); return; }
@@ -76,6 +76,24 @@ export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAd
                             </div>
                             <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-4">
                                 <input type="checkbox" checked={config.autoPlay} onChange={(e) => setConfig({ ...config, autoPlay: e.target.checked })} className="sr-only peer" />
+                                <div className={`w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-${themeColor}-600`}></div>
+                            </label>
+                        </div>
+
+                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                            <div>
+                                <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+                                    <Boxes size={18} className={config.autoDecompose ? 'text-emerald-500' : 'text-slate-400'} />
+                                    Auto-decompose
+                                </div>
+                                <p className="text-xs text-slate-400 mt-1">
+                                    {config.autoDecompose
+                                        ? 'Ativo — o Planner detecta issues grandes na triagem, marca como epica e fatia em sub-tasks (aprovacao automatica sob auto-play).'
+                                        : 'Desativado — issues grandes rodam inteiras (ou voce decompoe manualmente).'}
+                                </p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-4">
+                                <input type="checkbox" checked={config.autoDecompose} onChange={(e) => setConfig({ ...config, autoDecompose: e.target.checked })} className="sr-only peer" />
                                 <div className={`w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-${themeColor}-600`}></div>
                             </label>
                         </div>

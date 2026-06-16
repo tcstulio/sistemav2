@@ -756,6 +756,29 @@ class TaskRunnerService {
                     this.emitStatus(task);
                     return;
                 }
+
+                // Auto-decompose (flag autoDecompose): se o Planner detectou que a issue é grande
+                // demais p/ 1 run, ela vira ÉPICA e é fatiada em sub-tasks — em vez de ser executada.
+                // Aprovação: automática sob autoPlay; senão fica o plano p/ o humano aprovar (botão UI).
+                // É quem ANALISA a issue (Planner) que decide isso, na triagem — não o chat nem o humano.
+                const autoCfg = this.getAutomationConfig();
+                if (autoCfg.autoDecompose && decision.isEpic && task.kind !== 'epic' && !task.parentEpic) {
+                    try {
+                        this.recordEvent(task, 'planner_decision', `Planner: épica detectada — ${decision.epicReason || 'grande demais para 1 run'}. Decompondo...`, { isEpic: true });
+                        this.emitLog(task.issueNumber, 'info', `Planner: épica detectada — decompondo em sub-tasks.`);
+                        await this.markAsEpic(task.issueNumber);
+                        await this.decomposeEpic(task.issueNumber);
+                        if (autoCfg.autoPlay) {
+                            await this.approveDecomposition(task.issueNumber);
+                            this.emitLog(task.issueNumber, 'success', `Épica decomposta e auto-aprovada — sub-tasks na fila.`);
+                        } else {
+                            this.emitLog(task.issueNumber, 'info', `Plano de decomposição gerado — aguardando aprovação humana.`);
+                        }
+                    } catch (decErr: any) {
+                        this.emitLog(task.issueNumber, 'warn', `Falha ao decompor épica: ${decErr?.message || decErr}. Marcada como épica para decomposição manual.`);
+                    }
+                    return; // épica não é executada como task normal (excluída da fila por kind:'epic')
+                }
             } catch (plannerErr: any) {
                 log.warn(`Planner error for #${task.issueNumber}, proceeding without planner: ${plannerErr.message}`);
             }
@@ -804,7 +827,7 @@ class TaskRunnerService {
             const { uiConfigService } = require('./uiConfigService');
             return uiConfigService.get().taskAutomation;
         } catch {
-            return { autoPlay: false, autoMerge: false, minMergeScore: 8 };
+            return { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8 };
         }
     }
 
@@ -2339,7 +2362,8 @@ Return ONLY a JSON:
 
     getQueuedTasks(): Task[] {
         return Object.values(this.store.tasks)
-            .filter(t => t.status === 'pending' && !this.isTerminalStatus(t.status))
+            // Épicas não são "rodáveis" — elas decompõem em sub-tasks; nunca entram na fila de execução.
+            .filter(t => t.status === 'pending' && t.kind !== 'epic' && !this.isTerminalStatus(t.status))
             .sort((a, b) => (a.queuePriority ?? 999) - (b.queuePriority ?? 999));
     }
 
