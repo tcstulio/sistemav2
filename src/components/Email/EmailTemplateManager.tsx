@@ -3,6 +3,7 @@ import { X, Plus, Trash2, Edit3, Save } from 'lucide-react';
 import { EmailTemplate } from '../../types/email';
 import { EmailService } from '../../services/emailService';
 import { toast } from 'sonner';
+import { useConfirm } from '../../hooks/useConfirm';
 
 interface EmailTemplateManagerProps {
     onClose: () => void;
@@ -14,6 +15,7 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ onCl
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editForm, setEditForm] = useState({ name: '', subject: '', body: '' });
     const [isCreating, setIsCreating] = useState(false);
+    const confirm = useConfirm();
 
     useEffect(() => {
         loadTemplates();
@@ -61,7 +63,7 @@ export const EmailTemplateManager: React.FC<EmailTemplateManagerProps> = ({ onCl
     };
 
     const handleDelete = async (id: string) => {
-        if (!window.confirm('Excluir template?')) return;
+        if (!(await confirm('Excluir template?'))) return;
         try {
             await EmailService.deleteTemplate(id);
             toast.success('Template excluído');
