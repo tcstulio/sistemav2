@@ -89,6 +89,27 @@ export function createProtoSession(login: string, dolapikey: string, userData?: 
     return token;
 }
 
+// Backfill/atualiza o perfil (userData) de uma sessão já existente e persiste.
+// Usado pelo middleware quando a sessão é antiga/incompleta (criada antes de persistirmos
+// userData, ou quando getUserByKey falhou no login) — assim o admin não fica "perdido".
+export function setProtoSessionUserData(token: string, userData: any): void {
+    const s = sessions.get(token);
+    if (!s || !userData) return;
+    s.userData = {
+        id: userData.id,
+        login: userData.login || s.login,
+        firstname: userData.firstname,
+        lastname: userData.lastname,
+        email: userData.email,
+        job: userData.job,
+        admin: userData.admin,
+        employee: userData.employee,
+        socid: userData.socid,
+        photo: userData.photo,
+    };
+    persist();
+}
+
 export function getProtoSession(token: string): ProtoSession | null {
     if (!token || !token.startsWith('sess_')) return null; // não é sessão -> deixa o fluxo legado seguir
     const s = sessions.get(token);

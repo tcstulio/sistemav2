@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config/env';
-import { getProtoSession } from '../services/protoSession';
+import { getProtoSession, setProtoSessionUserData } from '../services/protoSession';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('Auth');
@@ -62,6 +62,29 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
     if (protoSession) {
         req.headers['dolapikey'] = config.dolibarrKey;
         if (req.query) { (req.query as any).DOLAPIKEY = config.dolibarrKey; }
+
+        // Backfill do perfil quando a sessão é antiga/incompleta (criada antes de persistirmos
+        // userData, ou getUserByKey falhou no login). Sem isso req.user fica sem 'admin' e quem
+        // lê req.user.admin (ex.: o chat em aiRoutes) trata um admin real como não-admin.
+        // Roda no MÁXIMO uma vez por sessão: depois do backfill, admin fica definido e cacheado.
+        if (!protoSession.userData || protoSession.userData.admin === undefined || protoSession.userData.admin === null) {
+            try {
+                const { dolibarrService } = require('../services/dolibarrService');
+                const fresh = await dolibarrService.getUserByKey(protoSession.dolapikey);
+                if (fresh) {
+                    // getUserByKey nem sempre traz 'admin' (users/info|myself). Resolve de forma
+                    // autoritativa via verifyAdminStatus (testa acesso real a /setup/company).
+                    if (fresh.admin === undefined || fresh.admin === null) {
+                        const isAdmin = await dolibarrService.verifyAdminStatus(protoSession.dolapikey);
+                        fresh.admin = isAdmin ? '1' : '0';
+                    }
+                    setProtoSessionUserData(userKey, fresh); // persiste -> cacheia
+                }
+            } catch (e: any) {
+                log.warn(`Backfill de userData falhou (sessão ${protoSession.login}): ${e?.message || e}`);
+            }
+        }
+
         (req as any).user = {
             login: protoSession.login,
             ...(protoSession.userData || {}),
