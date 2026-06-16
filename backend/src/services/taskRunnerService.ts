@@ -2200,7 +2200,7 @@ Return ONLY a JSON:
         this.emitStatus(task);
 
         this.checkEpicCompletion(task);
-        this.pullMainRepo(task);
+        this.refreshOriginMain(task);
 
         return task;
     }
@@ -2535,19 +2535,25 @@ The first element should be the task to execute first.`;
         };
     }
 
-    private pullMainRepo(task: Task): void {
-        git(['pull', 'origin', 'main'], { timeout: 60000 })
-            .then(({ stdout }) => {
-                const changed = stdout.includes('files changed') || stdout.includes('Fast-forward');
-                log.info(`Repo local atualizado após merge #${task.issueNumber}: ${stdout.trim().substring(0, 200)}`);
-                this.recordEvent(task, 'task_completed', changed
-                    ? `Repo local atualizado (nodemon reiniciará o backend automaticamente)`
-                    : `Repo local já estava atualizado`);
+    // Após um merge, atualiza APENAS o ref origin/main (git fetch) — NÃO faz pull/checkout na
+    // working tree do repo de dev. Antes era `git pull origin main`, que altera arquivos em
+    // backend/src → nodemon REINICIAVA o backend a CADA merge. Esse restart no meio da orquestração
+    // recarregava o store e (com autoPlay) re-executava tasks recém-mergeadas → cascata de re-runs
+    // e PRs duplicados (raiz do bug #16). O worktree do opencode já parte de origin/main (fetch no
+    // ensureWorktree), então a correção das tasks NÃO depende da working tree local estar atualizada.
+    // O backend de dev permanece no código que subiu até um restart manual — de propósito (zero
+    // restart-surpresa durante um lote de tasks).
+    private refreshOriginMain(task: Task): void {
+        git(['fetch', 'origin', 'main'], { timeout: 60000 })
+            .then(() => {
+                log.info(`origin/main atualizado (fetch) após merge #${task.issueNumber} — backend NÃO reinicia`);
+                this.recordEvent(task, 'task_completed', `origin/main atualizado (fetch); backend de dev não reinicia (fix #16)`);
                 this.save();
             })
             .catch((e: any) => {
-                log.warn(`git pull após merge #${task.issueNumber} falhou: ${e?.message || e}`);
-                this.recordEvent(task, 'task_failed', `git pull falhou: ${e?.message || e}`);
+                // Falha de fetch é não-fatal: a task JÁ mergeou. NÃO marca task_failed (era um bug à parte).
+                log.warn(`git fetch após merge #${task.issueNumber} falhou (não-fatal): ${e?.message || e}`);
+                this.recordEvent(task, 'task_completed', `git fetch pós-merge falhou (não-fatal): ${e?.message || e}`);
                 this.save();
             });
     }
