@@ -5,6 +5,7 @@ import { ApiLog } from '../../types';
 import { dbService } from '../../services/dbService';
 import { formatTime } from '../../utils/dateUtils';
 import { logger } from '../../utils/logger';
+import { useConfirm } from '../../hooks/useConfirm';
 
 const componentLog = logger.child('ConsoleLogsTab');
 
@@ -14,6 +15,7 @@ export const ConsoleLogsTab: React.FC<ConsoleLogsTabProps> = () => {
     const [logs, setLogs] = useState<ApiLog[]>([]);
     const [selectedLog, setSelectedLog] = useState<ApiLog | null>(null);
     const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+    const confirm = useConfirm();
 
     const loadLogs = async () => {
         setIsLoadingLogs(true);
@@ -28,7 +30,7 @@ export const ConsoleLogsTab: React.FC<ConsoleLogsTabProps> = () => {
     };
 
     const clearLogs = async () => {
-        if (!confirm("Limpar todos os logs?")) return;
+        if (!(await confirm("Limpar todos os logs?"))) return;
         try {
             await dbService.clearAll();
             setLogs([]);
