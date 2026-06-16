@@ -1,11 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Server, Database, Activity, RefreshCw, Power, Lock, Key } from 'lucide-react';
+import { toast, Toaster } from 'sonner';
 import { useDolibarr } from '../context/DolibarrContext';
+import { useConfirm } from '../hooks/useConfirm';
+import { notifyError } from '../utils/notifyError';
 
 const AdminApp: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'backend'>('backend');
     const [backendStatus, setBackendStatus] = useState<any>(null);
     const { config } = useDolibarr();
+    const confirm = useConfirm();
 
     // Auth State
     const [adminKey, setAdminKey] = useState('');
@@ -54,20 +58,20 @@ const AdminApp: React.FC = () => {
     };
 
     const handleRestart = async () => {
-        if (!confirm("Isso tentará reiniciar a conexão do WhatsApp. Confirmar?")) return;
+        if (!(await confirm({ message: 'Isso tentará reiniciar a conexão do WhatsApp. Confirmar?', danger: true }))) return;
         try {
             const res = await fetch('/api/admin/restart', {
                 method: 'POST',
                 headers: { 'x-admin-key': adminKey }
             });
             if (res.status === 403) {
-                alert("Acesso Negado: Chave Inválida");
+                toast.error('Acesso Negado: Chave Inválida');
                 return;
             }
-            alert("Comando enviado.");
+            toast.success('Comando enviado.');
             fetchBackendStatus();
         } catch (e) {
-            alert("Erro ao enviar comando.");
+            notifyError('Reiniciar WAHA', e);
         }
     };
 
@@ -81,6 +85,8 @@ const AdminApp: React.FC = () => {
 
     if (!isAuthenticated) {
         return (
+            <>
+            <Toaster richColors position="bottom-center" />
             <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 text-slate-200">
                 <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-xl p-8 shadow-2xl">
                     <div className="text-center mb-8">
@@ -128,11 +134,14 @@ const AdminApp: React.FC = () => {
                     </div>
                 </div>
             </div>
+            </>
         );
     }
 
     return (
-        <div className="min-h-screen bg-slate-950 text-slate-200 font-sans">
+            <>
+            <Toaster richColors position="bottom-center" />
+            <div className="min-h-screen bg-slate-950 text-slate-200 font-sans">
             {/* Admin Header */}
             <header className="bg-black border-b border-slate-800 p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -233,6 +242,7 @@ const AdminApp: React.FC = () => {
                 </main>
             </div>
         </div>
+            </>
     );
 };
 
