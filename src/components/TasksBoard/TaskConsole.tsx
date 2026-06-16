@@ -5,6 +5,8 @@ import { Button } from '../ui';
 import { TaskService, TaskMetrics } from '../../services/taskService';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { toast } from 'sonner';
+import { useConfirm } from '../../hooks/useConfirm';
+import { notifyError } from '../../utils/notifyError';
 
 interface LogEntry {
     type: 'info' | 'success' | 'warn' | 'error' | 'ai' | 'output';
@@ -54,6 +56,7 @@ const TYPE_PREFIX: Record<string, string> = {
 
 const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
     const { currentUser } = useDolibarr();
+    const confirm = useConfirm();
     const isAdmin = currentUser?.admin === 1 || currentUser?.admin === '1' || (currentUser?.admin as unknown) === true;
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [status, setStatus] = useState<TaskStatus | null>(null);
@@ -66,13 +69,18 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
 
     const handleKill = async () => {
         if (!isAdmin) { toast.error('Apenas administradores podem matar tasks.'); return; }
-        if (!confirm(`Matar a task #${issueNumber}? O processo do opencode e seus filhos serao encerrados (SIGKILL). Esta acao nao pode ser desfeita.`)) return;
+        if (!(await confirm({
+            title: 'Matar task',
+            message: `Matar a task #${issueNumber}? O processo do opencode e seus filhos serao encerrados (SIGKILL). Esta acao nao pode ser desfeita.`,
+            danger: true,
+            confirmText: 'Matar',
+        }))) return;
         setKilling(true);
         try {
             await TaskService.kill(issueNumber, 'user kill from TaskConsole');
             toast.success('Task cancelada. O processo foi encerrado.');
         } catch (e: any) {
-            toast.error(e.response?.data?.error || e.message);
+            notifyError('Matar task', e);
         } finally {
             setKilling(false);
         }
