@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { useSuppliers, useProducts } from '../../hooks/dolibarr';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { logger } from '../../utils/logger';
+import { useConfirm } from '../../hooks/useConfirm';
 
 const log = logger.child('ReceiptWizard');
 
@@ -18,6 +19,7 @@ type WizardStep = 'upload' | 'details' | 'items' | 'review';
 
 export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoiceCreated }) => {
     const { config } = useDolibarr();
+    const confirm = useConfirm();
     const { data: suppliers = [] } = useSuppliers(config);
     const { data: products = [] } = useProducts(config);
 
@@ -307,10 +309,8 @@ export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoice
     };
 
     const handleCreateProduct = async (idx: number) => {
-        // Simple Quick Create for now - could be a modal
         const item = items[idx];
-        const confirm = window.confirm(`Deseja criar o produto "${item.desc}" automaticamente?`);
-        if (!confirm) return;
+        if (!(await confirm(`Deseja criar o produto "${item.desc}" automaticamente?`))) return;
         if (!config) return;
 
         try {
