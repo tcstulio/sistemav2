@@ -623,6 +623,18 @@ describe('aiRoutes', () => {
         });
     });
 
+    describe('enrichedContext: data e hora atual (#417)', () => {
+        it('inclui "Data e hora atual" no contexto passado ao aiService', async () => {
+            await request(app)
+                .post('/api/generate-reply')
+                .send({ context: 'test' });
+
+            expect(mockAiService.generateReply).toHaveBeenCalledTimes(1);
+            const contextArg = mockAiService.generateReply.mock.calls[0][1];
+            expect(contextArg).toContain('Data e hora atual');
+        });
+    });
+
     describe('DELETE /api/sessions/:id', () => {
         it('deletes a single session', async () => {
             const { chatSessionService } = await import('../../services/chatSessionService');
