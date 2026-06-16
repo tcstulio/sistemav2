@@ -235,4 +235,77 @@ describe('ExpenseDetailModal', () => {
             );
         });
     });
+
+    it('uploads a document and shows success toast', async () => {
+        const user = userEvent.setup();
+        vi.mocked(DolibarrService.uploadDocument).mockResolvedValue({} as any);
+        vi.mocked(DolibarrService.fetchDocuments).mockResolvedValue([]);
+
+        renderWithProvider({
+            expense: baseExpense,
+            onClose: mockOnClose,
+            config: mockConfig,
+            users: [],
+        });
+
+        await user.click(screen.getByText('Documentos'));
+
+        const input = screen.getByLabelText('Upload') as HTMLInputElement;
+        const file = new File(['dummy'], 'receipt.pdf', { type: 'application/pdf' });
+        await user.upload(input, file);
+
+        await waitFor(() => {
+            expect(DolibarrService.uploadDocument).toHaveBeenCalledWith(
+                mockConfig, file, 'expensereport', 'ER-001'
+            );
+        });
+        await waitFor(() => {
+            expect(toast.success).toHaveBeenCalledWith('Arquivo enviado!');
+        });
+    });
+
+    it('shows notifyError toast when upload fails', async () => {
+        const user = userEvent.setup();
+        vi.mocked(DolibarrService.uploadDocument).mockRejectedValue(new Error('Upload failed'));
+
+        renderWithProvider({
+            expense: baseExpense,
+            onClose: mockOnClose,
+            config: mockConfig,
+            users: [],
+        });
+
+        await user.click(screen.getByText('Documentos'));
+
+        const input = screen.getByLabelText('Upload') as HTMLInputElement;
+        const file = new File(['dummy'], 'receipt.pdf', { type: 'application/pdf' });
+        await user.upload(input, file);
+
+        await waitFor(() => {
+            expect(toast.error).toHaveBeenCalledWith(
+                'Enviar arquivo falhou.',
+                expect.objectContaining({ id: 'err:Enviar arquivo' })
+            );
+        });
+    });
+
+    it('shows notifyError toast when loading documents fails', async () => {
+        vi.mocked(DolibarrService.fetchDocuments).mockRejectedValue(new Error('Fetch failed'));
+
+        renderWithProvider({
+            expense: baseExpense,
+            onClose: mockOnClose,
+            config: mockConfig,
+            users: [],
+        });
+
+        await userEvent.click(screen.getByText('Documentos'));
+
+        await waitFor(() => {
+            expect(toast.error).toHaveBeenCalledWith(
+                'Carregar documentos falhou.',
+                expect.objectContaining({ id: 'err:Carregar documentos' })
+            );
+        });
+    });
 });
