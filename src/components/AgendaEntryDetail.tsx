@@ -196,10 +196,7 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
             // Update local state optimistically
             setData({ ...data, ...editForm });
             setIsEditing(false);
-
-            // Trigger a background refresh if possible? 
-            // The user might need to wait for next sync to see changes persist if they reload.
-            // But immediate feedback is good.
+            toast.success('Evento atualizado com sucesso!');
         } catch (e) {
             notifyError('Salvar evento', e);
         } finally {

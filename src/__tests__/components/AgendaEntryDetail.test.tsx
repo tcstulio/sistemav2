@@ -145,6 +145,9 @@ describe('AgendaEntryDetail', () => {
                     expect.objectContaining({ label: 'Reunião de Equipe' })
                 );
             });
+            await waitFor(() => {
+                expect(mockToast.success).toHaveBeenCalledWith('Evento atualizado com sucesso!');
+            });
         });
 
         it('calls notifyError when save fails', async () => {
