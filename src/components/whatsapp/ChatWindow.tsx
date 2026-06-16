@@ -6,9 +6,8 @@ import { formatTime } from '../../utils/dateUtils';
 import { useCustomerMutations } from '../../hooks/useMutations';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { toast } from 'sonner';
-import { logger } from '../../utils/logger';
-
-const log = logger.child('ChatWindow');
+import { useConfirm } from '../../hooks/useConfirm';
+import { notifyError } from '../../utils/notifyError';
 
 interface ChatWindowProps {
     messages: WhatsAppMessage[];
@@ -37,6 +36,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
     isContextOpen,
     onRetry
 }) => {
+    const confirm = useConfirm();
     const chatContainerRef = useRef<HTMLDivElement>(null);
 
     const scrollToBottom = () => {
@@ -130,8 +130,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                 toast.error("Não foi possível extrair informações.");
             }
         } catch (e) {
-            log.error(e);
-            toast.error("Erro na extração IA.");
+            notifyError('Extração IA', e);
         } finally {
             setIsExtracting(false);
         }
@@ -149,8 +148,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             toast.success(`Cliente ${extractedData.name} criado com sucesso!`);
             setIsCreateModalOpen(false);
             // Optionally assign this conversation to the new customer if the system supports linking
-        } catch (e: any) {
-            toast.error("Erro ao criar cliente: " + e.message);
+        } catch (e) {
+            notifyError('Criar cliente', e);
         }
     };
 
@@ -269,10 +268,9 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                                         <span className="max-w-[100px] truncate">{assignee?.login || 'Outro Agente'}</span>
                                     </div>
                                     <button
-                                        onClick={() => {
-                                            if (confirm(`Esta conversa está com ${assignee?.login || 'outro agente'}. Deseja assumir mesmo assim?`)) {
-                                                onAssign(currentUser.id);
-                                            }
+                                        onClick={async () => {
+                                            if (!(await confirm(`Esta conversa está com ${assignee?.login || 'outro agente'}. Deseja assumir mesmo assim?`))) return;
+                                            onAssign(currentUser.id);
                                         }}
                                         className="text-xs text-orange-600 hover:text-orange-700 underline px-2"
                                         title="Roubar conversa"
