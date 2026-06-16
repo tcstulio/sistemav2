@@ -37,6 +37,8 @@ export const DolibarrService = {
     markInvoiceAsPaid: Commercial.markInvoiceAsPaid,
     abandonInvoice: Commercial.abandonInvoice,
     setInvoiceToDraft: Commercial.setInvoiceToDraft,
+    cloneInvoice: Commercial.cloneInvoice,
+    mapInvoiceLineForClone: Commercial.mapInvoiceLineForClone,
 
     // Operations
     ...Operations,

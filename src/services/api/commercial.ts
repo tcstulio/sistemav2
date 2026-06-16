@@ -458,6 +458,43 @@ export const cloneProposal = async (config: DolibarrConfig, id: string): Promise
     return newId;
 };
 
+// Mapeia uma linha de fatura origem para o payload de criação da cópia.
+// Preserva apenas dados comerciais (produto, descrição, qtd, preço, desconto, IVA).
+// NÃO copia rowid, product_type, status, validação, pagamentos ou datas.
+export const mapInvoiceLineForClone = (l: Record<string, any>): Record<string, unknown> => ({
+    fk_product: l.fk_product ?? undefined,
+    desc: l.desc ?? l.description,
+    qty: Number(l.qty) || 1,
+    subprice: Number(l.subprice) || 0,
+    remise_percent: l.remise_percent !== undefined ? Number(l.remise_percent) : 0,
+    tva_tx: Number(l.tva_tx) || 0,
+});
+
+// Clona uma fatura existente numa cópia em rascunho: mesmo cliente, condições e linhas,
+// sem copiar status, validação, pagamentos ou datas (date = hoje).
+export const cloneInvoice = async (config: DolibarrConfig, id: string): Promise<string> => {
+    const source: Record<string, any> = await getInvoiceData(config, id);
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    const payload: Record<string, unknown> = {
+        socid: source.socid,
+        date: today,
+    };
+    if (source.cond_reglement !== undefined) payload.cond_reglement = source.cond_reglement;
+    if (source.mode_reglement !== undefined) payload.mode_reglement = source.mode_reglement;
+
+    const created = await createInvoice(config, payload);
+    const newId = String((created as any)?.id ?? created);
+
+    const lines: Record<string, any>[] = Array.isArray(source.lines) ? source.lines : [];
+    for (const l of lines) {
+        await addInvoiceLine(config, newId, mapInvoiceLineForClone(l));
+    }
+
+    return newId;
+};
+
 export const createOrderFromProposal = async (config: DolibarrConfig, proposalId: string) => {
     const url = `${sanitizeUrl(config.apiUrl)}/orders`;
     return request(url, {
