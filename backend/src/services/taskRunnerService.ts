@@ -1685,13 +1685,13 @@ Return ONLY a JSON:
                     task.phase = 'done';
                     task.status = result.score >= 6 ? 'approved' : 'reviewing';
                     this.emitLog(task.issueNumber, 'success', `Judge: ${result.score}/10 — ${result.score >= 8 ? 'auto-aprovado' : result.score >= 6 ? 'aprovado (múltiplas tentativas)' : 'requer revisão humana'}`);
-                } else if (result.score >= 6) {
-                    task.phase = 'done';
-                    task.status = 'reviewing';
-                    this.emitLog(task.issueNumber, 'info', `Judge: ${result.score}/10 — aguardando revisão humana`);
                 } else {
-                    log.info(`Judge score ${result.score}/10, auto-fixing (attempt ${task.judgeAttempts})`);
-                    this.emitLog(task.issueNumber, 'warn', `Judge reprovou (${result.score}/10). Auto-corrigindo (tentativa ${task.judgeAttempts})...`);
+                    // Score < 8 e ainda há tentativas → AUTO-FIX. Antes a faixa 6-7 PARAVA p/ revisão
+                    // humana sem tentar consertar; agora ela também re-roda com o feedback do Judge
+                    // mirando >=8. Esgotadas as 3 tentativas, o ramo acima resolve: >=6 aprova
+                    // (good-enough, sem onerar o humano), <6 escala p/ revisão humana.
+                    log.info(`Judge score ${result.score}/10 (<8), auto-fixing (attempt ${task.judgeAttempts})`);
+                    this.emitLog(task.issueNumber, 'warn', `Judge: ${result.score}/10 (<8). Auto-corrigindo (tentativa ${task.judgeAttempts}/3)...`);
                     const fixContext = [
                         `Judge (score ${result.score}/10): ${result.review}`,
                         ...(result.missing_coverage?.length ? [`Cobertura faltando: ${result.missing_coverage.join(', ')}`] : []),
