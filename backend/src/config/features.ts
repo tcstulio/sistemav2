@@ -48,6 +48,13 @@ export const FEATURES = {
      */
     MEMORY_SEARCH_ENABLED: process.env.MEMORY_SEARCH_ENABLED === 'true',
 
+    /**
+     * TaskRunner: ao detectar uma issue 'opencode-task' nova no polling, INICIAR a execução
+     * automaticamente (além de notificar). Fluxo "criar issue + label → robô resolve sozinho".
+     * O Planner continua filtrando (go/esperar/pular). Default OFF para evitar execução surpresa.
+     */
+    TASKRUNNER_AUTOSTART: process.env.TASKRUNNER_AUTOSTART === 'true',
+
     // ========================================
     // WHATSAPP FEATURES
     // ========================================
@@ -153,6 +160,7 @@ export function logFeatures(): void {
         brainSync: FEATURES.SYNC_BRAIN_ENABLED,
         autoReply: FEATURES.AUTO_REPLY_ENABLED,
         crmContext: FEATURES.CRM_CONTEXT_INJECTION,
+        taskrunnerAutostart: FEATURES.TASKRUNNER_AUTOSTART,
         debugMode: FEATURES.DEBUG_MODE,
     });
 }
