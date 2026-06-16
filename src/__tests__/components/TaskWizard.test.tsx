@@ -105,7 +105,31 @@ describe('TaskWizard', () => {
             expect(onClose).toHaveBeenCalledTimes(1);
         });
 
-        expect(toast.success).toHaveBeenCalledWith('1 tarefa(s) criada(s) com sucesso!');
+        expect(toast.success).toHaveBeenCalledWith('1 tarefa criada com sucesso!');
+    });
+
+    it('creates multiple tasks and shows plural toast message', async () => {
+        const onSuccess = vi.fn();
+        render(<TaskWizard {...defaultProps} onSuccess={onSuccess} />);
+
+        const titleInput = screen.getByPlaceholderText('Título da tarefa...') as HTMLInputElement;
+        await userEvent.type(titleInput, 'Tarefa Um');
+
+        fireEvent.click(screen.getByText('Adicionar Linha'));
+
+        const inputs = screen.getAllByPlaceholderText('Título da tarefa...');
+        await userEvent.type(inputs[1], 'Tarefa Dois');
+
+        const submitBtn = screen.getByText('Confirmar Criação');
+        fireEvent.click(submitBtn);
+
+        await waitFor(() => {
+            expect(mockDolibarr.createTask).toHaveBeenCalledTimes(2);
+        });
+
+        await waitFor(() => {
+            expect(toast.success).toHaveBeenCalledWith('2 tarefas criadas com sucesso!');
+        });
     });
 
     it('uses notifyError when createTask fails', async () => {

@@ -341,7 +341,11 @@ export const TaskWizard: React.FC<TaskWizardProps> = ({ isOpen, onClose, project
                     }
                 }
             }
-            toast.success(`${validRows.length} tarefa(s) criada(s) com sucesso!`);
+            toast.success(
+                validRows.length === 1
+                    ? '1 tarefa criada com sucesso!'
+                    : `${validRows.length} tarefas criadas com sucesso!`
+            );
             onSuccess();
             onClose();
         } catch (e) {
