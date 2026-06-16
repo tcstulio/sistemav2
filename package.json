@@ -19,6 +19,8 @@
     "test:ui": "playwright test --ui",
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug",
+    "test:visual": "playwright test -c playwright.visual.config.ts",
+    "test:visual:update": "playwright test -c playwright.visual.config.ts --update-snapshots",
     "playwright:codegen": "playwright codegen",
     "scrape": "npx tsx scripts/web-scraper.ts",
     "test:app": "npx tsx scripts/test-own-app.ts",

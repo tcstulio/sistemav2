@@ -7,6 +7,10 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './tests',
 
+  // Os testes de regressão VISUAL têm config própria (playwright.visual.config.ts, chromium-only,
+  // baselines geradas na CI). O check E2E 'test' os IGNORA para não falhar por baseline ausente.
+  testIgnore: '**/visual/**',
+
   // Timeout máximo por teste
   timeout: 30 * 1000,
 

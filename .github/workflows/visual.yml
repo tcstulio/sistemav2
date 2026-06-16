@@ -1,0 +1,84 @@
+name: Visual
+
+# Regressão visual determinística (Fase 2 / Nível B) — Playwright toHaveScreenshot SELF-HOSTED.
+# Privacidade: screenshots e baselines NUNCA saem do nosso CI/repo (sem nuvem de terceiros).
+#
+# Dois modos:
+#  - pull_request: roda os testes visuais contra as baselines COMMITADAS (o GATE). Na 1ª vez (sem
+#    baseline) ele AUTO-GERA a baseline na CI/Linux e commita (bootstrap), passando. Quando a UI muda
+#    de propósito (baseline existe e diverge), FALHA → aprovação humana necessária.
+#  - workflow_dispatch (update_baselines=true): regenera e commita as baselines na branch — é a
+#    AÇÃO DE APROVAÇÃO HUMANA. O humano revisa o diff de imagem no PR do GitHub e roda isto p/ aceitar.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      update_baselines:
+        description: 'Regenerar e commitar as baselines visuais (aprovação humana)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # npm install (não ci): lockfile gerado em dev Windows; deps opcionais por plataforma quebram `npm ci`.
+      - run: npm install --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+
+      - name: Configura git (para commits de baseline)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # APROVAÇÃO HUMANA: regenera as baselines e commita na branch.
+      - name: Atualizar baselines (aprovação humana)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.update_baselines == 'true' }}
+        run: |
+          npm run test:visual:update
+          git add tests/visual
+          git commit -m "chore(visual): atualiza baselines (aprovacao humana)" || { echo "Sem mudancas de baseline."; exit 0; }
+          git push origin HEAD:${{ github.ref_name }}
+
+      # GATE (em PRs): compara contra as baselines commitadas. Auto-bootstrap se não houver baseline.
+      - name: Regressão visual (gate)
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          if npm run test:visual; then
+            echo "Visual OK — sem regressão."
+          else
+            if [ -z "$(git ls-files 'tests/visual/**/*.png')" ]; then
+              echo "Nenhuma baseline commitada ainda — gerando a inicial na CI (Linux) e commitando (bootstrap)."
+              npm run test:visual:update
+              git add tests/visual
+              git commit -m "chore(visual): baseline inicial gerada na CI"
+              git push origin HEAD:${{ github.head_ref }}
+              echo "Baseline inicial commitada. (Mudancas visuais futuras vao FALHAR ate aprovacao humana.)"
+            else
+              echo "::error::Regressao visual: o screenshot divergiu da baseline. Se a mudanca for intencional, rode o workflow 'Visual' (update_baselines=true) nesta branch para aprovar."
+              exit 1
+            fi
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-report
+          path: |
+            playwright-report/
+            tests/visual/**/*-diff.png
+          retention-days: 7
