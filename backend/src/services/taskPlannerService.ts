@@ -24,6 +24,8 @@ export interface PlannerDecision {
     overlappingFiles: string[];
     alreadyResolved: boolean;
     filesEstimate: string[];
+    isEpic: boolean;       // tarefa grande demais p/ 1 run → deve ser decomposta em sub-tasks
+    epicReason: string;
 }
 
 interface OpenPR {
@@ -94,6 +96,8 @@ export const taskPlannerService = {
             overlappingFiles: [],
             alreadyResolved: false,
             filesEstimate: [],
+            isEpic: false,
+            epicReason: '',
         };
 
         try {
@@ -138,7 +142,15 @@ export const taskPlannerService = {
                     if (llmDecision.alreadyResolved !== undefined) decision.alreadyResolved = llmDecision.alreadyResolved;
                     if (llmDecision.priority !== undefined) decision.priority = llmDecision.priority;
                     if (llmDecision.blockedBy?.length) decision.blockedBy = llmDecision.blockedBy;
+                    if (llmDecision.isEpic !== undefined) { decision.isEpic = !!llmDecision.isEpic; decision.epicReason = llmDecision.epicReason || ''; }
                 }
+            }
+
+            // Detecção de épica: o LLM sinaliza acima; uma estimativa alta de arquivos é a rede de
+            // segurança (caso o LLM subestime). Tarefa grande demais p/ 1 run do opencode → decompor.
+            if (!decision.isEpic && decision.filesEstimate.length >= 5) {
+                decision.isEpic = true;
+                decision.epicReason = `Estimativa de ${decision.filesEstimate.length} arquivos — grande demais para um único run`;
             }
 
             if (decision.alreadyResolved) {
@@ -184,7 +196,9 @@ Return ONLY a JSON:
     "alreadyResolved": true/false,
     "priority": 0-200,
     "blockedBy": [pr_number_if_waiting],
-    "filesEstimate": ["estimated files this task will modify"]
+    "filesEstimate": ["estimated files this task will modify"],
+    "isEpic": true/false,
+    "epicReason": "explanation in Portuguese if isEpic"
 }
 
 Rules:
@@ -193,7 +207,8 @@ Rules:
 - "wait" if there's a PR that modifies the same files AND is still in progress
 - "go" if safe to execute (no conflicts, not already done)
 - "reorder" if it can run but should wait for a more urgent task
-- priority: 0 = highest urgency, 100+ = blocked/waiting, 999 = skip`;
+- priority: 0 = highest urgency, 100+ = blocked/waiting, 999 = skip
+- "isEpic": true if this task is TOO BIG for a single opencode run — i.e. it realistically needs more than ~2-3 files changed, OR covers multiple independent concerns/features that should be split into smaller sub-tasks. A focused single-file/single-concern change is NOT an epic. When in doubt for a clearly large/multi-file refactor, mark isEpic true.`;
     },
 
     async queryLLM(prompt: string): Promise<Partial<PlannerDecision> | null> {
@@ -217,6 +232,8 @@ Rules:
                 priority: typeof parsed.priority === 'number' ? parsed.priority : 0,
                 blockedBy: Array.isArray(parsed.blockedBy) ? parsed.blockedBy : [],
                 filesEstimate: Array.isArray(parsed.filesEstimate) ? parsed.filesEstimate : [],
+                isEpic: !!parsed.isEpic,
+                epicReason: String(parsed.epicReason || ''),
             };
         } catch (e: any) {
             log.error('Planner LLM error', e.message);
