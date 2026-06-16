@@ -5,6 +5,7 @@ import { AiService } from '../../services/aiService';
 import { EmailService } from '../../services/emailService';
 import { toast } from 'sonner';
 import { logger } from '../../utils/logger';
+import { usePrompt } from '../../hooks/usePrompt';
 
 const log = logger.child('EmailComposer');
 
@@ -32,6 +33,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
     const [isSending, setIsSending] = useState(false);
     const [attachments, setAttachments] = useState<EmailAttachment[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const prompt = usePrompt();
 
     // Templates
     const [templates, setTemplates] = useState<EmailTemplate[]>([]);
@@ -105,7 +107,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
             toast.error('Escreva algo antes de salvar como template');
             return;
         }
-        const name = prompt('Nome do template:');
+        const name = await prompt('Nome do template:');
         if (!name) return;
         try {
             await EmailService.addTemplate({ name, subject, body });
