@@ -31,7 +31,15 @@ test.describe('Frontend Smoke Tests', () => {
     expect(title.length).toBeGreaterThan(0);
   });
 
-  test('no critical console errors on load', async ({ page }) => {
+  test('no critical console errors on load', async ({ page, request }) => {
+    // Sem backend o app loga erro de fetch/auth — este teste só faz sentido com o backend de pé
+    // (local / Modo B, ver docs/E2E_LOCAL.md). Na CI (sem backend) ele PULA, como os Backend Smoke
+    // Tests abaixo.
+    const health = await request
+      .get('http://localhost:3004/health', { timeout: 5000, failOnStatusCode: false })
+      .catch(() => null);
+    if (!health) { test.skip(); return; }
+
     const errors: string[] = [];
     page.on('console', msg => {
       if (msg.type() === 'error') {

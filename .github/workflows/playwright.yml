@@ -1,5 +1,9 @@
 name: E2E Tests
 
+# Na CI NÃO há backend nem Dolibarr → rodamos só os SMOKE tests (backend-independentes: o frontend
+# sobe, o React monta, sem erros críticos). O E2E COMPLETO (auth, navegação, fluxos internos) roda
+# LOCALMENTE contra um Dolibarr real — ver docs/E2E_LOCAL.md (Modo B: `npm run test:e2e:local`).
+
 on:
   push:
     branches: [main, develop]
@@ -15,9 +19,11 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
-      - run: npx playwright install --with-deps
-      - run: npx playwright test
+      # npm install (não ci): lockfile gerado em dev Windows; deps opcionais por plataforma quebram `npm ci`.
+      - run: npm install --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      # Só smoke (backend-independente) na CI; E2E completo é local (Modo B).
+      - run: npx playwright test tests/smoke.spec.ts --project=chromium
       - uses: actions/upload-artifact@v4
         if: always()
         with:
