@@ -34,6 +34,7 @@ import {
     ConfirmDeleteButton
 } from './ui';
 import { SafeHtml } from '../utils/sanitizeHtml';
+import { notifyError } from '../utils/notifyError';
 
 // ============================================
 // Types
@@ -361,9 +362,10 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
             await DolibarrService.createProduct(config!, productForm);
             setIsCreateModalOpen(false);
             setProductForm({ type: '0', price: 0 });
+            toast.success('Produto criado com sucesso!');
             onRefresh?.();
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            notifyError('Criar produto', e);
         } finally {
             setIsSubmitting(false);
         }
@@ -376,9 +378,10 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
             await DolibarrService.updateProduct(config!, productForm.id, productForm);
             setIsEditModalOpen(false);
             setSelectedProduct({ ...selectedProduct, ...productForm } as Product);
+            toast.success('Produto atualizado com sucesso!');
             onRefresh?.();
         } catch (e: any) {
-            alert(`Erro: ${e.message}`);
+            notifyError('Atualizar produto', e);
         } finally {
             setIsSubmitting(false);
         }
