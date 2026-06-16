@@ -8,6 +8,8 @@ import { DolibarrService } from '../services/dolibarrService';
 import { dbService } from '../services/dbService';
 import { getUiConfig, updateUiConfig } from '../services/uiConfigService';
 import { setOrgBranding } from '../hooks/useOrgBranding';
+import { useConfirm } from '../hooks/useConfirm';
+import { notifyError } from '../utils/notifyError';
 import { MenuConfigEditor } from './admin/MenuConfigEditor';
 import { DashboardConfigEditor } from './admin/DashboardConfigEditor';
 import { ScreenPermissionsEditor } from './admin/ScreenPermissionsEditor';
@@ -28,6 +30,7 @@ interface SettingsProps {
 
 const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
     const { logout, setConfig } = useDolibarr();
+    const confirm = useConfirm();
     const [localConfig, setLocalConfig] = useState<DolibarrConfig | null>(config);
 
     // Handle null config
@@ -133,11 +136,11 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                 onSave?.(updatedConfig); // Persist to storage
 
                 setIsEditModalOpen(false);
-                alert("Perfil atualizado com sucesso!");
+                toast.success("Perfil atualizado com sucesso!");
             }
         } catch (e: any) {
             log.error(e);
-            alert(`Falha ao atualizar perfil: ${e.message}`);
+            notifyError('Atualizar perfil', e);
         } finally {
             setIsSavingProfile(false);
         }
@@ -226,10 +229,9 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                             <Button
                                 type="button"
                                 variant="danger"
-                                onClick={() => {
-                                    if (confirm("Tem certeza que deseja sair?")) {
-                                        logout();
-                                    }
+                                onClick={async () => {
+                                    if (!(await confirm('Tem certeza que deseja sair?'))) return;
+                                    logout();
                                 }}
                                 className="bg-red-500/20 hover:bg-red-500/30 border border-red-400/20 text-red-100 shadow-none backdrop-blur-sm w-full md:w-auto justify-start md:justify-center"
                                 icon={<LogOut size={16} />}
@@ -344,12 +346,11 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                         type="button"
                         variant="secondary"
                         onClick={async () => {
-                            if (confirm('Isso irá apagar todas as tarefas locais e baixar novamente. Continuar?')) {
-                                const allTasks = await dbService.getAll('tasks');
-                                await dbService.saveAll('tasks', []);
-                                alert('Tarefas limpas. O sistema irá sincronizar novamente em instantes.');
-                                window.location.reload();
-                            }
+                            if (!(await confirm('Isso irá apagar todas as tarefas locais e baixar novamente. Continuar?'))) return;
+                            const allTasks = await dbService.getAll('tasks');
+                            await dbService.saveAll('tasks', []);
+                            toast.success('Tarefas limpas. O sistema irá sincronizar novamente em instantes.');
+                            window.location.reload();
                         }}
                         className="bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30 border border-transparent"
                         icon={<RefreshCw size={16} />}
