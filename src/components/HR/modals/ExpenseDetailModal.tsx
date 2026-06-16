@@ -7,11 +7,8 @@ import { formatDateOnly, formatDateTime } from '../../../utils/dateUtils';
 import { formatCurrency } from '../../../utils/formatUtils';
 import { getUserName } from '../utils';
 import { toast } from 'sonner';
-import { logger } from '../../../utils/logger';
 import { useConfirm } from '../../../hooks/useConfirm';
 import { notifyError } from '../../../utils/notifyError';
-
-const log = logger.child('ExpenseDetailModal');
 
 interface ExpenseDetailModalProps {
     expense: ExpenseReport | null;
@@ -56,8 +53,7 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
             const docs = await DolibarrService.fetchDocuments(config, 'expensereport', expense.id, expense.ref);
             setDocuments(Array.isArray(docs) ? docs : []);
         } catch (e) {
-            log.error("Failed to load documents", e);
-            toast.error("Erro ao carregar documentos");
+            notifyError('Carregar documentos', e);
         } finally {
             setIsLoadingDocs(false);
         }
@@ -108,8 +104,7 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
             toast.success("Arquivo enviado!");
             loadDocuments();
         } catch (e) {
-            log.error("Failed to upload document", e);
-            toast.error("Erro ao enviar arquivo");
+            notifyError('Enviar arquivo', e);
         }
     };
 
