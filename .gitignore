@@ -52,6 +52,8 @@ screenshots/
 *.png
 *.jpg
 *.jpeg
+# EXCEÇÃO: baselines de regressão visual (Playwright) DEVEM ser versionadas (sobrepõe o *.png acima).
+!tests/visual/**/*.png
 
 # Claude Code / AI tools
 .claude/
