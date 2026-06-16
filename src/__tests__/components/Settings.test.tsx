@@ -8,6 +8,21 @@ import type { DolibarrConfig } from '../../types';
 
 const mockLogout = vi.fn();
 const mockSetConfig = vi.fn();
+const mockToastSuccess = vi.fn();
+const mockToastError = vi.fn();
+const mockNotifyError = vi.fn();
+
+vi.mock('sonner', () => ({
+    toast: {
+        success: (...args: any[]) => mockToastSuccess(...args),
+        error: (...args: any[]) => mockToastError(...args),
+        info: vi.fn(),
+    },
+}));
+
+vi.mock('../../utils/notifyError', () => ({
+    notifyError: (...args: any[]) => mockNotifyError(...args),
+}));
 
 vi.mock('../../context/DolibarrContext', () => ({
     useDolibarr: () => ({ logout: mockLogout, setConfig: mockSetConfig }),
@@ -19,7 +34,14 @@ vi.mock('../../services/dolibarrService', () => ({
 
 vi.mock('../../services/uiConfigService', () => ({
     getUiConfig: vi.fn(() => Promise.resolve(null)),
-    updateUiConfig: vi.fn(),
+    updateUiConfig: vi.fn(() => Promise.resolve({ companyName: '', logoText: '' })),
+}));
+
+vi.mock('../../services/dbService', () => ({
+    dbService: {
+        getAll: vi.fn(() => Promise.resolve([])),
+        saveAll: vi.fn(() => Promise.resolve()),
+    },
 }));
 
 vi.mock('../../hooks/useOrgBranding', () => ({
@@ -125,5 +147,82 @@ describe('Settings — in-app confirm/alert (refactor #335)', () => {
         await user.click(screen.getByText('Cancelar'));
 
         expect(mockLogout).not.toHaveBeenCalled();
+    });
+
+    it('never invokes native window.alert or window.confirm during interactions', async () => {
+        const alertSpy = vi.spyOn(window, 'alert');
+        const confirmSpy = vi.spyOn(window, 'confirm');
+        const user = userEvent.setup();
+        renderWithProvider();
+
+        await user.click(screen.getByText('Sair'));
+        await screen.findByRole('dialog');
+        await user.click(screen.getByText('Cancelar'));
+
+        await user.click(screen.getByText('Forçar Ressincronização de Tarefas'));
+        await screen.findByRole('dialog');
+        await user.click(screen.getByText('Cancelar'));
+
+        expect(alertSpy).not.toHaveBeenCalled();
+        expect(confirmSpy).not.toHaveBeenCalled();
+        alertSpy.mockRestore();
+        confirmSpy.mockRestore();
+    });
+
+    it('shows toast.success after confirming resync', async () => {
+        const reloadSpy = vi.fn();
+        Object.defineProperty(window, 'location', {
+            value: { reload: reloadSpy },
+            writable: true,
+        });
+        const user = userEvent.setup();
+        renderWithProvider();
+
+        await user.click(screen.getByText('Forçar Ressincronização de Tarefas'));
+        await screen.findByRole('dialog');
+        await user.click(screen.getByText('Confirmar'));
+
+        await waitFor(() => {
+            expect(mockToastSuccess).toHaveBeenCalledWith(
+                'Tarefas limpas. O sistema irá sincronizar novamente em instantes.'
+            );
+        });
+    });
+
+    it('shows toast.success after saving profile edits', async () => {
+        const { DolibarrService } = await import('../../services/dolibarrService');
+        vi.mocked(DolibarrService.updateUser).mockResolvedValueOnce({} as any);
+
+        const user = userEvent.setup();
+        renderWithProvider();
+
+        await user.click(screen.getByText('Editar Dados'));
+
+        const emailInput = await screen.findByPlaceholderText('seu@email.com');
+        await user.clear(emailInput);
+        await user.type(emailInput, 'new@test.com');
+
+        await user.click(screen.getByText('Salvar'));
+
+        await waitFor(() => {
+            expect(mockToastSuccess).toHaveBeenCalledWith('Perfil atualizado com sucesso!');
+        });
+    });
+
+    it('calls notifyError (not toast.error/alert) when profile save throws', async () => {
+        const { DolibarrService } = await import('../../services/dolibarrService');
+        vi.mocked(DolibarrService.updateUser).mockRejectedValueOnce(new Error('fail'));
+
+        const user = userEvent.setup();
+        renderWithProvider();
+
+        await user.click(screen.getByText('Editar Dados'));
+        const emailInput = await screen.findByPlaceholderText('seu@email.com');
+        await user.type(emailInput, 'x@y.com');
+        await user.click(screen.getByText('Salvar'));
+
+        await waitFor(() => {
+            expect(mockNotifyError).toHaveBeenCalledWith('Atualizar perfil', expect.any(Error));
+        });
     });
 });

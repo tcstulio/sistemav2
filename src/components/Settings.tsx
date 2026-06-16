@@ -62,7 +62,7 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
             setOrgBranding(updated); // atualiza o branding (ex.: Sidebar) na hora, p/ todos os consumidores
             toast.success('Identidade da empresa atualizada para todos os usuários.');
         } catch (e: any) {
-            toast.error('Falha ao salvar (requer permissão de admin).');
+            notifyError('Salvar identidade da empresa', e);
         } finally {
             setSavingOrg(false);
         }
