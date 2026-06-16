@@ -14,6 +14,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useUsers, useCustomers, useInvoices, useOrders, useTickets } from '../../hooks/dolibarr';
+import { useConfirm } from '../../hooks/useConfirm';
 import { toast } from 'sonner';
 import { logger } from '../../utils/logger';
 
@@ -67,6 +68,8 @@ const EmailView: React.FC = () => {
 
     // Unread Counts
     const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+
+    const confirm = useConfirm();
 
     // CRM & Automations Data
     const { config } = useDolibarr();
@@ -425,7 +428,7 @@ const EmailView: React.FC = () => {
 
     const handleBulkDelete = async () => {
         if (!selectedAccountId || selectedUids.size === 0) return;
-        if (!window.confirm(`Excluir ${selectedUids.size} mensagem(ns)?`)) return;
+        if (!(await confirm({ message: `Excluir ${selectedUids.size} mensagem(ns)?`, danger: true }))) return;
         try {
             await EmailService.deleteMessages(selectedAccountId, selectedFolder, Array.from(selectedUids));
             toast.success(`${selectedUids.size} mensagem(ns) excluída(s)`);
