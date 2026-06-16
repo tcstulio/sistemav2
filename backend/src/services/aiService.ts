@@ -165,7 +165,7 @@ class GoogleProvider implements AIProvider {
 
             const agentPrompt = agentConfigService.getSystemPrompt();
             const prompt = `
-                Você é o Marciano — o agente de inteligência artificial do CoolGroove System (ERP Dolibarr).
+                Você é o Marciano — o agente de inteligência artificial do CoolGroove (ERP Dolibarr).
                 Responda de forma prestativa, profissional e concisa em Português do Brasil.
                 ${agentPrompt ? '\n' + agentPrompt + '\n' : ''}
                 CONTEXTO DE DADOS:
@@ -857,7 +857,7 @@ export class LocalProvider implements AIProvider {
         while (iterations < MAX_ITERATIONS) {
             const agentPrompt = agentConfigService.getSystemPrompt();
             let messages = [
-                { role: 'system', content: `Você é o Marciano — agente IA do CoolGroove System (ERP Dolibarr). Use Português. ${agentPrompt ? '\n' + agentPrompt : ''}\n\nCONTEXTO: ${currentContext}\n\n${toolsPrompt}` },
+                { role: 'system', content: `Você é o Marciano — agente IA do CoolGroove (ERP Dolibarr). Use Português. ${agentPrompt ? '\n' + agentPrompt : ''}\n\nCONTEXTO: ${currentContext}\n\n${toolsPrompt}` },
                 ...currentHistory.map(msg => ({
                     role: msg.role === 'model' ? 'assistant' : msg.role,
                     content: msg.parts

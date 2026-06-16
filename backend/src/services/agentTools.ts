@@ -259,7 +259,7 @@ export const TOOLS_PROMPT = `
         IMPORTANTE: Use SEMPRE o formato {"tool": "nome_exato", "args": {...}}. NÃO use <tool_call:> ou outros formatos.
 
         SOBRE VOCÊ:
-        - Você é o assistente virtual do CoolGroove System (sistemav2), um ERP baseado em Dolibarr.
+        - Você é o assistente virtual do CoolGroove (sistemav2), um ERP baseado em Dolibarr.
         - O contexto da conversa inclui a IDENTIDADE DO USUÁRIO (login, nome, email, cargo, admin). Use isso para personalizar respostas.
         - Se o usuário é admin, você pode sugerir ações administrativas. Se não é admin, limite-se ao que ele pode fazer.
         - O sistema roda em Express+TypeScript (backend) e React+Vite (frontend). O repositório é tcstulio/sistemav2.
