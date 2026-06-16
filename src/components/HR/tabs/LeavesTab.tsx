@@ -4,9 +4,9 @@ import { Plane, Thermometer, Sun, Calendar, User, Plus, CheckCircle2, Send, XCir
 import { useDolibarr } from '../../../context/DolibarrContext';
 import { DolibarrService } from '../../../services/dolibarrService';
 import { formatDateOnly } from '../../../utils/dateUtils';
-import { logger } from '../../../utils/logger';
-
-const log = logger.child('LeavesTab');
+import { useConfirm } from '../../../hooks/useConfirm';
+import { notifyError } from '../../../utils/notifyError';
+import { toast } from 'sonner';
 
 interface LeavesTabProps {
     leaveRequests: LeaveRequest[];
@@ -24,6 +24,7 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
     onOpenLeaveModal
 }) => {
     const { config } = useDolibarr();
+    const confirm = useConfirm();
     const [processingId, setProcessingId] = React.useState<string | null>(null);
 
     const getUserName = (id: string) => {
@@ -50,32 +51,32 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
     };
 
     const handleValidate = async (id: string) => {
-        if (!config || !window.confirm("Enviar solicitação para aprovação?")) return;
+        if (!config || !(await confirm('Enviar solicitação para aprovação?'))) return;
         setProcessingId(id);
         try {
             await DolibarrService.validateLeaveRequest(config, id);
-            alert("Solicitação enviada!");
-        } catch (e) { log.error("Failed to validate leave request", e); alert("Erro ao enviar."); }
+            toast.success('Solicitação enviada!');
+        } catch (e) { notifyError('Enviar solicitação para aprovação', e); }
         finally { setProcessingId(null); }
     };
 
     const handleApprove = async (id: string) => {
-        if (!config || !window.confirm("Aprovar esta solicitação?")) return;
+        if (!config || !(await confirm('Aprovar esta solicitação?'))) return;
         setProcessingId(id);
         try {
             await DolibarrService.approveLeaveRequest(config, id);
-            alert("Solicitação aprovada!");
-        } catch (e) { log.error("Failed to approve leave request", e); alert("Erro ao aprovar."); }
+            toast.success('Solicitação aprovada!');
+        } catch (e) { notifyError('Aprovar solicitação', e); }
         finally { setProcessingId(null); }
     };
 
     const handleRefuse = async (id: string) => {
-        if (!config || !window.confirm("Recusar esta solicitação?")) return;
+        if (!config || !(await confirm('Recusar esta solicitação?'))) return;
         setProcessingId(id);
         try {
             await DolibarrService.refuseLeaveRequest(config, id);
-            alert("Solicitação recusada!");
-        } catch (e) { log.error("Failed to refuse leave request", e); alert("Erro ao recusar."); }
+            toast.success('Solicitação recusada!');
+        } catch (e) { notifyError('Recusar solicitação', e); }
         finally { setProcessingId(null); }
     };
 
