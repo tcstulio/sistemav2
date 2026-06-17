@@ -5,6 +5,7 @@ import { messageService } from './legacy/messageService';
 import { emailService } from './emailService'; // New
 import { socketService } from './socketService';
 import { logger } from '../utils/logger';
+import { config } from '../config/env';
 
 const log = logger.child('SchedulerService');
 
@@ -477,6 +478,12 @@ class SchedulerService {
         scheduledAt?: number;
         delayBetween?: number;
     }): Promise<ScheduledMessage[]> {
+        // Defesa em profundidade: limita destinatários por broadcast (anti-spam em massa).
+        // A rota já valida via Zod, mas o serviço é chamado de outros pontos (ex.: agente).
+        if (params.chatIds.length > config.schedulerMaxBroadcast) {
+            throw new Error(`Broadcast excede o limite de ${config.schedulerMaxBroadcast} destinatários (recebidos: ${params.chatIds.length})`);
+        }
+
         const broadcastId = `broadcast_${Date.now()}`;
         const baseTime = params.scheduledAt || Date.now();
         const delay = params.delayBetween || 3000; // 3s default
