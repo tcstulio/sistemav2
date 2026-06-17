@@ -53,6 +53,21 @@ export interface LatestFinancialAnalysis {
     error?: string;
 }
 
+// Agenda da automação de Análise Financeira IA (#497).
+// Espelha o shape de PUT/GET /api/ai/analyze/financial-analysis/automation-config.
+export interface FinancialAnalysisAutomationSchedule {
+    dayOfWeek: number; // 0 = Domingo, 6 = Sábado
+    hour: number; // 0-23
+    minute: number; // 0-59
+}
+
+export interface FinancialAnalysisAutomationConfig {
+    enabled: boolean;
+    schedule: FinancialAnalysisAutomationSchedule;
+    lastRunAt: string | null; // ISO timestamp ou null
+    lastRunStatus: 'success' | 'error' | null;
+}
+
 const API_URL = '/api/ai';
 
 export const AiService = {
@@ -142,6 +157,31 @@ export const AiService = {
             return (response.data as LatestFinancialAnalysis | null) ?? null;
         } catch (error: any) {
             handleAiError('Última análise financeira', error);
+            return null;
+        }
+    },
+
+    // Lê a config da automação de Análise Financeira IA (#497).
+    getFinancialAnalysisAutomationConfig: async (): Promise<FinancialAnalysisAutomationConfig | null> => {
+        try {
+            const response = await axios.get(`${API_URL}/analyze/financial-analysis/automation-config`, getAuthHeaders());
+            return response.data as FinancialAnalysisAutomationConfig;
+        } catch (error: any) {
+            handleAiError('Config de automação financeira', error);
+            return null;
+        }
+    },
+
+    // Atualiza (parcial) a config da automação de Análise Financeira IA (#497).
+    // Retorna a config mergeada ou null em caso de erro.
+    updateFinancialAnalysisAutomationConfig: async (
+        patch: Partial<FinancialAnalysisAutomationConfig>
+    ): Promise<FinancialAnalysisAutomationConfig | null> => {
+        try {
+            const response = await axios.put(`${API_URL}/analyze/financial-analysis/automation-config`, patch, getAuthHeaders());
+            return response.data as FinancialAnalysisAutomationConfig;
+        } catch (error: any) {
+            handleAiError('Salvar config de automação financeira', error);
             return null;
         }
     },
