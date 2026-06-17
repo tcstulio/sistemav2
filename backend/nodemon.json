@@ -14,5 +14,5 @@
         "src/services/temp_*",
         "data"
     ],
-    "exec": "ts-node src/server.ts"
+    "exec": "tsx src/server.ts"
 }
