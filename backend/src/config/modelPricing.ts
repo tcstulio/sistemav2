@@ -26,6 +26,7 @@ const PRICING: Record<string, ModelPricing> = {
     'gemini-1.5-pro':       { inputPer1k: 0.00125, outputPer1k: 0.005 },
 
     // Z.AI / GLM
+    'glm-5.2':              { inputPer1k: 0.001, outputPer1k: 0.001 },
     'glm-5.1':              { inputPer1k: 0.001, outputPer1k: 0.001 },
     'glm-4.6':              { inputPer1k: 0.0006, outputPer1k: 0.0022 },
     'glm-4.5':              { inputPer1k: 0.0006, outputPer1k: 0.0022 },
