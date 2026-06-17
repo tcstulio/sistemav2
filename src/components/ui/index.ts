@@ -29,6 +29,7 @@ export { ConfirmDeleteButton } from './ConfirmDeleteButton';
 
 // List Controls (busca + ordenação + filtro padronizados)
 export { ListToolbar } from './ListToolbar';
+export { ListTotalBar } from './ListTotalBar';
 
 // Data Display
 export { StatusBadge } from './StatusBadge';

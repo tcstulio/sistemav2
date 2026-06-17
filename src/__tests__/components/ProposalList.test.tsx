@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import ProposalList from '../../components/ProposalList';
 import { DolibarrService } from '../../services/dolibarrService';
+import { useProposals } from '../../hooks/dolibarr';
+import { formatCurrency } from '../../utils/formatUtils';
 
 const { toastMock } = vi.hoisted(() => ({
     toastMock: {
@@ -162,6 +164,58 @@ describe('ProposalList — Duplicate button', () => {
         await waitFor(() => {
             expect(DolibarrService.cloneProposal).not.toHaveBeenCalled();
             expect(toastMock.success).not.toHaveBeenCalled();
+        });
+    });
+});
+
+describe('ProposalList — Total bar (#486)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('renders the total bar with the sum of all visible proposals as BRL', async () => {
+        renderComponent();
+
+        const totalBar = await screen.findByTestId('list-total-bar');
+        expect(totalBar).toBeTruthy();
+
+        const totalValue = screen.getByTestId('list-total-value');
+        expect(totalValue.textContent).toBe(formatCurrency(1200));
+    });
+
+    it('shows R$ 0,00 when there are no proposals', async () => {
+        vi.mocked(useProposals).mockReturnValue({
+            data: [],
+            isRefetching: false,
+            refetch: vi.fn(),
+        } as any);
+
+        renderComponent();
+
+        const totalValue = await screen.findByTestId('list-total-value');
+        expect(totalValue.textContent).toBe(formatCurrency(0));
+    });
+
+    it('updates the total when filtering by status tab', async () => {
+        vi.mocked(useProposals).mockReturnValue({
+            data: [
+                { id: 'prop1', ref: 'PR001', socid: 'cust1', date: 1700000000, total_ht: 1000, total_ttc: 1200, statut: '1', project_id: null, fk_user_author: null },
+                { id: 'prop2', ref: 'PR002', socid: 'cust1', date: 1700000001, total_ht: 500, total_ttc: 600, statut: '2', project_id: null, fk_user_author: null },
+            ],
+            isRefetching: false,
+            refetch: vi.fn(),
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        const totalValue = await screen.findByTestId('list-total-value');
+        expect(totalValue.textContent).toBe(formatCurrency(1800));
+
+        await user.click(screen.getByText('Assinadas'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('list-total-value').textContent).toBe(formatCurrency(600));
         });
     });
 });

@@ -26,6 +26,7 @@ import { Tabs, Tab } from './ui/Tabs';
 import { EmptyState } from './ui/EmptyState';
 import { StatusBadge } from './ui/StatusBadge';
 import { ListToolbar } from './ui/ListToolbar';
+import { ListTotalBar } from './ui/ListTotalBar';
 import { ConfirmDeleteButton } from './ui/ConfirmDeleteButton';
 import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
@@ -638,6 +639,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                     })}
                 </div>
             )}
+            <ListTotalBar total={filteredProposals.reduce((sum, prop) => sum + (prop.total_ttc ?? 0), 0)} />
         </>
     );
 

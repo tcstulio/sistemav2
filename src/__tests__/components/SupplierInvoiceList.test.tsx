@@ -6,6 +6,7 @@ import { ConfirmProvider } from '../../hooks/useConfirm';
 import { DolibarrService } from '../../services/dolibarrService';
 import { useSupplierInvoices, useSuppliers } from '../../hooks/dolibarr';
 import type { SupplierInvoice } from '../../types';
+import { formatCurrency } from '../../utils/formatUtils';
 
 vi.mock('../../services/dolibarrService', () => ({
     DolibarrService: {
@@ -248,5 +249,44 @@ describe('SupplierInvoiceList', () => {
 
         confirmSpy.mockRestore();
         alertSpy.mockRestore();
+    });
+});
+
+describe('SupplierInvoiceList — Total bar (#486)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('renders the total bar with the sum of all visible invoices as BRL', () => {
+        renderWithProvider([mockDraftInvoice, mockUnpaidInvoice, mockPaidInvoice]);
+
+        const totalBar = screen.getByTestId('list-total-bar');
+        expect(totalBar).toBeTruthy();
+
+        const totalValue = screen.getByTestId('list-total-value');
+        // 1500 + 2500 + 800 = 4800
+        expect(totalValue.textContent).toBe(formatCurrency(4800));
+    });
+
+    it('shows R$ 0,00 when there are no invoices', () => {
+        renderWithProvider([]);
+
+        const totalValue = screen.getByTestId('list-total-value');
+        expect(totalValue.textContent).toBe(formatCurrency(0));
+    });
+
+    it('updates the total when filtering by status tab', async () => {
+        const user = userEvent.setup();
+        renderWithProvider([mockDraftInvoice, mockUnpaidInvoice, mockPaidInvoice]);
+
+        // Initially shows sum of all (1500 + 2500 + 800 = 4800)
+        expect(screen.getByTestId('list-total-value').textContent).toBe(formatCurrency(4800));
+
+        // Filter to "Pagas" (statut = '2')
+        await user.click(screen.getByText('Pagas'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('list-total-value').textContent).toBe(formatCurrency(800));
+        });
     });
 });

@@ -10,7 +10,7 @@ import { PaginationControls } from './common/PaginationControls';
 import { useListControls } from '../hooks/useListControls';
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, StatusBadge, ListToolbar, ConfirmDeleteButton } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, StatusBadge, ListToolbar, ListTotalBar, ConfirmDeleteButton } from './ui';
 import type { StatusConfig } from './ui';
 
 const supplierInvoiceStatuses: Record<string, StatusConfig> = {
@@ -467,6 +467,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                     })}
                 </div>
             )}
+            <ListTotalBar total={filteredInvoices.reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0)} />
         </>
     );
 

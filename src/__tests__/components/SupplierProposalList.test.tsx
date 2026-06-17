@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import SupplierProposalList from '../../components/SupplierProposalList';
 import { DolibarrService } from '../../services/dolibarrService';
+import { formatCurrency } from '../../utils/formatUtils';
 
 // --- Mock sonner so we can assert toast calls instead of native alert ---
 const { toastMock } = vi.hoisted(() => ({
@@ -238,5 +239,74 @@ describe('SupplierProposalList — toast/notifyError (no native alert/confirm)',
             );
         });
         expect(window.alert).not.toHaveBeenCalled();
+    });
+});
+
+describe('SupplierProposalList — Total bar (#486)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.spyOn(window, 'alert').mockImplementation(() => {});
+        vi.spyOn(window, 'confirm').mockImplementation(() => false);
+    });
+
+    it('renders the total bar with the sum of all visible proposals as BRL', async () => {
+        const { useSupplierProposals } = await import('../../hooks/dolibarr');
+        vi.mocked(useSupplierProposals).mockReturnValue({
+            data: [
+                { id: 'prop1', ref: 'SP001', socid: 'sup1', datec: 1700000000, total_ht: 1500, statut: '1', project_id: null, fk_user_author: null },
+                { id: 'prop2', ref: 'SP002', socid: 'sup1', datec: 1700000001, total_ht: 500, statut: '0', project_id: null, fk_user_author: null },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+
+        renderComponent();
+
+        const totalBar = await screen.findByTestId('list-total-bar');
+        expect(totalBar).toBeTruthy();
+
+        const totalValue = screen.getByTestId('list-total-value');
+        // 1500 + 500 = 2000
+        expect(totalValue.textContent).toBe(formatCurrency(2000));
+    });
+
+    it('shows R$ 0,00 when there are no proposals', async () => {
+        const { useSupplierProposals } = await import('../../hooks/dolibarr');
+        vi.mocked(useSupplierProposals).mockReturnValue({
+            data: [],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+
+        renderComponent();
+
+        const totalValue = await screen.findByTestId('list-total-value');
+        expect(totalValue.textContent).toBe(formatCurrency(0));
+    });
+
+    it('updates the total when filtering by status tab', async () => {
+        const { useSupplierProposals } = await import('../../hooks/dolibarr');
+        vi.mocked(useSupplierProposals).mockReturnValue({
+            data: [
+                { id: 'prop1', ref: 'SP001', socid: 'sup1', datec: 1700000000, total_ht: 1500, statut: '1', project_id: null, fk_user_author: null },
+                { id: 'prop2', ref: 'SP002', socid: 'sup1', datec: 1700000001, total_ht: 500, statut: '0', project_id: null, fk_user_author: null },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        // Initially shows sum of all (1500 + 500 = 2000)
+        const totalValue = await screen.findByTestId('list-total-value');
+        expect(totalValue.textContent).toBe(formatCurrency(2000));
+
+        // Filter to "Rascunhos" (statut = '0')
+        await user.click(screen.getByText('Rascunhos'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('list-total-value').textContent).toBe(formatCurrency(500));
+        });
     });
 });

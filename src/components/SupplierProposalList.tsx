@@ -15,7 +15,7 @@ import { useListControls } from '../hooks/useListControls';
 import { notifyError } from '../utils/notifyError';
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, StatusBadge, ListToolbar, ConfirmDeleteButton } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, StatusBadge, ListToolbar, ListTotalBar, ConfirmDeleteButton } from './ui';
 import type { StatusConfig } from './ui';
 
 const supplierProposalStatuses: Record<string, StatusConfig> = {
@@ -481,28 +481,33 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
         );
     };
 
-    const renderListContent = filteredProposals.length === 0 ? (
-        <div className="p-6">
-            <EmptyState
-                icon={FileText}
-                title="Nenhuma solicitação encontrada"
-                description="Tente ajustar os filtros ou crie uma nova solicitação."
-                action={<Button onClick={handleOpenCreate} icon={<Plus size={16} />}>Nova Solicitação</Button>}
-            />
-        </div>
-    ) : (
-        <AutoSizer>
-            {({ height, width }) => (
-                <ListWindow
-                    height={height}
-                    width={width}
-                    itemCount={filteredProposals.length}
-                    itemSize={100}
-                >
-                    {Row}
-                </ListWindow>
+    const renderListContent = (
+        <>
+            {filteredProposals.length === 0 ? (
+                <div className="p-6">
+                    <EmptyState
+                        icon={FileText}
+                        title="Nenhuma solicitação encontrada"
+                        description="Tente ajustar os filtros ou crie uma nova solicitação."
+                        action={<Button onClick={handleOpenCreate} icon={<Plus size={16} />}>Nova Solicitação</Button>}
+                    />
+                </div>
+            ) : (
+                <AutoSizer>
+                    {({ height, width }) => (
+                        <ListWindow
+                            height={height}
+                            width={width}
+                            itemCount={filteredProposals.length}
+                            itemSize={100}
+                        >
+                            {Row}
+                        </ListWindow>
+                    )}
+                </AutoSizer>
             )}
-        </AutoSizer>
+            <ListTotalBar total={filteredProposals.reduce((sum, prop) => sum + (prop.total_ht ?? 0), 0)} />
+        </>
     );
 
     const renderDetail = selectedProposal ? (
