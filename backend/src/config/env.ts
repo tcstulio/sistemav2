@@ -38,6 +38,9 @@ export const config = {
     // Se vazio, a verificação é pulada (compat). Defina p/ exigir header x-webhook-secret.
     webhookSecret: process.env.WEBHOOK_SECRET || '',
 
+    // Cap de destinatários por broadcast do scheduler (anti-spam em massa). Configurável.
+    schedulerMaxBroadcast: parseInt(process.env.SCHEDULER_MAX_BROADCAST || '500', 10),
+
 
     // Banco Inter
     interClientId: process.env.INTER_CLIENT_ID || '',

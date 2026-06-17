@@ -16,8 +16,8 @@ import { join } from 'path';
 const CONFIG = {
   url: 'https://app.coolgroove.com.br',
   credentials: {
-    username: 'tulio.silva',
-    password: '123Eumesmo!2'
+    username: process.env.COOLGROOVE_USER || 'tulio.silva',
+    password: process.env.COOLGROOVE_PASSWORD || ''
   },
   slowMo: 300,
   screenshotDir: 'test-reports/coolgroove-exploration/screenshots',
