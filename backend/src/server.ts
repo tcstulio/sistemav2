@@ -273,6 +273,21 @@ app.get('/health', async (req, res) => {
         }
     })());
 
+    checks.push((async () => {
+        try {
+            const { sessionService } = require('./services/legacy/sessionService');
+            const sessions = sessionService.getAllSessions();
+            if (sessions.length === 0) {
+                health.dependencies.whatsapp = 'not_configured';
+            } else {
+                // 'WORKING' = sessão conectada; qualquer outro estado (SCAN_QR_CODE, STOPPED…) = degradado
+                health.dependencies.whatsapp = sessions.some((s: any) => s.status === 'WORKING') ? 'ok' : 'degraded';
+            }
+        } catch {
+            health.dependencies.whatsapp = 'unavailable';
+        }
+    })());
+
     await Promise.allSettled(checks);
 
     const hasErrors = Object.values(health.dependencies).some((v: any) => v === 'error');
