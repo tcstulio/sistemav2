@@ -308,6 +308,7 @@ export interface Task {
     killedAt?: string;
     queuePriority?: number;
     planReason?: string;
+    _lastNotifiedStatus?: TaskStatus; // idempotência das notificações de transição (não re-notifica o mesmo status)
     phase: TaskPhase;
     attempts: AttemptResult[];
     synthesisAttempt?: number;
@@ -465,6 +466,35 @@ class TaskRunnerService {
             error: task.error,
             updatedAt: task.updatedAt,
         });
+
+        // Empurra o PRÓXIMO PASSO ao operador nas transições do ciclo de vida (notificação in-app).
+        // Resolve "acompanhar todo o processo": antes 'reviewing' (aguardando merge) e 'failed'
+        // terminavam em silêncio. Idempotente por status (não re-notifica o mesmo) + best-effort.
+        try {
+            const NOTIFY: Partial<Record<TaskStatus, { title: string; msg: string; pri: 'low' | 'medium' | 'high' }>> = {
+                reviewing: { title: `Task #${task.issueNumber} aguardando revisão`, msg: task.prNumber ? `PR #${task.prNumber} pronto — aguarda sua revisão/merge.` : 'Aguarda revisão humana.', pri: 'high' },
+                merged: { title: `Task #${task.issueNumber} concluída`, msg: task.prNumber ? `PR #${task.prNumber} mergeado na main.` : 'Mergeada na main.', pri: 'medium' },
+                failed: { title: `Task #${task.issueNumber} falhou`, msg: task.error || 'A execução falhou.', pri: 'high' },
+                rejected: { title: `Task #${task.issueNumber} rejeitada`, msg: 'Rejeitada na revisão.', pri: 'low' },
+            };
+            const spec = NOTIFY[task.status];
+            if (spec && task._lastNotifiedStatus !== task.status) {
+                task._lastNotifiedStatus = task.status;
+                this.save(); // persiste a idempotência (sobrevive a restart — não re-notifica)
+                const { notificationService } = require('./notificationService');
+                notificationService.create({
+                    event: 'agent.action',
+                    title: spec.title,
+                    message: spec.msg,
+                    channels: ['in-app'],
+                    priority: spec.pri,
+                    entityType: 'opencode-task',
+                    entityId: String(task.issueNumber),
+                    senderName: 'TaskRunner',
+                    linkTo: '/tasks',
+                }).catch(() => { /* notificação é best-effort */ });
+            }
+        } catch { /* nunca quebra o emit de status */ }
     }
 
     /**
