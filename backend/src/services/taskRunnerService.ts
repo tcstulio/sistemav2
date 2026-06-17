@@ -1635,37 +1635,42 @@ Return ONLY a JSON:
             // Roteia pela fila serial do aiJobService (#320 item 3): o listener de
             // tool-calls do aiService é global, então o Judge não pode rodar em
             // paralelo com um job de chat — aqui ele espera a vez dele na fila.
-            const judgeResult = await aiJobService.runAndWait(
-                () => aiService.generateReply(history, '', undefined, 'chat'),
-                `judge-pr-${task.prNumber}`,
-            );
-            // Métricas de Judge (#305): registra tokens e custo USD por task.
-            // O modelName vem do GenerateReplyResult (TODO backend ainda não retorna,
-            // mas calcCostUsd retorna 0 para modelo desconhecido — não bloqueia).
-            try {
-                const modelName = (judgeResult as any).model || (judgeResult as any).modelUsed;
-                recordUsage(task.issueNumber, judgeResult.usage, modelName);
-            } catch { /* não bloqueia Judge se tracker falhar */ }
-            const reply = judgeResult.text;
-            const jsonMatch = reply.match(/\{[\s\S]*\}/);
+            // O Judge pode devolver saída não-parseável (sem JSON / JSON quebrado) — um hiccup do LLM
+            // que ANTES estacionava a task em 'reviewing' sem score, sem retry, sem auto-fix (deixava
+            // o PR preso pra sempre — visto no teste autônomo #486). Agora RE-AVALIA até 3x antes de
+            // desistir, e o fallback por regex também cobre o caso de NÃO vir JSON nenhum.
             let result: any = null;
-            if (jsonMatch) {
+            for (let parseTry = 1; parseTry <= 3 && !(result && typeof result.score === 'number'); parseTry++) {
+                const judgeResult = await aiJobService.runAndWait(
+                    () => aiService.generateReply(history, '', undefined, 'chat'),
+                    `judge-pr-${task.prNumber}${parseTry > 1 ? `-retry${parseTry}` : ''}`,
+                );
+                // Métricas de Judge (#305): registra tokens e custo USD por task.
                 try {
-                    result = JSON.parse(jsonMatch[0]);
-                } catch {
-                    // JSON malformado (ex.: aspas/quebra de linha não-escapadas no texto do review).
-                    // Fallback robusto: recupera o score por regex (e o review que der) — senão uma
-                    // falha de FORMATAÇÃO do LLM bloquearia o auto-merge de um PR válido (foi o que
-                    // travou o canário de frontend #399/#400).
-                    const scoreM = reply.match(/"score"\s*:\s*(\d+(?:\.\d+)?)/);
+                    const modelName = (judgeResult as any).model || (judgeResult as any).modelUsed;
+                    recordUsage(task.issueNumber, judgeResult.usage, modelName);
+                } catch { /* não bloqueia Judge se tracker falhar */ }
+                const reply = judgeResult.text;
+                const jsonMatch = reply.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    try { result = JSON.parse(jsonMatch[0]); } catch { /* tenta o regex abaixo */ }
+                }
+                // Fallback por regex: cobre JSON malformado E ausência total de JSON (recupera o score).
+                // Sem isso, uma falha de FORMATAÇÃO do LLM bloqueava o auto-merge de um PR válido (#399/#400).
+                if (!(result && typeof result.score === 'number')) {
+                    const scoreM = reply.match(/"?score"?\s*[:=]\s*(\d+(?:\.\d+)?)/i);
                     if (scoreM) {
                         result = {
                             score: Number(scoreM[1]),
-                            review: (reply.match(/"review"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1] || 'Review recuperado de JSON malformado.').slice(0, 2000),
-                            approved: /"approved"\s*:\s*true/.test(reply),
+                            review: (reply.match(/"review"\s*:\s*"((?:[^"\\]|\\.)*)"/)?.[1] || reply.slice(0, 500)).slice(0, 2000),
+                            approved: /"?approved"?\s*[:=]\s*true/i.test(reply),
                         };
-                        this.recordEvent(task, 'judge_score', `Judge: JSON malformado — score ${result.score} recuperado por fallback (regex)`, { score: result.score, recovered: true });
+                        this.recordEvent(task, 'judge_score', `Judge: score ${result.score} recuperado por fallback regex (tentativa ${parseTry}/3)`, { score: result.score, recovered: true });
                     }
+                }
+                if (!(result && typeof result.score === 'number')) {
+                    result = null;
+                    this.recordEvent(task, 'judge_error', `Judge: saída não-parseável (tentativa ${parseTry}/3)${parseTry < 3 ? ' — re-avaliando' : ''}`);
                 }
             }
             if (result && typeof result.score === 'number') {
@@ -1704,9 +1709,10 @@ Return ONLY a JSON:
                     return;
                 }
             } else {
+                // Esgotou as 3 re-avaliações sem score parseável → escala p/ revisão humana (não estaciona em silêncio).
                 task.status = 'reviewing';
-                task.judgeReview = 'Judge failed to evaluate';
-                this.recordEvent(task, 'judge_error', 'Judge failed to evaluate (sem JSON / score irrecuperável)');
+                task.judgeReview = 'Judge falhou em avaliar após 3 tentativas — requer revisão humana.';
+                this.recordEvent(task, 'judge_error', 'Judge: 3 tentativas sem score parseável — escalado p/ revisão humana');
             }
         } catch (e: any) {
             log.error(`Judge error for #${task.issueNumber}`, e);
