@@ -230,8 +230,11 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
           } else {
             // Load User from Cache
             if (parsed.currentUser) {
-              // Determine if we need to force refresh rights
-              if (!parsed.currentUser.rights) {
+              // Determine if we need to force refresh rights OU o status de admin.
+              // Antes só re-buscava quando faltava `rights` — então um currentUser em cache SEM
+              // `admin` ficava não-admin pra sempre, escondendo toda a UI admin (Merge/Iniciar/etc.)
+              // mesmo pra quem É admin no Dolibarr. Agora também re-busca quando `admin` está ausente.
+              if (!parsed.currentUser.rights || parsed.currentUser.admin === undefined || parsed.currentUser.admin === null) {
                 try { // Synchronous refetch attempt
                   const freshUser = await DolibarrService.fetchCurrentUser(parsed, parsed.currentUser.login);
                   if (freshUser) {
