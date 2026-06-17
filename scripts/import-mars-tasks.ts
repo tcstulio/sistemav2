@@ -22,7 +22,7 @@ import https from 'https';
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 const DOLIBARR_URL = (process.env.DOLIBARR_URL || 'https://sistema.coolgroove.com.br/api/index.php').replace(/\/+$/, '/');
-const DOLIBARR_API_KEY = process.env.DOLIBARR_API_KEY || '26ecc09039bd0bfeb52b11003449a2deb4770482';
+const DOLIBARR_API_KEY = process.env.DOLIBARR_API_KEY || '';
 const PROJECT_REF = process.env.PROJECT_REF || 'TEMPLATE-MARS-WORKFLOW';
 const PROJECT_TITLE = process.env.PROJECT_TITLE || 'Template Mars - Workflow Operacional de Eventos';
 const DRY_RUN = process.env.DRY_RUN === '1';

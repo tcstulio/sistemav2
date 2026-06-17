@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // CONFIGURATION - EDIT THESE VALUES
 const DOLIBARR_URL = 'https://sistema.coolgroove.com.br'; // Retrieved from .env (API_URL root)
-const API_KEY = '26ecc09039bd0bfeb52b11003449a2deb4770482'; // Retrieved from .env
+const API_KEY = process.env.DOLIBARR_API_KEY || ''; // Retrieved from .env (set DOLIBARR_API_KEY)
 const CUSTOM_SYNC_PATH = '/custom_sync.php'; // Path to the script relative to DOLIBARR_URL root
 
 async function testSync(type) {

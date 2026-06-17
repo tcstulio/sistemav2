@@ -6,7 +6,7 @@ import https from 'https';
 // Please fill in your Dolibarr details here
 const API_URL = 'https://sistema.coolgroove.com.br/api/index.php';
 const CUSTOM_SYNC_URL = 'https://sistema.coolgroove.com.br/custom_sync.php';
-const API_KEY = '26ecc09039bd0bfeb52b11003449a2deb4770482'; // You can find this in your user profile
+const API_KEY = process.env.DOLIBARR_API_KEY || ''; // set DOLIBARR_API_KEY in your environment
 const TASK_ID = '718';
 
 // Ignore self-signed certificate errors (common in dev/local environments)

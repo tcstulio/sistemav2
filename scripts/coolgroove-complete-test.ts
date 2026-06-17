@@ -19,8 +19,8 @@ import { join } from 'path';
 const CONFIG = {
   url: 'https://app.coolgroove.com.br',
   credentials: {
-    username: 'tulio.silva',
-    password: '123Eumesmo!2'
+    username: process.env.COOLGROOVE_USER || 'tulio.silva',
+    password: process.env.COOLGROOVE_PASSWORD || ''
   },
   resolutions: {
     desktop: { width: 1920, height: 1080, name: 'Desktop' }
