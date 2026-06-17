@@ -79,6 +79,21 @@ vi.mock('../../services/agentActivityService', () => ({
     },
 }));
 
+const mockFinancialAnalysisStore = vi.hoisted(() => ({
+    getAnalysis: vi.fn(() => null),
+    getAutomationConfig: vi.fn(() => ({
+        enabled: false,
+        schedule: { dayOfWeek: 1, hour: 8, minute: 0 },
+        lastRunAt: null,
+        lastRunStatus: null,
+    })),
+    saveAutomationConfig: vi.fn((updates: any) => ({ ...updates })),
+}));
+
+vi.mock('../../services/financialAnalysisStore', () => ({
+    financialAnalysisStore: mockFinancialAnalysisStore,
+}));
+
 vi.mock('../../services/chatSessionService', () => ({
     chatSessionService: {
         createSession: vi.fn(() => ({ id: 'mock_session' })),
@@ -385,6 +400,103 @@ describe('aiRoutes', () => {
                 .send({ invoices: [] });
 
             expect(res.status).toBe(200);
+        });
+    });
+
+    describe('GET /api/analyze/financial-analysis/latest', () => {
+        it('returns 200 with null when never ran', async () => {
+            mockFinancialAnalysisStore.getAnalysis.mockReturnValue(null);
+            const res = await request(app).get('/api/analyze/financial-analysis/latest');
+            expect(res.status).toBe(200);
+            expect(res.body).toBeNull();
+        });
+
+        it('returns 200 with the last persisted snapshot', async () => {
+            const snapshot = { data: { revenue: 1000 }, lastRunAt: '2025-06-17T10:00:00.000Z', status: 'success' };
+            mockFinancialAnalysisStore.getAnalysis.mockReturnValue(snapshot);
+            const res = await request(app).get('/api/analyze/financial-analysis/latest');
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual(snapshot);
+            expect(mockFinancialAnalysisStore.getAnalysis).toHaveBeenCalled();
+        });
+
+        it('returns 500 when store throws', async () => {
+            mockFinancialAnalysisStore.getAnalysis.mockImplementation(() => { throw new Error('disk error'); });
+            const res = await request(app).get('/api/analyze/financial-analysis/latest');
+            expect(res.status).toBe(500);
+            expect(res.body.error).toBe('disk error');
+        });
+    });
+
+    describe('GET /api/analyze/financial-analysis/automation-config', () => {
+        it('returns 200 with default config', async () => {
+            const cfg = { enabled: false, schedule: { dayOfWeek: 1, hour: 8, minute: 0 }, lastRunAt: null, lastRunStatus: null };
+            mockFinancialAnalysisStore.getAutomationConfig.mockReturnValue(cfg);
+            const res = await request(app).get('/api/analyze/financial-analysis/automation-config');
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual(cfg);
+            expect(mockFinancialAnalysisStore.getAutomationConfig).toHaveBeenCalled();
+        });
+
+        it('returns 500 when store throws', async () => {
+            mockFinancialAnalysisStore.getAutomationConfig.mockImplementation(() => { throw new Error('boom'); });
+            const res = await request(app).get('/api/analyze/financial-analysis/automation-config');
+            expect(res.status).toBe(500);
+        });
+    });
+
+    describe('PUT /api/analyze/financial-analysis/automation-config', () => {
+        it('updates enabled and returns 200 with merged config', async () => {
+            const merged = { enabled: true, schedule: { dayOfWeek: 1, hour: 8, minute: 0 }, lastRunAt: null, lastRunStatus: null };
+            mockFinancialAnalysisStore.saveAutomationConfig.mockReturnValue(merged);
+            const res = await request(app)
+                .put('/api/analyze/financial-analysis/automation-config')
+                .send({ enabled: true });
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual(merged);
+            expect(mockFinancialAnalysisStore.saveAutomationConfig).toHaveBeenCalledWith({ enabled: true });
+        });
+
+        it('updates schedule and returns 200', async () => {
+            const merged = { enabled: false, schedule: { dayOfWeek: 5, hour: 9, minute: 15 }, lastRunAt: null, lastRunStatus: null };
+            mockFinancialAnalysisStore.saveAutomationConfig.mockReturnValue(merged);
+            const res = await request(app)
+                .put('/api/analyze/financial-analysis/automation-config')
+                .send({ schedule: { dayOfWeek: 5, hour: 9, minute: 15 } });
+            expect(res.status).toBe(200);
+            expect(res.body.schedule).toEqual({ dayOfWeek: 5, hour: 9, minute: 15 });
+        });
+
+        it('returns 400 when schedule values are out of range', async () => {
+            const res = await request(app)
+                .put('/api/analyze/financial-analysis/automation-config')
+                .send({ schedule: { dayOfWeek: 9, hour: 0, minute: 0 } });
+            expect(res.status).toBe(400);
+            expect(res.body.error).toBe('Validation Error');
+            expect(mockFinancialAnalysisStore.saveAutomationConfig).not.toHaveBeenCalled();
+        });
+
+        it('returns 400 when body is empty (no updatable fields)', async () => {
+            const res = await request(app)
+                .put('/api/analyze/financial-analysis/automation-config')
+                .send({});
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 400 when enabled is wrong type', async () => {
+            const res = await request(app)
+                .put('/api/analyze/financial-analysis/automation-config')
+                .send({ enabled: 'yes' });
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 500 when store throws', async () => {
+            mockFinancialAnalysisStore.saveAutomationConfig.mockImplementation(() => { throw new Error('save fail'); });
+            const res = await request(app)
+                .put('/api/analyze/financial-analysis/automation-config')
+                .send({ enabled: true });
+            expect(res.status).toBe(500);
+            expect(res.body.error).toBe('save fail');
         });
     });
 

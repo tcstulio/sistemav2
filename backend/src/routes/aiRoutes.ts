@@ -6,6 +6,7 @@ import { extractToolCall } from '../services/aiService';
 import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
 import { agentActivityService } from '../services/agentActivityService';
 import { aiJobService } from '../services/aiJobService';
+import { financialAnalysisStore } from '../services/financialAnalysisStore';
 import { createLogger } from '../utils/logger';
 import { verifyDeeplink } from '../utils/deeplinkToken';
 
@@ -408,6 +409,51 @@ router.post('/analyze/sales-forecast', async (req, res) => {
         // For now, service logic infers from dates, but we keep the route flexible.
         const result = await aiService.generateSalesForecast(invoices, context);
         res.json({ result });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Financial Analysis (issue #490) — persisted snapshot + automation config
+const AutomationConfigSchema = z.object({
+    enabled: z.boolean().optional(),
+    schedule: z.object({
+        dayOfWeek: z.number().int().min(0).max(6),
+        hour: z.number().int().min(0).max(23),
+        minute: z.number().int().min(0).max(59)
+    }).optional(),
+    lastRunAt: z.string().nullable().optional(),
+    lastRunStatus: z.string().nullable().optional()
+}).refine(data => data.enabled !== undefined || data.schedule !== undefined || data.lastRunAt !== undefined || data.lastRunStatus !== undefined, {
+    message: 'At least one of enabled, schedule, lastRunAt or lastRunStatus must be provided'
+});
+
+router.get('/analyze/financial-analysis/latest', (req, res) => {
+    try {
+        const analysis = financialAnalysisStore.getAnalysis();
+        res.status(200).json(analysis);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.get('/analyze/financial-analysis/automation-config', (req, res) => {
+    try {
+        const config = financialAnalysisStore.getAutomationConfig();
+        res.status(200).json(config);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.put('/analyze/financial-analysis/automation-config', (req, res) => {
+    try {
+        const updates = AutomationConfigSchema.parse(req.body);
+        const config = financialAnalysisStore.saveAutomationConfig(updates);
+        res.status(200).json(config);
     } catch (error: any) {
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
