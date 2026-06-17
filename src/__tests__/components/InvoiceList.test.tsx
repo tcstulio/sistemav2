@@ -15,6 +15,13 @@ const { toastMock } = vi.hoisted(() => ({
 }));
 vi.mock('sonner', () => ({ toast: toastMock }));
 
+const { notifyErrorMock } = vi.hoisted(() => ({
+    notifyErrorMock: vi.fn(),
+}));
+vi.mock('../../utils/notifyError', () => ({
+    notifyError: notifyErrorMock,
+}));
+
 vi.mock('../../context/DolibarrContext', () => ({
     useDolibarr: vi.fn(() => ({ config: { apiUrl: 'http://test', apiKey: 'key' } })),
 }));
@@ -113,8 +120,9 @@ describe('InvoiceList — Duplicate button', () => {
         expect(window.confirm).not.toHaveBeenCalled();
     });
 
-    it('shows toast.error when duplicate fails', async () => {
-        vi.mocked(cloneInvoice).mockRejectedValue(new Error('Network error'));
+    it('calls notifyError with the real error when duplicate fails', async () => {
+        const err = new Error('Dolibarr says no');
+        vi.mocked(cloneInvoice).mockRejectedValue(err);
         const user = userEvent.setup();
         renderComponent();
 
@@ -126,7 +134,8 @@ describe('InvoiceList — Duplicate button', () => {
 
         await waitFor(() => {
             expect(cloneInvoice).toHaveBeenCalledWith(mockConfig, 'inv1');
-            expect(toastMock.error).toHaveBeenCalledWith('Erro ao duplicar fatura');
+            expect(notifyErrorMock).toHaveBeenCalledWith('Duplicar fatura', err);
+            expect(toastMock.error).not.toHaveBeenCalledWith('Erro ao duplicar fatura');
         });
     });
 
