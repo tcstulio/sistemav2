@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Config
 const API_URL = 'http://localhost:3004/api';
-const API_KEY = '26ecc09039bd0bfeb52b11003449a2deb4770482';
+const API_KEY = process.env.DOLIBARR_API_KEY || '';
 
 const main = async () => {
     try {

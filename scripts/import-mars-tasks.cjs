@@ -8,7 +8,7 @@ const axios = require('axios');
 const https = require('https');
 
 const DOLIBARR_URL = 'https://sistema.coolgroove.com.br/api/index.php/';
-const DOLIBARR_API_KEY = process.env.DOLIBARR_API_KEY || '26ecc09039bd0bfeb52b11003449a2deb4770482';
+const DOLIBARR_API_KEY = process.env.DOLIBARR_API_KEY || '';
 const PROJECT_REF = process.env.PROJECT_REF || 'MODELO-V3';
 const PROJECT_TITLE = process.env.PROJECT_TITLE || 'Base Evento Modelo v3';
 const DRY_RUN = process.env.DRY_RUN === '1';

@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 
 // Use the key found in .env
-const API_KEY = '26ecc09039bd0bfeb52b11003449a2deb4770482';
+const API_KEY = process.env.DOLIBARR_API_KEY || '';
 
 const main = async () => {
     try {
