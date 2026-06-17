@@ -73,6 +73,37 @@ describe('schedulerRoutes', () => {
         });
     });
 
+    describe('POST /api/scheduler/broadcast', () => {
+        it('returns 200 with a valid broadcast', async () => {
+            const res = await request(app)
+                .post('/api/scheduler/broadcast')
+                .send({ sessionId: 'default', chatIds: ['1@c.us', '2@c.us'], message: 'Hello' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockSchedulerService.scheduleBroadcast).toHaveBeenCalledTimes(1);
+        });
+
+        it('returns 400 when chatIds is empty', async () => {
+            const res = await request(app)
+                .post('/api/scheduler/broadcast')
+                .send({ sessionId: 'default', chatIds: [], message: 'Hello' });
+
+            expect(res.status).toBe(400);
+            expect(mockSchedulerService.scheduleBroadcast).not.toHaveBeenCalled();
+        });
+
+        it('returns 400 when chatIds exceeds the cap (anti-spam)', async () => {
+            const chatIds = Array.from({ length: 501 }, (_, i) => `${i}@c.us`);
+            const res = await request(app)
+                .post('/api/scheduler/broadcast')
+                .send({ sessionId: 'default', chatIds, message: 'Hello' });
+
+            expect(res.status).toBe(400);
+            expect(mockSchedulerService.scheduleBroadcast).not.toHaveBeenCalled();
+        });
+    });
+
     describe('GET /api/scheduler/pending', () => {
         it('returns 200', async () => {
             const res = await request(app).get('/api/scheduler/pending');
