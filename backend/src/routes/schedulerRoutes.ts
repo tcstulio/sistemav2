@@ -1,6 +1,9 @@
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { schedulerService } from '../services/schedulerService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { validateBody } from '../middleware/validation';
+import { config } from '../config/env';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('Scheduler');
@@ -8,6 +11,19 @@ const router = Router();
 
 // Protect all scheduler routes
 router.use(requireDolibarrLogin);
+
+// Broadcast: limita destinatários (anti-spam em massa) via cap configurável.
+const BroadcastSchema = z.object({
+    sessionId: z.string().min(1),
+    chatIds: z.array(z.string().min(1))
+        .min(1, 'chatIds não pode ser vazio')
+        .max(config.schedulerMaxBroadcast, `Máximo de ${config.schedulerMaxBroadcast} destinatários por broadcast`),
+    message: z.string().min(1),
+    scheduledAt: z.union([z.string(), z.number()]).optional(),
+    delayBetween: z.number().int().min(0).optional(),
+    channel: z.enum(['whatsapp', 'email']).optional(),
+    subject: z.string().optional(),
+});
 
 // --- Schedule a single message ---
 
@@ -66,13 +82,9 @@ router.post('/schedule', async (req: Request, res: Response) => {
 
 // --- Schedule broadcast to multiple contacts ---
 
-router.post('/broadcast', async (req: Request, res: Response) => {
+router.post('/broadcast', validateBody(BroadcastSchema), async (req: Request, res: Response) => {
     try {
         const { sessionId, chatIds, message, scheduledAt, delayBetween, channel, subject } = req.body;
-
-        if (!sessionId || !chatIds || !Array.isArray(chatIds) || chatIds.length === 0 || !message) {
-            return res.status(400).json({ error: 'Missing required fields: sessionId, chatIds (array), message' });
-        }
 
         let scheduleTime: number | undefined;
         if (scheduledAt) {
