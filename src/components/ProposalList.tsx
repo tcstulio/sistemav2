@@ -14,6 +14,7 @@ import { useConfirm } from '../hooks/useConfirm';
 import { useProposals, useCustomers, useProducts, useProjects, useProposalLines, useUsers } from '../hooks/dolibarr';
 import { useListControls } from '../hooks/useListControls';
 import { logger } from '../utils/logger';
+import { notifyError } from '../utils/notifyError';
 
 const log = logger.child('ProposalList');
 import { MasterDetailLayout } from './ui/MasterDetailLayout';
@@ -315,9 +316,8 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
             await DolibarrService.cloneProposal(config, proposalId);
             toast.success('Proposta duplicada com sucesso');
             refetchProposals();
-        } catch (err: any) {
-            log.error('Failed to duplicate proposal', err);
-            toast.error('Erro ao duplicar proposta');
+        } catch (e: any) {
+            notifyError('Duplicar proposta', e);
         } finally {
             setProcessingId(null);
         }

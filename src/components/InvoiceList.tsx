@@ -28,6 +28,7 @@ import { StatusBadge } from './ui/StatusBadge';
 import { ListToolbar } from './ui/ListToolbar';
 import { ConfirmDeleteButton } from './ui/ConfirmDeleteButton';
 import { logger } from '../utils/logger';
+import { notifyError } from '../utils/notifyError';
 
 const log = logger.child('InvoiceList');
 
@@ -255,9 +256,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             await cloneInvoice(config, invoiceId);
             toast.success('Fatura duplicada com sucesso');
             refetchInvoices();
-        } catch (err: any) {
-            log.error('Failed to duplicate invoice', err);
-            toast.error('Erro ao duplicar fatura');
+        } catch (e: any) {
+            notifyError('Duplicar fatura', e);
         } finally {
             setProcessingId(null);
         }
