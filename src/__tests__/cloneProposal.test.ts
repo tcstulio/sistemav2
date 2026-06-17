@@ -39,6 +39,7 @@ describe('mapProposalLineForClone', () => {
             subprice: 150.5,
             remise_percent: 10,
             tva_tx: 23,
+            product_type: 0,
         });
     });
 
@@ -78,7 +79,7 @@ describe('mapProposalLineForClone', () => {
 
         expect(mapped).not.toHaveProperty('rowid');
         expect(mapped).not.toHaveProperty('status');
-        expect(mapped).not.toHaveProperty('product_type');
+        expect(mapped.product_type).toBe(0);
         expect(mapped).not.toHaveProperty('fk_parent_line');
         expect(mapped).not.toHaveProperty('special_code');
         expect(mapped).not.toHaveProperty('info_bits');
@@ -93,7 +94,7 @@ describe('cloneProposal', () => {
         requestMock.mockReset();
     });
 
-    it('creates a draft clone preserving socid and lines, with date = today (not original)', async () => {
+    it('creates a draft clone preserving socid and lines, with date = Unix timestamp (not original)', async () => {
         const sourceProposal = {
             id: '100',
             socid: '42',
@@ -106,6 +107,8 @@ describe('cloneProposal', () => {
             ],
         };
 
+        const before = Math.floor(Date.now() / 1000);
+
         requestMock
             .mockResolvedValueOnce(sourceProposal)
             .mockResolvedValueOnce({ id: '200' })
@@ -113,12 +116,16 @@ describe('cloneProposal', () => {
 
         const newId = await cloneProposal(config, '100');
 
+        const after = Math.floor(Date.now() / 1000);
+
         expect(newId).toBe('200');
         expect(requestMock).toHaveBeenCalledTimes(3);
 
         const createBody = JSON.parse(String(requestMock.mock.calls[1]![1]!.body));
         expect(createBody.socid).toBe('42');
-        expect(createBody.date).toBe(new Date().toISOString().slice(0, 10));
+        expect(typeof createBody.date).toBe('number');
+        expect(createBody.date).toBeGreaterThanOrEqual(before);
+        expect(createBody.date).toBeLessThanOrEqual(after);
         expect(createBody.date).not.toBe('1577836800');
         expect(createBody.cond_reglement).toBe('1');
         expect(createBody.mode_reglement).toBe('2');
@@ -133,6 +140,7 @@ describe('cloneProposal', () => {
             subprice: 10,
             remise_percent: 5,
             tva_tx: 23,
+            product_type: 0,
         });
         expect(lineBody.rowid).toBeUndefined();
         expect(lineBody.status).toBeUndefined();

@@ -431,6 +431,7 @@ export const mapProposalLineForClone = (l: Record<string, any>): Record<string, 
     subprice: Number(l.subprice) || 0,
     remise_percent: l.remise_percent !== undefined ? Number(l.remise_percent) : 0,
     tva_tx: Number(l.tva_tx) || 0,
+    product_type: 0,
 });
 
 // Clona uma proposta existente numa cópia em rascunho: mesmo cliente, condições e linhas,
@@ -438,11 +439,9 @@ export const mapProposalLineForClone = (l: Record<string, any>): Record<string, 
 export const cloneProposal = async (config: DolibarrConfig, id: string): Promise<string> => {
     const source: Record<string, any> = await getProposal(config, id);
 
-    const today = new Date().toISOString().slice(0, 10);
-
     const payload: Record<string, unknown> = {
         socid: source.socid,
-        date: today,
+        date: Math.floor(Date.now() / 1000),
     };
     if (source.cond_reglement !== undefined) payload.cond_reglement = source.cond_reglement;
     if (source.mode_reglement !== undefined) payload.mode_reglement = source.mode_reglement;
@@ -468,6 +467,7 @@ export const mapInvoiceLineForClone = (l: Record<string, any>): Record<string, u
     subprice: Number(l.subprice) || 0,
     remise_percent: l.remise_percent !== undefined ? Number(l.remise_percent) : 0,
     tva_tx: Number(l.tva_tx) || 0,
+    product_type: 0,
 });
 
 // Clona uma fatura existente numa cópia em rascunho: mesmo cliente, condições e linhas,
@@ -475,11 +475,9 @@ export const mapInvoiceLineForClone = (l: Record<string, any>): Record<string, u
 export const cloneInvoice = async (config: DolibarrConfig, id: string): Promise<string> => {
     const source: Record<string, any> = await getInvoiceData(config, id);
 
-    const today = new Date().toISOString().slice(0, 10);
-
     const payload: Record<string, unknown> = {
         socid: source.socid,
-        date: today,
+        date: Math.floor(Date.now() / 1000),
     };
     if (source.cond_reglement !== undefined) payload.cond_reglement = source.cond_reglement;
     if (source.mode_reglement !== undefined) payload.mode_reglement = source.mode_reglement;
