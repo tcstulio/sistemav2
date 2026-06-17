@@ -9,8 +9,12 @@ import { WhatsAppProvider } from './contexts/WhatsAppContext';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { installReportCapture } from './utils/reportContext';
+import { initSentry } from './utils/sentry';
 import { ConfirmProvider } from './hooks/useConfirm';
 import { PromptProvider } from './hooks/usePrompt';
+
+// Monitoramento de erros (no-op sem VITE_SENTRY_DSN). Inicializa antes de tudo.
+initSentry();
 
 // Captura global de erros/falhas p/ o botão "Reportar problema" (instala cedo).
 installReportCapture();

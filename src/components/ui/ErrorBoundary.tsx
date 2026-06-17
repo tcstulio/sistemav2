@@ -2,6 +2,7 @@ import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp, MessageSquare } from 'lucide-react';
 import { logger } from '../../utils/logger';
 import { captureError } from '../../utils/errorStore';
+import { captureException } from '../../utils/sentry';
 
 const log = logger.child('ErrorBoundary');
 
@@ -54,6 +55,12 @@ export class ErrorBoundary extends Component<Props, State> {
         captureError({
             message: error.message,
             stack: error.stack,
+            componentStack: errorInfo.componentStack || undefined,
+            componentName: this.props.componentName
+        });
+
+        // Reporta ao Sentry (no-op se não houver DSN configurado).
+        captureException(error, {
             componentStack: errorInfo.componentStack || undefined,
             componentName: this.props.componentName
         });
