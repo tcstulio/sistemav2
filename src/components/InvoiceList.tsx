@@ -3,9 +3,11 @@ import { toast } from 'sonner';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Invoice, AppView } from '../types';
-import { FileText, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, Trash2, Loader2, CheckCircle, CreditCard, ShoppingCart, RefreshCcw, Truck } from 'lucide-react';
+import { FileText, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, Trash2, Loader2, CheckCircle, CreditCard, ShoppingCart, RefreshCcw, Truck, Copy } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
+import { cloneInvoice } from '../services/api/commercial';
 import { useInvoiceMutations } from '../hooks/useMutations';
+import { useConfirm } from '../hooks/useConfirm';
 import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
 import { PaginationControls } from './common/PaginationControls';
@@ -66,6 +68,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const [processingId, setProcessingId] = useState<string | null>(null);
 
     const { createInvoice } = useInvoiceMutations(config);
+
+    const confirm = useConfirm();
 
     // Pagination
     const [page, setPage] = useState(0);
@@ -238,6 +242,22 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
         } catch (err: any) {
             log.error("Failed to create credit note", err);
             toast.error(`Falha ao criar Nota de Crédito: ${err.message}`);
+        } finally {
+            setProcessingId(null);
+        }
+    };
+
+    const handleDuplicate = async (invoiceId: string) => {
+        const ok = await confirm({ message: 'Duplicar esta fatura como rascunho?' });
+        if (!ok || !config) return;
+        setProcessingId(invoiceId);
+        try {
+            await cloneInvoice(config, invoiceId);
+            toast.success('Fatura duplicada com sucesso');
+            refetchInvoices();
+        } catch (err: any) {
+            log.error('Failed to duplicate invoice', err);
+            toast.error('Erro ao duplicar fatura');
         } finally {
             setProcessingId(null);
         }
@@ -472,16 +492,28 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                         <span className="font-mono text-xs text-slate-400">{inv.ref}</span>
                                         <StatusBadge status={getInvoiceStatusKey(inv)} config={invoiceStatuses} />
                                     </div>
-                                    {inv.statut === '0' && (
-                                        <ConfirmDeleteButton
-                                            onDelete={() => DolibarrService.deleteInvoice(config, inv.id)}
-                                            onDeleted={() => {
-                                                if (selectedInvoice?.id === inv.id) setSelectedInvoice(null);
-                                                refetchInvoices();
-                                            }}
-                                            itemLabel={inv.ref}
+                                    <div className="flex items-center gap-1">
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            icon={<Copy size={16} />}
+                                            onClick={(e) => { e.stopPropagation(); handleDuplicate(inv.id); }}
+                                            title="Duplicar"
+                                            aria-label="Duplicar"
+                                            loading={processingId === inv.id}
+                                            disabled={!!processingId}
                                         />
-                                    )}
+                                        {inv.statut === '0' && (
+                                            <ConfirmDeleteButton
+                                                onDelete={() => DolibarrService.deleteInvoice(config, inv.id)}
+                                                onDeleted={() => {
+                                                    if (selectedInvoice?.id === inv.id) setSelectedInvoice(null);
+                                                    refetchInvoices();
+                                                }}
+                                                itemLabel={inv.ref}
+                                            />
+                                        )}
+                                    </div>
                                 </div>
                                 <h3
                                     className="font-bold text-slate-800 dark:text-white text-sm mb-1 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
