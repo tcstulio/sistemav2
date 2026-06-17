@@ -1,0 +1,232 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'fs';
+
+vi.mock('fs');
+vi.mock('../../utils/atomicWrite', () => ({
+    atomicWriteSync: vi.fn(),
+}));
+
+const mockedFs = vi.mocked(fs);
+
+describe('financialAnalysisStore', () => {
+    let financialAnalysisStore: any;
+
+    beforeEach(async () => {
+        vi.clearAllMocks();
+        vi.resetModules();
+        mockedFs.existsSync.mockReturnValue(false);
+
+        const mod = await import('../../services/financialAnalysisStore');
+        financialAnalysisStore = mod.financialAnalysisStore;
+    });
+
+    describe('constructor / load', () => {
+        it('creates data dir if not exists', () => {
+            expect(mockedFs.mkdirSync).toHaveBeenCalledWith(expect.any(String), { recursive: true });
+        });
+
+        it('starts with null analysis and default config', () => {
+            expect(financialAnalysisStore.getAnalysis()).toBeNull();
+            const cfg = financialAnalysisStore.getAutomationConfig();
+            expect(cfg).toEqual({
+                enabled: false,
+                schedule: { dayOfWeek: 1, hour: 8, minute: 0 },
+                lastRunAt: null,
+                lastRunStatus: null
+            });
+        });
+
+        it('loads persisted analysis + config from file', async () => {
+            vi.clearAllMocks();
+            vi.resetModules();
+
+            mockedFs.existsSync.mockReturnValue(true);
+            const persisted = {
+                analysis: { data: { kpi: 42 }, lastRunAt: '2025-01-01T00:00:00.000Z', status: 'success' },
+                automationConfig: {
+                    enabled: true,
+                    schedule: { dayOfWeek: 3, hour: 14, minute: 30 },
+                    lastRunAt: '2025-01-02T00:00:00.000Z',
+                    lastRunStatus: 'success'
+                }
+            };
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify(persisted));
+
+            const mod = await import('../../services/financialAnalysisStore');
+            const svc = mod.financialAnalysisStore;
+
+            expect(svc.getAnalysis()).toEqual(persisted.analysis);
+            expect(svc.getAutomationConfig()).toEqual(persisted.automationConfig);
+        });
+
+        it('handles load error gracefully with defaults', async () => {
+            vi.clearAllMocks();
+            vi.resetModules();
+
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockImplementation(() => { throw new Error('fail'); });
+
+            const mod = await import('../../services/financialAnalysisStore');
+            const svc = mod.financialAnalysisStore;
+            expect(svc.getAnalysis()).toBeNull();
+            expect(svc.getAutomationConfig().enabled).toBe(false);
+        });
+
+        it('normalizes missing/partial config fields with defaults', async () => {
+            vi.clearAllMocks();
+            vi.resetModules();
+
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ analysis: null, automationConfig: { enabled: true } }));
+
+            const mod = await import('../../services/financialAnalysisStore');
+            const svc = mod.financialAnalysisStore;
+            const cfg = svc.getAutomationConfig();
+            expect(cfg.enabled).toBe(true);
+            expect(cfg.schedule).toEqual({ dayOfWeek: 1, hour: 8, minute: 0 });
+            expect(cfg.lastRunAt).toBeNull();
+            expect(cfg.lastRunStatus).toBeNull();
+        });
+
+        it('handles corrupted JSON gracefully', async () => {
+            vi.clearAllMocks();
+            vi.resetModules();
+
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockReturnValue('not-json{');
+
+            const mod = await import('../../services/financialAnalysisStore');
+            const svc = mod.financialAnalysisStore;
+            expect(svc.getAnalysis()).toBeNull();
+            expect(svc.getAutomationConfig().enabled).toBe(false);
+        });
+    });
+
+    describe('save error handling', () => {
+        it('handles atomicWriteSync error gracefully', async () => {
+            vi.clearAllMocks();
+            vi.resetModules();
+
+            const mockAtomicWrite = vi.fn().mockImplementation(() => { throw new Error('write fail'); });
+            vi.doMock('../../utils/atomicWrite', () => ({ atomicWriteSync: mockAtomicWrite }));
+            mockedFs.existsSync.mockReturnValue(false);
+
+            const mod = await import('../../services/financialAnalysisStore');
+            const svc = mod.financialAnalysisStore;
+            svc.saveAnalysis({ data: { x: 1 }, status: 'success' });
+            expect(mockAtomicWrite).toHaveBeenCalled();
+        });
+    });
+
+    describe('getAnalysis / saveAnalysis', () => {
+        it('returns null when never saved', () => {
+            expect(financialAnalysisStore.getAnalysis()).toBeNull();
+        });
+
+        it('saves a success snapshot stamping lastRunAt automatically', () => {
+            const result = financialAnalysisStore.saveAnalysis({ data: { revenue: 1000 }, status: 'success' });
+            expect(result.status).toBe('success');
+            expect(result.data).toEqual({ revenue: 1000 });
+            expect(result.lastRunAt).toEqual(expect.any(String));
+            expect(new Date(result.lastRunAt).getTime()).not.toBeNaN();
+            expect(result.error).toBeUndefined();
+
+            const stored = financialAnalysisStore.getAnalysis();
+            expect(stored).toEqual(result);
+        });
+
+        it('saves an error snapshot with error message', () => {
+            const result = financialAnalysisStore.saveAnalysis({ data: null, status: 'error', error: 'boom' });
+            expect(result.status).toBe('error');
+            expect(result.error).toBe('boom');
+            expect(financialAnalysisStore.getAnalysis()).toEqual(result);
+        });
+
+        it('overwrites previous snapshot (only latest is kept)', () => {
+            financialAnalysisStore.saveAnalysis({ data: 'first', status: 'success' });
+            financialAnalysisStore.saveAnalysis({ data: 'second', status: 'success' });
+            expect(financialAnalysisStore.getAnalysis().data).toBe('second');
+        });
+
+        it('respects an explicit lastRunAt override', () => {
+            const fixed = '2024-12-31T23:59:59.000Z';
+            const result = financialAnalysisStore.saveAnalysis({ data: {}, status: 'success', lastRunAt: fixed });
+            expect(result.lastRunAt).toBe(fixed);
+        });
+    });
+
+    describe('getAutomationConfig / saveAutomationConfig', () => {
+        it('returns default config', () => {
+            const cfg = financialAnalysisStore.getAutomationConfig();
+            expect(cfg.enabled).toBe(false);
+            expect(cfg.schedule).toEqual({ dayOfWeek: 1, hour: 8, minute: 0 });
+        });
+
+        it('updates enabled only, preserving schedule', () => {
+            const cfg = financialAnalysisStore.saveAutomationConfig({ enabled: true });
+            expect(cfg.enabled).toBe(true);
+            expect(cfg.schedule).toEqual({ dayOfWeek: 1, hour: 8, minute: 0 });
+            expect(financialAnalysisStore.getAutomationConfig().enabled).toBe(true);
+        });
+
+        it('updates schedule only, preserving enabled', () => {
+            financialAnalysisStore.saveAutomationConfig({ enabled: true });
+            const cfg = financialAnalysisStore.saveAutomationConfig({ schedule: { dayOfWeek: 5, hour: 9, minute: 15 } });
+            expect(cfg.enabled).toBe(true);
+            expect(cfg.schedule).toEqual({ dayOfWeek: 5, hour: 9, minute: 15 });
+        });
+
+        it('updates lastRunAt and lastRunStatus', () => {
+            const cfg = financialAnalysisStore.saveAutomationConfig({
+                lastRunAt: '2025-06-17T10:00:00.000Z',
+                lastRunStatus: 'success'
+            });
+            expect(cfg.lastRunAt).toBe('2025-06-17T10:00:00.000Z');
+            expect(cfg.lastRunStatus).toBe('success');
+        });
+
+        it('can clear lastRunAt back to null', () => {
+            financialAnalysisStore.saveAutomationConfig({ lastRunAt: '2025-06-17T10:00:00.000Z' });
+            const cfg = financialAnalysisStore.saveAutomationConfig({ lastRunAt: null });
+            expect(cfg.lastRunAt).toBeNull();
+        });
+
+        it('preserves previously saved state across partial updates', () => {
+            financialAnalysisStore.saveAutomationConfig({ enabled: true, schedule: { dayOfWeek: 2, hour: 3, minute: 4 } });
+            const cfg = financialAnalysisStore.saveAutomationConfig({ lastRunStatus: 'error' });
+            expect(cfg).toEqual({
+                enabled: true,
+                schedule: { dayOfWeek: 2, hour: 3, minute: 4 },
+                lastRunAt: null,
+                lastRunStatus: 'error'
+            });
+        });
+
+        it('returns a new object reference (does not expose internal state mutation)', () => {
+            const a = financialAnalysisStore.getAutomationConfig();
+            const b = financialAnalysisStore.getAutomationConfig();
+            // saving returns a fresh object too
+            const c = financialAnalysisStore.saveAutomationConfig({ enabled: true });
+            expect(c).not.toBe(a);
+            expect(b).toEqual(a);
+        });
+    });
+
+    describe('persistence round-trip', () => {
+        it('writes the full store (analysis + config) to disk via atomicWriteSync', async () => {
+            const { atomicWriteSync } = await import('../../utils/atomicWrite');
+            const writeSpy = vi.mocked(atomicWriteSync);
+            writeSpy.mockClear();
+
+            financialAnalysisStore.saveAnalysis({ data: { revenue: 1000 }, status: 'success' });
+            financialAnalysisStore.saveAutomationConfig({ enabled: true });
+
+            expect(writeSpy.mock.calls.length).toBe(2);
+            const lastCall = writeSpy.mock.calls[writeSpy.mock.calls.length - 1][1] as any;
+            expect(lastCall.analysis.data).toEqual({ revenue: 1000 });
+            expect(lastCall.analysis.status).toBe('success');
+            expect(lastCall.automationConfig.enabled).toBe(true);
+            expect(lastCall.automationConfig.schedule).toEqual({ dayOfWeek: 1, hour: 8, minute: 0 });
+        });
+    });
+});
