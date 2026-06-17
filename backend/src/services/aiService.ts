@@ -81,6 +81,7 @@ export interface GenerateReplyResult {
 }
 
 const CONTEXT_WINDOWS: Record<string, number> = {
+    'glm-5.2': 200000,
     'glm-5.1': 200000,
     'glm-4.6v': 128000,
     'glm-4': 128000,

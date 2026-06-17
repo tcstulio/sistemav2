@@ -18,7 +18,7 @@ export const config = {
     localModelName: process.env.LOCAL_LLM_MODEL || 'llama3',
     zaiApiKey: process.env.ZAI_API_KEY || '',
     zaiBaseUrl: process.env.ZAI_BASE_URL || 'https://api.z.ai/api/coding/paas/v4/',
-    zaiModel: process.env.ZAI_MODEL || 'glm-5.1',
+    zaiModel: process.env.ZAI_MODEL || 'glm-5.2',
     // Visão (OCR/análise de imagem) via GLM-4.6V — usa a base PaaS padrão (NÃO a base 'coding'),
     // que é onde o modelo multimodal é servido. Permite OCR sem depender do Gemini.
     zaiVisionBaseUrl: process.env.ZAI_VISION_BASE_URL || 'https://api.z.ai/api/paas/v4',
