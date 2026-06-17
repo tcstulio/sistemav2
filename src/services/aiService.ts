@@ -44,6 +44,15 @@ export interface ChatSessionInfo {
     updatedAt: number;
 }
 
+// Snapshot da última análise financeira persistida (issue #492 / #490).
+// Espelha o shape retornado por GET /api/ai/analyze/financial-analysis/latest.
+export interface LatestFinancialAnalysis {
+    data: unknown; // Payload da análise IA (geralmente markdown em string)
+    lastRunAt: string; // ISO timestamp da última execução
+    status: 'success' | 'error';
+    error?: string;
+}
+
 const API_URL = '/api/ai';
 
 export const AiService = {
@@ -121,6 +130,19 @@ export const AiService = {
         } catch (error: any) {
             handleAiError('Análise financeira', error);
             return "Erro ao processar análise.";
+        }
+    },
+
+    // Recupera a última análise financeira persistida (org-wide). Retorna null
+    // quando ainda não há análise salva. Usado pelo dashboard para exibir o
+    // resultado automaticamente, sem exigir clique manual (#492).
+    getLatestFinancialAnalysis: async (): Promise<LatestFinancialAnalysis | null> => {
+        try {
+            const response = await axios.get(`${API_URL}/analyze/financial-analysis/latest`, getAuthHeaders());
+            return (response.data as LatestFinancialAnalysis | null) ?? null;
+        } catch (error: any) {
+            handleAiError('Última análise financeira', error);
+            return null;
         }
     },
 

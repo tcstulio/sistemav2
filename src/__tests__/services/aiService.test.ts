@@ -131,6 +131,39 @@ describe('AiService', () => {
         });
     });
 
+    describe('getLatestFinancialAnalysis', () => {
+        it('returns the latest persisted snapshot', async () => {
+            const snapshot = { data: '# Relatório IA', lastRunAt: '2025-07-14T18:00:00.000Z', status: 'success' as const };
+            mockAxios.get.mockResolvedValue({ data: snapshot });
+
+            const result = await AiService.getLatestFinancialAnalysis();
+
+            expect(result).toEqual(snapshot);
+            expect(mockAxios.get).toHaveBeenCalledWith(
+                expect.stringContaining('/analyze/financial-analysis/latest'),
+                expect.any(Object)
+            );
+        });
+
+        it('returns null when never ran', async () => {
+            mockAxios.get.mockResolvedValue({ data: null });
+
+            const result = await AiService.getLatestFinancialAnalysis();
+
+            expect(result).toBeNull();
+        });
+
+        it('returns null and toasts on error', async () => {
+            mockAxios.get.mockRejectedValue(new Error('Latest failed'));
+            toast.error = vi.fn();
+
+            const result = await AiService.getLatestFinancialAnalysis();
+
+            expect(result).toBeNull();
+            expect(toast.error).toHaveBeenCalled();
+        });
+    });
+
     describe('logCorrection', () => {
         it('logs correction data', async () => {
             await AiService.logCorrection('log123', 'Fixed typo');
