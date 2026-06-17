@@ -16,11 +16,13 @@ export const ReportButton: React.FC = () => {
     const [desc, setDesc] = useState('');
     const [sending, setSending] = useState(false);
     const [result, setResult] = useState<{ ok: boolean; url?: string; number?: number; error?: string } | null>(null);
+    const [autoFix, setAutoFix] = useState(false);
 
     const openModal = () => {
         setCtx(captureContext()); // snapshot ANTES de abrir o modal
         setTitle('');
         setDesc('');
+        setAutoFix(false);
         setResult(null);
         setOpen(true);
     };
@@ -34,7 +36,9 @@ export const ReportButton: React.FC = () => {
             title: title.trim(),
             description: desc,
             context: ctx,
-            labels: ['from-app'],
+            // autoFix → adiciona 'opencode-task' p/ o TaskRunner pegar (o agente tenta corrigir e
+            // abre um PR). 'from-app' fica sempre, p/ rastrear a origem. Sem autoFix = só triagem humana.
+            labels: autoFix ? ['from-app', 'opencode-task'] : ['from-app'],
         });
         setResult(r);
         setSending(false);
@@ -73,7 +77,7 @@ export const ReportButton: React.FC = () => {
                         {result?.ok ? (
                             <div className="p-6 text-center space-y-3">
                                 <CheckCircle2 size={40} className="mx-auto text-green-500" />
-                                <p className="text-slate-700 dark:text-slate-200 font-medium">Report enviado! Issue #{result.number} criada.</p>
+                                <p className="text-slate-700 dark:text-slate-200 font-medium">{autoFix ? `Report enviado! Issue #${result.number} criada e marcada para o agente corrigir.` : `Report enviado! Issue #${result.number} criada.`}</p>
                                 {result.url && (
                                     <a href={result.url} target="_blank" rel="noopener noreferrer"
                                         className="inline-flex items-center gap-1 text-sm text-indigo-600 hover:underline">
@@ -106,6 +110,13 @@ export const ReportButton: React.FC = () => {
                                         className="w-full text-sm p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white h-28"
                                     />
                                 </div>
+
+                                <label className="flex items-start gap-2 cursor-pointer select-none rounded-lg bg-indigo-50 dark:bg-indigo-900/20 p-3">
+                                    <input type="checkbox" checked={autoFix} onChange={(e) => setAutoFix(e.target.checked)} className="mt-0.5" />
+                                    <span className="text-xs text-slate-600 dark:text-slate-300">
+                                        <b className="text-indigo-600 dark:text-indigo-400">🤖 Pedir correção automática</b> — cria a issue como tarefa do agente (opencode-task). Ele tenta resolver e abre um PR para revisão. Um admin precisa iniciar a execução.
+                                    </span>
+                                </label>
 
                                 {/* Transparência: mostra o contexto que será anexado */}
                                 {ctx && (
