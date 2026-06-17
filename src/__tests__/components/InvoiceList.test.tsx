@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import InvoiceList from '../../components/InvoiceList';
 import { cloneInvoice } from '../../services/api/commercial';
+import { useInvoices } from '../../hooks/dolibarr';
+import { formatCurrency } from '../../utils/formatUtils';
 
 const { toastMock } = vi.hoisted(() => ({
     toastMock: {
@@ -153,6 +155,58 @@ describe('InvoiceList — Duplicate button', () => {
         await waitFor(() => {
             expect(cloneInvoice).not.toHaveBeenCalled();
             expect(toastMock.success).not.toHaveBeenCalled();
+        });
+    });
+});
+
+describe('InvoiceList — Total bar (#486)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('renders the total bar with the sum of all visible invoices as BRL', async () => {
+        renderComponent();
+
+        const totalBar = await screen.findByTestId('list-total-bar');
+        expect(totalBar).toBeTruthy();
+
+        const totalValue = screen.getByTestId('list-total-value');
+        expect(totalValue.textContent).toBe(formatCurrency(1200));
+    });
+
+    it('shows R$ 0,00 when there are no invoices', async () => {
+        vi.mocked(useInvoices).mockReturnValue({
+            data: [],
+            isRefetching: false,
+            refetch: vi.fn(),
+        } as any);
+
+        renderComponent();
+
+        const totalValue = await screen.findByTestId('list-total-value');
+        expect(totalValue.textContent).toBe(formatCurrency(0));
+    });
+
+    it('updates the total when filtering by status tab', async () => {
+        vi.mocked(useInvoices).mockReturnValue({
+            data: [
+                { id: 'inv1', ref: 'FA001', socid: 'cust1', date: 1700000000, total_ttc: 1200, statut: '1', type: '0', project_id: null, order_id: null },
+                { id: 'inv2', ref: 'FA002', socid: 'cust1', date: 1700000001, total_ttc: 800, statut: '2', type: '0', project_id: null, order_id: null },
+            ],
+            isRefetching: false,
+            refetch: vi.fn(),
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        const totalValue = await screen.findByTestId('list-total-value');
+        expect(totalValue.textContent).toBe(formatCurrency(2000));
+
+        await user.click(screen.getByText('Pagas'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('list-total-value').textContent).toBe(formatCurrency(800));
         });
     });
 });

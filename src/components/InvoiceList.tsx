@@ -26,6 +26,7 @@ import { Tabs, Tab } from './ui/Tabs';
 import { EmptyState } from './ui/EmptyState';
 import { StatusBadge } from './ui/StatusBadge';
 import { ListToolbar } from './ui/ListToolbar';
+import { ListTotalBar } from './ui/ListTotalBar';
 import { ConfirmDeleteButton } from './ui/ConfirmDeleteButton';
 import { logger } from '../utils/logger';
 import { notifyError } from '../utils/notifyError';
@@ -538,6 +539,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                     })}
                 </div>
             )}
+            <ListTotalBar total={filteredInvoices.reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0)} />
             <PaginationControls
                 page={page}
                 limit={limit}
