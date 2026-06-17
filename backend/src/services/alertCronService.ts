@@ -3,6 +3,8 @@ import { dolibarrService } from './dolibarr';
 import { notificationService, NotificationEvent } from './notificationService';
 import { renderTemplate } from './notificationTemplates';
 import { delegationFollowUpService } from './delegationFollowUpService';
+import { financialAnalysisStore } from './financialAnalysisStore';
+import { runSalesForecastAnalysis } from './analyzeService';
 
 const log = createLogger('AlertCron');
 
@@ -14,6 +16,9 @@ class AlertCronService {
     private intervals: NodeJS.Timeout[] = [];
     private alerted: AlertCache = {};
     private running = false;
+    // Guarda o último "slot" (dia-semana-hora-minuto) em que a automação de
+    // análise financeira disparou, para não rodar mais de uma vez no mesmo minuto-alvo.
+    private lastFinancialAnalysisSlot = '';
 
     start() {
         if (this.running) return;
@@ -34,7 +39,16 @@ class AlertCronService {
             this.checkStaleTickets().catch(e => log.error('checkStaleTickets', e));
         });
 
+        // Automação de análise financeira (issue #491): roda a cada minuto e só dispara
+        // a análise quando o horário atual bate com o schedule configurado. Reusar o
+        // mecanismo setInterval existente — sem node-cron. Resiliente a restarts e a
+        // mudanças de config (dia/hora), pois a config é relida a cada tick.
+        this.schedule(60 * 1000, () => {
+            this.checkFinancialAnalysisAutomation().catch(e => log.error('financialAnalysisAutomation', e));
+        });
+
         log.info('AlertCronService started (24h invoices, 6h stock, 4h tickets)');
+        log.info('[alertCronService] Financial analysis automation scheduled');
     }
 
     stop() {
@@ -42,6 +56,48 @@ class AlertCronService {
         this.intervals = [];
         this.running = false;
         log.info('AlertCronService stopped');
+    }
+
+    /**
+     * Avalia a cada minuto se a automação de análise financeira deve disparar.
+     * Dispara quando: automação habilitada E o dia/hora/minuto atuais batem com
+     * o schedule configurado, garantindo disparo único por slot (minuto-alvo).
+     * O parâmetro `now` existe para facilitar testes determinísticos.
+     */
+    async checkFinancialAnalysisAutomation(now: Date = new Date()): Promise<{ ran: boolean; reason?: string; status?: string }> {
+        const cfg = financialAnalysisStore.getAutomationConfig();
+        if (!cfg.enabled) return { ran: false, reason: 'disabled' };
+
+        const currentSlot = `${now.getDay()}-${now.getHours()}-${now.getMinutes()}`;
+        const targetSlot = `${cfg.schedule.dayOfWeek}-${cfg.schedule.hour}-${cfg.schedule.minute}`;
+        if (currentSlot !== targetSlot) return { ran: false, reason: 'not-due' };
+
+        // Evita disparar mais de uma vez no mesmo minuto-alvo (ex.: restart dentro do slot).
+        if (this.lastFinancialAnalysisSlot === currentSlot) return { ran: false, reason: 'already-ran' };
+        this.lastFinancialAnalysisSlot = currentSlot;
+
+        try {
+            const { snapshot } = await runSalesForecastAnalysis();
+            financialAnalysisStore.saveAutomationConfig({
+                lastRunAt: snapshot.lastRunAt,
+                lastRunStatus: snapshot.status,
+            });
+            log.info(`[alertCronService] Financial analysis automation ran (status=${snapshot.status})`);
+            return { ran: true, status: snapshot.status };
+        } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            const errSnap = financialAnalysisStore.saveAnalysis({
+                data: null,
+                status: 'error',
+                error: message,
+            });
+            financialAnalysisStore.saveAutomationConfig({
+                lastRunAt: errSnap.lastRunAt,
+                lastRunStatus: 'error',
+            });
+            log.error('[alertCronService] Financial analysis automation failed', e);
+            return { ran: true, status: 'error', reason: message };
+        }
     }
 
     private schedule(ms: number, fn: () => void) {
