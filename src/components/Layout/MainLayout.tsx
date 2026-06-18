@@ -68,6 +68,12 @@ export const MainLayout: React.FC = () => {
                         await notificationAction('markAllRead');
                     }}
                     onNavigate={handleNavigate}
+                    onDismiss={async (id) => {
+                        const prev = notifications;
+                        setNotifications(p => p.filter(n => n.id !== id)); // remoção otimista
+                        const ok = await notificationAction('dismiss', id);
+                        if (!ok) setNotifications(prev); // reverte se falhar
+                    }}
                     onClearAll={async () => {
                         setNotifications([]);
                         await notificationAction('clearAll');

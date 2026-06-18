@@ -12,6 +12,7 @@ interface NotificationPanelProps {
     onNavigate: (view: AppView, id: string) => void;
     onClearAll: () => void;
     onMarkAllRead: () => void;
+    onDismiss?: (id: string) => void;
 }
 
 type FilterType = 'all' | 'invoice' | 'ticket' | 'stock' | 'agent' | 'whatsapp' | 'task' | 'info';
@@ -40,7 +41,7 @@ const getIcon = (type: string, priority: string) => {
     }
 };
 
-const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, notifications, onMarkRead, onNavigate, onClearAll, onMarkAllRead }) => {
+const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, notifications, onMarkRead, onNavigate, onClearAll, onMarkAllRead, onDismiss }) => {
     const [activeFilter, setActiveFilter] = useState<FilterType>('all');
     const [showFilters, setShowFilters] = useState(false);
 
@@ -132,7 +133,18 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
                                                         <span className="text-[10px] bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 px-1.5 py-0.5 rounded font-medium">{note.senderName}</span>
                                                     )}
                                                 </div>
-                                                <span className="text-[10px] text-slate-400 whitespace-nowrap ml-2">{formatTime(note.date)}</span>
+                                                <div className="flex items-center gap-1 ml-2 shrink-0">
+                                                    <span className="text-[10px] text-slate-400 whitespace-nowrap">{formatTime(note.date)}</span>
+                                                    {onDismiss && (
+                                                        <button
+                                                            aria-label="Remover notificação"
+                                                            onClick={(e) => { e.stopPropagation(); onDismiss(note.id); }}
+                                                            className="text-slate-300 hover:text-red-500 dark:text-slate-600 dark:hover:text-red-400 p-0.5 rounded"
+                                                        >
+                                                            <X size={13} />
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </div>
                                             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">{note.message}</p>
 
