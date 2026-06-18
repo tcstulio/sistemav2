@@ -17,35 +17,52 @@ const AdminApp: React.FC = () => {
     const [authError, setAuthError] = useState(false);
 
     useEffect(() => {
-        const savedKey = sessionStorage.getItem('doli_admin_key');
-        if (savedKey) {
-            setAdminKey(savedKey);
-            setIsAuthenticated(true);
-        }
+        // A chave NÃO fica mais no sessionStorage (#33). A sessão admin vive num cookie
+        // httpOnly; aqui só perguntamos ao backend se ela está válida.
+        (async () => {
+            try {
+                const res = await fetch('/api/auth/admin-check', { credentials: 'include' });
+                const data = await res.json();
+                setIsAuthenticated(!!data.authenticated);
+            } catch { /* backend offline — segue deslogado */ }
+        })();
     }, []);
 
-    const handleLogin = (e: React.FormEvent) => {
+    const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (adminKey.trim().length > 0) {
-            sessionStorage.setItem('doli_admin_key', adminKey);
+        if (adminKey.trim().length === 0) return;
+        try {
+            const res = await fetch('/api/auth/admin-login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ adminKey }),
+            });
+            if (!res.ok) {
+                setAuthError(true);
+                return;
+            }
+            setAdminKey(''); // não mantém a chave em memória após autenticar
             setIsAuthenticated(true);
             setAuthError(false);
+        } catch {
+            setAuthError(true);
         }
     };
 
-    const handleLogout = () => {
-        sessionStorage.removeItem('doli_admin_key');
+    const handleLogout = async () => {
+        try {
+            await fetch('/api/auth/admin-logout', { method: 'POST', credentials: 'include' });
+        } catch { /* ignora — limpa o estado local de qualquer forma */ }
         setAdminKey('');
         setIsAuthenticated(false);
     };
 
     const fetchBackendStatus = async () => {
         try {
-            // Use the proxy path or direct if configured
-            const response = await fetch('/api/admin/status', {
-                headers: { 'x-admin-key': adminKey }
-            });
-            if (response.status === 403) {
+            // Autenticação via cookie httpOnly (credentials: include); sem chave no header.
+            const response = await fetch('/api/admin/status', { credentials: 'include' });
+            if (response.status === 403 || response.status === 401) {
                 setAuthError(true);
                 setIsAuthenticated(false); // Force re-login
                 return;
@@ -62,9 +79,9 @@ const AdminApp: React.FC = () => {
         try {
             const res = await fetch('/api/admin/restart', {
                 method: 'POST',
-                headers: { 'x-admin-key': adminKey }
+                credentials: 'include',
             });
-            if (res.status === 403) {
+            if (res.status === 403 || res.status === 401) {
                 toast.error('Acesso Negado: Chave Inválida');
                 return;
             }

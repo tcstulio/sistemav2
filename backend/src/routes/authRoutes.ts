@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { dolibarrService } from '../services/dolibarrService';
 import { createProtoSession } from '../services/protoSession';
 import { createLogger } from '../utils/logger';
+import { config } from '../config/env';
 
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
@@ -64,6 +65,47 @@ router.post('/login', loginLimiter, async (req, res) => {
 router.post('/logout', (req, res) => {
     res.clearCookie('dolapikey', { path: '/api' });
     res.json({ success: true, message: 'Logged out' });
+});
+
+// ===========================================
+// Admin Console auth (#33): a chave de admin vira cookie httpOnly em vez de
+// ficar no sessionStorage (legível por XSS). O cookie é validado por
+// requireDolibarrAdmin (break-glass key) nas rotas /api/admin/*.
+// ===========================================
+
+const AdminLoginSchema = z.object({ adminKey: z.string().min(1) });
+
+router.post('/admin-login', loginLimiter, (req, res) => {
+    try {
+        const { adminKey } = AdminLoginSchema.parse(req.body);
+        if (!config.adminKey || adminKey !== config.adminKey) {
+            return res.status(401).json({ success: false, error: 'Chave de admin inválida' });
+        }
+        res.cookie('admin_key', adminKey, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 12 * 60 * 60 * 1000, // 12h
+            path: '/api',
+        });
+        res.json({ success: true });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: error.issues });
+        }
+        log.error('Admin login error', { error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/admin-logout', (_req, res) => {
+    res.clearCookie('admin_key', { path: '/api' });
+    res.json({ success: true });
+});
+
+router.get('/admin-check', (req, res) => {
+    const authenticated = !!config.adminKey && req.cookies?.admin_key === config.adminKey;
+    res.json({ authenticated });
 });
 
 export default router;

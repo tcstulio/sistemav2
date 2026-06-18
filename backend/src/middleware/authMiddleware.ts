@@ -149,6 +149,11 @@ export const requireDolibarrAdmin = async (req: Request, res: Response, next: Ne
         userKey = authHeader.substring(7);
     }
 
+    // Cookie httpOnly do console admin (#33): a chave nunca fica em storage acessível por JS.
+    if (!userKey && req.cookies?.admin_key) {
+        userKey = req.cookies.admin_key;
+    }
+
     log.debug(`Admin auth check: ${req.method} ${req.path}`);
 
     // 2. Fallback to System Admin Key (break-glass). Atribui identidade de sistema (para o
