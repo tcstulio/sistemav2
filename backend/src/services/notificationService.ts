@@ -248,19 +248,22 @@ class NotificationService {
         return this.create(params);
     }
 
+    /** A notificação é visível para este usuário? (regra única reusada na listagem e no isolamento) */
+    private isVisibleTo(n: Notification, userId?: string): boolean {
+        if (!userId) return true;
+        return (
+            !n.recipient ||
+            n.recipient === userId ||
+            n.recipient === 'team' ||
+            n.recipient === 'all' ||
+            n.event === 'agent.action' ||
+            n.event === 'stock.low' ||
+            n.event === 'custom'
+        );
+    }
+
     getForUser(userId: string, limit?: number, offset?: number): Notification[] {
-        let result = this.data.notifications;
-        if (userId) {
-            result = result.filter(n =>
-                !n.recipient ||
-                n.recipient === userId ||
-                n.recipient === 'team' ||
-                n.recipient === 'all' ||
-                n.event === 'agent.action' ||
-                n.event === 'stock.low' ||
-                n.event === 'custom'
-            );
-        }
+        const result = this.data.notifications.filter(n => this.isVisibleTo(n, userId));
         const start = offset || 0;
         const end = start + (limit || 50);
         return result.slice(start, end);
@@ -270,9 +273,10 @@ class NotificationService {
         return this.data.notifications.find(n => n.id === id);
     }
 
-    markAsRead(id: string): boolean {
+    /** Marca como lida. Se userId for dado, só age se a notificação for visível a ele (isolamento). */
+    markAsRead(id: string, userId?: string): boolean {
         const notif = this.data.notifications.find(n => n.id === id);
-        if (notif) {
+        if (notif && this.isVisibleTo(notif, userId)) {
             notif.read = true;
             this.save();
             return true;
@@ -280,10 +284,11 @@ class NotificationService {
         return false;
     }
 
-    markAllAsRead(): number {
+    /** Marca todas como lidas. Com userId, só as visíveis a ele (não toca as dos outros). */
+    markAllAsRead(userId?: string): number {
         let count = 0;
         for (const n of this.data.notifications) {
-            if (!n.read) {
+            if (!n.read && this.isVisibleTo(n, userId)) {
                 n.read = true;
                 count++;
             }
@@ -292,9 +297,10 @@ class NotificationService {
         return count;
     }
 
-    delete(id: string): boolean {
+    /** Apaga uma notificação. Com userId, só se for visível a ele. */
+    delete(id: string, userId?: string): boolean {
         const idx = this.data.notifications.findIndex(n => n.id === id);
-        if (idx >= 0) {
+        if (idx >= 0 && this.isVisibleTo(this.data.notifications[idx], userId)) {
             this.data.notifications.splice(idx, 1);
             this.save();
             return true;
@@ -302,8 +308,20 @@ class NotificationService {
         return false;
     }
 
-    getUnreadCount(): number {
-        return this.data.notifications.filter(n => !n.read).length;
+    /**
+     * Apaga as notificações PESSOAIS do usuário (recipient === userId). Não remove as
+     * compartilhadas (broadcast/team/all) — limpar não pode sumir alerta de sistema de todos.
+     */
+    deleteAllForUser(userId: string): number {
+        const before = this.data.notifications.length;
+        this.data.notifications = this.data.notifications.filter(n => n.recipient !== userId);
+        const removed = before - this.data.notifications.length;
+        if (removed > 0) this.save();
+        return removed;
+    }
+
+    getUnreadCount(userId?: string): number {
+        return this.data.notifications.filter(n => !n.read && this.isVisibleTo(n, userId)).length;
     }
 
     getStats() {

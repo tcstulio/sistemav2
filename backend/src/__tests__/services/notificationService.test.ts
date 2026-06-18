@@ -1,0 +1,60 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('fs', () => ({ existsSync: vi.fn(() => false), readFileSync: vi.fn(), mkdirSync: vi.fn() }));
+vi.mock('../../utils/atomicWrite', () => ({ atomicWriteSync: vi.fn() }));
+vi.mock('../../services/socketService', () => ({ socketService: { emit: vi.fn() } }));
+vi.mock('../../services/channelRouter', () => ({ channelRouter: { sendWhatsApp: vi.fn(), sendEmail: vi.fn() } }));
+vi.mock('../../utils/logger', () => ({ createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
+
+import { notificationService } from '../../services/notificationService';
+
+const seed = (arr: any[]) => { (notificationService as any).data.notifications = arr; };
+
+const fixture = () => ([
+    { id: 'a', recipient: 'u1', read: false, event: 'task.assigned' },
+    { id: 'b', recipient: 'u2', read: false, event: 'task.assigned' },
+    { id: 'c', recipient: undefined, read: false, event: 'stock.low' }, // broadcast
+    { id: 'd', recipient: 'all', read: false, event: 'custom' },        // broadcast
+]);
+
+describe('notificationService — isolamento por usuário (#519)', () => {
+    beforeEach(() => seed(fixture()));
+
+    it('getForUser retorna as do usuário + broadcasts, nunca as de outro', () => {
+        const ids = notificationService.getForUser('u1').map(n => n.id);
+        expect(ids).toEqual(['a', 'c', 'd']); // sem 'b' (de u2)
+    });
+
+    it('getUnreadCount conta só as visíveis ao usuário', () => {
+        expect(notificationService.getUnreadCount('u1')).toBe(3); // a, c, d
+    });
+
+    it('delete só age em notificação visível ao usuário', () => {
+        expect(notificationService.delete('b', 'u1')).toBe(false); // de u2 → bloqueado
+        expect(notificationService.delete('a', 'u1')).toBe(true);  // própria → ok
+    });
+
+    it('markAsRead bloqueia notificação de outro usuário', () => {
+        expect(notificationService.markAsRead('b', 'u1')).toBe(false);
+        expect(notificationService.markAsRead('a', 'u1')).toBe(true);
+    });
+
+    it('markAllAsRead marca só as visíveis (não toca as de outro)', () => {
+        const count = notificationService.markAllAsRead('u1');
+        expect(count).toBe(3); // a, c, d
+        const b = (notificationService as any).data.notifications.find((n: any) => n.id === 'b');
+        expect(b.read).toBe(false); // a de u2 segue não-lida
+    });
+
+    it('deleteAllForUser remove só as PESSOAIS do usuário (mantém broadcasts e de outros)', () => {
+        const removed = notificationService.deleteAllForUser('u1');
+        expect(removed).toBe(1); // só 'a'
+        const ids = (notificationService as any).data.notifications.map((n: any) => n.id);
+        expect(ids.sort()).toEqual(['b', 'c', 'd']); // broadcasts e a de u2 preservadas
+    });
+
+    it('sem userId, getForUser/getUnreadCount não filtram (compat)', () => {
+        expect(notificationService.getForUser('').length).toBe(4);
+        expect(notificationService.getUnreadCount()).toBe(4);
+    });
+});

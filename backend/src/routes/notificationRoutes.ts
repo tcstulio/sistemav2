@@ -14,7 +14,7 @@ router.get('/', (req, res) => {
         const limit = Number(req.query.limit) || 50;
         const offset = Number(req.query.offset) || 0;
         const notifications = notificationService.getForUser(userId, limit, offset);
-        const unreadCount = notificationService.getUnreadCount();
+        const unreadCount = notificationService.getUnreadCount(userId);
         res.json({ notifications, unreadCount });
     } catch (e: any) {
         log.error('GET /notifications error', e.message);
@@ -33,7 +33,8 @@ router.get('/stats', (_req, res) => {
 
 router.put('/:id/read', (req, res) => {
     try {
-        const ok = notificationService.markAsRead(req.params.id);
+        const userId = (req as any).user?.id || (req as any).user?.login;
+        const ok = notificationService.markAsRead(req.params.id, userId);
         if (!ok) return res.status(404).json({ error: 'Not found' });
         res.json({ success: true });
     } catch (e: any) {
@@ -41,9 +42,21 @@ router.put('/:id/read', (req, res) => {
     }
 });
 
-router.put('/read-all', (_req, res) => {
+router.put('/read-all', (req, res) => {
     try {
-        const count = notificationService.markAllAsRead();
+        const userId = (req as any).user?.id || (req as any).user?.login;
+        const count = notificationService.markAllAsRead(userId);
+        res.json({ success: true, count });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Limpar TODAS as notificações pessoais do usuário (corrige o "Limpar" que era no-op).
+router.delete('/', (req, res) => {
+    try {
+        const userId = (req as any).user?.id || (req as any).user?.login;
+        const count = notificationService.deleteAllForUser(userId);
         res.json({ success: true, count });
     } catch (e: any) {
         res.status(500).json({ error: e.message });
@@ -52,7 +65,8 @@ router.put('/read-all', (_req, res) => {
 
 router.delete('/:id', (req, res) => {
     try {
-        const ok = notificationService.delete(req.params.id);
+        const userId = (req as any).user?.id || (req as any).user?.login;
+        const ok = notificationService.delete(req.params.id, userId);
         if (!ok) return res.status(404).json({ error: 'Not found' });
         res.json({ success: true });
     } catch (e: any) {
