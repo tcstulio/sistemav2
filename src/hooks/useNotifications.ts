@@ -171,17 +171,26 @@ export const useNotifications = (
 };
 
 export const useNotificationActions = () => {
-    return useCallback(async (action: 'markRead' | 'markAllRead' | 'clearAll', id?: string) => {
+    return useCallback(async (action: 'markRead' | 'markAllRead' | 'clearAll' | 'dismiss', id?: string): Promise<boolean> => {
         try {
+            let res: Response | undefined;
             if (action === 'markRead' && id) {
-                await fetch(`${API}/api/notifications/${id}/read`, { method: 'PUT' });
+                res = await fetch(`${API}/api/notifications/${id}/read`, { method: 'PUT' });
             } else if (action === 'markAllRead') {
-                await fetch(`${API}/api/notifications/read-all`, { method: 'PUT' });
+                res = await fetch(`${API}/api/notifications/read-all`, { method: 'PUT' });
             } else if (action === 'clearAll') {
-                await fetch(`${API}/api/notifications`, { method: 'DELETE' });
+                res = await fetch(`${API}/api/notifications`, { method: 'DELETE' });
+            } else if (action === 'dismiss' && id) {
+                res = await fetch(`${API}/api/notifications/${id}`, { method: 'DELETE' });
             }
+            if (res && !res.ok) {
+                log.error(`Notification action ${action} falhou: HTTP ${res.status}`);
+                return false;
+            }
+            return true;
         } catch (e) {
             log.error(`Failed to ${action}`, e);
+            return false;
         }
     }, []);
 };

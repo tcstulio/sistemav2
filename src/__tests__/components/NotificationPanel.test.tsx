@@ -48,6 +48,7 @@ describe('NotificationPanel', () => {
     const mockOnNavigate = vi.fn();
     const mockOnClearAll = vi.fn();
     const mockOnMarkAllRead = vi.fn();
+    const mockOnDismiss = vi.fn();
 
     beforeEach(() => {
         vi.clearAllMocks();
@@ -63,6 +64,7 @@ describe('NotificationPanel', () => {
                 onNavigate={mockOnNavigate}
                 onClearAll={mockOnClearAll}
                 onMarkAllRead={mockOnMarkAllRead}
+                onDismiss={mockOnDismiss}
             />
         );
     };
@@ -102,6 +104,15 @@ describe('NotificationPanel', () => {
         renderPanel();
         fireEvent.click(screen.getByText('Lidas'));
         expect(mockOnMarkAllRead).toHaveBeenCalled();
+    });
+
+    it('dismisses a single notification via the X button (without marking read/navigating)', () => {
+        renderPanel();
+        const dismissButtons = screen.getAllByLabelText('Remover notificação');
+        fireEvent.click(dismissButtons[0]); // 1ª notificação (id '1')
+        expect(mockOnDismiss).toHaveBeenCalledWith('1');
+        expect(mockOnMarkRead).not.toHaveBeenCalled(); // stopPropagation
+        expect(mockOnNavigate).not.toHaveBeenCalled();
     });
 
     it('calls onClearAll when "Limpar" button is clicked', () => {
