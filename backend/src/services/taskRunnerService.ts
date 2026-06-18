@@ -10,7 +10,8 @@ import { logger } from '../utils/logger';
 import { aiService } from './aiService';
 import { aiJobService } from './aiJobService';
 import { socketService } from './socketService';
-import { killTree, isAlive, killOpencodeOrphans, killByImageName } from '../utils/processTree';
+import { killTree, isAlive, killOpencodeOrphans, killByImageName, listPidsByName } from '../utils/processTree';
+import { previewPortsFor } from '../utils/previewPorts';
 import { screenshotService } from './screenshotService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
 
@@ -112,19 +113,42 @@ function runOpencode(
             }
         }, 500);
 
-        // Sampling CPU/mem (#305): poll a cada 2s enquanto o processo está vivo.
-        // pidusage é cross-platform (Windows: Get-Process / ps; Unix: /proc).
+        // Sampling CPU/mem (#305 + #502): a cada 2s mede o(s) processo(s) `opencode` — o trabalho
+        // real — e NÃO o child.pid, que é o git-bash wrapper (`git-bash -lc → opencode`) e fica ~0%
+        // só esperando o neto. Como os runs do TaskRunner são serializados (worktreeLock), os
+        // opencode.exe vivos durante a amostragem pertencem a esta task; somamos a CPU/RSS deles.
+        // Se nenhum opencode estiver vivo (ainda subindo ou já encerrado), pula a amostra em vez de
+        // registrar os zeros enganosos do git-bash. listPidsByName é rápido (Get-Process, sem WMI).
+        let sampling = false;
         const sampler = onSample ? setInterval(() => {
-            const pid = child.pid;
-            if (!pid || killed) return;
-            pidusage(pid, (err, stats) => {
-                if (err || !stats) return;
-                onSample({
-                    ts: new Date().toISOString(),
-                    cpuPercent: Math.round((stats.cpu || 0) * 10) / 10,
-                    rssMb: Math.round((stats.memory / (1024 * 1024)) * 10) / 10,
-                });
-            });
+            if (killed || sampling) return;
+            sampling = true;
+            (async () => {
+                try {
+                    const pids = await listPidsByName('opencode');
+                    if (pids.length === 0) return;
+                    const stats = await new Promise<Record<string, { cpu: number; memory: number } | undefined>>((res, rej) => {
+                        pidusage(pids, (err, s) => (err ? rej(err) : res(s as any)));
+                    });
+                    let cpu = 0;
+                    let mem = 0;
+                    for (const key of Object.keys(stats)) {
+                        const s = stats[key];
+                        if (!s) continue;
+                        cpu += s.cpu || 0;
+                        mem += s.memory || 0;
+                    }
+                    onSample({
+                        ts: new Date().toISOString(),
+                        cpuPercent: Math.round(cpu * 10) / 10,
+                        rssMb: Math.round((mem / (1024 * 1024)) * 10) / 10,
+                    });
+                } catch {
+                    // amostra perdida (enum/pidusage falhou sob carga) — ignora, próximo tick tenta
+                } finally {
+                    sampling = false;
+                }
+            })();
         }, 2000) : null;
 
         const finish = (err?: Error) => {
@@ -1814,8 +1838,8 @@ Return ONLY a JSON:
         this.emitLog(issueNumber, 'info', 'Judge Visual: capturando screenshots antes/depois...');
 
         try {
-            const previewPort = 3000 + (issueNumber % 1000);
-            const afterUrl = `http://localhost:${previewPort}`;
+            const { frontendPort } = previewPortsFor(issueNumber);
+            const afterUrl = `http://localhost:${frontendPort}`;
 
             const beforeUrl = 'http://localhost:3003';
 
@@ -2630,8 +2654,7 @@ The first element should be the task to execute first.`;
             await git(['checkout', task.branch!], { timeout: 15000, cwd: WT_ROOT });
         });
 
-        const previewPort = 5174 + (issueNumber % 10);
-        const backendPort = 3014 + (issueNumber % 10);
+        const { frontendPort: previewPort, backendPort } = previewPortsFor(issueNumber);
 
         const previewRoot = WT_ROOT;
 
