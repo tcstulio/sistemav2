@@ -33,7 +33,7 @@ describe('DelegationEventsService', () => {
         svc.logEvent('50', 'accepted', { by: '16' });
         expect(mockDoli.createAgendaEvent).toHaveBeenCalledWith(expect.objectContaining({
             label: '[Delegação] Delegação aceita',
-            type_code: 'AC_DELEG', // categoria própria, escondida da agenda normal
+            type_code: 'AC_OTH_AUTO', // categoria nativa de auto-eventos do Dolibarr (escondida por padrão)
             fk_element: '50',
             elementtype: 'project_task',
             userownerid: '16',

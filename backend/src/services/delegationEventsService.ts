@@ -90,9 +90,10 @@ export class DelegationEventsService {
     private async mirror(taskId: string, type: DelegationEventType, opts: { by?: string; note?: string }): Promise<void> {
         await dolibarrService.createAgendaEvent({
             label: `[Delegação] ${LABELS[type]}`,
-            // Categoria própria (#: agenda lotada) — escondida da agenda normal (igual AC_CHAT),
-            // visível como trilha de delegação. Antes caía em AC_OTH e poluía a agenda de todos.
-            type_code: 'AC_DELEG',
+            // Categoria NATIVA de eventos automáticos do Dolibarr (type 'systemauto'). O Dolibarr
+            // esconde esses da agenda por padrão (filtro de eventos automáticos), como faz com os
+            // que ele mesmo cria (projeto/tarefa). Antes caía em AC_OTH e poluía a agenda de todos.
+            type_code: 'AC_OTH_AUTO',
             note: opts.note || '',
             fk_element: taskId,
             elementtype: 'project_task',
