@@ -9,6 +9,7 @@ import { logger } from '../utils/logger';
 import { formatErrorsForAgent } from '../utils/errorStore';
 import { useLocation } from 'react-router-dom';
 import { formatViewContext } from '../config/viewRegistry';
+import { getAgentBootstrapConfig, AgentBootstrapConfig } from '../services/agentBootstrapService';
 // Hooks removidos: Backend processa dados via ferramentas IA
 
 const log = logger.child('VirtualAssistant');
@@ -19,17 +20,29 @@ const VA_SESSION_ID_KEY = 'coolgroove_va_session_id';
 const MAX_STORED_MESSAGES = 50;
 const WELCOME_MESSAGE: ChatMessage = { role: 'model', text: 'Olá! Sou seu Assistente Virtual. Posso analisar documentos e responder perguntas sobre seus dados.' };
 
+// Default usado se a config não carregar (degradação graciosa): comportamento original.
+const DEFAULT_BOOTSTRAP_CONFIG: AgentBootstrapConfig = {
+  enabled: true, includeTasks: true, includeAgenda: true, includeFinancial: true, extraInstruction: '',
+};
+
 // Sessão automática (#300): ao abrir uma conversa nova, o agente reúne proativamente um resumo
-// do dia usando as tools existentes. Enviado como turno do usuário, mas NÃO exibido como balão.
-const BOOTSTRAP_PROMPT = [
-  '[INÍCIO DE SESSÃO] Gere um resumo proativo e curto para abrir a conversa, em pt-BR e cordial.',
-  'Reúna, usando as ferramentas disponíveis:',
-  '1) minhas tarefas pendentes (list_user_tasks),',
-  '2) meus próximos compromissos/agenda (list_events),',
-  '3) um resumo financeiro rápido (get_financial_summary).',
-  'Use bullets curtos. NÃO invente dados: se uma ferramenta não retornar ou eu não tiver acesso,',
-  'apenas omita aquele item. Encerre perguntando como pode ajudar hoje.',
-].join('\n');
+// do dia. O QUE ele reúne é configurável pelo admin (#300 item 3 — agentBootstrapService).
+const buildBootstrapPrompt = (cfg: AgentBootstrapConfig): string => {
+  const items: string[] = [];
+  if (cfg.includeTasks) items.push('minhas tarefas pendentes (list_user_tasks)');
+  if (cfg.includeAgenda) items.push('meus próximos compromissos/agenda (list_events)');
+  if (cfg.includeFinancial) items.push('um resumo financeiro rápido (get_financial_summary)');
+
+  const lines = ['[INÍCIO DE SESSÃO] Gere um resumo proativo e curto para abrir a conversa, em pt-BR e cordial.'];
+  if (items.length > 0) {
+    lines.push('Reúna, usando as ferramentas disponíveis:');
+    items.forEach((it, i) => lines.push(`${i + 1}) ${it},`));
+    lines.push('Use bullets curtos. NÃO invente dados: se uma ferramenta não retornar ou eu não tiver acesso, apenas omita aquele item.');
+  }
+  if (cfg.extraInstruction?.trim()) lines.push(cfg.extraInstruction.trim());
+  lines.push('Encerre perguntando como pode ajudar hoje.');
+  return lines.join('\n');
+};
 
 // Deeplinks internos do agente (ex.: /tickets/new?prefill=<token>) e URLs http(s).
 const INTERNAL_DEEPLINK = /\/[A-Za-z0-9_\-/]+\?prefill=[A-Za-z0-9._-]+/g;
@@ -221,6 +234,10 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
 
   // Sessão automática (#300): reúne o resumo do dia via agente e exibe como abertura.
   const handleBootstrap = async () => {
+    // Config do admin (#300 item 3): se desligada, mantém a saudação estática.
+    const cfg = (await getAgentBootstrapConfig()) || DEFAULT_BOOTSTRAP_CONFIG;
+    if (!cfg.enabled) return;
+
     setIsLoading(true);
     try {
       let sid = currentSessionId;
@@ -233,7 +250,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         }
       }
       const pageContext = formatViewContext(location.pathname, location.search || undefined);
-      const result = await AiService.chatWithData(BOOTSTRAP_PROMPT, [], undefined, sid || undefined, pageContext);
+      const result = await AiService.chatWithData(buildBootstrapPrompt(cfg), [], undefined, sid || undefined, pageContext);
       if ((result as any)?.contextWindow) setContextWindow((result as any).contextWindow);
       if (result?.reply) {
         setMessages([{ role: 'model', text: result.reply, usage: (result as any).usage }]);
