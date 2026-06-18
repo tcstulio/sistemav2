@@ -33,13 +33,60 @@ const SYMPLA_BASE_URL = 'https://www.sympla.com.br/eventos/sao-paulo-sp/show-mus
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Extract JSON event data embedded in Sympla's Next.js SSR page
+ * Estratégia atual (2026): o Sympla migrou para Next.js App Router com streaming. Os eventos
+ * vêm em `self.__next_f.push([1,"…searchDataResult…"])` — um payload RSC onde o JSON está
+ * escapado dentro de um literal JS. Isolamos o array `searchDataResult.data` por bracket-matching
+ * (honrando as strings delimitadas por \") e desescapamos com um duplo JSON.parse.
+ */
+function extractFromNextFlight(html: string): any[] {
+    const marker = html.indexOf('searchDataResult');
+    if (marker === -1) return [];
+    const di = html.indexOf('\\"data\\":', marker);
+    if (di === -1) return [];
+    const start = html.indexOf('[', di);
+    if (start === -1) return [];
+
+    let depth = 0;
+    let inStr = false;
+    let end = -1;
+    for (let p = start; p < html.length; p++) {
+        const c = html[p];
+        if (inStr) {
+            if (c === '\\') {
+                if (html[p + 1] === '"') { inStr = false; p++; continue; } // \" fecha a string
+                p++; continue; // \\ ou outro escape — pula o par
+            }
+            continue;
+        }
+        if (c === '\\' && html[p + 1] === '"') { inStr = true; p++; continue; }
+        if (c === '[') depth++;
+        else if (c === ']') { depth--; if (depth === 0) { end = p + 1; break; } }
+    }
+    if (end === -1) return [];
+
+    try {
+        const arrEscaped = html.slice(start, end);
+        const text = JSON.parse('"' + arrEscaped + '"'); // desescapa o literal JS -> texto JSON
+        const data = JSON.parse(text);
+        return Array.isArray(data) ? data : [];
+    } catch (e) {
+        log.warn(`Falha ao desescapar payload RSC do Sympla: ${e}`);
+        return [];
+    }
+}
+
+/**
+ * Extract JSON event data embedded in Sympla's Next.js page
  */
 function extractEventsFromHtml(html: string): any[] {
+    // Strategy 0 (atual): payload RSC do App Router.
+    const flight = extractFromNextFlight(html);
+    if (flight.length > 0) return flight;
+
     const $ = cheerio.load(html);
     const events: any[] = [];
 
-    // Strategy 1: Look for JSON data in script tags (Next.js __NEXT_DATA__)
+    // Strategy 1: Look for JSON data in script tags (Next.js __NEXT_DATA__ — legado)
     $('script#__NEXT_DATA__').each((_, el) => {
         try {
             const json = JSON.parse($(el).text());
@@ -121,19 +168,21 @@ function mapSymplaEvent(raw: any): RawScrapedEvent | null {
 
         if (!date) return null;
 
-        // Build venue info
-        const venueName = raw.company || raw.venue || raw.address || 'Local não informado';
-        const venueAddress = raw.address ? `${raw.address}${raw.address_num ? ', ' + raw.address_num : ''}` : undefined;
-        const venueNeighborhood = raw.neighborhood || '';
+        // Build venue info. No formato atual o local vem aninhado em `location`
+        // (location.name = nome do local; company = organizador). Mantém fallback para o legado.
+        const loc = raw.location || {};
+        const venueName = loc.name || raw.company || raw.venue || loc.address || raw.address || 'Local não informado';
+        const venueAddress = loc.address || raw.address || undefined;
+        const venueNeighborhood = loc.neighborhood || raw.neighborhood || '';
 
-        // Build source URL
+        // Build source URL (no formato atual já vem absoluto)
         let sourceUrl = raw.url || '';
         if (sourceUrl && !sourceUrl.startsWith('http')) {
             sourceUrl = `https://www.sympla.com.br${sourceUrl}`;
         }
 
         // Image
-        const imageUrl = raw.images?.lg || raw.images?.original || raw.images?.xs || undefined;
+        const imageUrl = raw.images?.original || raw.images?.lg || raw.images?.xs || undefined;
 
         return {
             sourceId: `sympla_${raw.id || Date.now()}`,
