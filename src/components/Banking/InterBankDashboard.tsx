@@ -26,6 +26,7 @@ import { useInterBank, TransacaoInter, PixRecebido, BoletoResponse } from '../..
 import { io } from 'socket.io-client';
 import { formatDateOnly, formatDateTime } from '../../utils/dateUtils';
 import { logger } from '../../utils/logger';
+import { safeStorage } from '../../utils/safeStorage';
 
 const log = logger.child('InterBankDashboard');
 
@@ -106,9 +107,12 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
 
     // Socket Listener
     useEffect(() => {
+        // Token de sessão (opaco) lido da config — antes lia localStorage 'dolapikey', que NUNCA
+        // é gravado, então o socket conectava sem token e a auth falhava (#33).
+        const sessionToken = safeStorage.getJSON<Record<string, any>>('coolgroove_config', {})?.apiKey || '';
         const socket = io({
             auth: {
-                token: localStorage.getItem('dolapikey')
+                token: sessionToken
             }
         });
 

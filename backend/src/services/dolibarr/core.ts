@@ -428,6 +428,32 @@ export class DolibarrServiceBase {
         }
     }
 
+    /**
+     * Baixa a foto de um usuário (modulepart=user) server-side, usando a chave de serviço.
+     * Permite que o frontend exiba o avatar via proxy (cookie httpOnly) SEM expor o token na
+     * URL da imagem (#33). Retorna o buffer + content-type.
+     */
+    async getUserPhoto(userId: string, file: string): Promise<{ buffer: Buffer; contentType: string }> {
+        const url = `${this.baseUrl}documents/download`;
+        const headers = this.getHeaders();
+
+        const response = await axios.get(url, {
+            headers,
+            params: { modulepart: 'user', original_file: `${userId}/${file}` },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s < 500,
+        });
+
+        if (response.data?.content) {
+            return {
+                buffer: Buffer.from(response.data.content, 'base64'),
+                contentType: response.data['content-type'] || 'image/jpeg',
+            };
+        }
+
+        throw new Error(`Foto não encontrada para usuário #${userId}`);
+    }
+
     protected async getEntityRef(entityType: string, entityId: string): Promise<string> {
         const endpointMap: Record<string, string> = {
             invoice: 'invoices',

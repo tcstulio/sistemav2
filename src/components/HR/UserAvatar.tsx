@@ -1,6 +1,5 @@
 import React from 'react';
 import { DolibarrUser, DolibarrConfig } from '../../types';
-import { DolibarrService } from '../../services/dolibarrService';
 
 interface UserAvatarProps {
     user: DolibarrUser;
@@ -16,9 +15,8 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({ user, config, size = 'md
     };
 
     if (user.photo && user.id) {
-        const cleanApiUrl = DolibarrService.sanitizeUrl(config.apiUrl);
-        const encodedFile = `${user.id}/${encodeURIComponent(user.photo)}`;
-        const photoUrl = `${cleanApiUrl}/documents/download?modulepart=user&original_file=${encodedFile}&DOLAPIKEY=${config.apiKey}`;
+        // Via proxy do backend (cookie httpOnly) — o token NÃO vai na URL da imagem (#33).
+        const photoUrl = `/api/documents/user-photo?userId=${user.id}&file=${encodeURIComponent(user.photo)}`;
 
         return (
             <>

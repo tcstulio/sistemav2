@@ -171,4 +171,32 @@ router.get('/:entityType/:entityId/pdf', async (req: Request, res: Response) => 
     }
 });
 
+/**
+ * Proxy da foto de usuário (avatar). Autentica pelo cookie httpOnly (requireDolibarrLogin),
+ * busca a imagem no Dolibarr server-side e devolve o binário — assim o <img> do frontend não
+ * precisa carregar o token na URL (#33). A chave de serviço nunca sai do servidor.
+ */
+router.get('/user-photo', async (req: Request, res: Response) => {
+    try {
+        const userId = String(req.query.userId || '');
+        const file = String(req.query.file || '');
+        if (!/^\d+$/.test(userId) || !file) {
+            return res.status(400).json({ success: false, error: 'Parâmetros userId/file inválidos' });
+        }
+        // Anti path traversal: o nome do arquivo não pode conter separadores nem "..".
+        const safeFile = file.replace(/\.\./g, '').replace(/[\\/]/g, '');
+        if (!safeFile) {
+            return res.status(400).json({ success: false, error: 'Nome de arquivo inválido' });
+        }
+
+        const { buffer, contentType } = await dolibarrService.getUserPhoto(userId, safeFile);
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Cache-Control', 'private, max-age=300');
+        res.send(buffer);
+    } catch (error: any) {
+        log.error(`Erro ao obter foto de usuário: ${error.message}`);
+        res.status(404).json({ success: false, error: 'Foto não disponível' });
+    }
+});
+
 export default router;
