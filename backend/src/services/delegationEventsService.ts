@@ -90,6 +90,9 @@ export class DelegationEventsService {
     private async mirror(taskId: string, type: DelegationEventType, opts: { by?: string; note?: string }): Promise<void> {
         await dolibarrService.createAgendaEvent({
             label: `[Delegação] ${LABELS[type]}`,
+            // Categoria própria (#: agenda lotada) — escondida da agenda normal (igual AC_CHAT),
+            // visível como trilha de delegação. Antes caía em AC_OTH e poluía a agenda de todos.
+            type_code: 'AC_DELEG',
             note: opts.note || '',
             fk_element: taskId,
             elementtype: 'project_task',

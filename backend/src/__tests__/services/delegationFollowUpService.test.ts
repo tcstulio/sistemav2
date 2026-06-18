@@ -88,6 +88,30 @@ describe('DelegationFollowUpService.runTick', () => {
         expect(call?.[2].taskContacts).toEqual([{ task_id: '50', user_id: '16', type_id: '45' }]);
     });
 
+    it('espelha o evento de agenda com o dono real (responsável) e nota com contexto', async () => {
+        const { delegationEventsService } = await import('../../services/delegationEventsService');
+        mockDoli.listTasksFull.mockResolvedValue([{ id: '50', ref: 'TK50', label: 'Entregar relatório', date_end: dueSec(10), progress: 0, fk_user_creat: '9' }]);
+        mockDoli.getAllTaskContacts.mockReturnValue([{ task_id: '50', user_id: '16', type_id: '45' }]); // 45 = responsável
+        const svc = newSvc();
+        await svc.runTick(noon(11)); // baseline
+        await svc.runTick(noon(12)); // cobra
+        expect(delegationEventsService.logEvent).toHaveBeenCalledWith(
+            '50',
+            'cobranca',
+            expect.objectContaining({ by: '16', note: expect.stringContaining('Entregar relatório') }),
+        );
+    });
+
+    it('cai p/ o criador como dono quando não há responsável', async () => {
+        const { delegationEventsService } = await import('../../services/delegationEventsService');
+        mockDoli.listTasksFull.mockResolvedValue([{ id: '50', label: 'X', date_end: dueSec(10), progress: 0, fk_user_creat: '9' }]);
+        mockDoli.getAllTaskContacts.mockReturnValue([]); // sem responsável
+        const svc = newSvc();
+        await svc.runTick(noon(11));
+        await svc.runTick(noon(12));
+        expect(delegationEventsService.logEvent).toHaveBeenCalledWith('50', 'cobranca', expect.objectContaining({ by: '9' }));
+    });
+
     it('sem tarefas: retorna zero e não dispara', async () => {
         mockDoli.listTasksFull.mockResolvedValue([]);
         const svc = newSvc();

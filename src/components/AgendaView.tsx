@@ -151,6 +151,11 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
             // Chat messages are stored as agendaevents (type AC_CHAT) but are conversations,
             // not calendar items — never surface them in the agenda.
             if (e.type_code?.toUpperCase() === 'AC_CHAT') return;
+            // Eventos de delegação (cobrança/escalada/lembrete) são trilha de sistema, não
+            // compromissos — escondidos da agenda. Novos usam AC_DELEG; o legado é AC_OTH
+            // com label "[Delegação] …" (pega os ~383 antigos sem migração destrutiva).
+            if (e.type_code?.toUpperCase() === 'AC_DELEG') return;
+            if (typeof e.label === 'string' && e.label.startsWith('[Delegação]')) return;
             const isLog = isSystemLog(e);
             if (isLog && !showSystemEvents) return;
             const context = getContextLink(e);

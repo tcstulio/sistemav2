@@ -18,6 +18,7 @@ import { dolibarrService } from './dolibarr';
 import { dispatchTaskNotification } from './taskNotificationService';
 import { delegationService } from './delegationService';
 import { delegationEventsService, DelegationEventType } from './delegationEventsService';
+import { resolveRoleUsers } from './taskNotificationLogic';
 import { decideFollowUp, Cadence, DEFAULT_CADENCE, TaskTracking, FollowUpEvent } from './delegationFollowUpLogic';
 
 // Evento do motor -> tipo no log da delegação (linha do tempo). by=sistema (undefined).
@@ -31,6 +32,20 @@ const EVENT_TO_LOG: Record<FollowUpEvent, DelegationEventType> = {
 };
 
 const log = createLogger('DelegationFollowUp');
+
+/** Descrição com contexto p/ o evento de agenda da delegação (antes ia sem informação). */
+function buildDelegationNote(task: any): string {
+    const parts = [`Tarefa: ${task.label || `#${task.id}`}`];
+    if (task.ref) parts.push(`Ref: ${task.ref}`);
+    if (task.date_end) {
+        const d = new Date(Number(task.date_end) * 1000);
+        if (!isNaN(d.getTime())) parts.push(`Prazo: ${d.toLocaleDateString('pt-BR')}`);
+    }
+    if (task.progress !== undefined && task.progress !== null && task.progress !== '') {
+        parts.push(`Progresso: ${task.progress}%`);
+    }
+    return parts.join(' — ');
+}
 
 type TrackingStore = Record<string, TaskTracking>;
 
@@ -117,8 +132,17 @@ export class DelegationFollowUpService {
                 }
                 dispatches++;
                 result[event]++;
-                await dispatchTaskNotification(event, task, { taskContacts: contactsByTask.get(id) || [] });
-                delegationEventsService.logEvent(id, EVENT_TO_LOG[event], { atMs: nowMs }); // by=sistema
+                const taskContacts = contactsByTask.get(id) || [];
+                await dispatchTaskNotification(event, task, { taskContacts });
+                // Dono real (responsável > criador) p/ o evento não cair no admin (id 1) e
+                // descrição com contexto — antes o espelho ia sem dono e sem info.
+                const roles = resolveRoleUsers(task, taskContacts);
+                const owner = roles.responsavel[0] || roles.criador[0];
+                delegationEventsService.logEvent(id, EVENT_TO_LOG[event], {
+                    atMs: nowMs,
+                    by: owner,
+                    note: buildDelegationNote(task),
+                });
             }
 
             this.save();
