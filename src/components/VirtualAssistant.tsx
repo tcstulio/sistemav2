@@ -19,6 +19,18 @@ const VA_SESSION_ID_KEY = 'coolgroove_va_session_id';
 const MAX_STORED_MESSAGES = 50;
 const WELCOME_MESSAGE: ChatMessage = { role: 'model', text: 'Olá! Sou seu Assistente Virtual. Posso analisar documentos e responder perguntas sobre seus dados.' };
 
+// Sessão automática (#300): ao abrir uma conversa nova, o agente reúne proativamente um resumo
+// do dia usando as tools existentes. Enviado como turno do usuário, mas NÃO exibido como balão.
+const BOOTSTRAP_PROMPT = [
+  '[INÍCIO DE SESSÃO] Gere um resumo proativo e curto para abrir a conversa, em pt-BR e cordial.',
+  'Reúna, usando as ferramentas disponíveis:',
+  '1) minhas tarefas pendentes (list_user_tasks),',
+  '2) meus próximos compromissos/agenda (list_events),',
+  '3) um resumo financeiro rápido (get_financial_summary).',
+  'Use bullets curtos. NÃO invente dados: se uma ferramenta não retornar ou eu não tiver acesso,',
+  'apenas omita aquele item. Encerre perguntando como pode ajudar hoje.',
+].join('\n');
+
 // Deeplinks internos do agente (ex.: /tickets/new?prefill=<token>) e URLs http(s).
 const INTERNAL_DEEPLINK = /\/[A-Za-z0-9_\-/]+\?prefill=[A-Za-z0-9._-]+/g;
 const ABSOLUTE_URL = /https?:\/\/[^\s)]+/g;
@@ -101,6 +113,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const [contextWindow, setContextWindow] = useState<number>(200000);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const bootstrapAttemptedRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
@@ -205,6 +218,43 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     };
     reader.readAsDataURL(file);
   };
+
+  // Sessão automática (#300): reúne o resumo do dia via agente e exibe como abertura.
+  const handleBootstrap = async () => {
+    setIsLoading(true);
+    try {
+      let sid = currentSessionId;
+      if (!sid) {
+        const session = await AiService.createChatSession('Resumo inicial');
+        if (session) {
+          sid = session.id;
+          setCurrentSessionId(sid);
+          safeStorage.setItem(VA_SESSION_ID_KEY, sid);
+        }
+      }
+      const pageContext = formatViewContext(location.pathname, location.search || undefined);
+      const result = await AiService.chatWithData(BOOTSTRAP_PROMPT, [], undefined, sid || undefined, pageContext);
+      if ((result as any)?.contextWindow) setContextWindow((result as any).contextWindow);
+      if (result?.reply) {
+        setMessages([{ role: 'model', text: result.reply, usage: (result as any).usage }]);
+      }
+    } catch {
+      // Mantém a saudação estática em caso de erro (degradação graciosa).
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Dispara o bootstrap só na 1ª abertura de uma conversa NOVA (sem sessão/histórico) e sem input
+  // pendente (ex.: aberturas vindas de "Reportar ao Assistente" já trazem um texto e são puladas).
+  useEffect(() => {
+    const isFreshWelcome = messages.length === 1 && messages[0]?.role === 'model' && messages[0]?.text === WELCOME_MESSAGE.text;
+    if (isOpen && !bootstrapAttemptedRef.current && !currentSessionId && isFreshWelcome && !input.trim()) {
+      bootstrapAttemptedRef.current = true;
+      void handleBootstrap();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   const handleSend = async () => {
     if ((!input.trim() && !attachedImage && !attachedPdf) || isLoading) return;
