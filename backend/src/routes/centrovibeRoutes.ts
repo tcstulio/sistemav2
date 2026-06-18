@@ -1,7 +1,9 @@
 import { Router } from 'express';
-import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { z } from 'zod';
+import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
 import { centrovibeStoreService } from '../services/centrovibeStoreService';
 import { eventScraperService } from '../services/eventScraperService';
+import { scraperConfigStore } from '../services/scraperConfigStore';
 import { aiService } from '../services/aiService';
 import { createLogger } from '../utils/logger';
 
@@ -360,6 +362,50 @@ router.get('/scraper/status', (req, res) => {
         res.json(eventScraperService.getStatus());
     } catch (error: any) {
         log.error('Scraper status error', { error: error.message, stack: error.stack });
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ===========================================
+// Scraper Config (ligar/desligar fonte, intervalo/auto-run, URL-alvo editável)
+// ===========================================
+
+router.get('/scraper/config', (req, res) => {
+    try {
+        res.json(scraperConfigStore.getConfig());
+    } catch (error: any) {
+        log.error('Scraper config get error', { error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+});
+
+const sourceConfigSchema = z.object({
+    enabled: z.boolean().optional(),
+    url: z.string().url().optional(),
+    maxPages: z.number().int().min(1).max(10).optional(),
+});
+
+const scraperConfigSchema = z.object({
+    autoRun: z.boolean().optional(),
+    intervalHours: z.number().min(1).max(168).optional(),
+    sources: z.object({
+        sympla: sourceConfigSchema.optional(),
+        shotgun: sourceConfigSchema.optional(),
+        blacktag: sourceConfigSchema.optional(),
+    }).optional(),
+});
+
+router.put('/scraper/config', requireDolibarrAdmin, (req, res) => {
+    try {
+        const patch = scraperConfigSchema.parse(req.body);
+        const updated = scraperConfigStore.updateConfig(patch);
+        eventScraperService.reconfigureWorker(); // re-agenda com o novo intervalo/auto-run
+        res.json(updated);
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Config inválida', details: error.issues });
+        }
+        log.error('Scraper config put error', { error: error.message });
         res.status(500).json({ error: error.message });
     }
 });

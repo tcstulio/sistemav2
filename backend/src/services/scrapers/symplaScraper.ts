@@ -4,6 +4,12 @@ import { createLogger } from '../../utils/logger';
 
 const log = createLogger('SymplaScraper');
 
+/** Opções de execução vindas da config (URL-alvo editável + paginação). */
+export interface ScraperRunOpts {
+    url?: string;
+    maxPages?: number;
+}
+
 export interface RawScrapedEvent {
     sourceId: string;
     source: 'sympla' | 'shotgun' | 'blacktag';
@@ -209,13 +215,16 @@ function mapSymplaEvent(raw: any): RawScrapedEvent | null {
 export const symplaScraper = {
     name: 'sympla' as const,
 
-    async scrape(maxPages: number = 3): Promise<RawScrapedEvent[]> {
+    async scrape(opts: ScraperRunOpts = {}): Promise<RawScrapedEvent[]> {
         const allEvents: RawScrapedEvent[] = [];
+        const maxPages = opts.maxPages ?? 3;
+        const baseUrl = opts.url || SYMPLA_BASE_URL;
+        const pageSep = baseUrl.includes('?') ? '&' : '?';
         log.info(`Starting Sympla scrape (max ${maxPages} pages)`);
 
         for (let page = 1; page <= maxPages; page++) {
             try {
-                const url = page === 1 ? SYMPLA_BASE_URL : `${SYMPLA_BASE_URL}?page=${page}`;
+                const url = page === 1 ? baseUrl : `${baseUrl}${pageSep}page=${page}`;
                 log.info(`Fetching Sympla page ${page}: ${url}`);
 
                 const response = await axios.get(url, {

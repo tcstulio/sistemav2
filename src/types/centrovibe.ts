@@ -114,6 +114,7 @@ export interface PlatformStatus {
   lastSuccess: string | null;
   eventsFound: number;
   error?: string;
+  disabled?: boolean;
 }
 
 export interface ScraperStatus {
@@ -126,6 +127,20 @@ export interface ScraperStatus {
   };
   totalNewEvents: number;
   totalUpdated: number;
+}
+
+export type ScraperSourceKey = 'sympla' | 'shotgun' | 'blacktag';
+
+export interface ScraperSourceConfig {
+  enabled: boolean;
+  url: string;
+  maxPages?: number;
+}
+
+export interface ScraperConfig {
+  autoRun: boolean;
+  intervalHours: number;
+  sources: Record<ScraperSourceKey, ScraperSourceConfig>;
 }
 
 export interface RawScrapedEvent {

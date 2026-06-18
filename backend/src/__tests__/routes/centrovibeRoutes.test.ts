@@ -26,6 +26,22 @@ const mockCentrovibeStoreService = vi.hoisted(() => ({
 const mockEventScraperService = vi.hoisted(() => ({
     getStatus: vi.fn(() => ({ isRunning: false })),
     runScrape: vi.fn(),
+    reconfigureWorker: vi.fn(),
+}));
+
+const mockScraperConfig = vi.hoisted(() => ({
+    autoRun: true,
+    intervalHours: 6,
+    sources: {
+        sympla: { enabled: true, url: 'https://www.sympla.com.br/x', maxPages: 3 },
+        shotgun: { enabled: true, url: 'https://shotgun.live/x' },
+        blacktag: { enabled: true, url: 'https://blacktag.com.br/x' },
+    },
+}));
+
+const mockScraperConfigStore = vi.hoisted(() => ({
+    getConfig: vi.fn(() => mockScraperConfig),
+    updateConfig: vi.fn((patch: any) => ({ ...mockScraperConfig, ...patch })),
 }));
 
 const mockAiService = vi.hoisted(() => ({
@@ -34,6 +50,7 @@ const mockAiService = vi.hoisted(() => ({
 
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrLogin: mockRequireDolibarrLogin,
+    requireDolibarrAdmin: mockRequireDolibarrLogin, // nos testes, admin passa direto
 }));
 
 vi.mock('../../services/centrovibeStoreService', () => ({
@@ -42,6 +59,10 @@ vi.mock('../../services/centrovibeStoreService', () => ({
 
 vi.mock('../../services/eventScraperService', () => ({
     eventScraperService: mockEventScraperService,
+}));
+
+vi.mock('../../services/scraperConfigStore', () => ({
+    scraperConfigStore: mockScraperConfigStore,
 }));
 
 vi.mock('../../services/aiService', () => ({
@@ -100,6 +121,36 @@ describe('centrovibeRoutes', () => {
             const res = await request(app).get('/api/centrovibe/schedule');
 
             expect(res.status).toBe(200);
+        });
+    });
+
+    describe('GET /api/centrovibe/scraper/config', () => {
+        it('returns the current config', async () => {
+            const res = await request(app).get('/api/centrovibe/scraper/config');
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveProperty('intervalHours', 6);
+            expect(res.body.sources.sympla.enabled).toBe(true);
+        });
+    });
+
+    describe('PUT /api/centrovibe/scraper/config', () => {
+        it('updates config and reconfigures the worker', async () => {
+            const res = await request(app)
+                .put('/api/centrovibe/scraper/config')
+                .send({ autoRun: false, sources: { shotgun: { enabled: false } } });
+
+            expect(res.status).toBe(200);
+            expect(mockScraperConfigStore.updateConfig).toHaveBeenCalled();
+            expect(mockEventScraperService.reconfigureWorker).toHaveBeenCalled();
+        });
+
+        it('rejects invalid payload with 400', async () => {
+            const res = await request(app)
+                .put('/api/centrovibe/scraper/config')
+                .send({ intervalHours: 9999 }); // > 168
+
+            expect(res.status).toBe(400);
+            expect(mockScraperConfigStore.updateConfig).not.toHaveBeenCalled();
         });
     });
 

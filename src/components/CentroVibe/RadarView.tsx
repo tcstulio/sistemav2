@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { CLUSTERS } from './constants';
-import { ExternalEvent, EventCluster, Artist, Competitor, TicketBatch, ScraperStatus } from '../../types/centrovibe';
+import { ExternalEvent, EventCluster, Artist, Competitor, TicketBatch, ScraperStatus, ScraperConfig, ScraperSourceKey } from '../../types/centrovibe';
 import { CentroVibeService } from '../../services/centrovibeService';
 import { Card, Button, Input, Modal, Tabs, Tab, EmptyState } from '../ui';
-import { Radar, Plus, MapPin, Calendar, Users, AlertTriangle, ArrowLeft, Edit2, Save, X, Trash2, Ticket, RefreshCw, ExternalLink, Clock } from 'lucide-react';
+import { Radar, Plus, MapPin, Calendar, Users, AlertTriangle, ArrowLeft, Edit2, Save, X, Trash2, Ticket, RefreshCw, ExternalLink, Clock, Settings } from 'lucide-react';
+import { toast } from 'sonner';
+
+const SOURCE_LABELS: Record<ScraperSourceKey, string> = { sympla: 'Sympla', shotgun: 'Shotgun', blacktag: 'Blacktag' };
 
 interface RadarViewProps {
   myArtists: Artist[];
@@ -51,6 +54,9 @@ const RadarView: React.FC<RadarViewProps> = ({
   // Scraper state
   const [scraperStatus, setScraperStatus] = useState<ScraperStatus | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [scraperConfig, setScraperConfig] = useState<ScraperConfig | null>(null);
+  const [savingConfig, setSavingConfig] = useState(false);
 
   const fetchScraperStatus = useCallback(async () => {
     try {
@@ -81,6 +87,35 @@ const RadarView: React.FC<RadarViewProps> = ({
       }, 5000);
     } catch {
       setIsSyncing(false);
+    }
+  };
+
+  const openConfig = async () => {
+    setIsConfigOpen(true);
+    try {
+      setScraperConfig(await CentroVibeService.getScraperConfig());
+    } catch {
+      toast.error('Falha ao carregar a configuração dos scrapers');
+    }
+  };
+
+  const updateSource = (key: ScraperSourceKey, patch: Partial<ScraperConfig['sources'][ScraperSourceKey]>) => {
+    setScraperConfig(c => (c ? { ...c, sources: { ...c.sources, [key]: { ...c.sources[key], ...patch } } } : c));
+  };
+
+  const handleSaveConfig = async () => {
+    if (!scraperConfig) return;
+    setSavingConfig(true);
+    try {
+      const saved = await CentroVibeService.updateScraperConfig(scraperConfig);
+      setScraperConfig(saved);
+      toast.success('Configuração dos scrapers salva');
+      setIsConfigOpen(false);
+      fetchScraperStatus();
+    } catch {
+      toast.error('Falha ao salvar (requer admin)');
+    } finally {
+      setSavingConfig(false);
     }
   };
 
@@ -353,6 +388,9 @@ const RadarView: React.FC<RadarViewProps> = ({
                   >
                     {isSyncing ? 'Sincronizando...' : 'Sync Radar'}
                   </Button>
+                  <Button variant="outline" size="sm" icon={<Settings size={16} />} onClick={openConfig}>
+                    Configurar
+                  </Button>
                   <Button variant="outline" icon={<Plus size={16} />} onClick={() => setIsEventFormOpen(!isEventFormOpen)}>
                     Registrar Evento
                   </Button>
@@ -385,6 +423,82 @@ const RadarView: React.FC<RadarViewProps> = ({
                   </div>
                 </Card>
               )}
+
+              <Modal
+                isOpen={isConfigOpen}
+                onClose={() => setIsConfigOpen(false)}
+                title="Configuração dos Scrapers"
+                size="lg"
+                footer={
+                  <Button variant="primary" fullWidth loading={savingConfig} icon={<Save size={16} />} onClick={handleSaveConfig} disabled={!scraperConfig}>
+                    Salvar configuração
+                  </Button>
+                }
+              >
+                {!scraperConfig ? (
+                  <p className="text-sm text-slate-500 dark:text-slate-400">Carregando…</p>
+                ) : (
+                  <div className="space-y-5">
+                    {/* Agendamento */}
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <p className="text-sm font-bold text-slate-800 dark:text-white">Coleta automática</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">Roda periodicamente em segundo plano.</p>
+                      </div>
+                      <label className="inline-flex items-center cursor-pointer">
+                        <input type="checkbox" className="sr-only peer" checked={scraperConfig.autoRun}
+                          onChange={e => setScraperConfig(c => c ? { ...c, autoRun: e.target.checked } : c)} />
+                        <div className="w-11 h-6 bg-slate-300 dark:bg-slate-700 peer-checked:bg-indigo-600 rounded-full peer transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-5 relative"></div>
+                      </label>
+                    </div>
+                    <div className="w-40">
+                      <Input label="INTERVALO (HORAS)" type="number" min={1} max={168}
+                        value={String(scraperConfig.intervalHours)}
+                        onChange={e => setScraperConfig(c => c ? { ...c, intervalHours: Number(e.target.value) } : c)}
+                        disabled={!scraperConfig.autoRun} />
+                    </div>
+
+                    {/* Fontes */}
+                    <div className="space-y-3">
+                      <label className="block text-xs font-mono text-slate-500 dark:text-slate-400">FONTES</label>
+                      {(Object.keys(scraperConfig.sources) as ScraperSourceKey[]).map(key => {
+                        const src = scraperConfig.sources[key];
+                        const st = scraperStatus?.platforms?.[key];
+                        return (
+                          <Card key={key} className="p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <label className="inline-flex items-center cursor-pointer">
+                                  <input type="checkbox" className="sr-only peer" checked={src.enabled}
+                                    onChange={e => updateSource(key, { enabled: e.target.checked })} />
+                                  <div className="w-9 h-5 bg-slate-300 dark:bg-slate-700 peer-checked:bg-emerald-600 rounded-full peer transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4 relative"></div>
+                                </label>
+                                <span className="text-sm font-bold text-slate-800 dark:text-white">{SOURCE_LABELS[key]}</span>
+                              </div>
+                              {st && (
+                                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                  {st.disabled ? 'desativado' : st.error ? <span className="text-red-500">erro</span> : `${st.eventsFound} eventos`}
+                                </span>
+                              )}
+                            </div>
+                            <Input label="URL-ALVO (cidade/filtros)" value={src.url}
+                              onChange={e => updateSource(key, { url: e.target.value })}
+                              disabled={!src.enabled} placeholder="https://…" />
+                            {key === 'sympla' && (
+                              <div className="w-32 mt-2">
+                                <Input label="PÁGINAS" type="number" min={1} max={10}
+                                  value={String(src.maxPages ?? 3)}
+                                  onChange={e => updateSource(key, { maxPages: Number(e.target.value) })}
+                                  disabled={!src.enabled} />
+                              </div>
+                            )}
+                          </Card>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </Modal>
 
               <div className="space-y-4">
                 {filteredEvents.map(evt => {

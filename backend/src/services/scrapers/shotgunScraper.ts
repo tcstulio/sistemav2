@@ -1,218 +1,144 @@
-import axios from 'axios';
-import * as cheerio from 'cheerio';
+import { chromium, type Browser } from 'playwright';
 import { createLogger } from '../../utils/logger';
-import { RawScrapedEvent } from './symplaScraper';
+import { RawScrapedEvent, ScraperRunOpts } from './symplaScraper';
 
 const log = createLogger('ShotgunScraper');
 
-const BROWSER_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-};
-
 const SHOTGUN_BASE_URL = 'https://shotgun.live/en/cities/sao-paulo';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-/**
- * Fetch with retry and exponential backoff for 429 rate limits
- */
-async function fetchWithRetry(url: string, maxRetries: number = 3): Promise<string | null> {
-    const delays = [5000, 15000, 45000];
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-            const response = await axios.get(url, {
-                headers: BROWSER_HEADERS,
-                timeout: 15000,
-            });
-            return response.data;
-        } catch (error: any) {
-            if (error.response?.status === 429 && attempt < maxRetries) {
-                const waitTime = delays[attempt] || 45000;
-                log.warn(`Shotgun 429 rate limit, retrying in ${waitTime / 1000}s (attempt ${attempt + 1}/${maxRetries})`);
-                await delay(waitTime);
-            } else {
-                throw error;
-            }
-        }
-    }
-    return null;
+/** Forma crua extraída do DOM renderizado (uma por card). */
+export interface ShotgunRawCard {
+    href: string;
+    title: string;
+    datetime: string; // ISO (atributo <time datetime>) ou texto
+    imgSrc?: string;
+    cardText?: string;
 }
 
-/**
- * Parse month name to number
- */
-function parseMonthPt(month: string): number {
-    const months: Record<string, number> = {
-        'jan': 0, 'fev': 1, 'mar': 2, 'abr': 3, 'mai': 4, 'jun': 5,
-        'jul': 6, 'ago': 7, 'set': 8, 'out': 9, 'nov': 10, 'dez': 11,
-        'january': 0, 'february': 1, 'march': 2, 'april': 3, 'may': 4, 'june': 5,
-        'july': 6, 'august': 7, 'september': 8, 'october': 9, 'november': 10, 'december': 11,
+/** Converte um ISO datetime para a data local (YYYY-MM-DD) no fuso de São Paulo. */
+export function isoToSaoPauloDate(iso: string): string {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    // en-CA formata como YYYY-MM-DD
+    return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+}
+
+/** Extrai um preço em reais de um texto livre ("R$20.00", "R$ 1.234,56"). */
+export function parsePriceBRL(text: string): number | undefined {
+    const m = text.match(/R\$\s*([\d.,]+)/);
+    if (!m) return undefined;
+    let s = m[1];
+    const decPos = Math.max(s.lastIndexOf('.'), s.lastIndexOf(','));
+    if (decPos !== -1 && s.length - decPos - 1 === 2) {
+        // último separador com 2 dígitos depois = decimal; o resto é milhar
+        s = s.slice(0, decPos).replace(/[.,]/g, '') + '.' + s.slice(decPos + 1);
+    } else {
+        s = s.replace(/[.,]/g, '');
+    }
+    const n = parseFloat(s);
+    return isNaN(n) ? undefined : n;
+}
+
+/** Mapeia um card cru do Shotgun para o formato canônico. */
+export function mapShotgunCard(raw: ShotgunRawCard): RawScrapedEvent | null {
+    const slug = (raw.href || '').split('/events/').pop()?.split('?')[0]?.replace(/\/$/, '') || '';
+    const title = (raw.title || '').trim();
+    if (!slug || title.length < 3) return null;
+
+    const date = isoToSaoPauloDate(raw.datetime);
+    if (!date) return null;
+
+    const price = raw.cardText ? parsePriceBRL(raw.cardText) : undefined;
+
+    return {
+        sourceId: `shotgun_${slug}`,
+        source: 'shotgun',
+        title,
+        date,
+        venueName: 'São Paulo',
+        venueNeighborhood: 'São Paulo',
+        lineupNames: [],
+        ticketPrice: price,
+        isFree: price === 0,
+        imageUrl: raw.imgSrc || undefined,
+        sourceUrl: `https://shotgun.live/en/events/${slug}`,
     };
-    return months[month.toLowerCase().slice(0, 3)] ?? -1;
 }
 
 /**
- * Try to parse date from various text formats
+ * Estratégia (2026): o Shotgun bloqueia clientes HTTP simples com 429 (anti-bot
+ * a nível de CDN, inclusive no /api). Um browser real (Playwright/Chromium —
+ * já é dependência, usada no screenshotService) passa e renderiza os cards.
+ * Extraímos do DOM: título = alt da imagem de capa, data = <time datetime>,
+ * preço = "R$..." no texto do card.
  */
-function parseDateText(text: string): string {
-    // Try patterns like "Feb 15", "15 Feb", "15/02", "2026-02-15"
-    const now = new Date();
-    const year = now.getFullYear();
-
-    // Pattern: "DD Mon" or "Mon DD"
-    const match1 = text.match(/(\d{1,2})\s+(\w+)/);
-    const match2 = text.match(/(\w+)\s+(\d{1,2})/);
-
-    if (match1) {
-        const day = parseInt(match1[1]);
-        const month = parseMonthPt(match1[2]);
-        if (month >= 0 && day >= 1 && day <= 31) {
-            return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-        }
-    }
-
-    if (match2) {
-        const month = parseMonthPt(match2[1]);
-        const day = parseInt(match2[2]);
-        if (month >= 0 && day >= 1 && day <= 31) {
-            return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-        }
-    }
-
-    // Pattern: "DD/MM"
-    const slashMatch = text.match(/(\d{1,2})\/(\d{1,2})/);
-    if (slashMatch) {
-        const day = slashMatch[1].padStart(2, '0');
-        const month = slashMatch[2].padStart(2, '0');
-        return `${year}-${month}-${day}`;
-    }
-
-    return '';
-}
-
 export const shotgunScraper = {
     name: 'shotgun' as const,
 
-    async scrape(): Promise<RawScrapedEvent[]> {
-        const allEvents: RawScrapedEvent[] = [];
-        log.info('Starting Shotgun scrape');
-
+    async scrape(opts: ScraperRunOpts = {}): Promise<RawScrapedEvent[]> {
+        log.info('Starting Shotgun scrape (Playwright)');
+        let browser: Browser | undefined;
         try {
-            const html = await fetchWithRetry(SHOTGUN_BASE_URL);
-            if (!html) {
-                log.warn('Failed to fetch Shotgun page after retries');
-                return [];
-            }
+            browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'pt-BR' });
+            const page = await context.newPage();
 
-            const $ = cheerio.load(html);
+            const resp = await page.goto(opts.url || SHOTGUN_BASE_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
+            log.info(`Shotgun page status: ${resp?.status()}`);
+            await page.waitForSelector('a[href*="/events/"]', { timeout: 20000 }).catch(() => null);
+            await page.waitForTimeout(3000);
 
-            // Strategy 1: Look for JSON-LD structured data
-            $('script[type="application/ld+json"]').each((_, el) => {
-                try {
-                    const json = JSON.parse($(el).text());
-                    const events = Array.isArray(json) ? json : json['@graph'] || [json];
-                    for (const item of events) {
-                        if (item['@type'] === 'Event' || item['@type'] === 'MusicEvent') {
-                            const date = item.startDate ? new Date(item.startDate).toISOString().split('T')[0] : '';
-                            if (date) {
-                                allEvents.push({
-                                    sourceId: `shotgun_${item.url?.split('/').pop() || Date.now()}`,
-                                    source: 'shotgun',
-                                    title: item.name || '',
-                                    date,
-                                    venueName: item.location?.name || 'São Paulo',
-                                    venueAddress: item.location?.address?.streetAddress || undefined,
-                                    venueNeighborhood: item.location?.address?.addressLocality || 'São Paulo',
-                                    lineupNames: [],
-                                    ticketPrice: item.offers?.lowPrice ? Number(item.offers.lowPrice) : undefined,
-                                    imageUrl: item.image || undefined,
-                                    sourceUrl: item.url || SHOTGUN_BASE_URL,
-                                    genre: undefined,
-                                });
-                            }
-                        }
+            const rawCards: ShotgunRawCard[] = await page.evaluate(() => {
+                const anchors = Array.from(document.querySelectorAll('a[href*="/events/"]'));
+                const seen = new Set<string>();
+                const out: any[] = [];
+                for (const a of anchors) {
+                    const href = a.getAttribute('href') || '';
+                    if (!href || seen.has(href)) continue;
+                    seen.add(href);
+                    // card = ancestral mais próximo que contém um <time>
+                    let card: HTMLElement = a as HTMLElement;
+                    for (let i = 0; i < 6 && card.parentElement; i++) {
+                        if (card.querySelector('time')) break;
+                        card = card.parentElement;
                     }
-                } catch { /* skip invalid JSON-LD */ }
+                    const timeEl = card.querySelector('time');
+                    const datetime = timeEl ? (timeEl.getAttribute('datetime') || timeEl.textContent || '') : '';
+                    const imgs = Array.from(card.querySelectorAll('img'));
+                    const cover = imgs.find(im => {
+                        const src = im.getAttribute('src') || '';
+                        const alt = im.getAttribute('alt') || '';
+                        return /https?:|cloudinary|cloudfront|cdn/.test(src) && !!alt && !/decorative|gradient/i.test(alt);
+                    });
+                    out.push({
+                        href,
+                        title: cover ? (cover.getAttribute('alt') || '') : (a.textContent || '').trim(),
+                        datetime,
+                        imgSrc: cover ? (cover.getAttribute('src') || '') : '',
+                        cardText: (card.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 300),
+                    });
+                }
+                return out;
             });
 
-            // Strategy 2: Parse event cards from HTML
-            if (allEvents.length === 0) {
-                // Shotgun typically uses Next.js or React, look for __NEXT_DATA__
-                $('script#__NEXT_DATA__').each((_, el) => {
-                    try {
-                        const json = JSON.parse($(el).text());
-                        const extractEvents = (obj: any): any[] => {
-                            const results: any[] = [];
-                            if (!obj || typeof obj !== 'object') return results;
-                            if (Array.isArray(obj)) {
-                                for (const item of obj) results.push(...extractEvents(item));
-                            } else {
-                                if (obj.name && (obj.startDate || obj.date || obj.start_date)) {
-                                    results.push(obj);
-                                }
-                                for (const val of Object.values(obj)) {
-                                    if (typeof val === 'object') results.push(...extractEvents(val));
-                                }
-                            }
-                            return results;
-                        };
-                        const found = extractEvents(json);
-                        for (const item of found) {
-                            const dateStr = item.startDate || item.date || item.start_date || '';
-                            const date = dateStr ? new Date(dateStr).toISOString().split('T')[0] : '';
-                            if (date && item.name) {
-                                allEvents.push({
-                                    sourceId: `shotgun_${item.slug || item.id || Date.now()}_${allEvents.length}`,
-                                    source: 'shotgun',
-                                    title: item.name,
-                                    date,
-                                    venueName: item.venue?.name || item.location?.name || 'São Paulo',
-                                    venueNeighborhood: item.venue?.city || 'São Paulo',
-                                    lineupNames: item.lineup?.map((a: any) => a.name || a) || [],
-                                    ticketPrice: item.price || item.min_price || undefined,
-                                    imageUrl: item.cover_url || item.image || undefined,
-                                    sourceUrl: item.slug ? `https://shotgun.live/en/events/${item.slug}` : SHOTGUN_BASE_URL,
-                                    genre: item.genre || item.music_genre || undefined,
-                                });
-                            }
-                        }
-                    } catch { /* skip */ }
-                });
+            const events: RawScrapedEvent[] = [];
+            const seen = new Set<string>();
+            for (const raw of rawCards) {
+                const mapped = mapShotgunCard(raw);
+                if (mapped && !seen.has(mapped.sourceId)) {
+                    seen.add(mapped.sourceId);
+                    events.push(mapped);
+                }
             }
 
-            // Strategy 3: Fallback to link-based extraction
-            if (allEvents.length === 0) {
-                $('a[href*="/events/"]').each((_, el) => {
-                    const $link = $(el);
-                    const href = $link.attr('href') || '';
-                    const title = $link.text().trim() || $link.find('h2, h3, span').first().text().trim();
-                    const dateText = $link.closest('[class*="card"], [class*="event"]').find('time, [class*="date"]').text().trim();
-
-                    if (title && title.length > 3 && href.includes('/events/')) {
-                        const slug = href.split('/events/').pop()?.split('?')[0] || '';
-                        if (slug && !allEvents.some(e => e.sourceId === `shotgun_${slug}`)) {
-                            allEvents.push({
-                                sourceId: `shotgun_${slug}`,
-                                source: 'shotgun',
-                                title,
-                                date: parseDateText(dateText) || new Date().toISOString().split('T')[0],
-                                venueName: 'São Paulo',
-                                lineupNames: [],
-                                sourceUrl: `https://shotgun.live/en/events/${slug}`,
-                            });
-                        }
-                    }
-                });
-            }
-
-            log.info(`Shotgun scrape complete: ${allEvents.length} events`);
+            log.info(`Shotgun scrape complete: ${events.length} events`);
+            return events;
         } catch (error: any) {
             log.error(`Shotgun scrape error: ${error.message}`);
+            return [];
+        } finally {
+            await browser?.close().catch(() => null);
         }
-
-        return allEvents;
-    }
+    },
 };
