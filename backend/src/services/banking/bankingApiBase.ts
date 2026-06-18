@@ -229,6 +229,19 @@ export abstract class BankingApiBase {
     }
 
     /**
+     * Invalida o token OAuth e o axios/cert em cache, forçando o próximo request a
+     * re-inicializar com as credenciais/ambiente ATUAIS (ex.: após salvar credenciais no store
+     * em runtime, sem reiniciar o processo). Como request() chama initialize() on-demand quando
+     * !isReady(), basta zerar esses campos. (#45)
+     */
+    reloadCredentials(): void {
+        this.tokenCache = { accessToken: null, expiresAt: 0 };
+        this.httpsAgent = null;
+        this.axiosInstance = null;
+        this.initialized = false;
+    }
+
+    /**
      * Get service status
      */
     async getStatus(): Promise<BankServiceStatus> {

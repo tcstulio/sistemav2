@@ -4,8 +4,9 @@
  * Component for configuring Banco Inter API integration
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 import {
     Shield,
     Upload,
@@ -16,9 +17,11 @@ import {
     Link2,
     Loader2,
     AlertCircle,
-    CheckCircle2
+    CheckCircle2,
+    Save
 } from 'lucide-react';
 import { useInterBank } from '../../hooks/useInterBank';
+import { saveBankingCredentials, getBankingCredentialsStatus } from '../../services/bankingConfigService';
 
 interface InterSettingsTabProps {
     onSave?: () => void;
@@ -35,14 +38,27 @@ export function InterSettingsTab({ onSave }: InterSettingsTabProps) {
         saldo,
     } = useInterBank();
 
+    const queryClient = useQueryClient();
     const [clientId, setClientId] = useState('');
     const [clientSecret, setClientSecret] = useState('');
     const [environment, setEnvironment] = useState<'sandbox' | 'production'>('sandbox');
+    const [savingCreds, setSavingCreds] = useState(false);
+    const [secretConfigured, setSecretConfigured] = useState(false);
     const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
     const [uploadResult, setUploadResult] = useState<{ success: boolean; message: string } | null>(null);
 
     const certInputRef = useRef<HTMLInputElement>(null);
     const keyInputRef = useRef<HTMLInputElement>(null);
+
+    // Prefill do ambiente e flag de "secret já configurado" (nunca traz o valor do secret).
+    useEffect(() => {
+        getBankingCredentialsStatus('inter')
+            .then((st) => {
+                setSecretConfigured(st.hasClientSecret);
+                setEnvironment(st.environment);
+            })
+            .catch(() => { /* sem credenciais salvas ou sem permissão — ignora */ });
+    }, []);
 
     const handleUploadCertificates = async () => {
         const certFile = certInputRef.current?.files?.[0];
@@ -90,8 +106,31 @@ export function InterSettingsTab({ onSave }: InterSettingsTabProps) {
         }
     };
 
-    const handleSaveCredentials = () => {
-        toast.success('Credenciais salvas com sucesso. Configure as variáveis no arquivo .env do backend.');
+    const handleSaveCredentials = async () => {
+        if (!clientId && !clientSecret) {
+            toast.error('Informe ao menos o Client ID ou o Client Secret.');
+            return;
+        }
+        setSavingCreds(true);
+        try {
+            const st = await saveBankingCredentials('inter', {
+                clientId: clientId || undefined,
+                clientSecret: clientSecret || undefined, // vazio preserva o secret já salvo
+                environment,
+            });
+            setSecretConfigured(st.hasClientSecret);
+            setClientSecret(''); // não mantém o secret no estado da UI após salvar
+            toast.success('Credenciais salvas e aplicadas.');
+            queryClient.invalidateQueries({ queryKey: ['inter'] }); // atualiza o status/badges
+            onSave?.();
+        } catch (error: any) {
+            const msg = error.response?.status === 403
+                ? 'Apenas administradores podem salvar credenciais.'
+                : (error.response?.data?.error || error.message);
+            toast.error('Erro ao salvar: ' + msg);
+        } finally {
+            setSavingCreds(false);
+        }
     };
 
     return (
@@ -245,7 +284,7 @@ export function InterSettingsTab({ onSave }: InterSettingsTabProps) {
                             type="password"
                             value={clientSecret}
                             onChange={(e) => setClientSecret(e.target.value)}
-                            placeholder="Seu Client Secret"
+                            placeholder={secretConfigured ? '•••••••• (configurado — deixe em branco p/ manter)' : 'Seu Client Secret'}
                             className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                         />
                     </div>
@@ -264,17 +303,20 @@ export function InterSettingsTab({ onSave }: InterSettingsTabProps) {
                         </select>
                     </div>
 
-                    <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
-                        <p className="text-sm text-yellow-800 dark:text-yellow-300">
-                            As credenciais precisam ser configuradas no arquivo <code className="bg-yellow-100 dark:bg-yellow-800 px-1 rounded">.env</code> do backend.
+                    <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+                        <p className="text-sm text-slate-600 dark:text-slate-400">
+                            As credenciais são salvas com o <strong>Client Secret criptografado</strong> no backend e
+                            aplicadas imediatamente (sem reiniciar).{secretConfigured ? ' ✓ Secret já configurado.' : ''}
                         </p>
                     </div>
 
                     <button
                         onClick={handleSaveCredentials}
-                        className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg font-medium transition-colors"
+                        disabled={savingCreds}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
                     >
-                        Ver Instruções de Configuração
+                        {savingCreds ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        Salvar Credenciais
                     </button>
                 </div>
             </div>

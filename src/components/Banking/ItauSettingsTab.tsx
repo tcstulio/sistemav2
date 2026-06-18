@@ -4,8 +4,9 @@
  * Component for configuring Banco Itaú API integration
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 import {
     Shield,
     Upload,
@@ -17,9 +18,11 @@ import {
     Loader2,
     AlertCircle,
     CheckCircle2,
-    Landmark
+    Landmark,
+    Save
 } from 'lucide-react';
 import { useItauBank } from '../../hooks/useItauBank';
+import { saveBankingCredentials, getBankingCredentialsStatus } from '../../services/bankingConfigService';
 
 interface ItauSettingsTabProps {
     onSave?: () => void;
@@ -36,16 +39,29 @@ export function ItauSettingsTab({ onSave }: ItauSettingsTabProps) {
         saldo,
     } = useItauBank();
 
+    const queryClient = useQueryClient();
     const [clientId, setClientId] = useState('');
     const [clientSecret, setClientSecret] = useState('');
     const [contaCorrente, setContaCorrente] = useState('');
     const [agencia, setAgencia] = useState('');
     const [environment, setEnvironment] = useState<'sandbox' | 'production'>('sandbox');
+    const [savingCreds, setSavingCreds] = useState(false);
+    const [secretConfigured, setSecretConfigured] = useState(false);
     const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
     const [uploadResult, setUploadResult] = useState<{ success: boolean; message: string } | null>(null);
 
     const certInputRef = useRef<HTMLInputElement>(null);
     const keyInputRef = useRef<HTMLInputElement>(null);
+
+    // Prefill do ambiente e flag de "secret já configurado" (nunca traz o valor do secret).
+    useEffect(() => {
+        getBankingCredentialsStatus('itau')
+            .then((st) => {
+                setSecretConfigured(st.hasClientSecret);
+                setEnvironment(st.environment);
+            })
+            .catch(() => { /* sem credenciais salvas ou sem permissão — ignora */ });
+    }, []);
 
     const handleUploadCertificates = async () => {
         const certFile = certInputRef.current?.files?.[0];
@@ -93,8 +109,33 @@ export function ItauSettingsTab({ onSave }: ItauSettingsTabProps) {
         }
     };
 
-    const handleSaveCredentials = () => {
-        toast.success('Credenciais salvas com sucesso. Configure as variáveis no arquivo .env do backend.');
+    const handleSaveCredentials = async () => {
+        if (!clientId && !clientSecret && !contaCorrente && !agencia) {
+            toast.error('Preencha ao menos um campo para salvar.');
+            return;
+        }
+        setSavingCreds(true);
+        try {
+            const st = await saveBankingCredentials('itau', {
+                clientId: clientId || undefined,
+                clientSecret: clientSecret || undefined, // vazio preserva o secret já salvo
+                environment,
+                contaCorrente: contaCorrente || undefined,
+                agencia: agencia || undefined,
+            });
+            setSecretConfigured(st.hasClientSecret);
+            setClientSecret('');
+            toast.success('Credenciais salvas e aplicadas.');
+            queryClient.invalidateQueries({ queryKey: ['itau'] });
+            onSave?.();
+        } catch (error: any) {
+            const msg = error.response?.status === 403
+                ? 'Apenas administradores podem salvar credenciais.'
+                : (error.response?.data?.error || error.message);
+            toast.error('Erro ao salvar: ' + msg);
+        } finally {
+            setSavingCreds(false);
+        }
     };
 
     return (
@@ -248,7 +289,7 @@ export function ItauSettingsTab({ onSave }: ItauSettingsTabProps) {
                             type="password"
                             value={clientSecret}
                             onChange={(e) => setClientSecret(e.target.value)}
-                            placeholder="Seu Client Secret"
+                            placeholder={secretConfigured ? '•••••••• (configurado — deixe em branco p/ manter)' : 'Seu Client Secret'}
                             className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         />
                     </div>
@@ -294,17 +335,20 @@ export function ItauSettingsTab({ onSave }: ItauSettingsTabProps) {
                         </select>
                     </div>
 
-                    <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
-                        <p className="text-sm text-yellow-800 dark:text-yellow-300">
-                            As credenciais precisam ser configuradas no arquivo <code className="bg-yellow-100 dark:bg-yellow-800 px-1 rounded">.env</code> do backend.
+                    <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+                        <p className="text-sm text-slate-600 dark:text-slate-400">
+                            As credenciais são salvas com o <strong>Client Secret criptografado</strong> no backend e
+                            aplicadas imediatamente (sem reiniciar).{secretConfigured ? ' ✓ Secret já configurado.' : ''}
                         </p>
                     </div>
 
                     <button
                         onClick={handleSaveCredentials}
-                        className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg font-medium transition-colors"
+                        disabled={savingCreds}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
                     >
-                        Ver Instruções de Configuração
+                        {savingCreds ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        Salvar Credenciais
                     </button>
                 </div>
             </div>
