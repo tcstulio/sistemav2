@@ -73,6 +73,42 @@ describe('DolibarrHRService', () => {
         });
     });
 
+    describe('findUserByLoginOrEmail', () => {
+        it('returns null for empty term without calling the API', async () => {
+            const result = await service.findUserByLoginOrEmail('   ');
+            expect(result).toBeNull();
+            expect(mockAxios.get).not.toHaveBeenCalled();
+        });
+
+        it('finds by login (exact match, case-insensitive)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: [{ id: 7, login: 'TCS', email: 'x@y.com' }] });
+            const result = await service.findUserByLoginOrEmail('tcs');
+            expect(result?.id).toBe(7);
+            expect(mockAxios.get.mock.calls[0][1].params.sqlfilters).toContain('t.login');
+        });
+
+        it('falls back to email filter when login filter is empty', async () => {
+            mockAxios.get
+                .mockResolvedValueOnce({ status: 200, data: [] })
+                .mockResolvedValueOnce({ status: 200, data: [{ id: 9, login: 'foo', email: 'a@b.com' }] });
+            const result = await service.findUserByLoginOrEmail('a@b.com');
+            expect(result?.id).toBe(9);
+            expect(mockAxios.get.mock.calls[1][1].params.sqlfilters).toContain('t.email');
+        });
+
+        it('returns null when nothing matches', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: [] });
+            const result = await service.findUserByLoginOrEmail('ghost');
+            expect(result).toBeNull();
+        });
+
+        it('returns null on API error (best-effort)', async () => {
+            mockAxios.get.mockRejectedValue(new Error('boom'));
+            const result = await service.findUserByLoginOrEmail('tcs');
+            expect(result).toBeNull();
+        });
+    });
+
     describe('listExpenseReports', () => {
         it('returns expense reports list', async () => {
             const reports = [{ id: 1 }];

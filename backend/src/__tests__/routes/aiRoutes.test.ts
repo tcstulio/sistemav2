@@ -37,6 +37,10 @@ vi.mock('../../services/aiService', () => ({
     aiService: mockAiService,
 }));
 
+vi.mock('../../services/dolibarr', () => ({
+    dolibarrService: { findUserByLoginOrEmail: vi.fn(() => null) },
+}));
+
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({
         debug: vi.fn(),

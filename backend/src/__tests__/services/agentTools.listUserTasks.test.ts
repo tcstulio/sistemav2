@@ -10,7 +10,7 @@ vi.mock('../../services/dolibarrService', () => ({
 vi.mock('../../services/scraperService', () => ({ ScraperService: {} }));
 vi.mock('../../utils/urlValidation', () => ({ isValidExternalUrl: () => true }));
 
-import { executeTool, TOOLS_PROMPT } from '../../services/agentTools';
+import { executeTool, TOOLS_PROMPT, runWithToolContext } from '../../services/agentTools';
 import { dolibarrService } from '../../services/dolibarrService';
 
 describe('agentTools — list_user_tasks (#116)', () => {
@@ -28,8 +28,15 @@ describe('agentTools — list_user_tasks (#116)', () => {
         expect(out).toContain('Ligar para cliente');
     });
 
-    it('exige userId', async () => {
+    it('exige userId quando não há usuário no contexto', async () => {
         await expect(executeTool('list_user_tasks', {})).rejects.toThrow();
+    });
+
+    it('usa o ctx.userId (usuário logado) quando o arg vem vazio — #300', async () => {
+        (dolibarrService.listUserTasks as any).mockResolvedValue([{ ref: 'TK09', label: 'Minha tarefa', progress: 10 }]);
+        const out = await runWithToolContext({ userId: '42' }, () => executeTool('list_user_tasks', {}));
+        expect(dolibarrService.listUserTasks).toHaveBeenCalledWith('42');
+        expect(out).toContain('TK09');
     });
 
     it('lida graciosamente com lista vazia', async () => {
