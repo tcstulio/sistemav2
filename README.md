@@ -58,4 +58,10 @@ npm test                   # E2E (Playwright)
 
 ## Documentação
 
-Docs detalhados de arquitetura, API e deployment estão em construção (issue #31). Specs e planos atuais ficam em `docs/`.
+- [Arquitetura](docs/architecture.md) — componentes, fluxo de dados, subsistemas, auth.
+- [API](docs/api.md) — grupos de rotas, autenticação, rate limiting.
+- [Deployment & Operação](docs/deployment.md) — configurar, rodar, build, túnel, CI.
+- [Contribuindo](docs/contributing.md) — setup, convenções, testes, TaskRunner.
+- [Referência da API do Dolibarr](docs/dolibarr_api_reference.md) — endpoints do ERP usados.
+
+Specs e planos (Moltbot, Tulipa v4, delegação, taskrunner) também ficam em `docs/`.
