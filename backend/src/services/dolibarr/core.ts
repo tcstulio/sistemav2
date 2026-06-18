@@ -439,7 +439,8 @@ export class DolibarrServiceBase {
 
         const response = await axios.get(url, {
             headers,
-            params: { modulepart: 'user', original_file: `${userId}/${file}` },
+            // No Dolibarr a foto do usuário fica em users/{id}/photos/{arquivo} (modulepart=user).
+            params: { modulepart: 'user', original_file: `${userId}/photos/${file}` },
             httpsAgent: this.httpsAgent,
             validateStatus: (s) => s < 500,
         });
