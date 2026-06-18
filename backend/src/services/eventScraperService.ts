@@ -3,6 +3,7 @@ import { aiService } from './aiService';
 import { symplaScraper, RawScrapedEvent } from './scrapers/symplaScraper';
 import { shotgunScraper } from './scrapers/shotgunScraper';
 import { blacktagScraper } from './scrapers/blacktagScraper';
+import { scraperConfigStore } from './scraperConfigStore';
 import { logger } from '../utils/logger';
 
 const log = logger.child('EventScraper');
@@ -11,6 +12,8 @@ interface PlatformStatus {
     lastSuccess: string | null;
     eventsFound: number;
     error?: string;
+    /** true quando a fonte está desativada na config (não rodou nesta varredura). */
+    disabled?: boolean;
 }
 
 interface ScraperStatus {
@@ -75,6 +78,7 @@ class EventScraperService {
         this.status.totalUpdated = 0;
 
         const allRawEvents: RawScrapedEvent[] = [];
+        const config = scraperConfigStore.getConfig();
 
         // Run each adapter sequentially to respect rate limits
         const adapters = [
@@ -84,9 +88,19 @@ class EventScraperService {
         ];
 
         for (const { adapter, key } of adapters) {
+            const sourceCfg = config.sources[key];
+            if (!sourceCfg?.enabled) {
+                log.info(`${key} desativado na config — pulando`);
+                this.status.platforms[key] = {
+                    lastSuccess: this.status.platforms[key]?.lastSuccess ?? null,
+                    eventsFound: 0,
+                    disabled: true,
+                };
+                continue;
+            }
             try {
                 log.info(`Running ${key} adapter...`);
-                const events = await adapter.scrape();
+                const events = await adapter.scrape({ url: sourceCfg.url, maxPages: sourceCfg.maxPages });
                 this.status.platforms[key] = {
                     lastSuccess: new Date().toISOString(),
                     eventsFound: events.length,
@@ -268,16 +282,23 @@ class EventScraperService {
     }
 
     /**
-     * Start the automatic scraping worker
+     * Inicia o worker periódico conforme a config (auto-run + intervalo).
+     * Se autoRun estiver desligado, não agenda nada.
      */
-    startWorker(intervalHours: number = 6) {
+    startWorker() {
         if (this.workerInterval) {
             log.warn('Worker already running');
             return;
         }
 
-        const intervalMs = intervalHours * 60 * 60 * 1000;
-        log.info(`Starting scraper worker (interval: ${intervalHours}h)`);
+        const config = scraperConfigStore.getConfig();
+        if (!config.autoRun) {
+            log.info('Auto-run desativado na config — worker não agendado');
+            return;
+        }
+
+        const intervalMs = config.intervalHours * 60 * 60 * 1000;
+        log.info(`Starting scraper worker (interval: ${config.intervalHours}h)`);
 
         // Run first scrape after a 2-minute delay (let server warm up)
         setTimeout(() => {
@@ -295,6 +316,12 @@ class EventScraperService {
             this.workerInterval = null;
             log.info('Scraper worker stopped');
         }
+    }
+
+    /** Re-aplica a config ao worker (chamado após salvar a config). */
+    reconfigureWorker() {
+        this.stopWorker();
+        this.startWorker();
     }
 }
 

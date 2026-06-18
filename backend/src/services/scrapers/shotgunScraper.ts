@@ -1,6 +1,6 @@
 import { chromium, type Browser } from 'playwright';
 import { createLogger } from '../../utils/logger';
-import { RawScrapedEvent } from './symplaScraper';
+import { RawScrapedEvent, ScraperRunOpts } from './symplaScraper';
 
 const log = createLogger('ShotgunScraper');
 
@@ -76,7 +76,7 @@ export function mapShotgunCard(raw: ShotgunRawCard): RawScrapedEvent | null {
 export const shotgunScraper = {
     name: 'shotgun' as const,
 
-    async scrape(): Promise<RawScrapedEvent[]> {
+    async scrape(opts: ScraperRunOpts = {}): Promise<RawScrapedEvent[]> {
         log.info('Starting Shotgun scrape (Playwright)');
         let browser: Browser | undefined;
         try {
@@ -84,7 +84,7 @@ export const shotgunScraper = {
             const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'pt-BR' });
             const page = await context.newPage();
 
-            const resp = await page.goto(SHOTGUN_BASE_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
+            const resp = await page.goto(opts.url || SHOTGUN_BASE_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
             log.info(`Shotgun page status: ${resp?.status()}`);
             await page.waitForSelector('a[href*="/events/"]', { timeout: 20000 }).catch(() => null);
             await page.waitForTimeout(3000);

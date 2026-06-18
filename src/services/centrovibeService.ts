@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { safeStorage } from '../utils/safeStorage';
 import type {
-    CentroVibeData, Artist, DaySchedule, Competitor, ExternalEvent, CompatibilityResult, ScraperStatus
+    CentroVibeData, Artist, DaySchedule, Competitor, ExternalEvent, CompatibilityResult, ScraperStatus, ScraperConfig
 } from '../types/centrovibe';
 
 const API_URL = '/api/centrovibe';
@@ -134,5 +134,15 @@ export const CentroVibeService = {
     getScraperStatus: async (): Promise<ScraperStatus> => {
         const { data } = await axios.get(`${API_URL}/scraper/status`, getAuthHeaders());
         return data;
-    }
+    },
+
+    getScraperConfig: async (): Promise<ScraperConfig> => {
+        const { data } = await axios.get(`${API_URL}/scraper/config`, getAuthHeaders());
+        return data;
+    },
+
+    updateScraperConfig: async (patch: Partial<ScraperConfig>): Promise<ScraperConfig> => {
+        const { data } = await axios.put(`${API_URL}/scraper/config`, patch, getAuthHeaders());
+        return data;
+    },
 };

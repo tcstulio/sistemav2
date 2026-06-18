@@ -1,7 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { createLogger } from '../../utils/logger';
-import { RawScrapedEvent } from './symplaScraper';
+import { RawScrapedEvent, ScraperRunOpts } from './symplaScraper';
 
 const log = createLogger('BlacktagScraper');
 
@@ -98,10 +98,10 @@ export function parseBlacktagEvents(html: string, now: Date = new Date()): RawSc
 export const blacktagScraper = {
     name: 'blacktag' as const,
 
-    async scrape(): Promise<RawScrapedEvent[]> {
+    async scrape(opts: ScraperRunOpts = {}): Promise<RawScrapedEvent[]> {
         log.info('Starting Blacktag scrape');
         try {
-            const response = await axios.get(BLACKTAG_URL, {
+            const response = await axios.get(opts.url || BLACKTAG_URL, {
                 headers: BROWSER_HEADERS,
                 timeout: 15000,
             });

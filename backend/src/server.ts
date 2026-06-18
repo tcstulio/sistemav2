@@ -332,10 +332,10 @@ log.info('SessionService loaded');
 schedulerService.startWorker();
 log.info('SchedulerService worker started');
 
-// Start Event Scraper Worker (scrapes ticket platforms every 6h)
+// Start Event Scraper Worker (interval/auto-run vêm da config — scraperConfigStore)
 import { eventScraperService } from './services/eventScraperService';
-eventScraperService.startWorker(6);
-log.info('EventScraperService worker started (6h interval)');
+eventScraperService.startWorker();
+log.info('EventScraperService worker started (config-driven)');
 
 // Start Alert Cron (invoices, stock, tasks, tickets)
 import { alertCronService } from './services/alertCronService';

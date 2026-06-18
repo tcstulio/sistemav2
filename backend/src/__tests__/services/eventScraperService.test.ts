@@ -27,17 +27,38 @@ vi.mock('../../services/scrapers/blacktagScraper', () => ({
     blacktagScraper: { scrape: vi.fn() },
 }));
 
+const makeConfig = (overrides: any = {}) => {
+    const { sources: srcOverride, ...rest } = overrides;
+    return {
+        autoRun: true,
+        intervalHours: 6,
+        ...rest,
+        sources: {
+            sympla: { enabled: true, url: 'https://sympla.test', maxPages: 3 },
+            shotgun: { enabled: true, url: 'https://shotgun.test' },
+            blacktag: { enabled: true, url: 'https://blacktag.test' },
+            ...srcOverride,
+        },
+    };
+};
+
+vi.mock('../../services/scraperConfigStore', () => ({
+    scraperConfigStore: { getConfig: vi.fn() },
+}));
+
 import { eventScraperService } from '../../services/eventScraperService';
 import { aiService } from '../../services/aiService';
 import { centrovibeStoreService } from '../../services/centrovibeStoreService';
 import { symplaScraper } from '../../services/scrapers/symplaScraper';
 import { shotgunScraper } from '../../services/scrapers/shotgunScraper';
 import { blacktagScraper } from '../../services/scrapers/blacktagScraper';
+import { scraperConfigStore } from '../../services/scraperConfigStore';
 
 describe('EventScraperService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.useFakeTimers();
+        (scraperConfigStore.getConfig as any).mockReturnValue(makeConfig());
     });
 
     afterEach(() => {
@@ -98,6 +119,31 @@ describe('EventScraperService', () => {
 
             const status = await eventScraperService.runScrape();
             expect(status.platforms.sympla.error).toBe('Scrape failed');
+        });
+
+        it('skips sources disabled in config', async () => {
+            (scraperConfigStore.getConfig as any).mockReturnValue(
+                makeConfig({ sources: { shotgun: { enabled: false, url: 'https://shotgun.test' } } })
+            );
+            (symplaScraper.scrape as any).mockResolvedValue([]);
+            (blacktagScraper.scrape as any).mockResolvedValue([]);
+
+            const status = await eventScraperService.runScrape();
+
+            expect(shotgunScraper.scrape).not.toHaveBeenCalled();
+            expect(symplaScraper.scrape).toHaveBeenCalled();
+            expect(status.platforms.shotgun.disabled).toBe(true);
+        });
+
+        it('passes the configured url/maxPages to each adapter', async () => {
+            (symplaScraper.scrape as any).mockResolvedValue([]);
+            (shotgunScraper.scrape as any).mockResolvedValue([]);
+            (blacktagScraper.scrape as any).mockResolvedValue([]);
+
+            await eventScraperService.runScrape();
+
+            expect(symplaScraper.scrape).toHaveBeenCalledWith({ url: 'https://sympla.test', maxPages: 3 });
+            expect(blacktagScraper.scrape).toHaveBeenCalledWith({ url: 'https://blacktag.test', maxPages: undefined });
         });
 
         it('processes new events with classification', async () => {
@@ -243,17 +289,29 @@ describe('EventScraperService', () => {
 
     describe('worker', () => {
         it('startWorker starts the interval', () => {
-            eventScraperService.startWorker(1);
+            eventScraperService.startWorker();
             expect((eventScraperService as any).workerInterval).not.toBeNull();
         });
 
+        it('startWorker does not schedule when autoRun is off', () => {
+            (scraperConfigStore.getConfig as any).mockReturnValue(makeConfig({ autoRun: false }));
+            eventScraperService.startWorker();
+            expect((eventScraperService as any).workerInterval).toBeNull();
+        });
+
         it('startWorker skips if already running', () => {
-            eventScraperService.startWorker(1);
-            eventScraperService.startWorker(1);
+            eventScraperService.startWorker();
+            eventScraperService.startWorker();
+        });
+
+        it('reconfigureWorker restarts with the current config', () => {
+            eventScraperService.startWorker();
+            eventScraperService.reconfigureWorker();
+            expect((eventScraperService as any).workerInterval).not.toBeNull();
         });
 
         it('stopWorker clears the interval', () => {
-            eventScraperService.startWorker(1);
+            eventScraperService.startWorker();
             eventScraperService.stopWorker();
             expect((eventScraperService as any).workerInterval).toBeNull();
         });
