@@ -5,7 +5,7 @@
  */
 
 import axios from 'axios';
-import { DolibarrServiceBase, buildLikeFilter } from './core';
+import { DolibarrServiceBase, buildLikeFilter, buildSqlFilter } from './core';
 import { createLogger } from '../../utils/logger';
 
 const log = createLogger('DolibarrHR');
@@ -48,6 +48,42 @@ export class DolibarrHRService extends DolibarrServiceBase {
         return this.updateUser(id, {
             array_options: { options_entrevista_inicial: JSON.stringify(profile) },
         });
+    }
+
+    /**
+     * Acha um usuário pelo login (ou e-mail) — usado p/ resolver o ID Dolibarr do
+     * usuário logado quando o perfil não traz o id explícito. Best-effort: tenta login
+     * exato, depois e-mail exato; confirma o match no resultado. (#300)
+     */
+    async findUserByLoginOrEmail(loginOrEmail: string): Promise<any | null> {
+        const term = (loginOrEmail || '').trim();
+        if (!term) return null;
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}users`;
+        const lower = term.toLowerCase();
+
+        const tryFilter = async (sqlfilters: string): Promise<any | null> => {
+            try {
+                const response = await axios.get(url, {
+                    headers,
+                    params: { sqlfilters, limit: 5 },
+                    httpsAgent: this.httpsAgent,
+                    validateStatus: (s) => s === 200,
+                });
+                const list = Array.isArray(response.data) ? response.data : [];
+                const exact = list.find((u: any) =>
+                    String(u.login || '').toLowerCase() === lower ||
+                    String(u.email || '').toLowerCase() === lower
+                );
+                return exact || (list.length === 1 ? list[0] : null);
+            } catch (error) {
+                log.error('findUserByLoginOrEmail filter error', error);
+                return null;
+            }
+        };
+
+        return (await tryFilter(`(${buildSqlFilter('t.login', ':=', term)})`))
+            || (await tryFilter(`(${buildSqlFilter('t.email', ':=', term)})`));
     }
 
     async listUsers(search?: string): Promise<any[]> {

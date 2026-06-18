@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { aiService } from '../services/aiService';
+import { dolibarrService } from '../services/dolibarr';
 import { chatSessionService } from '../services/chatSessionService';
 import { runWithToolContext } from '../services/agentTools';
 import { extractToolCall } from '../services/aiService';
@@ -66,6 +67,21 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
 
         enrichedContext += `\n[SISTEMA] Data e hora atual: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
 
+        // ID Dolibarr do usuário. Fallback (#300): quando o perfil não traz o id mas
+        // temos login/email, resolve via Dolibarr — senão list_user_tasks etc. falham.
+        let dolibarrUserId = user?.id ? String(user.id) : '';
+        if (user && !dolibarrUserId && (user.login || user.email)) {
+            try {
+                const resolved = await dolibarrService.findUserByLoginOrEmail(user.login || user.email);
+                if (resolved?.id) {
+                    dolibarrUserId = String(resolved.id);
+                    log.info(`ID Dolibarr resolvido por ${user.login ? 'login' : 'email'} p/ o agente: ${dolibarrUserId}`);
+                }
+            } catch (e: any) {
+                log.warn('Falha ao resolver ID Dolibarr por login/email', e?.message);
+            }
+        }
+
         if (user) {
             const userIdentity = [
                 `\n[SISTEMA] Identidade do usuário:`,
@@ -74,15 +90,15 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
                 `- Email: ${user.email || 'não informado'}`,
                 `- Cargo: ${user.job || 'não informado'}`,
                 `- Admin: ${isAdmin ? 'Sim' : 'Não'}`,
-                `- ID Dolibarr: ${user.id || 'não informado'}`,
+                `- ID Dolibarr: ${dolibarrUserId || 'não informado'}`,
             ].join('\n');
             enrichedContext += userIdentity;
 
-            if (user.id) {
+            if (dolibarrUserId) {
                 try {
                     const { userPermissionsService } = require('../services/userPermissionsService');
-                    permissionProfile = await userPermissionsService.getProfile(String(user.id));
-                    const permContext = await userPermissionsService.getProfileForContext(String(user.id));
+                    permissionProfile = await userPermissionsService.getProfile(dolibarrUserId);
+                    const permContext = await userPermissionsService.getProfileForContext(dolibarrUserId);
                     enrichedContext += '\n\n' + permContext;
                 } catch (e: any) {
                     log.warn('Failed to load user permissions context', e.message);
@@ -108,7 +124,7 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
 
         const result = await runWithToolContext({
             listener: sessionId && module === 'chat' ? toolListener : null,
-            userId: String(user?.id || ''),
+            userId: dolibarrUserId,
             userLogin: user?.login || 'unknown',
             isAdmin,
             permissionProfile,

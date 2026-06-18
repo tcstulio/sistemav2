@@ -99,7 +99,7 @@ export const TOOLS_PROMPT = `
         15. list_users(search: string) - Lista usuários/funcionários.
         16. list_warehouses() - Lista estoques/armazéns.
         17. list_tasks(projectId: string) - Lista tarefas de um projeto.
-        18. list_user_tasks(userId: string) - Lista as tarefas atribuídas a um usuário.
+        18. list_user_tasks(userId?: string) - Lista as tarefas atribuídas a um usuário. Omita userId para listar as tarefas do PRÓPRIO usuário logado ("minhas tarefas").
         19. list_events(limit: number) - Lista eventos da agenda.
         20. list_contacts(search: string) - Lista contatos (pessoas de contato).
         21. list_categories(type: string) - Lista categorias (customer, product, etc).
@@ -998,8 +998,10 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 ).join('') + '</ul>';
         }
         case 'list_user_tasks': {
-            if (!args?.userId) throw new Error("Parâmetro 'userId' ausente.");
-            const userTasks = await dolibarrService.listUserTasks(args.userId);
+            // Fallback p/ o usuário logado (ctx.userId) quando o LLM não informa o id (#300).
+            const targetUserId = args?.userId || getToolContext().userId;
+            if (!targetUserId) throw new Error("Parâmetro 'userId' ausente e o usuário atual não tem ID Dolibarr vinculado.");
+            const userTasks = await dolibarrService.listUserTasks(targetUserId);
             if (userTasks.length === 0) return 'Nenhuma tarefa encontrada para este usuário.';
             return '<h3>📋 Tarefas do Usuário</h3><ul>' +
                 userTasks.map((t: any) =>
