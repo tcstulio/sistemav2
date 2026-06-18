@@ -63,6 +63,15 @@ vi.mock('../../services/dolibarrService', () => ({
     dolibarrService: {},
 }));
 
+const mockBootstrapStore = vi.hoisted(() => ({
+    getConfig: vi.fn(() => ({ enabled: true, includeTasks: true, includeAgenda: true, includeFinancial: true, extraInstruction: '' })),
+    updateConfig: vi.fn((p: any) => ({ enabled: true, includeTasks: true, includeAgenda: true, includeFinancial: true, extraInstruction: '', ...p })),
+}));
+
+vi.mock('../../services/agentBootstrapConfigStore', () => ({
+    agentBootstrapConfigStore: mockBootstrapStore,
+}));
+
 vi.mock('../../services/agentTools', () => ({
     setToolCallListener: vi.fn(),
     runWithToolContext: (ctx: any, fn: () => Promise<any>) => {
@@ -818,6 +827,30 @@ describe('aiRoutes', () => {
                 .delete('/api/sessions/nonexistent');
 
             expect(res.status).toBe(404);
+        });
+    });
+
+    describe('Agent bootstrap config (#300 item 3)', () => {
+        it('GET /api/agent/bootstrap-config returns the config', async () => {
+            const res = await request(app).get('/api/agent/bootstrap-config');
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({ enabled: true, includeTasks: true });
+        });
+
+        it('PUT /api/agent/bootstrap-config updates the config', async () => {
+            const res = await request(app)
+                .put('/api/agent/bootstrap-config')
+                .send({ enabled: false, includeFinancial: false });
+            expect(res.status).toBe(200);
+            expect(mockBootstrapStore.updateConfig).toHaveBeenCalledWith({ enabled: false, includeFinancial: false });
+            expect(res.body.enabled).toBe(false);
+        });
+
+        it('PUT rejects invalid payload with 400', async () => {
+            const res = await request(app)
+                .put('/api/agent/bootstrap-config')
+                .send({ enabled: 'yes' });
+            expect(res.status).toBe(400);
         });
     });
 });

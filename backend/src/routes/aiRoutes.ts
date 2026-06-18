@@ -6,6 +6,7 @@ import { runWithToolContext } from '../services/agentTools';
 import { extractToolCall } from '../services/aiService';
 import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
 import { agentActivityService } from '../services/agentActivityService';
+import { agentBootstrapConfigStore } from '../services/agentBootstrapConfigStore';
 import { aiJobService } from '../services/aiJobService';
 import { financialAnalysisStore } from '../services/financialAnalysisStore';
 import { createLogger } from '../utils/logger';
@@ -667,6 +668,39 @@ router.get('/agent/activity', requireDolibarrLogin, (req, res) => {
         const stats = agentActivityService.getStats();
         res.json({ activities, stats });
     } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ===========================================
+// Config da sessão automática do agente (#300 item 3) — o que o resumo
+// proativo reúne ao abrir a conversa. Leitura por qualquer logado; escrita admin.
+// ===========================================
+
+router.get('/agent/bootstrap-config', requireDolibarrLogin, (_req, res) => {
+    try {
+        res.json(agentBootstrapConfigStore.getConfig());
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+const BootstrapConfigSchema = z.object({
+    enabled: z.boolean().optional(),
+    includeTasks: z.boolean().optional(),
+    includeAgenda: z.boolean().optional(),
+    includeFinancial: z.boolean().optional(),
+    extraInstruction: z.string().max(2000).optional(),
+});
+
+router.put('/agent/bootstrap-config', requireDolibarrAdmin, (req, res) => {
+    try {
+        const patch = BootstrapConfigSchema.parse(req.body);
+        res.json(agentBootstrapConfigStore.updateConfig(patch));
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Config inválida', details: error.issues });
+        }
         res.status(500).json({ error: error.message });
     }
 });
