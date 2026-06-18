@@ -10,6 +10,7 @@
 
 import { logger } from '../utils/logger';
 import { config } from '../config/env';
+import { bankingCredentialsStore } from './bankingCredentialsStore';
 import {
     SaldoInter,
     ExtratoInter,
@@ -66,12 +67,13 @@ class InterApiService extends BankingApiBase {
         return 'Inter';
     }
 
+    // Credenciais: o store (salvo via UI, cifrado) tem prioridade; .env é fallback. (#45)
     protected getClientId(): string {
-        return config.interClientId || '';
+        return bankingCredentialsStore.getClientId('inter') || config.interClientId || '';
     }
 
     protected getClientSecret(): string {
-        return config.interClientSecret || '';
+        return bankingCredentialsStore.getClientSecret('inter') || config.interClientSecret || '';
     }
 
     protected getCertPath(): string {
@@ -83,7 +85,8 @@ class InterApiService extends BankingApiBase {
     }
 
     protected isSandbox(): boolean {
-        return config.interSandbox || false;
+        const s = bankingCredentialsStore.getSandbox('inter');
+        return s !== undefined ? s : (config.interSandbox || false);
     }
 
     protected getUrls(): { production: BankUrlConfig; sandbox: BankUrlConfig } {

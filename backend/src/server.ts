@@ -181,6 +181,8 @@ app.use('/api/scheduler', schedulerLimiter, schedulerRoutes);
 import webhookRoutes from './routes/webhookRoutes';
 app.use('/api/webhook', webhookRoutes);
 
+import bankingCredentialsRoutes from './routes/bankingCredentialsRoutes';
+app.use('/api/banking', bankingLimiter, bankingCredentialsRoutes); // admin-only (#45) — antes do bankingRoutes
 import bankingRoutes from './routes/bankingRoutes';
 app.use('/api/banking', bankingLimiter, bankingRoutes);
 

@@ -10,6 +10,7 @@
 
 import { logger } from '../utils/logger';
 import { config } from '../config/env';
+import { bankingCredentialsStore } from './bankingCredentialsStore';
 import {
     SaldoItau,
     ExtratoItau,
@@ -70,12 +71,13 @@ class ItauApiService extends BankingApiBase {
         return 'Itaú';
     }
 
+    // Credenciais: o store (salvo via UI, cifrado) tem prioridade; .env é fallback. (#45)
     protected getClientId(): string {
-        return config.itauClientId || '';
+        return bankingCredentialsStore.getClientId('itau') || config.itauClientId || '';
     }
 
     protected getClientSecret(): string {
-        return config.itauClientSecret || '';
+        return bankingCredentialsStore.getClientSecret('itau') || config.itauClientSecret || '';
     }
 
     protected getCertPath(): string {
@@ -87,7 +89,16 @@ class ItauApiService extends BankingApiBase {
     }
 
     protected isSandbox(): boolean {
-        return config.itauSandbox || false;
+        const s = bankingCredentialsStore.getSandbox('itau');
+        return s !== undefined ? s : (config.itauSandbox || false);
+    }
+
+    private getContaCorrente(): string {
+        return bankingCredentialsStore.getContaCorrente('itau') || config.itauContaCorrente || '';
+    }
+
+    private getAgencia(): string {
+        return bankingCredentialsStore.getAgencia('itau') || config.itauAgencia || '';
     }
 
     protected getUrls(): { production: BankUrlConfig; sandbox: BankUrlConfig } {
@@ -142,12 +153,14 @@ class ItauApiService extends BankingApiBase {
             'x-itau-correlationID': this.generateCorrelationId(),
         };
 
-        // Add account info if available
-        if (config.itauContaCorrente) {
-            customHeaders['x-conta-corrente'] = config.itauContaCorrente;
+        // Add account info if available (store > .env, #45)
+        const contaCorrente = this.getContaCorrente();
+        if (contaCorrente) {
+            customHeaders['x-conta-corrente'] = contaCorrente;
         }
-        if (config.itauAgencia) {
-            customHeaders['x-agencia'] = config.itauAgencia;
+        const agencia = this.getAgencia();
+        if (agencia) {
+            customHeaders['x-agencia'] = agencia;
         }
 
         // Use full URL since Itaú has multiple base URLs
