@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+import cookieParser from 'cookie-parser';
 
 const mockDolibarrService = vi.hoisted(() => ({
     login: vi.fn(),
@@ -9,6 +10,11 @@ const mockDolibarrService = vi.hoisted(() => ({
 vi.mock('../../services/dolibarrService', () => ({
     dolibarrService: mockDolibarrService,
 }));
+
+vi.mock('../../config/env', async (orig) => {
+    const actual = await (orig() as Promise<any>);
+    return { ...actual, config: { ...actual.config, adminKey: 'test-admin-key' } };
+});
 
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({
@@ -29,6 +35,7 @@ import authRoutes from '../../routes/authRoutes';
 function createApp() {
     const app = express();
     app.use(express.json());
+    app.use(cookieParser());
     app.use('/api', authRoutes);
     return app;
 }
@@ -118,6 +125,54 @@ describe('authRoutes', () => {
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
             expect(res.body.message).toBe('Logged out');
+            expect(res.headers['set-cookie']).toBeDefined();
+        });
+    });
+
+    describe('Admin console auth via cookie (#33)', () => {
+        it('admin-login sets an httpOnly admin_key cookie with the correct key', async () => {
+            const res = await request(app)
+                .post('/api/admin-login')
+                .send({ adminKey: 'test-admin-key' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            const cookie = (res.headers['set-cookie'] as unknown as string[])?.[0] || '';
+            expect(cookie).toContain('admin_key=');
+            expect(cookie).toContain('HttpOnly');
+        });
+
+        it('admin-login rejects a wrong key with 401 and no cookie', async () => {
+            const res = await request(app)
+                .post('/api/admin-login')
+                .send({ adminKey: 'wrong' });
+
+            expect(res.status).toBe(401);
+            expect(res.headers['set-cookie']).toBeUndefined();
+        });
+
+        it('admin-login validates the payload (400 when missing)', async () => {
+            const res = await request(app).post('/api/admin-login').send({});
+            expect(res.status).toBe(400);
+        });
+
+        it('admin-check returns authenticated:true with a valid cookie', async () => {
+            const res = await request(app)
+                .get('/api/admin-check')
+                .set('Cookie', 'admin_key=test-admin-key');
+            expect(res.status).toBe(200);
+            expect(res.body.authenticated).toBe(true);
+        });
+
+        it('admin-check returns authenticated:false without a cookie', async () => {
+            const res = await request(app).get('/api/admin-check');
+            expect(res.status).toBe(200);
+            expect(res.body.authenticated).toBe(false);
+        });
+
+        it('admin-logout clears the admin_key cookie', async () => {
+            const res = await request(app).post('/api/admin-logout');
+            expect(res.status).toBe(200);
             expect(res.headers['set-cookie']).toBeDefined();
         });
     });

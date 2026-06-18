@@ -523,6 +523,16 @@ describe('requireDolibarrAdmin', () => {
         expect(next).toHaveBeenCalled();
     });
 
+    it('allows system admin key via httpOnly cookie admin_key (#33)', async () => {
+        const req = mockReq({ cookies: { admin_key: 'test-admin-key-123' } });
+        const res = mockRes();
+        const next = mockNext();
+
+        await requireDolibarrAdmin(req, res, next);
+
+        expect(next).toHaveBeenCalled();
+    });
+
     it('allows system admin key via query DOLAPIKEY', async () => {
         const req = mockReq({ query: { DOLAPIKEY: 'test-admin-key-123' } });
         const res = mockRes();
