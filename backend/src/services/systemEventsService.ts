@@ -14,6 +14,7 @@ import { notificationService } from './notificationService';
 import { schedulerService } from './schedulerService';
 import { approvalService } from './approvalService';
 import { taskRunnerService } from './taskRunnerService';
+import { dolibarrService } from './dolibarr';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('SystemEvents');
@@ -55,10 +56,19 @@ export interface SystemEventQuery {
 }
 
 const ALL_SOURCES: SystemEventSource[] = ['audit', 'agent', 'delegation', 'notification', 'scheduler', 'approval', 'task'];
-// PR1: não-admin vê apenas o que é dele e não-sensível. Delegação/scheduler/task/audit/approval = admin-only.
-const NON_ADMIN_SOURCES: SystemEventSource[] = ['agent', 'notification'];
+// Visibilidade do não-admin (PR2, #519): só o que lhe concerne e não-sensível.
+//  - agent/notification: já filtrados por usuário no collector.
+//  - delegation: visível se o usuário está envolvido na tarefa (responsável/interveniente) ou
+//    executou a ação (campo `by`) — ver collectDelegation.
+//  - audit/approval: sensíveis → admin-only.
+//  - scheduler (mensagens do sistema por chatId) e task (robô opencode, sem dono): sem vínculo
+//    natural com o usuário comum → admin-only por ora.
+const NON_ADMIN_SOURCES: SystemEventSource[] = ['agent', 'notification', 'delegation'];
 const PER_SOURCE_CAP = 500;
 const PER_TASK_EVENT_CAP = 40;
+// Índice tarefa→usuários envolvidos é a única parte com I/O de rede (custom_sync); micro-cache p/
+// amortizar rajadas de re-fetch disparadas por socket (tempo real).
+const TASK_USER_INDEX_TTL_MS = 30_000;
 
 /** Converte ms | ISO | Date para ISO; retorna null se inválido (evento é descartado, nunca quebra o feed). */
 function toIso(v: number | string | Date | undefined | null): string | null {
@@ -113,8 +123,47 @@ class SystemEventsService {
             });
     }
 
-    private async collectDelegation(): Promise<SystemEvent[]> {
-        return delegationEventsService.listAll(PER_SOURCE_CAP).flatMap((e, i) => {
+    private taskUserIndexCache: { at: number; index: Map<string, Set<string>> } | null = null;
+
+    /**
+     * Mapa taskId → conjunto de userIds envolvidos (responsável/interveniente), via um único
+     * getAllTaskContacts() (custom_sync). Micro-cache TTL p/ não martelar a rede em rajada de
+     * re-fetch (tempo real). O criador da tarefa não tem getter de lista barato aqui; na prática
+     * ele é coberto pelo `by` do evento de origem (requested/template_set).
+     *
+     * O cache é user-agnóstico (taskId→userIds); o filtro por usuário é aplicado por requisição.
+     * Trade-off consciente: ao remover um contato de uma tarefa, ele ainda enxerga os eventos de
+     * delegação dela por até TASK_USER_INDEX_TTL_MS (apenas metadados de linha do tempo). Se isso
+     * virar problema, baixar o TTL ou invalidar o cache na alteração de contatos.
+     */
+    private async getTaskUserIndex(): Promise<Map<string, Set<string>>> {
+        const now = Date.now();
+        if (this.taskUserIndexCache && now - this.taskUserIndexCache.at < TASK_USER_INDEX_TTL_MS) {
+            return this.taskUserIndexCache.index;
+        }
+        const index = new Map<string, Set<string>>();
+        try {
+            const contacts = await dolibarrService.getAllTaskContacts();
+            for (const c of contacts || []) {
+                if (!c?.task_id || !c?.user_id) continue;
+                const key = String(c.task_id);
+                if (!index.has(key)) index.set(key, new Set());
+                index.get(key)!.add(String(c.user_id));
+            }
+        } catch (e: any) {
+            log.warn(`getTaskUserIndex falhou: ${e?.message || e}`);
+        }
+        this.taskUserIndexCache = { at: now, index };
+        return index;
+    }
+
+    private async collectDelegation(user: SystemUser): Promise<SystemEvent[]> {
+        let rows = delegationEventsService.listAll(PER_SOURCE_CAP);
+        if (!user.isAdmin) {
+            const index = await this.getTaskUserIndex();
+            rows = rows.filter((e) => e.by === user.id || index.get(String(e.taskId))?.has(user.id));
+        }
+        return rows.flatMap((e, i) => {
             const ts = toIso(e.at);
             if (!ts) return [];
             return [{
@@ -128,8 +177,11 @@ class SystemEventsService {
     }
 
     private async collectNotification(user: SystemUser): Promise<SystemEvent[]> {
-        // PR1: usa getForUser (existe na main e pós-#521); admin vê as próprias. getAll (admin vê todas) fica p/ PR2.
-        return notificationService.getForUser(user.id, PER_SOURCE_CAP).flatMap((n) => {
+        // PR2 (#519): admin vê TODAS (getAll); não-admin só as visíveis a ele (getForUser).
+        const list = user.isAdmin
+            ? notificationService.getAll(PER_SOURCE_CAP)
+            : notificationService.getForUser(user.id, PER_SOURCE_CAP);
+        return list.flatMap((n) => {
             const ts = toIso(n.createdAt);
             if (!ts) return [];
             return [{
@@ -195,7 +247,7 @@ class SystemEventsService {
             switch (source) {
                 case 'audit': return await this.collectAudit();
                 case 'agent': return await this.collectAgent(user);
-                case 'delegation': return await this.collectDelegation();
+                case 'delegation': return await this.collectDelegation(user);
                 case 'notification': return await this.collectNotification(user);
                 case 'scheduler': return await this.collectScheduler();
                 case 'approval': return await this.collectApproval();

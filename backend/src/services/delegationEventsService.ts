@@ -8,6 +8,7 @@ import path from 'path';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { createLogger } from '../utils/logger';
 import { dolibarrService } from './dolibarr';
+import { socketService } from './socketService';
 
 const log = createLogger('DelegationEvents');
 
@@ -92,6 +93,9 @@ export class DelegationEventsService {
         };
         this.store[id] = [...(this.store[id] || []), ev];
         this.save();
+        // Tempo real p/ a Central de Eventos (#519) — sinal "algo mudou"; o front re-busca com a
+        // visibilidade reaplicada no backend. Best-effort, nunca quebra o fluxo.
+        try { socketService.emit('delegation_event', { taskId: id, type, at: ev.at, by: ev.by }); } catch { /* noop */ }
         // Espelho durável no Dolibarr — nunca bloqueia/derruba o fluxo principal.
         this.mirror(id, type, opts).catch((e) => log.warn(`mirror actioncomm falhou (task=${id})`, e?.message || e));
         return ev;

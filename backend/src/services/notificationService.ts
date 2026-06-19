@@ -269,6 +269,13 @@ class NotificationService {
         return result.slice(start, end);
     }
 
+    /** TODAS as notificações (admin) — sem filtro de visibilidade. Usado pela Central de Eventos. (#519) */
+    getAll(limit?: number, offset?: number): Notification[] {
+        const start = offset || 0;
+        const end = start + (limit || 50);
+        return this.data.notifications.slice(start, end);
+    }
+
     getById(id: string): Notification | undefined {
         return this.data.notifications.find(n => n.id === id);
     }

@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'path';
 
 const mockDoli = vi.hoisted(() => ({ createAgendaEvent: vi.fn(() => Promise.resolve({ id: '1' })) }));
+const mockSocket = vi.hoisted(() => ({ emit: vi.fn() }));
 vi.mock('../../services/dolibarr', () => ({ dolibarrService: mockDoli }));
+vi.mock('../../services/socketService', () => ({ socketService: mockSocket }));
 vi.mock('../../utils/atomicWrite', () => ({ atomicWriteSync: vi.fn() }));
 vi.mock('../../utils/logger', () => ({ createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 
@@ -45,5 +47,13 @@ describe('DelegationEventsService', () => {
         const svc = newSvc();
         expect(() => svc.logEvent('50', 'cobranca')).not.toThrow();
         expect(svc.getEvents('50')).toHaveLength(1);
+    });
+
+    it('emite socket delegation_event ao registrar (tempo real p/ a Central de Eventos)', () => {
+        const svc = newSvc();
+        svc.logEvent('50', 'cobranca', { by: '7', atMs: 3000 });
+        expect(mockSocket.emit).toHaveBeenCalledWith('delegation_event', expect.objectContaining({
+            taskId: '50', type: 'cobranca', by: '7',
+        }));
     });
 });
