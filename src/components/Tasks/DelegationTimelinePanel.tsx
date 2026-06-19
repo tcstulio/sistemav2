@@ -34,6 +34,12 @@ const LABELS: Record<string, string> = {
     reminder: 'Lembrete de prazo',
 };
 
+// Papel do DESTINATÁRIO (to) conforme o tipo: cobrança/lembrete vão ao Responsável; escalada/conclusão ao Solicitante.
+const TO_ROLE: Record<string, string> = {
+    requested: 'Responsável', cobranca: 'Responsável', reminder: 'Responsável',
+    escalated: 'Solicitante', completed: 'Solicitante',
+};
+
 const fmt = (iso: string) => {
     const d = new Date(iso);
     return isNaN(d.getTime()) ? iso : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -89,7 +95,7 @@ export const DelegationTimelinePanel: React.FC<Props> = ({ config, taskId, users
                         <li key={i} className="ml-4">
                             <span className="absolute -left-1.5 w-3 h-3 rounded-full bg-indigo-500 border-2 border-white dark:border-slate-900" />
                             <p className="text-sm font-medium text-slate-900 dark:text-white">{LABELS[e.type] || e.type}</p>
-                            <p className="text-xs text-slate-500">{fmt(e.at)} · {userName(e.by)}{e.to ? ` → ${userName(e.to)}` : ''}</p>
+                            <p className="text-xs text-slate-500">{fmt(e.at)} · {userName(e.by)}{e.to ? ` → ${userName(e.to)}${TO_ROLE[e.type] ? ` (${TO_ROLE[e.type]})` : ''}` : ''}</p>
                             {e.note && <p className="text-xs text-slate-400 mt-0.5">{e.note}</p>}
                         </li>
                     ))}

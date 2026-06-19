@@ -10,6 +10,7 @@
 import { adminAuditService } from './adminAuditService';
 import { agentActivityService } from './agentActivityService';
 import { delegationEventsService } from './delegationEventsService';
+import { delegationService } from './delegationService';
 import { notificationService } from './notificationService';
 import { schedulerService } from './schedulerService';
 import { approvalService } from './approvalService';
@@ -167,14 +168,19 @@ class SystemEventsService {
         return rows.flatMap((e, i) => {
             const ts = toIso(e.at);
             if (!ts) return [];
+            // Enriquecimento: destinatário (to) + objetivo da delegação (do store local), p/ o
+            // card mostrar "Sistema → Fulano (Responsável) · <objetivo>". (#526 + card)
+            const objetivo = delegationService.get(String(e.taskId))?.objetivo;
+            const meta: Record<string, any> = {};
+            if (e.to) meta.to = e.to;
+            if (objetivo) meta.objetivo = objetivo;
             return [{
                 id: `deleg_${e.taskId}_${e.at}_${i}`, timestamp: ts, source: 'delegation' as const,
                 actor: { id: e.by || 'system', name: e.by ? e.by : 'Sistema' },
                 type: e.type, entityType: 'task', entityId: e.taskId,
                 description: e.note ? `${e.type} — ${e.note}` : e.type,
                 linkTo: `tasks/${e.taskId}`, severity: 'info' as const,
-                // `to` = destinatário (userId); o front resolve o nome p/ exibir "→ Fulano". (#526)
-                metadata: e.to ? { to: e.to } : undefined,
+                metadata: Object.keys(meta).length ? meta : undefined,
             }];
         });
     }
