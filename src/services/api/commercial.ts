@@ -1,4 +1,4 @@
-import { DolibarrConfig, ThirdParty, Invoice, SupplierInvoice, Proposal, Order, Contract, Shipment, SupplierOrder, SupplierProposal } from '../../types';
+import { DolibarrConfig, ThirdParty, Invoice, SupplierInvoice, SupplierInvoiceLine, Proposal, Order, Contract, Shipment, SupplierOrder, SupplierProposal } from '../../types';
 import { fetchList, fetchPage, request, getHeaders, sanitizeUrl } from './core';
 import { logger } from '../../utils/logger';
 
@@ -165,8 +165,44 @@ export const fetchSupplierInvoices = async (config: DolibarrConfig): Promise<Sup
         total_ttc: parseFloat(d.total_ttc),
         paye: String(d.paye) as any,
         statut: String(d.statut) as any,
+        date_modification: d.tms ? parseInt(d.tms) : undefined,
         array_options: d.array_options
     }));
+};
+
+/**
+ * Fallback REST para linhas de fatura de fornecedor (#559).
+ * O endpoint REST correto do Dolibarr e `supplierinvoices` (sem underscore). Quando o
+ * `custom_sync.php` nao reconhece o tipo `supplier_invoice_lines` (404), derivamos as
+ * linhas a partir da propria lista de faturas (cada fatura traz `lines`).
+ */
+export const fetchSupplierInvoiceLines = async (config: DolibarrConfig): Promise<SupplierInvoiceLine[]> => {
+    const data = await fetchList(config, 'supplierinvoices');
+    const lines: SupplierInvoiceLine[] = [];
+    for (const inv of data) {
+        const record = inv as Record<string, any>;
+        const rawLines = Array.isArray(record.lines) ? record.lines : [];
+        const parentId = String(record.id);
+        const parentTms = record.tms ? parseInt(record.tms) : undefined;
+        for (const l of rawLines as Record<string, any>[]) {
+            lines.push({
+                id: String(l.id ?? l.rowid),
+                parent_id: parentId,
+                label: l.label || l.desc || l.description || '',
+                description: l.desc || l.description || '',
+                qty: Number(l.qty),
+                vat_rate: Number(l.tva_tx ?? l.vat_rate ?? 0),
+                subprice: Number(l.subprice ?? l.pu_ht ?? 0),
+                total_ht: Number(l.total_ht ?? 0),
+                total_ttc: Number(l.total_ttc ?? 0),
+                product_id: l.fk_product ? String(l.fk_product) : (l.product_id ? String(l.product_id) : undefined),
+                product_ref: l.product_ref || undefined,
+                product_label: l.product_label || undefined,
+                date_modification: parentTms,
+            });
+        }
+    }
+    return lines;
 };
 
 export const fetchProposals = async (config: DolibarrConfig): Promise<Proposal[]> => {
