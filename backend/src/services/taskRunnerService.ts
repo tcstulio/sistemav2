@@ -461,11 +461,16 @@ class TaskRunnerService {
                     // notificacao é best-effort
                 }
 
-                // Auto-start opcional (TASKRUNNER_AUTOSTART=true): além de notificar, INICIA a task
-                // detectada — fluxo "criar issue + label opencode-task → robô resolve sozinho". O
-                // Planner ainda filtra (go/esperar/pular); usa modo cumulativo (melhor sob throttling).
-                // Default DESLIGADO para não surpreender com execução automática.
-                if (process.env.TASKRUNNER_AUTOSTART === 'true') {
+                // Auto-start: além de notificar, INICIA a task detectada — fluxo "criar issue +
+                // label opencode-task → robô resolve sozinho". O Planner ainda filtra
+                // (go/esperar/pular); usa modo cumulativo (melhor sob throttling).
+                // Liga por env (TASKRUNNER_AUTOSTART=true) OU pelo toggle de UI taskAutomation.autoPlay.
+                // Antes só a env var valia: o toggle autoPlay aparecia "ligado" na tela mas nunca
+                // disparava o start INICIAL (só encadeava a próxima após uma terminar) — fila travada.
+                const autoStartEnabled =
+                    process.env.TASKRUNNER_AUTOSTART === 'true' ||
+                    this.getAutomationConfig().autoPlay === true;
+                if (autoStartEnabled) {
                     this.emitLog(num, 'info', 'Auto-start (polling): iniciando execução automática...');
                     this.startTask(num, { mode: 'cumulative' }).catch((e: any) => {
                         log.warn(`Auto-start falhou para #${num}: ${e?.message || e}`);
