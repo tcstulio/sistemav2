@@ -360,6 +360,7 @@ class TaskRunnerService {
     private polling = false;
     private notifiedTasks = new Set<number>();
     private deletedIssueNumbers = new Map<number, number>();
+    private syncGitHubInFlight = false;
 
     constructor() {
         this.load();
@@ -587,7 +588,7 @@ class TaskRunnerService {
                 '--repo', REPO,
                 '--label', 'opencode-task',
                 '--state', state,
-                '--limit', '50',
+                '--limit', '100',
                 '--json', 'number,title,body,labels,createdAt,state,closedAt'
             ], { timeout: 15000 });
             return JSON.parse(stdout);
@@ -645,72 +646,83 @@ class TaskRunnerService {
      * Idempotente: rodar 2x nao muda estado.
      */
     async syncWithGitHub(): Promise<{ reconciled: number[] }> {
-        const reconciled: number[] = [];
-        const now = Date.now();
-        for (const [numStr, task] of Object.entries(this.store.tasks)) {
-            const num = Number(numStr);
-            if (this.isTerminalStatus(task.status)) continue;
+        // Guarda de concorrencia: o GET /api/tasks dispara isto em background a cada 10s (polling).
+        // Sem a guarda, execucoes se acumulam quando ha muitas tasks.
+        if (this.syncGitHubInFlight) return { reconciled: [] };
+        this.syncGitHubInFlight = true;
+        try {
+            const reconciled: number[] = [];
+            const now = Date.now();
 
-            // Não reconciliar uma task em EXECUÇÃO ATIVA: o run vivo é a fonte da verdade do estado.
-            // Reconciliar com o GitHub aqui (ex.: derivar status terminal de um PR fechado) chegava a
-            // sobrescrever um run em andamento com prNumber/estado defasado → split-brain (visto ao
-            // re-rodar a mesma task). 'cancelling' segue tratado abaixo.
-            if (task.status === 'running' || task.status === 'fixing') continue;
+            // Estado de TODAS as issues numa UNICA chamada (em vez de 1 `gh issue view` por task).
+            // Antes, com muitas tasks pendentes no store, isto fazia N chamadas sequenciais ao GitHub
+            // por request — estourando latencia/rate-limit e gerando "Erro ao carregar tasks".
+            const issues = await this.listIssues('all');
+            const stateByNum = new Map<number, string>();
+            for (const iss of issues) stateByNum.set(iss.number, iss.state);
 
-            // #323: resolve tasks presas em 'cancelling' ha mais de 60s (processo morreu sem completar)
-            if (task.status === 'cancelling') {
-                const updatedMs = new Date(task.updatedAt).getTime();
-                if (now - updatedMs > 60_000) {
-                    task.status = 'cancelled';
-                    task.error = task.error || 'Auto-resolvido: stuck em cancelling (>60s)';
-                    task.completedAt = new Date().toISOString();
-                    task.childPid = undefined;
-                    task.killRequested = false;
-                    this.recordEvent(task, 'task_killed', 'Auto-resolvido: stuck em cancelling (>60s)');
-                    reconciled.push(num);
-                    log.warn(`Task #${num} auto-resolvida de cancelling -> cancelled`);
+            for (const [numStr, task] of Object.entries(this.store.tasks)) {
+                const num = Number(numStr);
+                if (this.isTerminalStatus(task.status)) continue;
+
+                // Não reconciliar uma task em EXECUÇÃO ATIVA: o run vivo é a fonte da verdade do estado.
+                // Reconciliar com o GitHub aqui (ex.: derivar status terminal de um PR fechado) chegava a
+                // sobrescrever um run em andamento com prNumber/estado defasado → split-brain (visto ao
+                // re-rodar a mesma task). 'cancelling' segue tratado abaixo.
+                if (task.status === 'running' || task.status === 'fixing') continue;
+
+                // #323: resolve tasks presas em 'cancelling' ha mais de 60s (processo morreu sem completar)
+                if (task.status === 'cancelling') {
+                    const updatedMs = new Date(task.updatedAt).getTime();
+                    if (now - updatedMs > 60_000) {
+                        task.status = 'cancelled';
+                        task.error = task.error || 'Auto-resolvido: stuck em cancelling (>60s)';
+                        task.completedAt = new Date().toISOString();
+                        task.childPid = undefined;
+                        task.killRequested = false;
+                        this.recordEvent(task, 'task_killed', 'Auto-resolvido: stuck em cancelling (>60s)');
+                        reconciled.push(num);
+                        log.warn(`Task #${num} auto-resolvida de cancelling -> cancelled`);
+                    }
+                    continue;
                 }
-                continue;
-            }
 
-            let issueData: any;
-            try {
-                const { stdout } = await gh(['issue', 'view', String(num), '--repo', REPO, '--json', 'state,closedAt'], { timeout: 10000 });
-                issueData = JSON.parse(stdout);
-            } catch {
-                continue; // erro transiente, tenta no proximo boot
-            }
+                const state = stateByNum.get(num);
+                if (state === undefined) continue; // issue fora da lista (alem do limite) — tenta depois
 
-            // Issue ainda aberta: garante coerencia local
-            if (issueData.state !== 'CLOSED') {
-                if (task.status === 'pending' && task.startedAt) {
-                    task.startedAt = undefined;
-                    reconciled.push(num);
+                // Issue ainda aberta: garante coerencia local
+                if (state !== 'CLOSED') {
+                    if (task.status === 'pending' && task.startedAt) {
+                        task.startedAt = undefined;
+                        reconciled.push(num);
+                    }
+                    continue;
                 }
-                continue;
-            }
 
-            // Issue fechada: deriva status terminal pelo PR
-            if (task.prNumber) {
-                try {
-                    const { stdout: prOut } = await gh(['pr', 'view', String(task.prNumber), '--repo', REPO, '--json', 'state,merged'], { timeout: 10000 });
-                    const pr = JSON.parse(prOut);
-                    task.status = pr.merged ? 'merged' : 'rejected';
-                } catch {
+                // Issue fechada: deriva status terminal pelo PR (unica chamada extra, so p/ task com PR)
+                if (task.prNumber) {
+                    try {
+                        const { stdout: prOut } = await gh(['pr', 'view', String(task.prNumber), '--repo', REPO, '--json', 'state,merged'], { timeout: 10000 });
+                        const pr = JSON.parse(prOut);
+                        task.status = pr.merged ? 'merged' : 'rejected';
+                    } catch {
+                        task.status = 'failed';
+                    }
+                } else {
                     task.status = 'failed';
                 }
-            } else {
-                task.status = 'failed';
+                task.completedAt = task.completedAt || new Date().toISOString();
+                task.updatedAt = new Date().toISOString();
+                reconciled.push(num);
             }
-            task.completedAt = task.completedAt || new Date().toISOString();
-            task.updatedAt = new Date().toISOString();
-            reconciled.push(num);
+            if (reconciled.length) {
+                this.save();
+                log.info(`syncWithGitHub: reconciliou ${reconciled.length} task(s) -> [${reconciled.join(', ')}]`);
+            }
+            return { reconciled };
+        } finally {
+            this.syncGitHubInFlight = false;
         }
-        if (reconciled.length) {
-            this.save();
-            log.info(`syncWithGitHub: reconciliou ${reconciled.length} task(s) -> [${reconciled.join(', ')}]`);
-        }
-        return { reconciled };
     }
 
     getTask(issueNumber: number): Task | null {
