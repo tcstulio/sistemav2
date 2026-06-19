@@ -127,3 +127,55 @@ describe('Settings — in-app confirm/alert (refactor #335)', () => {
         expect(mockLogout).not.toHaveBeenCalled();
     });
 });
+
+describe('Settings — Rules of Hooks (#595)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    const wrap = (cfg: DolibarrConfig | null) => (
+        <MemoryRouter>
+            <ConfirmProvider>
+                <Settings config={cfg} />
+            </ConfirmProvider>
+        </MemoryRouter>
+    );
+
+    const isHooksOrderError = (s: string) =>
+        /Rendered (fewer|more) hooks than|change in the order of Hooks/i.test(s);
+
+    it('exibe "Configuração não disponível" quando config é null, sem lançar', () => {
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        render(wrap(null));
+
+        expect(screen.getByText('Configuração não disponível')).toBeTruthy();
+
+        const hooksError = errorSpy.mock.calls.find((c) => isHooksOrderError(String(c[0])));
+        expect(hooksError).toBeUndefined();
+
+        errorSpy.mockRestore();
+    });
+
+    it('não lança erro de hooks ao alternar config entre válido e null (rerender)', () => {
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        const { rerender } = render(wrap(baseConfig));
+
+        // Render normal com config válido
+        expect(screen.getByText('Salvar Preferências')).toBeTruthy();
+
+        // Re-render na MESMA árvore com config null — antes quebrava a tela (#595)
+        rerender(wrap(null));
+        expect(screen.getByText('Configuração não disponível')).toBeTruthy();
+
+        // Volta para config válido
+        rerender(wrap(baseConfig));
+        expect(screen.getByText('Salvar Preferências')).toBeTruthy();
+
+        const hooksError = errorSpy.mock.calls.find((c) => isHooksOrderError(String(c[0])));
+        expect(hooksError).toBeUndefined();
+
+        errorSpy.mockRestore();
+    });
+});

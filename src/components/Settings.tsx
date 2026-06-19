@@ -30,11 +30,32 @@ interface SettingsProps {
 }
 
 const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
-    const { logout, setConfig } = useDolibarr();
+    const { logout } = useDolibarr();
     const confirm = useConfirm();
-    const [localConfig, setLocalConfig] = useState<DolibarrConfig | null>(config);
 
-    // Handle null config
+    // --- Todos os hooks no topo, antes de qualquer return condicional (Rules of Hooks) ---
+    const [localConfig, setLocalConfig] = useState<DolibarrConfig | null>(config);
+    const [isSaved, setIsSaved] = useState(false);
+    const [settingsTab, setSettingsTab] = useState<'profile' | 'admin'>('profile');
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [isSavingProfile, setIsSavingProfile] = useState(false);
+    const [editForm, setEditForm] = useState({
+        email: '',
+        phone: '',
+        password: ''
+    });
+
+    // --- Identidade da empresa (org-wide, só admin) ---
+    // isAdmin derivado com guard p/ localConfig null (os hooks rodam antes do early-return).
+    const isAdmin = localConfig?.currentUser?.admin === 1 || localConfig?.currentUser?.admin === '1' || localConfig?.currentUser?.admin === true;
+    const [orgForm, setOrgForm] = useState({ companyName: '', logoText: '' });
+    const [savingOrg, setSavingOrg] = useState(false);
+    useEffect(() => {
+        if (!isAdmin) return;
+        getUiConfig().then((c) => { if (c) setOrgForm({ companyName: c.companyName, logoText: c.logoText }); });
+    }, [isAdmin]);
+
+    // Handle null config — early return DEPOIS de todos os hooks (Rules of Hooks #595).
     if (!config || !localConfig) {
         return (
             <PageLayout>
@@ -45,17 +66,6 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
             </PageLayout>
         );
     }
-    const [isSaved, setIsSaved] = useState(false);
-    const [settingsTab, setSettingsTab] = useState<'profile' | 'admin'>('profile');
-
-    // --- Identidade da empresa (org-wide, só admin) ---
-    const isAdmin = localConfig.currentUser?.admin === 1 || localConfig.currentUser?.admin === '1' || localConfig.currentUser?.admin === true;
-    const [orgForm, setOrgForm] = useState({ companyName: '', logoText: '' });
-    const [savingOrg, setSavingOrg] = useState(false);
-    useEffect(() => {
-        if (!isAdmin) return;
-        getUiConfig().then((c) => { if (c) setOrgForm({ companyName: c.companyName, logoText: c.logoText }); });
-    }, [isAdmin]);
     const handleSaveOrg = async () => {
         setSavingOrg(true);
         try {
@@ -93,15 +103,6 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
         { name: 'Neutro', value: 'neutral', hex: '#525252' },
         { name: 'Pedra', value: 'stone', hex: '#57534e' },
     ];
-
-    // Edit Profile State
-    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-    const [isSavingProfile, setIsSavingProfile] = useState(false);
-    const [editForm, setEditForm] = useState({
-        email: '',
-        phone: '',
-        password: ''
-    });
 
     const handleOpenEdit = () => {
         setEditForm({
