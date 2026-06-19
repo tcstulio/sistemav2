@@ -13,6 +13,11 @@ import { toast } from 'sonner';
 // Design System
 import { PageHeader, MasterDetailLayout, Card, EmptyState, ListToolbar, Spinner, ErrorState } from './ui';
 
+// Safety-net: garante uma altura mínima para a lista virtualizada mesmo quando o
+// AutoSizer ainda reporta height = 0 (cadeia flex sem altura resolvida). Evita que
+// o react-window não renderize nenhuma linha e a página fique travada (#651).
+const MIN_LIST_HEIGHT = 400;
+
 // Map Dolibarr Payment Mode IDs to Labels
 const PAYMENT_MODES: Record<string, string> = {
     '2': 'Transferência Bancária (VIR)',
@@ -194,7 +199,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
                 onCloseDetail={() => setSelectedPayment(null)}
                 listWidth="1/3"
                 list={
-                    <div className={`h-full transition-opacity ${isFetching ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}>
+                    <div className={`h-full transition-opacity ${isFetching ? 'opacity-60 pointer-events-none' : 'opacity-100'}`} style={{ minHeight: MIN_LIST_HEIGHT }}>
                         {payments.length === 0 ? (
                             <div className="p-6">
                                 <EmptyState
@@ -207,7 +212,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
                             <AutoSizer>
                                 {({ height, width }: { height: number; width: number }) => (
                                     <ListWindow
-                                        height={height}
+                                        height={Math.max(height, MIN_LIST_HEIGHT)}
                                         width={width}
                                         itemCount={payments.length}
                                         itemSize={120}
