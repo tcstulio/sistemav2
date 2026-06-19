@@ -9,11 +9,13 @@ const m = vi.hoisted(() => ({
     appr: { getActionHistory: vi.fn() },
     task: { getAllTasks: vi.fn() },
     doli: { getAllTaskContacts: vi.fn() },
+    delegSvc: { get: vi.fn() },
 }));
 
 vi.mock('../../services/adminAuditService', () => ({ adminAuditService: m.audit }));
 vi.mock('../../services/agentActivityService', () => ({ agentActivityService: m.agent }));
 vi.mock('../../services/delegationEventsService', () => ({ delegationEventsService: m.deleg }));
+vi.mock('../../services/delegationService', () => ({ delegationService: m.delegSvc }));
 vi.mock('../../services/notificationService', () => ({ notificationService: m.notif }));
 vi.mock('../../services/schedulerService', () => ({ schedulerService: m.sched }));
 vi.mock('../../services/approvalService', () => ({ approvalService: m.appr }));
@@ -59,6 +61,7 @@ describe('systemEventsService', () => {
         m.sched.getHistory.mockReturnValue([{ id: 's1', channel: 'whatsapp', message: 'lembrete', scheduledAt: T('2026-06-18T07:00:00Z'), status: 'sent', type: 'reminder', chatId: 'c1', sessionId: 'x' }]);
         m.appr.getActionHistory.mockResolvedValue([{ id: 'p1', type: 'pagar_boleto', description: 'pagar boleto', status: 'executed', riskLevel: 'high', requestedBy: 'u2', requestedAt: new Date('2026-06-18T06:00:00Z') }]);
         m.task.getAllTasks.mockReturnValue([{ issueNumber: 42, events: [{ ts: '2026-06-18T13:00:00Z', type: 'task_failed', message: 'falhou' }, { ts: 'data-ruim', type: 'task_started', message: 'x' }] }]);
+        m.delegSvc.get.mockReturnValue(undefined);
     });
 
     it('getAllowedSources: admin vê 7 fontes; não-admin vê 3 (agent, delegation, notification)', () => {
@@ -98,6 +101,13 @@ describe('systemEventsService', () => {
     it('delegação: expõe o destinatário (to) em metadata p/ o front resolver o nome (#526)', async () => {
         const r = await systemEventsService.query({ user: ADMIN, sources: ['delegation'] });
         expect(r.events.find(e => e.entityId === '60')?.metadata?.to).toBe('7');
+    });
+
+    it('delegação: inclui o objetivo da delegação no metadata p/ o card', async () => {
+        m.delegSvc.get.mockImplementation((id: string) => (id === '60' ? { objetivo: 'Contar bebidas' } : undefined));
+        const r = await systemEventsService.query({ user: ADMIN, sources: ['delegation'] });
+        expect(r.events.find(e => e.entityId === '60')?.metadata?.objetivo).toBe('Contar bebidas');
+        expect(r.events.find(e => e.entityId === '99')?.metadata?.objetivo).toBeUndefined();
     });
 
     it('delegação (admin): vê todas as delegações, sem filtro', async () => {

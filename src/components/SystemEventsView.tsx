@@ -24,6 +24,12 @@ const SOURCE_META: Record<SystemEventSource, { label: string; icon: React.Compon
     dolibarr: { label: 'Agenda (Dolibarr)', icon: Activity, dot: 'bg-slate-500' },
 };
 
+// Papel do destinatário (to) de um evento de delegação, conforme o tipo. (#526 + card)
+const DELEG_TO_ROLE: Record<string, string> = {
+    requested: 'Responsável', cobranca: 'Responsável', reminder: 'Responsável',
+    escalated: 'Solicitante', completed: 'Solicitante',
+};
+
 const sevColor = (s: SystemEvent['severity']) =>
     s === 'error' ? 'text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400'
         : s === 'warn' ? 'text-amber-600 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-400'
@@ -233,7 +239,7 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
                                                                 <span className="font-semibold text-slate-900 dark:text-white">{ev.actor.name}</span>{' '}
                                                                 <span className="text-slate-600 dark:text-slate-300">{ev.description}</span>
                                                                 {ev.metadata?.to && (
-                                                                    <span className="text-slate-500 dark:text-slate-400"> → {userMap[ev.metadata.to] || `#${ev.metadata.to}`}</span>
+                                                                    <span className="text-slate-500 dark:text-slate-400"> → {userMap[ev.metadata.to] || `#${ev.metadata.to}`}{DELEG_TO_ROLE[ev.type] ? ` (${DELEG_TO_ROLE[ev.type]})` : ''}</span>
                                                                 )}
                                                             </p>
                                                             <ChevronRight size={14} className="text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
@@ -244,6 +250,9 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
                                                             <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 font-mono">{ev.type}</span>
                                                             {ev.status && <span className="text-[10px] text-slate-400">{ev.status}</span>}
                                                         </div>
+                                                        {ev.metadata?.objetivo && (
+                                                            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1 line-clamp-1 italic" title={ev.metadata.objetivo}>🎯 {ev.metadata.objetivo}</p>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>
