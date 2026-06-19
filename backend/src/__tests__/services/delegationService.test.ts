@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'path';
 import { DAY_MS } from '../../services/delegationFollowUpLogic';
 
+const mockDoli = vi.hoisted(() => ({
+    setTaskDelegationState: vi.fn().mockResolvedValue(true),
+    listDelegationStates: vi.fn().mockResolvedValue([]),
+}));
+vi.mock('../../services/dolibarr', () => ({ dolibarrService: mockDoli }));
 vi.mock('../../utils/atomicWrite', () => ({ atomicWriteSync: vi.fn() }));
 vi.mock('../../utils/logger', () => ({ createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 
@@ -58,5 +63,35 @@ describe('DelegationService', () => {
         expect(rec.objetivo).toBe('Contar bebidas');
         expect(rec.criterio).toBe('Planilha enviada');
         expect(rec.aceite?.status).toBe('pending'); // preservado
+    });
+
+    // --- Durabilidade no Dolibarr (#293) ---
+
+    it('espelha o estado no Dolibarr a cada upsert (extrafield options_delegation_state)', () => {
+        const svc = newSvc();
+        svc.accept('50', '16', noon(10));
+        expect(mockDoli.setTaskDelegationState).toHaveBeenLastCalledWith('50', expect.stringContaining('"status":"accepted"'));
+    });
+
+    it('hydrateFromDolibarr popula o cache local sem sobrescrever o que já existe', async () => {
+        const svc = newSvc();
+        svc.setDoc('50', { objetivo: 'local' }); // já existe localmente → não sobrescreve
+        mockDoli.listDelegationStates.mockResolvedValueOnce([
+            { taskId: '50', state: JSON.stringify({ taskId: '50', objetivo: 'remoto' }) },
+            { taskId: '77', state: JSON.stringify({ taskId: '77', criterio: 'remoto77', aceite: { status: 'accepted' } }) },
+        ]);
+        const n = await svc.hydrateFromDolibarr();
+        expect(n).toBe(1); // só a 77 (a 50 já existia)
+        expect(svc.get('50')?.objetivo).toBe('local'); // preservado (cache quente vence)
+        expect(svc.get('77')?.criterio).toBe('remoto77');
+        expect(svc.getAceite('77')?.status).toBe('accepted');
+    });
+
+    it('hydrateFromDolibarr ignora estado corrompido e é best-effort', async () => {
+        const svc = newSvc();
+        mockDoli.listDelegationStates.mockResolvedValueOnce([{ taskId: '88', state: '{corrompido' }]);
+        const n = await svc.hydrateFromDolibarr();
+        expect(n).toBe(0);
+        expect(svc.get('88')).toBeUndefined();
     });
 });

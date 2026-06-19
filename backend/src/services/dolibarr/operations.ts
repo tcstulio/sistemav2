@@ -140,6 +140,50 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
         }
     }
 
+    /**
+     * Durabilidade da delegação (#293): espelha o estado do ciclo no extrafield
+     * options_delegation_state da tarefa, via REST nativa (PUT /tasks/{id}). `stateJson` já vem
+     * serializado. Best-effort — se o extrafield ainda não existe no Dolibarr (setup do
+     * custom_delegation.php não rodou), retorna false sem quebrar o fluxo (cai no store local).
+     */
+    async setTaskDelegationState(taskId: string, stateJson: string): Promise<boolean> {
+        try {
+            const url = `${this.baseUrl}tasks/${taskId}`;
+            // O PUT REST do Dolibarr sanitiza extrafields desconhecidos com 'alphanohtml', que
+            // REMOVE todas as aspas duplas (e mangla < > & \) — destruiria o JSON. Gravamos em
+            // base64 (A-Za-z0-9+/=), cujo alfabeto passa intacto pela sanitização; decodificado
+            // de volta em listDelegationStates. (#293)
+            const encoded = Buffer.from(stateJson, 'utf8').toString('base64');
+            await axios.put(url, { array_options: { options_delegation_state: encoded } }, {
+                headers: this.getHeaders(),
+                httpsAgent: this.httpsAgent,
+                validateStatus: (s) => s === 200,
+            });
+            return true;
+        } catch (error: any) {
+            log.warn(`setTaskDelegationState task=${taskId} falhou (extrafield criado?): ${error?.message || error}`);
+            return false;
+        }
+    }
+
+    /**
+     * Lê os estados de delegação persistidos no Dolibarr (custom_delegation.php?action=list) para
+     * reidratar o cache local. Decodifica o base64 gravado por setTaskDelegationState e devolve o
+     * JSON cru. Best-effort: [] se o script não estiver deployado. (#293)
+     */
+    async listDelegationStates(): Promise<Array<{ taskId: string; state: string }>> {
+        try {
+            const res = await this.proxyCustomSync({ action: 'list' }, this.getHeaders(), 'custom_delegation.php');
+            return this.extractSyncRows(res)
+                .filter((r: any) => r && r.task_id != null && r.delegation_state)
+                .map((r: any) => ({ taskId: String(r.task_id), state: Buffer.from(String(r.delegation_state), 'base64').toString('utf8') }))
+                .filter((x) => !!x.state);
+        } catch (error: any) {
+            log.warn(`listDelegationStates falhou: ${error?.message || error}`);
+            return [];
+        }
+    }
+
     /** Todos os vínculos de contato de tarefas (type=task_contacts): [{id, task_id, user_id, type_id}]. */
     async getAllTaskContacts(): Promise<any[]> {
         try {

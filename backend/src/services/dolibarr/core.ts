@@ -331,14 +331,14 @@ export class DolibarrServiceBase {
         }
     }
 
-    async proxyCustomSync(query: any, headers: any) {
+    async proxyCustomSync(query: any, headers: any, scriptName: string = 'custom_sync.php') {
         let rootUrl = config.dolibarrUrl;
         if (rootUrl.includes('/api/index.php')) {
             rootUrl = rootUrl.replace('/api/index.php', '');
         }
         rootUrl = rootUrl.replace(/\/$/, '');
 
-        const targetUrl = `${rootUrl}/custom_sync.php`;
+        const targetUrl = `${rootUrl}/${scriptName}`;
 
         const finalHeaders: any = {
             'Accept': 'application/json',
