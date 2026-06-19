@@ -15,6 +15,7 @@ import { useProposals, useCustomers, useProducts, useProjects, useProposalLines,
 import { useListControls } from '../hooks/useListControls';
 import { logger } from '../utils/logger';
 import { notifyError } from '../utils/notifyError';
+import { formatCurrency } from '../utils/formatUtils';
 
 const log = logger.child('ProposalList');
 import { MasterDetailLayout } from './ui/MasterDetailLayout';
@@ -506,7 +507,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                         <div className="text-right mr-3">
                             <div className="text-xs text-slate-500">Total</div>
                             <div className="text-lg font-bold text-slate-800 dark:text-white">
-                                ${prop.total_ttc.toLocaleString()}
+                                {formatCurrency(prop.total_ttc)}
                             </div>
                         </div>
                         <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -621,7 +622,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                                             </div>
                                             <h4 className="font-medium text-sm mb-1">{getCustomerName(prop.socid)}</h4>
                                             <div className="flex justify-between items-end mt-3">
-                                                <span className="font-bold text-sm">${prop.total_ttc.toLocaleString()}</span>
+                                                <span className="font-bold text-sm">{formatCurrency(prop.total_ttc)}</span>
                                                 <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                                                     <Button
                                                         variant="ghost"
@@ -813,9 +814,9 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                                                         <div className="text-xs text-slate-500 mt-0.5" dangerouslySetInnerHTML={{ __html: sanitizeHtml(line.description) }} />
                                                     </td>
                                                     <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">{line.qty}</td>
-                                                    <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">${line.subprice?.toLocaleString()}</td>
+                                                    <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">{formatCurrency(line.subprice)}</td>
                                                     <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">{line.remise_percent ? `${line.remise_percent}%` : '-'}</td>
-                                                    <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white">${line.total_ht?.toLocaleString()}</td>
+                                                    <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white">{formatCurrency(line.total_ht)}</td>
                                                 </tr>
                                             ))
                                         ) : (
@@ -827,11 +828,11 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                                     <tfoot className="bg-slate-50 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800">
                                         <tr>
                                             <td colSpan={4} className="px-4 py-3 text-right font-bold text-slate-700 dark:text-slate-300">Total (S/ Imposto)</td>
-                                            <td className="px-4 py-3 text-right font-bold text-slate-800 dark:text-white text-lg">${selectedProposal.total_ht?.toLocaleString()}</td>
+                                            <td className="px-4 py-3 text-right font-bold text-slate-800 dark:text-white text-lg">{formatCurrency(selectedProposal.total_ht)}</td>
                                         </tr>
                                         <tr>
                                             <td colSpan={4} className="px-4 py-3 text-right font-bold text-slate-700 dark:text-slate-300">Total (C/ Imposto)</td>
-                                            <td className="px-4 py-3 text-right font-bold text-indigo-600 dark:text-indigo-400 text-lg">${selectedProposal.total_ttc.toLocaleString()}</td>
+                                            <td className="px-4 py-3 text-right font-bold text-indigo-600 dark:text-indigo-400 text-lg">{formatCurrency(selectedProposal.total_ttc)}</td>
                                         </tr>
                                     </tfoot>
                                 </table>
@@ -1012,7 +1013,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                                             <div className="flex-1 text-right">
                                                 <span className="text-[10px] text-slate-500 block">Total</span>
                                                 <div className="text-sm font-bold text-slate-700 dark:text-slate-300 py-1">
-                                                    ${line.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    {formatCurrency(line.total)}
                                                 </div>
                                             </div>
                                         </div>
@@ -1040,7 +1041,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                             <div className="text-right">
                                 <span className="text-xs text-slate-500 uppercase font-bold">Total Estimado</span>
                                 <div className="text-xl font-bold text-indigo-600 dark:text-indigo-400">
-                                    ${formData.lines.reduce((acc, curr) => acc + curr.total, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                    {formatCurrency(formData.lines.reduce((acc, curr) => acc + curr.total, 0))}
                                 </div>
                             </div>
                         </div>

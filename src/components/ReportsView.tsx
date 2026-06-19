@@ -3,6 +3,7 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useInvoices, useSupplierInvoices, useCustomers, useProducts } from '../hooks/dolibarr';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { FileBarChart, Download, TrendingUp, Users, Package, DollarSign, Loader2 } from 'lucide-react';
+import { formatCurrency } from '../utils/formatUtils';
 
 const ReportsView: React.FC = () => {
     const { config } = useDolibarr();
@@ -156,7 +157,7 @@ const ReportsView: React.FC = () => {
                                 <BarChart data={salesByMonthData}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.1} />
                                     <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} tickFormatter={(val) => `$${val / 1000}k`} />
+                                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} tickFormatter={(val) => formatCurrency(val)} />
                                     <Tooltip
                                         contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: '#1e293b', color: '#f8fafc' }}
                                         cursor={{ fill: 'rgba(0,0,0,0.05)' }}
@@ -232,7 +233,7 @@ const ReportsView: React.FC = () => {
                                 <span className="font-medium">Valor Médio da Fatura</span>
                             </div>
                             <div className="text-3xl font-bold">
-                                ${invoices.length > 0 ? (invoices.reduce((a, b) => a + b.total_ttc, 0) / invoices.length).toLocaleString(undefined, { maximumFractionDigits: 0 }) : 0}
+                                {formatCurrency(invoices.length > 0 ? invoices.reduce((a, b) => a + b.total_ttc, 0) / invoices.length : 0)}
                             </div>
                             <div className="mt-4 text-xs bg-white/20 inline-block px-2 py-1 rounded">
                                 Em {invoices.length} faturas
