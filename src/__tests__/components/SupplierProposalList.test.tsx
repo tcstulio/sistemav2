@@ -310,3 +310,32 @@ describe('SupplierProposalList — Total bar (#486)', () => {
         });
     });
 });
+
+describe('SupplierProposalList — currency formatting (#640)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.spyOn(window, 'alert').mockImplementation(() => {});
+        vi.spyOn(window, 'confirm').mockImplementation(() => false);
+    });
+
+    it('renders proposal values in BRL via formatCurrency (no raw $ prefix)', async () => {
+        const { useSupplierProposals } = await import('../../hooks/dolibarr');
+        vi.mocked(useSupplierProposals).mockReturnValue({
+            data: [
+                { id: 'propX', ref: 'SP-BRL-001', socid: 'sup1', datec: 1700000000, total_ht: 2345.67, statut: '1', project_id: null, fk_user_author: null },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+
+        const { container } = renderComponent();
+        await screen.findByTestId('list-total-bar');
+
+        const formatted = formatCurrency(2345.67);
+        const matches = Array.from(container.querySelectorAll('*')).filter(
+            (el) => el.textContent === formatted
+        );
+        // The card value AND the total bar both render the BRL value
+        expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+});

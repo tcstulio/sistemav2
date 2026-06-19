@@ -290,3 +290,30 @@ describe('SupplierInvoiceList — Total bar (#486)', () => {
         });
     });
 });
+
+describe('SupplierInvoiceList — currency formatting (#640)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('renders invoice values in BRL via formatCurrency (no raw $ prefix)', () => {
+        const invoice: SupplierInvoice = {
+            id: 'invX',
+            ref: 'FA-BRL-001',
+            socid: 'sup1',
+            type: '0',
+            date: Math.floor(new Date('2024-06-01').getTime() / 1000),
+            total_ttc: 1234.56,
+            paye: '0',
+            statut: '1',
+        };
+        const { container } = renderWithProvider([invoice]);
+
+        const formatted = formatCurrency(1234.56);
+        const matches = Array.from(container.querySelectorAll('*')).filter(
+            (el) => el.textContent === formatted
+        );
+        // The list card value AND the total bar both render the BRL value
+        expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+});
