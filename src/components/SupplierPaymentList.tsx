@@ -13,6 +13,11 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 // Design System
 import { PageHeader, MasterDetailLayout, Card, EmptyState, ListToolbar } from './ui';
 
+// Safety-net: garante uma altura mínima para a lista virtualizada mesmo quando o
+// AutoSizer ainda reporta height = 0 (cadeia flex sem altura resolvida). Evita que
+// o react-window não renderize nenhuma linha e a página fique travada (#651).
+const MIN_LIST_HEIGHT = 400;
+
 interface SupplierPaymentListProps {
     onNavigate?: (view: AppView, id: string) => void;
     initialItemId?: string;
@@ -155,7 +160,7 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
                 onCloseDetail={() => setSelectedPayment(null)}
                 listWidth="1/3"
                 list={
-                    <div className="h-full">
+                    <div className="h-full" style={{ minHeight: MIN_LIST_HEIGHT }}>
                         {payments.length === 0 ? (
                             <div className="p-6">
                                 <EmptyState
@@ -168,7 +173,7 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
                             <AutoSizer>
                                 {({ height, width }: { height: number; width: number }) => (
                                     <ListWindow
-                                        height={height}
+                                        height={Math.max(height, MIN_LIST_HEIGHT)}
                                         width={width}
                                         itemCount={payments.length}
                                         itemSize={120}
