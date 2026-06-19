@@ -80,6 +80,7 @@ const MENU_ICONS: Record<string, React.ElementType> = {
     warehouses: Warehouse,
     manufacturing: Settings,
     activity: Activity,
+    system_events: Activity,
     'opencode-tasks': Zap,
     'issues': Zap,
     groups: ShieldCheck,

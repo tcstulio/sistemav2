@@ -49,6 +49,7 @@ const EmailView = React.lazy(() => import('./Email/EmailView'));
 const SchedulerAdmin = React.lazy(() => import('./SchedulerAdmin'));
 const ChatSessionsView = React.lazy(() => import('./ChatSessionsView'));
 const ActivityView = React.lazy(() => import('./ActivityView'));
+const SystemEventsView = React.lazy(() => import('./SystemEventsView'));
 const TaskDetail = React.lazy(() => import('./TaskDetail'));
 const PendingPayments = React.lazy(() => import('./PendingPayments').then(m => ({ default: m.PendingPayments })));
 const SupplierPaymentList = React.lazy(() => import('./SupplierPaymentList'));
@@ -276,6 +277,7 @@ const App: React.FC = () => {
                         <Route path="/monthly-report" element={<ViewWrapper Component={MonthlyReport} viewId="reports" />} />
 
                         <Route path="/activity" element={<ViewWrapper Component={ActivityView} viewId="activity" />} />
+                        <Route path="/system-events" element={<ViewWrapper Component={SystemEventsView} viewId="system_events" />} />
 
                         <Route path="/development" element={<ViewWrapper Component={DevelopmentView} viewId="development" />} />
                         <Route path="/chat-sessions" element={<ViewWrapper Component={ChatSessionsView} viewId="development" />} />

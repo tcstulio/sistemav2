@@ -219,6 +219,9 @@ app.use('/api/tasks', taskRoutes);
 import notificationRoutes from './routes/notificationRoutes';
 app.use('/api/notifications', notificationRoutes);
 
+import systemEventsRoutes from './routes/systemEventsRoutes';
+app.use('/api/system-events', systemEventsRoutes);
+
 app.use('/api/github', githubRoutes);
 
 // Health Check

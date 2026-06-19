@@ -71,6 +71,16 @@ export class DelegationEventsService {
         return this.store[String(taskId)] || [];
     }
 
+    /** Todos os eventos de todas as delegações (com o taskId), do mais novo ao mais antigo. (#519) */
+    listAll(limit = 1000): Array<DelegationEvent & { taskId: string }> {
+        const out: Array<DelegationEvent & { taskId: string }> = [];
+        for (const [taskId, evs] of Object.entries(this.store)) {
+            for (const ev of evs) out.push({ ...ev, taskId });
+        }
+        out.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+        return out.slice(0, limit);
+    }
+
     /** Registra um evento (local) e espelha no Dolibarr como actioncomm (best-effort). */
     logEvent(taskId: string, type: DelegationEventType, opts: { by?: string; atMs?: number; note?: string } = {}): DelegationEvent {
         const id = String(taskId);

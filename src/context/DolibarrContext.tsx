@@ -121,6 +121,9 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
 
       // System (Admin-only modules handled by admin override above)
       'activity': { module: 'agenda', perms: ['myevent.read', 'allactions.read'] },
+      // Central de Eventos (#519): tela liberada a todos os autenticados — o conteúdo
+      // é filtrado por usuário no backend (admin vê tudo; demais só o que lhes concerne).
+      'system_events': { module: 'societe', perms: ['lire', 'read'] },
       'development': { module: 'user', perms: ['user.lire'] }, // Admin-restricted in practice
       'settings': { module: 'user', perms: ['self.read'] },
       'simulator': { module: 'societe', perms: ['lire', 'read'] },
