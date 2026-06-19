@@ -1,16 +1,16 @@
-import { execFile, exec, ChildProcess, spawn } from 'child_process';
+import { execFile, exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
-import pidusage from 'pidusage';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { logger } from '../utils/logger';
 import { aiService } from './aiService';
 import { aiJobService } from './aiJobService';
 import { socketService } from './socketService';
-import { killTree, isAlive, killOpencodeOrphans, killByImageName, listPidsByName } from '../utils/processTree';
+import { killTree, isAlive, killOpencodeOrphans } from '../utils/processTree';
+import { runOpencode, resolveBash } from '../utils/runOpencode';
 import { previewPortsFor } from '../utils/previewPorts';
 import { screenshotService } from './screenshotService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
@@ -40,6 +40,13 @@ const OPENCODE_TIMEOUT_MS = (Number(process.env.TASKRUNNER_OPENCODE_TIMEOUT_MIN)
 // por round, senão o watchdog mata antes de a task longa terminar.
 const MAX_TASK_WALL_MS = (Number(process.env.TASKRUNNER_MAX_TASK_WALL_MIN) || 180) * 60 * 1000;
 
+// Auto-recuperação da fila (#644 criterion opcional): se um ghost/hung promise deixar a
+// cadeia com pendingExecs>0 mas SEM nenhuma task ativa (running/fixing/cancelling) por mais
+// de QUEUE_RECOVERY_MIN_MS, reseta a cadeia e retoma. Com o settle forçado do runOpencode
+// isto raramente dispara — é backstop de segurança contra qualquer estado preso. Default 5min.
+const QUEUE_RECOVERY_MIN_MS = (Number(process.env.TASKRUNNER_QUEUE_RECOVERY_MIN) || 5) * 60 * 1000;
+const QUEUE_CHECK_INTERVAL_MS = 60 * 1000;
+
 function git(args: string[], opts?: { timeout?: number; cwd?: string }) {
     return execFileAsync('git', args, { cwd: opts?.cwd || REPO_ROOT, timeout: opts?.timeout, maxBuffer: BIG });
 }
@@ -54,134 +61,11 @@ function sh(command: string, cwd: string, timeout: number) {
     return execAsync(command, { cwd, timeout, maxBuffer: BIG, windowsHide: true });
 }
 
-// O opencode lançado via cmd.exe TRAVA no repo grande (ele aninha tsc/vitest no cmd.exe e
-// fica ~15min até o timeout); no git-bash roda normal (<5min). Por isso o opencode — e só
-// ele — vai por aqui. `-lc` carrega o profile p/ ter o PATH do npm global (onde está o bin).
-function resolveBash(): string {
-    if (process.platform !== 'win32') return 'bash';
-    const candidates = [
-        process.env.TASKRUNNER_BASH,
-        'C:\\Program Files\\Git\\bin\\bash.exe',
-        'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
-    ].filter(Boolean) as string[];
-    return candidates.find((p) => fs.existsSync(p)) || 'bash';
-}
+// GIT_BASH resolve o git-bash (importado de runOpencode util — mesma lógica usada lá).
+// `bash()` executa comandos CONTROLADOS (sem conteúdo do usuário) nesse shell.
 const GIT_BASH = resolveBash();
 function bash(command: string, cwd: string, timeout: number) {
     return execFileAsync(GIT_BASH, ['-lc', command], { cwd, timeout, maxBuffer: BIG, windowsHide: true });
-}
-
-/**
- * Roda o opencode com tracking de PID e observador de kill (issue #304).
- * - Salva childPid na task para que killTask consiga localizar o processo.
- * - Polling a cada 500ms: se task.killRequested virar true, mata a arvore e rejeita.
- * - No Unix usa detached:true para criar novo process group (necessario p/ kill -pid).
- * - onSample (issue #305): a cada 2s amostra CPU/memória via pidusage (cross-platform).
- */
-function runOpencode(
-    command: string,
-    cwd: string,
-    task: Task,
-    timeoutMs: number,
-    onSample?: (sample: CpuMemSample) => void,
-): Promise<string> {
-    return new Promise((resolve, reject) => {
-        const child: ChildProcess = spawn(GIT_BASH, ['-lc', command], {
-            cwd,
-            detached: process.platform !== 'win32',
-            stdio: ['ignore', 'pipe', 'pipe'],
-            windowsHide: true,
-        });
-        task.childPid = child.pid;
-
-        let stdout = '';
-        let stderr = '';
-        let killed = false;
-        child.stdout?.on('data', (b) => { stdout += b.toString(); });
-        child.stderr?.on('data', (b) => { stderr += b.toString(); });
-
-        const watcher = setInterval(() => {
-            if (task.killRequested && !killed) {
-                killed = true;
-                const pid = child.pid;
-                if (pid) {
-                    killTree(pid).catch(() => { /* logged inside */ });
-                }
-                // Backstop sem-enumeração: garante a morte do opencode mesmo se a árvore do bash já
-                // se quebrou (órfão) ou se o Get-Process/WMI falha sob carga. Run é serializado.
-                killByImageName('opencode.exe').catch(() => { /* ignore */ });
-            }
-        }, 500);
-
-        // Sampling CPU/mem (#305 + #502): a cada 2s mede o(s) processo(s) `opencode` — o trabalho
-        // real — e NÃO o child.pid, que é o git-bash wrapper (`git-bash -lc → opencode`) e fica ~0%
-        // só esperando o neto. Como os runs do TaskRunner são serializados (worktreeLock), os
-        // opencode.exe vivos durante a amostragem pertencem a esta task; somamos a CPU/RSS deles.
-        // Se nenhum opencode estiver vivo (ainda subindo ou já encerrado), pula a amostra em vez de
-        // registrar os zeros enganosos do git-bash. listPidsByName é rápido (Get-Process, sem WMI).
-        let sampling = false;
-        const sampler = onSample ? setInterval(() => {
-            if (killed || sampling) return;
-            sampling = true;
-            (async () => {
-                try {
-                    const pids = await listPidsByName('opencode');
-                    if (pids.length === 0) return;
-                    const stats = await new Promise<Record<string, { cpu: number; memory: number } | undefined>>((res, rej) => {
-                        pidusage(pids, (err, s) => (err ? rej(err) : res(s as any)));
-                    });
-                    let cpu = 0;
-                    let mem = 0;
-                    for (const key of Object.keys(stats)) {
-                        const s = stats[key];
-                        if (!s) continue;
-                        cpu += s.cpu || 0;
-                        mem += s.memory || 0;
-                    }
-                    onSample({
-                        ts: new Date().toISOString(),
-                        cpuPercent: Math.round(cpu * 10) / 10,
-                        rssMb: Math.round((mem / (1024 * 1024)) * 10) / 10,
-                    });
-                } catch {
-                    // amostra perdida (enum/pidusage falhou sob carga) — ignora, próximo tick tenta
-                } finally {
-                    sampling = false;
-                }
-            })();
-        }, 2000) : null;
-
-        const finish = (err?: Error) => {
-            clearInterval(watcher);
-            if (sampler) clearInterval(sampler);
-            if (task.childPid === child.pid) task.childPid = undefined;
-            if (err) reject(err);
-            else resolve(stdout);
-        };
-
-        const killTimer = setTimeout(() => {
-            finish(new Error(`opencode timeout (${Math.round(timeoutMs / 1000)}s)`));
-            if (child.pid) killTree(child.pid).catch(() => { /* ignore */ });
-            // Backstop: mata o opencode na FONTE do timeout p/ não virar órfão (causa do ciclo
-            // vicioso no #335). taskkill /IM não enumera, então funciona mesmo sob carga.
-            killByImageName('opencode.exe').catch(() => { /* ignore */ });
-        }, timeoutMs);
-
-        child.on('exit', (code, signal) => {
-            clearTimeout(killTimer);
-            if (killed) {
-                finish(new Error(`opencode killed (signal=${signal}, code=${code})`));
-            } else if (code === 0) {
-                finish();
-            } else {
-                finish(new Error(`opencode exited code=${code} signal=${signal}: ${(stderr || stdout).substring(0, 2000)}`));
-            }
-        });
-        child.on('error', (err) => {
-            clearTimeout(killTimer);
-            finish(err);
-        });
-    });
 }
 
 export type TaskStatus = 'pending' | 'running' | 'reviewing' | 'approved' | 'fixing' | 'cancelling' | 'cancelled' | 'merged' | 'rejected' | 'failed';
@@ -361,6 +245,10 @@ class TaskRunnerService {
     private notifiedTasks = new Set<number>();
     private deletedIssueNumbers = new Map<number, number>();
     private syncGitHubInFlight = false;
+    // Auto-recuperação da fila (#644): timer periódico + timestamp de quando a cadeia ficou
+    // "presa" (pendingExecs>0 sem task ativa). Ver checkQueueHealth.
+    private recoveryTimer: NodeJS.Timeout | null = null;
+    private stuckSince: number | null = null;
 
     constructor() {
         this.load();
@@ -380,6 +268,10 @@ class TaskRunnerService {
                 log.warn(`syncWithGitHub no boot falhou: ${e?.message || e}`);
             });
         });
+        // Auto-recuperação da fila (#644): checa periodicamente se a cadeia ficou presa e,
+        // se sim após QUEUE_RECOVERY_MIN_MS, reseta e retoma. unref p/ não segurar o processo.
+        this.recoveryTimer = setInterval(() => this.checkQueueHealth(), QUEUE_CHECK_INTERVAL_MS);
+        if (this.recoveryTimer.unref) this.recoveryTimer.unref();
     }
 
     /**
@@ -426,8 +318,48 @@ class TaskRunnerService {
             clearInterval(this.pollTimer);
             this.pollTimer = null;
         }
+        if (this.recoveryTimer) {
+            clearInterval(this.recoveryTimer);
+            this.recoveryTimer = null;
+        }
         this.polling = false;
         log.info('TaskRunner polling stopped');
+    }
+
+    /**
+     * Auto-recuperação da fila (#644 criterion opcional). Detecta o sintoma exato do bug —
+     * a cadeia com um slot ocupado (pendingExecs>0) mas SEM nenhuma task refletindo execução
+     * ativa (running/fixing/cancelling), i.e. um promise ghost/hung segurando a fila. Após
+     * QUEUE_RECOVERY_MIN_MS nesse estado, reseta execChain/pendingExecs e retoma o autoPlay.
+     * Com o settle forçado do runOpencode isto é raramente necessário; é backstop. Só age com
+     * autoPlay ligado e fila pendente, e nunca durante uma execução ativa legítima (nesse caso
+     * há task em running/fixing → activeCount>0 → não é "stuck").
+     */
+    private checkQueueHealth(): void {
+        try {
+            const cfg = this.getAutomationConfig();
+            if (!cfg.autoPlay) { this.stuckSince = null; return; }
+            const queued = this.getQueuedTasks();
+            if (queued.length === 0) { this.stuckSince = null; return; }
+            const active: TaskStatus[] = ['running', 'fixing', 'cancelling'];
+            const activeCount = Object.values(this.store.tasks).filter((t) => active.includes(t.status)).length;
+            // "Stuck" = slot da cadeia ocupado mas nenhuma task ativa o representando (ghost).
+            const isStuck = this.pendingExecs > 0 && activeCount === 0;
+            if (!isStuck) { this.stuckSince = null; return; }
+            if (this.stuckSince === null) this.stuckSince = Date.now();
+            if (Date.now() - this.stuckSince < QUEUE_RECOVERY_MIN_MS) return;
+            const mins = Math.round((Date.now() - this.stuckSince) / 60000);
+            log.warn(`Recuperação de fila: cadeia presa (pendingExecs=${this.pendingExecs}, 0 ativas) há ${mins}min — resetando execChain/pendingExecs e retomando`);
+            // Reseta só execChain/pendingExecs (NÃO o worktreeLock): com o settle forçado do
+            // runOpencode, executeTask sempre completa e libera o lock, então a serialização é
+            // preservada. Resetar o lock poderia deixar 2 executeTask concorrentes (corrupção git).
+            this.pendingExecs = 0;
+            this.execChain = Promise.resolve();
+            this.stuckSince = null;
+            this.autoPlayNext();
+        } catch (e: any) {
+            log.warn(`checkQueueHealth falhou: ${e?.message || e}`);
+        }
     }
 
     private async pollSync() {
@@ -638,6 +570,16 @@ class TaskRunnerService {
 
     private isTerminalStatus(s: TaskStatus): boolean {
         return s === 'approved' || s === 'merged' || s === 'rejected' || s === 'failed' || s === 'cancelled';
+    }
+
+    /**
+     * Sinal de cancelamento ativo: killRequested (watchdog/timeout) OU status de cancelamento
+     * (killTask). Usado nos catch dos loops de exec para tratar um cancel — inclusive quando o
+     * kill da árvore FALHOU e o runOpencode foi settle à força — como ABORT, e não como erro
+     * genérico que seguiria rodando a task (#644).
+     */
+    private isCancelSignal(task: Task): boolean {
+        return !!task.killRequested || task.status === 'cancelling' || task.status === 'cancelled';
     }
 
     /**
@@ -878,17 +820,29 @@ class TaskRunnerService {
                 clearTimeout(watchdog);
             }
         }).catch((e: any) => {
-            log.error(`Task #${task.issueNumber} failed`, e);
-            task.status = 'failed';
-            task.error = e.message;
-            task.completedAt = new Date().toISOString();
-            task.updatedAt = task.completedAt;
-            this.finalizeTaskMetrics(task);
-            this.recordEvent(task, 'task_failed', `Falha: ${e.message}`, { error: e.message });
-            this.save();
-            this.emitStatus(task);
+            // killTask (ou o settle forçado do runOpencode após kill falho) pode já ter marcado a
+            // task com status terminal (cancelled). NÃO sobrescreve para 'failed' — senão um
+            // cancelamento vira falha e confunde o autoPlayNext. Apenas loga; o status decidido
+            // pelo caminho de cancel prevalece. (Robustez #644: a fila precisa avançar mesmo
+            // quando o kill/exec falha ou lança.)
+            if (this.isTerminalStatus(task.status) || task.status === 'cancelling') {
+                log.warn(`Task #${task.issueNumber} encerrou (${task.status}) durante a execução (kill/timeout): ${e?.message || e}`);
+            } else {
+                log.error(`Task #${task.issueNumber} failed`, e);
+                task.status = 'failed';
+                task.error = e.message;
+                task.completedAt = new Date().toISOString();
+                task.updatedAt = task.completedAt;
+                this.finalizeTaskMetrics(task);
+                this.recordEvent(task, 'task_failed', `Falha: ${e.message}`, { error: e.message });
+                this.save();
+                this.emitStatus(task);
+            }
         }).finally(() => {
-            this.pendingExecs--;
+            // Decrementa SEMPRE (mesmo após kill/exec falho/throw) — é o que libera a fila.
+            // Guarda contra negativo (defesa em profundidade caso o contador des sincronize).
+            if (this.pendingExecs > 0) this.pendingExecs--;
+            // Após um cancel (kill bem-sucedido OU falho) o cascade retoma aqui (#644).
             this.autoPlayNext();
         });
     }
@@ -1262,7 +1216,7 @@ class TaskRunnerService {
         let anyChange = false;
 
         for (let round = 1; round <= MAX_ROUNDS; round++) {
-            if (task.killRequested) {
+            if (this.isCancelSignal(task)) {
                 if (userCancelled()) return { verify, aborted: true };
                 this.recordEvent(task, 'exploration_completed', `Watchdog no round ${round} — finalizando com o progresso acumulado`, { rounds: round - 1, watchdog: true });
                 break;
@@ -1282,8 +1236,13 @@ class TaskRunnerService {
                 const stdout = await this.runOpencodeIsolated(task);
                 this.recordEvent(task, 'opencode_output', `Round ${round} — output`, { attempt: round, phase: 'exploring', output: String(stdout).substring(0, 5000) });
             } catch (e: any) {
+                // Cancel do USUÁRIO (killTask setou status cancelling/cancelled) — inclusive quando
+                // o kill falhou e o runOpencode foi settle à força: aborta de verdade (#644).
+                if (userCancelled()) {
+                    this.recordEvent(task, 'task_killed', 'Cancelada pelo usuário durante round cumulativo', { attempt: round });
+                    return { verify, aborted: true };
+                }
                 if (task.killRequested) {
-                    if (userCancelled()) { this.recordEvent(task, 'task_killed', 'Cancelada pelo usuário durante round cumulativo', { attempt: round }); return { verify, aborted: true }; }
                     // Watchdog matou o opencode no meio do round: PRESERVA o progresso parcial e
                     // cai no commit (em vez de descartar tudo). break sai do loop p/ o tail.
                     this.recordEvent(task, 'error', `Round ${round}: watchdog interrompeu o opencode — preservando progresso e finalizando`, { attempt: round, watchdog: true });
@@ -1392,7 +1351,7 @@ class TaskRunnerService {
         const MAX_EXPLORE = 3;
         if (!hasExploration) {
         for (let attempt = 1; attempt <= MAX_EXPLORE; attempt++) {
-            if (task.killRequested) return;
+            if (this.isCancelSignal(task)) return;
             fs.writeFileSync(promptPath, this.buildPrompt(task, issueData));
             this.recordEvent(task, 'attempt_started', `Fase 1 — Exploração ${attempt}/${MAX_EXPLORE}`, { attempt, phase: 'exploring', maxAttempts: MAX_EXPLORE });
 
@@ -1402,7 +1361,7 @@ class TaskRunnerService {
                 this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
                 this.recordEvent(task, 'opencode_output', `Exploração ${attempt} — output`, { attempt, phase: 'exploring', output: output.substring(0, 5000) });
             } catch (e: any) {
-                if (task.killRequested) {
+                if (this.isCancelSignal(task)) {
                     this.recordEvent(task, 'task_killed', 'Task cancelada durante opencode', { attempt, phase: 'exploring' });
                     return;
                 }
@@ -1468,7 +1427,7 @@ class TaskRunnerService {
 
         const MAX_SYNTH = 3;
         for (let synthAttempt = 1; synthAttempt <= MAX_SYNTH; synthAttempt++) {
-            if (task.killRequested) return;
+            if (this.isCancelSignal(task)) return;
             task.synthesisAttempt = synthAttempt;
             fs.writeFileSync(promptPath, this.buildSynthesisPrompt(task, issueData));
             this.recordEvent(task, 'synthesis_started', `Fase 2 — Síntese ${synthAttempt}/${MAX_SYNTH}`, { synthAttempt, maxSynth: MAX_SYNTH });
@@ -1479,7 +1438,7 @@ class TaskRunnerService {
                 this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
                 this.recordEvent(task, 'opencode_output', `Síntese ${synthAttempt} — output`, { synthAttempt, phase: 'synthesizing', output: output.substring(0, 5000) });
             } catch (e: any) {
-                if (task.killRequested) {
+                if (this.isCancelSignal(task)) {
                     this.recordEvent(task, 'task_killed', 'Task cancelada durante síntese', { synthAttempt });
                     return;
                 }
@@ -2406,13 +2365,30 @@ Return ONLY a JSON:
         this.recordEvent(task, 'task_killed', `Cancelamento solicitado: ${reason}`, { pid, reason });
         this.emitStatus(task);
 
-        // Mata direto (nao espera o watcher) + aguarda ate 5s.
+        // Mata direto (nao espera o watcher). O kill pode FALHAR (Windows: taskkill "Command
+        // failed") — registra o resultado e segue; o sweep abaixo + o settle forçado do
+        // runOpencode garantem que a fila não trava mesmo com kill falho (#644).
         let killResult: { ok: boolean; signal: string; durationMs: number; alreadyDead: boolean } | null = null;
-        if (pid && isAlive(pid)) {
-            killResult = await killTree(pid);
-            this.recordEvent(task, 'task_killed',
-                `Process tree killed via ${killResult.signal}${killResult.alreadyDead ? ' (ja estava morto)' : ''}`,
-                { pid, ...killResult });
+        try {
+            if (pid && isAlive(pid)) {
+                killResult = await killTree(pid);
+                this.recordEvent(task, 'task_killed',
+                    `Process tree killed via ${killResult.signal}${killResult.alreadyDead ? ' (ja estava morto)' : ''}`,
+                    { pid, ...killResult });
+            }
+        } catch (e: any) {
+            this.recordEvent(task, 'task_killed', `Kill direto falhou: ${String(e?.message || e).substring(0, 200)}`, { pid, error: e?.message });
+        }
+
+        // Após o kill (bem-sucedido OU falho), varre opencode órfão que possa ter sobrevivido e
+        // libera os locks do worktree/snapshot para a próxima execução (#644 criterion 4).
+        // O runOpencodeIsolated também faz isto no seu finally, mas reforçamos aqui para cobrir
+        // fases fora do run (setup/verify) e o caso do kill falho deixar o órfão vivo.
+        try {
+            const gone = await this.sweepOrphanedOpencode(`cancel #${issueNumber}`, [], task);
+            this.cleanStaleLocks(gone);
+        } catch (e: any) {
+            log.warn(`killTask #${issueNumber}: sweep/limpeza de locks falhou (não-fatal): ${e?.message || e}`);
         }
 
         task.status = 'cancelled';
@@ -2420,7 +2396,9 @@ Return ONLY a JSON:
         task.completedAt = task.killedAt;
         task.error = reason;
         task.childPid = undefined;
-        task.killRequested = false;
+        // NÃO reseta killRequested aqui: a exec em andamento (execChain) precisa enxergá-lo para
+        // tratar o settle forçado como CANCEL (e não erro genérico). scheduleExec zera a flag no
+        // início de um novo run (retry), então um cancel anterior não pré-mata uma reexecução.
         task.updatedAt = task.killedAt;
         this.finalizeTaskMetrics(task);
         this.save();
