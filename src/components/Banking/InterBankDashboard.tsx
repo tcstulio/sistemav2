@@ -525,6 +525,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                                                             const pdf = await api.downloadBoletoPdf(b.nossoNumero);
                                                             const url = URL.createObjectURL(pdf);
                                                             window.open(url);
+                                                            setTimeout(() => URL.revokeObjectURL(url), 60_000); // libera o blob após a aba carregar (evita memory leak, #33)
                                                         }}
                                                         className="p-1.5 text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors"
                                                         title="Download PDF"
