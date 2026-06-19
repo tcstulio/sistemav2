@@ -232,6 +232,9 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
                                                             <p className="text-sm text-slate-800 dark:text-slate-200 line-clamp-2">
                                                                 <span className="font-semibold text-slate-900 dark:text-white">{ev.actor.name}</span>{' '}
                                                                 <span className="text-slate-600 dark:text-slate-300">{ev.description}</span>
+                                                                {ev.metadata?.to && (
+                                                                    <span className="text-slate-500 dark:text-slate-400"> → {userMap[ev.metadata.to] || `#${ev.metadata.to}`}</span>
+                                                                )}
                                                             </p>
                                                             <ChevronRight size={14} className="text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
                                                         </div>

@@ -161,7 +161,8 @@ class SystemEventsService {
         let rows = delegationEventsService.listAll(PER_SOURCE_CAP);
         if (!user.isAdmin) {
             const index = await this.getTaskUserIndex();
-            rows = rows.filter((e) => e.by === user.id || index.get(String(e.taskId))?.has(user.id));
+            // visível se o usuário agiu (by), é o destinatário (to), ou está envolvido na tarefa.
+            rows = rows.filter((e) => e.by === user.id || e.to === user.id || index.get(String(e.taskId))?.has(user.id));
         }
         return rows.flatMap((e, i) => {
             const ts = toIso(e.at);
@@ -172,6 +173,8 @@ class SystemEventsService {
                 type: e.type, entityType: 'task', entityId: e.taskId,
                 description: e.note ? `${e.type} — ${e.note}` : e.type,
                 linkTo: `tasks/${e.taskId}`, severity: 'info' as const,
+                // `to` = destinatário (userId); o front resolve o nome p/ exibir "→ Fulano". (#526)
+                metadata: e.to ? { to: e.to } : undefined,
             }];
         });
     }

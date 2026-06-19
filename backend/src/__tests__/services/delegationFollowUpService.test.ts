@@ -88,28 +88,27 @@ describe('DelegationFollowUpService.runTick', () => {
         expect(call?.[2].taskContacts).toEqual([{ task_id: '50', user_id: '16', type_id: '45' }]);
     });
 
-    it('espelha o evento de agenda com o dono real (responsável) e nota com contexto', async () => {
+    it('cobrança: destinatário = Responsável, autor = Sistema (by undefined), nota com contexto (#526)', async () => {
         const { delegationEventsService } = await import('../../services/delegationEventsService');
         mockDoli.listTasksFull.mockResolvedValue([{ id: '50', ref: 'TK50', label: 'Entregar relatório', date_end: dueSec(10), progress: 0, fk_user_creat: '9' }]);
         mockDoli.getAllTaskContacts.mockReturnValue([{ task_id: '50', user_id: '16', type_id: '45' }]); // 45 = responsável
         const svc = newSvc();
         await svc.runTick(noon(11)); // baseline
         await svc.runTick(noon(12)); // cobra
-        expect(delegationEventsService.logEvent).toHaveBeenCalledWith(
-            '50',
-            'cobranca',
-            expect.objectContaining({ by: '16', note: expect.stringContaining('Entregar relatório') }),
-        );
+        const arg = (delegationEventsService.logEvent as any).mock.calls.find((c: any[]) => c[1] === 'cobranca')?.[2];
+        expect(arg.to).toBe('16');       // destinatário = Responsável (para quem foi a cobrança)
+        expect(arg.by).toBeUndefined();  // autor = Sistema
+        expect(arg.note).toContain('Entregar relatório');
     });
 
-    it('cai p/ o criador como dono quando não há responsável', async () => {
+    it('cobrança sem responsável: destinatário cai p/ o criador (solicitante)', async () => {
         const { delegationEventsService } = await import('../../services/delegationEventsService');
         mockDoli.listTasksFull.mockResolvedValue([{ id: '50', label: 'X', date_end: dueSec(10), progress: 0, fk_user_creat: '9' }]);
         mockDoli.getAllTaskContacts.mockReturnValue([]); // sem responsável
         const svc = newSvc();
         await svc.runTick(noon(11));
         await svc.runTick(noon(12));
-        expect(delegationEventsService.logEvent).toHaveBeenCalledWith('50', 'cobranca', expect.objectContaining({ by: '9' }));
+        expect(delegationEventsService.logEvent).toHaveBeenCalledWith('50', 'cobranca', expect.objectContaining({ to: '9' }));
     });
 
     it('sem tarefas: retorna zero e não dispara', async () => {
@@ -121,13 +120,17 @@ describe('DelegationFollowUpService.runTick', () => {
     });
 
     it('aceite pendente com prazo estourado: escala ao solicitante (acceptance_overdue)', async () => {
+        const { delegationEventsService } = await import('../../services/delegationEventsService');
         mockDoli.listTasksFull.mockResolvedValue([{ id: '50', progress: 0, fk_user_creat: '9' }]);
+        mockDoli.getAllTaskContacts.mockReturnValue([{ task_id: '50', user_id: '16', type_id: '45' }]); // responsável existe
         mockDelegation.getAceite.mockReturnValue({ status: 'pending', deadlineDay: 12 });
         const svc = newSvc();
         await svc.runTick(noon(11)); // baseline (dentro do prazo de aceite)
         const r = await svc.runTick(noon(13)); // prazo estourado -> escala
         expect(r.acceptance_overdue).toBe(1);
         expect(mockDispatch).toHaveBeenCalledWith('acceptance_overdue', expect.objectContaining({ id: '50' }), expect.anything());
+        // escalada vai ao SOLICITANTE (criador '9'), não ao responsável
+        expect(delegationEventsService.logEvent).toHaveBeenCalledWith('50', 'escalated', expect.objectContaining({ to: '9' }));
     });
 
     it('aceite pendente dentro do prazo: não cobra a entrega', async () => {

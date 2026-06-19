@@ -26,7 +26,8 @@ export type DelegationEventType =
 export interface DelegationEvent {
     type: DelegationEventType;
     at: string;        // ISO
-    by?: string;       // userId (resolvido p/ nome no frontend); ausente = sistema
+    by?: string;       // userId de quem AGIU (resolvido p/ nome no frontend); ausente = sistema
+    to?: string;       // userId do DESTINATÁRIO da ação (p/ quem foi a cobrança/escalada/etc.)
     note?: string;
 }
 
@@ -83,25 +84,26 @@ export class DelegationEventsService {
     }
 
     /** Registra um evento (local) e espelha no Dolibarr como actioncomm (best-effort). */
-    logEvent(taskId: string, type: DelegationEventType, opts: { by?: string; atMs?: number; note?: string } = {}): DelegationEvent {
+    logEvent(taskId: string, type: DelegationEventType, opts: { by?: string; to?: string; atMs?: number; note?: string } = {}): DelegationEvent {
         const id = String(taskId);
         const ev: DelegationEvent = {
             type,
             at: new Date(opts.atMs ?? Date.now()).toISOString(),
             by: opts.by,
+            to: opts.to,
             note: opts.note,
         };
         this.store[id] = [...(this.store[id] || []), ev];
         this.save();
         // Tempo real p/ a Central de Eventos (#519) — sinal "algo mudou"; o front re-busca com a
         // visibilidade reaplicada no backend. Best-effort, nunca quebra o fluxo.
-        try { socketService.emit('delegation_event', { taskId: id, type, at: ev.at, by: ev.by }); } catch { /* noop */ }
+        try { socketService.emit('delegation_event', { taskId: id, type, at: ev.at, by: ev.by, to: ev.to }); } catch { /* noop */ }
         // Espelho durável no Dolibarr — nunca bloqueia/derruba o fluxo principal.
         this.mirror(id, type, opts).catch((e) => log.warn(`mirror actioncomm falhou (task=${id})`, e?.message || e));
         return ev;
     }
 
-    private async mirror(taskId: string, type: DelegationEventType, opts: { by?: string; note?: string }): Promise<void> {
+    private async mirror(taskId: string, type: DelegationEventType, opts: { by?: string; to?: string; note?: string }): Promise<void> {
         await dolibarrService.createAgendaEvent({
             label: `[Delegação] ${LABELS[type]}`,
             // Categoria NATIVA de eventos automáticos do Dolibarr (type 'systemauto'). O Dolibarr
@@ -111,7 +113,8 @@ export class DelegationEventsService {
             note: opts.note || '',
             fk_element: taskId,
             elementtype: 'project_task',
-            userownerid: opts.by,
+            // Dono do evento na agenda = destinatário (a quem concerne), com fallback p/ o autor.
+            userownerid: opts.to ?? opts.by,
         });
     }
 }

@@ -9,7 +9,8 @@ const log = logger.child('DelegationTimelinePanel');
 interface TimelineEvent {
     type: string;
     at: string;     // ISO
-    by?: string;    // userId
+    by?: string;    // userId de quem agiu
+    to?: string;    // userId do destinatário (para quem)
     note?: string;
 }
 
@@ -88,7 +89,7 @@ export const DelegationTimelinePanel: React.FC<Props> = ({ config, taskId, users
                         <li key={i} className="ml-4">
                             <span className="absolute -left-1.5 w-3 h-3 rounded-full bg-indigo-500 border-2 border-white dark:border-slate-900" />
                             <p className="text-sm font-medium text-slate-900 dark:text-white">{LABELS[e.type] || e.type}</p>
-                            <p className="text-xs text-slate-500">{fmt(e.at)} · {userName(e.by)}</p>
+                            <p className="text-xs text-slate-500">{fmt(e.at)} · {userName(e.by)}{e.to ? ` → ${userName(e.to)}` : ''}</p>
                             {e.note && <p className="text-xs text-slate-400 mt-0.5">{e.note}</p>}
                         </li>
                     ))}
