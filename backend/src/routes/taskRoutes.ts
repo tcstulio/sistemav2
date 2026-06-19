@@ -12,9 +12,14 @@ const router = Router();
 // Leitura: qualquer usuario logado.
 router.get('/', requireDolibarrLogin, async (req, res) => {
     try {
-        // Reconcilia com GitHub antes de devolver (idempotente, resolve tasks orfas).
-        await taskRunnerService.syncWithGitHub();
+        // syncTasks faz UMA chamada ao GitHub (gh issue list) e atualiza o store.
         const tasks = await taskRunnerService.syncTasks();
+        // Reconciliacao (resolve tasks orfas/fechadas) roda em BACKGROUND para nao bloquear a
+        // listagem. Faze-la sincrona aqui — a cada 10s de polling, com muitas tasks pendentes —
+        // estourava timeout/rate-limit e causava "Erro ao carregar tasks".
+        taskRunnerService.syncWithGitHub().catch((e: any) =>
+            log.warn('syncWithGitHub (bg) falhou', { error: e?.message })
+        );
         res.json(tasks);
     } catch (error: any) {
         log.error('List tasks error', { error: error.message });
