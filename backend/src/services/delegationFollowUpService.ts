@@ -18,7 +18,7 @@ import { dolibarrService } from './dolibarr';
 import { dispatchTaskNotification } from './taskNotificationService';
 import { delegationService } from './delegationService';
 import { delegationEventsService, DelegationEventType } from './delegationEventsService';
-import { resolveRoleUsers } from './taskNotificationLogic';
+import { resolveRoleUsers, RoleUsers } from './taskNotificationLogic';
 import { decideFollowUp, Cadence, DEFAULT_CADENCE, TaskTracking, FollowUpEvent } from './delegationFollowUpLogic';
 
 // Evento do motor -> tipo no log da delegação (linha do tempo). by=sistema (undefined).
@@ -30,6 +30,20 @@ const EVENT_TO_LOG: Record<FollowUpEvent, DelegationEventType> = {
     stalled: 'escalated',
     completed: 'completed',
 };
+
+/** Destinatário do evento do motor: cobrança/lembrete vão ao Responsável; escalada/conclusão ao Solicitante. */
+function targetForEvent(event: FollowUpEvent, roles: RoleUsers): string | undefined {
+    switch (event) {
+        case 'overdue':            // cobrança da entrega
+        case 'deadline_reminder':  // lembrete de prazo
+        case 'acceptance_pending': // solicitação de aceite (não vem do tick, mas por completude)
+            return roles.responsavel[0] || roles.criador[0];
+        case 'acceptance_overdue': // aceite estourado
+        case 'stalled':            // parada → escala
+        case 'completed':          // reporte da conclusão
+            return roles.criador[0] || roles.responsavel[0];
+    }
+}
 
 const log = createLogger('DelegationFollowUp');
 
@@ -134,13 +148,13 @@ export class DelegationFollowUpService {
                 result[event]++;
                 const taskContacts = contactsByTask.get(id) || [];
                 await dispatchTaskNotification(event, task, { taskContacts });
-                // Dono real (responsável > criador) p/ o evento não cair no admin (id 1) e
-                // descrição com contexto — antes o espelho ia sem dono e sem info.
+                // Evento do motor: autor = Sistema (by undefined); o DESTINATÁRIO (to) é quem a ação
+                // concerne — cobrança→Responsável, escalada/conclusão→Solicitante. O `to` também vira
+                // o dono do espelho de agenda (não cai no admin) e diz "para quem" na trilha. (#526)
                 const roles = resolveRoleUsers(task, taskContacts);
-                const owner = roles.responsavel[0] || roles.criador[0];
                 delegationEventsService.logEvent(id, EVENT_TO_LOG[event], {
                     atMs: nowMs,
-                    by: owner,
+                    to: targetForEvent(event, roles),
                     note: buildDelegationNote(task),
                 });
             }

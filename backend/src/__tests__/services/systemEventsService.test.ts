@@ -41,10 +41,12 @@ describe('systemEventsService', () => {
             ];
             return opts?.userId ? all.filter(a => a.userId === opts.userId) : all;
         });
-        // delegação: um evento do user 7 (by) e um de tarefa alheia (by 9, task 99)
+        // delegação: evento do user 7 (by), um de tarefa alheia (by 9, task 99) e um onde o
+        // user 7 é o DESTINATÁRIO (to=7, autor=Sistema) — task 60.
         m.deleg.listAll.mockReturnValue([
             { taskId: '50', type: 'cobranca', at: '2026-06-18T08:00:00Z', by: '7', note: 'prazo' },
             { taskId: '99', type: 'escalated', at: '2026-06-18T08:30:00Z', by: '9', note: 'outra tarefa' },
+            { taskId: '60', type: 'cobranca', at: '2026-06-18T08:15:00Z', to: '7', note: 'cobrança ao 7' },
         ]);
         // índice de papéis: user 7 é contato (responsável) da task 50; task 99 é de outros.
         m.doli.getAllTaskContacts.mockResolvedValue([{ id: 'c1', task_id: '50', user_id: '7', type_id: '45' }]);
@@ -85,16 +87,22 @@ describe('systemEventsService', () => {
         expect(r.events.find(e => e.source === 'agent')?.actor.id).toBe('7');
     });
 
-    it('delegação (não-admin): só das tarefas em que está envolvido — por `by` ou por papel', async () => {
+    it('delegação (não-admin): só das tarefas em que está envolvido — por `by`, por `to` ou por papel', async () => {
         const r = await systemEventsService.query({ user: USER, sources: ['delegation'] });
         const ids = r.events.map(e => e.entityId);
         expect(ids).toContain('50');   // by === user.id (e também é contato)
+        expect(ids).toContain('60');   // to === user.id (é o destinatário) (#526)
         expect(ids).not.toContain('99'); // tarefa alheia → oculta
+    });
+
+    it('delegação: expõe o destinatário (to) em metadata p/ o front resolver o nome (#526)', async () => {
+        const r = await systemEventsService.query({ user: ADMIN, sources: ['delegation'] });
+        expect(r.events.find(e => e.entityId === '60')?.metadata?.to).toBe('7');
     });
 
     it('delegação (admin): vê todas as delegações, sem filtro', async () => {
         const r = await systemEventsService.query({ user: ADMIN, sources: ['delegation'] });
-        expect(r.events.map(e => e.entityId).sort()).toEqual(['50', '99']);
+        expect(r.events.map(e => e.entityId).sort()).toEqual(['50', '60', '99']);
     });
 
     it('notification: admin usa getAll (vê de todos); não-admin usa getForUser (só as suas)', async () => {

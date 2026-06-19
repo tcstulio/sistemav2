@@ -32,4 +32,13 @@ describe('DelegationTimelinePanel', () => {
         expect(screen.getByText(/Bruno Souza/)).toBeInTheDocument();
         expect(screen.getByText(/Sistema/)).toBeInTheDocument();
     });
+
+    it('mostra o destinatário (para quem) — "Sistema → Nome" (#526)', async () => {
+        mockSvc.getDelegationEvents.mockResolvedValue([
+            { type: 'cobranca', at: '2026-06-11T09:00:00Z', to: '16' }, // by ausente=Sistema; to=Bruno
+        ]);
+        render(<DelegationTimelinePanel config={config} taskId="50" users={users} />);
+        expect(await screen.findByText('Cobrança enviada')).toBeInTheDocument();
+        expect(screen.getByText((_, el) => el?.tagName === 'P' && /Sistema\s*→\s*Bruno Souza/.test(el.textContent || ''))).toBeInTheDocument();
+    });
 });

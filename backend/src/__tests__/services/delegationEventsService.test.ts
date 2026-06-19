@@ -56,4 +56,13 @@ describe('DelegationEventsService', () => {
             taskId: '50', type: 'cobranca', by: '7',
         }));
     });
+
+    it('grava o destinatário (to) e usa-o como dono do espelho de agenda (#526)', () => {
+        const svc = newSvc();
+        svc.logEvent('50', 'cobranca', { to: '16', atMs: 3000 }); // by ausente = Sistema
+        const ev = svc.getEvents('50')[0];
+        expect(ev.to).toBe('16');
+        expect(ev.by).toBeUndefined();
+        expect(mockDoli.createAgendaEvent).toHaveBeenCalledWith(expect.objectContaining({ userownerid: '16' }));
+    });
 });
