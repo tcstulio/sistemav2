@@ -15,6 +15,19 @@ vi.mock('../../services/systemEventsService', () => ({
     getSystemEvents: (p: any) => mockEvents(p),
 }));
 
+// Socket-fake controlável: captura o handler do onAny p/ simular eventos em tempo real.
+const sock = vi.hoisted(() => {
+    const state: { onAny: ((e: string, ...a: any[]) => void) | null } = { onAny: null };
+    const socket = {
+        onAny: (fn: (e: string, ...a: any[]) => void) => { state.onAny = fn; },
+        offAny: () => { state.onAny = null; },
+    };
+    return { state, socket };
+});
+vi.mock('../../contexts/WhatsAppContext', () => ({
+    useWhatsAppContext: () => ({ socket: sock.socket, isConnected: true }),
+}));
+
 const ev = (over: any = {}) => ({
     id: 'e1', timestamp: '2026-06-18T10:00:00Z', source: 'agent',
     actor: { id: '7', name: 'User 7' }, type: 'list_user_tasks',
@@ -54,5 +67,27 @@ describe('SystemEventsView (#519)', () => {
             const lastCall = mockEvents.mock.calls.at(-1)?.[0];
             expect(lastCall.sources).not.toContain('agent');
         });
+    });
+
+    it('indicador "Ao vivo" quando conectado', async () => {
+        render(<SystemEventsView onNavigate={vi.fn()} />);
+        expect(await screen.findByText('Ao vivo')).toBeTruthy();
+    });
+
+    it('evento de socket relevante dispara re-busca (debounced)', async () => {
+        render(<SystemEventsView onNavigate={vi.fn()} />);
+        await screen.findByText('listou tarefas');
+        mockEvents.mockClear();
+        sock.state.onAny?.('notification', { id: 'x' }); // sinal de tempo real
+        await waitFor(() => expect(mockEvents).toHaveBeenCalled(), { timeout: 2500 });
+    });
+
+    it('evento de socket irrelevante NÃO dispara re-busca', async () => {
+        render(<SystemEventsView onNavigate={vi.fn()} />);
+        await screen.findByText('listou tarefas');
+        mockEvents.mockClear();
+        sock.state.onAny?.('whatsapp_message', {});
+        await new Promise(r => setTimeout(r, 1800)); // além do debounce
+        expect(mockEvents).not.toHaveBeenCalled();
     });
 });

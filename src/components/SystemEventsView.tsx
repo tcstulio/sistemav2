@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Bot, Users, Bell, CalendarClock, CheckCircle, Cpu, ShieldCheck, Clock, ChevronRight, Inbox, RefreshCw, Filter } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
+import { useWhatsAppContext } from '../contexts/WhatsAppContext';
 import { useSystemLogs, useUsers } from '../hooks/dolibarr';
 import { AppView, SystemLog } from '../types';
 import { formatRelativeTime } from '../utils/dateUtils';
@@ -33,6 +34,7 @@ const BACKEND_FETCH_LIMIT = 200;
 
 const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
     const { config } = useDolibarr();
+    const { socket, isConnected } = useWhatsAppContext();
     const { data: systemLogs = [] } = useSystemLogs(config, !!config);
     const { data: users = [] } = useUsers(config, !!config);
 
@@ -69,14 +71,36 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
     // Busca no backend quando muda o conjunto de fontes ativas (exceto dolibarr, que é cliente).
     const activeBackend = useMemo(() => Array.from(active).filter(s => s !== 'dolibarr'), [active]);
     const activeBackendKey = activeBackend.slice().sort().join(',');
-    const refetch = async () => {
-        setLoading(true);
-        if (activeBackend.length === 0) { setBackendEvents([]); setLoading(false); return; }
-        const res = await getSystemEvents({ sources: activeBackend.join(','), limit: BACKEND_FETCH_LIMIT });
-        setBackendEvents(res.events);
-        setLoading(false);
+    // silent=true: atualização em tempo real sem o spinner full (não pisca a lista).
+    const refetch = async (silent = false) => {
+        if (!silent) setLoading(true);
+        if (activeBackend.length === 0) { setBackendEvents([]); if (!silent) setLoading(false); return; }
+        try {
+            const res = await getSystemEvents({ sources: activeBackend.join(','), limit: BACKEND_FETCH_LIMIT });
+            setBackendEvents(res.events);
+        } catch { /* mantém o que já está na tela */ }
+        finally { if (!silent) setLoading(false); }
     };
     useEffect(() => { refetch(); /* eslint-disable-next-line */ }, [activeBackendKey]);
+
+    // Sempre aponta p/ o refetch mais recente (captura activeBackend atual sem re-registrar o socket).
+    const refetchRef = useRef(refetch);
+    refetchRef.current = refetch;
+
+    // Tempo real (#519): o socket é broadcast global; ao receber um evento relevante, re-busca no
+    // backend (com debounce), que reaplica a visibilidade por usuário. Sem vazamento.
+    useEffect(() => {
+        if (!socket) return;
+        const LIVE_RE = /^agent_activity$|^notification$|^scheduler_|^approval_|^delegation_event$|^task:/;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const onAnyEvent = (event: string) => {
+            if (!LIVE_RE.test(event)) return;
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(() => refetchRef.current(true), 1500);
+        };
+        socket.onAny(onAnyEvent);
+        return () => { socket.offAny(onAnyEvent); if (timer) clearTimeout(timer); };
+    }, [socket]);
 
     // Dolibarr (actioncomm) normalizado no cliente — sem AC_CHAT.
     const dolibarrEvents = useMemo<SystemEvent[]>(() => {
@@ -135,7 +159,13 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
                 title="Central de Eventos"
                 subtitle={`${filtered.length} eventos${active.has('dolibarr') ? '' : ''}`}
                 actions={
-                    <Button onClick={refetch} loading={loading} variant="primary" icon={<RefreshCw size={16} />}>Atualizar</Button>
+                    <div className="flex items-center gap-3">
+                        <span className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400" title={isConnected ? 'Atualizando em tempo real' : 'Sem conexão em tempo real'}>
+                            <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300 dark:bg-slate-600'}`} />
+                            {isConnected ? 'Ao vivo' : 'Offline'}
+                        </span>
+                        <Button onClick={() => refetch()} loading={loading} variant="primary" icon={<RefreshCw size={16} />}>Atualizar</Button>
+                    </div>
                 }
             />
 
