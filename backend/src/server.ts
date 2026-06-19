@@ -345,6 +345,12 @@ import { alertCronService } from './services/alertCronService';
 alertCronService.start();
 log.info('AlertCronService started');
 
+// Reidrata o estado durável da delegação a partir do Dolibarr (#293) — best-effort, não bloqueia o boot.
+import { delegationService } from './services/delegationService';
+delegationService.hydrateFromDolibarr()
+    .then((n) => { if (n > 0) log.info(`DelegationService: ${n} delegação(ões) reidratada(s) do Dolibarr (#293)`); })
+    .catch(() => { /* best-effort */ });
+
 // Start TaskRunner polling (sync GitHub issues com label "opencode-task")
 import { taskRunnerService } from './services/taskRunnerService';
 taskRunnerService.startPolling();

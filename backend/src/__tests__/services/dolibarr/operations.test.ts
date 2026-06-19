@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const { mockAxios } = vi.hoisted(() => {
     const fn = vi.fn() as any;
     fn.get = vi.fn();
+    fn.put = vi.fn();
     fn.isAxiosError = vi.fn();
     return { mockAxios: fn };
 });
@@ -48,6 +49,38 @@ describe('DolibarrOperationsService', () => {
             mockAxios.mockResolvedValue({ data: {} });
             await service.addTimeSpent('1', {} as any);
             expect(mockAxios.mock.calls[0][0].headers.DOLAPIKEY).toBe('test-api-key-1234567890');
+        });
+    });
+
+    describe('delegation state (#293)', () => {
+        it('setTaskDelegationState grava o estado em base64 (sobrevive ao alphanohtml do Dolibarr)', async () => {
+            mockAxios.put.mockResolvedValue({ data: {} });
+            const json = JSON.stringify({ taskId: '50', aceite: { status: 'accepted', by: '16' } });
+            const ok = await service.setTaskDelegationState('50', json);
+            expect(ok).toBe(true);
+            const [url, body] = mockAxios.put.mock.calls[0];
+            expect(url).toContain('tasks/50');
+            const sent = body.array_options.options_delegation_state;
+            expect(sent).not.toContain('"'); // sem aspas → não é destruído pela sanitização
+            expect(Buffer.from(sent, 'base64').toString('utf8')).toBe(json); // round-trip exato
+        });
+
+        it('setTaskDelegationState retorna false se o PUT falha (extrafield ausente) — graceful', async () => {
+            mockAxios.put.mockRejectedValue(new Error('400'));
+            expect(await service.setTaskDelegationState('50', '{}')).toBe(false);
+        });
+
+        it('listDelegationStates decodifica o base64 e devolve o JSON cru', async () => {
+            const json = JSON.stringify({ taskId: '77', criterio: 'x' });
+            const b64 = Buffer.from(json, 'utf8').toString('base64');
+            mockAxios.get.mockResolvedValue({ status: 200, data: { data: [{ task_id: '77', delegation_state: b64 }] }, headers: {} });
+            const out = await service.listDelegationStates();
+            expect(out).toEqual([{ taskId: '77', state: json }]);
+        });
+
+        it('listDelegationStates é best-effort: [] quando o script não está deployado', async () => {
+            mockAxios.get.mockRejectedValue(new Error('404'));
+            expect(await service.listDelegationStates()).toEqual([]);
         });
     });
 

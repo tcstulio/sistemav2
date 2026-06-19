@@ -13,6 +13,7 @@ import path from 'path';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { createLogger } from '../utils/logger';
 import { AceiteState, dayIndex, DEFAULT_CADENCE } from './delegationFollowUpLogic';
+import { dolibarrService } from './dolibarr';
 
 const log = createLogger('Delegation');
 
@@ -85,7 +86,41 @@ export class DelegationService {
         const next: DelegationRecord = { ...cur, ...patch, taskId: id };
         this.store[id] = next;
         this.save();
+        this.mirror(next); // #293 — espelho durável no Dolibarr (best-effort, não bloqueia)
         return next;
+    }
+
+    /** Espelha o estado no extrafield options_delegation_state da tarefa (Dolibarr). #293, fire-and-forget. */
+    private mirror(rec: DelegationRecord): void {
+        void dolibarrService
+            .setTaskDelegationState(rec.taskId, JSON.stringify(rec))
+            .catch((e: any) => log.warn(`mirror delegation_state task=${rec.taskId} falhou: ${e?.message || e}`));
+    }
+
+    /**
+     * Reidrata o cache local a partir dos estados persistidos no Dolibarr (#293). O store local
+     * tem prioridade (cache quente): só preenche o que falta. Best-effort. Retorna quantos
+     * registros foram reidratados.
+     */
+    async hydrateFromDolibarr(): Promise<number> {
+        let n = 0;
+        try {
+            const states = await dolibarrService.listDelegationStates();
+            for (const { taskId, state } of states) {
+                if (this.store[taskId]) continue; // não sobrescreve o cache local
+                try {
+                    const rec = JSON.parse(state) as DelegationRecord;
+                    if (rec && typeof rec === 'object') {
+                        this.store[taskId] = { ...rec, taskId };
+                        n++;
+                    }
+                } catch { /* estado corrompido — ignora */ }
+            }
+            if (n > 0) this.save();
+        } catch (e: any) {
+            log.warn(`hydrateFromDolibarr falhou: ${e?.message || e}`);
+        }
+        return n;
     }
 
     /** Define o template de execução estruturada (ex.: contagem de estoque). */
