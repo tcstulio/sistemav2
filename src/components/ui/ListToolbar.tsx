@@ -25,7 +25,7 @@ export function ListToolbar<T>({ controls, searchPlaceholder = 'Buscar...', clas
                     value={controls.search}
                     onChange={(e) => controls.setSearch(e.target.value)}
                     icon={<Search size={16} />}
-                    className="w-full sm:w-48"
+                    className="h-9 w-full sm:w-48"
                     fullWidth={false}
                 />
             )}
@@ -35,7 +35,7 @@ export function ListToolbar<T>({ controls, searchPlaceholder = 'Buscar...', clas
                     key={f.key}
                     value={controls.filterValues[f.key] || ''}
                     onChange={(e) => controls.setFilter(f.key, e.target.value)}
-                    className="text-sm px-2 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    className="h-9 text-sm px-2 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                     title={f.label}
                 >
                     <option value="">{f.label}: todos</option>
@@ -50,7 +50,7 @@ export function ListToolbar<T>({ controls, searchPlaceholder = 'Buscar...', clas
                     <select
                         value={controls.sortKey}
                         onChange={(e) => controls.setSortKey(e.target.value)}
-                        className="text-sm px-2 py-2 border rounded-l-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                        className="h-9 text-sm px-2 py-2 border rounded-l-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                         title="Ordenar por"
                     >
                         {sorts.map((s) => (
@@ -60,7 +60,7 @@ export function ListToolbar<T>({ controls, searchPlaceholder = 'Buscar...', clas
                     <button
                         type="button"
                         onClick={controls.toggleSortDir}
-                        className="px-2 py-2 border border-l-0 rounded-r-lg dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                        className="h-9 px-2 py-2 border border-l-0 rounded-r-lg dark:border-slate-700 text-slate-500 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center justify-center"
                         title={controls.sortDir === 'asc' ? 'Crescente' : 'Decrescente'}
                         aria-label="Inverter ordem"
                     >
