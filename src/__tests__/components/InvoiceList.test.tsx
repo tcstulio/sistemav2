@@ -210,3 +210,29 @@ describe('InvoiceList — Total bar (#486)', () => {
         });
     });
 });
+
+describe('InvoiceList — Currency standardization (#639)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('renders invoice values in BRL via formatCurrency (no USD $ prefix)', async () => {
+        vi.mocked(useInvoices).mockReturnValue({
+            data: [
+                { id: 'invX', ref: 'FAX1', socid: 'cust1', date: 1700000000, total_ttc: 1234.56, statut: '1', type: '0', project_id: null, order_id: null },
+            ],
+            isRefetching: false,
+            refetch: vi.fn(),
+        } as any);
+
+        const { container } = renderComponent();
+        await screen.findByTestId('list-total-bar');
+
+        const formatted = formatCurrency(1234.56);
+        const matches = Array.from(container.querySelectorAll('*')).filter(
+            (el) => el.textContent === formatted
+        );
+        // The list card value AND the total bar both render the BRL value
+        expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+});

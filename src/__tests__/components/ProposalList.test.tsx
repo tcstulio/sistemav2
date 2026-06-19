@@ -219,3 +219,29 @@ describe('ProposalList — Total bar (#486)', () => {
         });
     });
 });
+
+describe('ProposalList — Currency standardization (#639)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('renders proposal values in BRL via formatCurrency (no USD $ prefix)', async () => {
+        vi.mocked(useProposals).mockReturnValue({
+            data: [
+                { id: 'propX', ref: 'PRX1', socid: 'cust1', date: 1700000000, total_ht: 1000, total_ttc: 2345.67, statut: '1', project_id: null, fk_user_author: null },
+            ],
+            isRefetching: false,
+            refetch: vi.fn(),
+        } as any);
+
+        const { container } = renderComponent();
+        await screen.findByTestId('list-total-bar');
+
+        const formatted = formatCurrency(2345.67);
+        const matches = Array.from(container.querySelectorAll('*')).filter(
+            (el) => el.textContent === formatted
+        );
+        // The row total AND the total bar both render the BRL value
+        expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+});
