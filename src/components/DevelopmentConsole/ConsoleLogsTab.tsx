@@ -32,7 +32,8 @@ export const ConsoleLogsTab: React.FC<ConsoleLogsTabProps> = () => {
     const clearLogs = async () => {
         if (!(await confirm("Limpar todos os logs?"))) return;
         try {
-            await dbService.clearAll();
+            // Limpa SÓ as stores de log — antes chamava clearAll() e apagava todo o cache offline (#26).
+            await dbService.clearStores(['api_logs', 'systemLogs']);
             setLogs([]);
         } catch (e) {
             componentLog.error(e);

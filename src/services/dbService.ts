@@ -261,6 +261,23 @@ export const dbService = {
         }
     },
 
+    /** Limpa SOMENTE as stores indicadas (ex.: logs), sem apagar o resto do cache offline. (#26) */
+    clearStores: async (storeNames: string[]) => {
+        try {
+            const db = await dbService.open();
+            const valid = storeNames.filter(s => db.objectStoreNames.contains(s));
+            if (valid.length === 0) return;
+            const transaction = db.transaction(valid, 'readwrite');
+            valid.forEach(storeName => transaction.objectStore(storeName).clear());
+            return new Promise<void>((resolve, reject) => {
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+            });
+        } catch (e) {
+            log.error(`Failed to clear stores: ${storeNames.join(',')}`, e);
+        }
+    },
+
     clearAll: async () => {
         try {
             const db = await dbService.open();
