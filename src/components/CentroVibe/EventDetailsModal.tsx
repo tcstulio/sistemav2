@@ -3,6 +3,7 @@ import { VenueEvent, Artist, TicketBatch, EventCluster } from '../../types/centr
 import { CLUSTERS } from './constants';
 import { Modal, Button, Input } from '../ui';
 import { Clock, MapPin, Ticket, User, Instagram, Users, Mic2, Plus, Trash2, Search, Edit2, X } from 'lucide-react';
+import { formatCurrency } from '../../utils/formatUtils';
 
 interface EventDetailsModalProps {
   event: VenueEvent | null;
@@ -222,7 +223,7 @@ const EventDetailsModal: React.FC<EventDetailsModalProps> = ({ event, onClose, o
             <div className="mt-6 pt-4 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center text-xs text-slate-500 dark:text-slate-400">
               <span>Estimativa de Receita:</span>
               <span className="font-mono font-bold text-green-600 dark:text-green-400 text-sm">
-                R$ {localTickets.reduce((acc, t) => acc + (t.price * (t.totalCount || 0)), 0).toLocaleString('pt-BR')}
+                {formatCurrency(localTickets.reduce((acc, t) => acc + (t.price * (t.totalCount || 0)), 0))}
               </span>
             </div>
           </div>

@@ -91,7 +91,7 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
                         </div>
                     </div>
                     <div className="text-right">
-                        <div className="text-lg font-bold text-slate-700 dark:text-slate-300">-${p.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                        <div className="text-lg font-bold text-slate-700 dark:text-slate-300">-{formatCurrency(p.amount)}</div>
                         <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Pago</div>
                     </div>
                 </Card>
@@ -261,7 +261,7 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
                     actions={
                         <div className="flex items-center gap-4">
                             <div className="flex items-center gap-4 bg-blue-50 dark:bg-blue-900/20 px-4 py-2 rounded-xl border border-blue-100 dark:border-blue-800">
-                                <div className="text-blue-600 dark:text-blue-400 font-bold text-lg">${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                <div className="text-blue-600 dark:text-blue-400 font-bold text-lg">{formatCurrency(totalPaid)}</div>
                                 <div className="text-xs text-blue-800 dark:text-blue-300 uppercase font-bold tracking-wide">Total Pago</div>
                             </div>
                             <ListToolbar controls={controls} searchPlaceholder="Buscar ref/número..." />

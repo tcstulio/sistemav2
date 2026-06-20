@@ -94,6 +94,7 @@ class FinancialAnalysisStoreService {
             atomicWriteSync(STORE_PATH, this.data);
         } catch (error) {
             log.error('Save Error', error);
+            throw error;
         }
     }
 

@@ -13,6 +13,11 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 // Design System
 import { PageHeader, MasterDetailLayout, Card, EmptyState, ListToolbar } from './ui';
 
+// Safety-net: garante uma altura mínima para a lista virtualizada mesmo quando o
+// AutoSizer ainda reporta height = 0 (cadeia flex sem altura resolvida). Evita que
+// o react-window não renderize nenhuma linha e a página fique travada (#651).
+const MIN_LIST_HEIGHT = 400;
+
 interface SupplierPaymentListProps {
     onNavigate?: (view: AppView, id: string) => void;
     initialItemId?: string;
@@ -140,7 +145,7 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
                     actions={
                         <div className="flex items-center gap-3">
                             <div className="flex items-center gap-2 bg-rose-50 dark:bg-rose-900/20 px-4 py-2 rounded-xl border border-rose-100 dark:border-rose-800">
-                                <div className="text-rose-600 dark:text-rose-400 font-bold text-lg">-${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                <div className="text-rose-600 dark:text-rose-400 font-bold text-lg">-{formatCurrency(totalPaid)}</div>
                                 <div className="text-xs text-rose-800 dark:text-rose-300 uppercase font-bold tracking-wide">Total</div>
                             </div>
                             <ListToolbar controls={controls} searchPlaceholder="Buscar ref/nota..." />
@@ -155,7 +160,7 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
                 onCloseDetail={() => setSelectedPayment(null)}
                 listWidth="1/3"
                 list={
-                    <div className="h-full">
+                    <div className="h-full" style={{ minHeight: MIN_LIST_HEIGHT }}>
                         {payments.length === 0 ? (
                             <div className="p-6">
                                 <EmptyState
@@ -168,7 +173,7 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
                             <AutoSizer>
                                 {({ height, width }: { height: number; width: number }) => (
                                     <ListWindow
-                                        height={height}
+                                        height={Math.max(height, MIN_LIST_HEIGHT)}
                                         width={width}
                                         itemCount={payments.length}
                                         itemSize={120}
@@ -203,7 +208,7 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
                                                                 </div>
                                                             </div>
                                                             <div className="text-right shrink-0">
-                                                                <div className="font-bold text-rose-600 dark:text-rose-400 text-sm">-${Number(p.amount).toLocaleString()}</div>
+                                                                <div className="font-bold text-rose-600 dark:text-rose-400 text-sm">-{formatCurrency(Number(p.amount))}</div>
                                                             </div>
                                                         </div>
                                                     </Card>

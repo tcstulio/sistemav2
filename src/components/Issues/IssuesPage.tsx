@@ -69,6 +69,7 @@ const SortableMiniCard: React.FC<{
     const [feedback, setFeedback] = useState('');
     const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
     const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
+    const canKill = ['running', 'fixing'].includes(task.status);
     const isSortable = task.status === 'pending';
 
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -144,21 +145,21 @@ const SortableMiniCard: React.FC<{
                         </button>
                     )}
                     {isActive && (
-                        <button onClick={(e) => { e.stopPropagation(); onConsole(task); }} className="text-[10px] px-1.5 py-0.5 rounded text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
+                        <button onClick={(e) => { e.stopPropagation(); onConsole(task); }} aria-label={`Ver console da task #${task.issueNumber}`} className="text-[10px] px-1.5 py-0.5 rounded text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
                             <Terminal size={10} />
                         </button>
                     )}
-                    {isAdmin && isActive && (
-                        <button onClick={(e) => { e.stopPropagation(); onAction('kill', task); }} className="text-[10px] px-1.5 py-0.5 rounded text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
+                    {isAdmin && canKill && (
+                        <button onClick={(e) => { e.stopPropagation(); onAction('kill', task); }} aria-label={`Cancelar task #${task.issueNumber}`} className="text-[10px] px-1.5 py-0.5 rounded text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
                             <XCircle size={10} />
                         </button>
                     )}
                     {isAdmin && (
                         <>
-                            <button onClick={(e) => { e.stopPropagation(); onEdit(task); }} className="text-[10px] px-1.5 py-0.5 rounded text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+                            <button onClick={(e) => { e.stopPropagation(); onEdit(task); }} aria-label={`Editar task #${task.issueNumber}`} className="text-[10px] px-1.5 py-0.5 rounded text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
                                 <Pencil size={10} />
                             </button>
-                            <button onClick={(e) => { e.stopPropagation(); onDelete(task); }} className="text-[10px] px-1.5 py-0.5 rounded text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                            <button onClick={(e) => { e.stopPropagation(); onDelete(task); }} aria-label={`Excluir task #${task.issueNumber}`} className="text-[10px] px-1.5 py-0.5 rounded text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
                                 <Trash2 size={10} />
                             </button>
                         </>
@@ -202,6 +203,7 @@ const TaskListCard: React.FC<{
     const [showFeedback, setShowFeedback] = useState(false);
     const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
     const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
+    const canKill = ['running', 'fixing'].includes(task.status);
 
     return (
         <Card className="relative overflow-hidden">
@@ -282,7 +284,7 @@ const TaskListCard: React.FC<{
                 </Button>
                 {isAdmin && <Button variant="ghost" size="sm" icon={<Pencil size={12} />} onClick={() => onEdit(task)}>Editar</Button>}
                 {isActive && <Button variant="ghost" size="sm" icon={<Terminal size={12} />} onClick={() => onConsole(task)} className="text-indigo-500">Console</Button>}
-                {isAdmin && isActive && <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('kill', task)} className="text-amber-600">Cancelar</Button>}
+                {isAdmin && canKill && <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('kill', task)} className="text-amber-600">Cancelar</Button>}
                 {isAdmin && <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500" />}
             </div>
 
@@ -493,7 +495,9 @@ const IssuesPage: React.FC = () => {
                     toast.info('Enviando correção...');
                     await TaskService.fix(task.issueNumber, extra);
                     break;
-                case 'kill': await TaskService.kill(task.issueNumber); toast.info('Cancelando...'); break;
+                case 'kill':
+                    if (!(await confirm({ title: `Cancelar a task #${task.issueNumber}?`, message: 'O trabalho em andamento será perdido.', confirmText: 'Sim, cancelar', cancelText: 'Manter executando', danger: true }))) return;
+                    await TaskService.kill(task.issueNumber); toast.info('Cancelando...'); break;
             }
             loadTasks();
         } catch (e: any) { toast.error(e.response?.data?.error || e.message); }

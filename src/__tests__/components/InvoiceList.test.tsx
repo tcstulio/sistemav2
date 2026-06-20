@@ -210,3 +210,59 @@ describe('InvoiceList — Total bar (#486)', () => {
         });
     });
 });
+
+describe('InvoiceList — Currency standardization (#639)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('renders invoice values in BRL via formatCurrency (no USD $ prefix)', async () => {
+        vi.mocked(useInvoices).mockReturnValue({
+            data: [
+                { id: 'invX', ref: 'FAX1', socid: 'cust1', date: 1700000000, total_ttc: 1234.56, statut: '1', type: '0', project_id: null, order_id: null },
+            ],
+            isRefetching: false,
+            refetch: vi.fn(),
+        } as any);
+
+        const { container } = renderComponent();
+        await screen.findByTestId('list-total-bar');
+
+        const formatted = formatCurrency(1234.56);
+        const matches = Array.from(container.querySelectorAll('*')).filter(
+            (el) => el.textContent === formatted
+        );
+        // The list card value AND the total bar both render the BRL value
+        expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+});
+
+describe('InvoiceList — Final currency sweep (#643)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('renders monetary values as R$ with 2 decimals and no isolated dollar sign', async () => {
+        vi.mocked(useInvoices).mockReturnValue({
+            data: [
+                { id: 'invSweep', ref: 'FA-SWEEP', socid: 'cust1', date: 1700000000, total_ttc: 1234.56, statut: '1', type: '0', project_id: null, order_id: null },
+            ],
+            isRefetching: false,
+            refetch: vi.fn(),
+        } as any);
+
+        const { container } = renderComponent();
+        await screen.findByTestId('list-total-bar');
+
+        const text = container.textContent || '';
+
+        // BRL marker present
+        expect(text).toContain('R$');
+        // Value rendered through formatCurrency (same formatter used in production)
+        expect(text).toContain(formatCurrency(1234.56));
+        // No isolated "$" — every "$" must be part of "R$"
+        expect(text.match(/(?<!R)\$/g)).toBeNull();
+        // Exactly 2 decimal places (pt-BR format: ",dd")
+        expect(formatCurrency(1234.56)).toMatch(/^R\$\s[\d.]+,\d{2}$/);
+    });
+});

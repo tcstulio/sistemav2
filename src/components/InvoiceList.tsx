@@ -15,6 +15,7 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useInvoices, useCustomers, useProjects, useProducts, useShipments, useInvoiceLines, useUsers, usePayments, usePaymentInvoiceLinks } from '../hooks/dolibarr';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
+import { formatCurrency } from '../utils/formatUtils';
 import { RichTextEditor } from './common/RichTextEditor';
 import { CustomerPaymentModal } from './Modals/CustomerPaymentModal';
 import { MasterDetailLayout } from './ui/MasterDetailLayout';
@@ -532,7 +533,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 )}
                                 <div className="flex justify-between items-end">
                                     <span className="text-xs text-slate-500">{formatDateOnly(inv.date)}</span>
-                                    <span className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                    <span className="font-bold text-slate-800 dark:text-white">{formatCurrency(inv.total_ttc)}</span>
                                 </div>
                             </Card>
                         );
@@ -682,7 +683,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                         <div className="flex justify-between items-start mb-6">
                             <div>
                                 <p className="text-sm text-slate-500 uppercase font-bold mb-1">Valor da Fatura</p>
-                                <p className="text-3xl font-bold text-slate-900 dark:text-white">${selectedInvoice.total_ttc.toLocaleString()}</p>
+                                <p className="text-3xl font-bold text-slate-900 dark:text-white">{formatCurrency(selectedInvoice.total_ttc)}</p>
                             </div>
                             <div className="text-right">
                                 <p className="text-sm text-slate-500 uppercase font-bold mb-1">Data</p>
@@ -789,9 +790,9 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                                     )}
                                                 </td>
                                                 <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">{line.qty}</td>
-                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">${line.subprice?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">{formatCurrency(line.subprice)}</td>
                                                 <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">{line.remise_percent ? `${line.remise_percent}%` : '-'}</td>
-                                                <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white font-mono">${line.total_ttc?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                                <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white font-mono">{formatCurrency(line.total_ttc)}</td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -799,7 +800,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                         <tr>
                                             <td colSpan={4} className="px-4 py-3 text-right font-bold text-slate-700 dark:text-slate-300 uppercase text-xs tracking-wider">Total Geral</td>
                                             <td className="px-4 py-3 text-right font-bold text-emerald-600 dark:text-emerald-400 font-mono text-base">
-                                                ${selectedInvoice.total_ttc?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                {formatCurrency(selectedInvoice.total_ttc)}
                                             </td>
                                         </tr>
                                     </tfoot>
@@ -868,7 +869,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                                             {payment ? formatDateOnly(payment.date_payment) : '-'}
                                                         </td>
                                                         <td className="px-4 py-2 text-right font-mono text-slate-700 dark:text-slate-300">
-                                                            ${link.amount?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                            {formatCurrency(link.amount)}
                                                         </td>
                                                     </tr>
                                                 ))}
@@ -880,13 +881,13 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                         <div className="text-right">
                                             <p className="text-xs text-slate-500 uppercase font-bold">Total Pago</p>
                                             <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
-                                                ${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                {formatCurrency(totalPaid)}
                                             </p>
                                         </div>
                                         <div className="text-right">
                                             <p className="text-xs text-slate-500 uppercase font-bold">Saldo Restante</p>
                                             <p className={`text-lg font-bold ${remaining > 0.01 ? 'text-red-500' : 'text-slate-400'}`}>
-                                                ${Math.max(0, remaining).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                {formatCurrency(Math.max(0, remaining))}
                                             </p>
                                         </div>
                                     </div>
@@ -997,7 +998,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                         <div className="flex justify-end mt-4 pt-2 border-t border-slate-100 dark:border-slate-800">
                             <div className="text-right">
                                 <span className="text-xs text-slate-500 uppercase font-bold mr-2">Total (S/ Imposto)</span>
-                                <span className="text-xl font-bold text-slate-800 dark:text-white">${calculateTotal().toFixed(2)}</span>
+                                <span className="text-xl font-bold text-slate-800 dark:text-white">{formatCurrency(calculateTotal())}</span>
                             </div>
                         </div>
                     </div>

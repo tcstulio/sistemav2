@@ -1,6 +1,7 @@
 import React from 'react';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Proposal, Order } from '../../types/sales';
+import { formatCurrency } from '../../utils/formatUtils';
 
 interface SalesTabProps {
     salesStats: any;
@@ -54,18 +55,18 @@ export const SalesTab: React.FC<SalesTabProps> = ({ salesStats, proposals, order
                     <div className="grid grid-cols-2 gap-4">
                         <div className="p-4 bg-gray-50 rounded-lg">
                             <p className="text-xs text-gray-500 uppercase">Volume de Propostas</p>
-                            <p className="text-xl font-bold text-gray-800">R$ {salesStats.proposalsValue.toFixed(2)}</p>
+                            <p className="text-xl font-bold text-gray-800">{formatCurrency(salesStats.proposalsValue)}</p>
                             <p className="text-xs text-gray-400 mt-1">{salesStats.proposalsCount} propostas</p>
                         </div>
                         <div className="p-4 bg-emerald-50 rounded-lg">
                             <p className="text-xs text-emerald-600 uppercase">Vendas Realizadas</p>
-                            <p className="text-xl font-bold text-emerald-700">R$ {salesStats.ordersValue.toFixed(2)}</p>
+                            <p className="text-xl font-bold text-emerald-700">{formatCurrency(salesStats.ordersValue)}</p>
                             <p className="text-xs text-emerald-500 mt-1">{salesStats.ordersCount} pedidos</p>
                         </div>
                         <div className="col-span-2 p-4 bg-blue-50 rounded-lg flex justify-between items-center">
                             <div>
                                 <p className="text-xs text-blue-600 uppercase">Ticket Médio</p>
-                                <p className="text-xl font-bold text-blue-700">R$ {salesStats.avgTicket.toFixed(2)}</p>
+                                <p className="text-xl font-bold text-blue-700">{formatCurrency(salesStats.avgTicket)}</p>
                             </div>
                         </div>
                     </div>
@@ -90,7 +91,7 @@ export const SalesTab: React.FC<SalesTabProps> = ({ salesStats, proposals, order
                                     <td className="px-4 py-2 font-medium">{o.ref}</td>
                                     <td className="px-4 py-2">{o.socid ? `Cliente #${o.socid}` : '-'}</td>
                                     <td className="px-4 py-2">{new Date(o.date_commande || o.datec || 0).toLocaleDateString()}</td>
-                                    <td className="px-4 py-2 text-right text-emerald-600 font-bold">R$ {Number(o.total_ttc).toFixed(2)}</td>
+                                    <td className="px-4 py-2 text-right text-emerald-600 font-bold">{formatCurrency(Number(o.total_ttc))}</td>
                                 </tr>
                             )) : (
                                 <tr>

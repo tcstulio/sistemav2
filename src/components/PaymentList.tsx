@@ -11,7 +11,12 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 import { toast } from 'sonner';
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, EmptyState, ListToolbar } from './ui';
+import { PageHeader, MasterDetailLayout, Card, EmptyState, ListToolbar, Spinner, ErrorState } from './ui';
+
+// Safety-net: garante uma altura mínima para a lista virtualizada mesmo quando o
+// AutoSizer ainda reporta height = 0 (cadeia flex sem altura resolvida). Evita que
+// o react-window não renderize nenhuma linha e a página fique travada (#651).
+const MIN_LIST_HEIGHT = 400;
 
 // Map Dolibarr Payment Mode IDs to Labels
 const PAYMENT_MODES: Record<string, string> = {
@@ -32,10 +37,17 @@ interface PaymentListProps {
 }
 
 const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) => {
-    const { config } = useDolibarr();
+    const { config, isLoading: configLoading, error: configError } = useDolibarr();
 
     // Data Hooks
-    const { data: paymentsData } = usePayments(config);
+    const {
+        data: paymentsData,
+        isLoading: paymentsLoading,
+        isError,
+        isFetching,
+        error: paymentsError,
+        refetch,
+    } = usePayments(config);
     const rawPayments = paymentsData || [];
 
     const { data: invoicesData } = useInvoices(config);
@@ -82,8 +94,6 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
 
     const totalReceived = useMemo(() => payments.reduce((acc, p) => acc + p.amount, 0), [payments]);
 
-    if (!config) return <div className="p-8 text-center flex items-center justify-center gap-2 text-slate-500"><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-500"></div> Carregando...</div>;
-
     // Find linked invoices for a payment
     const getLinkedInvoices = (paymentId: number | string) => {
         const paymentLinks = links.filter(l => String(l.fk_paiement) === String(paymentId));
@@ -102,7 +112,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
         toast.success('Copiado para a área de transferência');
     };
 
-    // Detail derived data
+    // Detail derived data (calculado antes dos guards p/ manter a ordem dos hooks do React)
     const detailData = useMemo(() => {
         if (!selectedPayment) return null;
 
@@ -116,6 +126,39 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
 
         return { bankAccount, author, paymentModeLabel, linkedInvoices };
     }, [selectedPayment, bankAccounts, users, links, invoices]);
+
+    // ---- Guards: loading / error (#648) ----
+    // Config ainda não resolvido (ex.: hidratação do IndexedDB pendente).
+    if (!config || configLoading) {
+        return (
+            <div className="p-8 text-center flex items-center justify-center gap-2 text-slate-500">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-500" /> Carregando...
+            </div>
+        );
+    }
+
+    // Primeira carga dos pagamentos (sem dados ainda) -> spinner centralizado.
+    if (paymentsLoading && !paymentsData) {
+        return (
+            <div className="flex flex-col h-full items-center justify-center gap-3 p-8 bg-slate-50 dark:bg-slate-950">
+                <Spinner size="lg" />
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Carregando pagamentos…</p>
+            </div>
+        );
+    }
+
+    // Erro na query -> card de erro amigável + botão de retry.
+    if (isError) {
+        const errorMessage =
+            (paymentsError instanceof Error ? paymentsError.message : (paymentsError ? String(paymentsError) : '')) ||
+            configError ||
+            'Não foi possível carregar os pagamentos.';
+        return (
+            <div className="flex flex-col h-full items-center justify-center p-8 bg-slate-50 dark:bg-slate-950">
+                <ErrorState message={errorMessage} onRetry={() => refetch()} />
+            </div>
+        );
+    }
 
     return (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
@@ -131,8 +174,17 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
                     subtitle="Histórico de pagamentos recebidos"
                     actions={
                         <div className="flex items-center gap-3">
+                            {isFetching && (
+                                <span
+                                    data-testid="payments-fetching-indicator"
+                                    className="flex items-center gap-1 text-xs text-slate-400 dark:text-slate-500"
+                                    title="Atualizando pagamentos…"
+                                >
+                                    <Spinner size="sm" className="text-slate-400 dark:text-slate-500" />
+                                </span>
+                            )}
                             <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2 rounded-xl border border-emerald-100 dark:border-emerald-800">
-                                <div className="text-emerald-600 dark:text-emerald-400 font-bold text-lg">${totalReceived.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                <div className="text-emerald-600 dark:text-emerald-400 font-bold text-lg">{formatCurrency(totalReceived)}</div>
                                 <div className="text-xs text-emerald-800 dark:text-emerald-300 uppercase font-bold tracking-wide">Total</div>
                             </div>
                             <ListToolbar controls={controls} searchPlaceholder="Buscar pagamento..." />
@@ -147,7 +199,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
                 onCloseDetail={() => setSelectedPayment(null)}
                 listWidth="1/3"
                 list={
-                    <div className="h-full">
+                    <div className={`h-full transition-opacity ${isFetching ? 'opacity-60 pointer-events-none' : 'opacity-100'}`} style={{ minHeight: MIN_LIST_HEIGHT }}>
                         {payments.length === 0 ? (
                             <div className="p-6">
                                 <EmptyState
@@ -160,7 +212,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
                             <AutoSizer>
                                 {({ height, width }: { height: number; width: number }) => (
                                     <ListWindow
-                                        height={height}
+                                        height={Math.max(height, MIN_LIST_HEIGHT)}
                                         width={width}
                                         itemCount={payments.length}
                                         itemSize={120}
@@ -195,7 +247,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
                                                                 </div>
                                                             </div>
                                                             <div className="text-right shrink-0">
-                                                                <div className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">+${p.amount.toLocaleString()}</div>
+                                                                <div className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">+{formatCurrency(p.amount)}</div>
                                                             </div>
                                                         </div>
                                                     </Card>

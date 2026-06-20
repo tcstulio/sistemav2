@@ -3,6 +3,7 @@ import { FileSignature, ShoppingCart } from 'lucide-react';
 import { Proposal, Order } from '../../../types/sales';
 import { AppView } from '../../../types/common';
 import { formatDateOnly } from '../../../utils/dateUtils';
+import { formatCurrency } from '../../../utils/formatUtils';
 
 interface ProjectSalesTabProps {
     proposals: Proposal[];
@@ -38,7 +39,7 @@ export const ProjectSalesTab: React.FC<ProjectSalesTabProps> = ({
                                     <div className="text-xs text-slate-500">{formatDateOnly(p.date)}</div>
                                 </div>
                                 <div className="text-right font-bold text-slate-700 dark:text-slate-300 px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded-full text-xs">
-                                    ${p.total_ttc.toLocaleString()}
+                                    {formatCurrency(p.total_ttc)}
                                 </div>
                             </div>
                         ))
@@ -67,7 +68,7 @@ export const ProjectSalesTab: React.FC<ProjectSalesTabProps> = ({
                                     <div className="text-xs text-slate-500">{formatDateOnly(o.date)}</div>
                                 </div>
                                 <div className="text-right font-bold text-indigo-600 dark:text-indigo-400">
-                                    ${o.total_ttc.toLocaleString()}
+                                    {formatCurrency(o.total_ttc)}
                                 </div>
                             </div>
                         ))

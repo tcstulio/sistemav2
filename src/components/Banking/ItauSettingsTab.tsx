@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useItauBank } from '../../hooks/useItauBank';
 import { saveBankingCredentials, getBankingCredentialsStatus } from '../../services/bankingConfigService';
+import { formatCurrency } from '../../utils/formatUtils';
 
 interface ItauSettingsTabProps {
     onSave?: () => void;
@@ -93,7 +94,7 @@ export function ItauSettingsTab({ onSave }: ItauSettingsTabProps) {
             if (result.success) {
                 setTestResult({
                     success: true,
-                    message: `Conexão OK! Saldo disponível: R$ ${result.saldo?.disponivel?.toFixed(2) || '0.00'}`,
+                    message: `Conexão OK! Saldo disponível: ${formatCurrency(result.saldo?.disponivel ?? 0)}`,
                 });
             } else {
                 setTestResult({
@@ -193,7 +194,7 @@ export function ItauSettingsTab({ onSave }: ItauSettingsTabProps) {
                     <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                         <p className="text-sm text-slate-600 dark:text-slate-400">Saldo Disponível</p>
                         <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                            R$ {saldo.disponivel.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            {formatCurrency(saldo.disponivel)}
                         </p>
                     </div>
                 )}

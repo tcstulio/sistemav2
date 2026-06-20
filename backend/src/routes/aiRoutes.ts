@@ -467,15 +467,22 @@ router.get('/analyze/financial-analysis/automation-config', (req, res) => {
 });
 
 router.put('/analyze/financial-analysis/automation-config', (req, res) => {
+    let updates;
     try {
-        const updates = AutomationConfigSchema.parse(req.body);
-        const config = financialAnalysisStore.saveAutomationConfig(updates);
-        res.status(200).json(config);
+        updates = AutomationConfigSchema.parse(req.body);
     } catch (error: any) {
         if (error instanceof z.ZodError) {
             return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
         }
-        res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: error.message });
+    }
+
+    try {
+        const config = financialAnalysisStore.saveAutomationConfig(updates);
+        return res.status(200).json(config);
+    } catch (err: any) {
+        log.error('Falha ao salvar configuração de automação', { error: err.message, stack: err.stack });
+        return res.status(500).json({ error: 'Falha ao salvar configuração de automação', details: err.message });
     }
 });
 
