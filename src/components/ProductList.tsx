@@ -35,6 +35,7 @@ import {
 } from './ui';
 import { SafeHtml } from '../utils/sanitizeHtml';
 import { notifyError } from '../utils/notifyError';
+import { formatCurrency } from '../utils/formatUtils';
 
 // ============================================
 // Types
@@ -91,7 +92,7 @@ const ProductRow: React.FC<{
                         </div>
                         <div className="shrink-0">{getStockBadge()}</div>
                     </div>
-                    <div className="mt-2 font-bold text-slate-900 dark:text-white">${product.price?.toLocaleString() || 0}</div>
+                    <div className="mt-2 font-bold text-slate-900 dark:text-white">{formatCurrency(Number(product.price) || 0)}</div>
                 </div>
             </div>
         </Card>
@@ -162,7 +163,7 @@ const ProductDetail: React.FC<{
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
                                     <span className="text-xs text-slate-500 uppercase font-bold">Preço</span>
-                                    <div className="font-bold text-xl dark:text-white mt-1">${product.price?.toLocaleString() || 0}</div>
+                                    <div className="font-bold text-xl dark:text-white mt-1">{formatCurrency(Number(product.price) || 0)}</div>
                                 </div>
                                 <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
                                     <span className="text-xs text-slate-500 uppercase font-bold">Tipo</span>
@@ -286,6 +287,8 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
     // Form State
     const [productForm, setProductForm] = useState<Partial<Product>>({ type: '0', price: 0 });
     const [restockSupplierId, setRestockSupplierId] = useState('');
+    const [restockQty, setRestockQty] = useState(10);
+    const [restockDate, setRestockDate] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Initial item selection
@@ -404,7 +407,38 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
 
     const openRestockModal = (supplierId: string) => {
         setRestockSupplierId(supplierId);
+        setRestockQty(10);
+        setRestockDate('');
         setIsRestockModalOpen(true);
+    };
+
+    const handleRestock = async () => {
+        if (!selectedProduct || !restockSupplierId) return;
+        if (!restockQty || restockQty <= 0) {
+            toast.error('Informe uma quantidade válida.');
+            return;
+        }
+        setIsSubmitting(true);
+        try {
+            await DolibarrService.createSupplierOrder(config!, {
+                socid: restockSupplierId,
+                date: Date.now() / 1000,
+                date_livraison: restockDate ? new Date(restockDate).getTime() / 1000 : undefined,
+                lines: [{
+                    fk_product: selectedProduct.id,
+                    desc: selectedProduct.label,
+                    qty: restockQty,
+                    subprice: Number(selectedProduct.price) || 0,
+                    product_type: 0,
+                }],
+            });
+            toast.success(`Pedido de compra criado para ${selectedProduct.label}.`);
+            setIsRestockModalOpen(false);
+        } catch (e: any) {
+            notifyError('Criar pedido de compra', e);
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     // Loading state
@@ -612,7 +646,7 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                 footer={
                     <>
                         <Button variant="secondary" onClick={() => setIsRestockModalOpen(false)}>Cancelar</Button>
-                        <Button icon={<ShoppingCart size={16} />}>Criar Pedido</Button>
+                        <Button icon={<ShoppingCart size={16} />} loading={isSubmitting} onClick={handleRestock}>Criar Pedido</Button>
                     </>
                 }
             >
@@ -620,8 +654,8 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                     <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
                         <span className="text-sm font-medium">{selectedProduct?.label}</span>
                     </div>
-                    <Input label="Quantidade" type="number" defaultValue={10} />
-                    <Input label="Entrega Esperada" type="date" />
+                    <Input label="Quantidade" type="number" value={restockQty} onChange={e => setRestockQty(parseInt(e.target.value) || 0)} />
+                    <Input label="Entrega Esperada" type="date" value={restockDate} onChange={e => setRestockDate(e.target.value)} />
                 </div>
             </Modal>
         </div>

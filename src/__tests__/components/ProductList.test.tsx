@@ -33,7 +33,7 @@ vi.mock('../../hooks/dolibarr', () => ({
     })),
     useCategories: vi.fn(() => ({ data: [] })),
     useBOMs: vi.fn(() => ({ data: [] })),
-    useSuppliers: vi.fn(() => ({ data: [] })),
+    useSuppliers: vi.fn(() => ({ data: [{ id: 'sup1', name: 'Fornecedor Alpha' }] })),
 }));
 
 vi.mock('../../hooks/usePrefill', () => ({
@@ -45,6 +45,7 @@ vi.mock('../../services/dolibarrService', () => ({
         createProduct: vi.fn(),
         updateProduct: vi.fn(),
         deleteProduct: vi.fn(),
+        createSupplierOrder: vi.fn(),
     },
 }));
 
@@ -74,6 +75,7 @@ describe('ProductList — no native alert/confirm', () => {
         vi.clearAllMocks();
         vi.mocked(DolibarrService.createProduct).mockResolvedValue({ id: '99' } as any);
         vi.mocked(DolibarrService.updateProduct).mockResolvedValue({} as any);
+        vi.mocked(DolibarrService.createSupplierOrder).mockResolvedValue({ id: 'PO-1' } as any);
     });
 
     it('renders the page header', () => {
@@ -181,5 +183,87 @@ describe('ProductList — no native alert/confirm', () => {
 
         alertSpy.mockRestore();
         confirmSpy.mockRestore();
+    });
+
+    describe('currency formatting (R$/BRL)', () => {
+        it('renders the product row price in R$ via formatCurrency, not with hardcoded $', () => {
+            render(<ProductList />);
+            // O preço 100 deve aparecer formatado em BRL (R$ 100,00), contendo "R$" e vírgula decimal
+            const priceEl = screen.getByText(/R\$\s*100,00/);
+            expect(priceEl).toBeInTheDocument();
+            // Garante que não há o "$ " cru do padrão antigo
+            expect(priceEl.textContent).toContain('R$');
+        });
+
+        it('renders the detail "Preço" card in R$ via formatCurrency', async () => {
+            const user = userEvent.setup();
+            render(<ProductList />);
+
+            await user.click(screen.getByText('Produto Alpha'));
+
+            // Com o detalhe aberto, tanto a linha da lista quanto o card renderizam em R$
+            const prices = screen.getAllByText(/R\$\s*100,00/);
+            expect(prices.length).toBeGreaterThanOrEqual(2);
+            prices.forEach(el => expect(el.textContent).toContain('R$'));
+        });
+    });
+
+    describe('Restock modal', () => {
+        it('creates a supplier order with controlled inputs and feedback on "Criar Pedido"', async () => {
+            const user = userEvent.setup();
+            render(<ProductList />);
+
+            // Abre o detalhe
+            await user.click(screen.getByText('Produto Alpha'));
+            // Vai para a aba Fornecedores
+            await user.click(screen.getByRole('button', { name: 'Fornecedores' }));
+            // Abre o modal de reposição
+            await user.click(screen.getByRole('button', { name: 'Repor' }));
+
+            expect(screen.getByText('Repor Produto')).toBeInTheDocument();
+
+            // Inputs são controlados: altera a quantidade
+            const qtyInput = screen.getByLabelText('Quantidade');
+            await user.clear(qtyInput);
+            await user.type(qtyInput, '25');
+
+            // Botão não é inerte: cria o pedido de compra
+            await user.click(screen.getByRole('button', { name: 'Criar Pedido' }));
+
+            await waitFor(() => {
+                expect(DolibarrService.createSupplierOrder).toHaveBeenCalledTimes(1);
+            });
+            const callArgs = vi.mocked(DolibarrService.createSupplierOrder).mock.calls[0];
+            const data = callArgs[1] as any;
+            expect(data.socid).toBe('sup1');
+            expect(data.lines[0]).toMatchObject({
+                fk_product: '1',
+                qty: 25,
+                subprice: 100,
+            });
+            await waitFor(() => {
+                expect(toast.success).toHaveBeenCalled();
+            });
+        });
+
+        it('shows an error toast when quantity is invalid and does not call the service', async () => {
+            const user = userEvent.setup();
+            render(<ProductList />);
+
+            await user.click(screen.getByText('Produto Alpha'));
+            await user.click(screen.getByRole('button', { name: 'Fornecedores' }));
+            await user.click(screen.getByRole('button', { name: 'Repor' }));
+
+            const qtyInput = screen.getByLabelText('Quantidade');
+            await user.clear(qtyInput);
+            await user.type(qtyInput, '0');
+
+            await user.click(screen.getByRole('button', { name: 'Criar Pedido' }));
+
+            await waitFor(() => {
+                expect(toast.error).toHaveBeenCalledWith('Informe uma quantidade válida.');
+            });
+            expect(DolibarrService.createSupplierOrder).not.toHaveBeenCalled();
+        });
     });
 });
