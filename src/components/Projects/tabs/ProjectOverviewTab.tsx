@@ -4,6 +4,7 @@ import { Project } from '../../../types/projects';
 import { AppView } from '../../../types/common';
 import { LinkedObjects } from '../../common/LinkedObjects';
 import { formatDateOnly } from '../../../utils/dateUtils';
+import { formatCurrency } from '../../../utils/formatUtils';
 
 interface ProjectOverviewTabProps {
     project: Project;
@@ -78,18 +79,18 @@ export const ProjectOverviewTab: React.FC<ProjectOverviewTabProps> = ({
                         <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
                             <ArrowDown size={18} /> <span className="text-sm font-medium">Faturado</span>
                         </div>
-                        <span className="font-bold text-emerald-700 dark:text-emerald-400">${totalInvoiced.toLocaleString()}</span>
+                        <span className="font-bold text-emerald-700 dark:text-emerald-400">{formatCurrency(totalInvoiced)}</span>
                     </div>
                     <div className="flex items-center justify-between p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-100 dark:border-red-900/30">
                         <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
                             <ArrowUp size={18} /> <span className="text-sm font-medium">Custos</span>
                         </div>
-                        <span className="font-bold text-red-700 dark:text-red-400">${(totalSupplierBills + totalExpenses).toLocaleString()}</span>
+                        <span className="font-bold text-red-700 dark:text-red-400">{formatCurrency(totalSupplierBills + totalExpenses)}</span>
                     </div>
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
                         <span className="text-sm font-bold text-slate-500">Margem</span>
                         <span className={`text-lg font-bold ${margin >= 0 ? 'text-slate-800 dark:text-white' : 'text-red-500'}`}>
-                            ${margin.toLocaleString()}
+                            {formatCurrency(margin)}
                         </span>
                     </div>
                 </div>
