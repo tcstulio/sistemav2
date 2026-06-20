@@ -4,6 +4,7 @@ import { UserAvatar } from './UserAvatar';
 import { formatDuration, getProjectName, getLeaveIcon, getLeaveStatusBadge, getExpenseStatusBadge } from './utils';
 import { UserCheck, Clock, Receipt, Plane, Shield, Edit2, Trash2, X, ArrowLeft, CreditCard, Fingerprint, Mail, Phone, Users, Plus, Calendar, Bot } from 'lucide-react';
 import { formatDateOnly } from '../../utils/dateUtils';
+import { formatCurrency } from '../../utils/formatUtils';
 import { useGroups, useGroupUsers } from '../../hooks/dolibarr';
 import * as HRAdmin from '../../services/api/hrAdmin';
 
@@ -179,7 +180,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                             <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
                                 <h4 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2"><CreditCard size={18} className="text-indigo-500" /> Informações Bancárias</h4>
                                 <div className="space-y-3">
-                                    <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700 flex justify-between items-center"><span className="text-sm text-slate-600 dark:text-slate-400">Salário</span><span className="font-bold text-slate-800 dark:text-white">{(user as any).salary ? `R$ ${Number((user as any).salary).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'Não informado'}</span></div>
+                                    <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700 flex justify-between items-center"><span className="text-sm text-slate-600 dark:text-slate-400">Salário</span><span className="font-bold text-slate-800 dark:text-white">{(user as any).salary ? formatCurrency(Number((user as any).salary)) : 'Não informado'}</span></div>
                                     <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700 flex justify-between items-center"><span className="text-sm text-slate-600 dark:text-slate-400">IBAN</span><span className="font-mono text-xs text-slate-800 dark:text-white">{(user as any).iban || (user as any).bank || 'Não informado'}</span></div>
                                 </div>
                             </div>
@@ -312,7 +313,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                                     </div>
                                 </div>
                                 <div className="text-right">
-                                    <span className="block text-xl font-bold text-slate-900 dark:text-white">${exp.total_ttc.toFixed(2)}</span>
+                                    <span className="block text-xl font-bold text-slate-900 dark:text-white">{formatCurrency(exp.total_ttc)}</span>
                                     <span className="text-xs text-slate-500">Total TTC</span>
                                 </div>
                             </div>

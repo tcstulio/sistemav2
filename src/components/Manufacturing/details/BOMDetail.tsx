@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { BOM, DolibarrConfig, Product } from '../../../types';
 import { ArrowLeft, X, Hammer, Layers, Coins, Package, Pencil } from 'lucide-react';
 import { getProductName, getProductPrice } from '../utils';
+import { formatCurrency } from '../../../utils/formatUtils';
 
 interface BOMDetailProps {
     bom: BOM;
@@ -82,7 +83,7 @@ export const BOMDetail: React.FC<BOMDetailProps> = ({
                                             <span className="text-xs text-slate-500 uppercase font-bold">Custo Estimado</span>
                                             <div className="font-medium text-slate-800 dark:text-white flex items-center gap-1">
                                                 <Coins size={14} className="text-yellow-500" />
-                                                ${bomTotalCost.toLocaleString()}
+                                                {formatCurrency(bomTotalCost)}
                                             </div>
                                             <div className="text-xs text-slate-500">Baseado no custo médio dos componentes</div>
                                         </div>
@@ -128,7 +129,7 @@ export const BOMDetail: React.FC<BOMDetailProps> = ({
                                                     </div>
                                                     <div className="text-right">
                                                         <div className="font-bold text-slate-700 dark:text-slate-300">x{line.qty}</div>
-                                                        <div className="text-xs text-slate-400">Est: ${(line.cost_price || getProductPrice(line.fk_product, products)).toLocaleString()}</div>
+                                                        <div className="text-xs text-slate-400">Est: {formatCurrency(line.cost_price || getProductPrice(line.fk_product, products))}</div>
                                                     </div>
                                                 </div>
                                             </div>
