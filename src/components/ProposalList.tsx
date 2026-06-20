@@ -164,7 +164,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
         setEditingId(prop.id);
         setFormData({
             socid: prop.socid,
-            date: new Date(prop.date).toISOString().split('T')[0],
+            date: new Date(prop.date * 1000).toISOString().split('T')[0],
             project_id: prop.project_id || '',
             note_public: '',
             lines: existingLines.map(l => ({
