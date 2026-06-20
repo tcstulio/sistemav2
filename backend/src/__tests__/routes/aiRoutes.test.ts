@@ -509,7 +509,8 @@ describe('aiRoutes', () => {
                 .put('/api/analyze/financial-analysis/automation-config')
                 .send({ enabled: true });
             expect(res.status).toBe(500);
-            expect(res.body.error).toBe('save fail');
+            expect(res.body.error).toBe('Falha ao salvar configuração de automação');
+            expect(res.body.details).toBe('save fail');
         });
     });
 
