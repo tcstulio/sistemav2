@@ -22,7 +22,7 @@ interface ChatInterfaceProps {
     onBack?: () => void;
 }
 
-export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, elementType, title = "Comentários", height = "400px", onBack }) => {
+export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, elementType, title = "Comentários", height = "100%", onBack }) => {
     const { config, currentUser, refreshData } = useDolibarr();
     const { data: events, isLoading, refetch } = useEvents(config);
     const navigate = useNavigate();
@@ -197,7 +197,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
     if (isLoading) return <div className="p-4 flex justify-center"><Loader2 className="animate-spin" /></div>;
 
     return (
-        <div className="flex flex-col bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700 overflow-hidden" style={{ height }}>
+        <div className="flex flex-col min-h-0 bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700 overflow-hidden" style={{ height }}>
             {/* Header */}
             <div className="p-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 flex justify-between items-center h-[50px]">
                 {!showSearch ? (
@@ -242,7 +242,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
             </div>
 
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50 dark:bg-gray-900/50" ref={scrollRef} onClick={handleInternalLinkClick}>
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 bg-gray-50/50 dark:bg-gray-900/50" ref={scrollRef} onClick={handleInternalLinkClick}>
                 {chatMessages.length === 0 ? (
                     <div className="text-center text-gray-400 py-10 text-sm">Nenhum comentário ainda. Inicie a conversa!</div>
                 ) : (
@@ -312,7 +312,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
             </div>
 
             {/* Input Area */}
-            <div className="p-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col gap-2">
+            <div className="p-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col gap-2 flex-shrink-0">
                 {/* Reply Banner */}
                 {replyingTo && (
                     <div className="flex items-center justify-between text-xs bg-gray-100 dark:bg-gray-700 p-2 rounded border-l-4 border-blue-500 mb-1">
