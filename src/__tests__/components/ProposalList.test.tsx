@@ -242,6 +242,8 @@ describe('ProposalList — Currency standardization (#627 / #639)', () => {
         await screen.findByTestId('list-total-bar');
 
         const formatted = formatCurrency(1234.56); // -> "R$ 1.234,56"
+        expect(formatted).toContain('R$');
+
         // O card da lista E o rodapé (ListTotalBar) renderizam o valor em BRL
         const matches = Array.from(container.querySelectorAll('*')).filter(
             (el) => el.textContent === formatted
@@ -249,10 +251,19 @@ describe('ProposalList — Currency standardization (#627 / #639)', () => {
         expect(matches.length).toBeGreaterThanOrEqual(2);
 
         // Critério de aceite: contém R$ e NÃO exibe "$" sozinho (prefixo USD)
-        expect(formatted).toContain('R$');
         expect(container.textContent).toContain('R$');
         expect(container.textContent).not.toContain('$1,234.56');
         expect(container.textContent).not.toContain('$ 1,234.56');
+
+        // Nenhuma moeda com "$" sozinho (ex.: "$1,234.56") pode aparecer na tela.
+        // Lookbehind robusto: ignora o "$" de "R$" (síntese da tentativa 1).
+        expect(container.textContent || '').not.toMatch(/(?<![rR])\$\s?\d/);
+
+        // Nenhum elemento individual começa com "$" + dígito (síntese da tentativa 2).
+        const bareDollarElements = Array.from(container.querySelectorAll('*')).filter((el) =>
+            /^\$\s?\d/.test(el.textContent || '')
+        );
+        expect(bareDollarElements).toHaveLength(0);
     });
 
     it('renders detail totals in BRL when opening a proposal', async () => {
@@ -269,13 +280,26 @@ describe('ProposalList — Currency standardization (#627 / #639)', () => {
 
         await user.click(await screen.findByText('PRX1'));
 
-        // Totais do detalhe (s/ e c/ imposto) em R$
+        // Asserção granular por célula via label único (síntese da tentativa 2):
+        // os totais s/ e c/ imposto do detalhe precisam estar em R$.
+        const htLabel = await screen.findByText('Total (S/ Imposto)');
+        const ttcLabel = screen.getByText('Total (C/ Imposto)');
+        const htValueCell = htLabel.nextElementSibling as HTMLElement;
+        const ttcValueCell = ttcLabel.nextElementSibling as HTMLElement;
+
+        expect(htValueCell?.textContent).toBe(formatCurrency(1000));
+        expect(htValueCell?.textContent ?? '').toContain('R$');
+        expect(ttcValueCell?.textContent).toBe(formatCurrency(1234.56));
+        expect(ttcValueCell?.textContent ?? '').toContain('R$');
+
+        // Checagem geral do container (síntese da tentativa 3).
         await waitFor(() => {
             expect(container.textContent).toContain(formatCurrency(1000));
             expect(container.textContent).toContain(formatCurrency(1234.56));
         });
         expect(container.textContent).not.toContain('$1,234.56');
         expect(container.textContent).not.toContain('$ 1,234.56');
+        expect(container.textContent || '').not.toMatch(/(?<![rR])\$\s?\d/);
     });
 });
 
