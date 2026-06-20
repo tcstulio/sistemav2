@@ -184,7 +184,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
                                 </span>
                             )}
                             <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-900/20 px-4 py-2 rounded-xl border border-emerald-100 dark:border-emerald-800">
-                                <div className="text-emerald-600 dark:text-emerald-400 font-bold text-lg">${totalReceived.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                <div className="text-emerald-600 dark:text-emerald-400 font-bold text-lg">{formatCurrency(totalReceived)}</div>
                                 <div className="text-xs text-emerald-800 dark:text-emerald-300 uppercase font-bold tracking-wide">Total</div>
                             </div>
                             <ListToolbar controls={controls} searchPlaceholder="Buscar pagamento..." />
@@ -247,7 +247,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
                                                                 </div>
                                                             </div>
                                                             <div className="text-right shrink-0">
-                                                                <div className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">+${p.amount.toLocaleString()}</div>
+                                                                <div className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">+{formatCurrency(p.amount)}</div>
                                                             </div>
                                                         </div>
                                                     </Card>
