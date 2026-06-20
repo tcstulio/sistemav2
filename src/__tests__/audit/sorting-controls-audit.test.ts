@@ -41,6 +41,15 @@ const ALL_FILES = listComponentFiles();
 const SORT_DIRECTION_ICONS = ['ArrowDownAZ', 'ArrowUpAZ'];
 const SORT_AFFORDANCES = ['Ordenar por', 'Inverter ordem'];
 
+// Tokens que indicam estado de ordenação manual conectado a um <select>/botão.
+// Se um componente os usa junto de um <select>, está reimplementando a UI de
+// ordenação fora do ListToolbar — salvo o próprio ListToolbar.
+const SORT_STATE_TOKENS = [
+    'sortKey', 'sortDir', 'toggleSortDir', 'setSortKey',
+    'sortConfig', 'setSortConfig',
+    'orderBy', 'setOrderBy', 'sortBy', 'setSortBy',
+];
+
 function filesContainingAny(needles: string[]): SourceFile[] {
     return ALL_FILES.filter((f) => needles.some((n) => f.content.includes(n)));
 }
@@ -111,6 +120,21 @@ describe('Auditoria #575 — controles de ordenação centralizados no ListToolb
             .filter((f) => allMarkers.some((m) => f.content.includes(m)))
             .map((f) => f.rel);
         expect(offenders).toEqual([]);
+    });
+
+    it('nenhum <select> é conectado a estado de ordenação fora do ListToolbar', () => {
+        // Heurística complementar: mesmo sem os marcadores canônicos (ícones/
+        // affordances), um <select> ligado a sortKey/sortDir/sortConfig/etc. indica
+        // uma UI de ordenação manual. Apenas o ListToolbar pode fazer isso.
+        const offenders = ALL_FILES
+            .filter((f) => f.rel !== TOOLBAR_REL)
+            .filter((f) => f.content.includes('<select'))
+            .filter((f) => SORT_STATE_TOKENS.some((t) => f.content.includes(t)))
+            .map((f) => f.rel);
+        expect(
+            offenders,
+            `<select> com estado de ordenação manual fora do ListToolbar: ${offenders.join(', ')}`,
+        ).toEqual([]);
     });
 
     it('todas as listas documentadas importam o ListToolbar', () => {
