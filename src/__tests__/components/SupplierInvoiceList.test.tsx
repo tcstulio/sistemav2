@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import SupplierInvoiceList from '../../components/SupplierInvoiceList';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import { DolibarrService } from '../../services/dolibarrService';
-import { useSupplierInvoices, useSuppliers } from '../../hooks/dolibarr';
+import { useSupplierInvoices, useSuppliers, useSupplierInvoiceLines, useSupplierPayments, useSupplierPaymentInvoiceLinks } from '../../hooks/dolibarr';
 import type { SupplierInvoice } from '../../types';
 import { formatCurrency } from '../../utils/formatUtils';
 
@@ -288,5 +288,137 @@ describe('SupplierInvoiceList — Total bar (#486)', () => {
         await waitFor(() => {
             expect(screen.getByTestId('list-total-value').textContent).toBe(formatCurrency(800));
         });
+    });
+});
+
+describe('SupplierInvoiceList — Currency standardization (#689)', () => {
+    // Strict text match (avoids getByText whitespace-normalization of the NBSP
+    // inside the BRL string "R$\u00A0X,XX"). Same approach as the InvoiceList #639 test.
+    const findAllWithText = (container: HTMLElement, text: string) =>
+        Array.from(container.querySelectorAll('*')).filter((el) => el.textContent === text);
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        // Defaults: no lines/payments/links (isolate each test from prior overrides)
+        vi.mocked(useSupplierInvoiceLines).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierPayments).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierPaymentInvoiceLinks).mockReturnValue({ data: [] } as any);
+    });
+
+    it('renders the list card total in BRL via formatCurrency (no USD $ prefix)', () => {
+        const { container } = renderWithProvider([mockUnpaidInvoice]); // total_ttc 2500
+
+        const formatted = formatCurrency(2500);
+        const matches = findAllWithText(container, formatted);
+        // List card value + list total bar both render the BRL value
+        expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('renders the detail "Valor Total" in BRL via formatCurrency', async () => {
+        const user = userEvent.setup();
+        const { container } = renderWithProvider([mockUnpaidInvoice]);
+
+        await user.click(screen.getByText('FA-UNPAID-001'));
+
+        await waitFor(() => {
+            expect(screen.getByText('Valor Total')).toBeTruthy();
+        });
+        expect(findAllWithText(container, formatCurrency(2500)).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('renders the items table "Total Geral" footer in BRL via formatCurrency', async () => {
+        const user = userEvent.setup();
+        vi.mocked(useSupplierInvoiceLines).mockReturnValue({
+            data: [
+                { id: 'l1', parent_id: 'inv2', label: 'Item', description: '', qty: 1, vat_rate: 0, subprice: 2500, total_ht: 2500, total_ttc: 2500 },
+            ],
+        } as any);
+
+        const { container } = renderWithProvider([mockUnpaidInvoice]);
+        await user.click(screen.getByText('FA-UNPAID-001'));
+
+        await waitFor(() => {
+            expect(screen.getByText('Total Geral')).toBeTruthy();
+        });
+        expect(findAllWithText(container, formatCurrency(2500)).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('renders each linked payment amount in BRL via formatCurrency', async () => {
+        const user = userEvent.setup();
+        vi.mocked(useSupplierPayments).mockReturnValue({
+            data: [{ id: 99, ref: 'PAY-001', date_payment: '2024-06-10', amount: 1000 }],
+        } as any);
+        vi.mocked(useSupplierPaymentInvoiceLinks).mockReturnValue({
+            data: [{ id: 'lnk1', fk_paiementfourn: '99', fk_facturefourn: 'inv2', amount: 1000 }],
+        } as any);
+
+        const { container } = renderWithProvider([mockUnpaidInvoice]);
+        await user.click(screen.getByText('FA-UNPAID-001'));
+
+        await waitFor(() => {
+            expect(screen.getByText('Saldo Restante')).toBeTruthy();
+        });
+        // Payment value renders as BRL (R$ 1.000,00)
+        expect(findAllWithText(container, formatCurrency(1000)).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('renders the "Saldo Restante" in BRL via formatCurrency', async () => {
+        const user = userEvent.setup();
+        // total 2500, paid 1000 => remaining 1500
+        vi.mocked(useSupplierPayments).mockReturnValue({
+            data: [{ id: 99, ref: 'PAY-001', date_payment: '2024-06-10', amount: 1000 }],
+        } as any);
+        vi.mocked(useSupplierPaymentInvoiceLinks).mockReturnValue({
+            data: [{ id: 'lnk1', fk_paiementfourn: '99', fk_facturefourn: 'inv2', amount: 1000 }],
+        } as any);
+
+        const { container } = renderWithProvider([mockUnpaidInvoice]);
+        await user.click(screen.getByText('FA-UNPAID-001'));
+
+        await waitFor(() => {
+            expect(screen.getByText('Saldo Restante')).toBeTruthy();
+        });
+        expect(findAllWithText(container, formatCurrency(1500)).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('renders the "Saldo Restante" as BRL R$ 0,00 when fully paid (no bare 0.00)', async () => {
+        const user = userEvent.setup();
+        // total 2500, paid 2500 => remaining 0
+        vi.mocked(useSupplierPayments).mockReturnValue({
+            data: [{ id: 99, ref: 'PAY-001', date_payment: '2024-06-10', amount: 2500 }],
+        } as any);
+        vi.mocked(useSupplierPaymentInvoiceLinks).mockReturnValue({
+            data: [{ id: 'lnk1', fk_paiementfourn: '99', fk_facturefourn: 'inv2', amount: 2500 }],
+        } as any);
+
+        const { container } = renderWithProvider([mockUnpaidInvoice]);
+        await user.click(screen.getByText('FA-UNPAID-001'));
+
+        await waitFor(() => {
+            expect(screen.getByText('Saldo Restante')).toBeTruthy();
+        });
+        expect(findAllWithText(container, formatCurrency(0)).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('never renders a raw "$" dollar prefix for any monetary value', async () => {
+        const user = userEvent.setup();
+        vi.mocked(useSupplierInvoiceLines).mockReturnValue({
+            data: [
+                { id: 'l1', parent_id: 'inv2', label: 'Item', description: '', qty: 1, vat_rate: 0, subprice: 2500, total_ht: 2500, total_ttc: 2500 },
+            ],
+        } as any);
+
+        const { container } = renderWithProvider([mockUnpaidInvoice]);
+        await user.click(screen.getByText('FA-UNPAID-001'));
+
+        await waitFor(() => {
+            expect(screen.getByText('Valor Total')).toBeTruthy();
+        });
+
+        // No element should expose a bare "$<digit>" dollar-style currency string
+        const dollarMatches = Array.from(container.querySelectorAll('*')).filter((el) =>
+            /\$\d/.test(el.textContent || '')
+        );
+        expect(dollarMatches).toHaveLength(0);
     });
 });
