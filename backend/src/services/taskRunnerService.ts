@@ -814,6 +814,19 @@ class TaskRunnerService {
                 log.warn(`Planner error for #${task.issueNumber}, proceeding without planner: ${plannerErr.message}`);
             }
 
+            // Cota esgotada já na triagem (o Planner é uma chamada LLM): não inicia o opencode —
+            // devolve à fila. Evita um run inteiro de opencode que só tomaria 429.
+            if (isQuotaExhausted()) {
+                task.status = 'pending';
+                task.startedAt = undefined;
+                task.updatedAt = new Date().toISOString();
+                this.recordEvent(task, 'quota_hold', '⏸️ Cota de LLM esgotada na triagem — aguardando a API voltar (auto-retoma)', { quotaHold: true });
+                this.emitLog(task.issueNumber, 'warn', 'Cota de LLM esgotada — task segurada antes do run (auto-retoma).');
+                this.save();
+                this.emitStatus(task);
+                return;
+            }
+
             task.status = activeStatus;
             task.startedAt = new Date().toISOString();
             task.killRequested = false; // limpa flag de kill de execução anterior (watchdog/cancel) p/ não pré-matar um retry
