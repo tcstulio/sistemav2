@@ -12,6 +12,7 @@ import { getProjectActivity } from '../../utils/analytics/projects';
 import ReactMarkdown from 'react-markdown';
 import { Loader2, TrendingUp, DollarSign, Users, Briefcase, FileText, ChevronRight } from 'lucide-react';
 import { logger } from '../../utils/logger';
+import { formatCurrency } from '../../utils/formatUtils';
 
 const log = logger.child('MonthlyReport');
 
@@ -128,8 +129,8 @@ export const MonthlyReport: React.FC = () => {
 
             {/* KPI Summary (Always Visible) */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                <Card title="Resultado Líquido" value={`R$ ${financialStats.net.toFixed(2)}`} color={financialStats.net >= 0 ? 'green' : 'red'} />
-                <Card title="Receita Vendas" value={`R$ ${salesStats.ordersValue.toFixed(2)}`} subValue={`${salesStats.ordersCount} pedidos`} color="blue" />
+                <Card title="Resultado Líquido" value={formatCurrency(financialStats.net)} color={financialStats.net >= 0 ? 'green' : 'red'} />
+                <Card title="Receita Vendas" value={formatCurrency(salesStats.ordersValue)} subValue={`${salesStats.ordersCount} pedidos`} color="blue" />
                 <Card title="Projetos Ativos" value={projectStats.activeCount.toString()} subValue={`${projectStats.tasksCompleted} tarefas entr.`} color="purple" />
                 <Card title="Equipe Ativa" value={hrStats.headcount.toString()} subValue={`${hrStats.activeLeaves} em licença`} color="orange" />
             </div>

@@ -7,6 +7,7 @@ import { useSuppliers, useProducts } from '../../hooks/dolibarr';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { logger } from '../../utils/logger';
 import { useConfirm } from '../../hooks/useConfirm';
+import { formatCurrency } from '../../utils/formatUtils';
 
 const log = logger.child('ReceiptWizard');
 
@@ -597,17 +598,17 @@ export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoice
             <div className={`mt-4 p-4 rounded-xl border ${isTotalMatching ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800'}`}>
                 <div className="flex justify-between items-center mb-1">
                     <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Total dos Itens:</span>
-                    <span className="font-bold text-slate-900 dark:text-white">${itemsTotal.toFixed(2)}</span>
+                    <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(itemsTotal)}</span>
                 </div>
                 <div className="flex justify-between items-center">
                     <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Total do Recibo:</span>
-                    <span className="font-bold text-slate-900 dark:text-white">${invoiceData.total.toFixed(2)}</span>
+                    <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(invoiceData.total)}</span>
                 </div>
 
                 {!isTotalMatching && (
                     <div className="flex items-center gap-2 mt-2 text-xs text-orange-600 dark:text-orange-400 font-medium">
                         <AlertTriangle size={12} />
-                        <span>Os valores não batem (Diferença: ${difference.toFixed(2)})</span>
+                        <span>Os valores não batem (Diferença: {formatCurrency(difference)})</span>
                     </div>
                 )}
             </div>
@@ -658,7 +659,7 @@ export const ReceiptWizard: React.FC<ReceiptWizardProps> = ({ onClose, onInvoice
                 </div>
                 <div className="border-t border-slate-200 dark:border-slate-700 pt-2 flex justify-between font-bold">
                     <span className="text-slate-700 dark:text-slate-300">Total:</span>
-                    <span className="text-emerald-600 dark:text-emerald-400">${itemsTotal.toFixed(2)}</span>
+                    <span className="text-emerald-600 dark:text-emerald-400">{formatCurrency(itemsTotal)}</span>
                 </div>
             </div>
 
