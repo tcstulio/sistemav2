@@ -112,8 +112,8 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
             toolCalls.push({ tool, args, result: result.slice(0, 2000), duration });
             try {
                 agentActivityService.record({
-                    userId: user?.id || 'unknown',
-                    userName: [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'unknown',
+                    userId: user?.id || dolibarrUserId || '',
+                    userName: [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'Agente',
                     tool,
                     args,
                     result: result.slice(0, 500),
