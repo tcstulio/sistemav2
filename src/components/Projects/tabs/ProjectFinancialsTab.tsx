@@ -3,6 +3,7 @@ import { Receipt } from 'lucide-react';
 import { Invoice, SupplierInvoice } from '../../../types/sales';
 import { AppView } from '../../../types/common';
 import { formatDateOnly } from '../../../utils/dateUtils';
+import { formatCurrency } from '../../../utils/formatUtils';
 
 interface ProjectFinancialsTabProps {
     invoices: Invoice[];
@@ -38,7 +39,7 @@ export const ProjectFinancialsTab: React.FC<ProjectFinancialsTabProps> = ({
                                     <div className="text-xs text-slate-500">{formatDateOnly(inv.date)}</div>
                                 </div>
                                 <div className="text-right font-bold text-emerald-600 dark:text-emerald-400">
-                                    ${inv.total_ttc.toLocaleString()}
+                                    {formatCurrency(inv.total_ttc)}
                                 </div>
                             </div>
                         ))
@@ -66,7 +67,7 @@ export const ProjectFinancialsTab: React.FC<ProjectFinancialsTabProps> = ({
                                     <div className="text-xs text-slate-500">{inv.label || 'Sem descrição'}</div>
                                 </div>
                                 <div className="text-right font-bold text-red-600 dark:text-red-400">
-                                    -${inv.total_ttc.toLocaleString()}
+                                    -{formatCurrency(inv.total_ttc)}
                                 </div>
                             </div>
                         ))

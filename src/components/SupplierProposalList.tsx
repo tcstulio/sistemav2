@@ -13,6 +13,7 @@ import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { useListControls } from '../hooks/useListControls';
 import { notifyError } from '../utils/notifyError';
+import { formatCurrency } from '../utils/formatUtils';
 
 // Design System
 import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, StatusBadge, ListToolbar, ListTotalBar, ConfirmDeleteButton } from './ui';
@@ -453,7 +454,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                             <span className="text-sm font-bold text-slate-900 dark:text-white">
-                                ${proposal.total_ht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                {formatCurrency(proposal.total_ht)}
                             </span>
                             {(proposal.statut === '0' || proposal.statut === '1') && (
                                 <ConfirmDeleteButton
@@ -661,8 +662,8 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                                             <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(line.description || '') }} className="prose dark:prose-invert text-sm max-w-none line-clamp-2" />
                                         </td>
                                         <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">{line.qty}</td>
-                                        <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">${line.subprice?.toLocaleString()}</td>
-                                        <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white">${line.total_ht.toLocaleString()}</td>
+                                        <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400">{formatCurrency(line.subprice)}</td>
+                                        <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white">{formatCurrency(line.total_ht)}</td>
                                     </tr>
                                 ))}
                                 {(proposalLines.filter(l => String(l.parent_id) === String(selectedProposal.id))).length === 0 && (
@@ -676,7 +677,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                             <tfoot className="bg-slate-50 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800">
                                 <tr>
                                     <td colSpan={3} className="px-4 py-3 text-right font-bold text-slate-600 dark:text-slate-400 uppercase text-xs tracking-wider">Total (HT)</td>
-                                    <td className="px-4 py-3 text-right font-bold text-indigo-600 dark:text-indigo-400 text-base">${selectedProposal.total_ht.toLocaleString()}</td>
+                                    <td className="px-4 py-3 text-right font-bold text-indigo-600 dark:text-indigo-400 text-base">{formatCurrency(selectedProposal.total_ht)}</td>
                                 </tr>
                             </tfoot>
                         </table>
@@ -848,7 +849,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                                                     <div className="flex-1 text-right">
                                                         <span className="text-[10px] text-slate-500 block">Total</span>
                                                         <div className="text-sm font-bold text-slate-700 dark:text-slate-300 py-1">
-                                                            ${line.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                            {formatCurrency(line.total)}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -876,7 +877,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                                     <div className="text-right">
                                         <span className="text-xs text-slate-500 uppercase font-bold">Total Estimado</span>
                                         <div className="text-xl font-bold text-indigo-600 dark:text-indigo-400">
-                                            ${formData.lines.reduce((acc, curr) => acc + curr.total, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                            {formatCurrency(formData.lines.reduce((acc, curr) => acc + curr.total, 0))}
                                         </div>
                                     </div>
                                 </div>

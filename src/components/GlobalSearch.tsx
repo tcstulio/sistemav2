@@ -3,6 +3,7 @@ import { Search, X, Users, FolderKanban, FileText, Package, Ticket as TicketIcon
 import { ThirdParty, Project, Invoice, Product, Ticket, AppView, Order, Contract, DolibarrUser, BankLine } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useCustomers, useSuppliers, useProjects, useInvoices, useOrders, useContracts, useTickets, useProducts, useUsers, useBankAccounts, useBankLines } from '../hooks/dolibarr';
+import { formatCurrency } from '../utils/formatUtils';
 
 interface GlobalSearchProps {
   isOpen: boolean;
@@ -81,7 +82,7 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({ isOpen, onClose, onNavigate
     const matchedInvoices = safeInvoices
       .filter(i => i.ref.toLowerCase().includes(lowerQuery))
       .slice(0, limit)
-      .map(i => ({ type: 'Fatura', id: i.id, label: i.ref, subLabel: `Total: $${i.total_ttc}`, icon: FileText, view: 'invoices' as AppView }));
+      .map(i => ({ type: 'Fatura', id: i.id, label: i.ref, subLabel: `Total: ${formatCurrency(i.total_ttc)}`, icon: FileText, view: 'invoices' as AppView }));
 
     const matchedOrders = safeOrders
       .filter(o => o.ref.toLowerCase().includes(lowerQuery))
@@ -106,7 +107,7 @@ const GlobalSearch: React.FC<GlobalSearchProps> = ({ isOpen, onClose, onNavigate
     const matchedPayments = safeBankLines
       .filter(l => l.amount > 0 && (l.label.toLowerCase().includes(lowerQuery)))
       .slice(0, limit)
-      .map(l => ({ type: 'Pagamento', id: '', label: l.label, subLabel: `$${l.amount}`, icon: TrendingUp, view: 'payments' as AppView }));
+      .map(l => ({ type: 'Pagamento', id: '', label: l.label, subLabel: `${formatCurrency(l.amount)}`, icon: TrendingUp, view: 'payments' as AppView }));
 
     return [
       ...matchedCustomers,

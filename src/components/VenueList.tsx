@@ -13,6 +13,7 @@ import {
     PricingLabels
 } from '../types/venue';
 import { fetchList } from '../services/api/core';
+import { formatCurrency } from '../utils/formatUtils';
 import { AppView } from '../types';
 import { formatDateOnly } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
@@ -161,7 +162,7 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue 
 
     const formatPrice = (price: number | null) => {
         if (price === null) return 'Sob consulta';
-        return `R$ ${price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+        return formatCurrency(price);
     };
 
     const handleSelectForSimulator = () => {
