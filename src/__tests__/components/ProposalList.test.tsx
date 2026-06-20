@@ -96,6 +96,10 @@ vi.mock('../../utils/sanitizeHtml', () => ({
     sanitizeHtml: (html: string) => html,
 }));
 
+vi.mock('../../components/common/LinkedObjects', () => ({
+    LinkedObjects: () => null,
+}));
+
 const mockConfig = { apiUrl: 'http://test', apiKey: 'key' };
 
 const renderComponent = (props?: Record<string, any>) =>
@@ -243,5 +247,47 @@ describe('ProposalList — Currency standardization (#639)', () => {
         );
         // The row total AND the total bar both render the BRL value
         expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+});
+
+describe('ProposalList — Edit date conversion (#626)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('shows the correct date in the edit form when date is in unix seconds', async () => {
+        // date: 1718000000 = ~10/06/2024 (unix SEGUNDOS, como retornado pela API)
+        vi.mocked(useProposals).mockReturnValue({
+            data: [
+                {
+                    id: 'prop-date',
+                    ref: 'PR-DATE-001',
+                    socid: 'cust1',
+                    date: 1718000000,
+                    total_ht: 1000,
+                    total_ttc: 1200,
+                    statut: '1',
+                    project_id: null,
+                    fk_user_author: null,
+                },
+            ],
+            isRefetching: false,
+            refetch: vi.fn(),
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        // Seleciona a proposta para abrir o detail view
+        await user.click(await screen.findByText('PR-DATE-001'));
+
+        // Abre o formulário de edição pelo botão "Editar" do detail view
+        await user.click(await screen.findByText('Editar'));
+
+        // O input[type=date] deve mostrar 2024-06-10 (segundos convertidos p/ ms),
+        // e NÃO uma data de 1970 (que ocorreria ao tratar segundos como milissegundos).
+        const dateInput = await screen.findByDisplayValue('2024-06-10') as HTMLInputElement;
+        expect(dateInput).toBeTruthy();
+        expect(dateInput.type).toBe('date');
     });
 });
