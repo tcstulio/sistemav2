@@ -9,6 +9,7 @@ import { logger } from '../utils/logger';
 import { aiService } from './aiService';
 import { aiJobService } from './aiJobService';
 import { isQuotaError, isQuotaExhausted, markQuotaExhausted, clearQuotaExhausted, quotaStatus } from './llmQuotaState';
+import { isPeakUtcHour } from '../utils/peakWindow';
 import { socketService } from './socketService';
 import { killTree, isAlive, killOpencodeOrphans } from '../utils/processTree';
 import { runOpencode, resolveBash } from '../utils/runOpencode';
@@ -380,6 +381,18 @@ class TaskRunnerService {
             }
             log.info('✅ Sonda de cota: API VOLTOU — retomando o cascade automaticamente.');
             this.autoPlayNext();
+        }
+        // Retomada off-peak: se saiu do pico (e sem bloqueio de cota) e o cascade está PARADO
+        // com fila pendente, religa. Também recupera um cascade que parou por qualquer motivo.
+        if (!isQuotaExhausted() && !this.isPeakHold()) {
+            try {
+                const cfg = this.getAutomationConfig();
+                const active = Object.values(this.store.tasks).some((t) => t.status === 'running' || t.status === 'fixing');
+                if (cfg.autoPlay && !active && this.pendingExecs === 0 && this.getQueuedTasks().length > 0) {
+                    log.info('Off-peak + fila pendente + cascade parado — retomando dispatch.');
+                    this.autoPlayNext();
+                }
+            } catch { /* best-effort */ }
         }
         const before = new Set(Object.keys(this.store.tasks).map(Number));
         await this.syncWithGitHub();
@@ -900,9 +913,23 @@ class TaskRunnerService {
         }
     }
 
-    /** Estado de cota de LLM (esgotada? desde quando? motivo?) — p/ UI mostrar "em espera". */
+    /** Estado de cota de LLM (esgotada? desde quando? motivo?) + hold de pico — p/ UI. */
     getQuotaStatus() {
-        return quotaStatus();
+        return { ...quotaStatus(), peakHold: this.isPeakHold() };
+    }
+
+    /**
+     * Horário de PICO do Z.AI (GLM consome 3x a cota): 14:00–18:00 UTC+8 = 06:00–10:00 UTC
+     * = 03:00–07:00 BRT. Off-peak é 1x (promoção até set/2026). Como o teto é SEMANAL, rodar
+     * no pico queima a cota 3x mais rápido -> MENOS tasks por semana. Por isso o robô NÃO
+     * despacha durante o pico (a task em execução não é morta; só novos dispatches seguram).
+     * Janela configurável por env; desligável com TASKRUNNER_PEAK_HOLD=false.
+     */
+    private isPeakHold(): boolean {
+        if (process.env.TASKRUNNER_PEAK_HOLD === 'false') return false;
+        const start = Number(process.env.TASKRUNNER_PEAK_UTC_START ?? 6);  // 06:00 UTC
+        const end = Number(process.env.TASKRUNNER_PEAK_UTC_END ?? 10);     // 10:00 UTC
+        return isPeakUtcHour(new Date().getUTCHours(), start, end);
     }
 
     private autoPlayNext() {
@@ -910,6 +937,9 @@ class TaskRunnerService {
         if (!config.autoPlay) return;
         // Cota esgotada: NÃO despacha (evita queimar tasks em 429). A sonda em pollSync retoma quando volta.
         if (isQuotaExhausted()) { log.warn('Auto-play em espera: cota de LLM esgotada — aguardando sonda confirmar retorno da API.'); return; }
+        // Horário de pico (3x): segura o dispatch p/ não queimar a cota semanal 3x mais rápido.
+        // A task em execução segue; só novos dispatches esperam o off-peak (pollSync retoma).
+        if (this.isPeakHold()) { log.info('Auto-play em hold de PICO (GLM 3x) — aguardando off-peak (retoma ~07:00 BRT / 10:00 UTC).'); return; }
         const queued = this.getQueuedTasks();
         if (queued.length === 0) return;
         const next = queued[0];
