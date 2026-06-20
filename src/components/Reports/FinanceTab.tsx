@@ -1,6 +1,7 @@
 import React from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 import { Payment, SupplierPayment } from '../../types/finance';
+import { formatCurrency } from '../../utils/formatUtils';
 
 interface FinanceTabProps {
     financialStats: any;
@@ -39,7 +40,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({ financialStats, payments
                                 <CartesianGrid strokeDasharray="3 3" />
                                 <XAxis dataKey="name" />
                                 <YAxis />
-                                <Tooltip formatter={(value) => `R$ ${Number(value).toFixed(2)}`} />
+                                <Tooltip formatter={(value) => formatCurrency(Number(value))} />
                                 <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                                     {[0, 1, 2].map((entry, index) => (
                                         <Cell key={`cell-${index}`} fill={index === 1 ? '#EF4444' : index === 2 ? '#10B981' : '#3B82F6'} />
@@ -69,7 +70,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({ financialStats, payments
                                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                     ))}
                                 </Pie>
-                                <Tooltip formatter={(value) => `R$ ${Number(value).toFixed(2)}`} />
+                                <Tooltip formatter={(value) => formatCurrency(Number(value))} />
                                 <Legend />
                             </PieChart>
                         </ResponsiveContainer>
@@ -96,7 +97,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({ financialStats, payments
                                     <td className="px-4 py-2 font-medium">{p.ref}</td>
                                     <td className="px-4 py-2">{new Date(p.date_payment).toLocaleDateString()}</td>
                                     <td className="px-4 py-2 text-gray-500 truncate max-w-xs">{p.note || '-'}</td>
-                                    <td className="px-4 py-2 text-right text-red-600 font-bold">R$ {Number(p.amount).toFixed(2)}</td>
+                                    <td className="px-4 py-2 text-right text-red-600 font-bold">{formatCurrency(Number(p.amount))}</td>
                                 </tr>
                             )) : (
                                 <tr>

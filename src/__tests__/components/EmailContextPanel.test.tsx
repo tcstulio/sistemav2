@@ -4,7 +4,8 @@ import { EmailContextPanel } from '../../components/Email/EmailContextPanel';
 import { ThirdParty, Invoice, Order, Ticket } from '../../types';
 
 vi.mock('../../utils/dateUtils', () => ({
-    formatDateOnly: vi.fn((date: number) => new Date(date * 1000).toLocaleDateString('pt-BR'))
+    formatDateOnly: vi.fn((date: number) => new Date(date * 1000).toLocaleDateString('pt-BR')),
+    formatDateLocal: vi.fn((ts: number) => String(ts)),
 }));
 
 describe('EmailContextPanel', () => {

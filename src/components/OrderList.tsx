@@ -9,6 +9,7 @@ import { useOrders, useCustomers, useShipments, useInvoices, useUsers } from '..
 import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
+import { formatCurrency } from '../utils/formatUtils';
 import { logger } from '../utils/logger';
 
 const log = logger.child('OrderList');
@@ -195,7 +196,7 @@ const OrderDetail: React.FC<{
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                                         <div>
                                             <p className="text-sm text-slate-500 uppercase font-bold mb-1">Valor Total</p>
-                                            <p className="text-3xl font-bold text-slate-900 dark:text-white">${order.total_ttc.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                                            <p className="text-3xl font-bold text-slate-900 dark:text-white">{formatCurrency(order.total_ttc)}</p>
                                         </div>
                                         <div>
                                             <p className="text-sm text-slate-500 uppercase font-bold mb-1">Data</p>
@@ -226,7 +227,7 @@ const OrderDetail: React.FC<{
                                                             <div className="font-medium text-slate-800 dark:text-white text-sm">{line.desc || line.label}</div>
                                                             <div className="text-xs text-slate-500">Qtd: {line.qty}</div>
                                                         </div>
-                                                        <div className="text-right font-medium text-slate-800 dark:text-white">${line.price.toLocaleString()}</div>
+                                                        <div className="text-right font-medium text-slate-800 dark:text-white">{formatCurrency(line.price)}</div>
                                                     </div>
                                                 ))
                                             ) : (
@@ -302,7 +303,7 @@ const OrderDetail: React.FC<{
                                                 </div>
                                                 <div className="text-xs text-slate-500 mt-1">{formatDateOnly(inv.date)}</div>
                                             </div>
-                                            <div className="text-right font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString()}</div>
+                                            <div className="text-right font-bold text-slate-800 dark:text-white">{formatCurrency(inv.total_ttc)}</div>
                                         </div>
                                     ))
                                 )}
@@ -633,7 +634,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                         <div className="flex justify-end mt-4 pt-2 border-t border-slate-100 dark:border-slate-800">
                             <div className="text-right">
                                 <span className="text-xs text-slate-500 uppercase font-bold mr-2">Total (S/ Imposto)</span>
-                                <span className="text-xl font-bold text-slate-800 dark:text-white">${calculateOrderTotal().toFixed(2)}</span>
+                                <span className="text-xl font-bold text-slate-800 dark:text-white">{formatCurrency(calculateOrderTotal())}</span>
                             </div>
                         </div>
                     </div>
@@ -758,7 +759,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                                     <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-1 line-clamp-1">{getCustomerName(ord.socid)}</h3>
                                     <div className="flex justify-between items-end">
                                         <span className="text-xs text-slate-500">{formatDateOnly(ord.date)}</span>
-                                        <span className="font-bold text-slate-800 dark:text-white">${ord.total_ttc.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                        <span className="font-bold text-slate-800 dark:text-white">{formatCurrency(ord.total_ttc)}</span>
                                     </div>
                                 </Card>
                             ))}
