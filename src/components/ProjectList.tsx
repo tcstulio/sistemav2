@@ -400,8 +400,6 @@ const ProjectList: React.FC<{
     const { data: projectContacts = [] } = useProjectContacts(config);
     const { data: contacts = [] } = useContacts(config);
 
-    if (!config) return <div className="p-8 text-center"><Loader2 className="animate-spin mx-auto" /></div>;
-
     // Pagination
     const [page, setPage] = useState(0);
     const [limit, setLimit] = useState(20);
@@ -791,6 +789,8 @@ const ProjectList: React.FC<{
         await DolibarrService.deleteTicket(config, ticketId);
         if (refreshData) refreshData();
     };
+
+    if (!config) return <div className="p-8 text-center"><Loader2 className="animate-spin mx-auto" /></div>;
 
     return (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
