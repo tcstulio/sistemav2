@@ -8,6 +8,7 @@ import { atomicWriteSync } from '../utils/atomicWrite';
 import { logger } from '../utils/logger';
 import { aiService } from './aiService';
 import { aiJobService } from './aiJobService';
+import { isQuotaError, isQuotaExhausted, markQuotaExhausted, clearQuotaExhausted, quotaStatus } from './llmQuotaState';
 import { socketService } from './socketService';
 import { killTree, isAlive, killOpencodeOrphans } from '../utils/processTree';
 import { runOpencode, resolveBash } from '../utils/runOpencode';
@@ -78,6 +79,7 @@ export type TaskEventType =
     | 'task_rejected'
     | 'task_killed'
     | 'task_watchdog_timeout'
+    | 'quota_hold'
     | 'worktree_setup_started'
     | 'worktree_setup_completed'
     | 'worktree_cleanup'
@@ -363,6 +365,22 @@ class TaskRunnerService {
     }
 
     private async pollSync() {
+        // Sonda de cota: se a cota/saldo de LLM esgotou, testa com uma chamada barata se já voltou.
+        // Sucesso limpa o sinal (dentro de postChatCompletion) -> retoma o cascade automaticamente.
+        // Falha -> segue segurando, sem detectar/auto-iniciar nada (não queima tasks em 429).
+        if (isQuotaExhausted()) {
+            const st = quotaStatus();
+            log.warn(`Sonda de cota: LLM esgotado (${st.reason || 'sem detalhe'}) — testando se voltou...`);
+            try {
+                await aiService.generateReply([{ role: 'user', parts: 'ping' } as any], '', undefined, 'chat');
+            } catch { /* o estado de cota é atualizado DENTRO da chamada (mark/clear) */ }
+            if (isQuotaExhausted()) {
+                log.warn('Sonda de cota: ainda indisponível — novo teste no próximo ciclo.');
+                return; // mantém a fila congelada enquanto a API estiver fora
+            }
+            log.info('✅ Sonda de cota: API VOLTOU — retomando o cascade automaticamente.');
+            this.autoPlayNext();
+        }
         const before = new Set(Object.keys(this.store.tasks).map(Number));
         await this.syncWithGitHub();
         const tasks = await this.syncTasks();
@@ -827,6 +845,19 @@ class TaskRunnerService {
             // quando o kill/exec falha ou lança.)
             if (this.isTerminalStatus(task.status) || task.status === 'cancelling') {
                 log.warn(`Task #${task.issueNumber} encerrou (${task.status}) durante a execução (kill/timeout): ${e?.message || e}`);
+            } else if (isQuotaExhausted() || isQuotaError(e?.message)) {
+                // Cota/saldo de LLM esgotado (429/1310/402/...): NÃO é falha da TASK, é infra temporária.
+                // Devolve a task à fila (pending) em vez de failed — senão o backlog seria destruído
+                // durante a pane. O dispatch é segurado (autoPlayNext skip) e a sonda em pollSync retoma
+                // automaticamente quando a API voltar. Erro de cota nunca consome a task.
+                markQuotaExhausted(e?.message || 'quota');
+                task.status = 'pending';
+                task.startedAt = undefined;
+                task.updatedAt = new Date().toISOString();
+                this.recordEvent(task, 'quota_hold', `⏸️ Cota de LLM esgotada — task devolvida à fila; retoma automaticamente quando a API voltar`, { quotaHold: true, error: e?.message });
+                this.emitLog(task.issueNumber, 'warn', 'Cota de LLM esgotada — segurando a fila até a API voltar (auto-retoma).');
+                this.save();
+                this.emitStatus(task);
             } else {
                 log.error(`Task #${task.issueNumber} failed`, e);
                 task.status = 'failed';
@@ -856,9 +887,16 @@ class TaskRunnerService {
         }
     }
 
+    /** Estado de cota de LLM (esgotada? desde quando? motivo?) — p/ UI mostrar "em espera". */
+    getQuotaStatus() {
+        return quotaStatus();
+    }
+
     private autoPlayNext() {
         const config = this.getAutomationConfig();
         if (!config.autoPlay) return;
+        // Cota esgotada: NÃO despacha (evita queimar tasks em 429). A sonda em pollSync retoma quando volta.
+        if (isQuotaExhausted()) { log.warn('Auto-play em espera: cota de LLM esgotada — aguardando sonda confirmar retorno da API.'); return; }
         const queued = this.getQueuedTasks();
         if (queued.length === 0) return;
         const next = queued[0];
@@ -1235,6 +1273,9 @@ class TaskRunnerService {
             try {
                 const stdout = await this.runOpencodeIsolated(task);
                 this.recordEvent(task, 'opencode_output', `Round ${round} — output`, { attempt: round, phase: 'exploring', output: String(stdout).substring(0, 5000) });
+                // opencode usa o GLM por dentro: se a saída tem marcador de cota (429/limit exhausted),
+                // sinaliza esgotamento p/ a task não ser tratada como "sem mudança = falha".
+                if (isQuotaError(String(stdout))) markQuotaExhausted(`opencode round ${round}: cota esgotada`);
             } catch (e: any) {
                 // Cancel do USUÁRIO (killTask setou status cancelling/cancelled) — inclusive quando
                 // o kill falhou e o runOpencode foi settle à força: aborta de verdade (#644).
@@ -1250,6 +1291,7 @@ class TaskRunnerService {
                 }
                 // timeout/erro: o progresso parcial é PRESERVADO (não reseta) — registra e segue.
                 this.recordEvent(task, 'error', `Round ${round}: opencode ${String(e.message || e).substring(0, 200)} (progresso parcial mantido)`, { attempt: round, error: e.message });
+                if (isQuotaError(e?.message)) markQuotaExhausted(`opencode round ${round}: ${String(e?.message).slice(0, 80)}`);
             }
 
             // Stage TUDO (qualquer dir, inclui arquivos novos), exceto o PROMPT_FILE — assim a
@@ -1297,6 +1339,17 @@ class TaskRunnerService {
         }
 
         if (!anyChange) {
+            if (isQuotaExhausted()) {
+                // "Sem mudança" causado por cota esgotada (opencode tomou 429 e não gerou nada):
+                // devolve à fila, NÃO marca failed — retoma quando a API voltar.
+                task.status = 'pending';
+                task.startedAt = undefined;
+                task.updatedAt = new Date().toISOString();
+                this.recordEvent(task, 'quota_hold', '⏸️ Sem mudanças por cota de LLM esgotada — devolvida à fila; retoma quando a API voltar', { quotaHold: true });
+                this.emitLog(task.issueNumber, 'warn', 'Cota de LLM esgotada — segurando a fila (auto-retoma).');
+                this.save(); this.emitStatus(task);
+                return { verify, aborted: true };
+            }
             task.status = 'failed';
             task.error = 'Modo cumulativo: nenhuma mudança produzida.';
             task.updatedAt = new Date().toISOString();
@@ -1437,12 +1490,14 @@ class TaskRunnerService {
                 const output = String(stdout);
                 this.emitLog(issueNumber, 'ai', output.substring(0, 1500));
                 this.recordEvent(task, 'opencode_output', `Síntese ${synthAttempt} — output`, { synthAttempt, phase: 'synthesizing', output: output.substring(0, 5000) });
+                if (isQuotaError(output)) markQuotaExhausted(`opencode síntese ${synthAttempt}: cota esgotada`);
             } catch (e: any) {
                 if (this.isCancelSignal(task)) {
                     this.recordEvent(task, 'task_killed', 'Task cancelada durante síntese', { synthAttempt });
                     return;
                 }
                 this.recordEvent(task, 'error', `opencode erro na síntese: ${String(e.message || e).substring(0, 300)}`, { synthAttempt, error: e.message });
+                if (isQuotaError(e?.message)) markQuotaExhausted(`opencode síntese ${synthAttempt}: ${String(e?.message).slice(0, 80)}`);
             }
 
             const changes = await this.worktreeChanges();
@@ -1451,6 +1506,16 @@ class TaskRunnerService {
                     this.recordEvent(task, 'attempt_no_changes', `Síntese ${synthAttempt}: nenhuma mudança`, { synthAttempt });
                     task.feedbackHistory.push('A síntese não gerou mudanças. Tente novamente combinando as tentativas anteriores.');
                     continue;
+                }
+                if (isQuotaExhausted()) {
+                    task.status = 'pending';
+                    task.startedAt = undefined;
+                    task.updatedAt = new Date().toISOString();
+                    this.recordEvent(task, 'quota_hold', '⏸️ Síntese sem mudanças por cota esgotada — devolvida à fila; retoma quando a API voltar', { quotaHold: true });
+                    this.emitLog(issueNumber, 'warn', 'Cota de LLM esgotada — segurando a fila (auto-retoma).');
+                    this.save();
+                    this.emitStatus(task);
+                    return;
                 }
                 task.status = 'failed';
                 task.error = 'Síntese não produziu mudanças após 3 tentativas.';
