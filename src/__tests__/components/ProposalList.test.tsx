@@ -224,15 +224,15 @@ describe('ProposalList — Total bar (#486)', () => {
     });
 });
 
-describe('ProposalList — Currency standardization (#639)', () => {
+describe('ProposalList — Currency standardization (#627 / #639)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
     });
 
-    it('renders proposal values in BRL via formatCurrency (no USD $ prefix)', async () => {
+    it('renders proposal values in BRL via formatCurrency (card shows R$, never a bare $ prefix)', async () => {
         vi.mocked(useProposals).mockReturnValue({
             data: [
-                { id: 'propX', ref: 'PRX1', socid: 'cust1', date: 1700000000, total_ht: 1000, total_ttc: 2345.67, statut: '1', project_id: null, fk_user_author: null },
+                { id: 'propX', ref: 'PRX1', socid: 'cust1', date: 1700000000, total_ht: 1000, total_ttc: 1234.56, statut: '1', project_id: null, fk_user_author: null },
             ],
             isRefetching: false,
             refetch: vi.fn(),
@@ -241,12 +241,41 @@ describe('ProposalList — Currency standardization (#639)', () => {
         const { container } = renderComponent();
         await screen.findByTestId('list-total-bar');
 
-        const formatted = formatCurrency(2345.67);
+        const formatted = formatCurrency(1234.56); // -> "R$ 1.234,56"
+        // O card da lista E o rodapé (ListTotalBar) renderizam o valor em BRL
         const matches = Array.from(container.querySelectorAll('*')).filter(
             (el) => el.textContent === formatted
         );
-        // The row total AND the total bar both render the BRL value
         expect(matches.length).toBeGreaterThanOrEqual(2);
+
+        // Critério de aceite: contém R$ e NÃO exibe "$" sozinho (prefixo USD)
+        expect(formatted).toContain('R$');
+        expect(container.textContent).toContain('R$');
+        expect(container.textContent).not.toContain('$1,234.56');
+        expect(container.textContent).not.toContain('$ 1,234.56');
+    });
+
+    it('renders detail totals in BRL when opening a proposal', async () => {
+        vi.mocked(useProposals).mockReturnValue({
+            data: [
+                { id: 'propX', ref: 'PRX1', socid: 'cust1', date: 1700000000, total_ht: 1000, total_ttc: 1234.56, statut: '1', project_id: null, fk_user_author: null },
+            ],
+            isRefetching: false,
+            refetch: vi.fn(),
+        } as any);
+
+        const user = userEvent.setup();
+        const { container } = renderComponent();
+
+        await user.click(await screen.findByText('PRX1'));
+
+        // Totais do detalhe (s/ e c/ imposto) em R$
+        await waitFor(() => {
+            expect(container.textContent).toContain(formatCurrency(1000));
+            expect(container.textContent).toContain(formatCurrency(1234.56));
+        });
+        expect(container.textContent).not.toContain('$1,234.56');
+        expect(container.textContent).not.toContain('$ 1,234.56');
     });
 });
 
