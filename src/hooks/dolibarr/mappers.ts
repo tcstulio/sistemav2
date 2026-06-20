@@ -1059,6 +1059,7 @@ export const mapSalaryPayment = (raw: RawDolibarrRecord): SalaryPayment => ({
     amount: toNumber(raw.amount),
     salary: toNumber(raw.salary),
     fk_bank: toString(raw.fk_bank),
+    fk_typepayment: raw.fk_typepayment || undefined,
     date_modification: toTimestamp(raw.tms),
 });
 

@@ -115,6 +115,7 @@ export interface SalaryPayment {
     amount: number;
     salary: number; // Gross salary?
     fk_bank: string;
+    fk_typepayment?: string; // Tipo/meio de pagamento (Dolibarr llx_payment_salary.fk_typepayment)
     date_modification?: number;
 }
 
