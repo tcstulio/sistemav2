@@ -787,6 +787,8 @@ class GoogleProvider implements AIProvider {
 
 // --- Local LLM Provider (OpenAI Compatible) ---
 
+import { isQuotaError, markQuotaExhausted, clearQuotaExhausted } from './llmQuotaState';
+
 export class LocalProvider implements AIProvider {
     private baseUrl: string;
     private modelName: string;
@@ -823,22 +825,47 @@ export class LocalProvider implements AIProvider {
         return code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'ECONNREFUSED';
     }
 
+    // Detalhe legível do erro (status HTTP + corpo, ou code/message) — usado p/ detectar cota.
+    private errDetail(err: any): string {
+        return err?.response
+            ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data || '').slice(0, 200)}`
+            : (err?.code || err?.message || String(err));
+    }
+
     // POST /chat/completions no primário; se falhar de forma recuperável e houver fallback
-    // configurado, refaz a MESMA chamada no fallback (MiniMax M3). Lança se ambos falharem
-    // (os catches do chamador convertem em texto de erro, comportamento original preservado).
+    // configurado, refaz a MESMA chamada no fallback (MiniMax M3). Lança se ambos falharem.
+    // Efeito colateral: SUCESSO limpa o sinal global de cota; FALHA por cota (429/1310/402/...)
+    // o marca — para o TaskRunner segurar o dispatch e retomar quando a API voltar.
     private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string }): Promise<any> {
         const buildBody = (model: string) => ({ model, messages, temperature });
+        let primaryErr: any;
         try {
-            return await axios.post(`${this.baseUrl}/chat/completions`, buildBody(options?.model || this.modelName), { headers: this.getHeaders(), timeout: 180000 });
+            const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(options?.model || this.modelName), { headers: this.getHeaders(), timeout: 180000 });
+            clearQuotaExhausted(); // sucesso -> cota OK
+            return r;
         } catch (err: any) {
-            if (!this.fallbackConfig || !this.isRetryableError(err)) throw err;
+            primaryErr = err;
+            if (!this.fallbackConfig || !this.isRetryableError(err)) {
+                if (isQuotaError(this.errDetail(err))) markQuotaExhausted(`primário ${this.modelName}: ${this.errDetail(err)}`);
+                throw err;
+            }
             const reason = err?.response?.status || err?.code || err?.message || 'erro';
             log.warn(`LLM primário (${this.modelName}) falhou [${reason}] -> fallback para ${this.fallbackConfig.model}`);
-            const fbHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-            if (this.fallbackConfig.apiKey) fbHeaders['Authorization'] = `Bearer ${this.fallbackConfig.apiKey}`;
-            const resp = await axios.post(`${this.fallbackConfig.baseUrl}/chat/completions`, buildBody(this.fallbackConfig.model), { headers: fbHeaders, timeout: 180000 });
-            log.info(`LLM fallback OK: ${this.fallbackConfig.model} respondeu no lugar de ${this.modelName}`);
+        }
+        // Fallback (MiniMax M3)
+        const fbHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (this.fallbackConfig!.apiKey) fbHeaders['Authorization'] = `Bearer ${this.fallbackConfig!.apiKey}`;
+        try {
+            const resp = await axios.post(`${this.fallbackConfig!.baseUrl}/chat/completions`, buildBody(this.fallbackConfig!.model), { headers: fbHeaders, timeout: 180000 });
+            log.info(`LLM fallback OK: ${this.fallbackConfig!.model} respondeu no lugar de ${this.modelName}`);
+            clearQuotaExhausted(); // fallback respondeu -> ainda há cota (no MiniMax)
             return resp;
+        } catch (fbErr: any) {
+            // Ambos falharam: se qualquer um foi erro de cota, sinaliza esgotamento GLOBAL.
+            if (isQuotaError(this.errDetail(fbErr)) || isQuotaError(this.errDetail(primaryErr))) {
+                markQuotaExhausted(`primário+fallback esgotados — ${this.errDetail(fbErr)}`);
+            }
+            throw fbErr;
         }
     }
 
