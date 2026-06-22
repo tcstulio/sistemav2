@@ -58,11 +58,15 @@ Object.defineProperty(globalThis, 'matchMedia', {
 });
 
 Object.defineProperty(globalThis, 'IntersectionObserver', {
-    value: vi.fn(() => ({
-        observe: vi.fn(),
-        unobserve: vi.fn(),
-        disconnect: vi.fn(),
-    })),
+    value: vi.fn(function () {
+        return {
+            observe: vi.fn(),
+            unobserve: vi.fn(),
+            disconnect: vi.fn(),
+        };
+    }),
+    writable: true,
+    configurable: true,
 });
 
 Object.defineProperty(globalThis, 'ResizeObserver', {
