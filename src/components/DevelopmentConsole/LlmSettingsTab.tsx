@@ -95,6 +95,22 @@ export const LlmSettingsTab: React.FC = () => {
         return savedConfig.apiKey || '';
     };
 
+    // Backend sobrescreve config.XBaseUrl com o `url` enviado quando ele é truthy
+    // (adminRoutes.ts:334-338). Para providers remotos (glm/minimax/google) a URL
+    // deve vir do env, não da UI — então retornamos undefined para não corromper.
+    const urlForProvider = (provider: string): string | undefined => {
+        return provider === 'local' ? config.localUrl : undefined;
+    };
+
+    const keyForProvider = (provider: string): string | undefined => {
+        switch (provider) {
+            case 'google': return config.googleKey;
+            case 'glm': return config.zaiKey;
+            case 'minimax': return config.minimaxKey;
+            default: return undefined;
+        }
+    };
+
     // Load data on mount
     useEffect(() => {
         loadConfig();
@@ -175,9 +191,9 @@ export const LlmSettingsTab: React.FC = () => {
                 if (targetProvider === 'glm') setGlmModels(response.data.models);
                 if (targetProvider === 'minimax') setMinimaxModels(response.data.models);
 
-                if (targetProvider === config.provider) {
-                    setAvailableModels(response.data.models);
-                }
+                // Sempre popular availableModels: caller pode ter clicado num botão de provider
+                // (passando forProvider explícito) e quer ver os modelos no select ativo.
+                setAvailableModels(response.data.models);
             }
         } catch (e) {
             log.error("Failed to fetch models", e);
@@ -213,20 +229,15 @@ export const LlmSettingsTab: React.FC = () => {
     const handleSaveConfig = async () => {
         setIsSaving(true);
         try {
-            const keyMap: Record<string, string | undefined> = {
-                google: config.googleKey,
-                glm: config.zaiKey,
-                minimax: config.minimaxKey,
-                local: undefined
-            };
             await axios.post('/api/admin/config/llm', {
                 provider: config.provider,
-                url: config.localUrl,
-                key: keyMap[config.provider],
+                url: urlForProvider(config.provider),
+                key: keyForProvider(config.provider),
                 modelName: config.modelName
             }, {
                 headers: { 'Authorization': 'Bearer ' + getToken() }
             });
+            await loadConfig();
             toast.success("Configuração salva com sucesso!");
         } catch (e: any) {
             toast.error("Erro: " + (e.response?.data?.message || e.message));
@@ -267,17 +278,11 @@ export const LlmSettingsTab: React.FC = () => {
         setIsTesting(true);
         setTestResult(null);
         try {
-            const apiKeyMap: Record<string, string | undefined> = {
-                google: config.googleKey,
-                glm: config.zaiKey,
-                minimax: config.minimaxKey,
-                local: undefined
-            };
             const response = await axios.post('/api/admin/config/llm/test', {
                 provider: config.provider,
-                url: config.localUrl,
+                url: urlForProvider(config.provider),
                 model: config.modelName,
-                apiKey: apiKeyMap[config.provider]
+                apiKey: keyForProvider(config.provider)
             }, {
                 headers: { 'Authorization': 'Bearer ' + getToken() }
             });
@@ -414,13 +419,13 @@ export const LlmSettingsTab: React.FC = () => {
                                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                     <button
                                         onClick={() => {
-                                            setConfig({ ...config, provider: 'local', modelName: 'llama3' });
+                                            setConfig({ ...config, provider: 'local' });
                                             fetchModels('local');
                                         }}
                                         className={`p-4 rounded-xl border-2 text-left transition-all ${config.provider === 'local'
                                             ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
                                             : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300'
-                                            }`}
+                                        }`}
                                     >
                                         <div className="flex items-center gap-3 mb-2">
                                             <Server className={config.provider === 'local' ? 'text-indigo-600' : 'text-slate-400'} />
@@ -430,13 +435,13 @@ export const LlmSettingsTab: React.FC = () => {
                                     </button>
                                     <button
                                         onClick={() => {
-                                            setConfig({ ...config, provider: 'google', modelName: 'gemini-2.0-flash' });
+                                            setConfig({ ...config, provider: 'google' });
                                             fetchModels('google');
                                         }}
                                         className={`p-4 rounded-xl border-2 text-left transition-all ${config.provider === 'google'
                                             ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
                                             : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300'
-                                            }`}
+                                        }`}
                                     >
                                         <div className="flex items-center gap-3 mb-2">
                                             <Cpu className={config.provider === 'google' ? 'text-indigo-600' : 'text-slate-400'} />
@@ -446,13 +451,13 @@ export const LlmSettingsTab: React.FC = () => {
                                     </button>
                                     <button
                                         onClick={() => {
-                                            setConfig({ ...config, provider: 'glm', modelName: 'glm-5.1' });
+                                            setConfig({ ...config, provider: 'glm' });
                                             fetchModels('glm');
                                         }}
                                         className={`p-4 rounded-xl border-2 text-left transition-all ${config.provider === 'glm'
                                             ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
                                             : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300'
-                                            }`}
+                                        }`}
                                     >
                                         <div className="flex items-center gap-3 mb-2">
                                             <Sparkles className={config.provider === 'glm' ? 'text-indigo-600' : 'text-slate-400'} />
@@ -462,13 +467,13 @@ export const LlmSettingsTab: React.FC = () => {
                                     </button>
                                     <button
                                         onClick={() => {
-                                            setConfig({ ...config, provider: 'minimax', modelName: 'MiniMax-M3' });
+                                            setConfig({ ...config, provider: 'minimax' });
                                             fetchModels('minimax');
                                         }}
                                         className={`p-4 rounded-xl border-2 text-left transition-all ${config.provider === 'minimax'
                                             ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
                                             : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300'
-                                            }`}
+                                        }`}
                                     >
                                         <div className="flex items-center gap-3 mb-2">
                                             <Zap className={config.provider === 'minimax' ? 'text-indigo-600' : 'text-slate-400'} />
