@@ -1,6 +1,7 @@
 import React from 'react';
-import { X, ExternalLink, Briefcase, UserCircle, FileText, ShoppingCart, Ticket as TicketIcon, Plus } from 'lucide-react';
+import { X, ExternalLink, Briefcase, UserCircle, FileText, ShoppingCart, Ticket as TicketIcon, Plus, FolderKanban, Link } from 'lucide-react';
 import { ThirdParty, Invoice, Order, Ticket, AppView } from '../../types';
+import { Project } from '../../types/projects';
 import { formatDateOnly } from '../../utils/dateUtils';
 import { formatCurrency } from '../../utils/formatUtils';
 
@@ -12,15 +13,18 @@ interface ContextPanelProps {
         invoices: Invoice[];
         orders: Order[];
         tickets: Ticket[];
+        projects?: Project[];
     } | null;
     onNavigate?: (view: AppView, id: string) => void;
+    onLinkCustomer?: () => void;
+    onCreateTicket?: () => void;
     // [ANTIGRAVITY] New Props
     conversation?: any; // WhatsAppConversation
     chatSettings?: any;
     onUpdateSettings?: (settings: any) => void;
 }
 
-export const ContextPanel: React.FC<ContextPanelProps> = ({ isOpen, onClose, contextData, onNavigate, conversation, chatSettings, onUpdateSettings }) => {
+export const ContextPanel: React.FC<ContextPanelProps> = ({ isOpen, onClose, contextData, onNavigate, onLinkCustomer, onCreateTicket, conversation, chatSettings, onUpdateSettings }) => {
     const [activeTab, setActiveTab] = React.useState<'crm' | 'settings'>('crm');
 
     // Group Config Local State
@@ -128,7 +132,12 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ isOpen, onClose, con
                             <div className="text-center p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700">
                                 <UserCircle size={32} className="mx-auto text-slate-400 mb-2 opacity-50" />
                                 <p className="text-xs text-slate-500 mb-2">Cliente não encontrado.</p>
-                                <button className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline">Vincular Manualmente</button>
+                                <button
+                                    onClick={onLinkCustomer}
+                                    className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 mx-auto"
+                                >
+                                    <Link size={11} /> Vincular Manualmente
+                                </button>
                             </div>
                         )}
 
@@ -211,9 +220,38 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({ isOpen, onClose, con
                             ) : <p className="text-xs text-slate-400 italic">Nenhum chamado recente.</p>}
                         </div>
 
+                        {/* Active Projects */}
+                        {contextData?.customer && contextData.projects && contextData.projects.length > 0 && (
+                            <div>
+                                <h4 className="font-bold text-slate-700 dark:text-slate-300 text-sm mb-2 flex items-center gap-2">
+                                    <FolderKanban size={14} /> Projetos Ativos
+                                </h4>
+                                <div className="space-y-2">
+                                    {contextData.projects.map(proj => (
+                                        <div
+                                            key={proj.id}
+                                            className="p-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                                            onClick={() => onNavigate && onNavigate('projects', proj.id)}
+                                        >
+                                            <div className="text-xs font-bold text-slate-700 dark:text-slate-300 line-clamp-1">{proj.title}</div>
+                                            <div className="flex justify-between items-center mt-1">
+                                                <span className="text-[10px] text-slate-500">{proj.ref}</span>
+                                                <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+                                                    {proj.progress}%
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         {contextData?.customer && (
                             <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
-                                <button className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center justify-center gap-2 transition-colors">
+                                <button
+                                    onClick={onCreateTicket}
+                                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center justify-center gap-2 transition-colors"
+                                >
                                     <Plus size={14} /> Criar Novo Ticket
                                 </button>
                             </div>
