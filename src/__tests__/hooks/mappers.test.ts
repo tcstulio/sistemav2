@@ -25,6 +25,54 @@ describe('Dolibarr Mappers', () => {
             expect(result.id).toBe('2');
             expect(result.name).toBe('');
         });
+
+        it('maps extended fields (url, idprof1, typent_id, phone_mobile, fax, socialnetworks, array_options)', () => {
+            const raw = {
+                id: '3',
+                name: 'Empresa XYZ',
+                client: '1',
+                fournisseur: '0',
+                url: 'https://empresa.com',
+                idprof1: '12.345.678/0001-99',
+                typent_id: '5',
+                phone_mobile: '+5511999999999',
+                fax: '+551133334444',
+                socialnetworks: { linkedin: 'https://linkedin.com/in/xyz' },
+                array_options: { options_assinante: 'João Silva' },
+            };
+            const result = mappers.mapThirdParty(raw as any);
+            expect(result.url).toBe('https://empresa.com');
+            expect(result.idprof1).toBe('12.345.678/0001-99');
+            expect(result.typent_id).toBe('5');
+            expect(result.phone_mobile).toBe('+5511999999999');
+            expect(result.fax).toBe('+551133334444');
+            expect(result.socialnetworks?.linkedin).toBe('https://linkedin.com/in/xyz');
+            expect(result.array_options?.options_assinante).toBe('João Silva');
+        });
+
+        it('mapSupplier maps extended fields', () => {
+            const raw = {
+                id: '10',
+                name: 'Fornecedor ABC',
+                client: '0',
+                fournisseur: '1',
+                url: 'https://fornecedor.com',
+                idprof1: '98.765.432/0001-11',
+                typent_id: '8',
+                phone_mobile: '+5521988887777',
+                fax: undefined,
+                socialnetworks: undefined,
+                array_options: undefined,
+            };
+            const result = mappers.mapSupplier(raw as any);
+            expect(result.url).toBe('https://fornecedor.com');
+            expect(result.idprof1).toBe('98.765.432/0001-11');
+            expect(result.typent_id).toBe('8');
+            expect(result.phone_mobile).toBe('+5521988887777');
+            expect(result.fax).toBeUndefined();
+            expect(result.socialnetworks).toBeUndefined();
+            expect(result.array_options).toBeUndefined();
+        });
     });
 
     describe('Invoice mappers', () => {
