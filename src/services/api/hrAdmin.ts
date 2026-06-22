@@ -168,6 +168,35 @@ export const getContact = async (config: DolibarrConfig, id: string) => {
 
 // -- Write Operations --
 
+/**
+ * Persist reconciliation state for a bank line via our backend proxy.
+ * Calls POST /api/banking/reconcile/toggle which updates Dolibarr via
+ * PUT bankaccounts/{accountId}/lines/{lineId} with num_releve.
+ *
+ * @returns true if the backend accepted the update, false otherwise.
+ */
+export const reconcileBankLine = async (
+    config: DolibarrConfig,
+    accountId: string,
+    lineId: string,
+    reconciled: boolean
+): Promise<boolean> => {
+    const response = await fetch('/api/banking/reconcile/toggle', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'DOLAPIKEY': config.apiKey ? config.apiKey.trim() : '',
+        },
+        body: JSON.stringify({ accountId, lineId, reconciled }),
+    });
+    if (!response.ok) {
+        const errText = await response.text().catch(() => 'unknown error');
+        throw new Error(`Falha ao persistir conciliação: ${errText}`);
+    }
+    const data = await response.json();
+    return Boolean(data.success);
+};
+
 export const createBankAccount = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/bankaccounts`;
     return request(url, {

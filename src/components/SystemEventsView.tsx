@@ -242,7 +242,7 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-start justify-between gap-2">
                                                             <p className="text-sm text-slate-800 dark:text-slate-200 line-clamp-2">
-                                                                <span className="font-semibold text-slate-900 dark:text-white">{ev.actor.name}</span>{' '}
+                                                                <span className="font-semibold text-slate-900 dark:text-white">{userMap[ev.actor.id] || ev.actor.name}</span>{' '}
                                                                 <span className="text-slate-600 dark:text-slate-300">{ev.description}</span>
                                                                 {ev.metadata?.to && (
                                                                     <span className="text-slate-500 dark:text-slate-400"> → {userMap[ev.metadata.to] || `#${ev.metadata.to}`}{DELEG_TO_ROLE[ev.type] ? ` (${DELEG_TO_ROLE[ev.type]})` : ''}</span>

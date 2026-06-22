@@ -3,9 +3,10 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import SystemEventsView from '../../components/SystemEventsView';
 
 vi.mock('../../context/DolibarrContext', () => ({ useDolibarr: () => ({ config: { apiUrl: 'x' } }) }));
+const mockUsers = vi.hoisted(() => vi.fn(() => ({ data: [] as any[] })));
 vi.mock('../../hooks/dolibarr', () => ({
     useSystemLogs: () => ({ data: [] }),
-    useUsers: () => ({ data: [] }),
+    useUsers: () => mockUsers(),
 }));
 
 const mockSources = vi.fn();
@@ -37,6 +38,7 @@ const ev = (over: any = {}) => ({
 describe('SystemEventsView (#519)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mockUsers.mockReturnValue({ data: [] });
         mockSources.mockResolvedValue(['audit', 'agent', 'delegation', 'notification', 'scheduler', 'approval', 'task']);
         mockEvents.mockResolvedValue({ events: [ev()], total: 1, sources: [] });
     });
@@ -89,6 +91,15 @@ describe('SystemEventsView (#519)', () => {
         sock.state.onAny?.('whatsapp_message', {});
         await new Promise(r => setTimeout(r, 1800)); // além do debounce
         expect(mockEvents).not.toHaveBeenCalled();
+    });
+
+    it('(#544) resolve actor.name numérico/#id via userMap (mostra o nome real, não o cru)', async () => {
+        mockUsers.mockReturnValue({ data: [{ id: '7', firstname: 'João', lastname: 'Silva', login: 'jsilva' }] });
+        mockEvents.mockResolvedValue({ events: [ev({ actor: { id: '7', name: '#7' }, description: 'cobrança delegada' })], total: 1, sources: [] });
+        const { container } = render(<SystemEventsView onNavigate={vi.fn()} />);
+        expect(await screen.findByText(/João Silva/)).toBeTruthy();
+        // o ID cru / referência rotulada não vaza: o nome resolvido aparece no lugar
+        expect(container.textContent).not.toContain('#7');
     });
 });
 

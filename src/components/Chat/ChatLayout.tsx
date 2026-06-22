@@ -9,7 +9,7 @@ export const ChatLayout: React.FC = () => {
     const hasActiveChat = !!(type && id);
 
     return (
-        <div className="h-[calc(100vh-64px)] overflow-hidden bg-white dark:bg-slate-950 flex flex-col">
+        <div className="h-full overflow-hidden bg-white dark:bg-slate-950 flex flex-col">
             <MasterDetailLayout
                 list={
                     <ChatSidebar onSelect={() => { }} />
