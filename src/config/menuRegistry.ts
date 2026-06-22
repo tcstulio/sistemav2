@@ -95,7 +95,6 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
         items: [
             { id: 'products', path: '/products', label: 'Produtos' },
             { id: 'categories', path: '/categories', label: 'Categorias/Tags' },
-            { id: 'inventory', path: '/inventory', label: 'Estoque' },
             { id: 'warehouses', path: '/warehouses', label: 'Estoques' },
             { id: 'manufacturing', path: '/manufacturing', label: 'Produção' },
         ],

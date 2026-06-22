@@ -623,6 +623,7 @@ export const mapWarehouse = (raw: RawDolibarrRecord): Warehouse => ({
     statut: toString(raw.statut) as '0' | '1',
     date_modification: toTimestamp(raw.tms),
     array_options: raw.array_options || undefined,
+    fk_parent: raw.fk_parent && String(raw.fk_parent) !== '0' ? toString(raw.fk_parent) : undefined,
 });
 
 /**
