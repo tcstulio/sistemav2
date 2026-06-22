@@ -11,8 +11,18 @@ const mockService = vi.hoisted(() => ({
 
 vi.mock('../../middleware/authMiddleware', () => ({ requireDolibarrLogin: mockRequireDolibarrLogin }));
 vi.mock('../../services/dashboardArtifactsService', () => ({ dashboardArtifactsService: mockService }));
+vi.mock('../../services/financialAnalysisStore', () => ({
+    financialAnalysisStore: { saveAnalysis: vi.fn(), getLatest: vi.fn(() => null) },
+}));
+const mockLoggerInstance = vi.hoisted(() => {
+    const inst: any = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn(), child: vi.fn() };
+    inst.child.mockReturnValue(inst);
+    return inst;
+});
 vi.mock('../../utils/logger', () => ({
-    createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn() }),
+    logger: mockLoggerInstance,
+    createLogger: () => mockLoggerInstance,
+    default: mockLoggerInstance,
 }));
 
 import dashboardRoutes from '../../routes/dashboardRoutes';
