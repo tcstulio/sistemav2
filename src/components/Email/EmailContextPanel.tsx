@@ -72,8 +72,7 @@ export const EmailContextPanel: React.FC<EmailContextPanelProps> = ({ isOpen, on
                 ) : (
                     <div className="text-center p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700">
                         <UserCircle size={32} className="mx-auto text-slate-400 mb-2 opacity-50" />
-                        <p className="text-xs text-slate-500 mb-2">Cliente não encontrado.</p>
-                        <button className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline">Vincular Manualmente</button>
+                        <p className="text-xs text-slate-500">Cliente não encontrado.</p>
                     </div>
                 )}
 
@@ -158,7 +157,10 @@ export const EmailContextPanel: React.FC<EmailContextPanelProps> = ({ isOpen, on
 
                 {contextData?.customer && (
                     <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
-                        <button className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center justify-center gap-2 transition-colors">
+                        <button
+                            onClick={() => onNavigate && onNavigate('tickets', 'new')}
+                            className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center justify-center gap-2 transition-colors"
+                        >
                             <Plus size={14} /> Criar Novo Ticket
                         </button>
                     </div>

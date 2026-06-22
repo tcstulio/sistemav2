@@ -56,6 +56,7 @@ import {
     ExpenseReportPayment,
     ExpenseReportPaymentLink,
     VATPayment,
+    Salary,
     SalaryPayment,
     SocialContributionPayment,
     LoanPayment,
@@ -1088,13 +1089,29 @@ export const mapVATPayment = (raw: RawDolibarrRecord): VATPayment => ({
 });
 
 /**
+ * Map raw Salary record data (llx_salary — tabela pai de payment_salary)
+ */
+export const mapSalary = (raw: RawDolibarrRecord): Salary => ({
+    id: toString(raw.id),
+    ref: raw.ref || '',
+    fk_user: toString(raw.fk_user),
+    amount: toNumber(raw.amount),
+    date_modification: toTimestamp(raw.tms),
+});
+
+/**
  * Map raw Salary payment data
+ * Nota: fk_user vem vazio do SQL atual de custom_sync.php porque llx_payment_salary
+ * não possui essa coluna — ela está em llx_salary (pai, via fk_salary).
+ * O campo fk_salary é preservado aqui para que o componente possa resolver o
+ * colaborador assim que o SQL for corrigido (ver issue #568).
  */
 export const mapSalaryPayment = (raw: RawDolibarrRecord): SalaryPayment => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     num_payment: raw.num_payment || undefined,
     fk_user: toString(raw.fk_user),
+    fk_salary: raw.fk_salary ? toString(raw.fk_salary) : undefined,
     date_payment: toTimestamp(raw.date_payment || raw.datep),
     amount: toNumber(raw.amount),
     salary: toNumber(raw.salary),

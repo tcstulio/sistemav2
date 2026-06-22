@@ -9,6 +9,12 @@ const mockSchedulerService = vi.hoisted(() => ({
     getPending: vi.fn(() => []),
     cancelMessage: vi.fn(() => true),
     scheduleBroadcast: vi.fn(() => []),
+    // Template CRUD (#604)
+    createTemplate: vi.fn(() => ({ id: 'tpl-1', name: 'Test', content: 'Hi', category: 'general', channel: 'whatsapp' })),
+    getTemplates: vi.fn(() => []),
+    deleteTemplate: vi.fn(() => true),
+    updateTemplate: vi.fn(() => ({ id: 'tpl-1', name: 'Updated', content: 'Hi', category: 'general', channel: 'whatsapp' })),
+    getStats: vi.fn(() => ({})),
 }));
 
 vi.mock('../../middleware/authMiddleware', () => ({
@@ -124,6 +130,31 @@ describe('schedulerRoutes', () => {
             mockSchedulerService.cancelMessage.mockReturnValue(false);
 
             const res = await request(app).delete('/api/scheduler/not-found');
+
+            expect(res.status).toBe(404);
+        });
+    });
+
+    describe('PUT /api/scheduler/templates/:id (#604)', () => {
+        it('returns 200 and updated template when found', async () => {
+            mockSchedulerService.updateTemplate.mockReturnValue({ id: 'tpl-1', name: 'Novo Nome', content: 'Hi', category: 'general', channel: 'whatsapp' });
+
+            const res = await request(app)
+                .put('/api/scheduler/templates/tpl-1')
+                .send({ name: 'Novo Nome' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.name).toBe('Novo Nome');
+            expect(mockSchedulerService.updateTemplate).toHaveBeenCalledWith('tpl-1', expect.objectContaining({ name: 'Novo Nome' }));
+        });
+
+        it('returns 404 when template not found', async () => {
+            mockSchedulerService.updateTemplate.mockReturnValue(null);
+
+            const res = await request(app)
+                .put('/api/scheduler/templates/nonexistent')
+                .send({ name: 'X' });
 
             expect(res.status).toBe(404);
         });

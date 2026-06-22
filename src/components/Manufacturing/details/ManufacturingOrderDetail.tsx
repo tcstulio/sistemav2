@@ -1,13 +1,14 @@
 
 import React, { useState } from 'react';
 import { ManufacturingOrder, DolibarrConfig, Project, Product, StockMovement } from '../../../types';
-import { Package, Clock, User, AlertCircle, ArrowLeft, Settings, X, ArrowDownCircle, ArrowUpCircle, Pencil, Trash2, CheckCheck, XCircle } from 'lucide-react';
-import { formatDateTime } from '../../../utils/dateUtils';
-import { getProductName, getStatusBadge } from '../utils';
+import { Package, Clock, User, AlertCircle, ArrowLeft, Settings, X, ArrowDownCircle, ArrowUpCircle, Pencil, Trash2, CheckCheck, XCircle, FolderKanban, Calendar } from 'lucide-react';
+import { formatDateTime, formatDateOnly } from '../../../utils/dateUtils';
+import { getProductName, getProjectName, getStatusBadge } from '../utils';
 
 interface ManufacturingOrderDetailProps {
     order: ManufacturingOrder;
     products: Product[];
+    projects: Project[];
     stockMovements: StockMovement[];
     config: DolibarrConfig;
     onClose: () => void;
@@ -22,6 +23,7 @@ interface ManufacturingOrderDetailProps {
 export const ManufacturingOrderDetail: React.FC<ManufacturingOrderDetailProps> = ({
     order,
     products,
+    projects,
     stockMovements,
     config,
     onClose,
@@ -141,6 +143,40 @@ export const ManufacturingOrderDetail: React.FC<ManufacturingOrderDetailProps> =
                                     <p className="text-sm text-slate-500 uppercase font-bold">Produzindo</p>
                                     <h3 className="text-xl font-bold text-slate-900 dark:text-white">{getProductName(order.product_to_produce_id, products)}</h3>
                                     <p className="text-sm text-slate-600 dark:text-slate-400">Qtd Alvo: {order.qty}</p>
+                                </div>
+                            </div>
+
+                            {/* Project & Dates block */}
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+                                <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border border-slate-100 dark:border-slate-700 flex items-start gap-2">
+                                    <FolderKanban size={15} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <span className="text-xs text-slate-500 uppercase font-bold block">Projeto</span>
+                                        {order.project_id && getProjectName(order.project_id, projects)
+                                            ? <span className="text-sm font-medium text-slate-800 dark:text-white" data-testid="mo-project-name">{getProjectName(order.project_id, projects)}</span>
+                                            : <span className="text-sm text-slate-400 italic">—</span>
+                                        }
+                                    </div>
+                                </div>
+                                <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border border-slate-100 dark:border-slate-700 flex items-start gap-2">
+                                    <Calendar size={15} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <span className="text-xs text-slate-500 uppercase font-bold block">Início</span>
+                                        {order.date_start
+                                            ? <span className="text-sm font-medium text-slate-800 dark:text-white" data-testid="mo-date-start">{formatDateOnly(order.date_start)}</span>
+                                            : <span className="text-sm text-slate-400 italic">—</span>
+                                        }
+                                    </div>
+                                </div>
+                                <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border border-slate-100 dark:border-slate-700 flex items-start gap-2">
+                                    <Calendar size={15} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <span className="text-xs text-slate-500 uppercase font-bold block">Conclusão</span>
+                                        {order.date_end
+                                            ? <span className="text-sm font-medium text-slate-800 dark:text-white" data-testid="mo-date-end">{formatDateOnly(order.date_end)}</span>
+                                            : <span className="text-sm text-slate-400 italic">—</span>
+                                        }
+                                    </div>
                                 </div>
                             </div>
 
