@@ -46,6 +46,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
     const [showTaskWizard, setShowTaskWizard] = useState(false);
     const [wizardInitialData, setWizardInitialData] = useState<{ label: string; description: string }[] | undefined>(undefined);
     const [isUploading, setIsUploading] = useState(false);
+    // Otimista: mensagens adicionadas localmente antes do POST confirmar pelo servidor
+    const [optimisticMessages, setOptimisticMessages] = useState<any[]>([]);
+    // Erro de envio visível inline (além do toast) para que o usuário saiba que pode tentar de novo
+    const [sendError, setSendError] = useState<string | null>(null);
 
     const scrollRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,8 +67,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
 
     // Filter events
     const chatMessages = useMemo(() => {
-        if (!events) return [];
-        return events
+        const baseEvents = events || [];
+        // Remove mensagens otimistas que já possuem contraparte real vinda do Dolibarr
+        const realDescriptions = new Set(
+            baseEvents
+                .filter((e: any) => e.elementtype === elementType && String(e.fk_element) === String(elementId))
+                .map((e: any) => e.description || e.label || '')
+        );
+        const activeOptimistic = optimisticMessages.filter(
+            (m: any) => !realDescriptions.has(m.description || m.label || '')
+        );
+        return [...activeOptimistic, ...baseEvents]
             .filter((e: any) => {
                 // Determine if this is a DM or standard entity chat
                 if (elementType === 'user') {
@@ -91,7 +104,21 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                 return content.includes(searchTerm.toLowerCase());
             })
             .sort((a: any, b: any) => a.date_start - b.date_start); // Oldest first
-    }, [events, elementId, elementType, currentUser, searchTerm]);
+    }, [events, optimisticMessages, elementId, elementType, currentUser, searchTerm]);
+
+    // Reconcilia o estado otimista: descarta mensagens locais assim que a real aparece no cache
+    useEffect(() => {
+        if (!events || events.length === 0 || optimisticMessages.length === 0) return;
+        const realDescriptions = new Set(
+            events
+                .filter((e: any) => e.elementtype === elementType && String(e.fk_element) === String(elementId))
+                .map((e: any) => e.description || e.label || '')
+        );
+        const remaining = optimisticMessages.filter((m: any) => !realDescriptions.has(m.description || m.label || ''));
+        if (remaining.length !== optimisticMessages.length) {
+            setOptimisticMessages(remaining);
+        }
+    }, [events, elementType, elementId, optimisticMessages]);
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files || e.target.files.length === 0 || !config) return;
@@ -139,22 +166,41 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
         if (!newMessage.trim() || !config || isSending) return;
 
         setIsSending(true);
+        setSendError(null);
+
+        let finalMessage = newMessage;
+
+        // Handle Reply
+        if (replyingTo) {
+            const quote = `<blockquote style="border-left: 3px solid #ccc; padding-left: 10px; margin-bottom: 5px; color: #666; font-size: 0.9em;">
+                <strong>${replyingTo.user_author_name || 'Usuário'}:</strong><br/>
+                ${replyingTo.description || replyingTo.label || '(Sem conteúdo)'}
+            </blockquote><br/>`;
+            finalMessage = quote + finalMessage;
+        }
+
+        const nowSec = Math.floor(Date.now() / 1000);
+
+        // Otimista: exibe a mensagem localmente antes do POST resolver
+        const optimisticMsg = {
+            id: `optimistic-${nowSec}-${Math.random().toString(36).slice(2, 8)}`,
+            label: `Comentário em ${elementType}`,
+            description: finalMessage,
+            date_start: nowSec,
+            type_code: 'AC_CHAT',
+            elementtype: elementType,
+            fk_element: elementId,
+            fk_user_author: String(currentUser?.id),
+            user_author_name: 'Eu',
+            percentage: 100,
+            _optimistic: true,
+        };
+        setOptimisticMessages(prev => [...prev, optimisticMsg]);
+
         try {
-            // Construct payload
-            let finalMessage = newMessage;
-
-            // Handle Reply
-            if (replyingTo) {
-                const quote = `<blockquote style="border-left: 3px solid #ccc; padding-left: 10px; margin-bottom: 5px; color: #666; font-size: 0.9em;">
-                    <strong>${replyingTo.user_author_name || 'Usuário'}:</strong><br/>
-                    ${replyingTo.description || replyingTo.label || '(Sem conteúdo)'}
-                </blockquote><br/>`;
-                finalMessage = quote + finalMessage;
-            }
-
             const payload = {
                 label: `Comentário em ${elementType}`,
-                datep: Math.floor(Date.now() / 1000),
+                datep: nowSec,
                 duration: 0,
                 description: finalMessage,
                 note: finalMessage,
@@ -171,10 +217,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
             await Operations.createEvent(config, payload);
             setNewMessage('');
             setReplyingTo(null);
-            await refetch();
-            setTimeout(() => refetch(), 1500);
             refreshData();
+            // Refetch imediato + refetch adiado: o Dolibarr pode ter latência de indexação
+            await refetch();
+            setTimeout(() => refetch(), 2500);
         } catch (error) {
+            console.error('[ChatInterface] Falha ao enviar mensagem:', error);
+            // Preserva o texto digitado para o usuário tentar novamente; remove o bubble otimista
+            setOptimisticMessages(prev => prev.filter((m: any) => m.id !== optimisticMsg.id));
+            const errMsg = error instanceof Error ? error.message : String(error || 'Erro desconhecido');
+            setSendError(errMsg);
             notifyError('Enviar mensagem', error);
         } finally {
             setIsSending(false);
@@ -326,6 +378,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                     </div>
                 )}
 
+                {/* Send Error (inline) */}
+                {sendError && (
+                    <div role="alert" data-testid="send-error" className="flex items-center gap-2 text-xs bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 p-2 rounded border-l-4 border-red-500 mb-1">
+                        <span className="font-medium whitespace-nowrap">Falha ao enviar:</span>
+                        <span className="truncate">{sendError}</span>
+                    </div>
+                )}
+
                 <RichTextEditor
                     value={newMessage}
                     onChange={setNewMessage}
@@ -355,6 +415,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                     <button
                         onClick={() => handleSendMessage()}
                         disabled={isSending || !newMessage.trim()}
+                        aria-label="Enviar mensagem"
                         className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-colors sm:p-2"
                     >
                         {isSending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}

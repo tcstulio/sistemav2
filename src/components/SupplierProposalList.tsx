@@ -53,7 +53,6 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
     const [filterStatus, setFilterStatus] = useState<'all' | 'open' | 'signed' | 'draft' | 'declined'>('all');
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [selectedProposal, setSelectedProposal] = useState<SupplierProposal | null>(null);
-    const [showDebug, setShowDebug] = useState(false);
 
     // Deep Link Effect
     useEffect(() => {
@@ -164,7 +163,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
             socid: prop.socid,
             date: new Date(prop.datec * 1000).toISOString().split('T')[0],
             project_id: prop.project_id || '',
-            note_public: '',
+            note_public: prop.note_public || '',
             lines: existingLines.map(l => ({
                 id: l.id,
                 productId: l.product_id || '',
@@ -199,6 +198,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                     socid: formData.socid,
                     project_id: formData.project_id || null,
                     date: new Date(formData.date).getTime() / 1000,
+                    note_public: formData.note_public || null,
                     lines: formData.lines.map(l => ({
                         fk_product: l.productId || null,
                         desc: l.desc,
@@ -219,6 +219,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                     socid: formData.socid,
                     project_id: formData.project_id || null,
                     date: new Date(formData.date).getTime() / 1000,
+                    note_public: formData.note_public || null,
                 };
                 await DolibarrService.updateSupplierProposal(config, editingId, headerPayload);
 
@@ -328,6 +329,22 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
             refetchProposals();
         } catch (e: any) {
             notifyError('Fechar solicitação', e);
+        } finally {
+            setProcessingId(null);
+        }
+    };
+
+    const handleValidateProposal = async () => {
+        if (!selectedProposal) return;
+        setProcessingId(selectedProposal.id);
+        try {
+            await DolibarrService.validateSupplierProposal(config, selectedProposal.id);
+            toast.success("Solicitação validada e enviada ao fornecedor!");
+            setSelectedProposal(null);
+            if (onRefresh) onRefresh();
+            refetchProposals();
+        } catch (e: any) {
+            notifyError('Validar solicitação', e);
         } finally {
             setProcessingId(null);
         }
@@ -553,6 +570,20 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                     )}
                 </div>
 
+                {/* Validate Draft Action Bar */}
+                {selectedProposal.statut === '0' && (
+                    <div className="flex items-center justify-between p-4 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-100 dark:border-amber-900/30">
+                        <span className="text-sm font-medium text-amber-800 dark:text-amber-300">Rascunho — avance o fluxo:</span>
+                        <button
+                            onClick={handleValidateProposal}
+                            disabled={!!processingId}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-md text-sm font-medium hover:bg-indigo-700 shadow-sm disabled:opacity-50"
+                        >
+                            {processingId === selectedProposal.id ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} Validar / Enviar ao Fornecedor
+                        </button>
+                    </div>
+                )}
+
                 {/* Approval Action Bar */}
                 {selectedProposal.statut === '1' && (
                     <div className="flex items-center justify-between p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-900/30">
@@ -608,29 +639,6 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                         <div className="text-sm flex justify-between border-b border-slate-50 dark:border-slate-800 pb-2">
                             <span className="text-slate-500">Autor:</span> <span className="font-medium text-slate-800 dark:text-white">{getUserName(selectedProposal.fk_user_author)}</span>
                         </div>
-                        {showDebug && (
-                            <div className="pt-2">
-                                <button
-                                    onClick={() => setShowDebug(!showDebug)}
-                                    className="text-xs text-red-400 hover:text-red-500 mb-1"
-                                >
-                                    Hide Debug
-                                </button>
-                                <textarea
-                                    readOnly
-                                    className="w-full h-24 text-[10px] font-mono p-1 border border-slate-200 bg-slate-50 rounded"
-                                    value={JSON.stringify(selectedProposal, null, 2)}
-                                />
-                            </div>
-                        )}
-                        {!showDebug && (
-                            <button
-                                onClick={() => setShowDebug(true)}
-                                className="text-[10px] text-slate-300 hover:text-slate-500"
-                            >
-                                SHOW DEBUG
-                            </button>
-                        )}
                     </div>
                 </div>
 

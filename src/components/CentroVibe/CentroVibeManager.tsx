@@ -4,6 +4,7 @@ import { INITIAL_SCHEDULE, INITIAL_ARTISTS, INITIAL_COMPETITORS, INITIAL_EXTERNA
 import { CentroVibeViewMode, VenueEvent, DaySchedule, Artist, Competitor, ExternalEvent, CentroVibeData } from '../../types/centrovibe';
 import AgendaCard from './AgendaCard';
 import EventDetailsModal from './EventDetailsModal';
+import NewEventModal from './NewEventModal';
 import MonthView from './MonthView';
 import YearView from './YearView';
 import ArtistList from './ArtistList';
@@ -12,7 +13,7 @@ import RadarView from './RadarView';
 import AssistantModal from './AssistantModal';
 import VibeCheck from './VibeCheck';
 import { PageLayout, PageHeader, Tabs, Tab, Button, Card, Spinner } from '../ui';
-import { Sparkles, Users, Calendar, LayoutGrid, CalendarDays, BarChart3, Mic2, Radar } from 'lucide-react';
+import { Sparkles, Users, Calendar, LayoutGrid, CalendarDays, BarChart3, Mic2, Radar, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface CentroVibeManagerProps {
@@ -33,6 +34,7 @@ const CentroVibeManager: React.FC<CentroVibeManagerProps> = () => {
   const [viewMode, setViewMode] = useState<CentroVibeViewMode>('week');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+  const [isNewEventOpen, setIsNewEventOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -88,8 +90,38 @@ const CentroVibeManager: React.FC<CentroVibeManagerProps> = () => {
     saveAll({ schedule: newSchedule });
   };
 
+  const handleAddEvent = (dayIndex: number, newEvent: VenueEvent) => {
+    const newSchedule = schedule.map((day, i) =>
+      i === dayIndex ? { ...day, events: [...day.events, newEvent] } : day
+    );
+    setSchedule(newSchedule);
+    saveAll({ schedule: newSchedule });
+  };
+
+  const handleDeleteEvent = (eventId: string) => {
+    const newSchedule = schedule.map(day => ({
+      ...day,
+      events: day.events.filter(ev => ev.id !== eventId),
+    }));
+    setSchedule(newSchedule);
+    setSelectedEvent(null);
+    saveAll({ schedule: newSchedule });
+  };
+
   const handleAddArtist = (newArtist: Artist) => {
     const updated = [...artists, newArtist];
+    setArtists(updated);
+    saveAll({ artists: updated });
+  };
+
+  const handleUpdateArtist = (updatedArtist: Artist) => {
+    const updated = artists.map(a => a.id === updatedArtist.id ? updatedArtist : a);
+    setArtists(updated);
+    saveAll({ artists: updated });
+  };
+
+  const handleDeleteArtist = (artistId: string) => {
+    const updated = artists.filter(a => a.id !== artistId);
     setArtists(updated);
     saveAll({ artists: updated });
   };
@@ -151,6 +183,10 @@ const CentroVibeManager: React.FC<CentroVibeManagerProps> = () => {
                 <Calendar className="text-indigo-500" size={20} />
                 <h2 className="text-xl font-bold text-slate-800 dark:text-white">Agenda Modelo (Semanal)</h2>
               </div>
+              <div className="flex items-center gap-3">
+              <Button variant="outline" size="sm" icon={<Plus size={14} />} onClick={() => setIsNewEventOpen(true)}>
+                Novo Evento
+              </Button>
               <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
                 {[
                   { value: 'all' as const, label: 'Tudo', active: '' },
@@ -165,6 +201,7 @@ const CentroVibeManager: React.FC<CentroVibeManagerProps> = () => {
                     {f.label}
                   </button>
                 ))}
+              </div>
               </div>
             </div>
 
@@ -225,7 +262,12 @@ const CentroVibeManager: React.FC<CentroVibeManagerProps> = () => {
         )}
 
         {viewMode === 'artists' && (
-          <ArtistList artists={artists} onAddArtist={handleAddArtist} />
+          <ArtistList
+            artists={artists}
+            onAddArtist={handleAddArtist}
+            onUpdateArtist={handleUpdateArtist}
+            onDeleteArtist={handleDeleteArtist}
+          />
         )}
 
         {viewMode === 'vibes' && (
@@ -249,7 +291,14 @@ const CentroVibeManager: React.FC<CentroVibeManagerProps> = () => {
         event={selectedEvent}
         onClose={() => setSelectedEvent(null)}
         onUpdateEvent={handleEventUpdate}
+        onDeleteEvent={handleDeleteEvent}
         allArtists={artists}
+      />
+      <NewEventModal
+        isOpen={isNewEventOpen}
+        schedule={schedule}
+        onClose={() => setIsNewEventOpen(false)}
+        onAddEvent={handleAddEvent}
       />
       <AssistantModal isOpen={isAssistantOpen} onClose={() => setIsAssistantOpen(false)} />
     </PageLayout>

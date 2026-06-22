@@ -1,7 +1,7 @@
 
-import React, { useState } from 'react';
-import { Warehouse, AppView } from '../types';
-import { Warehouse as WarehouseIcon, ArrowRightLeft, Search, MapPin, Package, User, Truck, X, Sliders, Plus, Edit2, Trash2, Loader2, Save, CalendarDays, Filter, RefreshCw, Layers, ArrowUpRight, ArrowDownRight, FileText } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Warehouse, AppView, Product } from '../types';
+import { Warehouse as WarehouseIcon, ArrowRightLeft, Search, MapPin, Package, User, Truck, X, Sliders, Plus, Edit2, Trash2, Loader2, Save, CalendarDays, Filter, RefreshCw, Layers, ArrowUpRight, ArrowDownRight, FileText, ArrowLeft, Boxes } from 'lucide-react';
 import { formatDateTime } from '../utils/dateUtils';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -10,8 +10,112 @@ import { logger } from '../utils/logger';
 import { notifyError } from '../utils/notifyError';
 import { toast } from 'sonner';
 import { useConfirm } from '../hooks/useConfirm';
+import { mapWithConcurrency } from '../utils/mapWithConcurrency';
 
 const log = logger.child('InventoryView');
+
+// Máximo de consultas simultâneas de estoque ao Dolibarr (evita fan-out N+1).
+const STOCK_FETCH_CONCURRENCY = 6;
+
+interface WarehouseStockItem {
+    product: Product;
+    qty: number;
+}
+
+/** Painel de conteúdo de um armazém: lista produtos com suas quantidades */
+const WarehouseContentPanel: React.FC<{
+    warehouse: Warehouse;
+    items: WarehouseStockItem[];
+    isLoading: boolean;
+    onBack: () => void;
+    onNavigate?: (view: AppView, id: string) => void;
+}> = ({ warehouse, items, isLoading, onBack, onNavigate }) => {
+    const totalQty = items.reduce((sum, it) => sum + it.qty, 0);
+
+    return (
+        <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
+            {/* Sub-header com botão voltar */}
+            <div className="p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none">
+                <div className="flex items-center gap-3 mb-1">
+                    <button
+                        onClick={onBack}
+                        className="flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium transition-colors"
+                        data-testid="back-button"
+                    >
+                        <ArrowLeft size={16} /> Armazéns
+                    </button>
+                </div>
+                <div className="flex items-center gap-3 mt-2">
+                    <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400">
+                        <WarehouseIcon size={22} />
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-xl text-slate-800 dark:text-white">{warehouse.label}</h3>
+                        {warehouse.lieu && (
+                            <span className="text-sm text-slate-400 flex items-center gap-1 mt-0.5">
+                                <MapPin size={13} /> {warehouse.lieu}
+                            </span>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 md:p-6">
+                <div className="max-w-3xl mx-auto space-y-4">
+                    {/* Resumo */}
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                            <span className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">Itens com estoque</span>
+                            <div className="font-bold text-2xl text-slate-800 dark:text-white mt-1">{isLoading ? '—' : items.length}</div>
+                        </div>
+                        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                            <span className="text-xs text-slate-500 dark:text-slate-400 uppercase font-bold">Quantidade total</span>
+                            <div className="font-bold text-2xl text-slate-800 dark:text-white mt-1">{isLoading ? '—' : totalQty.toLocaleString()}</div>
+                        </div>
+                    </div>
+
+                    {/* Lista de itens */}
+                    <div className="bg-white dark:bg-slate-900 p-4 md:p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <h4 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+                            <Boxes size={18} /> Itens neste armazém
+                        </h4>
+
+                        {isLoading ? (
+                            <div className="flex justify-center py-12" data-testid="loading-spinner">
+                                <Loader2 className="animate-spin text-slate-400" size={28} />
+                            </div>
+                        ) : items.length === 0 ? (
+                            <div className="flex flex-col items-center py-12 text-slate-400" data-testid="empty-state">
+                                <Package size={40} className="mb-3 opacity-50" />
+                                <p className="font-medium">Nenhum item em estoque</p>
+                                <p className="text-sm mt-1">Este armazém não possui produtos com quantidade registrada.</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-2" data-testid="stock-items">
+                                {items.map(({ product, qty }) => (
+                                    <button
+                                        key={product.id}
+                                        type="button"
+                                        onClick={() => onNavigate?.('products', product.id)}
+                                        className="w-full text-left flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                                    >
+                                        <div className="min-w-0 pr-2">
+                                            <span className="text-sm font-medium text-slate-800 dark:text-white block truncate">
+                                                {product.label}
+                                            </span>
+                                            <span className="text-xs text-slate-400 font-mono block truncate">{product.ref}</span>
+                                        </div>
+                                        <span className="shrink-0 font-bold text-slate-900 dark:text-white">{qty.toLocaleString()}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 interface InventoryViewProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -30,6 +134,51 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
     const confirm = useConfirm();
     const [activeTab, setActiveTab] = useState<'warehouses' | 'movements'>('warehouses');
     const [searchTerm, setSearchTerm] = useState('');
+
+    // Drill-in: armazém selecionado para ver conteúdo
+    const [selectedWarehouse, setSelectedWarehouse] = useState<Warehouse | null>(null);
+    const [stockItems, setStockItems] = useState<WarehouseStockItem[]>([]);
+    const [isLoadingStock, setIsLoadingStock] = useState(false);
+
+    const loadStock = useCallback(
+        async (warehouse: Warehouse) => {
+            if (!config) return;
+            setIsLoadingStock(true);
+            setStockItems([]);
+            try {
+                const candidates = products.filter(p => p.type === '0' && (p.stock_reel || 0) > 0);
+                const results = await mapWithConcurrency(candidates, STOCK_FETCH_CONCURRENCY, async product => {
+                    try {
+                        const full: any = await DolibarrService.getProductWithStock(config, product.id);
+                        const warehouseStock = full?.stock_warehouse?.[warehouse.id];
+                        const qty = warehouseStock ? parseFloat(warehouseStock.real ?? warehouseStock.stock ?? '0') : 0;
+                        return qty > 0 ? { product, qty } : null;
+                    } catch (e) {
+                        log.warn(`Falha ao buscar estoque do produto ${product.id}`, e);
+                        return null;
+                    }
+                });
+                setStockItems(
+                    results
+                        .filter((r): r is WarehouseStockItem => r !== null)
+                        .sort((a, b) => b.qty - a.qty)
+                );
+            } catch (e) {
+                log.error('Erro ao carregar estoque do armazém', e);
+            } finally {
+                setIsLoadingStock(false);
+            }
+        },
+        [config, products]
+    );
+
+    useEffect(() => {
+        if (selectedWarehouse) {
+            loadStock(selectedWarehouse);
+        } else {
+            setStockItems([]);
+        }
+    }, [selectedWarehouse, loadStock]);
 
     // Warehouse CRUD State
     const [isWarehouseModalOpen, setIsWarehouseModalOpen] = useState(false);
@@ -188,6 +337,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
                 <p>Carregando dados de estoque...</p>
             </div>
         )
+    }
+
+    // Drill-in: mostrar conteúdo do armazém selecionado
+    if (selectedWarehouse) {
+        return (
+            <WarehouseContentPanel
+                warehouse={selectedWarehouse}
+                items={stockItems}
+                isLoading={isLoadingStock}
+                onBack={() => setSelectedWarehouse(null)}
+                onNavigate={onNavigate}
+            />
+        );
     }
 
     return (
@@ -458,7 +620,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
                             </div>
                         ) : (
                             filteredWarehouses.map(wh => (
-                                <div key={wh.id} className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all group">
+                                <div
+                                    key={wh.id}
+                                    onClick={() => setSelectedWarehouse(wh)}
+                                    className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md hover:border-indigo-300 dark:hover:border-indigo-700 transition-all group cursor-pointer"
+                                    data-testid={`warehouse-card-${wh.id}`}
+                                >
                                     <div className="flex justify-between items-start mb-3">
                                         <div className="flex items-center gap-3">
                                             <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg text-slate-500 dark:text-slate-400">
@@ -472,8 +639,20 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
                                             </div>
                                         </div>
                                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={() => openWarehouseModal(wh)} className="p-2 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20"><Edit2 size={16} /></button>
-                                            <button onClick={() => handleDeleteWarehouse(wh.id)} className="p-2 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-900/20"><Trash2 size={16} /></button>
+                                            <button
+                                                onClick={e => { e.stopPropagation(); openWarehouseModal(wh); }}
+                                                className="p-2 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
+                                                data-testid={`edit-btn-${wh.id}`}
+                                            >
+                                                <Edit2 size={16} />
+                                            </button>
+                                            <button
+                                                onClick={e => { e.stopPropagation(); handleDeleteWarehouse(wh.id); }}
+                                                className="p-2 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+                                                data-testid={`delete-btn-${wh.id}`}
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
                                         </div>
                                     </div>
                                     {wh.lieu && <div className="flex items-center gap-2 text-sm text-slate-500 mb-2"><MapPin size={14} /> {wh.lieu}</div>}

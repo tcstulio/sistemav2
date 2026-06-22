@@ -5,7 +5,7 @@ import { Order, AppView } from '../types';
 import { ShoppingCart, ExternalLink, Package, CheckCircle, Truck, Clock, FilePlus, Download, Receipt, Lock, CheckSquare, Trash2, Plus, Pencil } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useOrders, useCustomers, useShipments, useInvoices, useUsers } from '../hooks/dolibarr';
+import { useOrders, useCustomers, useShipments, useInvoices, useUsers, useProjects } from '../hooks/dolibarr';
 import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
@@ -52,6 +52,7 @@ const OrderDetail: React.FC<{
     onNavigate?: (view: AppView, id: string) => void;
     customers: any[];
     users: any[];
+    projects: any[];
     shipments: any[];
     invoices: any[];
     processingId: string | null;
@@ -62,7 +63,7 @@ const OrderDetail: React.FC<{
     onDownloadPdf: (ref: string) => void;
     onOpenDolibarr: (id: string) => void;
     onDeleteShipment: (id: string) => void;
-    onCreateInvoiceLike: (id: string) => void;
+    onCreateInvoice: (id: string) => void;
     onDeleteOrder: () => Promise<any>;
     onOrderDeleted: () => void;
 }> = ({
@@ -71,6 +72,7 @@ const OrderDetail: React.FC<{
     onNavigate,
     customers,
     users,
+    projects,
     shipments,
     invoices,
     processingId,
@@ -81,7 +83,7 @@ const OrderDetail: React.FC<{
     onDownloadPdf,
     onOpenDolibarr,
     onDeleteShipment,
-    onCreateInvoiceLike,
+    onCreateInvoice,
     onDeleteOrder,
     onOrderDeleted
 }) => {
@@ -96,6 +98,12 @@ const OrderDetail: React.FC<{
             if (!id) return '-';
             const u = users.find(user => String(user.id) === String(id));
             return u ? (u.firstname ? `${u.firstname} ${u.lastname}` : u.login) : `User ${id}`;
+        };
+
+        const getProjectInfo = (projectId?: string) => {
+            if (!projectId) return null;
+            const p = projects.find((proj: any) => String(proj.id) === String(projectId));
+            return p ? { id: projectId, ref: p.ref, title: p.title || p.ref } : { id: projectId, ref: projectId, title: projectId };
         };
 
         const currentOrderShipments = useMemo(() => {
@@ -116,11 +124,21 @@ const OrderDetail: React.FC<{
                         </span>
                     }
                     subtitle={
-                        <span
-                            className="cursor-pointer hover:underline hover:text-indigo-500"
-                            onClick={() => onNavigate && onNavigate('customers', order.socid)}
-                        >
-                            Cliente: {getCustomerName(order.socid)}
+                        <span className="flex items-center gap-3 flex-wrap">
+                            <span
+                                className="cursor-pointer hover:underline hover:text-indigo-500"
+                                onClick={() => onNavigate && onNavigate('customers', order.socid)}
+                            >
+                                Cliente: {getCustomerName(order.socid)}
+                            </span>
+                            {getProjectInfo(order.project_id) && (
+                                <span
+                                    className="cursor-pointer hover:underline hover:text-indigo-500"
+                                    onClick={() => onNavigate && getProjectInfo(order.project_id) && onNavigate('projects', getProjectInfo(order.project_id)!.id)}
+                                >
+                                    Projeto: {getProjectInfo(order.project_id)!.title}
+                                </span>
+                            )}
                         </span>
                     }
                     onBack={onClose}
@@ -287,7 +305,7 @@ const OrderDetail: React.FC<{
                                         icon={Receipt}
                                         title="Nenhuma fatura gerada"
                                         description="Não há faturas para este pedido."
-                                        action={<Button onClick={() => onCreateInvoiceLike(order.id)}>Gerar Fatura (Simulação)</Button>}
+                                        action={order.statut !== '0' ? <Button onClick={() => onCreateInvoice(order.id)}>Gerar Fatura</Button> : undefined}
                                     />
                                 ) : (
                                     currentOrderInvoices.map(inv => (
@@ -332,6 +350,8 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     const { data: invoicesData } = useInvoices(config);
     const invoices = invoicesData || [];
     const { data: users = [] } = useUsers(config);
+    const { data: projectsData } = useProjects(config);
+    const projects = projectsData || [];
 
     // Fallback if config is null
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
@@ -450,6 +470,12 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
         return customer ? customer.name : 'Cliente Desconhecido';
     };
 
+    const getProjectName = (projectId?: string) => {
+        if (!projectId) return null;
+        const p = projects.find((proj: any) => String(proj.id) === String(projectId));
+        return p ? (p.title || p.ref) : null;
+    };
+
     // Filtro de status (Tabs) como pré-filtro antes de busca/ordenação (#121).
     // Status: 0=Draft, 1=Validated, 2=Processing, 3=Delivered/Closed
     const statusFilteredOrders = useMemo(() => {
@@ -480,12 +506,18 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
         window.open(`${baseUrl}/commande/card.php?id=${id}`, '_blank');
     };
 
-    const handleCreateInvoice = (id: string) => {
+    const handleCreateInvoice = async (id: string) => {
         setProcessingId(id);
-        setTimeout(() => {
-            setProcessingId(null);
+        try {
+            await DolibarrService.createInvoiceFromOrder(config, id);
             toast.success(`Fatura criada com sucesso a partir do Pedido ${id}!`);
-        }, 1500);
+            if (onRefresh) onRefresh();
+        } catch (e: any) {
+            log.error('Failed to create invoice from order', e);
+            toast.error(`Falha ao gerar fatura: ${e.message}`);
+        } finally {
+            setProcessingId(null);
+        }
     };
 
     const handleValidateOrder = async (id: string) => {
@@ -757,6 +789,9 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                                         )}
                                     </div>
                                     <h3 className="font-bold text-slate-800 dark:text-white text-sm mb-1 line-clamp-1">{getCustomerName(ord.socid)}</h3>
+                                    {getProjectName(ord.project_id) && (
+                                        <p className="text-xs text-indigo-500 dark:text-indigo-400 mb-1 line-clamp-1">Projeto: {getProjectName(ord.project_id)}</p>
+                                    )}
                                     <div className="flex justify-between items-end">
                                         <span className="text-xs text-slate-500">{formatDateOnly(ord.date)}</span>
                                         <span className="font-bold text-slate-800 dark:text-white">{formatCurrency(ord.total_ttc)}</span>
@@ -774,6 +809,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                             onNavigate={onNavigate}
                             customers={customers}
                             users={users}
+                            projects={projects}
                             shipments={shipments}
                             invoices={invoices}
                             processingId={processingId}
@@ -784,7 +820,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                             onDownloadPdf={handleDownloadPdf}
                             onOpenDolibarr={openInDolibarr}
                             onDeleteShipment={handleDeleteShipment}
-                            onCreateInvoiceLike={handleCreateInvoice}
+                            onCreateInvoice={handleCreateInvoice}
                             onDeleteOrder={() => DolibarrService.deleteOrder(config, selectedOrder.id)}
                             onOrderDeleted={() => handleOrderDeleted(selectedOrder.id)}
                         />
