@@ -384,6 +384,13 @@ export const mapPayment = (data: any): Payment => ({
     mode_id: data.mode_id ? Number(data.mode_id) : undefined,
     user_author_id: data.user_author_id ? Number(data.user_author_id) : undefined,
     date_modification: toTimestamp(data.tms),
+    // Nota: o custom_sync.php/payments não envia fk_soc/fk_projet no payload bruto.
+    // Estes campos são mapeados aqui caso uma versão futura do SQL os inclua.
+    // A derivação via fatura vinculada (getPaymentContext) é a fonte primária atual.
+    fk_soc: data.fk_soc ? Number(data.fk_soc) : undefined,
+    socid: data.socid ? Number(data.socid) : undefined,
+    project_id: data.project_id ? Number(data.project_id) : undefined,
+    fk_projet: data.fk_projet ? Number(data.fk_projet) : undefined,
 });
 
 export const mapSupplierPayment = (data: any): SupplierPayment => ({

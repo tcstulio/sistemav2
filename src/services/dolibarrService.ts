@@ -28,6 +28,11 @@ export const DolibarrService = {
     cloneProposal: Commercial.cloneProposal,
     mapProposalLineForClone: Commercial.mapProposalLineForClone,
 
+    // Order Lines
+    addOrderLine: Commercial.addOrderLine,
+    updateOrderLine: Commercial.updateOrderLine,
+    deleteOrderLine: Commercial.deleteOrderLine,
+
     // Invoice Lines
     updateInvoice: Commercial.updateInvoice,
     createInvoiceFromOrder: Commercial.createInvoiceFromOrder,
