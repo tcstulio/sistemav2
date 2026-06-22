@@ -239,6 +239,7 @@ export const mapProject = (raw: RawDolibarrRecord): Project => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     title: raw.title || '',
+    description: raw.description ? toString(raw.description) : undefined,
     statut: toString(raw.statut) as '0' | '1' | '2',
     progress: toNumber(raw.progress),
     socid: raw.socid ? toString(raw.socid) : '',
