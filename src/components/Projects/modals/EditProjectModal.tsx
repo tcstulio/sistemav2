@@ -1,12 +1,13 @@
 import React from 'react';
 import { X } from 'lucide-react';
 
-interface EditProjectForm {
+export interface EditProjectForm {
     title: string;
     status: string;
     date_start: string;
     date_end: string;
     description: string;
+    budget_amount: string;
 }
 
 interface EditProjectModalProps {
@@ -60,6 +61,16 @@ export const EditProjectModal: React.FC<EditProjectModalProps> = ({
                             <option value="2">Fechado</option>
                         </select>
                     </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
+                        <textarea
+                            rows={3}
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white resize-none"
+                            value={form.description}
+                            onChange={e => setForm({ ...form, description: e.target.value })}
+                            placeholder="Descrição do projeto (opcional)"
+                        />
+                    </div>
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data Início</label>
@@ -79,6 +90,18 @@ export const EditProjectModal: React.FC<EditProjectModalProps> = ({
                                 onChange={e => setForm({ ...form, date_end: e.target.value })}
                             />
                         </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Orçamento (R$)</label>
+                        <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={form.budget_amount}
+                            onChange={e => setForm({ ...form, budget_amount: e.target.value })}
+                            placeholder="0,00"
+                        />
                     </div>
                     <div className="pt-2 flex justify-end gap-2">
                         <button type="button" onClick={onClose} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancelar</button>

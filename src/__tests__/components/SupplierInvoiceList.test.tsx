@@ -438,3 +438,87 @@ describe('SupplierInvoiceList — Currency standardization (#689)', () => {
         expect(dollarMatches).toHaveLength(0);
     });
 });
+
+describe('SupplierInvoiceList — Alvo de clique não-ambíguo (#690) + moeda BRL no card (#691)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useSupplierInvoiceLines).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierPayments).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierPaymentInvoiceLinks).mockReturnValue({ data: [] } as any);
+    });
+
+    it('card total_ttc contém R$ e não contém $ isolado', () => {
+        const { container } = renderWithProvider([mockUnpaidInvoice]); // total_ttc: 2500
+
+        const formatted = formatCurrency(2500);
+        // deve conter R$
+        expect(formatted).toMatch(/R\$/);
+        // algum elemento renderiza o valor formatado
+        const matches = Array.from(container.querySelectorAll('*')).filter(
+            (el) => el.textContent === formatted
+        );
+        expect(matches.length).toBeGreaterThanOrEqual(1);
+
+        // nenhum elemento com "$<dígito>" sem o R antes
+        const bareDollar = Array.from(container.querySelectorAll('*')).filter((el) =>
+            /(?<!R)\$\d/.test(el.textContent || '')
+        );
+        expect(bareDollar).toHaveLength(0);
+    });
+
+    it('clicar no nome do fornecedor chama onNavigate com suppliers e não abre o detalhe', async () => {
+        const user = userEvent.setup();
+        const onNavigate = vi.fn();
+
+        vi.mocked(useSupplierInvoices).mockReturnValue({ data: [mockUnpaidInvoice], refetch: vi.fn() } as any);
+        vi.mocked(useSuppliers).mockReturnValue({
+            data: [{ id: 'sup1', name: 'Fornecedor Alpha' }],
+        } as any);
+
+        render(
+            <ConfirmProvider>
+                <SupplierInvoiceList onNavigate={onNavigate} />
+            </ConfirmProvider>
+        );
+
+        const supplierBtn = screen.getByRole('button', { name: 'Fornecedor Alpha' });
+        await user.click(supplierBtn);
+
+        expect(onNavigate).toHaveBeenCalledWith('suppliers', 'sup1');
+        // detalhe NÃO deve abrir (ref da fatura não aparece no painel de detalhe)
+        expect(screen.queryByText('Valor Total')).toBeNull();
+    });
+
+    it('clicar na área do card (fora do nome do fornecedor) abre o detalhe', async () => {
+        const user = userEvent.setup();
+        const onNavigate = vi.fn();
+
+        vi.mocked(useSupplierInvoices).mockReturnValue({ data: [mockUnpaidInvoice], refetch: vi.fn() } as any);
+        vi.mocked(useSuppliers).mockReturnValue({
+            data: [{ id: 'sup1', name: 'Fornecedor Alpha' }],
+        } as any);
+
+        render(
+            <ConfirmProvider>
+                <SupplierInvoiceList onNavigate={onNavigate} />
+            </ConfirmProvider>
+        );
+
+        // Clica na ref da fatura (área do card, fora do nome do fornecedor)
+        await user.click(screen.getByText('FA-UNPAID-001'));
+
+        await waitFor(() => {
+            expect(screen.getByText('Valor Total')).toBeTruthy();
+        });
+
+        // onNavigate não deve ter sido chamado para suppliers
+        expect(onNavigate).not.toHaveBeenCalledWith('suppliers', expect.anything());
+    });
+
+    it('nome do fornecedor tem aparência de link (classe text-indigo-600)', () => {
+        renderWithProvider([mockUnpaidInvoice]);
+
+        const supplierBtn = screen.getByRole('button', { name: 'Fornecedor Alpha' });
+        expect(supplierBtn.className).toMatch(/text-indigo-600/);
+    });
+});

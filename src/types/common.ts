@@ -6,6 +6,7 @@ export interface DolibarrUser {
     lastname?: string;
     email?: string;
     phone_mobile?: string;
+    office_phone?: string;
     photo?: string;
     statut: '0' | '1';
     job?: string;
