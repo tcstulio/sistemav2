@@ -15,7 +15,13 @@ router.get('/', (req, res) => {
         const offset = Number(req.query.offset) || 0;
         const notifications = notificationService.getForUser(userId, limit, offset);
         const unreadCount = notificationService.getUnreadCount(userId);
-        res.json({ notifications, unreadCount });
+        // Deriva scope: 'personal' quando recipient === userId logado; 'system' nos demais.
+        // Retrocompatível: campos anteriores não são removidos.
+        const notificationsWithScope = notifications.map(n => ({
+            ...n,
+            scope: (n.recipient && n.recipient === userId) ? 'personal' : 'system' as 'personal' | 'system',
+        }));
+        res.json({ notifications: notificationsWithScope, unreadCount });
     } catch (e: any) {
         log.error('GET /notifications error', e.message);
         res.status(500).json({ error: e.message });

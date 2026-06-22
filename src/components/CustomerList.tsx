@@ -22,6 +22,7 @@ const log = logger.child('CustomerList');
 // Common Components
 import { PaginationControls } from './common/PaginationControls';
 import { LinkedObjects } from './common/LinkedObjects';
+import { ThirdPartyContacts } from './common/ThirdPartyContacts';
 
 // ============================================
 // Sub-components
@@ -227,6 +228,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
     const customerProjects = useMemo(() => selectedCustomer ? projects.filter(p => String(p.socid) === String(selectedCustomer.id)) : [], [selectedCustomer, projects]);
     const customerProposals = useMemo(() => selectedCustomer ? proposals.filter(p => String(p.socid) === String(selectedCustomer.id)) : [], [selectedCustomer, proposals]);
     const customerOrders = useMemo(() => selectedCustomer ? orders.filter(o => String(o.socid) === String(selectedCustomer.id)) : [], [selectedCustomer, orders]);
+    const customerContacts = useMemo(() => selectedCustomer ? contacts.filter(c => String(c.socid) === String(selectedCustomer.id)) : [], [selectedCustomer, contacts]);
 
 
     // Handlers
@@ -496,6 +498,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
             <div className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4">
                 <Tabs value={activeTab} onChange={(v) => setActiveTab(v as any)}>
                     <Tab value="overview">Visão Geral</Tab>
+                    <Tab value="contacts" badge={customerContacts.length}>Responsáveis</Tab>
                     <Tab value="projects" badge={customerProjects.length}>Projetos</Tab>
                     <Tab value="invoices" badge={customerInvoices.length}>Faturas</Tab>
                     <Tab value="orders" badge={customerOrders.length}>Pedidos</Tab>
@@ -580,6 +583,14 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                                 />
                             </div>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'contacts' && config && (
+                <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-950/50">
+                    <div className="max-w-2xl mx-auto">
+                        <ThirdPartyContacts socid={selectedCustomer.id} config={config} />
                     </div>
                 </div>
             )}

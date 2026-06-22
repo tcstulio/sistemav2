@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Bell, BellOff, Save, MessageSquare, Mail, Monitor } from 'lucide-react';
+import { Bell, BellOff, Save, MessageSquare, Mail, Monitor, AlertTriangle, Phone, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { Card, Button, Spinner } from '../ui';
-import { getUiConfig, updateUiConfig, TaskNotifEvent, TaskNotifRole, NotifChannel, TaskNotificationsConfig } from '../../services/uiConfigService';
+import { getUiConfig, updateUiConfig, getUsersMissingPhone, TaskNotifEvent, TaskNotifRole, NotifChannel, TaskNotificationsConfig, UserMissingPhone } from '../../services/uiConfigService';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('NotificationConfigEditor');
@@ -52,6 +52,11 @@ export const NotificationConfigEditor: React.FC<NotificationConfigEditorProps> =
     const [config, setConfig] = useState<TaskNotificationsConfig | null>(null);
     const [externalEnabled, setExternalEnabled] = useState(false);
 
+    // Estado do diagnóstico de telefones
+    const [diagLoading, setDiagLoading] = useState(false);
+    const [diagResult, setDiagResult] = useState<{ total: number; missingCount: number; users: UserMissingPhone[] } | null>(null);
+    const [diagOpen, setDiagOpen] = useState(false);
+
     useEffect(() => {
         if (!isAdmin) { setLoading(false); return; }
         let cancelled = false;
@@ -71,6 +76,19 @@ export const NotificationConfigEditor: React.FC<NotificationConfigEditorProps> =
         })();
         return () => { cancelled = true; };
     }, [isAdmin]);
+
+    const handleLoadDiag = async () => {
+        setDiagLoading(true);
+        try {
+            const result = await getUsersMissingPhone();
+            setDiagResult(result);
+            setDiagOpen(true);
+        } catch (e: any) {
+            toast.error(`Falha ao carregar diagnóstico: ${e?.message || 'erro'}`);
+        } finally {
+            setDiagLoading(false);
+        }
+    };
 
     const toggleChannel = (event: TaskNotifEvent, role: TaskNotifRole, channel: NotifChannel) => {
         if (!config) return;
@@ -114,27 +132,100 @@ export const NotificationConfigEditor: React.FC<NotificationConfigEditorProps> =
             ) : config ? (
                 <>
                     {/* Toggle externo */}
-                    <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700 flex items-center justify-between mb-4">
-                        <div>
-                            <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
-                                {externalEnabled ? <Bell size={18} className="text-emerald-500" /> : <BellOff size={18} className="text-slate-400" />}
-                                Canais externos (WhatsApp / Email)
+                    <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700 mb-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+                                    {externalEnabled ? <Bell size={18} className="text-emerald-500" /> : <BellOff size={18} className="text-slate-400" />}
+                                    Notificações externas (WhatsApp / E-mail)
+                                </div>
+                                <p className="text-xs text-slate-400 mt-1">
+                                    {externalEnabled
+                                        ? 'Ativo — notificações WhatsApp e Email serão enviadas conforme a matriz abaixo.'
+                                        : 'Desativado — somente notificações in-app são entregues, mesmo que estejam marcadas abaixo.'}
+                                </p>
                             </div>
-                            <p className="text-xs text-slate-400 mt-1">
-                                {externalEnabled
-                                    ? 'Ativo — notificações WhatsApp e Email serão enviadas conforme a matriz abaixo.'
-                                    : 'Desativado — somente notificações in-app são entregues, mesmo que estejam marcadas abaixo.'}
-                            </p>
+                            <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-4">
+                                <input
+                                    type="checkbox"
+                                    checked={externalEnabled}
+                                    onChange={(e) => setExternalEnabled(e.target.checked)}
+                                    className="sr-only peer"
+                                />
+                                <div className={`w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-${themeColor}-600`}></div>
+                            </label>
                         </div>
-                        <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-4">
-                            <input
-                                type="checkbox"
-                                checked={externalEnabled}
-                                onChange={(e) => setExternalEnabled(e.target.checked)}
-                                className="sr-only peer"
-                            />
-                            <div className={`w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-${themeColor}-600`}></div>
-                        </label>
+
+                        {/* Aviso explícito ao habilitar */}
+                        {externalEnabled && (
+                            <div className="flex items-start gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg px-3 py-2">
+                                <AlertTriangle size={15} className="text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                                <p className="text-xs text-amber-700 dark:text-amber-300">
+                                    <strong>Atenção:</strong> Habilitar este toggle fará o sistema enviar mensagens <strong>reais</strong> para o WhatsApp e e-mail de todos os usuários afetados pelas regras abaixo.
+                                    Certifique-se de que os telefones estão cadastrados corretamente no Dolibarr antes de ativar.
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Diagnóstico de telefones */}
+                        <div className="border-t border-slate-100 dark:border-slate-700 pt-3">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                                    <Phone size={13} />
+                                    Diagnóstico: usuários sem telefone cadastrado
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={handleLoadDiag}
+                                        disabled={diagLoading}
+                                        className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium disabled:opacity-50"
+                                    >
+                                        <RefreshCw size={11} className={diagLoading ? 'animate-spin' : ''} />
+                                        {diagLoading ? 'Carregando...' : 'Verificar'}
+                                    </button>
+                                    {diagResult && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setDiagOpen(o => !o)}
+                                            className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                                        >
+                                            {diagOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                            {diagResult && (
+                                <p className="text-xs mt-1 text-slate-500 dark:text-slate-400">
+                                    <span className={diagResult.missingCount > 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-emerald-600 dark:text-emerald-400 font-medium'}>
+                                        {diagResult.missingCount} de {diagResult.total}
+                                    </span>{' '}
+                                    {diagResult.missingCount === 1 ? 'usuário ativo sem' : 'usuários ativos sem'} <code>phone_mobile</code> — não receberão WhatsApp.
+                                </p>
+                            )}
+                            {diagResult && diagOpen && diagResult.users.length > 0 && (
+                                <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-100 dark:border-slate-700">
+                                    <table className="w-full text-xs">
+                                        <thead>
+                                            <tr className="bg-slate-50 dark:bg-slate-800">
+                                                <th className="text-left px-3 py-1.5 text-slate-400 font-medium">Login</th>
+                                                <th className="text-left px-3 py-1.5 text-slate-400 font-medium">Nome</th>
+                                                <th className="text-left px-3 py-1.5 text-slate-400 font-medium">E-mail</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {diagResult.users.map(u => (
+                                                <tr key={u.id} className="border-t border-slate-100 dark:border-slate-800">
+                                                    <td className="px-3 py-1.5 text-slate-600 dark:text-slate-300 font-mono">{u.login}</td>
+                                                    <td className="px-3 py-1.5 text-slate-600 dark:text-slate-300">{u.name || '—'}</td>
+                                                    <td className="px-3 py-1.5 text-slate-500 dark:text-slate-400">{u.email || '—'}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {/* Legenda */}

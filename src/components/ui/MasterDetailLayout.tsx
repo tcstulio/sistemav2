@@ -53,7 +53,7 @@ export const MasterDetailLayout: React.FC<MasterDetailLayoutProps> = ({
     const hasDetail = showDetail && detail;
 
     return (
-        <div className={`flex-1 min-h-0 flex overflow-hidden ${className}`}>
+        <div className={`relative flex-1 min-h-0 flex overflow-hidden ${className}`}>
             {/* List Panel
                 min-h-0 é CRÍTICO (#651): sem ele, o flex item tem min-height:auto
                 (tamanho do conteúdo), o painel cresce com o conteúdo em vez de ser

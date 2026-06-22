@@ -41,6 +41,12 @@ export const config = {
     // Cap de destinatários por broadcast do scheduler (anti-spam em massa). Configurável.
     schedulerMaxBroadcast: parseInt(process.env.SCHEDULER_MAX_BROADCAST || '500', 10),
 
+    // Resiliência LLM: backoff exponencial em erros de infra (429/timeout/5xx).
+    // LLM_PRIMARY_TIMEOUT_MS: tempo máximo por chamada ao provider primário (ms). Default 180s.
+    // LLM_RETRY_DEADLINE_MS:  prazo total para re-tentativas em erro de infra (ms). Default 60s.
+    llmPrimaryTimeoutMs: parseInt(process.env.LLM_PRIMARY_TIMEOUT_MS || '180000', 10),
+    llmRetryDeadlineMs: parseInt(process.env.LLM_RETRY_DEADLINE_MS || '60000', 10),
+
 
     // Banco Inter
     interClientId: process.env.INTER_CLIENT_ID || '',
