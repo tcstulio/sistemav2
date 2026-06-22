@@ -2,38 +2,64 @@ import React, { useState } from 'react';
 import { Artist, ArtistRole, EventCluster } from '../../types/centrovibe';
 import { CLUSTERS } from './constants';
 import { Card, Button, Input, Modal } from '../ui';
-import { Mic2, Disc, Settings, Users, Plus, Search, Instagram } from 'lucide-react';
+import { Mic2, Disc, Settings, Users, Plus, Search, Instagram, Edit2, Trash2 } from 'lucide-react';
 
 interface ArtistListProps {
   artists: Artist[];
   onAddArtist: (artist: Artist) => void;
+  onUpdateArtist: (artist: Artist) => void;
+  onDeleteArtist: (artistId: string) => void;
 }
 
-const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist }) => {
+const emptyForm = () => ({
+  name: '',
+  role: 'dj' as ArtistRole,
+  cluster: 'brasil_raiz' as EventCluster,
+  subGenre: '',
+  instagram: '',
+  rate: '$$',
+});
+
+const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist, onUpdateArtist, onDeleteArtist }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingArtist, setEditingArtist] = useState<Artist | null>(null);
   const [filterCluster, setFilterCluster] = useState<EventCluster | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const [newName, setNewName] = useState('');
-  const [newRole, setNewRole] = useState<ArtistRole>('dj');
-  const [newCluster, setNewCluster] = useState<EventCluster>('brasil_raiz');
-  const [newSubGenre, setNewSubGenre] = useState('');
-  const [newIg, setNewIg] = useState('');
+  const [form, setForm] = useState(emptyForm());
 
-  const handleAddArtist = () => {
-    if (!newName) return;
-    const newArtist: Artist = {
-      id: Date.now().toString(),
-      name: newName,
-      role: newRole,
-      cluster: newCluster,
-      subGenre: newSubGenre,
-      instagram: newIg,
-      rate: '$$'
-    };
-    onAddArtist(newArtist);
+  const openAdd = () => {
+    setEditingArtist(null);
+    setForm(emptyForm());
+    setIsModalOpen(true);
+  };
+
+  const openEdit = (artist: Artist) => {
+    setEditingArtist(artist);
+    setForm({
+      name: artist.name,
+      role: artist.role,
+      cluster: artist.cluster,
+      subGenre: artist.subGenre,
+      instagram: artist.instagram || '',
+      rate: artist.rate || '$$',
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleConfirm = () => {
+    if (!form.name) return;
+    if (editingArtist) {
+      onUpdateArtist({ ...editingArtist, ...form });
+    } else {
+      onAddArtist({ id: Date.now().toString(), ...form });
+    }
     setIsModalOpen(false);
-    setNewName(''); setNewSubGenre(''); setNewIg('');
+  };
+
+  const handleDelete = (artistId: string) => {
+    if (!window.confirm('Excluir artista?')) return;
+    onDeleteArtist(artistId);
   };
 
   const filteredArtists = artists.filter(artist => {
@@ -61,7 +87,7 @@ const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist }) => {
           </h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm">Gerencie bandas, DJs e produtoras por Cluster.</p>
         </div>
-        <Button variant="primary" icon={<Plus size={16} />} onClick={() => setIsModalOpen(true)}>
+        <Button variant="primary" icon={<Plus size={16} />} onClick={openAdd}>
           Novo Talento
         </Button>
       </div>
@@ -105,9 +131,25 @@ const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist }) => {
                 <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300">
                   {getRoleIcon(artist.role)}
                 </div>
-                <span className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider ${cluster.color}`}>
-                  {cluster.label.split('/')[0]}
-                </span>
+                <div className="flex items-center gap-1">
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider ${cluster.color}`}>
+                    {cluster.label.split('/')[0]}
+                  </span>
+                  <button
+                    onClick={() => openEdit(artist)}
+                    className="p-1 text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded transition-colors"
+                    title="Editar artista"
+                  >
+                    <Edit2 size={13} />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(artist.id)}
+                    className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                    title="Excluir artista"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
               <h3 className="font-bold text-lg text-slate-800 dark:text-white mb-1 truncate">{artist.name}</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">{artist.subGenre}</p>
@@ -123,18 +165,18 @@ const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist }) => {
         })}
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Adicionar Novo Talento" size="md">
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingArtist ? 'Editar Talento' : 'Adicionar Novo Talento'} size="md">
         <div className="space-y-4">
           <Input
             label="Nome do Artista/Projeto"
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
+            value={form.name}
+            onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
             placeholder="Ex: DJ Cleiton"
           />
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
-              <select value={newRole} onChange={e => setNewRole(e.target.value as ArtistRole)}
+              <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value as ArtistRole }))}
                 className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500">
                 <option value="dj">DJ</option>
                 <option value="band">Banda</option>
@@ -144,7 +186,7 @@ const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist }) => {
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cluster (Vibe)</label>
-              <select value={newCluster} onChange={e => setNewCluster(e.target.value as EventCluster)}
+              <select value={form.cluster} onChange={e => setForm(f => ({ ...f, cluster: e.target.value as EventCluster }))}
                 className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500">
                 {Object.keys(CLUSTERS).map(k => (
                   <option key={k} value={k}>{CLUSTERS[k as EventCluster].label}</option>
@@ -154,19 +196,29 @@ const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist }) => {
           </div>
           <Input
             label="Sub-gênero"
-            value={newSubGenre}
-            onChange={e => setNewSubGenre(e.target.value)}
+            value={form.subGenre}
+            onChange={e => setForm(f => ({ ...f, subGenre: e.target.value }))}
             placeholder="Ex: Pagode 90, Techno"
           />
           <Input
             label="Instagram"
             icon={<Instagram size={16} />}
-            value={newIg}
-            onChange={e => setNewIg(e.target.value)}
+            value={form.instagram}
+            onChange={e => setForm(f => ({ ...f, instagram: e.target.value }))}
             placeholder="@usuario"
           />
-          <Button variant="primary" fullWidth onClick={handleAddArtist}>
-            Cadastrar
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cachê</label>
+            <select value={form.rate} onChange={e => setForm(f => ({ ...f, rate: e.target.value }))}
+              className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500">
+              <option value="$">$ (até R$500)</option>
+              <option value="$$">$$ (R$500–2k)</option>
+              <option value="$$$">$$$ (R$2k–10k)</option>
+              <option value="$$$$">$$$$ (acima de R$10k)</option>
+            </select>
+          </div>
+          <Button variant="primary" fullWidth onClick={handleConfirm}>
+            {editingArtist ? 'Salvar Alterações' : 'Cadastrar'}
           </Button>
         </div>
       </Modal>

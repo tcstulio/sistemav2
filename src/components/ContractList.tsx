@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Contract, AppView } from '../types';
-import { FileSignature, Plus, Loader2, CheckCircle2, Calendar, User, FolderKanban, Receipt, ExternalLink, Archive, Pencil } from 'lucide-react';
+import { FileSignature, Plus, Loader2, CheckCircle2, Calendar, User, FolderKanban, Receipt, ExternalLink, Archive, Pencil, Package } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useContracts, useCustomers, useProjects, useInvoices } from '../hooks/dolibarr';
@@ -55,6 +55,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
     const [editContractId, setEditContractId] = useState<string | undefined>(undefined);
     const [newContractForm, setNewContractForm] = useState({
         socid: '',
+        project_id: '',
         date_contrat: new Date().toISOString().split('T')[0],
         date_fin_validite: '',
         note_public: ''
@@ -68,6 +69,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
         setEditContractId(String(c.id));
         setNewContractForm({
             socid: String(c.socid),
+            project_id: c.project_id || '',
             date_contrat: tsToInput(c.date_contrat),
             date_fin_validite: tsToInput(c.date_fin_validite),
             note_public: c.note_public || '',
@@ -85,6 +87,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
             setEditContractId(undefined);
             setNewContractForm({
                 socid: prefill.data.socid || '',
+                project_id: prefill.data.project_id || '',
                 date_contrat: prefill.data.date_contrat || new Date().toISOString().split('T')[0],
                 date_fin_validite: prefill.data.date_fin_validite || '',
                 note_public: prefill.data.note_public || '',
@@ -98,6 +101,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
             setEditContractId(String(c.id));
             setNewContractForm({
                 socid: String(c.socid),
+                project_id: prefill.data.project_id ?? c.project_id ?? '',
                 date_contrat: prefill.data.date_contrat || tsToInput(c.date_contrat),
                 date_fin_validite: prefill.data.date_fin_validite || tsToInput(c.date_fin_validite),
                 note_public: prefill.data.note_public ?? c.note_public ?? '',
@@ -153,12 +157,15 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
         if (!newContractForm.socid) return;
         setIsSubmitting(true);
         try {
-            const payload = {
+            const payload: Record<string, unknown> = {
                 socid: newContractForm.socid,
                 date_contrat: new Date(newContractForm.date_contrat).getTime() / 1000,
                 date_fin_validite: newContractForm.date_fin_validite ? new Date(newContractForm.date_fin_validite).getTime() / 1000 : undefined,
-                note_public: newContractForm.note_public
+                note_public: newContractForm.note_public,
             };
+            if (newContractForm.project_id) {
+                payload.project_id = newContractForm.project_id;
+            }
             if (editContractId) {
                 await DolibarrService.updateObject(config, 'contracts', editContractId, payload);
                 toast.success("Contrato atualizado");
@@ -168,7 +175,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
             }
             setIsCreateModalOpen(false);
             setEditContractId(undefined);
-            setNewContractForm({ socid: '', date_contrat: new Date().toISOString().split('T')[0], date_fin_validite: '', note_public: '' });
+            setNewContractForm({ socid: '', project_id: '', date_contrat: new Date().toISOString().split('T')[0], date_fin_validite: '', note_public: '' });
             if (onRefresh) onRefresh();
         } catch (e: any) {
             notifyError('Salvar contrato', e);
@@ -380,6 +387,38 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                                     </div>
                                 )}
                             </div>
+
+                            {/* Contract lines */}
+                            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                                <h3 className="font-bold text-slate-800 dark:text-white mb-4 border-b border-slate-100 dark:border-slate-800 pb-2">Linhas de Serviço</h3>
+                                {!selectedContract.lines || selectedContract.lines.length === 0 ? (
+                                    <EmptyState icon={Package} title="Sem linhas de serviço" description="Este contrato não possui linhas de serviço cadastradas." />
+                                ) : (
+                                    <div className="space-y-2">
+                                        {selectedContract.lines.map((line, idx) => (
+                                            <div key={line.id || idx} className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800 text-sm">
+                                                <div className="flex-1 text-slate-800 dark:text-white font-medium">{line.desc || '—'}</div>
+                                                <div className="flex items-center gap-4 shrink-0 text-slate-600 dark:text-slate-400">
+                                                    <span>Qtd: <span className="font-semibold text-slate-800 dark:text-white">{line.qty}</span></span>
+                                                    <span>Preço: <span className="font-semibold text-slate-800 dark:text-white">{formatCurrency(line.price)}</span></span>
+                                                    {(line.date_start || line.date_end) && (
+                                                        <span className="text-xs text-slate-500">
+                                                            {line.date_start ? formatDateOnly(line.date_start) : '?'}
+                                                            {line.date_end ? ` → ${formatDateOnly(line.date_end)}` : ''}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                        <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
+                                            <span className="text-sm font-bold text-slate-800 dark:text-white">
+                                                Total: {formatCurrency(selectedContract.lines.reduce((sum, l) => sum + (l.price * l.qty), 0))}
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
                             <LinkedObjects
                                 id={selectedContract.id}
                                 type="contrat"
@@ -467,6 +506,17 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                         >
                             <option value="">Selecione o Cliente...</option>
                             {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Projeto (Opcional)</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={newContractForm.project_id}
+                            onChange={e => setNewContractForm({ ...newContractForm, project_id: e.target.value })}
+                        >
+                            <option value="">Nenhum projeto...</option>
+                            {projects.map(p => <option key={p.id} value={p.id}>{p.title || p.ref}</option>)}
                         </select>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
