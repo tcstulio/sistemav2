@@ -52,10 +52,22 @@ export const ProjectOverviewTab: React.FC<ProjectOverviewTabProps> = ({
                         <span className="text-sm text-slate-500">Início</span>
                         <span className="text-sm text-slate-800 dark:text-white">{formatDateOnly(project.date_start) || '-'}</span>
                     </div>
-                    <div className="flex justify-between">
+                    <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                         <span className="text-sm text-slate-500">Fim</span>
                         <span className="text-sm text-slate-800 dark:text-white">{formatDateOnly(project.date_end) || '-'}</span>
                     </div>
+                    {project.budget_amount != null && project.budget_amount > 0 && (
+                        <div className="flex justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                            <span className="text-sm text-slate-500">Orçamento</span>
+                            <span className="text-sm font-medium text-slate-800 dark:text-white">{formatCurrency(project.budget_amount)}</span>
+                        </div>
+                    )}
+                    {project.description && (
+                        <div className="pt-1">
+                            <span className="text-xs text-slate-500 block mb-1">Descrição</span>
+                            <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-line">{project.description}</p>
+                        </div>
+                    )}
                     {createdByName && (
                         <div className="flex justify-between border-t border-slate-100 dark:border-slate-800 pt-2 mt-2">
                             <span className="text-xs text-slate-500">Criado por</span>
