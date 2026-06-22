@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDolibarr } from '../../context/DolibarrContext';
-import { Send, User as UserIcon, Calendar, Clock, Loader2, Search, X, CheckSquare, Paperclip, ArrowLeft } from 'lucide-react';
+import { Send, User as UserIcon, Calendar, Loader2, Search, X, CheckSquare, Paperclip, ArrowLeft, Trash2, Pencil } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import * as Operations from '../../services/api/operations';
@@ -13,6 +13,7 @@ import { DolibarrService } from '../../services/dolibarrService';
 import { toast } from 'sonner';
 import { notifyError } from '../../utils/notifyError';
 import { SafeHtml, stripHtml, sanitizeHtml } from '../../utils/sanitizeHtml';
+import { useConfirm } from '../../hooks/useConfirm';
 
 interface ChatInterfaceProps {
     elementId: string;
@@ -26,6 +27,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
     const { config, currentUser, refreshData } = useDolibarr();
     const { data: events, isLoading, refetch } = useEvents(config);
     const navigate = useNavigate();
+    const confirm = useConfirm();
 
     const handleInternalLinkClick = useCallback((e: React.MouseEvent) => {
         const target = e.target as HTMLElement;
@@ -50,6 +52,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
     const [optimisticMessages, setOptimisticMessages] = useState<any[]>([]);
     // Erro de envio visível inline (além do toast) para que o usuário saiba que pode tentar de novo
     const [sendError, setSendError] = useState<string | null>(null);
+    // Edição inline: id da mensagem sendo editada + texto em edição
+    const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+    const [editingText, setEditingText] = useState('');
+    const [isSavingEdit, setIsSavingEdit] = useState(false);
+    // Exclusão: ids em processo de exclusão (loading)
+    const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
 
     const scrollRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -119,6 +127,60 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
             setOptimisticMessages(remaining);
         }
     }, [events, elementType, elementId, optimisticMessages]);
+
+    const handleDeleteMessage = useCallback(async (msg: any) => {
+        if (!config) return;
+        const ok = await confirm({
+            title: 'Excluir mensagem',
+            message: 'Tem certeza que deseja excluir esta mensagem? Esta ação não pode ser desfeita.',
+            confirmText: 'Excluir',
+            danger: true,
+        });
+        if (!ok) return;
+
+        setDeletingIds(prev => new Set(prev).add(String(msg.id)));
+        try {
+            await Operations.deleteEvent(config, String(msg.id));
+            await refetch();
+        } catch (err) {
+            notifyError('Excluir mensagem', err);
+        } finally {
+            setDeletingIds(prev => {
+                const next = new Set(prev);
+                next.delete(String(msg.id));
+                return next;
+            });
+        }
+    }, [config, confirm, refetch]);
+
+    const handleStartEdit = useCallback((msg: any) => {
+        setEditingMsgId(String(msg.id));
+        setEditingText(msg.description || msg.label || '');
+    }, []);
+
+    const handleSaveEdit = useCallback(async (msg: any) => {
+        if (!config || !editingText.trim()) return;
+        setIsSavingEdit(true);
+        try {
+            await Operations.updateEvent(config, String(msg.id), {
+                label: msg.label || `Comentário em ${elementType}`,
+                description: editingText,
+                note: editingText,
+            });
+            setEditingMsgId(null);
+            setEditingText('');
+            await refetch();
+        } catch (err) {
+            notifyError('Editar mensagem', err);
+        } finally {
+            setIsSavingEdit(false);
+        }
+    }, [config, editingText, elementType, refetch]);
+
+    const handleCancelEdit = useCallback(() => {
+        setEditingMsgId(null);
+        setEditingText('');
+    }, []);
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files || e.target.files.length === 0 || !config) return;
@@ -301,22 +363,55 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                     chatMessages.map((msg: any) => {
                         const isMe = String(msg.fk_user_author) === String(currentUser?.id);
                         const authorName = msg.user_author_name || (isMe ? 'Eu' : `Usuário ${msg.fk_user_author}`);
+                        const isEditing = editingMsgId === String(msg.id);
+                        const isDeleting = deletingIds.has(String(msg.id));
 
                         return (
                             <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                                 <div className={`max-w-[80%] rounded-lg p-3 shadow-sm ${isMe
                                     ? 'bg-blue-600 text-white rounded-tr-none'
                                     : 'bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 border border-gray-200 dark:border-gray-600 rounded-tl-none'
-                                    } group relative`}>
+                                    } group relative ${isDeleting ? 'opacity-50' : ''}`}>
                                     {!isMe && (
                                         <div className="text-xs font-bold text-blue-600 dark:text-blue-400 mb-1">
                                             {authorName}
                                         </div>
                                     )}
-                                    <SafeHtml
-                                        html={msg.description || msg.label || '(Sem conteúdo)'}
-                                        className="text-sm message-content"
-                                    />
+
+                                    {isEditing ? (
+                                        <div className="flex flex-col gap-2">
+                                            <textarea
+                                                data-testid={`edit-input-${msg.id}`}
+                                                value={editingText}
+                                                onChange={e => setEditingText(e.target.value)}
+                                                className="w-full text-sm bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded p-1 resize-none"
+                                                rows={3}
+                                                autoFocus
+                                            />
+                                            <div className="flex gap-2 justify-end">
+                                                <button
+                                                    onClick={handleCancelEdit}
+                                                    className="text-xs px-2 py-1 rounded bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-300"
+                                                >
+                                                    Cancelar
+                                                </button>
+                                                <button
+                                                    data-testid={`save-edit-${msg.id}`}
+                                                    onClick={() => handleSaveEdit(msg)}
+                                                    disabled={isSavingEdit}
+                                                    className="text-xs px-2 py-1 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 flex items-center gap-1"
+                                                >
+                                                    {isSavingEdit ? <Loader2 size={10} className="animate-spin" /> : null}
+                                                    Salvar
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <SafeHtml
+                                            html={msg.description || msg.label || '(Sem conteúdo)'}
+                                            className="text-sm message-content"
+                                        />
+                                    )}
 
                                     {/* Action Bar */}
                                     <div className={`absolute top-0 right-[-8px] lg:opacity-0 lg:group-hover:opacity-100 opacity-100 transition-opacity translate-x-full pr-2 flex flex-col gap-2`}>
@@ -329,6 +424,30 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                                                 <Send size={14} />
                                             </div>
                                         </button>
+
+                                        {isMe && !isEditing && (
+                                            <button
+                                                data-testid={`edit-btn-${msg.id}`}
+                                                onClick={() => handleStartEdit(msg)}
+                                                disabled={isDeleting}
+                                                className="p-2 bg-white dark:bg-gray-700 shadow-sm border border-gray-100 dark:border-gray-600 rounded-full text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 hover:shadow-md transition-all sm:p-1.5"
+                                                title="Editar"
+                                            >
+                                                <Pencil size={14} />
+                                            </button>
+                                        )}
+
+                                        {isMe && (
+                                            <button
+                                                data-testid={`delete-btn-${msg.id}`}
+                                                onClick={() => handleDeleteMessage(msg)}
+                                                disabled={isDeleting}
+                                                className="p-2 bg-white dark:bg-gray-700 shadow-sm border border-gray-100 dark:border-gray-600 rounded-full text-gray-400 hover:text-rose-600 dark:hover:text-rose-400 hover:shadow-md transition-all sm:p-1.5"
+                                                title="Excluir"
+                                            >
+                                                {isDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                                            </button>
+                                        )}
 
                                         {elementType === 'project' && (
                                             <button

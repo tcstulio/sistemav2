@@ -2,11 +2,6 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useTasks, useProjects, useUsers, useTaskContacts, useProjectContacts, useTaskTimeLogs } from '../../hooks/dolibarr'; // Import hooks
 import { Task, DolibarrUser, TaskContact, ProjectContact } from '../../types'; // Added DolibarrUser
-// Check if these exist, otherwise use standard divs. 
-// Actually, looking at previous files, components/ui/card might not exist or be standard. 
-// I'll use standard Tailwind classes to be safe as I haven't verified key UI components path.
-// Re-reading file structure: there is no "ui" folder in "components".
-// I will build the UI with raw Tailwind.
 
 import {
     CheckCircle2,
@@ -22,7 +17,8 @@ import {
     List,
     Layers,
     ChevronDown,
-    X
+    X,
+    Plus
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -30,7 +26,10 @@ import { TaskTimeDialog } from './TaskTimeDialog';
 import { TimeAnalysisDashboard } from './TimeAnalysisDashboard';
 import { TaskAssistantModal } from './TaskAssistantModal';
 import { Sparkles, RefreshCw } from 'lucide-react';
-import TaskDetail from '../TaskDetail'; // Added Sparkles & RefreshCw
+import TaskDetail from '../TaskDetail';
+import { TaskModal } from '../Projects/modals/TaskModal';
+import { DolibarrService } from '../../services/dolibarrService';
+import { toast } from 'sonner';
 
 interface UserTaskDashboardProps {
     onNavigate: (view: string, id: string) => void;
@@ -48,12 +47,12 @@ function canLogTimeOnTask(task: Task, userId: string | undefined, taskContacts: 
 
 const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => {
     const { config, currentUser: user } = useDolibarr(); // Get config & currentUser
-    const { data: tasks } = useTasks(config); // Fetch Tasks
-    const { data: projects } = useProjects(config); // Fetch Projects
+    const { data: tasks, refetch: refetchTasks } = useTasks(config); // Fetch Tasks
+    const { data: projects, refetch: refetchProjects } = useProjects(config); // Fetch Projects
     const { data: allUsers } = useUsers(config); // Fetch Users for hierarchy
-    const { data: taskContacts } = useTaskContacts(config); // Fetch Task Contacts
-    const { data: projectContacts } = useProjectContacts(config); // Fetch Project Contacts
-    const { data: timeLogs } = useTaskTimeLogs(config); // Fetch Time Logs
+    const { data: taskContacts, refetch: refetchTaskContacts } = useTaskContacts(config); // Fetch Task Contacts
+    const { data: projectContacts, refetch: refetchProjectContacts } = useProjectContacts(config); // Fetch Project Contacts
+    const { data: timeLogs, refetch: refetchTimeLogs } = useTaskTimeLogs(config); // Fetch Time Logs
 
     const [filterStatus, setFilterStatus] = useState<'all' | 'open'>('open');
     const [viewMode, setViewMode] = useState<'me' | 'team' | 'analytics'>('me');
@@ -74,14 +73,63 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
     const [memberSearchQuery, setMemberSearchQuery] = useState('');
     const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
 
+    // Create task modal state
+    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [isSubmittingCreate, setIsSubmittingCreate] = useState(false);
+    const [createForm, setCreateForm] = useState({
+        label: '',
+        description: '',
+        planned_workload: 0,
+        date_start: '',
+        date_end: '',
+        fk_user_assign: user?.id || '',
+    });
+
     const handleRefresh = async () => {
         setIsRefreshing(true);
-        // Assuming refreshTasks is available or we trigger a re-fetch via context/hooks if exposed.
-        // For now, since useTasks doesn't expose refresh directly in this file's usage (it might, let's check hook usage),
-        // we might just reload window or rely on hook internal revalidation.
-        // Actually, checking lines 37, useTasks returns { data }. If we want refresh, we need to update hook or just use window.location.reload() for MVP.
-        // Better: just set a timeout to simulate for UI feedback.
-        setTimeout(() => setIsRefreshing(false), 1000);
+        try {
+            await Promise.all([
+                refetchTasks(),
+                refetchProjects(),
+                refetchTaskContacts(),
+                refetchProjectContacts(),
+                refetchTimeLogs(),
+            ]);
+        } catch (_err) {
+            // silently ignore — individual queries show their own errors
+        } finally {
+            setIsRefreshing(false);
+        }
+    };
+
+    const handleRefetchAfterMutation = async () => {
+        await Promise.allSettled([refetchTasks(), refetchTaskContacts()]);
+    };
+
+    const handleCreateTask = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!config) return;
+        setIsSubmittingCreate(true);
+        try {
+            const payload: Record<string, unknown> = {
+                label: createForm.label,
+                description: createForm.description,
+                planned_workload: Math.round((Number(createForm.planned_workload) || 0) * 3600),
+            };
+            if (createForm.date_start) payload.date_start = Math.floor(new Date(createForm.date_start).getTime() / 1000);
+            if (createForm.date_end) payload.date_end = Math.floor(new Date(createForm.date_end).getTime() / 1000);
+            if (createForm.fk_user_assign) payload.fk_user_assign = createForm.fk_user_assign;
+
+            await DolibarrService.createTask(config, payload);
+            toast.success('Tarefa criada com sucesso!');
+            setIsCreateModalOpen(false);
+            setCreateForm({ label: '', description: '', planned_workload: 0, date_start: '', date_end: '', fk_user_assign: user?.id || '' });
+            await handleRefetchAfterMutation();
+        } catch (err: any) {
+            toast.error('Erro ao criar tarefa: ' + (err?.message || String(err)));
+        } finally {
+            setIsSubmittingCreate(false);
+        }
     };
 
     // Calculate Subordinates (Recursive)
@@ -551,9 +599,19 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                     )}
 
                     <button
+                        onClick={() => setIsCreateModalOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm"
+                        title="Nova Tarefa"
+                    >
+                        <Plus className="w-4 h-4" />
+                        <span className="hidden sm:inline">Nova Tarefa</span>
+                    </button>
+
+                    <button
                         onClick={handleRefresh}
                         className="p-2 sm:p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 transition-colors"
                         title="Atualizar"
+                        disabled={isRefreshing}
                     >
                         <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-indigo-600' : ''}`} />
                     </button>
@@ -745,7 +803,14 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                                             <List className="h-8 w-8 text-slate-400" />
                                         </div>
                                         <p className="text-lg font-medium">Nenhuma tarefa encontrada</p>
-                                        <p className="text-sm">Tente ajustar os filtros ou criar uma nova tarefa</p>
+                                        <p className="text-sm mb-4">Tente ajustar os filtros ou criar uma nova tarefa</p>
+                                        <button
+                                            onClick={() => setIsCreateModalOpen(true)}
+                                            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                                        >
+                                            <Plus className="w-4 h-4" />
+                                            Nova Tarefa
+                                        </button>
                                     </div>
                                 ) : (
                                     <div className="space-y-8 pb-10">
@@ -874,6 +939,10 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                             onNavigate={onNavigate}
                             onClose={() => setSelectedTaskId(null)}
                             isEmbedded={true}
+                            onDeleted={async () => {
+                                setSelectedTaskId(null);
+                                await handleRefetchAfterMutation();
+                            }}
                         />
                     ) : (
                         <div className="flex flex-col items-center justify-center h-full text-slate-400">
@@ -1069,6 +1138,17 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                     onClose={() => setTaskToLogTime(null)}
                 />
             )}
+
+            <TaskModal
+                isOpen={isCreateModalOpen}
+                onClose={() => setIsCreateModalOpen(false)}
+                onSubmit={handleCreateTask}
+                form={createForm}
+                setForm={setCreateForm}
+                isSubmitting={isSubmittingCreate}
+                isEditing={false}
+                users={allUsers || []}
+            />
         </div>
     );
 };

@@ -61,6 +61,8 @@ describe('CreateProjectModal', () => {
         expect(screen.getByText('Referência')).toBeInTheDocument();
         expect(screen.getByText('Título')).toBeInTheDocument();
         expect(screen.getByText('Cliente (SocID)')).toBeInTheDocument();
+        expect(screen.getByText('Descrição')).toBeInTheDocument();
+        expect(screen.getByText('Orçamento (R$)')).toBeInTheDocument();
     });
 
     it('calls onClose when X button is clicked', () => {
@@ -91,7 +93,36 @@ describe('CreateProjectModal', () => {
         expect(mockOnClose).toHaveBeenCalled();
     });
 
-    it('calls onSubmit with form data when submitting', async () => {
+    it('calls onSubmit with form data including new fields when submitting', async () => {
+        const customers = [createMockCustomer('1', 'Empresa Teste')];
+        render(
+            <CreateProjectModal
+                isOpen={true}
+                onClose={mockOnClose}
+                onSubmit={mockOnSubmit}
+                customers={customers}
+                isSubmitting={false}
+            />
+        );
+
+        fireEvent.change(screen.getByPlaceholderText('PROJ-2024-001'), { target: { value: 'TEST-001' } });
+        fireEvent.change(screen.getByPlaceholderText('Nome do projeto'), { target: { value: 'Meu Projeto' } });
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: '1' } });
+        fireEvent.change(screen.getByPlaceholderText('Descrição do projeto (opcional)'), { target: { value: 'Minha descrição' } });
+        fireEvent.change(screen.getByPlaceholderText('0,00'), { target: { value: '10000' } });
+
+        fireEvent.click(screen.getByText('Criar Projeto'));
+
+        expect(mockOnSubmit).toHaveBeenCalledWith(expect.objectContaining({
+            ref: 'TEST-001',
+            title: 'Meu Projeto',
+            socid: '1',
+            description: 'Minha descrição',
+            budget_amount: '10000'
+        }));
+    });
+
+    it('calls onSubmit with basic fields when no optional fields filled', async () => {
         const customers = [createMockCustomer('1', 'Empresa Teste')];
         render(
             <CreateProjectModal
@@ -109,11 +140,11 @@ describe('CreateProjectModal', () => {
 
         fireEvent.click(screen.getByText('Criar Projeto'));
 
-        expect(mockOnSubmit).toHaveBeenCalledWith({
+        expect(mockOnSubmit).toHaveBeenCalledWith(expect.objectContaining({
             ref: 'TEST-001',
             title: 'Meu Projeto',
             socid: '1'
-        });
+        }));
     });
 
     it('auto-uppercases reference input', () => {
@@ -174,5 +205,19 @@ describe('CreateProjectModal', () => {
         );
         expect(screen.getByText('Empresa A')).toBeInTheDocument();
         expect(screen.getByText('Empresa B')).toBeInTheDocument();
+    });
+
+    it('renders date start and date end fields', () => {
+        render(
+            <CreateProjectModal
+                isOpen={true}
+                onClose={mockOnClose}
+                onSubmit={mockOnSubmit}
+                customers={[]}
+                isSubmitting={false}
+            />
+        );
+        expect(screen.getByText('Data Início')).toBeInTheDocument();
+        expect(screen.getByText('Data Fim')).toBeInTheDocument();
     });
 });

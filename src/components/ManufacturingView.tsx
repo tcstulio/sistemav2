@@ -15,6 +15,7 @@ import { ProduceModal } from './Manufacturing/modals/ProduceModal';
 import { ManufacturingOrderDetail } from './Manufacturing/details/ManufacturingOrderDetail';
 import { BOMDetail } from './Manufacturing/details/BOMDetail';
 import { logger } from '../utils/logger';
+import { notifyError } from '../utils/notifyError';
 
 const log = logger.child('ManufacturingView');
 
@@ -158,6 +159,57 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
         ]);
     };
 
+    // Delete handlers
+    const handleDeleteMO = async (mo: ManufacturingOrder) => {
+        if (!config) return;
+        try {
+            await DolibarrService.deleteManufacturingOrder(config, mo.id);
+            toast.success(`Ordem ${mo.ref} excluída com sucesso.`);
+            setSelectedMO(null);
+            await handleRefresh();
+        } catch (e) {
+            notifyError('Excluir ordem de produção', e);
+        }
+    };
+
+    const handleDeleteBOM = async (bom: BOM) => {
+        if (!config) return;
+        try {
+            await DolibarrService.deleteBOM(config, bom.id);
+            toast.success(`BOM ${bom.ref} excluída com sucesso.`);
+            setSelectedBOM(null);
+            await handleRefresh();
+        } catch (e) {
+            notifyError('Excluir BOM', e);
+        }
+    };
+
+    // MO status transition handlers
+    const handleValidateMO = async (mo: ManufacturingOrder) => {
+        if (!config) return;
+        try {
+            await DolibarrService.validateManufacturingOrder(config, mo.id);
+            toast.success(`Ordem ${mo.ref} validada com sucesso.`);
+            await handleRefresh();
+            // Update the selected MO status locally so the badge updates immediately
+            setSelectedMO(prev => prev ? { ...prev, status: '1' } : prev);
+        } catch (e) {
+            notifyError('Validar ordem de produção', e);
+        }
+    };
+
+    const handleCancelMO = async (mo: ManufacturingOrder) => {
+        if (!config) return;
+        try {
+            await DolibarrService.cancelManufacturingOrder(config, mo.id);
+            toast.success(`Ordem ${mo.ref} cancelada com sucesso.`);
+            await handleRefresh();
+            setSelectedMO(prev => prev ? { ...prev, status: '0' } : prev);
+        } catch (e) {
+            notifyError('Cancelar ordem de produção', e);
+        }
+    };
+
     if (!config) {
         return (
             <div className="flex items-center justify-center p-20 text-slate-400">
@@ -188,6 +240,7 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
                 onSuccess={handleRefresh}
                 initialForm={bomPrefill}
                 editId={bomEditId}
+                initialLines={bomEditId ? (boms.find(b => b.id === bomEditId)?.lines ?? []) : []}
             />
             <ConsumeModal
                 isOpen={isConsumeModalOpen}
@@ -291,6 +344,9 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
                             onEdit={() => openMoEditor(selectedMO)}
                             onOpenConsume={() => setIsConsumeModalOpen(true)}
                             onOpenProduce={() => setIsProduceModalOpen(true)}
+                            onDelete={() => handleDeleteMO(selectedMO)}
+                            onValidate={() => handleValidateMO(selectedMO)}
+                            onCancel={() => handleCancelMO(selectedMO)}
                         />
                     ) : activeTab === 'bom' && selectedBOM ? (
                         <BOMDetail
@@ -299,6 +355,7 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
                             config={config}
                             onClose={() => setSelectedBOM(null)}
                             onEdit={() => openBomEditor(selectedBOM)}
+                            onDelete={() => handleDeleteBOM(selectedBOM)}
                         />
                     ) : (
                         <div className="flex flex-col items-center justify-center h-full text-slate-400">

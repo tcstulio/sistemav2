@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import Settings from '../../components/Settings';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import type { DolibarrConfig } from '../../types';
+import { DolibarrService } from '../../services/dolibarrService';
 
 const mockLogout = vi.fn();
 const mockSetConfig = vi.fn();
@@ -53,6 +54,8 @@ const baseConfig: DolibarrConfig = {
         firstname: 'Test',
         lastname: 'User',
         email: 'test@test.com',
+        job: 'Desenvolvedor',
+        office_phone: '+55 11 3000-0000',
         admin: 0,
     } as any,
 };
@@ -177,5 +180,78 @@ describe('Settings — Rules of Hooks (#595)', () => {
         expect(hooksError).toBeUndefined();
 
         errorSpy.mockRestore();
+    });
+});
+
+describe('Settings — editar perfil com nome/sobrenome (#596)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        (DolibarrService.updateUser as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    });
+
+    it('abre modal com Nome e Sobrenome pré-preenchidos do currentUser', async () => {
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter>
+                <ConfirmProvider>
+                    <Settings config={baseConfig} />
+                </ConfirmProvider>
+            </MemoryRouter>
+        );
+
+        await user.click(screen.getByText('Editar Dados'));
+
+        const firstnameInput = screen.getByDisplayValue('Test');
+        const lastnameInput = screen.getByDisplayValue('User');
+        expect(firstnameInput).toBeTruthy();
+        expect(lastnameInput).toBeTruthy();
+    });
+
+    it('abre modal com Cargo e Telefone fixo pré-preenchidos', async () => {
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter>
+                <ConfirmProvider>
+                    <Settings config={baseConfig} />
+                </ConfirmProvider>
+            </MemoryRouter>
+        );
+
+        await user.click(screen.getByText('Editar Dados'));
+
+        expect(screen.getByDisplayValue('Desenvolvedor')).toBeTruthy();
+        expect(screen.getByDisplayValue('+55 11 3000-0000')).toBeTruthy();
+    });
+
+    it('edita Nome, salva e chama updateUser com { firstname } e reflete no cabeçalho', async () => {
+        const user = userEvent.setup();
+        const onSave = vi.fn();
+        render(
+            <MemoryRouter>
+                <ConfirmProvider>
+                    <Settings config={baseConfig} onSave={onSave} />
+                </ConfirmProvider>
+            </MemoryRouter>
+        );
+
+        await user.click(screen.getByText('Editar Dados'));
+
+        const firstnameInput = screen.getByDisplayValue('Test');
+        await user.clear(firstnameInput);
+        await user.type(firstnameInput, 'Novo');
+
+        await user.click(screen.getByText('Salvar'));
+
+        await waitFor(() => {
+            expect(DolibarrService.updateUser as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+                expect.anything(),
+                '1',
+                expect.objectContaining({ firstname: 'Novo' })
+            );
+        });
+
+        await waitFor(() => {
+            expect(screen.getByText('Novo User')).toBeTruthy();
+        });
     });
 });

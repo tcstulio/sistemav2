@@ -7,6 +7,13 @@ import { DolibarrService } from '../../services/dolibarrService';
 import { useEvents } from '../../hooks/dolibarr';
 import { toast } from 'sonner';
 
+// useConfirm mock: por padrão confirma a ação
+const mockConfirm = vi.fn().mockResolvedValue(true);
+vi.mock('../../hooks/useConfirm', () => ({
+    useConfirm: () => mockConfirm,
+    ConfirmProvider: ({ children }: any) => children,
+}));
+
 vi.mock('sonner', () => ({
     toast: {
         success: vi.fn(),
@@ -40,6 +47,8 @@ vi.mock('../../hooks/dolibarr', () => ({
 
 vi.mock('../../services/api/operations', () => ({
     createEvent: vi.fn(),
+    deleteEvent: vi.fn(),
+    updateEvent: vi.fn(),
 }));
 
 vi.mock('../../services/dolibarrService', () => ({
@@ -298,6 +307,93 @@ describe('ChatInterface — fluxo de envio de mensagem (#664)', () => {
 
         await waitFor(() => {
             expect(screen.getAllByText('Mensagem dedup')).toHaveLength(1);
+        });
+    });
+});
+
+const msgOwn = { id: 'msg-1', elementtype: 'project', fk_element: '1', fk_user_author: 'u1', user_author_name: 'Eu', description: 'Minha mensagem', date_start: 1700000000 };
+const msgOther = { id: 'msg-2', elementtype: 'project', fk_element: '1', fk_user_author: 'u99', user_author_name: 'Outro', description: 'Mensagem alheia', date_start: 1700000001 };
+
+describe('ChatInterface — excluir/editar mensagens (#601)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockConfirm.mockResolvedValue(true);
+        vi.mocked(Operations.deleteEvent).mockResolvedValue({} as any);
+        vi.mocked(Operations.updateEvent).mockResolvedValue({} as any);
+        vi.mocked(Operations.createEvent).mockResolvedValue({} as any);
+        vi.mocked(useEvents).mockReturnValue({
+            data: [msgOwn, msgOther],
+            isLoading: false,
+            refetch: mockRefetch,
+        } as any);
+    });
+
+    it('mensagem própria exibe botão Excluir; mensagem alheia não exibe', () => {
+        renderChat();
+        expect(screen.getByTestId('delete-btn-msg-1')).toBeInTheDocument();
+        expect(screen.queryByTestId('delete-btn-msg-2')).toBeNull();
+    });
+
+    it('mensagem própria exibe botão Editar; mensagem alheia não exibe', () => {
+        renderChat();
+        expect(screen.getByTestId('edit-btn-msg-1')).toBeInTheDocument();
+        expect(screen.queryByTestId('edit-btn-msg-2')).toBeNull();
+    });
+
+    it('clicar em Excluir (com confirmação) chama Operations.deleteEvent com o id correto', async () => {
+        const user = userEvent.setup();
+        renderChat();
+
+        await user.click(screen.getByTestId('delete-btn-msg-1'));
+
+        await waitFor(() => {
+            expect(Operations.deleteEvent).toHaveBeenCalledWith(expect.any(Object), 'msg-1');
+        });
+    });
+
+    it('clicar em Excluir sem confirmar (mockConfirm=false) não chama deleteEvent', async () => {
+        mockConfirm.mockResolvedValue(false);
+        const user = userEvent.setup();
+        renderChat();
+
+        await user.click(screen.getByTestId('delete-btn-msg-1'));
+
+        await waitFor(() => {
+            expect(Operations.deleteEvent).not.toHaveBeenCalled();
+        });
+    });
+
+    it('erro ao excluir dispara notifyError', async () => {
+        vi.mocked(Operations.deleteEvent).mockRejectedValue(new Error('Falha na exclusão'));
+        const user = userEvent.setup();
+        renderChat();
+
+        await user.click(screen.getByTestId('delete-btn-msg-1'));
+
+        await waitFor(() => {
+            expect(notifyError).toHaveBeenCalledWith('Excluir mensagem', expect.any(Error));
+        });
+    });
+
+    it('clicar em Editar exibe input inline; salvar chama Operations.updateEvent', async () => {
+        const user = userEvent.setup();
+        renderChat();
+
+        await user.click(screen.getByTestId('edit-btn-msg-1'));
+
+        const editInput = await screen.findByTestId('edit-input-msg-1');
+        expect(editInput).toBeInTheDocument();
+
+        await user.clear(editInput);
+        await user.type(editInput, 'Texto editado');
+        await user.click(screen.getByTestId('save-edit-msg-1'));
+
+        await waitFor(() => {
+            expect(Operations.updateEvent).toHaveBeenCalledWith(
+                expect.any(Object),
+                'msg-1',
+                expect.objectContaining({ description: 'Texto editado' })
+            );
         });
     });
 });

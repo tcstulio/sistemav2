@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { ManufacturingOrder, DolibarrConfig, Project, Product, StockMovement } from '../../../types';
-import { Package, Clock, User, AlertCircle, ArrowLeft, Settings, X, ArrowDownCircle, ArrowUpCircle, Pencil } from 'lucide-react';
+import { Package, Clock, User, AlertCircle, ArrowLeft, Settings, X, ArrowDownCircle, ArrowUpCircle, Pencil, Trash2, CheckCheck, XCircle } from 'lucide-react';
 import { formatDateTime } from '../../../utils/dateUtils';
 import { getProductName, getStatusBadge } from '../utils';
 
@@ -14,6 +14,9 @@ interface ManufacturingOrderDetailProps {
     onEdit?: () => void;
     onOpenConsume: () => void;
     onOpenProduce: () => void;
+    onDelete?: () => void;
+    onValidate?: () => void;
+    onCancel?: () => void;
 }
 
 export const ManufacturingOrderDetail: React.FC<ManufacturingOrderDetailProps> = ({
@@ -24,13 +27,22 @@ export const ManufacturingOrderDetail: React.FC<ManufacturingOrderDetailProps> =
     onClose,
     onEdit,
     onOpenConsume,
-    onOpenProduce
+    onOpenProduce,
+    onDelete,
+    onValidate,
+    onCancel
 }) => {
     const [moDetailTab, setMoDetailTab] = useState<'overview' | 'traceability'>('overview');
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
     const linkedMovements = stockMovements.filter(m =>
         m.label && m.label.includes(order.ref)
     );
+
+    const isDraft = order.status === '0';
+    const isValidated = order.status === '1';
+    const canValidate = isDraft && onValidate;
+    const canCancel = (isDraft || isValidated) && onCancel;
 
     return (
         <div className="flex flex-col h-full bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800">
@@ -49,10 +61,66 @@ export const ManufacturingOrderDetail: React.FC<ManufacturingOrderDetailProps> =
                             <Pencil size={12} /> Editar
                         </button>
                     )}
+                    {onDelete && (
+                        <button
+                            onClick={() => setShowDeleteConfirm(true)}
+                            className="flex items-center gap-1 text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-800/40 px-3 py-1.5 rounded font-medium transition-colors"
+                            data-testid="mo-delete-btn"
+                        >
+                            <Trash2 size={12} /> Excluir
+                        </button>
+                    )}
                     <button className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><Settings size={20} /></button>
                     <button onClick={onClose} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
                 </div>
             </div>
+
+            {/* Delete Confirmation */}
+            {showDeleteConfirm && (
+                <div className="flex-none bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 px-4 py-3 flex items-center justify-between gap-4">
+                    <span className="text-sm text-red-700 dark:text-red-300">Tem certeza que deseja excluir a ordem <strong>{order.ref}</strong>?</span>
+                    <div className="flex gap-2 flex-shrink-0">
+                        <button
+                            onClick={() => setShowDeleteConfirm(false)}
+                            className="text-xs px-3 py-1.5 border border-slate-300 rounded hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300"
+                        >
+                            Cancelar
+                        </button>
+                        <button
+                            onClick={() => { setShowDeleteConfirm(false); onDelete?.(); }}
+                            className="text-xs px-3 py-1.5 bg-red-600 text-white rounded hover:bg-red-700"
+                            data-testid="mo-delete-confirm-btn"
+                        >
+                            Excluir
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Status Actions */}
+            {(canValidate || canCancel) && (
+                <div className="flex-none bg-slate-50 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-800 px-4 py-2 flex items-center gap-2">
+                    <span className="text-xs text-slate-500 mr-1">Ações de status:</span>
+                    {canValidate && (
+                        <button
+                            onClick={onValidate}
+                            className="flex items-center gap-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-800/40 px-3 py-1.5 rounded font-medium transition-colors"
+                            data-testid="mo-validate-btn"
+                        >
+                            <CheckCheck size={12} /> Validar
+                        </button>
+                    )}
+                    {canCancel && (
+                        <button
+                            onClick={onCancel}
+                            className="flex items-center gap-1 text-xs bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-800/40 px-3 py-1.5 rounded font-medium transition-colors"
+                            data-testid="mo-cancel-btn"
+                        >
+                            <XCircle size={12} /> Cancelar Ordem
+                        </button>
+                    )}
+                </div>
+            )}
 
             {/* Tabs */}
             <div className="flex border-b border-slate-100 dark:border-slate-800 px-4 overflow-x-auto flex-none bg-slate-50 dark:bg-slate-800/30">
