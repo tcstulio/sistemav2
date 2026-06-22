@@ -739,6 +739,25 @@ class SchedulerService {
         return false;
     }
 
+    updateTemplate(id: string, updates: {
+        name?: string;
+        content?: string;
+        category?: MessageTemplate['category'];
+        channel?: 'whatsapp' | 'email';
+        subject?: string;
+    }): MessageTemplate | null {
+        const tpl = this.data.templates.find(t => t.id === id);
+        if (!tpl) return null;
+        if (updates.name !== undefined) tpl.name = updates.name;
+        if (updates.content !== undefined) tpl.content = updates.content;
+        if (updates.category !== undefined) tpl.category = updates.category;
+        if (updates.channel !== undefined) tpl.channel = updates.channel;
+        if (updates.subject !== undefined) tpl.subject = updates.subject;
+        this.save();
+        log.info(`Updated template: ${tpl.name}`);
+        return tpl;
+    }
+
     /**
      * Render a template with variables
      */
@@ -989,6 +1008,25 @@ class SchedulerService {
             return true;
         }
         return false;
+    }
+
+    updateFlow(id: string, updates: {
+        name?: string;
+        triggerKeywords?: string[];
+        initialMessage?: string;
+    }): ChatFlow | null {
+        const flow = this.data.chatFlows.find(f => f.id === id);
+        if (!flow) return null;
+        if (updates.name !== undefined) flow.name = updates.name;
+        if (updates.triggerKeywords !== undefined) {
+            flow.triggerKeywords = updates.triggerKeywords.map(k => k.toLowerCase());
+        }
+        if (updates.initialMessage !== undefined && flow.steps.length > 0) {
+            flow.steps[0] = { ...flow.steps[0], message: updates.initialMessage };
+        }
+        this.save();
+        log.info(`Updated flow: ${flow.name}`);
+        return flow;
     }
 
     /**
