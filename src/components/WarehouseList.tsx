@@ -1,4 +1,4 @@
-/**
+﻿/**
  * WarehouseList - Estoque por armazém (#125)
  *
  * Lista os armazéns (useWarehouses) e, ao selecionar um, mostra os produtos
@@ -12,7 +12,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Warehouse as WarehouseType, Product, AppView } from '../types';
-import { Warehouse, Search, MapPin, Package, Loader2, Boxes } from 'lucide-react';
+import { Warehouse, Search, MapPin, Package, Loader2, Boxes, Phone, Info, Hash } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useWarehouses, useProducts } from '../hooks/dolibarr';
@@ -99,6 +99,57 @@ const WarehouseDetail: React.FC<{
 
             <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-950/50">
                 <div className="max-w-3xl mx-auto space-y-6">
+                    {/* Info block: status, description, address, phone, fax, extrafields */}
+                    <Card padding="md">
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                                <Info size={14} className="text-slate-400 shrink-0" />
+                                <span
+                                    data-testid="warehouse-status"
+                                    className={`text-xs px-2 py-1 rounded-full font-medium ${
+                                        warehouse.statut === '1'
+                                            ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300'
+                                            : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                                    }`}
+                                >
+                                    {warehouse.statut === '1' ? 'Ativo' : 'Inativo'}
+                                </span>
+                            </div>
+                            {warehouse.description && (
+                                <p data-testid="warehouse-description" className="text-sm text-slate-600 dark:text-slate-300">
+                                    {warehouse.description}
+                                </p>
+                            )}
+                            {(warehouse.address || warehouse.zip || warehouse.town) && (
+                                <p data-testid="warehouse-address" className="text-sm text-slate-500 flex items-center gap-1">
+                                    <MapPin size={13} className="shrink-0" />
+                                    {[warehouse.address, warehouse.zip && warehouse.town ? `${warehouse.zip} ${warehouse.town}` : (warehouse.zip || warehouse.town)].filter(Boolean).join(', ')}
+                                </p>
+                            )}
+                            {warehouse.phone && (
+                                <p data-testid="warehouse-phone" className="text-sm text-slate-500 flex items-center gap-1">
+                                    <Phone size={13} className="shrink-0" />
+                                    {warehouse.phone}
+                                </p>
+                            )}
+                            {warehouse.fax && (
+                                <p data-testid="warehouse-fax" className="text-sm text-slate-500 flex items-center gap-1">
+                                    <Hash size={13} className="shrink-0" />
+                                    {warehouse.fax}
+                                </p>
+                            )}
+                            {warehouse.array_options && Object.entries(warehouse.array_options)
+                                .filter(([, v]) => v !== null && v !== undefined && v !== '')
+                                .map(([key, val]) => (
+                                    <p key={key} data-testid={`extrafield-${key}`} className="text-sm text-slate-500 flex items-center gap-1">
+                                        <Hash size={13} className="shrink-0" />
+                                        <span className="font-medium">{key.replace('options_', '')}:</span> {String(val)}
+                                    </p>
+                                ))
+                            }
+                        </div>
+                    </Card>
+
                     {/* Summary */}
                     <div className="grid grid-cols-2 gap-4">
                         <Card padding="md">

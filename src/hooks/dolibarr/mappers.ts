@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Dolibarr Entity Mappers
  * 
  * Centralized mapping functions to convert raw API/Database data
@@ -607,7 +607,13 @@ export const mapWarehouse = (raw: RawDolibarrRecord): Warehouse => ({
     description: raw.description,
     lieu: raw.lieu || '',
     statut: toString(raw.statut) as '0' | '1',
+    address: raw.address || undefined,
+    zip: raw.zip || undefined,
+    town: raw.town || undefined,
+    phone: raw.phone || undefined,
+    fax: raw.fax || undefined,
     date_modification: toTimestamp(raw.tms),
+    array_options: raw.array_options || undefined,
 });
 
 /**

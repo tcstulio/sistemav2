@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Testes para a tela InventoryView (#569)
  * Cobre: lista de armazéns, drill-in ao clicar no card, estado vazio,
  * navegação de volta, e não conflito com botões Editar/Excluir.
@@ -178,6 +178,83 @@ describe('InventoryView (#569) — drill-in de armazém', () => {
         resolveStock!();
         await waitFor(() => {
             expect(screen.queryByTestId('loading-spinner')).not.toBeInTheDocument();
+        });
+    });
+});
+
+describe('InventoryView (#634) — UI padronizada e cor de tema', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('usa PageHeader: exibe título "Estoque e Inventário"', () => {
+        render(<InventoryView />);
+        expect(screen.getByText('Estoque e Inventário')).toBeInTheDocument();
+        expect(screen.getByText('Gerencie armazéns e movimentações')).toBeInTheDocument();
+    });
+
+    it('abas usam Tabs estático: aba ativa contém classe border-indigo-600 (tema indigo)', () => {
+        render(<InventoryView />);
+        // The Tabs component renders static indigo classes — find the active tab button
+        const warehouseTab = screen.getByText('Armazéns');
+        expect(warehouseTab.className).toContain('border-indigo-600');
+        expect(warehouseTab.className).toContain('text-indigo-600');
+        // No interpolated template literal in the className
+        expect(warehouseTab.className).not.toContain('${');
+    });
+
+    it('clicar em Movimentações troca o conteúdo exibido', () => {
+        render(<InventoryView />);
+        const movTab = screen.getByText('Movimentações');
+        fireEvent.click(movTab);
+        // Movements list is active; warehouse cards should not be visible
+        expect(screen.queryByTestId('warehouse-card-1')).not.toBeInTheDocument();
+    });
+
+    it('clicar em Armazém abre o modal (componente padrão: role=dialog)', () => {
+        render(<InventoryView />);
+        fireEvent.click(screen.getByText('Armazém'));
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        expect(screen.getByText('Novo Armazém')).toBeInTheDocument();
+    });
+
+    it('fechar modal de Armazém remove o dialog', () => {
+        render(<InventoryView />);
+        fireEvent.click(screen.getByText('Armazém'));
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        fireEvent.click(screen.getByText('Cancelar'));
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('clicar em Transferir abre modal de transferência', () => {
+        render(<InventoryView />);
+        fireEvent.click(screen.getByText('Transferir'));
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        expect(screen.getByText('Nova Transferência de Estoque')).toBeInTheDocument();
+    });
+
+    it('clicar em Ajustar abre modal de correção', () => {
+        render(<InventoryView />);
+        fireEvent.click(screen.getByText('Ajustar'));
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        expect(screen.getByText('Correção de Estoque')).toBeInTheDocument();
+    });
+
+    it('submeter form de armazém chama createWarehouse com valores do form', async () => {
+        render(<InventoryView />);
+        fireEvent.click(screen.getByText('Armazém'));
+
+        const dialog = screen.getByRole('dialog');
+        const labelInput = dialog.querySelector('input[placeholder="Armazém Principal"]') as HTMLInputElement;
+        fireEvent.change(labelInput, { target: { value: 'Novo Dep' } });
+
+        fireEvent.submit(dialog.querySelector('form')!);
+
+        await waitFor(() => {
+            expect(mockSvc.createWarehouse).toHaveBeenCalledWith(
+                mockConfig,
+                expect.objectContaining({ label: 'Novo Dep' })
+            );
         });
     });
 });

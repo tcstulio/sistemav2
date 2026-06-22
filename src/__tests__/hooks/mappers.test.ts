@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import * as mappers from '../../hooks/dolibarr/mappers';
 
 describe('Dolibarr Mappers', () => {
@@ -342,6 +342,47 @@ describe('Dolibarr Mappers', () => {
             const result = mappers.mapWarehouse(raw);
             expect(result.id).toBe('1');
             expect(result.label).toBe('Almoxarifado Central');
+        });
+
+        it('preserves array_options (extrafields) from raw payload', () => {
+            const raw = {
+                id: '2',
+                label: 'Dep Externo',
+                statut: '1',
+                array_options: { options_setor: 'Frio', options_cap: '5000' },
+            };
+            const result = mappers.mapWarehouse(raw);
+            expect(result.array_options).toEqual({ options_setor: 'Frio', options_cap: '5000' });
+        });
+
+        it('maps address fields (address, zip, town, phone, fax)', () => {
+            const raw = {
+                id: '3',
+                label: 'Dep Norte',
+                statut: '1',
+                address: 'Av. Brasil, 500',
+                zip: '01310-000',
+                town: 'São Paulo',
+                phone: '(11) 1234-5678',
+                fax: '(11) 8765-4321',
+            };
+            const result = mappers.mapWarehouse(raw);
+            expect(result.address).toBe('Av. Brasil, 500');
+            expect(result.zip).toBe('01310-000');
+            expect(result.town).toBe('São Paulo');
+            expect(result.phone).toBe('(11) 1234-5678');
+            expect(result.fax).toBe('(11) 8765-4321');
+        });
+
+        it('does not set optional fields when absent in raw payload', () => {
+            const raw = { id: '4', label: 'Dep Vazio', statut: '0' };
+            const result = mappers.mapWarehouse(raw);
+            expect(result.address).toBeUndefined();
+            expect(result.zip).toBeUndefined();
+            expect(result.town).toBeUndefined();
+            expect(result.phone).toBeUndefined();
+            expect(result.fax).toBeUndefined();
+            expect(result.array_options).toBeUndefined();
         });
     });
 

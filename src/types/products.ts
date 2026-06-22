@@ -1,4 +1,4 @@
-
+﻿
 export interface Product {
     id: string;
     ref: string;
@@ -44,6 +44,11 @@ export interface Warehouse {
     description?: string;
     statut: '0' | '1';
     lieu?: string;
+    address?: string;
+    zip?: string;
+    town?: string;
+    phone?: string;
+    fax?: string;
     date_modification?: number;
     array_options?: Record<string, any>;
 }
