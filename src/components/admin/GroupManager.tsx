@@ -1,14 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Users, ShieldCheck, Plus, Trash2, Search, Lock, RefreshCw } from 'lucide-react';
+import { Users, ShieldCheck, Plus, Trash2, Search, Lock, RefreshCw, Pencil } from 'lucide-react';
 import { DolibarrConfig, UserGroup } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
 import { useDolibarr } from '../../context/DolibarrContext';
+import { useUsers, useGroupUsers } from '../../hooks/dolibarr';
 import { logger } from '../../utils/logger';
 import { notifyError } from '../../utils/notifyError';
 import {
     PageLayout,
     PageHeader,
-    Card,
     Button,
     Input,
     Modal,
@@ -16,6 +16,8 @@ import {
     EmptyState,
     Spinner,
 } from '../ui';
+import { GroupModal } from '../HR/modals/GroupModal';
+import { GroupDetail } from '../HR/GroupDetail';
 
 const log = logger.child('GroupManager');
 
@@ -24,10 +26,10 @@ interface GroupManagerProps {
 }
 
 /**
- * GroupManager - ADMIN-ONLY screen to manage user groups (issue #128, 1st slice).
+ * GroupManager - ADMIN-ONLY screen to manage user groups (issue #128, 2nd slice — closes #592).
  *
- * Lists groups, allows creating (name + note) and deleting (with confirmation).
- * Per-screen permissions per group are the next slice (connects to #112).
+ * Full CRUD: list / create / edit (name + note) / delete / members / permissions.
+ * Card is clickable to open group detail panel.
  */
 export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
     const { currentUser } = useDolibarr();
@@ -47,9 +49,18 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
     const [form, setForm] = useState({ name: '', note: '' });
     const [isSaving, setIsSaving] = useState(false);
 
+    // Edit modal state
+    const [groupToEdit, setGroupToEdit] = useState<UserGroup | null>(null);
+
+    // Detail panel state (members + permissions)
+    const [selectedGroup, setSelectedGroup] = useState<UserGroup | null>(null);
+
     // Delete confirmation state
     const [groupToDelete, setGroupToDelete] = useState<UserGroup | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
+
+    // Users list for GroupDetail (members management)
+    const { data: users = [] } = useUsers(config);
 
     const loadGroups = useCallback(async () => {
         setIsLoading(true);
@@ -108,12 +119,40 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
         try {
             await DolibarrService.deleteGroup(config, groupToDelete.id);
             setGroupToDelete(null);
+            // If the deleted group was selected in the detail panel, close it
+            if (selectedGroup?.id === groupToDelete.id) {
+                setSelectedGroup(null);
+            }
             await loadGroups();
         } catch (err) {
             notifyError('Excluir grupo', err);
         } finally {
             setIsDeleting(false);
         }
+    };
+
+    // After editing, refresh group list and update selectedGroup if open
+    const handleEditRefresh = useCallback(async () => {
+        await loadGroups();
+        // Refresh selectedGroup if it was the one edited
+        if (groupToEdit && selectedGroup?.id === groupToEdit.id) {
+            // Will be refreshed from new groups list on next render via effect
+        }
+    }, [loadGroups, groupToEdit, selectedGroup]);
+
+    // Sync selectedGroup with refreshed group list
+    useEffect(() => {
+        if (selectedGroup) {
+            const fresh = groups.find(g => g.id === selectedGroup.id);
+            if (fresh && (fresh.name !== selectedGroup.name || fresh.note !== selectedGroup.note)) {
+                setSelectedGroup(fresh);
+            }
+        }
+    }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const formatDate = (ts?: number) => {
+        if (!ts) return null;
+        return new Date(ts * 1000).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
     };
 
     // Access guard: ADMIN-ONLY
@@ -217,7 +256,18 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
                 ) : (
                     <div className="grid grid-cols-1 gap-3">
                         {filteredGroups.map(group => (
-                            <Card key={group.id} padding="md" className="group">
+                            /* Use a plain div (not Card's onClick) to avoid <button> inside <button> */
+                            <div
+                                key={group.id}
+                                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm hover:shadow-md hover:ring-2 hover:ring-indigo-400/50 transition-all cursor-pointer p-4"
+                                role="button"
+                                tabIndex={0}
+                                aria-label={`Abrir detalhes do grupo ${group.name}`}
+                                onClick={() => setSelectedGroup(group)}
+                                onKeyDown={e => {
+                                    if (e.key === 'Enter' || e.key === ' ') setSelectedGroup(group);
+                                }}
+                            >
                                 <div className="flex items-center justify-between gap-4">
                                     <div className="flex items-center gap-4 min-w-0">
                                         <div className="shrink-0 w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
@@ -230,18 +280,41 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
                                             <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1">
                                                 {group.note || 'Sem descrição'}
                                             </p>
+                                            {(group.datec || group.tms) && (
+                                                <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                                                    {group.datec
+                                                        ? `Criado em ${formatDate(group.datec)}`
+                                                        : `Atualizado em ${formatDate(group.tms)}`}
+                                                </p>
+                                            )}
                                         </div>
                                     </div>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        icon={<Trash2 size={16} />}
-                                        className="text-slate-400 hover:text-red-500 shrink-0"
-                                        aria-label={`Excluir grupo ${group.name}`}
-                                        onClick={() => setGroupToDelete(group)}
-                                    />
+                                    <div className="flex items-center gap-1 shrink-0">
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            icon={<Pencil size={16} />}
+                                            className="text-slate-400 hover:text-indigo-500"
+                                            aria-label={`Editar grupo ${group.name}`}
+                                            onClick={e => {
+                                                e.stopPropagation();
+                                                setGroupToEdit(group);
+                                            }}
+                                        />
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            icon={<Trash2 size={16} />}
+                                            className="text-slate-400 hover:text-red-500"
+                                            aria-label={`Excluir grupo ${group.name}`}
+                                            onClick={e => {
+                                                e.stopPropagation();
+                                                setGroupToDelete(group);
+                                            }}
+                                        />
+                                    </div>
                                 </div>
-                            </Card>
+                            </div>
                         ))}
                     </div>
                 )}
@@ -297,6 +370,41 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
                     <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
                 </form>
             </Modal>
+
+            {/* Edit Group Modal — reuses HR/modals/GroupModal */}
+            <GroupModal
+                isOpen={!!groupToEdit}
+                onClose={() => setGroupToEdit(null)}
+                config={config}
+                groupToEdit={groupToEdit}
+                onRefresh={handleEditRefresh}
+            />
+
+            {/* Group Detail Slide-over (members + permissions) */}
+            {selectedGroup && (
+                <div
+                    className="fixed inset-0 z-40 flex"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label={`Detalhes do grupo ${selectedGroup.name}`}
+                >
+                    {/* Backdrop */}
+                    <div
+                        className="flex-1 bg-black/30 backdrop-blur-sm"
+                        onClick={() => setSelectedGroup(null)}
+                    />
+                    {/* Panel */}
+                    <div className="w-full max-w-lg h-full">
+                        <GroupDetail
+                            group={selectedGroup}
+                            users={users}
+                            currentConfig={config}
+                            onClose={() => setSelectedGroup(null)}
+                            onRefresh={loadGroups}
+                        />
+                    </div>
+                </div>
+            )}
 
             {/* Delete Confirmation */}
             <ConfirmModal

@@ -3,7 +3,7 @@ import { usePrefill } from '../hooks/usePrefill';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { toast } from 'sonner';
 import { Ticket, ThirdParty, DolibarrUser, DolibarrConfig, AppView, AgendaEvent, Project } from '../types';
-import { Ticket as TicketIcon, AlertCircle, Clock, Calendar, CheckCircle2, User, ExternalLink, MessageSquare, Send, UserCircle, Sparkles, Loader2, List, Kanban, Plus, DollarSign, Users, Info, Phone, Bot, FileText, FolderKanban, ClipboardList, Wrench, Pencil } from 'lucide-react';
+import { Ticket as TicketIcon, AlertCircle, Clock, Calendar, CheckCircle2, User, ExternalLink, MessageSquare, Send, UserCircle, Sparkles, Loader2, List, Kanban, Plus, DollarSign, Users, Info, Phone, Bot, FileText, FolderKanban, ClipboardList, Wrench, Pencil, XCircle } from 'lucide-react';
 import { useListControls } from '../hooks/useListControls';
 import { ticketSorts, TICKET_DATE_SORT_KEY } from './TicketList.sorts';
 import { AiService } from '../services/aiService';
@@ -64,7 +64,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
 
     // New Ticket State
     const [isNewTicketModalOpen, setIsNewTicketModalOpen] = useState(false);
-    const [newTicketForm, setNewTicketForm] = useState({ subject: '', message: '', socid: '', severity_code: 'NORMAL', type_code: 'ISSUE' });
+    const [newTicketForm, setNewTicketForm] = useState({ subject: '', message: '', socid: '', severity_code: 'NORMAL', type_code: 'ISSUE', fk_project: '', fk_user_assign: '' });
     const [isSubmittingTicket, setIsSubmittingTicket] = useState(false);
     const prefill = usePrefill();
     const appliedPrefillRef = useRef<typeof prefill>(null);
@@ -72,8 +72,11 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
     // Edit Ticket State (#57/#78)
     const [isEditTicketModalOpen, setIsEditTicketModalOpen] = useState(false);
     const [editTicketId, setEditTicketId] = useState<string | undefined>(undefined);
-    const [editTicketForm, setEditTicketForm] = useState({ subject: '', message: '', severity_code: 'NORMAL' });
+    const [editTicketForm, setEditTicketForm] = useState({ subject: '', message: '', severity_code: 'NORMAL', socid: '', fk_project: '', fk_user_assign: '', type_code: 'ISSUE' });
     const [isSavingEditTicket, setIsSavingEditTicket] = useState(false);
+
+    // Status change state
+    const [isChangingStatus, setIsChangingStatus] = useState(false);
 
     // Escalation State
     const [isEscalateModalOpen, setIsEscalateModalOpen] = useState(false);
@@ -135,6 +138,10 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
                 subject: prefill.data.subject ?? current?.subject ?? '',
                 message: prefill.data.message ?? current?.message ?? '',
                 severity_code: prefill.data.severity_code ?? current?.severity_code ?? 'NORMAL',
+                socid: prefill.data.socid ?? current?.socid ?? '',
+                fk_project: prefill.data.fk_project ?? current?.project_id ?? '',
+                fk_user_assign: prefill.data.fk_user_assign ?? current?.fk_user_assign ?? '',
+                type_code: prefill.data.type_code ?? current?.type_code ?? 'ISSUE',
             });
             setIsEditTicketModalOpen(true);
             toast.info('Revise as mudanças e salve o ticket.');
@@ -227,9 +234,10 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
         setIsSendingReply(true);
 
         try {
-            const targetId = selectedTicket.track_id || selectedTicket.id;
-            await DolibarrService.addTicketMessage(config, targetId, replyText);
+            // #614: use track_id in body (POST /tickets/newmessage), never use id as path param.
+            await DolibarrService.addTicketMessage(config, selectedTicket.track_id, replyText);
 
+            // Only add to local history after the API call succeeds (#614 criterion 4).
             const newMsg = {
                 id: `local-${Date.now()}`,
                 text: replyText,
@@ -238,11 +246,12 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
                 user: 'Você',
                 type: 'message'
             };
-            setLocalHistory([...localHistory, newMsg]);
+            setLocalHistory(prev => [...prev, newMsg]);
             setReplyText('');
         } catch (e) {
             log.error("Failed to send reply", e);
             toast.error("Falha ao enviar mensagem. Verifique o console.");
+            // Do NOT add to localHistory on failure (#614 criterion 4)
         } finally {
             setIsSendingReply(false);
         }
@@ -260,16 +269,30 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
     const handleCreateTicket = async () => {
         setIsSubmittingTicket(true);
         try {
+            // #615: send all context fields (socid, fk_project, fk_user_assign, type_code, severity_code)
             await DolibarrService.createTicket(config, newTicketForm);
             setIsNewTicketModalOpen(false);
-            setNewTicketForm({ subject: '', message: '', socid: '', severity_code: 'NORMAL', type_code: 'ISSUE' });
+            setNewTicketForm({ subject: '', message: '', socid: '', severity_code: 'NORMAL', type_code: 'ISSUE', fk_project: '', fk_user_assign: '' });
+            refetchTickets();
             if (onRefresh) onRefresh();
-        } catch (e) { log.error("Failed to create ticket", e); } finally { setIsSubmittingTicket(false); }
+        } catch (e) {
+            log.error("Failed to create ticket", e);
+            toast.error('Falha ao criar o chamado.');
+        } finally { setIsSubmittingTicket(false); }
     };
 
     const openEditTicket = (t: Ticket) => {
         setEditTicketId(String(t.id));
-        setEditTicketForm({ subject: t.subject || '', message: t.message || '', severity_code: t.severity_code || 'NORMAL' });
+        // #615: include context fields in edit form
+        setEditTicketForm({
+            subject: t.subject || '',
+            message: t.message || '',
+            severity_code: t.severity_code || 'NORMAL',
+            socid: t.socid || '',
+            fk_project: t.project_id || '',
+            fk_user_assign: t.fk_user_assign || '',
+            type_code: t.type_code || 'ISSUE',
+        });
         setIsEditTicketModalOpen(true);
     };
 
@@ -277,14 +300,45 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
         if (!editTicketId) return;
         setIsSavingEditTicket(true);
         try {
+            // #615: persist all context fields
             await DolibarrService.updateTicket(config, editTicketId, editTicketForm);
             setIsEditTicketModalOpen(false);
             toast.success('Chamado atualizado.');
+            refetchTickets();
             if (onRefresh) onRefresh();
         } catch (e) {
             log.error("Failed to update ticket", e);
             toast.error('Falha ao atualizar o chamado.');
         } finally { setIsSavingEditTicket(false); }
+    };
+
+    // #615: Status change actions (resolve/reopen)
+    const handleCloseTicket = async () => {
+        if (!selectedTicket || isChangingStatus) return;
+        setIsChangingStatus(true);
+        try {
+            await DolibarrService.closeTicket(config, selectedTicket.id);
+            toast.success('Chamado marcado como resolvido.');
+            refetchTickets();
+            if (onRefresh) onRefresh();
+        } catch (e) {
+            log.error("Failed to close ticket", e);
+            toast.error('Falha ao resolver o chamado.');
+        } finally { setIsChangingStatus(false); }
+    };
+
+    const handleReopenTicket = async () => {
+        if (!selectedTicket || isChangingStatus) return;
+        setIsChangingStatus(true);
+        try {
+            await DolibarrService.reopenTicket(config, selectedTicket.id);
+            toast.success('Chamado reaberto.');
+            refetchTickets();
+            if (onRefresh) onRefresh();
+        } catch (e) {
+            log.error("Failed to reopen ticket", e);
+            toast.error('Falha ao reabrir o chamado.');
+        } finally { setIsChangingStatus(false); }
     };
 
     const handleEscalate = () => {
@@ -309,7 +363,8 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
             toast.success("Intervenção Criada com Sucesso");
             setIsEscalateModalOpen(false);
 
-            await DolibarrService.addTicketMessage(config, selectedTicket.track_id || selectedTicket.id, "Chamado escalado para Intervenção de Serviço de Campo.");
+            // #614: use track_id in body — escalation note also needs track_id
+            await DolibarrService.addTicketMessage(config, selectedTicket.track_id, "Chamado escalado para Intervenção de Serviço de Campo.");
 
             if (onRefresh) onRefresh();
         } catch (e: any) {
@@ -462,14 +517,38 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
                         >
                             Escalar
                         </Button>
+                        {/* #615: resolve / reopen */}
+                        {selectedTicket.statut !== '8' && selectedTicket.statut !== 'CLOSED' && selectedTicket.statut !== 'RESOLVED' ? (
+                            <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={<CheckCircle2 size={14} />}
+                                onClick={handleCloseTicket}
+                                loading={isChangingStatus}
+                                className="hidden lg:inline-flex text-emerald-600 border-emerald-200 hover:bg-emerald-50"
+                            >
+                                Resolver
+                            </Button>
+                        ) : (
+                            <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={<XCircle size={14} />}
+                                onClick={handleReopenTicket}
+                                loading={isChangingStatus}
+                                className="hidden lg:inline-flex text-orange-600 border-orange-200 hover:bg-orange-50"
+                            >
+                                Reabrir
+                            </Button>
+                        )}
                     </div>
                 }
             />
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 dark:bg-slate-950/50">
 
-                {/* Mobile Escalate Button */}
-                <div className="lg:hidden">
+                {/* Mobile action buttons */}
+                <div className="lg:hidden flex flex-col gap-2">
                     <Button
                         variant="secondary"
                         fullWidth
@@ -478,6 +557,27 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
                     >
                         Escalar para Serviço de Campo
                     </Button>
+                    {selectedTicket.statut !== '8' && selectedTicket.statut !== 'CLOSED' && selectedTicket.statut !== 'RESOLVED' ? (
+                        <Button
+                            variant="secondary"
+                            fullWidth
+                            icon={<CheckCircle2 size={16} />}
+                            onClick={handleCloseTicket}
+                            loading={isChangingStatus}
+                        >
+                            Marcar como Resolvido
+                        </Button>
+                    ) : (
+                        <Button
+                            variant="secondary"
+                            fullWidth
+                            icon={<XCircle size={16} />}
+                            onClick={handleReopenTicket}
+                            loading={isChangingStatus}
+                        >
+                            Reabrir Chamado
+                        </Button>
+                    )}
                 </div>
 
                 {/* AI Context Section */}
@@ -711,12 +811,71 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
                 }
             >
                 <div className="space-y-4">
-                    <Input placeholder="Assunto" value={newTicketForm.subject} onChange={e => setNewTicketForm({ ...newTicketForm, subject: e.target.value })} />
-                    <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Mensagem" value={newTicketForm.message} onChange={e => setNewTicketForm({ ...newTicketForm, message: e.target.value })} />
+                    <Input placeholder="Assunto *" value={newTicketForm.subject} onChange={e => setNewTicketForm({ ...newTicketForm, subject: e.target.value })} />
+                    <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Mensagem *" value={newTicketForm.message} onChange={e => setNewTicketForm({ ...newTicketForm, message: e.target.value })} />
+                    {/* #615: context fields */}
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Cliente</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={newTicketForm.socid}
+                            onChange={e => setNewTicketForm({ ...newTicketForm, socid: e.target.value })}
+                        >
+                            <option value="">— Sem cliente —</option>
+                            {customers.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Projeto</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={newTicketForm.fk_project}
+                            onChange={e => setNewTicketForm({ ...newTicketForm, fk_project: e.target.value })}
+                        >
+                            <option value="">— Sem projeto —</option>
+                            {projects.map(p => (
+                                <option key={p.id} value={p.id}>{p.title}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Responsável</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={newTicketForm.fk_user_assign}
+                            onChange={e => setNewTicketForm({ ...newTicketForm, fk_user_assign: e.target.value })}
+                        >
+                            <option value="">— Sem responsável —</option>
+                            {users.map(u => (
+                                <option key={u.id} value={u.id}>{`${u.firstname || ''} ${u.lastname || ''}`.trim() || u.login}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo</label>
+                            <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={newTicketForm.type_code} onChange={e => setNewTicketForm({ ...newTicketForm, type_code: e.target.value })}>
+                                <option value="ISSUE">Incidente</option>
+                                <option value="REQUEST">Requisição</option>
+                                <option value="OTHER">Outro</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Gravidade</label>
+                            <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={newTicketForm.severity_code} onChange={e => setNewTicketForm({ ...newTicketForm, severity_code: e.target.value })}>
+                                <option value="LOW">Baixa</option>
+                                <option value="NORMAL">Normal</option>
+                                <option value="HIGH">Alta</option>
+                                <option value="BLOCKING">Bloqueante</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
             </Modal>
 
-            {/* Edit Ticket Modal (#57/#78) */}
+            {/* Edit Ticket Modal (#57/#78 + #615) */}
             <Modal
                 isOpen={isEditTicketModalOpen}
                 onClose={() => setIsEditTicketModalOpen(false)}
@@ -731,14 +890,64 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
                 <div className="space-y-4">
                     <Input placeholder="Assunto" value={editTicketForm.subject} onChange={e => setEditTicketForm({ ...editTicketForm, subject: e.target.value })} />
                     <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Mensagem" value={editTicketForm.message} onChange={e => setEditTicketForm({ ...editTicketForm, message: e.target.value })} />
+                    {/* #615: context fields in edit modal */}
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Gravidade</label>
-                        <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editTicketForm.severity_code} onChange={e => setEditTicketForm({ ...editTicketForm, severity_code: e.target.value })}>
-                            <option value="LOW">Baixa</option>
-                            <option value="NORMAL">Normal</option>
-                            <option value="HIGH">Alta</option>
-                            <option value="BLOCKING">Bloqueante</option>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Cliente</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={editTicketForm.socid}
+                            onChange={e => setEditTicketForm({ ...editTicketForm, socid: e.target.value })}
+                        >
+                            <option value="">— Sem cliente —</option>
+                            {customers.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
                         </select>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Projeto</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={editTicketForm.fk_project}
+                            onChange={e => setEditTicketForm({ ...editTicketForm, fk_project: e.target.value })}
+                        >
+                            <option value="">— Sem projeto —</option>
+                            {projects.map(p => (
+                                <option key={p.id} value={p.id}>{p.title}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Responsável</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={editTicketForm.fk_user_assign}
+                            onChange={e => setEditTicketForm({ ...editTicketForm, fk_user_assign: e.target.value })}
+                        >
+                            <option value="">— Sem responsável —</option>
+                            {users.map(u => (
+                                <option key={u.id} value={u.id}>{`${u.firstname || ''} ${u.lastname || ''}`.trim() || u.login}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo</label>
+                            <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editTicketForm.type_code} onChange={e => setEditTicketForm({ ...editTicketForm, type_code: e.target.value })}>
+                                <option value="ISSUE">Incidente</option>
+                                <option value="REQUEST">Requisição</option>
+                                <option value="OTHER">Outro</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Gravidade</label>
+                            <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editTicketForm.severity_code} onChange={e => setEditTicketForm({ ...editTicketForm, severity_code: e.target.value })}>
+                                <option value="LOW">Baixa</option>
+                                <option value="NORMAL">Normal</option>
+                                <option value="HIGH">Alta</option>
+                                <option value="BLOCKING">Bloqueante</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
             </Modal>

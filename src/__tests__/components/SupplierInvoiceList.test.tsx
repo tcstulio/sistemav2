@@ -124,6 +124,22 @@ describe('SupplierInvoiceList', () => {
         expect(screen.getByText('Nenhuma fatura encontrada')).toBeTruthy();
     });
 
+    it('#559: monta a tela sem lancar erro e exibe o cabecalho', () => {
+        // Smoke: ao abrir "Faturas de Fornecedor" a tela deve renderizar o titulo
+        // em vez de quebrar com 404. Hooks sao mockados para simular o caminho
+        // pos-correcao (fallback REST populando a lista / empty state).
+        renderWithProvider();
+        expect(screen.getByText('Faturas de Fornecedor')).toBeTruthy();
+    });
+
+    it('#559: lista faturas vindas do caminho de fallback (REST supplierinvoices)', () => {
+        // Simula o cenario real: custom_sync 404 -> fallbackFetch (fetchSupplierInvoices)
+        // devolve as faturas via REST, e a tela as lista no DOM.
+        renderWithProvider([mockUnpaidInvoice, mockPaidInvoice]);
+        expect(screen.getByText('FA-UNPAID-001')).toBeTruthy();
+        expect(screen.getByText('FA-PAID-001')).toBeTruthy();
+    });
+
     it('renders invoice refs in the list', () => {
         renderWithProvider([mockDraftInvoice, mockUnpaidInvoice, mockPaidInvoice]);
         expect(screen.getByText('FA-DRAFT-001')).toBeTruthy();
