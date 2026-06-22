@@ -150,3 +150,39 @@ export const getEntityLink = (
             return null;
     }
 };
+
+/**
+ * Returns true when the given elementType has a mapped navigation destination
+ * (i.e. getEntityLink would return non-null for a valid fk_element).
+ * Used to determine whether a feed item should appear as clickable.
+ */
+export const hasEntityLink = (elementType: string | undefined): boolean => {
+    if (!elementType) return false;
+    const t = elementType.toLowerCase();
+    return [
+        'projet', 'project',
+        'task', 'projet_task',
+        'ticket',
+        'propal', 'comm/propal', 'proposal',
+        'supplier_proposal', 'supplier_propal',
+        'commande', 'order',
+        'facture', 'invoice',
+        'facture_fourn', 'supplier_invoice',
+        'contrat', 'contract',
+        'societe', 'company', 'thirdparty', 'customer',
+        'supplier', 'fournisseur',
+        'intervention', 'ficheinter',
+        'shipment', 'expedition',
+        'payment', 'paiement',
+        'supplier_payment', 'paiement_fourn',
+        'product', 'produit',
+        'service',
+        'user', 'utilisateur',
+        'venue', 'partnership',
+        'agenda', 'agenda_event', 'actioncomm',
+        'bank', 'bank_account',
+        'tax_payment', 'chargesociales',
+        'salary_payment', 'salary',
+        'expense_report', 'expensereport',
+    ].includes(t);
+};

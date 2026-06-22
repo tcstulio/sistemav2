@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { DolibarrConfig } from '../types';
-import { Save, CheckCircle, Palette, Moon, Sun, User, ShieldCheck, LogOut, RefreshCw, Smartphone, Key, Mail, Building2, History, Users } from 'lucide-react';
+import { Save, CheckCircle, Palette, Moon, Sun, User, ShieldCheck, LogOut, RefreshCw, Smartphone, Key, Mail, Building2, History, Users, Briefcase, Phone } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useDolibarr } from '../context/DolibarrContext';
 import { DolibarrService } from '../services/dolibarrService';
@@ -40,6 +40,10 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isSavingProfile, setIsSavingProfile] = useState(false);
     const [editForm, setEditForm] = useState({
+        firstname: '',
+        lastname: '',
+        job: '',
+        office_phone: '',
         email: '',
         phone: '',
         password: ''
@@ -106,6 +110,10 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
 
     const handleOpenEdit = () => {
         setEditForm({
+            firstname: localConfig.currentUser?.firstname || '',
+            lastname: localConfig.currentUser?.lastname || '',
+            job: (localConfig.currentUser?.job as string) || '',
+            office_phone: (localConfig.currentUser?.office_phone as string) || '',
             email: localConfig.currentUser?.email || '',
             phone: (localConfig.currentUser?.phone_mobile || '') as string,
             password: ''
@@ -119,6 +127,10 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
             if (!localConfig.currentUser) return;
 
             const updates: any = {};
+            if (editForm.firstname) updates.firstname = editForm.firstname;
+            if (editForm.lastname) updates.lastname = editForm.lastname;
+            if (editForm.job) updates.job = editForm.job;
+            if (editForm.office_phone) updates.office_phone = editForm.office_phone;
             if (editForm.email) updates.email = editForm.email;
             if (editForm.phone) updates.phone_mobile = editForm.phone;
             if (editForm.password) updates.password = editForm.password;
@@ -402,6 +414,40 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                 }
             >
                 <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                        <Input
+                            label="Nome"
+                            type="text"
+                            icon={<User size={16} />}
+                            value={editForm.firstname}
+                            onChange={e => setEditForm({ ...editForm, firstname: e.target.value })}
+                            placeholder="Nome"
+                        />
+                        <Input
+                            label="Sobrenome"
+                            type="text"
+                            icon={<User size={16} />}
+                            value={editForm.lastname}
+                            onChange={e => setEditForm({ ...editForm, lastname: e.target.value })}
+                            placeholder="Sobrenome"
+                        />
+                    </div>
+                    <Input
+                        label="Cargo / Função"
+                        type="text"
+                        icon={<Briefcase size={16} />}
+                        value={editForm.job}
+                        onChange={e => setEditForm({ ...editForm, job: e.target.value })}
+                        placeholder="Ex.: Analista, Gerente…"
+                    />
+                    <Input
+                        label="Telefone fixo"
+                        type="tel"
+                        icon={<Phone size={16} />}
+                        value={editForm.office_phone}
+                        onChange={e => setEditForm({ ...editForm, office_phone: e.target.value })}
+                        placeholder="+55 11 3000-0000"
+                    />
                     <Input
                         label="Email"
                         type="email"

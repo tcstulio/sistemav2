@@ -67,6 +67,7 @@ export class DolibarrService extends DolibarrServiceBase {
     listPayments = (limit?: number) => this.payments.listPayments(limit);
     listBankAccounts = () => this.payments.listBankAccounts();
     listBankLines = (accountId: string, limit?: number) => this.payments.listBankLines(accountId, limit);
+    reconcileBankLine = (accountId: string, lineId: string, reconciled: boolean, userKey?: string) => this.payments.reconcileBankLine(accountId, lineId, reconciled, userKey);
 
     // === Products ===
     listProducts = (search?: string) => this.products.listProducts(search);
@@ -91,6 +92,10 @@ export class DolibarrService extends DolibarrServiceBase {
     listEvents = (limit?: number) => this.operations.listEvents(limit);
     createAgendaEvent = (data: Parameters<DolibarrOperationsService['createAgendaEvent']>[0], userKey?: string) => this.operations.createAgendaEvent(data, userKey);
     listInterventions = (search?: string) => this.operations.listInterventions(search);
+    updateIntervention = (
+        id: string,
+        payload: { socid?: string | number; date?: string | number; fk_project?: string | number; description?: string }
+    ) => this.operations.updateIntervention(id, payload);
 
     // === HR ===
     getUserById = (id: string) => this.hr.getUserById(id);

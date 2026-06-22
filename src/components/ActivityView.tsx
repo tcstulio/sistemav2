@@ -1,10 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { Activity, Users, TrendingUp, Clock, FileText, Package, Receipt, Ticket, Inbox, ChevronRight, Sparkles, RefreshCw, Filter } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useSystemLogs, useUsers } from '../hooks/dolibarr';
+import { useSystemLogs, useUsers, useCustomers, useProjects } from '../hooks/dolibarr';
 import { SystemLog, AppView } from '../types';
 import { formatRelativeTime } from '../utils/dateUtils';
-import { getEntityLink } from '../utils/navigationUtils';
+import { getEntityLink, hasEntityLink } from '../utils/navigationUtils';
 
 import ActivityReportModal from './ActivityReportModal';
 import {
@@ -96,6 +96,8 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
     const { config } = useDolibarr();
     const { data: systemLogs = [], isLoading: isLoadingLogs, refetch } = useSystemLogs(config, !!config);
     const { data: users = [] } = useUsers(config, !!config);
+    const { data: customers = [] } = useCustomers(config, !!config);
+    const { data: projects = [] } = useProjects(config, !!config);
 
     const [filterUser, setFilterUser] = useState<string>('all');
     const [filterType, setFilterType] = useState<string>('all');
@@ -120,6 +122,20 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
         });
         return map;
     }, [users]);
+
+    // Customer map: id -> name
+    const customerMap = useMemo(() => {
+        const map: Record<string, string> = {};
+        customers.forEach(c => { map[c.id] = c.name; });
+        return map;
+    }, [customers]);
+
+    // Project map: id -> title
+    const projectMap = useMemo(() => {
+        const map: Record<string, string> = {};
+        projects.forEach(p => { map[p.id] = p.title; });
+        return map;
+    }, [projects]);
 
     // Get unique action types for filter
     const actionTypes = useMemo(() => {
@@ -185,15 +201,33 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
     };
 
     // Navigation Helper
+    // Only navigate when there is a real fk_element (never treat log.id as entity id).
+    // Falls back to client navigation when the type has no mapping but socid is present.
     const handleItemClick = (log: SystemLog) => {
         if (!onNavigate) return;
 
-        // Use utility to find target
-        const link = getEntityLink(log.elementtype, log.fk_element || log.id, { socid: log.socid });
-
-        if (link) {
-            onNavigate(link.view, link.id);
+        // If the entity type is known-mapped, require a real fk_element
+        if (hasEntityLink(log.elementtype)) {
+            if (log.fk_element) {
+                const link = getEntityLink(log.elementtype, log.fk_element, { socid: log.socid });
+                if (link) { onNavigate(link.view, link.id); }
+            } else if (log.socid) {
+                // Has mapped type but no fk_element -> navigate to client if available
+                onNavigate('customers', log.socid);
+            }
+        } else if (log.socid) {
+            // Unknown/unmapped type: navigate to client when possible
+            onNavigate('customers', log.socid);
         }
+        // Otherwise: no action (item is intentionally non-clickable)
+    };
+
+    // Determine if a log item has a navigable destination (used to control cursor/affordance)
+    const isClickable = (log: SystemLog): boolean => {
+        if (!onNavigate) return false;
+        if (hasEntityLink(log.elementtype) && log.fk_element) return true;
+        if (log.socid) return true;
+        return false;
     };
 
     // Calculate user activity stats (last 7 days) (Refactored to be cleaner)
@@ -390,12 +424,17 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
                                             const { action, color, icon } = getActionDescription(log);
                                             const userName = log.fk_user_author ? userMap[log.fk_user_author] || `Usuário #${log.fk_user_author}` : 'Sistema';
                                             const entityLabel = getEntityLabel(log.elementtype);
+                                            const clickable = isClickable(log);
+
+                                            // Context: client and/or project names for this log entry
+                                            const customerName = log.socid ? (customerMap[log.socid] || `#${log.socid}`) : undefined;
+                                            const projectName = log.project_id ? (projectMap[log.project_id] || `#${log.project_id}`) : undefined;
 
                                             return (
                                                 <div
                                                     key={log.id}
-                                                    onClick={() => handleItemClick(log)}
-                                                    className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group"
+                                                    onClick={clickable ? () => handleItemClick(log) : undefined}
+                                                    className={`p-4 transition-colors group${clickable ? ' hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer' : ''}`}
                                                 >
                                                     <div className="flex items-start gap-3">
                                                         <div className={`p-2 rounded-lg ${color} shrink-0`}>
@@ -413,8 +452,41 @@ const ActivityView: React.FC<ActivityViewProps> = ({ onNavigate }) => {
                                                                         <span className="text-slate-500"> - {log.label}</span>
                                                                     )}
                                                                 </p>
-                                                                <ChevronRight size={14} className="text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity ml-2 shrink-0" />
+                                                                {clickable && (
+                                                                    <ChevronRight size={14} className="text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity ml-2 shrink-0" />
+                                                                )}
                                                             </div>
+                                                            {/* Context chips: client and/or project */}
+                                                            {(customerName || projectName) && (
+                                                                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                                                    {customerName && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={e => {
+                                                                                e.stopPropagation();
+                                                                                if (onNavigate && log.socid) onNavigate('customers', log.socid);
+                                                                            }}
+                                                                            className="text-[10px] bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-700 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+                                                                            aria-label={`Cliente: ${customerName}`}
+                                                                        >
+                                                                            Cliente: {customerName}
+                                                                        </button>
+                                                                    )}
+                                                                    {projectName && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={e => {
+                                                                                e.stopPropagation();
+                                                                                if (onNavigate && log.project_id) onNavigate('projects', log.project_id);
+                                                                            }}
+                                                                            className="text-[10px] bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 px-1.5 py-0.5 rounded border border-violet-200 dark:border-violet-700 hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors"
+                                                                            aria-label={`Projeto: ${projectName}`}
+                                                                        >
+                                                                            Projeto: {projectName}
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            )}
                                                             <div className="flex items-center gap-2 mt-1.5">
                                                                 <span className="text-xs text-slate-400 flex items-center gap-1" title={new Date(log.date_action).toLocaleString()}>
                                                                     <Clock size={10} />
