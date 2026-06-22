@@ -19,6 +19,12 @@ interface Activity {
     createdAt: number;
 }
 
+/** Normaliza nome de autor: vazio, 'unknown' e IDs numéricos crus → fallback seguro. */
+function displayName(name?: string, fallback = 'Agente'): string {
+    if (!name || name === 'unknown' || /^\d+$/.test(name)) return fallback;
+    return name;
+}
+
 export const AgentActivityFeed: React.FC = () => {
     const [activities, setActivities] = useState<Activity[]>([]);
     const [loading, setLoading] = useState(true);
@@ -83,7 +89,7 @@ export const AgentActivityFeed: React.FC = () => {
                             <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400">
                                 <Clock size={8} />
                                 <span>{new Date(a.createdAt).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
-                                <span>por {a.userName && a.userName !== 'unknown' ? a.userName : 'Agente'}</span>
+                                <span>por {displayName(a.userName)}</span>
                                 {a.durationMs > 0 && <span>{(a.durationMs / 1000).toFixed(1)}s</span>}
                             </div>
                         </div>

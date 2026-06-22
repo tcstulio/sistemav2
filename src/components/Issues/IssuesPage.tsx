@@ -12,6 +12,18 @@ import { DndContext, closestCorners, PointerSensor, useSensor, useSensors, DragE
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
+/** Formata o timestamp de desfecho de uma task para exibição compacta. */
+const formatOutcomeTime = (status: string, task: { completedAt?: string; updatedAt: string }): string | null => {
+    const OUTCOME_STATUSES = ['merged', 'rejected', 'cancelled', 'failed'];
+    if (!OUTCOME_STATUSES.includes(status)) return null;
+    const raw = task.completedAt || task.updatedAt;
+    if (!raw) return null;
+    const d = new Date(raw);
+    const label: Record<string, string> = { merged: 'Merge', rejected: 'Rejeitada', cancelled: 'Cancelada', failed: 'Falhou' };
+    const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    return `${label[status] ?? status} ${time}`;
+};
+
 const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
     pending: { color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800', icon: <Clock size={14} />, label: 'Pendente' },
     running: { color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-900/20', icon: <Loader2 size={14} className="animate-spin" />, label: 'Executando' },
@@ -31,7 +43,9 @@ const PIPELINE_COLUMNS = [
     { key: 'queue', label: 'Fila', statuses: ['pending'] },
     { key: 'active', label: 'Em Execução', statuses: ['running', 'fixing', 'cancelling'] },
     { key: 'review', label: 'Revisão', statuses: ['reviewing', 'approved'] },
-    { key: 'done', label: 'Concluído', statuses: ['merged', 'rejected', 'cancelled', 'failed'] },
+    { key: 'done', label: 'Concluído', statuses: ['merged', 'rejected'] },
+    { key: 'failed', label: 'Falhadas', statuses: ['failed'] },
+    { key: 'cancelled', label: 'Canceladas', statuses: ['cancelled'] },
 ] as const;
 
 const LABEL_COLORS: Record<string, string> = {
@@ -54,6 +68,111 @@ const LABEL_ICONS: Record<string, React.ReactNode> = {
     opencode_task: <Wrench size={12} />,
 };
 
+/** Modal com histórico completo de eventos de uma task do TaskRunner. */
+const TaskHistoryModal: React.FC<{
+    task: Task;
+    onClose: () => void;
+}> = ({ task, onClose }) => {
+    const [events, setEvents] = useState<import('../../services/taskService').TaskEvent[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        let cancelled = false;
+        const load = async () => {
+            try {
+                // Prefer events already embedded in task, otherwise fetch
+                if (task.events && task.events.length > 0) {
+                    if (!cancelled) { setEvents(task.events); setLoading(false); }
+                } else {
+                    const evts = await TaskService.listEvents(task.issueNumber);
+                    if (!cancelled) { setEvents(evts); setLoading(false); }
+                }
+            } catch {
+                if (!cancelled) setLoading(false);
+            }
+        };
+        load();
+        return () => { cancelled = true; };
+    }, [task]);
+
+    const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
+    const outcomeTime = formatOutcomeTime(task.status, task);
+
+    return (
+        <div
+            className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+            onClick={onClose}
+            data-testid="task-history-modal"
+        >
+            <div
+                className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl"
+                onClick={e => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="flex items-start justify-between p-4 border-b border-slate-200 dark:border-slate-700 gap-3">
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-mono text-slate-400">#{task.issueNumber}</span>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color} ${cfg.bg}`}>
+                                {cfg.icon} {cfg.label}
+                            </span>
+                            {outcomeTime && (
+                                <span className="text-[10px] text-slate-400">{outcomeTime}</span>
+                            )}
+                        </div>
+                        <h3 className="text-sm font-semibold text-slate-800 dark:text-white line-clamp-2">{task.title}</h3>
+                    </div>
+                    <button
+                        onClick={onClose}
+                        className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+                        aria-label="Fechar histórico"
+                    >
+                        <XCircle size={18} />
+                    </button>
+                </div>
+
+                {/* Timeline */}
+                <div className="flex-1 overflow-y-auto p-4">
+                    <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-3 flex items-center gap-1.5">
+                        <Clock size={11} /> Histórico de eventos
+                    </h4>
+                    {loading ? (
+                        <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-indigo-500" /></div>
+                    ) : events.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-8">Nenhum evento registrado</p>
+                    ) : (
+                        <ol className="relative border-l border-slate-200 dark:border-slate-700 space-y-4 ml-2">
+                            {events.map((evt, i) => {
+                                const d = new Date(evt.ts);
+                                const timeStr = d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+                                const isError = evt.type === 'error' || evt.type === 'failed';
+                                return (
+                                    <li key={i} className="ml-4">
+                                        <span className={`absolute -left-1.5 mt-1 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${isError ? 'bg-red-500' : 'bg-indigo-400'}`} />
+                                        <div className="flex items-baseline gap-2 mb-0.5">
+                                            <span className="text-[9px] font-mono text-slate-400 shrink-0">{timeStr}</span>
+                                            <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${isError ? 'bg-red-50 text-red-600 dark:bg-red-900/20' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>{evt.type}</span>
+                                        </div>
+                                        <p className="text-xs text-slate-600 dark:text-slate-300 leading-snug whitespace-pre-wrap break-words">{evt.message}</p>
+                                    </li>
+                                );
+                            })}
+                        </ol>
+                    )}
+                </div>
+
+                {task.error && (
+                    <div className="px-4 pb-4">
+                        <div className="p-2 rounded-lg bg-red-50 dark:bg-red-900/20 text-xs text-red-600 border border-red-200 dark:border-red-800">
+                            <span className="font-bold">Erro: </span>{task.error}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
 const SortableMiniCard: React.FC<{
     task: Task;
     onAction: (action: string, task: Task, extra?: string) => void;
@@ -61,10 +180,11 @@ const SortableMiniCard: React.FC<{
     onEdit: (task: Task) => void;
     onDelete: (task: Task) => void;
     onConsole: (task: Task) => void;
+    onHistory: (task: Task) => void;
     isAdmin: boolean;
     queuePosition?: number;
     isDragOverlay?: boolean;
-}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, isAdmin, queuePosition, isDragOverlay }) => {
+}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, isAdmin, queuePosition, isDragOverlay }) => {
     const [showFeedback, setShowFeedback] = useState(false);
     const [feedback, setFeedback] = useState('');
     const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
@@ -83,10 +203,18 @@ const SortableMiniCard: React.FC<{
         opacity: isDragging ? 0.5 : 1,
     } : undefined;
 
+    const outcomeTime = formatOutcomeTime(task.status, task);
+
     return (
-        <div ref={isSortable ? setNodeRef : undefined} style={style} {...(isSortable ? attributes : {})} {...(isSortable ? listeners : {})}
-            className={`p-3 rounded-lg border ${isActive ? 'border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-900/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'} transition-all hover:shadow-sm ${isDragging ? 'ring-2 ring-indigo-400 shadow-lg' : ''}`}>
-            <div className="flex items-center gap-2 mb-1">
+        <div
+            ref={isSortable ? setNodeRef : undefined}
+            style={style}
+            {...(isSortable ? attributes : {})}
+            {...(isSortable ? listeners : {})}
+            onClick={() => onHistory(task)}
+            className={`p-3 rounded-lg border cursor-pointer ${isActive ? 'border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-900/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'} transition-all hover:shadow-sm hover:border-indigo-300 dark:hover:border-indigo-700 ${isDragging ? 'ring-2 ring-indigo-400 shadow-lg' : ''}`}
+        >
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
                 {isSortable && isAdmin && (
                     <span className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 dark:text-slate-600 dark:hover:text-slate-400">
                         <GripVertical size={12} />
@@ -99,6 +227,9 @@ const SortableMiniCard: React.FC<{
                 <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${cfg.color} ${cfg.bg}`}>
                     {cfg.icon} {cfg.label}
                 </span>
+                {outcomeTime && (
+                    <span className="text-[9px] text-slate-400 ml-auto">{outcomeTime}</span>
+                )}
                 {task.judgeScore !== undefined && (
                     <span className={`text-[9px] font-medium ${task.judgeScore >= 7 ? 'text-green-600' : 'text-amber-600'}`}>
                         <Star size={8} className="inline" /> {task.judgeScore}/10
@@ -195,18 +326,20 @@ const TaskListCard: React.FC<{
     onEdit: (task: Task) => void;
     onDelete: (task: Task) => void;
     onConsole: (task: Task) => void;
+    onHistory: (task: Task) => void;
     isAdmin: boolean;
     queuePosition?: number;
-}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, isAdmin, queuePosition }) => {
+}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, isAdmin, queuePosition }) => {
     const [expanded, setExpanded] = useState(false);
     const [feedback, setFeedback] = useState('');
     const [showFeedback, setShowFeedback] = useState(false);
     const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
     const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
     const canKill = ['running', 'fixing'].includes(task.status);
+    const outcomeTime = formatOutcomeTime(task.status, task);
 
     return (
-        <Card className="relative overflow-hidden">
+        <Card className="relative overflow-hidden cursor-pointer hover:border-indigo-200 dark:hover:border-indigo-700 transition-colors" onClick={() => onHistory(task)}>
             {isActive && <div className="absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-blue-500 via-purple-500 to-blue-500 animate-pulse" />}
             <div className="flex items-start gap-2">
                 {queuePosition !== undefined && (
@@ -220,6 +353,11 @@ const TaskListCard: React.FC<{
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color} ${cfg.bg}`}>
                             {cfg.icon} {cfg.label}
                         </span>
+                        {outcomeTime && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] text-slate-500 bg-slate-100 dark:bg-slate-800" data-testid="outcome-time">
+                                <Clock size={10} /> {outcomeTime}
+                            </span>
+                        )}
                         {task.judgeScore !== undefined && (
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${task.judgeScore >= 7 ? 'text-green-600 bg-green-50' : 'text-amber-600 bg-amber-50'}`}>
                                 <Star size={10} /> {task.judgeScore}/10
@@ -236,7 +374,7 @@ const TaskListCard: React.FC<{
                     <div className="flex items-center gap-3 mt-1 flex-wrap">
                         {task.branch && <p className="text-[10px] font-mono text-slate-400">branch: {task.branch}</p>}
                         {task.prUrl && (
-                            <a href={task.prUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline">
+                            <a href={task.prUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="inline-flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline">
                                 PR #{task.prNumber} <ExternalLink size={8} />
                             </a>
                         )}
@@ -256,7 +394,7 @@ const TaskListCard: React.FC<{
                 </div>
             )}
 
-            <div className="flex items-center gap-2 mt-3 flex-wrap">
+            <div className="flex items-center gap-2 mt-3 flex-wrap" onClick={e => e.stopPropagation()}>
                 {isAdmin && task.status === 'pending' && (
                     <Button variant="primary" size="sm" icon={<Play size={12} />} onClick={() => onAction('start', task)}>Iniciar</Button>
                 )}
@@ -405,6 +543,7 @@ const IssuesPage: React.FC = () => {
     const [editBody, setEditBody] = useState('');
     const [deleteConfirm, setDeleteConfirm] = useState<Task | null>(null);
     const [consoleTask, setConsoleTask] = useState<Task | null>(null);
+    const [historyTask, setHistoryTask] = useState<Task | null>(null);
     const [labelingIssue, setLabelingIssue] = useState<number | null>(null);
 
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
@@ -773,6 +912,7 @@ const IssuesPage: React.FC = () => {
                                                             onEdit={openEdit}
                                                             onDelete={setDeleteConfirm}
                                                             onConsole={setConsoleTask}
+                                                            onHistory={setHistoryTask}
                                                             isAdmin={isAdmin}
                                                             queuePosition={getQueuePosition(task)}
                                                         />
@@ -797,7 +937,7 @@ const IssuesPage: React.FC = () => {
                                 </Card>
                             )}
                             {filteredTasks.map(task => (
-                                <TaskListCard key={task.issueNumber} task={task} onAction={handleTaskAction} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} isAdmin={isAdmin} queuePosition={getQueuePosition(task)} />
+                                <TaskListCard key={task.issueNumber} task={task} onAction={handleTaskAction} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} onHistory={setHistoryTask} isAdmin={isAdmin} queuePosition={getQueuePosition(task)} />
                             ))}
                         </div>
                     )}
@@ -856,6 +996,8 @@ const IssuesPage: React.FC = () => {
 
             {/* MODALS */}
             {showCreate && <CreateTaskModal onClose={() => setShowCreate(false)} onCreated={loadTasks} />}
+
+            {historyTask && <TaskHistoryModal task={historyTask} onClose={() => setHistoryTask(null)} />}
 
             {reviewTask && (diffLoading ? (
                 <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">

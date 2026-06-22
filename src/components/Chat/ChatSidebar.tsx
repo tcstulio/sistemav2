@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useUsers, useProjects, useEvents } from '../../hooks/dolibarr';
 import { useDolibarr } from '../../context/DolibarrContext';
-import { Search, Briefcase, MessageSquare, Clock } from 'lucide-react';
+import { Search, Briefcase, MessageSquare, Clock, Plus } from 'lucide-react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 
 interface ChatSidebarProps {
@@ -14,6 +14,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
     const { id: activeId } = useParams();
     const location = useLocation();
     const [searchTerm, setSearchTerm] = useState('');
+    const [showNewConversation, setShowNewConversation] = useState(false);
 
     // Fetch data
     const { data: users } = useUsers(config);
@@ -52,7 +53,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
         if (!users) return [];
         let list = users.filter((u: any) => String(u.statut) === '1' && String(u.id) !== String(currentUser?.id));
 
-        if (!searchTerm) {
+        if (!searchTerm && !showNewConversation) {
             // Show only recent conversations
             return list.filter((u: any) => activeUserIds.has(String(u.id)));
         } else {
@@ -67,7 +68,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
     const filteredProjects = useMemo(() => {
         if (!projects) return [];
 
-        if (!searchTerm) {
+        if (!searchTerm && !showNewConversation) {
             // Recent: Show ANY project with chat history, regardless of status
             return projects.filter((p: any) => activeProjectIds.has(String(p.id)));
         } else {
@@ -83,27 +84,49 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
         const name = type === 'user' ? (item.firstname || item.login) : item.ref;
 
         onSelect(type, id, name);
+        setShowNewConversation(false);
         navigate(`/chat/${type}/${id}`);
+    };
+
+    const handleNewConversationClick = () => {
+        setShowNewConversation(true);
+        setSearchTerm('');
     };
 
     return (
         <div className="h-full bg-slate-50 dark:bg-slate-900 flex flex-col">
             {/* Header */}
             <div className="p-4 border-b border-slate-200 dark:border-slate-800">
-                <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-4 flex items-center gap-2">
-                    <MessageSquare className="w-5 h-5 text-indigo-500" />
-                    Mensagens
-                </h2>
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                        <MessageSquare className="w-5 h-5 text-indigo-500" />
+                        Mensagens
+                    </h2>
+                    <button
+                        data-testid="nova-conversa-btn"
+                        onClick={handleNewConversationClick}
+                        title="Nova conversa"
+                        className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-800 transition-colors"
+                    >
+                        <Plus size={14} />
+                        Nova
+                    </button>
+                </div>
                 <div className="relative">
                     <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
                     <input
                         type="text"
-                        placeholder="Buscar para iniciar..."
+                        placeholder={showNewConversation ? 'Buscar pessoa ou projeto...' : 'Buscar para iniciar...'}
                         value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
+                        onChange={(e) => { setSearchTerm(e.target.value); if (e.target.value) setShowNewConversation(false); }}
                         className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg pl-9 pr-4 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
                     />
                 </div>
+                {showNewConversation && !searchTerm && (
+                    <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                        Mostrando todas as pessoas e projetos disponíveis. Digite para filtrar.
+                    </p>
+                )}
             </div>
 
             {/* List */}
@@ -118,7 +141,17 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
                     <div className="space-y-1">
                         {filteredUsers.length === 0 && (
                             <div className="px-3 text-xs text-slate-400 italic">
-                                {searchTerm ? 'Nenhum usuário encontrado' : 'Nenhuma conversa recente'}
+                                {searchTerm ? 'Nenhum usuário encontrado' : (
+                                    <span>
+                                        Nenhuma conversa recente.{' '}
+                                        <button
+                                            onClick={handleNewConversationClick}
+                                            className="text-indigo-500 hover:text-indigo-700 underline"
+                                        >
+                                            Iniciar nova conversa
+                                        </button>
+                                    </span>
+                                )}
                             </div>
                         )}
                         {filteredUsers.map((user: any) => (
@@ -155,7 +188,17 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({ onSelect }) => {
                     <div className="space-y-1">
                         {filteredProjects.length === 0 && (
                             <div className="px-3 text-xs text-slate-400 italic">
-                                {searchTerm ? 'Nenhum projeto encontrado' : 'Nenhuma conversa recente'}
+                                {searchTerm ? 'Nenhum projeto encontrado' : (
+                                    <span>
+                                        Nenhuma conversa recente.{' '}
+                                        <button
+                                            onClick={handleNewConversationClick}
+                                            className="text-indigo-500 hover:text-indigo-700 underline"
+                                        >
+                                            Iniciar nova conversa
+                                        </button>
+                                    </span>
+                                )}
                             </div>
                         )}
                         {filteredProjects.map((project: any) => (
