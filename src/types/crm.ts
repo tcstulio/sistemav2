@@ -28,6 +28,7 @@ export interface ThirdParty {
     date_modification?: number;
     outstanding_balance?: number;
     array_options?: Record<string, any>;
+    category_ids?: string[];
 }
 
 export interface Contact {

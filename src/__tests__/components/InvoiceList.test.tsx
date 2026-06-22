@@ -281,7 +281,8 @@ describe('InvoiceList — Final currency sweep (#643)', () => {
     });
 });
 
-describe('InvoiceList — alvos de clique e exclusão (#553)', () => {
+// Covers: #702 (estrutura HTML / alvos separados), #703 (excluir não-rascunho), #704 (testes)
+describe('InvoiceList — alvos de clique e exclusão (#553 / #702 / #703 / #704)', () => {
     const defaultInvoice = {
         id: 'inv1',
         ref: 'FA2501-0001',
