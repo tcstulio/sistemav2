@@ -74,6 +74,37 @@ export const updateIntervention = async (
     });
 };
 
+export interface InterventionLinePayload {
+    desc: string;
+    duration: number; // seconds
+    date?: number;    // unix timestamp (optional)
+}
+
+export const addInterventionLine = async (
+    config: DolibarrConfig,
+    interventionId: string,
+    payload: InterventionLinePayload
+) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/interventions/${interventionId}/lines`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(payload)
+    });
+};
+
+export const deleteInterventionLine = async (
+    config: DolibarrConfig,
+    interventionId: string,
+    lineId: string
+) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/interventions/${interventionId}/lines/${lineId}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
 export const fetchTicketEvents = async (config: DolibarrConfig, ticketId: string) => {
     // Fetches linked events/logs for the ticket
     // Uses agendaevents generic endpoint with filter for elementtype 'ticket'
