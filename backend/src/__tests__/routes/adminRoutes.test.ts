@@ -7,6 +7,7 @@ const mockConfigService = vi.hoisted(() => ({
     setModuleConfigs: vi.fn(),
     getAllPrompts: vi.fn(() => ({})),
     setPrompts: vi.fn(),
+    resetModulesToGlobal: vi.fn(),
 }));
 
 vi.mock('../../services/configService', () => ({
@@ -331,6 +332,16 @@ describe('adminRoutes', () => {
                 .send({ provider: 'openai' });
 
             expect(res.status).toBe(400);
+        });
+
+        it('sincroniza configService.moduleConfigs (regressao #784)', async () => {
+            mockConfigService.resetModulesToGlobal.mockClear();
+            const res = await request(app)
+                .post('/api/admin/config/llm')
+                .send({ provider: 'minimax', modelName: 'MiniMax-M3' });
+
+            expect(res.status).toBe(200);
+            expect(mockConfigService.resetModulesToGlobal).toHaveBeenCalledTimes(1);
         });
     });
 

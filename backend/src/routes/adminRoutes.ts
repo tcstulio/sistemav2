@@ -331,6 +331,7 @@ router.post('/config/llm', async (req, res) => {
         aiService.setConfig(provider, url, key, modelName);
 
         config.llmProvider = provider;
+        configService.resetModulesToGlobal();
         if (url) {
             if (provider === 'glm') config.zaiBaseUrl = url;
             else if (provider === 'minimax') config.minimaxBaseUrl = url;
