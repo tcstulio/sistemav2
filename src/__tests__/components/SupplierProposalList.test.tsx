@@ -49,6 +49,7 @@ vi.mock('../../services/dolibarrService', () => ({
         addSupplierProposalLine: vi.fn(),
         closeSupplierProposal: vi.fn(),
         deleteSupplierProposal: vi.fn(),
+        validateSupplierProposal: vi.fn(),
     },
 }));
 
@@ -307,6 +308,203 @@ describe('SupplierProposalList — Total bar (#486)', () => {
 
         await waitFor(() => {
             expect(screen.getByTestId('list-total-value').textContent).toBe(formatCurrency(500));
+        });
+    });
+});
+
+describe('SupplierProposalList — issue #589 fixes', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.spyOn(window, 'alert').mockImplementation(() => {});
+        vi.spyOn(window, 'confirm').mockImplementation(() => false);
+    });
+
+    it('sends note_public in the create payload', async () => {
+        vi.mocked(DolibarrService.createSupplierProposal).mockResolvedValue({} as any);
+        const user = userEvent.setup();
+        renderComponent();
+
+        await user.click(screen.getAllByText('Nova Solicitação')[0]);
+        await screen.findByText('Criar Solicitação');
+
+        // Select a supplier — modal may show "Fornecedor Teste" multiple times; pick first visible dropdown trigger
+        await user.click(screen.getByText('Selecione o Fornecedor...'));
+        // getAllByText returns all; the last one is the dropdown option that just appeared
+        const opts = screen.getAllByText('Fornecedor Teste');
+        await user.click(opts[opts.length - 1]);
+
+        // Fill in the public note field
+        const noteField = screen.getByPlaceholderText('Observações...');
+        await user.clear(noteField);
+        await user.type(noteField, 'Nota de teste');
+
+        await user.click(screen.getByText('Criar Solicitação'));
+
+        await waitFor(() => {
+            expect(DolibarrService.createSupplierProposal).toHaveBeenCalledWith(
+                expect.anything(),
+                expect.objectContaining({ note_public: 'Nota de teste' })
+            );
+        });
+    });
+
+    it('loads note_public from existing proposal when opening edit', async () => {
+        const { useSupplierProposals } = await import('../../hooks/dolibarr');
+        vi.mocked(useSupplierProposals).mockReturnValue({
+            data: [
+                {
+                    id: 'prop-edit',
+                    ref: 'SP2501-0099',
+                    socid: 'sup1',
+                    datec: 1700000000,
+                    total_ht: 300,
+                    statut: '0',
+                    project_id: null,
+                    fk_user_author: null,
+                    note_public: 'Nota já salva',
+                },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        // Click proposal to open detail
+        const card = await screen.findByText('SP2501-0099');
+        await user.click(card);
+
+        // Click Editar
+        const editBtn = await screen.findByText('Editar');
+        await user.click(editBtn);
+
+        // The note field should show the saved value
+        await waitFor(() => {
+            const noteField = screen.getByPlaceholderText('Observações...');
+            expect((noteField as HTMLTextAreaElement).value).toBe('Nota já salva');
+        });
+    });
+
+    it('does not render the SHOW DEBUG button', async () => {
+        const { useSupplierProposals } = await import('../../hooks/dolibarr');
+        vi.mocked(useSupplierProposals).mockReturnValue({
+            data: [
+                {
+                    id: 'prop-debug',
+                    ref: 'SP2501-0003',
+                    socid: 'sup1',
+                    datec: 1700000000,
+                    total_ht: 100,
+                    statut: '1',
+                    project_id: null,
+                    fk_user_author: null,
+                },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('SP2501-0003');
+        await user.click(card);
+
+        // Detail panel should open — verify SHOW DEBUG is absent
+        await screen.findByText('Assinar / Aceitar');
+        expect(screen.queryByText('SHOW DEBUG')).toBeNull();
+    });
+
+    it('renders monetary values using formatCurrency (R$) not literal $', async () => {
+        const { useSupplierProposals, useSupplierProposalLines } = await import('../../hooks/dolibarr');
+        vi.mocked(useSupplierProposals).mockReturnValue({
+            data: [
+                {
+                    id: 'prop-currency',
+                    ref: 'SP2501-0004',
+                    socid: 'sup1',
+                    datec: 1700000000,
+                    total_ht: 1234.56,
+                    statut: '1',
+                    project_id: null,
+                    fk_user_author: null,
+                },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+        vi.mocked(useSupplierProposalLines).mockReturnValue({
+            data: [
+                {
+                    id: 'line1',
+                    parent_id: 'prop-currency',
+                    product_id: null,
+                    description: 'Item A',
+                    qty: 2,
+                    subprice: 617.28,
+                    total_ht: 1234.56,
+                },
+            ],
+            refetch: mockRefetch,
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('SP2501-0004');
+        await user.click(card);
+
+        // Wait for detail to render the line item price
+        await waitFor(() => {
+            // formatCurrency produces "R$" locale string, never bare "$"
+            const allText = document.body.textContent ?? '';
+            // Should contain R$ somewhere
+            expect(allText).toContain('R$');
+            // Should not contain a bare $ followed by digits (USD-style)
+            expect(allText).not.toMatch(/\$\d/);
+        });
+    });
+
+    it('shows Validar button for draft proposal and calls validateSupplierProposal on click', async () => {
+        const { useSupplierProposals } = await import('../../hooks/dolibarr');
+        vi.mocked(useSupplierProposals).mockReturnValue({
+            data: [
+                {
+                    id: 'prop-draft',
+                    ref: 'SP2501-0005',
+                    socid: 'sup1',
+                    datec: 1700000000,
+                    total_ht: 200,
+                    statut: '0',
+                    project_id: null,
+                    fk_user_author: null,
+                },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+
+        vi.mocked(DolibarrService.validateSupplierProposal).mockResolvedValue({} as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('SP2501-0005');
+        await user.click(card);
+
+        // The validate button should be present for draft
+        const validateBtn = await screen.findByText('Validar / Enviar ao Fornecedor');
+        expect(validateBtn).toBeTruthy();
+
+        await user.click(validateBtn);
+
+        await waitFor(() => {
+            expect(DolibarrService.validateSupplierProposal).toHaveBeenCalledWith(
+                expect.anything(),
+                'prop-draft'
+            );
+            expect(toastMock.success).toHaveBeenCalledWith('Solicitação validada e enviada ao fornecedor!');
         });
     });
 });

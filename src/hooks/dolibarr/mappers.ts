@@ -22,6 +22,7 @@ import {
     Ticket,
     Payment,
     Contract,
+    ContractLine,
     Intervention,
     BankAccount,
     BankLine,
@@ -131,16 +132,26 @@ export const mapSupplier = (raw: RawDolibarrRecord): ThirdParty => ({
     name: raw.name || '',
     name_alias: raw.name_alias,
     code_client: raw.code_client,
+    code_fournisseur: raw.code_fournisseur,
     email: raw.email,
     phone: raw.phone,
+    phone_mobile: raw.phone_mobile,
+    fax: raw.fax,
+    url: raw.url,
+    idprof1: raw.idprof1,
+    idprof2: raw.idprof2,
+    typent_id: raw.typent_id ? toString(raw.typent_id) : undefined,
+    socialnetworks: raw.socialnetworks ?? undefined,
     address: raw.address || '',
     zip: raw.zip || '',
     town: raw.town || '',
     client: toString(raw.client),
     status: raw.status,
+    tva_intra: raw.tva_intra,
     date_creation: toTimestamp(raw.datec),
     date_modification: toTimestamp(raw.tms),
     fournisseur: toString(raw.fournisseur) || '1',
+    array_options: raw.array_options ?? undefined,
 });
 
 /**
@@ -151,16 +162,26 @@ export const mapThirdParty = (raw: RawDolibarrRecord): ThirdParty => ({
     name: raw.name || '',
     name_alias: raw.name_alias,
     code_client: raw.code_client,
+    code_fournisseur: raw.code_fournisseur,
     email: raw.email,
     phone: raw.phone,
+    phone_mobile: raw.phone_mobile,
+    fax: raw.fax,
+    url: raw.url,
+    idprof1: raw.idprof1,
+    idprof2: raw.idprof2,
+    typent_id: raw.typent_id ? toString(raw.typent_id) : undefined,
+    socialnetworks: raw.socialnetworks ?? undefined,
     address: raw.address || '',
     zip: raw.zip || '',
     town: raw.town || '',
     client: toString(raw.client),
     status: raw.status,
+    tva_intra: raw.tva_intra,
     date_creation: toTimestamp(raw.datec),
     date_modification: toTimestamp(raw.tms),
     fournisseur: toString(raw.fournisseur) || '0',
+    array_options: raw.array_options ?? undefined,
 });
 
 /**
@@ -238,6 +259,7 @@ export const mapProject = (raw: RawDolibarrRecord): Project => ({
     id: toString(raw.id),
     ref: raw.ref || '',
     title: raw.title || '',
+    description: raw.description ? toString(raw.description) : undefined,
     statut: toString(raw.statut) as '0' | '1' | '2',
     progress: toNumber(raw.progress),
     socid: raw.socid ? toString(raw.socid) : '',
@@ -379,6 +401,18 @@ export const mapSupplierPayment = (data: any): SupplierPayment => ({
 });
 
 /**
+ * Map raw contract line data to ContractLine entity
+ */
+export const mapContractLine = (raw: RawDolibarrRecord): ContractLine => ({
+    id: toString(raw.id),
+    desc: raw.description || raw.desc || '',
+    qty: toNumber(raw.qty),
+    price: toNumber(raw.subprice ?? raw.price_ht ?? raw.price ?? 0),
+    date_start: raw.date_ouverture_prevue ? toTimestamp(raw.date_ouverture_prevue) : (raw.date_start ? toTimestamp(raw.date_start) : undefined),
+    date_end: raw.date_fin_validite ? toTimestamp(raw.date_fin_validite) : (raw.date_end ? toTimestamp(raw.date_end) : undefined),
+});
+
+/**
  * Map raw contract data to Contract entity
  */
 export const mapContract = (raw: RawDolibarrRecord): Contract => ({
@@ -391,6 +425,8 @@ export const mapContract = (raw: RawDolibarrRecord): Contract => ({
     statut: toString(raw.statut) as '0' | '1' | '2',
     note_public: raw.note_public,
     date_modification: toTimestamp(raw.tms),
+    lines: Array.isArray(raw.lines) ? raw.lines.map(mapContractLine) : [],
+    array_options: raw.array_options && typeof raw.array_options === 'object' ? raw.array_options : undefined,
 });
 
 /**

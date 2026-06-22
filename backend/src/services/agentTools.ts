@@ -120,12 +120,12 @@ export const TOOLS_PROMPT = `
         FERRAMENTAS DE AÇÃO (escrita com confirmação na tela; devolvem um LINK):
         33. prepare_create_ticket(subject, message, type_code?, severity_code?, socid?) - Rascunho de ticket de suporte. Se souber o cliente, ache o id antes com search_customer e passe em socid.
         34. prepare_edit_ticket(id, subject?, message?, severity_code?) - Prepara EDIÇÃO de um ticket. Ache o id antes com list_tickets. severity_code: 'LOW', 'NORMAL', 'HIGH', 'BLOCKING'.
-        35. prepare_create_customer(name, email?, phone?, address?, town?, zip?, client?) - Rascunho de novo cliente/prospect (client: '1'=cliente, '0' ou '2'=prospect).
-        36. prepare_edit_customer(id, name?, email?, phone?, address?, town?, zip?, client?) - Prepara EDIÇÃO de um cliente existente. Ache o id antes com search_customer e informe APENAS os campos a mudar.
+        35. prepare_create_customer(name, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, client?, array_options?) - Rascunho de novo cliente/prospect (client: '1'=cliente, '0' ou '2'=prospect; typent_id: '8'=PF, '5'=PJ; idprof1=CNPJ/CPF; array_options.options_assinante=responsável legal PJ).
+        36. prepare_edit_customer(id, name?, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, client?, array_options?) - Prepara EDIÇÃO de um cliente existente. Ache o id antes com search_customer e informe APENAS os campos a mudar.
         37. prepare_create_project(title, ref?, socid?) - Rascunho de novo projeto. socid = id do cliente (ache com search_customer). ref = referência (ex.: PROJ-2025-001).
         38. prepare_edit_project(id, title) - Prepara EDIÇÃO de um projeto (ex.: renomear). Ache o id antes com list_projects.
-        39. prepare_create_supplier(name, email?, phone?, address?, town?, zip?) - Rascunho de novo fornecedor.
-        40. prepare_edit_supplier(id, name?, email?, phone?, address?, town?, zip?) - Prepara EDIÇÃO de um fornecedor. Ache o id antes com list_suppliers.
+        39. prepare_create_supplier(name, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, code_fournisseur?, array_options?) - Rascunho de novo fornecedor (typent_id: '8'=PF, '5'=PJ; idprof1=CNPJ/CPF; array_options.options_assinante=responsável legal PJ).
+        40. prepare_edit_supplier(id, name?, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, code_fournisseur?, array_options?) - Prepara EDIÇÃO de um fornecedor. Ache o id antes com list_suppliers.
         41. prepare_create_task(label, project_id, description?, planned_workload?, date_start?, date_end?, fk_user_assign?) - Rascunho de tarefa num projeto. project_id obrigatório (ache com list_projects). planned_workload em HORAS; datas em YYYY-MM-DD. fk_user_assign = id do usuário responsável (ache com list_users).
         42. prepare_edit_task(id, label?, description?, planned_workload?, date_start?, date_end?) - Prepara EDIÇÃO de uma tarefa. Ache o id antes com list_tasks. planned_workload em HORAS; datas em YYYY-MM-DD.
         42b. prepare_create_delegation(label, project_id, fk_user_assign, date_end?, criterio?, description?) - Cria uma DELEGAÇÃO: tarefa + responsável + critério de pronto, pedindo o ACEITE do responsável. Use quando alguém PEDE algo a outra pessoa ("peça pro fulano entregar X até sexta"). project_id e fk_user_assign obrigatórios (ache com list_projects/list_users). date_end (prazo) em YYYY-MM-DD. criterio = como saber que terminou. O solicitante é quem confirmar.
@@ -293,8 +293,8 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
     },
     customer: {
         label: 'cliente',
-        createFields: ['name', 'email', 'phone', 'address', 'town', 'zip', 'client'],
-        editFields: ['name', 'email', 'phone', 'address', 'town', 'zip', 'client'],
+        createFields: ['name', 'name_alias', 'email', 'phone', 'phone_mobile', 'fax', 'url', 'idprof1', 'typent_id', 'address', 'town', 'zip', 'client', 'array_options'],
+        editFields: ['name', 'name_alias', 'email', 'phone', 'phone_mobile', 'fax', 'url', 'idprof1', 'typent_id', 'address', 'town', 'zip', 'client', 'array_options'],
         required: ['name'],
         newRoute: '/customers/new',
         editRoute: '/customers/:id/edit',
@@ -309,8 +309,8 @@ const DEEPLINK_ENTITIES: Record<string, DeeplinkEntity> = {
     },
     supplier: {
         label: 'fornecedor',
-        createFields: ['name', 'email', 'phone', 'address', 'town', 'zip'],
-        editFields: ['name', 'email', 'phone', 'address', 'town', 'zip'],
+        createFields: ['name', 'name_alias', 'email', 'phone', 'phone_mobile', 'fax', 'url', 'idprof1', 'typent_id', 'address', 'town', 'zip', 'code_fournisseur', 'array_options'],
+        editFields: ['name', 'name_alias', 'email', 'phone', 'phone_mobile', 'fax', 'url', 'idprof1', 'typent_id', 'address', 'town', 'zip', 'code_fournisseur', 'array_options'],
         required: ['name'],
         newRoute: '/suppliers/new',
         editRoute: '/suppliers/:id/edit',
