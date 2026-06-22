@@ -18,6 +18,12 @@ export interface SaldoInter {
     limite: number;
 }
 
+export interface TransacaoVinculo {
+    projeto?: string;
+    cliente?: string;
+    finalidade: string;
+}
+
 export interface TransacaoInter {
     dataEntrada: string;
     dataMovimento: string;
@@ -27,6 +33,7 @@ export interface TransacaoInter {
     titulo: string;
     descricao: string;
     idTransacao?: string;
+    vinculo?: TransacaoVinculo;
 }
 
 export interface ExtratoInter {
