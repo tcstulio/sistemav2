@@ -67,6 +67,7 @@ export class DolibarrService extends DolibarrServiceBase {
     listPayments = (limit?: number) => this.payments.listPayments(limit);
     listBankAccounts = () => this.payments.listBankAccounts();
     listBankLines = (accountId: string, limit?: number) => this.payments.listBankLines(accountId, limit);
+    reconcileBankLine = (accountId: string, lineId: string, reconciled: boolean, userKey?: string) => this.payments.reconcileBankLine(accountId, lineId, reconciled, userKey);
 
     // === Products ===
     listProducts = (search?: string) => this.products.listProducts(search);
