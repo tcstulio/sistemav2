@@ -100,4 +100,27 @@ describe('ConversationList', () => {
         const badge = document.querySelector('.bg-green-500.text-white');
         expect(badge).toBeTruthy();
     });
+
+    it('shows CRM badge when conversation has customer_id', () => {
+        const conversationsWithCRM: typeof mockConversations = [
+            {
+                ...mockConversations[0],
+                customer_id: 'cust-1',
+            },
+            mockConversations[1],
+        ];
+        render(
+            <ConversationList
+                {...defaultProps}
+                conversations={conversationsWithCRM}
+            />
+        );
+        expect(screen.getByText('CRM')).toBeTruthy();
+    });
+
+    it('does not show CRM badge when conversation has no customer_id', () => {
+        render(<ConversationList {...defaultProps} />);
+        const crmBadge = screen.queryByText('CRM');
+        expect(crmBadge).toBeNull();
+    });
 });
