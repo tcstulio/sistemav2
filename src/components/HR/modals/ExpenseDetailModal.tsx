@@ -91,9 +91,9 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
     };
 
     const handleDownloadPdf = (doc: any) => {
-        // Implementation depends on how files are served. Usually requires a specific fetch.
-        // For now, if there is a 'download' link or we can construct one using the Service:
-        DolibarrService.downloadDocument(config, 'expensereport', `${expense.ref}/${doc.name}`);
+        // File-specific download via direct Dolibarr URL (file path, not entityId)
+        const url = `${config.apiUrl}/documents/download?module_part=expensereport&original_file=${encodeURIComponent(`${expense.ref}/${doc.name}`)}`;
+        window.open(url, '_blank', 'noreferrer');
     };
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
