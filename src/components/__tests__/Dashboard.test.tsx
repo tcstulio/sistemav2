@@ -22,6 +22,8 @@ vi.mock('../../hooks/dolibarr', () => ({
     useBankLines: () => ({ data: [] }),
     useInterventions: () => ({ data: [] }),
     useTickets: () => ({ data: [] }),
+    useProjects: () => ({ data: [] }),
+    useCustomers: () => ({ data: [] }),
 }));
 
 vi.mock('../../hooks/useOrgBranding', () => ({
