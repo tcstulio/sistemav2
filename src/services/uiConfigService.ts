@@ -56,3 +56,22 @@ export async function updateUiConfig(patch: Partial<UiConfig>): Promise<UiConfig
     const res = await axios.put(API_URL, patch, getAuthHeaders());
     return res.data as UiConfig;
 }
+
+export interface UserMissingPhone {
+    id: string;
+    login: string;
+    name: string;
+    email: string | null;
+}
+
+export interface UsersMissingPhoneResult {
+    total: number;
+    missingCount: number;
+    users: UserMissingPhone[];
+}
+
+/** Admin-only: lista usuários ativos sem phone_mobile no Dolibarr. */
+export async function getUsersMissingPhone(): Promise<UsersMissingPhoneResult> {
+    const res = await axios.get('/api/ui-config/admin/users-missing-phone', getAuthHeaders());
+    return res.data as UsersMissingPhoneResult;
+}

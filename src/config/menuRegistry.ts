@@ -104,6 +104,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
         id: 'system',
         title: 'SISTEMA',
         items: [
+            { id: 'my_notifications', path: '/notifications', label: 'Minhas Notificações' },
             { id: 'issues', path: '/issues', label: 'Issues & Tasks' },
             { id: 'activity', path: '/activity', label: 'Atividades' },
             { id: 'system_events', path: '/system-events', label: 'Central de Eventos' },
