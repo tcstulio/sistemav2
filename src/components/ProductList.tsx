@@ -1,6 +1,6 @@
 /**
  * ProductListV2 - Example component using the Design System
- * 
+ *
  * This serves as a MODEL for refactoring other List components.
  * Uses: PageLayout, PageHeader, MasterDetailLayout, Card, Button, Input, Modal, Tabs, EmptyState
  */
@@ -10,6 +10,13 @@ import { toast } from 'sonner';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Product, AppView } from '../types';
 import { Package, Box, Briefcase, AlertCircle, CheckCircle2, Warehouse, Plus, Loader2, Tag, Truck, ShoppingCart, Pencil } from 'lucide-react';
+
+/**
+ * Categoria 174 = "Itens de Aluguel" (confirmado em runtime: produtos desta categoria
+ * vão e voltam — não são consumidos — e não devem registrar baixas de estoque).
+ * Produtos sem essa categoria são tratados como Insumos (entram/saem do estoque).
+ */
+const RENTAL_CATEGORY_ID = '174';
 import { DolibarrService } from '../services/dolibarrService';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
@@ -58,15 +65,22 @@ const ProductRow: React.FC<{
     isSelected: boolean;
     onSelect: () => void;
 }> = ({ product, isSelected, onSelect }) => {
+    const isRental = product.category_ids?.includes(RENTAL_CATEGORY_ID) ?? false;
+
     const getStockBadge = () => {
         if (product.type === '1') {
             return <span className="text-xs text-blue-600 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30 px-2 py-1 rounded-full font-medium">Serviço</span>;
         }
+        if (isRental) {
+            return <span className="text-xs text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 px-2 py-1 rounded-full font-medium">Aluguel</span>;
+        }
         const stock = product.stock_reel || 0;
+        // Usa seuil_stock_alerte do produto; fallback para 5 se não definido
+        const alertThreshold = product.seuil_stock_alerte ?? 5;
         if (stock <= 0) {
             return <span className="flex items-center gap-1 text-xs text-red-600 bg-red-50 dark:bg-red-900/30 px-2 py-1 rounded-full font-medium"><AlertCircle size={12} /> Sem Estoque</span>;
         }
-        if (stock < 5) {
+        if (stock < alertThreshold) {
             return <span className="flex items-center gap-1 text-xs text-orange-600 bg-orange-50 dark:bg-orange-900/30 px-2 py-1 rounded-full font-medium"><AlertCircle size={12} /> Baixo ({stock})</span>;
         }
         return <span className="flex items-center gap-1 text-xs text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-1 rounded-full font-medium"><CheckCircle2 size={12} /> {stock}</span>;
@@ -81,7 +95,7 @@ const ProductRow: React.FC<{
             className="mb-2"
         >
             <div className="flex items-start gap-4">
-                <div className={`p-3 rounded-lg ${product.type === '1' ? 'bg-blue-100 text-blue-500' : 'bg-indigo-100 text-indigo-500'}`}>
+                <div className={`p-3 rounded-lg ${product.type === '1' ? 'bg-blue-100 text-blue-500' : isRental ? 'bg-purple-100 text-purple-500' : 'bg-indigo-100 text-indigo-500'}`}>
                     {product.type === '1' ? <Briefcase size={20} /> : <Box size={20} />}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -92,7 +106,14 @@ const ProductRow: React.FC<{
                         </div>
                         <div className="shrink-0">{getStockBadge()}</div>
                     </div>
-                    <div className="mt-2 font-bold text-slate-900 dark:text-white">{formatCurrency(product.price ?? 0)}</div>
+                    <div className="mt-2 flex items-center gap-2">
+                        <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(product.price ?? 0)}</span>
+                        {isRental && (
+                            <span data-testid="rental-badge" className="text-xs text-purple-600 bg-purple-50 dark:bg-purple-900/30 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                                <Tag size={10} /> Aluguel
+                            </span>
+                        )}
+                    </div>
                 </div>
             </div>
         </Card>
@@ -169,15 +190,38 @@ const ProductDetail: React.FC<{
                                     <span className="text-xs text-slate-500 uppercase font-bold">Tipo</span>
                                     <div className="font-medium dark:text-white mt-1">{product.type === '0' ? 'Produto' : 'Serviço'}</div>
                                 </div>
+                                {product.vat_rate !== undefined && (
+                                    <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
+                                        <span className="text-xs text-slate-500 uppercase font-bold">Alíquota IVA/ICMS</span>
+                                        <div className="font-medium dark:text-white mt-1">{product.vat_rate}%</div>
+                                    </div>
+                                )}
+                                {product.type === '1' && product.duration && (
+                                    <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
+                                        <span className="text-xs text-slate-500 uppercase font-bold">Duração</span>
+                                        <div className="font-medium dark:text-white mt-1">{product.duration}</div>
+                                    </div>
+                                )}
+                                {product.type === '0' && product.seuil_stock_alerte !== undefined && (
+                                    <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
+                                        <span className="text-xs text-slate-500 uppercase font-bold">Alerta de Estoque</span>
+                                        <div className="font-medium dark:text-white mt-1">{product.seuil_stock_alerte}</div>
+                                    </div>
+                                )}
                             </div>
 
-                            <div className="flex items-center gap-2 mt-4">
+                            <div className="flex items-center gap-2 mt-4 flex-wrap">
                                 <span className={`px-3 py-1 rounded-full text-xs font-medium ${product.tosell === '1' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                                     {product.tosell === '1' ? '✓ À venda' : '✗ Fora de venda'}
                                 </span>
                                 <span className={`px-3 py-1 rounded-full text-xs font-medium ${product.tobuy === '1' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}`}>
                                     {product.tobuy === '1' ? '✓ Para compra' : '✗ Sem compra'}
                                 </span>
+                                {product.category_ids?.includes(RENTAL_CATEGORY_ID) && (
+                                    <span className="px-3 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700 flex items-center gap-1">
+                                        <Tag size={10} /> Item de Aluguel
+                                    </span>
+                                )}
                             </div>
                         </Card>
                     )}
@@ -187,7 +231,15 @@ const ProductDetail: React.FC<{
                             <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
                                 <Warehouse size={18} /> Detalhes de Estoque
                             </h3>
-                            {product.stock_details && product.stock_details.length > 0 ? (
+                            {product.category_ids?.includes(RENTAL_CATEGORY_ID) ? (
+                                <div className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg text-center">
+                                    <Tag size={24} className="mx-auto mb-2 text-purple-500" />
+                                    <p className="text-sm font-medium text-purple-700 dark:text-purple-300">Item de Aluguel</p>
+                                    <p className="text-xs text-purple-500 mt-1">Este item vai e volta — não registra consumo de estoque.</p>
+                                    <div className="mt-4 text-2xl font-bold text-slate-800 dark:text-white">{product.stock_reel || 0}</div>
+                                    <p className="text-xs text-slate-500">Unidades disponíveis</p>
+                                </div>
+                            ) : product.stock_details && product.stock_details.length > 0 ? (
                                 <div className="space-y-2">
                                     {product.stock_details.map((detail, idx) => (
                                         <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800 rounded-lg">
@@ -199,7 +251,10 @@ const ProductDetail: React.FC<{
                             ) : (
                                 <div className="text-center py-8">
                                     <div className="text-4xl font-bold text-slate-800 dark:text-white mb-2">{product.stock_reel || 0}</div>
-                                    <p className="text-sm text-slate-500">Total em Estoque</p>
+                                    <p className="text-sm text-slate-500">Total em Estoque (Insumo)</p>
+                                    {product.seuil_stock_alerte !== undefined && (
+                                        <p className="text-xs text-orange-500 mt-1">Alerta em: {product.seuil_stock_alerte} unidades</p>
+                                    )}
                                 </div>
                             )}
                         </Card>
@@ -336,9 +391,14 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
             if (filterType === 'product') matchesType = p.type === '0';
             if (filterType === 'service') matchesType = p.type === '1';
 
+            // #566: filtrar por category_ids (não array_options.category que não existe)
             let matchesCategory = true;
-            if (selectedCategory !== 'all' && p.array_options?.category) {
-                matchesCategory = p.array_options.category === selectedCategory;
+            if (selectedCategory === 'rental') {
+                matchesCategory = p.category_ids?.includes(RENTAL_CATEGORY_ID) ?? false;
+            } else if (selectedCategory === 'supply') {
+                matchesCategory = !(p.category_ids?.includes(RENTAL_CATEGORY_ID) ?? false);
+            } else if (selectedCategory !== 'all') {
+                matchesCategory = p.category_ids?.includes(selectedCategory) ?? false;
             }
 
             return matchesType && matchesCategory;
@@ -482,16 +542,17 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                         <div className="flex items-center gap-2">
                             <ListToolbar controls={controls} searchPlaceholder="Buscar..." />
 
-                            {categories.length > 0 && (
-                                <select
-                                    value={selectedCategory}
-                                    onChange={(e) => setSelectedCategory(e.target.value)}
-                                    className="px-3 py-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg text-sm"
-                                >
-                                    <option value="all">Todas Tags</option>
-                                    {categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                                </select>
-                            )}
+                            <select
+                                value={selectedCategory}
+                                onChange={(e) => setSelectedCategory(e.target.value)}
+                                className="px-3 py-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg text-sm"
+                                aria-label="Filtrar por categoria"
+                            >
+                                <option value="all">Todas Categorias</option>
+                                <option value="supply">Insumos</option>
+                                <option value="rental">Itens de Aluguel</option>
+                                {categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                            </select>
 
                             <Button icon={<Plus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                                 Novo
@@ -577,6 +638,34 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                         </div>
                         <Input label="Preço" type="number" value={productForm.price || 0} onChange={e => setProductForm({ ...productForm, price: parseFloat(e.target.value) })} />
                     </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input
+                            label="Alíquota IVA/ICMS (%)"
+                            type="number"
+                            value={productForm.vat_rate ?? ''}
+                            onChange={e => setProductForm({ ...productForm, vat_rate: e.target.value !== '' ? parseFloat(e.target.value) : undefined })}
+                            placeholder="0.00"
+                        />
+                        {/* seuil_stock_alerte: só para Produto (type=0) */}
+                        {productForm.type === '0' && (
+                            <Input
+                                label="Alerta de Estoque (qtd)"
+                                type="number"
+                                value={productForm.seuil_stock_alerte ?? ''}
+                                onChange={e => setProductForm({ ...productForm, seuil_stock_alerte: e.target.value !== '' ? parseInt(e.target.value, 10) : undefined })}
+                                placeholder="5"
+                            />
+                        )}
+                        {/* duration: só para Serviço (type=1) */}
+                        {productForm.type === '1' && (
+                            <Input
+                                label="Duração"
+                                value={productForm.duration ?? ''}
+                                onChange={e => setProductForm({ ...productForm, duration: e.target.value })}
+                                placeholder="ex: 1h, 2 dias"
+                            />
+                        )}
+                    </div>
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
                         <RichTextEditor value={productForm.description || ''} onChange={html => setProductForm({ ...productForm, description: html })} placeholder="Descreva o produto ou serviço..." />
@@ -625,6 +714,35 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                                 <option value="0">Fora de Compra</option>
                             </select>
                         </div>
+                    </div>
+                    {/* Campos do Dolibarr — #633 */}
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input
+                            label="Alíquota IVA/ICMS (%)"
+                            type="number"
+                            value={productForm.vat_rate ?? ''}
+                            onChange={e => setProductForm({ ...productForm, vat_rate: e.target.value !== '' ? parseFloat(e.target.value) : undefined })}
+                            placeholder="0.00"
+                        />
+                        {/* seuil_stock_alerte: só para Produto (type=0) */}
+                        {productForm.type === '0' && (
+                            <Input
+                                label="Alerta de Estoque (qtd)"
+                                type="number"
+                                value={productForm.seuil_stock_alerte ?? ''}
+                                onChange={e => setProductForm({ ...productForm, seuil_stock_alerte: e.target.value !== '' ? parseInt(e.target.value, 10) : undefined })}
+                                placeholder="5"
+                            />
+                        )}
+                        {/* duration: só para Serviço (type=1) */}
+                        {productForm.type === '1' && (
+                            <Input
+                                label="Duração"
+                                value={productForm.duration ?? ''}
+                                onChange={e => setProductForm({ ...productForm, duration: e.target.value })}
+                                placeholder="ex: 1h, 2 dias"
+                            />
+                        )}
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
