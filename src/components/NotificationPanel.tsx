@@ -1,8 +1,10 @@
 
 import React, { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AppNotification, AppView } from '../types';
-import { X, Bell, AlertTriangle, CheckCircle, Info, Clock, AlertCircle as AlertCircleIcon, Mail, Bot, ShoppingCart, MessageSquare, Filter } from 'lucide-react';
+import { X, Bell, CheckCircle, Clock, Filter, ExternalLink } from 'lucide-react';
 import { formatTime } from '../utils/dateUtils';
+import { getNotificationIcon } from '../utils/notificationIcons';
 
 interface NotificationPanelProps {
     isOpen: boolean;
@@ -27,21 +29,8 @@ const FILTER_OPTIONS: { key: FilterType; label: string }[] = [
     { key: 'task', label: 'Tarefas' },
 ];
 
-const getIcon = (type: string, priority: string) => {
-    if (priority === 'high') return <AlertCircleIcon size={20} className="text-red-500" />;
-    switch (type) {
-        case 'stock': return <AlertTriangle size={20} className="text-orange-500" />;
-        case 'invoice': return <AlertTriangle size={20} className="text-yellow-500" />;
-        case 'email': return <Mail size={20} className="text-indigo-500" />;
-        case 'agent': return <Bot size={20} className="text-purple-500" />;
-        case 'whatsapp': return <MessageSquare size={20} className="text-green-500" />;
-        case 'ticket': return <AlertCircleIcon size={20} className="text-amber-500" />;
-        case 'task': return <ShoppingCart size={20} className="text-blue-500" />;
-        default: return <Info size={20} className="text-blue-500" />;
-    }
-};
-
 const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, notifications, onMarkRead, onNavigate, onClearAll, onMarkAllRead, onDismiss }) => {
+    const navigate = useNavigate();
     const [activeFilter, setActiveFilter] = useState<FilterType>('all');
     const [showFilters, setShowFilters] = useState(false);
 
@@ -59,6 +48,11 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
     );
 
     if (!isOpen) return null;
+
+    const handleVerTodas = () => {
+        navigate('/notifications');
+        onClose();
+    };
 
     return (
         <>
@@ -103,7 +97,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
                     </div>
                 )}
 
-                <div className="overflow-y-auto h-[calc(100%-60px)] p-2" style={{ height: showFilters ? 'calc(100% - 100px)' : undefined }}>
+                <div className="overflow-y-auto p-2" style={{ height: showFilters ? 'calc(100% - 140px)' : 'calc(100% - 100px)' }}>
                     {filteredNotifications.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-3">
                             <CheckCircle size={48} className="opacity-20" />
@@ -124,7 +118,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
                                     }}
                                 >
                                     <div className="flex gap-3">
-                                        <div className="mt-1 shrink-0">{getIcon(note.type, note.priority)}</div>
+                                        <div className="mt-1 shrink-0">{getNotificationIcon(note.type, note.priority)}</div>
                                         <div className="flex-1 min-w-0">
                                             <div className="flex justify-between items-start">
                                                 <div className="flex items-center gap-1.5">
@@ -161,6 +155,17 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
                             ))}
                         </div>
                     )}
+                </div>
+
+                {/* Rodapé: link "Ver todas" */}
+                <div className="absolute bottom-0 left-0 right-0 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3">
+                    <button
+                        onClick={handleVerTodas}
+                        className="w-full flex items-center justify-center gap-2 text-sm font-medium text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 transition-colors"
+                    >
+                        <ExternalLink size={14} />
+                        Ver todas as notificações
+                    </button>
                 </div>
             </div>
         </>

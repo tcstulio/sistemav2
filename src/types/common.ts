@@ -72,6 +72,10 @@ export interface AppNotification {
     linkTo?: { view: AppView; id: string };
     senderName?: string;
     channels?: string[];
+    /** ID do destinatário (usuario logado = pessoal; 'team'/'all'/undefined = sistema) */
+    recipient?: string;
+    /** Escopo derivado pelo backend: 'personal' quando recipient === userId logado, 'system' nos demais */
+    scope?: 'personal' | 'system';
 }
 
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import NotificationPanel from '../../components/NotificationPanel';
 import { AppNotification, AppView } from '../../types';
 
@@ -56,16 +57,18 @@ describe('NotificationPanel', () => {
 
     const renderPanel = (notifications: AppNotification[] = mockNotifications, isOpen = true) => {
         return render(
-            <NotificationPanel
-                isOpen={isOpen}
-                onClose={mockOnClose}
-                notifications={notifications}
-                onMarkRead={mockOnMarkRead}
-                onNavigate={mockOnNavigate}
-                onClearAll={mockOnClearAll}
-                onMarkAllRead={mockOnMarkAllRead}
-                onDismiss={mockOnDismiss}
-            />
+            <MemoryRouter>
+                <NotificationPanel
+                    isOpen={isOpen}
+                    onClose={mockOnClose}
+                    notifications={notifications}
+                    onMarkRead={mockOnMarkRead}
+                    onNavigate={mockOnNavigate}
+                    onClearAll={mockOnClearAll}
+                    onMarkAllRead={mockOnMarkAllRead}
+                    onDismiss={mockOnDismiss}
+                />
+            </MemoryRouter>
         );
     };
 

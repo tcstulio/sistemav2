@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
 import fs from 'fs/promises';
 
@@ -24,6 +24,10 @@ vi.mock('../../config/env', () => ({
         llmProvider: 'google',
         localLlmUrl: 'http://localhost:11434/v1',
         localModelName: 'llama3',
+        // Resiliência LLM (#719): deadline curto p/ testes não esperarem backoff real.
+        // Cada teste pode sobrescrever via (config as any).llmRetryDeadlineMs = <valor>.
+        llmPrimaryTimeoutMs: 5000,
+        llmRetryDeadlineMs: 0,
     },
 }));
 
@@ -616,6 +620,148 @@ describe('AiService', () => {
             expect(result.text).toBe('Resposta do MiniMax.');
             expect(result.model).toBe('MiniMax-M3');
             expect(result.fellBack).toBe(true);
+        });
+    });
+
+    // ── #719/#727: postChatCompletion — fallback, backoff, não-recuperável, deadline ──────────────
+    describe('LocalProvider - postChatCompletion fallback (#719/#727)', () => {
+        const fallbackConfig = { baseUrl: 'https://api.minimax.io/v1', model: 'MiniMax-M3', apiKey: 'fb-key' };
+
+        // Acesso ao config mockado para ajustar deadline por teste (deadline=0 → pula backoff).
+        let configMock: any;
+        beforeEach(async () => {
+            configMock = (await import('../../config/env')).config;
+            configMock.llmRetryDeadlineMs = 0; // sem espera; deadline esgota imediatamente
+            configMock.llmPrimaryTimeoutMs = 5000;
+        });
+        afterEach(() => {
+            vi.clearAllMocks();
+        });
+
+        it('cenário 1: primário responde → retorna texto do primário, fellBack=false, provider=glm', async () => {
+            (axios.post as any).mockResolvedValue({
+                data: { choices: [{ message: { content: 'Texto do GLM.' } }], usage: { total_tokens: 10 } },
+            });
+            const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2', undefined, undefined, fallbackConfig);
+            const result = await provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
+            expect(result.text).toBe('Texto do GLM.');
+            expect(result.model).toBe('glm-5.2');
+            expect(result.fellBack).toBe(false);
+        });
+
+        it('cenário 2: primário 429 → fallback MiniMax acionado, fellBack=true, provider=MiniMax-M3', async () => {
+            (axios.post as any).mockImplementation(async (url: string) => {
+                if (url.includes('localhost')) {
+                    const err: any = new Error('HTTP 429 rate limit');
+                    err.response = { status: 429, data: {} };
+                    throw err;
+                }
+                return { data: { choices: [{ message: { content: 'Texto do MiniMax.' } }], usage: {} } };
+            });
+            const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2', undefined, undefined, fallbackConfig);
+            const result = await provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
+            expect(result.text).toBe('Texto do MiniMax.');
+            expect(result.model).toBe('MiniMax-M3');
+            expect(result.fellBack).toBe(true);
+        });
+
+        it('cenário 3: primário ECONNREFUSED → fallback MiniMax acionado', async () => {
+            (axios.post as any).mockImplementation(async (url: string) => {
+                if (url.includes('localhost')) {
+                    const err: any = new Error('connect ECONNREFUSED 127.0.0.1:11434');
+                    err.code = 'ECONNREFUSED';
+                    throw err;
+                }
+                return { data: { choices: [{ message: { content: 'MiniMax via ECONNREFUSED.' } }], usage: {} } };
+            });
+            const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2', undefined, undefined, fallbackConfig);
+            const result = await provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
+            expect(result.text).toBe('MiniMax via ECONNREFUSED.');
+            expect(result.fellBack).toBe(true);
+        });
+
+        it('cenário 4: primário falha com 400 (não-recuperável) → fallback NÃO acionado, erro lançado', async () => {
+            (axios.post as any).mockImplementation(async (url: string) => {
+                if (url.includes('localhost')) {
+                    const err: any = new Error('Bad Request');
+                    err.response = { status: 400, data: { error: 'invalid input' } };
+                    throw err;
+                }
+                // Fallback NÃO deve ser chamado neste cenário
+                return { data: { choices: [{ message: { content: 'NÃO DEVE CHEGAR AQUI' } }], usage: {} } };
+            });
+            const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2', undefined, undefined, fallbackConfig);
+            // generateReply captura o erro internamente e retorna texto de erro
+            const result = await provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
+            // O texto de erro não deve conter resposta do fallback
+            expect(result.text).not.toBe('NÃO DEVE CHEGAR AQUI');
+            // O fallback NÃO foi chamado: só 1 chamada (primário)
+            expect((axios.post as any).mock.calls.length).toBe(1);
+        });
+
+        it('cenário 5: fallback desativado (LLM_FALLBACK_ENABLED=false) + primário 429 → sem fallback, erro lançado', async () => {
+            // Sem fallbackConfig = fallback desativado
+            (axios.post as any).mockImplementation(async () => {
+                const err: any = new Error('rate limited');
+                err.response = { status: 429, data: {} };
+                throw err;
+            });
+            const providerSemFallback = new LocalProvider('http://localhost:11434/v1', 'glm-5.2');
+            const result = await providerSemFallback.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
+            // Sem fallback → generateReply captura e retorna erro
+            expect(result.text).toContain('Erro');
+            // Só 1 tentativa ao primário (deadline=0 → sem backoff)
+            expect((axios.post as any).mock.calls.length).toBe(1);
+        });
+
+        it('cenário 6: ambos falham (primário 429 + MiniMax 429) → erro lançado, não texto de fallback', async () => {
+            (axios.post as any).mockImplementation(async () => {
+                const err: any = new Error('rate limited both');
+                err.response = { status: 429, data: {} };
+                throw err;
+            });
+            const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2', undefined, undefined, fallbackConfig);
+            const result = await provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
+            // generateReply captura e retorna texto de erro (não staciona, não lança)
+            expect(result.text).toContain('Erro');
+        });
+
+        it('cenário 6b: backoff exponencial — 429 repetido dentro do deadline → eventualmente sucede', async () => {
+            // Deadline longo o suficiente para 1 retry (2s backoff inicial).
+            // Usamos fake timers para não esperar 2s reais.
+            vi.useFakeTimers();
+            configMock.llmRetryDeadlineMs = 10000; // 10s de deadline
+            let calls = 0;
+            (axios.post as any).mockImplementation(async (url: string) => {
+                calls++;
+                if (calls <= 2) {
+                    // Primeiras 2 chamadas: 429
+                    const err: any = new Error('rate limited');
+                    err.response = { status: 429, data: {} };
+                    throw err;
+                }
+                // 3ª chamada: sucesso
+                return { data: { choices: [{ message: { content: 'Sucesso após retry.' } }], usage: {} } };
+            });
+            const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2');
+            const promise = provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
+            // Avança os timers para cobrir os delays de backoff (2s + 4s)
+            await vi.runAllTimersAsync();
+            const result = await promise;
+            expect(result.text).toBe('Sucesso após retry.');
+            expect(result.fellBack).toBe(false);
+            vi.useRealTimers();
+        });
+
+        it('smoke test: generateReply mantém assinatura esperada (text, usage, fellBack, model)', async () => {
+            (axios.post as any).mockResolvedValue({
+                data: { choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 } },
+            });
+            const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+            const result = await provider.generateReply([{ role: 'user', parts: 'smoke' } as any], '');
+            expect(typeof result.text).toBe('string');
+            expect(result.usage).toBeDefined();
+            expect(typeof result.fellBack).toBe('boolean');
         });
     });
 });

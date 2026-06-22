@@ -60,3 +60,34 @@ describe('notificationRoutes (#519)', () => {
         expect(mockSvc.markAllAsRead).toHaveBeenCalledWith('u1');
     });
 });
+
+describe('notificationRoutes — scope derivado (#531)', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('recipient === userId → scope personal', async () => {
+        mockSvc.getForUser.mockReturnValueOnce([
+            { id: 'n1', event: 'task.assigned', title: 'T', message: 'M', priority: 'medium', read: false, createdAt: 1000, recipient: 'u1', channels: ['in-app'], deliveredTo: ['in-app'], failedChannels: [] },
+        ]);
+        const res = await request(app).get('/api/notifications');
+        expect(res.status).toBe(200);
+        expect(res.body.notifications[0].scope).toBe('personal');
+    });
+
+    it('recipient diferente do userId → scope system', async () => {
+        mockSvc.getForUser.mockReturnValueOnce([
+            { id: 'n2', event: 'stock.low', title: 'T', message: 'M', priority: 'high', read: false, createdAt: 1000, recipient: 'outro', channels: ['in-app'], deliveredTo: ['in-app'], failedChannels: [] },
+        ]);
+        const res = await request(app).get('/api/notifications');
+        expect(res.status).toBe(200);
+        expect(res.body.notifications[0].scope).toBe('system');
+    });
+
+    it('sem recipient → scope system', async () => {
+        mockSvc.getForUser.mockReturnValueOnce([
+            { id: 'n3', event: 'custom', title: 'T', message: 'M', priority: 'medium', read: false, createdAt: 1000, recipient: undefined, channels: ['in-app'], deliveredTo: ['in-app'], failedChannels: [] },
+        ]);
+        const res = await request(app).get('/api/notifications');
+        expect(res.status).toBe(200);
+        expect(res.body.notifications[0].scope).toBe('system');
+    });
+});
