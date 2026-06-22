@@ -101,6 +101,25 @@ describe('SystemEventsView (#519)', () => {
         // o ID cru / referência rotulada não vaza: o nome resolvido aparece no lugar
         expect(container.textContent).not.toContain('#7');
     });
+
+    it('(#544) actor.name "unknown" vira "Sistema" quando userMap não resolve o ID', async () => {
+        mockUsers.mockReturnValue({ data: [] }); // sem userMap
+        mockEvents.mockResolvedValue({ events: [ev({ actor: { id: 'x', name: 'unknown' }, description: 'ação sem autor' })], total: 1, sources: [] });
+        const { container } = render(<SystemEventsView onNavigate={vi.fn()} />);
+        await screen.findByText(/ação sem autor/);
+        expect(container.textContent).not.toContain('unknown');
+        expect(screen.getByText(/Sistema/)).toBeTruthy();
+    });
+
+    it('(#544) actor.name numérico cru sem entrada no userMap vira "Sistema"', async () => {
+        mockUsers.mockReturnValue({ data: [] }); // userMap vazio
+        mockEvents.mockResolvedValue({ events: [ev({ actor: { id: '42', name: '42' }, description: 'ação numérica' })], total: 1, sources: [] });
+        const { container } = render(<SystemEventsView onNavigate={vi.fn()} />);
+        await screen.findByText(/ação numérica/);
+        // nome numérico cru nunca deve aparecer como nome de exibição
+        expect(container.textContent).not.toMatch(/\b42\b.*\b42\b/); // não exibe '42 42'
+        expect(screen.getByText(/Sistema/)).toBeTruthy();
+    });
 });
 
 describe('SystemEventsView (#587) — cliques e navegação', () => {
