@@ -17,9 +17,10 @@ import { ConnectModal } from './whatsapp/ConnectModal';
 import { CreateSessionModal } from './whatsapp/CreateSessionModal';
 import { NewConversationModal } from './whatsapp/NewConversationModal';
 import { WhatsAppProfileSettings } from './whatsapp/WhatsAppProfileSettings';
+import { ContactPicker } from './whatsapp/ContactPicker';
 import { AppView, WhatsAppConversation } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useUsers, useCustomers, useInvoices, useOrders, useTickets, useContacts, useSuppliers } from '../hooks/dolibarr';
+import { useUsers, useCustomers, useInvoices, useOrders, useTickets, useContacts, useSuppliers, useProjects } from '../hooks/dolibarr';
 import { AiService } from '../services/aiService';
 import { toast } from 'sonner';
 import { useConfirm } from '../hooks/useConfirm';
@@ -41,6 +42,7 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
     const { data: invoices = [] } = useInvoices(config || null, !!config);
     const { data: orders = [] } = useOrders(config || null, !!config);
     const { data: tickets = [] } = useTickets(config || null, !!config);
+    const { data: projects = [] } = useProjects(config || null, !!config);
 
     // --- State Management ---
 
@@ -73,6 +75,7 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
     const [isNewConversationModalOpen, setIsNewConversationModalOpen] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState(false);
+    const [isLinkCustomerOpen, setIsLinkCustomerOpen] = useState(false);
 
     // Settings State
     const [settingsSessionId, setSettingsSessionId] = useState<string>('default');
@@ -88,7 +91,7 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
     const [tempUserSettings, setTempUserSettings] = useState({ signatureName: '' });
 
     // --- Derived Logic ---
-    const contextData = useCRMContext(selectedConversation, customers, invoices, orders, tickets);
+    const contextData = useCRMContext(selectedConversation, customers, invoices, orders, tickets, projects);
     const isLoading = isSessionsLoading || isListLoading;
 
     // --- Effects ---
@@ -234,6 +237,25 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
         }
     };
 
+    const handleLinkCustomer = async (entry: { id: string; name: string; type: string }) => {
+        if (!selectedConversation) return;
+        try {
+            await WhatsAppService.updateChatSettings(selectedConversation.id, { customerId: entry.id });
+            setSelectedConversation((prev: any) => prev ? { ...prev, customer_id: entry.id } : prev);
+            toast.success(`Cliente vinculado: ${entry.name}`);
+            setIsLinkCustomerOpen(false);
+        } catch (e) {
+            toast.error('Erro ao vincular cliente.');
+        }
+    };
+
+    const handleCreateTicket = () => {
+        if (!selectedConversation) return;
+        if (onNavigate) {
+            onNavigate('tickets', 'new');
+        }
+    };
+
     const handleCreateSession = async (sessionId: string, name: string) => {
         setIsCreateSessionModalOpen(false);
         setSelectedAccount(sessionId);
@@ -376,6 +398,8 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
                 onClose={() => setIsContextOpen(false)}
                 contextData={contextData}
                 onNavigate={onNavigate}
+                onLinkCustomer={() => setIsLinkCustomerOpen(true)}
+                onCreateTicket={handleCreateTicket}
                 conversation={selectedConversation}
                 chatSettings={chatSettings}
                 onUpdateSettings={(settings) => {
@@ -519,6 +543,31 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
                         >
                             Fechar
                         </button>
+                    </div>
+                </div>
+            )}
+
+            {/* LINK CUSTOMER MODAL */}
+            {isLinkCustomerOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md p-6 border border-slate-200 dark:border-slate-700">
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-lg font-bold text-slate-800 dark:text-white">Vincular Cliente</h2>
+                            <button
+                                onClick={() => setIsLinkCustomerOpen(false)}
+                                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-500"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <p className="text-xs text-slate-500 mb-4">Selecione o cliente do Dolibarr para vincular a esta conversa.</p>
+                        <ContactPicker
+                            customers={customers}
+                            contacts={contacts}
+                            suppliers={suppliers}
+                            users={users}
+                            onSelect={handleLinkCustomer}
+                        />
                     </div>
                 </div>
             )}

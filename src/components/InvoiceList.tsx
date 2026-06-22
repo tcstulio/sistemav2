@@ -86,6 +86,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const [newInvoice, setNewInvoice] = useState({
         socid: '',
         date: new Date().toISOString().split('T')[0],
+        project_id: '',
+        date_lim_reglement: '',
         items: [] as { productId: string, desc: string, qty: number, price: number, remise_percent: number }[]
     });
 
@@ -96,6 +98,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
         ref: string;
         socid: string;
         date: string;
+        project_id: string;
+        date_lim_reglement: string;
         items: { id?: string, productId: string, desc: string, qty: number, price: number, remise_percent: number }[];
         deletedLineIds: string[];
     } | null>(null);
@@ -118,6 +122,10 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             setNewInvoice({
                 socid: prefill.data.socid || '',
                 date: prefill.data.date || new Date().toISOString().split('T')[0],
+                project_id: prefill.data.fk_project ? String(prefill.data.fk_project) : '',
+                date_lim_reglement: prefill.data.date_lim_reglement
+                    ? new Date(Number(prefill.data.date_lim_reglement) * 1000).toISOString().split('T')[0]
+                    : '',
                 items: lines.map((l: any) => ({
                     productId: l.fk_product ? String(l.fk_product) : '',
                     desc: l.desc || '',
@@ -307,6 +315,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                 socid: newInvoice.socid,
                 date: new Date(newInvoice.date).getTime() / 1000,
                 type: "0",
+                ...(newInvoice.project_id ? { fk_project: newInvoice.project_id } : {}),
+                ...(newInvoice.date_lim_reglement ? { date_lim_reglement: new Date(newInvoice.date_lim_reglement).getTime() / 1000 } : {}),
                 lines: newInvoice.items.map(item => ({
                     fk_product: item.productId || undefined,
                     desc: item.desc,
@@ -317,7 +327,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             });
             toast.success("Fatura Criada com Sucesso");
             setIsCreateModalOpen(false);
-            setNewInvoice({ socid: '', date: new Date().toISOString().split('T')[0], items: [] });
+            setNewInvoice({ socid: '', date: new Date().toISOString().split('T')[0], project_id: '', date_lim_reglement: '', items: [] });
         } catch (e: any) {
             log.error("Failed to create invoice", e);
             toast.error(`Falha ao criar fatura: ${e.message}`);
@@ -335,6 +345,10 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             ref: invoice.ref,
             socid: invoice.socid,
             date: new Date(invoice.date * 1000).toISOString().split('T')[0],
+            project_id: invoice.project_id || '',
+            date_lim_reglement: invoice.date_lim_reglement
+                ? new Date(invoice.date_lim_reglement * 1000).toISOString().split('T')[0]
+                : '',
             items: lines.map(l => ({
                 id: l.id,
                 productId: l.product_id || '',
@@ -389,7 +403,11 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
         try {
             await DolibarrService.updateInvoice(config, editingInvoiceData.id, {
                 date: new Date(editingInvoiceData.date).getTime() / 1000,
-                socid: editingInvoiceData.socid
+                socid: editingInvoiceData.socid,
+                fk_project: editingInvoiceData.project_id || 0,
+                ...(editingInvoiceData.date_lim_reglement
+                    ? { date_lim_reglement: new Date(editingInvoiceData.date_lim_reglement).getTime() / 1000 }
+                    : { date_lim_reglement: 0 }),
             });
 
             for (const lineId of editingInvoiceData.deletedLineIds) {
@@ -729,9 +747,17 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 <p className="text-sm text-slate-500 uppercase font-bold mb-1">Valor da Fatura</p>
                                 <p className="text-3xl font-bold text-slate-900 dark:text-white">{formatCurrency(selectedInvoice.total_ttc)}</p>
                             </div>
-                            <div className="text-right">
-                                <p className="text-sm text-slate-500 uppercase font-bold mb-1">Data</p>
-                                <p className="text-lg font-medium text-slate-800 dark:text-white">{formatDateOnly(selectedInvoice.date)}</p>
+                            <div className="text-right flex flex-col gap-2">
+                                <div>
+                                    <p className="text-sm text-slate-500 uppercase font-bold mb-1">Data</p>
+                                    <p className="text-lg font-medium text-slate-800 dark:text-white">{formatDateOnly(selectedInvoice.date)}</p>
+                                </div>
+                                <div>
+                                    <p className="text-sm text-slate-500 uppercase font-bold mb-1">Vencimento</p>
+                                    <p className="text-lg font-medium text-slate-800 dark:text-white">
+                                        {selectedInvoice.date_lim_reglement ? formatDateOnly(selectedInvoice.date_lim_reglement) : <span className="text-slate-400 text-sm">—</span>}
+                                    </p>
+                                </div>
                             </div>
                         </div>
 
@@ -999,6 +1025,26 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 required
                             />
                         </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Projeto (opcional)</label>
+                            <select
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={newInvoice.project_id}
+                                onChange={e => setNewInvoice({ ...newInvoice, project_id: e.target.value })}
+                            >
+                                <option value="">Sem projeto</option>
+                                {projects.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data de Vencimento (opcional)</label>
+                            <input
+                                type="date"
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={newInvoice.date_lim_reglement}
+                                onChange={e => setNewInvoice({ ...newInvoice, date_lim_reglement: e.target.value })}
+                            />
+                        </div>
                     </div>
 
                     <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
@@ -1091,6 +1137,26 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     value={editingInvoiceData.date}
                                     onChange={e => setEditingInvoiceData({ ...editingInvoiceData, date: e.target.value })}
                                     required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Projeto (opcional)</label>
+                                <select
+                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                    value={editingInvoiceData.project_id}
+                                    onChange={e => setEditingInvoiceData({ ...editingInvoiceData, project_id: e.target.value })}
+                                >
+                                    <option value="">Sem projeto</option>
+                                    {projects.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data de Vencimento (opcional)</label>
+                                <input
+                                    type="date"
+                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                    value={editingInvoiceData.date_lim_reglement}
+                                    onChange={e => setEditingInvoiceData({ ...editingInvoiceData, date_lim_reglement: e.target.value })}
                                 />
                             </div>
                         </div>

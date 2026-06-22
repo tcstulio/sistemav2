@@ -1,5 +1,5 @@
 import React, { useMemo, useCallback } from 'react';
-import { MessageSquare, MessageSquarePlus, Search, Plus, Trash2, RefreshCw, Loader2, Settings, Users, User } from 'lucide-react';
+import { MessageSquare, MessageSquarePlus, Search, Plus, Trash2, RefreshCw, Loader2, Settings, Users, Building2 } from 'lucide-react';
 import { WhatsAppConversation, WhatsAppAccount } from '../../types';
 import { formatDateLocal } from '../../utils/dateUtils';
 
@@ -196,6 +196,11 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                                             {conv.isGroup && (
                                                 <span className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300 text-[10px] font-bold px-1.5 rounded border border-indigo-200 dark:border-indigo-800 shrink-0">
                                                     GRUPO
+                                                </span>
+                                            )}
+                                            {conv.customer_id && (
+                                                <span className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300 text-[10px] font-bold px-1.5 rounded border border-emerald-200 dark:border-emerald-800 shrink-0 flex items-center gap-0.5" title="Cliente vinculado">
+                                                    <Building2 size={9} /> CRM
                                                 </span>
                                             )}
                                         </div>

@@ -4,6 +4,7 @@ import { AgendaEvent, AppView } from '../types';
 import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronRight, CheckCircle2, Circle, Bot, List, Calendar as CalendarIcon, ChevronLeft, Plus, Loader2, X, Phone, Mail, Users, ShoppingCart, FileSignature, Ticket as TicketIcon, ArrowUp, ArrowDown } from 'lucide-react';
 import { formatDateOnly, formatDateTime, formatDateLong } from '../utils/dateUtils';
 import { DolibarrService } from '../services/dolibarrService';
+import type { EventType } from '../services/api/operations';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useEvents, useTasks, useInterventions, useProjects, useCustomers } from '../hooks/dolibarr';
 import AgendaEntryDetail from './AgendaEntryDetail';
@@ -83,9 +84,16 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
         date_start: '',
         date_end: '',
         type_code: 'AC_RDV',
-        description: ''
+        description: '',
+        location: '',
+        fulldayevent: false,
+        priority: 0,
     });
     const [isSubmittingEvent, setIsSubmittingEvent] = useState(false);
+
+    // Event types from Dolibarr dictionary
+    const [eventTypes, setEventTypes] = useState<EventType[]>([]);
+    const [isLoadingEventTypes, setIsLoadingEventTypes] = useState(false);
 
     // Deeplink HITL do agente (#57): create_event abre o modal de novo evento; edit_event
     // abre o evento no AgendaEntryDetail em modo edição com as mudanças sugeridas.
@@ -102,6 +110,9 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                 date_end: prefill.data.date_end || '',
                 type_code: prefill.data.type_code || 'AC_RDV',
                 description: prefill.data.description || '',
+                location: '',
+                fulldayevent: false,
+                priority: 0,
             });
             setIsEventModalOpen(true);
             toast.info('Revise os dados e confirme a criação do evento.');
@@ -113,6 +124,37 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
             toast.info('Revise as mudanças e salve o evento.');
         }
     }, [prefill]);
+
+    // Load event types from Dolibarr when modal opens
+    useEffect(() => {
+        if (!isEventModalOpen || !config || eventTypes.length > 0) return;
+        setIsLoadingEventTypes(true);
+        DolibarrService.getEventTypes(config)
+            .then(types => {
+                if (types.length > 0) {
+                    setEventTypes(types);
+                    // If current type_code is not in the list, default to first
+                    setNewEventForm(prev => ({
+                        ...prev,
+                        type_code: types.some(t => t.code === prev.type_code) ? prev.type_code : types[0].code,
+                    }));
+                }
+            })
+            .catch(err => {
+                log.error('Falha ao carregar tipos de evento:', err);
+                // fallback: keep hardcoded types (set below)
+            })
+            .finally(() => setIsLoadingEventTypes(false));
+    }, [isEventModalOpen, config]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Fallback event types if Dolibarr types haven't loaded yet
+    const FALLBACK_EVENT_TYPES: EventType[] = [
+        { code: 'AC_RDV', label: 'Reunião (Rendez-vous)' },
+        { code: 'AC_TEL', label: 'Chamada Telefônica' },
+        { code: 'AC_EMAIL', label: 'Email' },
+        { code: 'AC_OTH', label: 'Outro' },
+    ];
+    const displayedEventTypes = eventTypes.length > 0 ? eventTypes : FALLBACK_EVENT_TYPES;
 
     // Helper to detect if an event is a system log
     const isSystemLog = (event: AgendaEvent): boolean => {
@@ -423,20 +465,35 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
 
         setIsSubmittingEvent(true);
         try {
-            await DolibarrService.createEvent(config, {
+            const payload: Record<string, unknown> = {
                 label: newEventForm.label,
-                date_start: new Date(newEventForm.date_start).getTime(),
-                date_end: newEventForm.date_end ? new Date(newEventForm.date_end).getTime() : undefined,
+                date_start: Math.floor(new Date(newEventForm.date_start).getTime() / 1000),
                 type_code: newEventForm.type_code,
-                description: newEventForm.description,
-                percentage: 0
-            });
+                percentage: 0,
+            };
+            if (newEventForm.date_end) {
+                payload.date_end = Math.floor(new Date(newEventForm.date_end).getTime() / 1000);
+            }
+            if (newEventForm.description) {
+                payload.description = newEventForm.description;
+            }
+            if (newEventForm.location) {
+                payload.location = newEventForm.location;
+            }
+            if (newEventForm.fulldayevent) {
+                payload.fulldayevent = 1;
+            }
+            if (newEventForm.priority > 0) {
+                payload.priority = newEventForm.priority;
+            }
+            await DolibarrService.createEvent(config, payload);
             toast.success("Evento criado com sucesso");
             setIsEventModalOpen(false);
-            setNewEventForm({ label: '', date_start: '', date_end: '', type_code: 'AC_RDV', description: '' });
+            setNewEventForm({ label: '', date_start: '', date_end: '', type_code: displayedEventTypes[0]?.code ?? 'AC_RDV', description: '', location: '', fulldayevent: false, priority: 0 });
             refreshData();
         } catch (e) {
             log.error(e);
+            toast.error("Erro ao criar evento");
         } finally {
             setIsSubmittingEvent(false);
         }
@@ -480,7 +537,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
         const loadNewer = () => setVisibleRange(prev => ({ ...prev, end: Math.min(groupedList.length, prev.end + 10) }));
 
         return (
-            <div className="space-y-6 max-w-4xl mx-auto pb-20 pt-4 px-2">
+            <div className="space-y-6 w-full pb-20 pt-4 px-4 md:px-6">
 
                 {/* LOAD OLDER BUTTON */}
                 {hasOlder && (
@@ -621,17 +678,54 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                            Tipo
+                            {isLoadingEventTypes && <span className="ml-2 text-xs text-slate-400">(carregando...)</span>}
+                        </label>
                         <select
                             className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                             value={newEventForm.type_code}
                             onChange={e => setNewEventForm({ ...newEventForm, type_code: e.target.value })}
+                            data-testid="event-type-select"
                         >
-                            <option value="AC_RDV">Reunião (Rendez-vous)</option>
-                            <option value="AC_TEL">Chamada Telefônica</option>
-                            <option value="AC_EMAIL">Email</option>
-                            <option value="AC_OTH">Outro</option>
+                            {displayedEventTypes.map(t => (
+                                <option key={t.code} value={t.code}>{t.label}</option>
+                            ))}
                         </select>
+                    </div>
+                    <Input
+                        label="Local"
+                        value={newEventForm.location}
+                        onChange={e => setNewEventForm({ ...newEventForm, location: e.target.value })}
+                        placeholder="Endereço ou link da reunião"
+                    />
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="flex items-center gap-2 pt-1">
+                            <input
+                                id="fulldayevent"
+                                type="checkbox"
+                                className="rounded border-slate-300 dark:border-slate-600"
+                                checked={newEventForm.fulldayevent}
+                                onChange={e => setNewEventForm({ ...newEventForm, fulldayevent: e.target.checked })}
+                                data-testid="fulldayevent-checkbox"
+                            />
+                            <label htmlFor="fulldayevent" className="text-sm font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                                Dia inteiro
+                            </label>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Prioridade</label>
+                            <select
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={newEventForm.priority}
+                                onChange={e => setNewEventForm({ ...newEventForm, priority: Number(e.target.value) })}
+                                data-testid="priority-select"
+                            >
+                                <option value={0}>Normal</option>
+                                <option value={1}>Alta</option>
+                                <option value={2}>Urgente</option>
+                            </select>
+                        </div>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
@@ -690,24 +784,29 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
 
             {/* Main Content Area */}
             {viewMode === 'list' ? (
-                // VIEW: LIST with MasterDetail
-                <div className="flex-1 overflow-hidden">
-                    <MasterDetailLayout
-                        showDetail={!!selectedItemId}
-                        onCloseDetail={() => { setSelectedItemId(null); setEditEventPrefill(undefined); }}
-                        list={renderListContent()}
-                        detail={
-                            selectedItemId ? (
+                selectedItemId ? (
+                    // VIEW: LIST with MasterDetail (item selected → split view)
+                    <div className="flex-1 overflow-hidden">
+                        <MasterDetailLayout
+                            showDetail={true}
+                            onCloseDetail={() => { setSelectedItemId(null); setEditEventPrefill(undefined); }}
+                            list={renderListContent()}
+                            detail={
                                 <AgendaEntryDetail
                                     config={config}
                                     initialItemId={selectedItemId}
                                     editPrefill={editEventPrefill}
                                     onNavigate={onNavigate || (() => { })}
                                 />
-                            ) : undefined
-                        }
-                    />
-                </div>
+                            }
+                        />
+                    </div>
+                ) : (
+                    // VIEW: LIST full-width (no item selected → no placeholder)
+                    <div className="flex-1 overflow-y-auto" data-testid="agenda-list-container">
+                        {renderListContent()}
+                    </div>
+                )
             ) : (
                 // VIEW: CALENDAR (Independent Scroll)
                 <div className="flex-1 overflow-y-auto p-4 md:p-6 relative">

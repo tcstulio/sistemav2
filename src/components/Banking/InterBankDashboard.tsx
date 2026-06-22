@@ -413,7 +413,8 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                                         <tr className="text-left text-xs text-slate-500 dark:text-slate-400 uppercase">
                                             <th className="px-4 py-2">Data</th>
                                             <th className="px-4 py-2">Tipo</th>
-                                            <th className="px-4 py-2">Descrição</th>
+                                            <th className="px-4 py-2">Descrição / Finalidade</th>
+                                            <th className="px-4 py-2">Cliente</th>
                                             <th className="px-4 py-2 text-right">Valor</th>
                                         </tr>
                                     </thead>
@@ -431,7 +432,12 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                                                         {t.tipoTransacao}
                                                     </span>
                                                 </td>
-                                                <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{t.titulo || t.descricao}</td>
+                                                <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">
+                                                    <div>{t.tipoOperacao === 'D' ? (t.vinculo?.finalidade || t.titulo || t.descricao) : (t.titulo || t.descricao)}</div>
+                                                </td>
+                                                <td className="px-4 py-3 text-sm text-slate-500 dark:text-slate-400">
+                                                    {t.tipoOperacao === 'D' ? (t.vinculo?.cliente || <span className="text-slate-300 dark:text-slate-600">—</span>) : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                                                </td>
                                                 <td className={`px-4 py-3 text-sm font-medium text-right ${t.tipoOperacao === 'C' ? 'text-green-600' : 'text-red-600'
                                                     }`}>
                                                     {t.tipoOperacao === 'C' ? '+' : '-'} {formatCurrency(Number(t.valor))}

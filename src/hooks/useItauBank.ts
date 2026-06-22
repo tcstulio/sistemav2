@@ -24,12 +24,20 @@ export interface SaldoItau {
     limite: number;
 }
 
+export interface TransacaoVinculo {
+    projeto?: string;
+    cliente?: string;
+    finalidade: string;
+}
+
 export interface TransacaoItau {
     dataMovimento: string;
     tipoOperacao: 'C' | 'D';
     tipoTransacao: string;
     descricao: string;
     valor: number;
+    complemento?: string;
+    vinculo?: TransacaoVinculo;
 }
 
 export interface PixRecebidoItau {

@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Payment, AppView } from '../types';
-import { ArrowDownLeft, Calendar, FileText, TrendingUp, Wallet, Link2, X, CreditCard, Copy, StickyNote, Hash, User } from 'lucide-react';
+import { ArrowDownLeft, Calendar, FileText, TrendingUp, Wallet, Link2, X, CreditCard, Copy, StickyNote, Hash, User, Building2, CalendarDays } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
-import { usePayments, useInvoices, usePaymentInvoiceLinks, useBankAccounts, useUsers } from '../hooks/dolibarr';
+import { usePayments, useInvoices, usePaymentInvoiceLinks, useBankAccounts, useUsers, useCustomers, useProjects } from '../hooks/dolibarr';
 import { useListControls } from '../hooks/useListControls';
 import { formatDateOnly } from '../utils/dateUtils';
 import { formatDate, formatCurrency } from '../utils/formatUtils';
@@ -58,12 +58,48 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
 
     const { data: bankAccounts } = useBankAccounts(config);
     const { data: users } = useUsers(config);
+    const { data: customers } = useCustomers(config);
+    const { data: projects } = useProjects(config);
 
     const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
 
     // Busca + ordenação + filtro padronizados (#121).
     const controls = useListControls(rawPayments, {
-        searchText: (p) => `${p.ref || ''} ${p.num_paiement || ''} ${p.note || ''}`,
+        searchText: (p) => {
+            // Resolve cliente e evento para inclusão na busca textual
+            const socId = p.fk_soc ?? p.socid;
+            const projId = p.project_id ?? p.fk_projet;
+            let custName = '';
+            let projTitle = '';
+
+            if (socId != null) {
+                const c = customers?.find(c => String(c.id) === String(socId));
+                if (c) custName = c.name;
+            }
+            if (projId != null) {
+                const pr = projects?.find(pr => String(pr.id) === String(projId));
+                if (pr) projTitle = pr.title;
+            }
+            // Fallback via fatura vinculada quando os campos diretos não existem
+            if (!custName || !projTitle) {
+                const paymentLinks = links.filter(l => String(l.fk_paiement) === String(p.id));
+                for (const link of paymentLinks) {
+                    const inv = invoices.find(i => String(i.id) === String(link.fk_facture));
+                    if (inv) {
+                        if (!custName && inv.socid) {
+                            const c = customers?.find(c => String(c.id) === String(inv.socid));
+                            if (c) custName = c.name;
+                        }
+                        if (!projTitle && inv.project_id) {
+                            const pr = projects?.find(pr => String(pr.id) === String(inv.project_id));
+                            if (pr) projTitle = pr.title;
+                        }
+                        if (custName && projTitle) break;
+                    }
+                }
+            }
+            return `${p.ref || ''} ${p.num_paiement || ''} ${p.note || ''} ${custName} ${projTitle}`;
+        },
         sorts: [
             { key: 'date', label: 'Data', get: (p) => new Date(p.date_payment).getTime() || 0 },
             { key: 'amount', label: 'Valor', get: (p) => p.amount ?? 0 },
@@ -107,6 +143,35 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
         }).filter(item => item.invoice);
     };
 
+    // Deriva cliente e evento para um pagamento.
+    // Fonte primária: campos fk_soc/project_id do próprio Payment (quando disponíveis).
+    // Fallback: primeira fatura vinculada (socid + project_id).
+    const getPaymentContext = (payment: Payment) => {
+        const socId = payment.fk_soc ?? payment.socid;
+        const projId = payment.project_id ?? payment.fk_projet;
+
+        let customerId: string | undefined = socId != null ? String(socId) : undefined;
+        let projectId: string | undefined = projId != null ? String(projId) : undefined;
+
+        // Fallback via fatura vinculada
+        if (!customerId || !projectId) {
+            const linked = getLinkedInvoices(payment.id);
+            if (linked.length > 0 && linked[0].invoice) {
+                const inv = linked[0].invoice;
+                if (!customerId && inv.socid) customerId = String(inv.socid);
+                if (!projectId && inv.project_id) projectId = String(inv.project_id);
+            }
+        }
+
+        const customer = customerId ? customers?.find(c => String(c.id) === customerId) : undefined;
+        const project = projectId ? projects?.find(p => String(p.id) === projectId) : undefined;
+
+        return {
+            customer: customer ? { id: customer.id, name: customer.name } : (customerId ? { id: customerId, name: `Cliente #${customerId}` } : undefined),
+            project: project ? { id: project.id, title: project.title } : (projectId ? { id: projectId, title: `Evento #${projectId}` } : undefined),
+        };
+    };
+
     const copyToClipboard = (text: string) => {
         navigator.clipboard.writeText(text);
         toast.success('Copiado para a área de transferência');
@@ -124,8 +189,10 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
             : 'Não especificado';
         const linkedInvoices = getLinkedInvoices(selectedPayment.id);
 
-        return { bankAccount, author, paymentModeLabel, linkedInvoices };
-    }, [selectedPayment, bankAccounts, users, links, invoices]);
+        const context = getPaymentContext(selectedPayment);
+
+        return { bankAccount, author, paymentModeLabel, linkedInvoices, context };
+    }, [selectedPayment, bankAccounts, users, links, invoices, customers, projects]);
 
     // ---- Guards: loading / error (#648) ----
     // Config ainda não resolvido (ex.: hidratação do IndexedDB pendente).
@@ -215,11 +282,12 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
                                         height={Math.max(height, MIN_LIST_HEIGHT)}
                                         width={width}
                                         itemCount={payments.length}
-                                        itemSize={120}
+                                        itemSize={160}
                                     >
                                         {({ index, style }: { index: number; style: React.CSSProperties }) => {
                                             const p = payments[index];
                                             const linkedInvoices = getLinkedInvoices(p.id);
+                                            const ctx = getPaymentContext(p);
 
                                             return (
                                                 <div style={{ ...style, paddingLeft: 8, paddingRight: 8, paddingBottom: 8 }}>
@@ -238,6 +306,20 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
                                                                     <h4 className="font-bold text-slate-800 dark:text-white text-sm truncate">{p.ref}</h4>
                                                                     <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
                                                                         <Calendar size={10} /> {formatDateOnly(p.date_payment)}
+                                                                    </div>
+                                                                    <div className="flex items-center gap-1 mt-1 text-[10px] text-slate-500 truncate">
+                                                                        <Building2 size={10} className="shrink-0" />
+                                                                        {ctx.customer
+                                                                            ? <span className="truncate">{ctx.customer.name}</span>
+                                                                            : <span className="italic text-slate-400">Cliente não informado</span>
+                                                                        }
+                                                                    </div>
+                                                                    <div className="flex items-center gap-1 mt-0.5 text-[10px] text-slate-500 truncate">
+                                                                        <CalendarDays size={10} className="shrink-0" />
+                                                                        {ctx.project
+                                                                            ? <span className="truncate">{ctx.project.title}</span>
+                                                                            : <span className="italic text-slate-400">Sem evento</span>
+                                                                        }
                                                                     </div>
                                                                     {linkedInvoices.length > 0 && (
                                                                         <div className="flex items-center gap-1 mt-1 text-[10px] text-indigo-500">
@@ -317,6 +399,42 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
                                                 Este pagamento não está vinculado a nenhuma fatura conhecida.
                                             </p>
                                         )}
+                                    </Card>
+
+                                    {/* Cliente e Evento */}
+                                    <Card header="Cliente e Evento">
+                                        <div className="space-y-4">
+                                            <div>
+                                                <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+                                                    <Building2 size={12} /> Cliente
+                                                </div>
+                                                {detailData.context.customer ? (
+                                                    <div
+                                                        className="font-medium text-indigo-600 dark:text-indigo-400 text-sm cursor-pointer hover:underline"
+                                                        onClick={() => onNavigate && detailData.context.customer && onNavigate('customers', detailData.context.customer.id)}
+                                                    >
+                                                        {detailData.context.customer.name}
+                                                    </div>
+                                                ) : (
+                                                    <div className="text-slate-400 italic text-sm">Cliente não informado</div>
+                                                )}
+                                            </div>
+                                            <div>
+                                                <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+                                                    <CalendarDays size={12} /> Evento / Projeto
+                                                </div>
+                                                {detailData.context.project ? (
+                                                    <div
+                                                        className="font-medium text-indigo-600 dark:text-indigo-400 text-sm cursor-pointer hover:underline"
+                                                        onClick={() => onNavigate && detailData.context.project && onNavigate('projects', detailData.context.project.id)}
+                                                    >
+                                                        {detailData.context.project.title}
+                                                    </div>
+                                                ) : (
+                                                    <div className="text-slate-400 italic text-sm">Sem evento</div>
+                                                )}
+                                            </div>
+                                        </div>
                                     </Card>
 
                                     {/* Transaction Details */}
