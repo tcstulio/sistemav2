@@ -58,8 +58,10 @@ describe('updateBankAccount — #629', () => {
 
         await updateBankAccount(MOCK_CONFIG, '42', { label: 'Nova Conta', bank: 'Bradesco' });
 
+        // sanitizeUrl() returns '' and request() proxies via /api/dolibarr/<path>
+        // so the effective URL is /api/dolibarr/bankaccounts/42 (not the raw apiUrl).
         expect(mockFetch).toHaveBeenCalledWith(
-            'http://dolibarr/bankaccounts/42',
+            '/api/dolibarr/bankaccounts/42',
             expect.objectContaining({
                 method: 'PUT',
                 body: JSON.stringify({ label: 'Nova Conta', bank: 'Bradesco' }),
