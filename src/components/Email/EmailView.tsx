@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { EmailService } from '../../services/emailService';
 import { EmailAccount, EmailMessage, EmailBody } from '../../types/email';
+import { AppView } from '../../types';
 import { EmailAccountList } from './EmailAccountList';
 import { EmailList } from './EmailList';
 import { EmailComposer } from './EmailComposer';
@@ -29,6 +31,8 @@ const POLL_OPTIONS = [
 ];
 
 const EmailView: React.FC = () => {
+    const navigate = useNavigate();
+
     // State
     const [accounts, setAccounts] = useState<EmailAccount[]>([]);
     const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
@@ -96,17 +100,20 @@ const EmailView: React.FC = () => {
         }).catch(() => {});
     }, []);
 
+    // Derived sender email address
+    const senderEmail = useMemo(() => {
+        if (!messageBody?.from) return undefined;
+        const emailMatch = messageBody.from.match(/<(.+)>/) || [null, messageBody.from];
+        return (emailMatch[1] || emailMatch[0] || '').trim() || undefined;
+    }, [messageBody]);
+
     // Derived Context Data
     const contextData = useMemo(() => {
-        if (!messageBody?.from) return null;
+        if (!senderEmail) return null;
 
-        const emailMatch = messageBody.from.match(/<(.+)>/) || [null, messageBody.from];
-        const email = (emailMatch[1] || emailMatch[0] || '').trim();
-
-        const customer = customers.find(c => {
-            if (c.email && c.email.toLowerCase() === email.toLowerCase()) return true;
-            return false;
-        });
+        const customer = customers.find(c =>
+            c.email && c.email.toLowerCase() === senderEmail.toLowerCase()
+        );
 
         if (!customer) return { customer: undefined, invoices: [], orders: [], tickets: [] };
 
@@ -115,7 +122,12 @@ const EmailView: React.FC = () => {
         const custTickets = tickets.filter(t => String(t.socid) === String(customer.id)).slice(0, 5);
 
         return { customer, invoices: custInvoices, orders: custOrders, tickets: custTickets };
-    }, [messageBody, customers, invoices, orders, tickets]);
+    }, [senderEmail, customers, invoices, orders, tickets]);
+
+    // Navigate handler for context panel
+    const handleContextNavigate = useCallback((view: AppView, id: string) => {
+        navigate(`/${view}/${id}`);
+    }, [navigate]);
 
     // Threading: group messages by conversation
     const threadedMessages = useMemo(() => {
@@ -756,6 +768,8 @@ const EmailView: React.FC = () => {
                 isOpen={isContextOpen && !!messageBody}
                 onClose={() => setIsContextOpen(false)}
                 contextData={contextData}
+                onNavigate={handleContextNavigate}
+                emailAddress={senderEmail}
             />
 
             {/* Modals */}

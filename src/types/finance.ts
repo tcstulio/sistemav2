@@ -113,12 +113,27 @@ export interface VATPayment {
     date_modification?: number;
 }
 
+// === Salaries (llx_salary) ===
+/** Registro de salário de um colaborador (tabela pai de SalaryPayment via fk_salary) */
+export interface Salary {
+    id: string;
+    ref: string;
+    fk_user: string;
+    amount: number;
+    date_modification?: number;
+}
+
 // === Salary Payments ===
 export interface SalaryPayment {
     id: string;
     ref: string;
     num_payment?: string;
     fk_user: string;
+    /** ID do registro de salário pai (llx_salary.rowid).
+     *  Necessário para resolver fk_user quando o custom_sync.php ainda não envia
+     *  fk_user diretamente. Será preenchido quando o SQL de salary_payments
+     *  incluir fk_salary no SELECT (ver issue #568 para correção no Dolibarr). */
+    fk_salary?: string;
     date_payment: number;
     amount: number;
     salary: number; // Gross salary?

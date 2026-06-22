@@ -62,6 +62,7 @@ import {
     ExpenseReportPaymentLink,
     ExpenseReportLine,
     VATPayment,
+    Salary,
     SalaryPayment,
     SocialContributionPayment,
     LoanPayment,
@@ -154,6 +155,19 @@ export const useVATPayments = createDolibarrHook<RawDolibarrRecord, VATPayment>(
     endpoint: 'vat_payments',
     dateField: 'tms',
     mapper: mappers.mapVATPayment,
+});
+
+/**
+ * Hook for fetching and syncing Salary records (llx_salary — tabela pai de payment_salary).
+ * Necessário para resolver fk_user de pagamentos de salário quando o SQL de
+ * custom_sync.php ainda não envia fk_user diretamente via JOIN (ver issue #568).
+ */
+export const useSalaries = createDolibarrHook<RawDolibarrRecord, Salary>({
+    queryKey: 'salaries',
+    storeName: 'salaries',
+    endpoint: 'salaries',
+    dateField: 'tms',
+    mapper: mappers.mapSalary,
 });
 
 /**
