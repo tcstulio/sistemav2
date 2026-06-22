@@ -259,6 +259,17 @@ router.post('/flows', (req: Request, res: Response) => {
     }
 });
 
+router.put('/flows/:id', (req: Request, res: Response) => {
+    try {
+        const { name, triggerKeywords, initialMessage } = req.body;
+        const updated = schedulerService.updateFlow(req.params.id, { name, triggerKeywords, initialMessage });
+        if (updated) res.json({ success: true, data: updated });
+        else res.status(404).json({ error: 'Flow not found' });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 router.delete('/flows/:id', (req: Request, res: Response) => {
     const success = schedulerService.deleteFlow(req.params.id);
     if (success) res.json({ success: true });
