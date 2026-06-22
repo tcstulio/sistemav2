@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserGroup, DolibarrUser, GroupUser, DolibarrConfig } from '../../types';
-import { X, UserPlus, Trash2, Save, Shield, Check, MinusCircle } from 'lucide-react';
+import { X, ArrowLeft, UserPlus, Trash2, Save, Shield, Check, MinusCircle } from 'lucide-react';
 import { useGroupUsers, useGroups } from '../../hooks/dolibarr';
 import * as HRAdmin from '../../services/api/hrAdmin';
 import { UserAvatar } from './UserAvatar';
@@ -84,18 +84,20 @@ export const GroupDetail: React.FC<GroupDetailProps> = ({
     // For now, listing members is the key value.
 
     return (
-        <div className="h-full flex flex-col bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden relative">
-            <div className="absolute top-0 right-0 p-4 z-10">
-                <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
+        <div className="h-full flex flex-col bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden">
+            <div className="flex-none bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-100 dark:border-slate-800 p-4 flex items-center justify-between z-10">
+                <div className="flex items-center gap-3">
+                    <button onClick={onClose} aria-label="Voltar" className="lg:hidden p-2 -ml-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white">
+                        <ArrowLeft size={20} />
+                    </button>
+                    <div>
+                        <h2 className="text-lg font-bold text-slate-800 dark:text-white leading-tight">{group.name}</h2>
+                        <p className="text-sm text-slate-500">{group.note || 'Sem descrição'}</p>
+                    </div>
+                </div>
+                <button onClick={onClose} aria-label="Fechar" className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
                     <X size={20} />
                 </button>
-            </div>
-
-            <div className="p-6 border-b border-slate-100 dark:border-slate-800">
-                <h2 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                    {group.name}
-                </h2>
-                <p className="text-sm text-slate-500 mt-1">{group.note || 'Sem descrição'}</p>
             </div>
 
             <div className="flex border-b border-slate-100 dark:border-slate-800 px-6">

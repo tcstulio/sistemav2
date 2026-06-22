@@ -222,4 +222,30 @@ describe('webhookRoutes', () => {
             expect(res.body).toHaveProperty('invoice_created');
         });
     });
+
+    describe('PUT /api/webhooks/flows/:id (#604)', () => {
+        it('returns 200 and updated flow when found', async () => {
+            mockSchedulerService.updateFlow = vi.fn(() => ({
+                id: 'flow-1', name: 'Fluxo Editado', triggerKeywords: ['oi'], enabled: true, steps: []
+            }));
+
+            const res = await request(app)
+                .put('/api/webhooks/flows/flow-1')
+                .send({ name: 'Fluxo Editado', triggerKeywords: ['oi'] });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.name).toBe('Fluxo Editado');
+        });
+
+        it('returns 404 when flow not found', async () => {
+            mockSchedulerService.updateFlow = vi.fn(() => null);
+
+            const res = await request(app)
+                .put('/api/webhooks/flows/nonexistent')
+                .send({ name: 'X' });
+
+            expect(res.status).toBe(404);
+        });
+    });
 });

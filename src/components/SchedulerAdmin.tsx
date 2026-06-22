@@ -124,6 +124,11 @@ export const SchedulerAdmin: React.FC = () => {
     const [editingRule, setEditingRule] = useState<AutomationRule | null>(null);
     const [showNewRuleForm, setShowNewRuleForm] = useState(false);
     const [showNewFlowForm, setShowNewFlowForm] = useState(false);
+    const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
+    const [editingFlow, setEditingFlow] = useState<(ChatFlow & { triggerKeywordsStr: string; initialMessage: string }) | null>(null);
+    // Test-rule modal: holds {ruleId, channel} while user types the target
+    const [testTargetModal, setTestTargetModal] = useState<{ ruleId: string; channel: 'whatsapp' | 'email' } | null>(null);
+    const [testTargetValue, setTestTargetValue] = useState('');
 
     // New message form
     const [newMessage, setNewMessage] = useState({ chatId: '', message: '', scheduledAt: '', channel: 'whatsapp', subject: '' });
@@ -319,6 +324,56 @@ export const SchedulerAdmin: React.FC = () => {
         }
     };
 
+    const saveTemplate = async () => {
+        if (!editingTemplate) return;
+        try {
+            const res = await fetch(`${API_BASE}/api/scheduler/templates/${editingTemplate.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: editingTemplate.name,
+                    content: editingTemplate.content,
+                    category: editingTemplate.category,
+                    channel: editingTemplate.channel,
+                    subject: editingTemplate.subject,
+                })
+            });
+            if (res.ok) {
+                toast.success('Template atualizado!');
+                setEditingTemplate(null);
+                fetchData();
+            } else {
+                toast.error('Erro ao salvar template');
+            }
+        } catch (e) {
+            toast.error('Erro ao salvar template');
+        }
+    };
+
+    const saveFlow = async () => {
+        if (!editingFlow) return;
+        try {
+            const res = await fetch(`${API_BASE}/api/webhook/flows/${editingFlow.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: editingFlow.name,
+                    triggerKeywords: editingFlow.triggerKeywordsStr.split(',').map(k => k.trim()).filter(Boolean),
+                    initialMessage: editingFlow.initialMessage,
+                })
+            });
+            if (res.ok) {
+                toast.success('Fluxo atualizado!');
+                setEditingFlow(null);
+                fetchData();
+            } else {
+                toast.error('Erro ao salvar fluxo');
+            }
+        } catch (e) {
+            toast.error('Erro ao salvar fluxo');
+        }
+    };
+
     const toggleFlow = async (id: string) => {
         try {
             await fetch(`${API_BASE}/api/webhook/flows/${id}/toggle`, { method: 'PATCH' });
@@ -349,19 +404,20 @@ export const SchedulerAdmin: React.FC = () => {
         }
     };
 
-    const testRule = async (id: string) => {
+    const testRule = (id: string) => {
         const rule = rules.find(r => r.id === id);
         if (!rule) return;
+        setTestTargetValue('');
+        setTestTargetModal({ ruleId: id, channel: rule.channel || 'whatsapp' });
+    };
 
-        const promptText = rule.channel === 'email'
-            ? "Para ENVIO REAL, digite o email de destino (Deixe vazio para simulação apenas):"
-            : "Para ENVIO REAL, digite o telefone (ex: 5511999998888) (Deixe vazio para simulação apenas):";
-
-        const target = '';
-        if (target === null) return;
-
+    const submitTestRule = async () => {
+        if (!testTargetModal) return;
+        const { ruleId } = testTargetModal;
+        const target = testTargetValue.trim();
+        setTestTargetModal(null);
         try {
-            const res = await fetch(`${API_BASE}/api/webhook/rules/${id}/test`, {
+            const res = await fetch(`${API_BASE}/api/webhook/rules/${ruleId}/test`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ target })
@@ -1156,9 +1212,14 @@ export const SchedulerAdmin: React.FC = () => {
                                             <div style={{ color: '#64748b', fontSize: '14px' }}>{tpl.content}</div>
                                             <span style={{ fontSize: '11px', background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '4px' }}>{tpl.category}</span>
                                         </div>
-                                        <button onClick={() => deleteTemplate(tpl.id)} style={{ ...buttonStyle, background: '#ef4444', color: 'white' }}>
-                                            Excluir
-                                        </button>
+                                        <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                                            <button onClick={() => setEditingTemplate({ ...tpl })} style={{ ...buttonStyle, background: '#3b82f6', color: 'white' }}>
+                                                Editar
+                                            </button>
+                                            <button onClick={() => deleteTemplate(tpl.id)} style={{ ...buttonStyle, background: '#ef4444', color: 'white' }}>
+                                                Excluir
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -1237,6 +1298,16 @@ export const SchedulerAdmin: React.FC = () => {
                                                 </div>
                                             </div>
                                             <div style={{ display: 'flex', gap: '8px' }}>
+                                                <button
+                                                    onClick={() => setEditingFlow({
+                                                        ...flow,
+                                                        triggerKeywordsStr: flow.triggerKeywords.join(', '),
+                                                        initialMessage: flow.steps[0]?.message ?? '',
+                                                    })}
+                                                    style={{ ...buttonStyle, background: '#3b82f6', color: 'white' }}
+                                                >
+                                                    Editar
+                                                </button>
                                                 <button
                                                     onClick={() => toggleFlow(flow.id)}
                                                     style={{ ...buttonStyle, background: flow.enabled ? '#f59e0b' : '#10b981', color: 'white' }}
@@ -1500,9 +1571,16 @@ João,5511777776666"
                         <div style={{ ...cardStyle, width: '90%', maxWidth: '600px', maxHeight: '90vh', overflow: 'auto' }}>
                             <h3 style={{ marginTop: 0, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 🧪 Resultado do Teste
-                                <span style={{ fontSize: '12px', background: '#dbeafe', color: '#1d4ed8', padding: '4px 8px', borderRadius: '12px' }}>
-                                    DRY-RUN
-                                </span>
+                                {testResult.dryRun && (
+                                    <span style={{ fontSize: '12px', background: '#dbeafe', color: '#1d4ed8', padding: '4px 8px', borderRadius: '12px' }}>
+                                        DRY-RUN
+                                    </span>
+                                )}
+                                {testResult.realSend && (
+                                    <span style={{ fontSize: '12px', background: '#dcfce7', color: '#166534', padding: '4px 8px', borderRadius: '12px' }}>
+                                        ENVIADO
+                                    </span>
+                                )}
                             </h3>
 
                             <div style={{ marginBottom: '15px' }}>
@@ -1510,7 +1588,7 @@ João,5511777776666"
                             </div>
 
                             <div style={{ marginBottom: '15px' }}>
-                                <strong>Conta WhatsApp:</strong> {testResult.rule?.sessionId}
+                                <strong>{rules.find(r => r.id === testResult.rule?.id)?.channel === 'email' ? 'Conta Email' : 'Conta WhatsApp'}:</strong> {testResult.rule?.sessionId}
                             </div>
 
                             <div style={{ marginBottom: '15px' }}>
@@ -1625,6 +1703,165 @@ João,5511777776666"
                     </div>
                 )
             }
+            {/* Test Target Modal (#603) */}
+            {testTargetModal && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    background: 'rgba(0,0,0,0.5)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+                }}>
+                    <div style={{ ...cardStyle, width: '90%', maxWidth: '440px' }}>
+                        <h3 style={{ marginTop: 0, color: '#1e293b' }}>🧪 Testar Regra</h3>
+                        <p style={{ color: '#64748b', fontSize: '14px' }}>
+                            {testTargetModal.channel === 'email'
+                                ? 'Digite o email de destino para envio real (deixe vazio para simulação):'
+                                : 'Digite o telefone de destino (ex: 5511999998888) para envio real (deixe vazio para simulação):'}
+                        </p>
+                        <input
+                            data-testid="test-target-input"
+                            placeholder={testTargetModal.channel === 'email' ? 'email@destino.com' : '5511999998888'}
+                            value={testTargetValue}
+                            onChange={e => setTestTargetValue(e.target.value)}
+                            style={inputStyle}
+                            autoFocus
+                        />
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+                            <button onClick={submitTestRule} style={{ ...buttonStyle, background: '#3b82f6', color: 'white', flex: 1 }}>
+                                {testTargetValue.trim() ? 'Enviar de Verdade' : 'Simular (Dry-Run)'}
+                            </button>
+                            <button onClick={() => setTestTargetModal(null)} style={{ ...buttonStyle, background: '#f1f5f9', color: '#475569' }}>
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Template Modal (#604) */}
+            {editingTemplate && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    background: 'rgba(0,0,0,0.5)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+                }}>
+                    <div style={{ ...cardStyle, width: '90%', maxWidth: '560px' }}>
+                        <h3 style={{ marginTop: 0, color: '#1e293b' }}>✏️ Editar Template</h3>
+                        <div style={{ display: 'grid', gap: '12px' }}>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Nome</label>
+                                <input
+                                    data-testid="edit-template-name"
+                                    value={editingTemplate.name}
+                                    onChange={e => setEditingTemplate({ ...editingTemplate, name: e.target.value })}
+                                    style={inputStyle}
+                                />
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Canal</label>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button
+                                        onClick={() => setEditingTemplate({ ...editingTemplate, channel: 'whatsapp' })}
+                                        style={{
+                                            flex: 1, padding: '8px', borderRadius: '6px', border: `1px solid ${editingTemplate.channel === 'whatsapp' ? '#10b981' : '#e2e8f0'}`,
+                                            background: editingTemplate.channel === 'whatsapp' ? '#dcfce7' : 'white',
+                                            color: editingTemplate.channel === 'whatsapp' ? '#166534' : '#64748b',
+                                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '13px'
+                                        }}
+                                    >
+                                        <MessageCircle size={14} /> WhatsApp
+                                    </button>
+                                    <button
+                                        onClick={() => setEditingTemplate({ ...editingTemplate, channel: 'email' })}
+                                        style={{
+                                            flex: 1, padding: '8px', borderRadius: '6px', border: `1px solid ${editingTemplate.channel === 'email' ? '#3b82f6' : '#e2e8f0'}`,
+                                            background: editingTemplate.channel === 'email' ? '#dbeafe' : 'white',
+                                            color: editingTemplate.channel === 'email' ? '#1e40af' : '#64748b',
+                                            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '13px'
+                                        }}
+                                    >
+                                        <Mail size={14} /> Email
+                                    </button>
+                                </div>
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Categoria</label>
+                                <select value={editingTemplate.category} onChange={e => setEditingTemplate({ ...editingTemplate, category: e.target.value })} style={inputStyle}>
+                                    <option value="general">Geral</option>
+                                    <option value="reminder">Lembrete</option>
+                                    <option value="confirmation">Confirmação</option>
+                                    <option value="news">Novidades</option>
+                                </select>
+                            </div>
+                            {editingTemplate.channel === 'email' && (
+                                <div>
+                                    <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Assunto</label>
+                                    <input value={editingTemplate.subject ?? ''} onChange={e => setEditingTemplate({ ...editingTemplate, subject: e.target.value })} style={inputStyle} />
+                                </div>
+                            )}
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Conteúdo</label>
+                                <textarea
+                                    value={editingTemplate.content}
+                                    onChange={e => setEditingTemplate({ ...editingTemplate, content: e.target.value })}
+                                    rows={4}
+                                    style={{ ...inputStyle, resize: 'vertical' }}
+                                />
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+                            <button onClick={saveTemplate} style={{ ...buttonStyle, background: '#10b981', color: 'white', flex: 1 }}>Salvar</button>
+                            <button onClick={() => setEditingTemplate(null)} style={{ ...buttonStyle, background: '#f1f5f9', color: '#475569' }}>Cancelar</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Flow Modal (#604) */}
+            {editingFlow && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    background: 'rgba(0,0,0,0.5)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+                }}>
+                    <div style={{ ...cardStyle, width: '90%', maxWidth: '520px' }}>
+                        <h3 style={{ marginTop: 0, color: '#1e293b' }}>✏️ Editar Fluxo</h3>
+                        <div style={{ display: 'grid', gap: '12px' }}>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Nome</label>
+                                <input
+                                    data-testid="edit-flow-name"
+                                    value={editingFlow.name}
+                                    onChange={e => setEditingFlow({ ...editingFlow, name: e.target.value })}
+                                    style={inputStyle}
+                                />
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Palavras-chave (separadas por vírgula)</label>
+                                <input
+                                    data-testid="edit-flow-keywords"
+                                    value={editingFlow.triggerKeywordsStr}
+                                    onChange={e => setEditingFlow({ ...editingFlow, triggerKeywordsStr: e.target.value })}
+                                    placeholder="oi, olá, menu"
+                                    style={inputStyle}
+                                />
+                            </div>
+                            <div>
+                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Mensagem inicial</label>
+                                <textarea
+                                    value={editingFlow.initialMessage}
+                                    onChange={e => setEditingFlow({ ...editingFlow, initialMessage: e.target.value })}
+                                    rows={3}
+                                    style={{ ...inputStyle, resize: 'vertical' }}
+                                />
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+                            <button onClick={saveFlow} style={{ ...buttonStyle, background: '#10b981', color: 'white', flex: 1 }}>Salvar</button>
+                            <button onClick={() => setEditingFlow(null)} style={{ ...buttonStyle, background: '#f1f5f9', color: '#475569' }}>Cancelar</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div >
     );
 };

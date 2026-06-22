@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MasterDetailLayout } from '../../components/ui/MasterDetailLayout';
 
 describe('MasterDetailLayout', () => {
@@ -92,6 +92,69 @@ describe('MasterDetailLayout', () => {
         expect(listPanel).toHaveClass('min-h-0');
         expect(listPanel).toHaveClass('flex-1');
         expect(listPanel).toHaveClass('overflow-y-auto');
+    });
+
+    // --- Responsividade (#557) ---
+
+    it('root container has class relative for correct absolute-panel anchoring (#557)', () => {
+        const { container } = render(
+            <MasterDetailLayout
+                list={<div>List</div>}
+                detail={<div>Detail</div>}
+                showDetail={true}
+            />
+        );
+        expect(container.firstChild).toHaveClass('relative');
+    });
+
+    it('detail panel has absolute inset-0 positioning classes on mobile (#557)', () => {
+        const { container } = render(
+            <MasterDetailLayout
+                list={<div>List</div>}
+                detail={<div>Detail</div>}
+                showDetail={true}
+            />
+        );
+        // Detail panel is the second child of the root when showDetail=true (first is list panel)
+        const root = container.firstChild as HTMLElement;
+        const detailPanel = root.children[1] as HTMLElement;
+        expect(detailPanel).toHaveClass('absolute');
+        expect(detailPanel).toHaveClass('inset-0');
+        expect(detailPanel).toHaveClass('z-20');
+    });
+
+    it('detail panel switches to static on desktop (lg:static lg:inset-auto lg:z-auto) (#557)', () => {
+        const { container } = render(
+            <MasterDetailLayout
+                list={<div>List</div>}
+                detail={<div>Detail</div>}
+                showDetail={true}
+            />
+        );
+        const root = container.firstChild as HTMLElement;
+        const detailPanel = root.children[1] as HTMLElement;
+        // Tailwind responsive classes are present in the className string even if not applied by JSDOM
+        expect(detailPanel.className).toContain('lg:static');
+        expect(detailPanel.className).toContain('lg:inset-auto');
+        expect(detailPanel.className).toContain('lg:z-auto');
+    });
+
+    it('calls onCloseDetail when close button inside detail is clicked (#557)', () => {
+        const onCloseDetail = vi.fn();
+        render(
+            <MasterDetailLayout
+                list={<div>List</div>}
+                detail={
+                    <button onClick={onCloseDetail} aria-label="Fechar">
+                        Fechar
+                    </button>
+                }
+                showDetail={true}
+                onCloseDetail={onCloseDetail}
+            />
+        );
+        fireEvent.click(screen.getByRole('button', { name: /fechar/i }));
+        expect(onCloseDetail).toHaveBeenCalledTimes(1);
     });
 
 });

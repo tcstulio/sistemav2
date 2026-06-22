@@ -24,7 +24,9 @@ export const ProjectDocumentsTab: React.FC<ProjectDocumentsTabProps> = ({
     onDelete
 }) => {
     const handleDownload = (filename: string) => {
-        DolibarrService.downloadDocument(config, 'project', `${project.ref}/${filename}`);
+        // File-specific download via direct Dolibarr URL (file path, not entityId)
+        const url = `${config.apiUrl}/documents/download?module_part=project&original_file=${encodeURIComponent(`${project.ref}/${filename}`)}`;
+        window.open(url, '_blank', 'noreferrer');
     };
 
     if (isLoading) {
