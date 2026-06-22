@@ -519,6 +519,7 @@ const HRList: React.FC<HRListProps> = ({
                             searchTerm={searchTerm}
                             sortConfig={sortConfig}
                             onOpenLeaveModal={() => setIsLeaveModalOpen(true)}
+                            onRefresh={onRefresh}
                         />
                     )}
                     {activeTab === 'recruitment' && (
