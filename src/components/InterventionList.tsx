@@ -165,8 +165,8 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                 description: newIntervention.description
             };
             if (editInterventionId) {
-                // requer o endpoint custom PUT /interventions/{id} (api_interventions.class.php) implantado no Dolibarr.
-                await DolibarrService.updateObject(config, 'interventions', editInterventionId, payload);
+                // Rota backend custom PUT /interventions/{id} (issue #657) via updateIntervention.
+                await DolibarrService.updateIntervention(config, editInterventionId, payload);
                 toast.success("Intervenção atualizada");
             } else {
                 await DolibarrService.createIntervention(config, payload);

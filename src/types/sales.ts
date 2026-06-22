@@ -100,7 +100,7 @@ export interface Order {
     project_id?: string;
     date: number;
     date_commande?: number; // Alias: order date (same as date)
-    datec?: number; // Alias: creation date 
+    datec?: number; // Alias: creation date
     total_ttc: number;
     statut: '0' | '1' | '2' | '3'; // 0=draft, 1=validated, 2=in process, 3=delivered
     lines?: OrderLine[];
@@ -108,6 +108,7 @@ export interface Order {
     fk_user_valid?: string; // ADDED
     date_modification?: number;
     array_options?: Record<string, any>;
+    soc_name?: string; // Joined customer name
 }
 
 export interface OrderLine {
