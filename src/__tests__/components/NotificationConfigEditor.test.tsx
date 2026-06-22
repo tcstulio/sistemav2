@@ -42,9 +42,13 @@ describe('NotificationConfigEditor — toggle externo (#532)', () => {
         mockGetUsersMissingPhone.mockResolvedValue({ total: 3, missingCount: 1, users: [{ id: '5', login: 'joao', name: 'João Silva', email: 'joao@test.com' }] });
     });
 
+    // Helper: aguarda o componente terminar de carregar (o Spinner não exibe texto,
+    // então esperamos o checkbox aparecer — sinal de que config foi carregado).
+    const waitForLoaded = () => waitFor(() => expect(screen.getByRole('checkbox')).toBeTruthy());
+
     it('renderiza o toggle para admin', async () => {
         render(<NotificationConfigEditor isAdmin={true} />);
-        await waitFor(() => expect(screen.queryByText(/Carregando/i)).toBeNull());
+        await waitForLoaded();
         expect(screen.getByRole('checkbox')).toBeTruthy();
         expect(screen.getByText(/Notificações externas/i)).toBeTruthy();
     });
@@ -56,14 +60,14 @@ describe('NotificationConfigEditor — toggle externo (#532)', () => {
 
     it('toggle inicia desabilitado conforme o config default', async () => {
         render(<NotificationConfigEditor isAdmin={true} />);
-        await waitFor(() => expect(screen.queryByText(/Carregando/i)).toBeNull());
+        await waitForLoaded();
         const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
         expect(checkbox.checked).toBe(false);
     });
 
     it('exibe aviso de mensagens reais ao habilitar o toggle', async () => {
         render(<NotificationConfigEditor isAdmin={true} />);
-        await waitFor(() => expect(screen.queryByText(/Carregando/i)).toBeNull());
+        await waitForLoaded();
         fireEvent.click(screen.getByRole('checkbox'));
         // O aviso usa <strong> internamente — usar container.textContent ou regex no container
         await waitFor(() => {
@@ -76,7 +80,7 @@ describe('NotificationConfigEditor — toggle externo (#532)', () => {
 
     it('salvar chama updateUiConfig com taskNotificationsExternalEnabled correto', async () => {
         render(<NotificationConfigEditor isAdmin={true} />);
-        await waitFor(() => expect(screen.queryByText(/Carregando/i)).toBeNull());
+        await waitForLoaded();
         // Habilita o toggle
         fireEvent.click(screen.getByRole('checkbox'));
         // Clica em Salvar
@@ -90,7 +94,7 @@ describe('NotificationConfigEditor — toggle externo (#532)', () => {
 
     it('botão Verificar carrega o diagnóstico de usuários sem telefone', async () => {
         render(<NotificationConfigEditor isAdmin={true} />);
-        await waitFor(() => expect(screen.queryByText(/Carregando/i)).toBeNull());
+        await waitForLoaded();
         fireEvent.click(screen.getByRole('button', { name: /Verificar/i }));
         await waitFor(() => {
             expect(mockGetUsersMissingPhone).toHaveBeenCalled();
@@ -100,7 +104,7 @@ describe('NotificationConfigEditor — toggle externo (#532)', () => {
 
     it('diagnóstico exibe lista de usuários sem telefone ao expandir', async () => {
         render(<NotificationConfigEditor isAdmin={true} />);
-        await waitFor(() => expect(screen.queryByText(/Carregando/i)).toBeNull());
+        await waitForLoaded();
         fireEvent.click(screen.getByRole('button', { name: /Verificar/i }));
         await waitFor(() => expect(screen.getByText('João Silva')).toBeTruthy());
         // login e email podem aparecer múltiplos — verificar pelo nome completo que é único
