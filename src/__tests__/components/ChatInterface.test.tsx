@@ -191,3 +191,113 @@ describe('ChatInterface — flexbox structure (#662)', () => {
         expect(footer).not.toBeNull();
     });
 });
+
+describe('ChatInterface — fluxo de envio de mensagem (#664)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false, refetch: mockRefetch } as any);
+        vi.mocked(Operations.createEvent).mockResolvedValue({} as any);
+        vi.mocked(DolibarrService.uploadDocument).mockResolvedValue({} as any);
+    });
+
+    it('renderiza input e botão de enviar no DOM', () => {
+        renderChat();
+        expect(screen.getByTestId('message-input')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /enviar mensagem/i })).toBeInTheDocument();
+    });
+
+    it('envia com payload correto (type_code AC_CHAT, elementtype, fk_element) ao clicar em enviar', async () => {
+        const user = userEvent.setup();
+        renderChat({ elementType: 'project', elementId: '42' });
+
+        const input = screen.getByTestId('message-input');
+        await user.type(input, 'Olá mundo');
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
+
+        await waitFor(() => {
+            expect(Operations.createEvent).toHaveBeenCalledWith(
+                expect.any(Object),
+                expect.objectContaining({
+                    type_code: 'AC_CHAT',
+                    elementtype: 'project',
+                    fk_element: '42',
+                    description: 'Olá mundo',
+                    userownerid: 'u1',
+                })
+            );
+        });
+    });
+
+    it('limpa o input após sucesso do POST', async () => {
+        const user = userEvent.setup();
+        renderChat();
+
+        const input = screen.getByTestId('message-input') as HTMLTextAreaElement;
+        await user.type(input, 'Mensagem de sucesso');
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
+
+        await waitFor(() => {
+            expect(Operations.createEvent).toHaveBeenCalled();
+        });
+        await waitFor(() => {
+            expect((screen.getByTestId('message-input') as HTMLTextAreaElement).value).toBe('');
+        });
+    });
+
+    it('preserva o texto e mostra erro inline quando o envio falha', async () => {
+        const user = userEvent.setup();
+        vi.mocked(Operations.createEvent).mockRejectedValue(new Error('Payload inválido'));
+
+        renderChat();
+
+        const input = screen.getByTestId('message-input') as HTMLTextAreaElement;
+        await user.type(input, 'Texto importante');
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('send-error')).toBeInTheDocument();
+        });
+        // O texto NÃO é perdido em caso de erro
+        expect((screen.getByTestId('message-input') as HTMLTextAreaElement).value).toBe('Texto importante');
+        expect(notifyError).toHaveBeenCalledWith('Enviar mensagem', expect.any(Error));
+    });
+
+    it('mostra a mensagem imediatamente na conversa após enviar (atualização otimista)', async () => {
+        const user = userEvent.setup();
+        renderChat();
+
+        const input = screen.getByTestId('message-input');
+        await user.type(input, 'Mensagem otimista');
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
+
+        await waitFor(() => {
+            expect(screen.getByText('Mensagem otimista')).toBeInTheDocument();
+        });
+    });
+
+    it('descarta a mensagem otimista quando a real chega via useEvents (dedup)', async () => {
+        const user = userEvent.setup();
+        renderChat();
+
+        const input = screen.getByTestId('message-input');
+        await user.type(input, 'Mensagem dedup');
+        await user.click(screen.getByRole('button', { name: /enviar mensagem/i }));
+
+        await waitFor(() => {
+            expect(screen.getByText('Mensagem dedup')).toBeInTheDocument();
+        });
+
+        // Simula o servidor devolvendo a mensagem real (mesma descrição/contexto)
+        vi.mocked(useEvents).mockReturnValue({
+            data: [
+                { id: 'real-1', elementtype: 'project', fk_element: '1', fk_user_author: 'u1', user_author_name: 'Eu', description: 'Mensagem dedup', date_start: Math.floor(Date.now() / 1000) },
+            ],
+            isLoading: false,
+            refetch: mockRefetch,
+        } as any);
+
+        await waitFor(() => {
+            expect(screen.getAllByText('Mensagem dedup')).toHaveLength(1);
+        });
+    });
+});

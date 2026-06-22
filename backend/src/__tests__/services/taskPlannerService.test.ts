@@ -23,8 +23,9 @@ vi.mock('../../services/taskRunnerService', () => ({
     },
 }));
 
-import { taskPlannerService, PlannerAction } from '../../services/taskPlannerService';
+import { taskPlannerService, PlannerAction, invalidatePlannerCache } from '../../services/taskPlannerService';
 import { aiJobService } from '../../services/aiJobService';
+import { taskRunnerService } from '../../services/taskRunnerService';
 import type { Task } from '../../services/taskRunnerService';
 
 const makeTask = (overrides: Partial<Task> = {}): Task => ({
@@ -95,5 +96,63 @@ describe('taskPlannerService — type safety', () => {
         expect(typeof decision.action).toBe('string');
         expect(typeof decision.reason).toBe('string');
         expect(typeof decision.alreadyResolved).toBe('boolean');
+    });
+});
+
+describe('taskPlannerService — cache de decisões (#712)', () => {
+    // body > 50 chars força a chamada de LLM (analyzeTask só consulta o LLM com corpo relevante).
+    const longBody = 'Implementar feature X no arquivo src/services/example.ts com testes unitários e cobertura ampla do fluxo.';
+
+    beforeEach(async () => {
+        vi.clearAllMocks();
+        invalidatePlannerCache();
+        const { execFile } = await import('child_process');
+        vi.mocked(execFile as any).mockImplementation((cmd: string, args: string[], opts: any, cb: any) => {
+            if (typeof opts === 'function') cb = opts;
+            cb(null, { stdout: args[1] === 'list' ? '[]' : '', stderr: '' });
+        });
+        vi.mocked(aiJobService.runAndWait).mockResolvedValue({
+            text: JSON.stringify({ action: 'go', reason: 'ok', alreadyResolved: false }),
+        });
+    });
+
+    it('reaproveita a decisão (cache hit) na 2ª análise da mesma issue sem nova chamada de LLM', async () => {
+        const task = makeTask({ issueNumber: 712, body: longBody });
+        const d1 = await taskPlannerService.analyzeTask(task);
+        const d2 = await taskPlannerService.analyzeTask(task);
+        expect(d1.action).toBe('go');
+        expect(d2.action).toBe('go');
+        expect(vi.mocked(aiJobService.runAndWait)).toHaveBeenCalledTimes(1);
+    });
+
+    it('invalida o cache quando o corpo da issue muda (hash diferente) → nova análise', async () => {
+        const task = makeTask({ issueNumber: 712, body: longBody });
+        await taskPlannerService.analyzeTask(task);
+        await taskPlannerService.analyzeTask({ ...task, body: longBody + ' (editado, conteúdo novo e diferente)' });
+        expect(vi.mocked(aiJobService.runAndWait)).toHaveBeenCalledTimes(2);
+    });
+
+    it('{ noCache: true } ignora o cache e re-analisa', async () => {
+        const task = makeTask({ issueNumber: 712, body: longBody });
+        await taskPlannerService.analyzeTask(task);
+        await taskPlannerService.analyzeTask(task, { noCache: true });
+        expect(vi.mocked(aiJobService.runAndWait)).toHaveBeenCalledTimes(2);
+    });
+
+    it('invalidatePlannerCache() força recomputação na análise seguinte', async () => {
+        const task = makeTask({ issueNumber: 712, body: longBody });
+        await taskPlannerService.analyzeTask(task);
+        invalidatePlannerCache(712);
+        await taskPlannerService.analyzeTask(task);
+        expect(vi.mocked(aiJobService.runAndWait)).toHaveBeenCalledTimes(2);
+    });
+
+    it('reevaluateWaiting aplica teto de 20 tasks por chamada (PLANNER_REEVAL_MAX default)', async () => {
+        const waiting: Task[] = Array.from({ length: 25 }, (_, i) =>
+            makeTask({ issueNumber: 1000 + i, body: longBody, status: 'pending', queuePriority: 100 + i }),
+        );
+        vi.mocked(taskRunnerService.getAllTasks).mockReturnValue(waiting);
+        const results = await taskPlannerService.reevaluateWaiting();
+        expect(results.length).toBe(20);
     });
 });

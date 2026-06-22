@@ -8,7 +8,7 @@ const m = vi.hoisted(() => ({
     sched: { getHistory: vi.fn() },
     appr: { getActionHistory: vi.fn() },
     task: { getAllTasks: vi.fn() },
-    doli: { getAllTaskContacts: vi.fn() },
+    doli: { getAllTaskContacts: vi.fn(), listUsers: vi.fn() },
     delegSvc: { get: vi.fn() },
 }));
 
@@ -32,8 +32,11 @@ const USER = { id: '7', login: 'u7', name: 'User 7', isAdmin: false };
 describe('systemEventsService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        // micro-cache do índice de tarefa→usuários persiste entre testes; zera p/ isolar.
+        // micro-cache do índice de tarefa→usuários e de nomes persistem entre testes; zera p/ isolar.
         (systemEventsService as any).taskUserIndexCache = null;
+        (systemEventsService as any).userNameCache = null;
+        // listUsers vazio por padrão → resolução de nome cai em '#id'/'Sistema' (fallback legível).
+        m.doli.listUsers.mockReturnValue([]);
         m.audit.list.mockReturnValue([{ id: 'a1', ts: T('2026-06-18T10:00:00Z'), adminId: '1', adminLogin: 'admin', action: 'user.update', target: '9', summary: 'mudou perm' }]);
         // agent: respeita options.userId (admin: undefined → todos; user: filtra)
         m.agent.getActivities.mockImplementation((opts: any) => {
@@ -154,5 +157,86 @@ describe('systemEventsService', () => {
     it('severidade: task_failed vira error', async () => {
         const r = await systemEventsService.query({ user: ADMIN, sources: ['task'] });
         expect(r.events[0].severity).toBe('error');
+    });
+
+    describe('normalização de ator (#544): nunca "unknown" nem ID cru', () => {
+        it('delegação: com `by` resolvido via listUsers, actor.name é o nome (não o ID cru)', async () => {
+            m.doli.listUsers.mockReturnValue([{ id: '7', login: 'u7', firstname: 'User', lastname: '7' }]);
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['delegation'] });
+            const ev50 = r.events.find(e => e.entityId === '50');
+            expect(ev50?.actor.name).toBe('User 7');
+            expect(ev50?.actor.name).not.toBe('7');
+        });
+
+        it('delegação: com `by` NÃO resolvido, actor.name é "#id" (legível, nunca o cru nem "unknown")', async () => {
+            // listUsers vazio (default) → by='7' não resolvido
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['delegation'] });
+            const ev50 = r.events.find(e => e.entityId === '50');
+            expect(ev50?.actor.name).toBe('#7');
+            expect(ev50?.actor.name).not.toBe('7');
+        });
+
+        it('delegação: sem `by`, actor.name === "Sistema"', async () => {
+            m.deleg.listAll.mockReturnValue([{ taskId: '70', type: 'reminder', at: '2026-06-18T08:00:00Z' }]);
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['delegation'] });
+            expect(r.events[0]?.actor.name).toBe('Sistema');
+        });
+
+        it('notificação: sem senderId/senderName, actor.name === "Sistema"', async () => {
+            m.notif.getAll.mockReturnValue([{ id: 'n9', event: 'custom', title: 'Sem remetente', read: false, createdAt: T('2026-06-18T12:00:00Z'), priority: 'low' }]);
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['notification'] });
+            expect(r.events[0]?.actor.name).toBe('Sistema');
+        });
+
+        it('notificação: com senderId (sem senderName) resolve o nome via listUsers', async () => {
+            m.doli.listUsers.mockReturnValue([{ id: '1', login: 'admin', firstname: 'Adm', lastname: 'Root' }]);
+            m.notif.getAll.mockReturnValue([{ id: 'n9', event: 'custom', title: 'X', senderId: '1', read: false, createdAt: T('2026-06-18T12:00:00Z'), priority: 'low' }]);
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['notification'] });
+            expect(r.events[0]?.actor.name).toBe('Adm Root');
+        });
+
+        it('agente: userName "unknown" vira "Agente" (nunca "unknown")', async () => {
+            m.agent.getActivities.mockReturnValue([{ id: 'g9', userId: '', userName: 'unknown', tool: 't', action: 'a', description: 'd', result: 'success', durationMs: 1, createdAt: T('2026-06-18T11:00:00Z') }]);
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['agent'] });
+            expect(r.events[0]?.actor.name).toBe('Agente');
+        });
+
+        it('agente: userName vazio vira "Agente"', async () => {
+            m.agent.getActivities.mockReturnValue([{ id: 'g9', userId: '1', userName: '', tool: 't', action: 'a', description: 'd', result: 'success', durationMs: 1, createdAt: T('2026-06-18T11:00:00Z') }]);
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['agent'] });
+            expect(r.events[0]?.actor.name).toBe('Agente');
+        });
+
+        it('aprovação: requestedBy "unknown" vira "Sistema"', async () => {
+            m.appr.getActionHistory.mockResolvedValue([{ id: 'p9', type: 'enviar_pix', description: 'pix', status: 'executed', riskLevel: 'high', requestedBy: 'unknown', requestedAt: new Date('2026-06-18T06:00:00Z') }]);
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['approval'] });
+            expect(r.events[0]?.actor.name).toBe('Sistema');
+        });
+
+        it('aprovação: requestedBy numérico é resolvido via listUsers (não o ID cru)', async () => {
+            m.doli.listUsers.mockReturnValue([{ id: '2', login: 'fin', firstname: 'Financeiro', lastname: 'Silva' }]);
+            m.appr.getActionHistory.mockResolvedValue([{ id: 'p9', type: 'enviar_pix', description: 'pix', status: 'executed', riskLevel: 'high', requestedBy: '2', requestedAt: new Date('2026-06-18T06:00:00Z') }]);
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['approval'] });
+            expect(r.events[0]?.actor.name).toBe('Financeiro Silva');
+        });
+
+        it('auditoria: sem adminLogin, actor.name === "Sistema" (não o ID cru)', async () => {
+            m.audit.list.mockReturnValue([{ id: 'a9', ts: T('2026-06-18T10:00:00Z'), adminId: '99', adminLogin: '', action: 'x', summary: 's' }]);
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['audit'] });
+            expect(r.events[0]?.actor.name).toBe('Sistema');
+        });
+
+        it('fontes automáticas mantêm rótulos estáveis (nunca "unknown")', async () => {
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['scheduler', 'task'] });
+            const sched = r.events.find(e => e.source === 'scheduler');
+            const task = r.events.find(e => e.source === 'task');
+            expect(sched?.actor.name).toBe('Agendador');
+            expect(task?.actor.name).toBe('TaskRunner');
+        });
+
+        it('em todas as fontes, nenhum evento expõe "unknown" como actor.name', async () => {
+            const r = await systemEventsService.query({ user: ADMIN });
+            expect(r.events.every(e => e.actor.name !== 'unknown')).toBe(true);
+        });
     });
 });

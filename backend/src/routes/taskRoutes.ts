@@ -27,6 +27,11 @@ router.get('/', requireDolibarrLogin, async (req, res) => {
     }
 });
 
+// Status da cota de LLM (esgotada/em espera). Antes de /:issueNumber p/ não casar como número.
+router.get('/quota-status', requireDolibarrLogin, (_req, res) => {
+    res.json(taskRunnerService.getQuotaStatus());
+});
+
 router.get('/:issueNumber', requireDolibarrLogin, async (req, res) => {
     try {
         const task = taskRunnerService.getTask(Number(req.params.issueNumber));

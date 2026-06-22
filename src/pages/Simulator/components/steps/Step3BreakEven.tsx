@@ -86,16 +86,16 @@ const Step3BreakEven: React.FC<Step3Props> = ({ data, results }) => {
     return (
         <div className="space-y-6 animate-in slide-in-from-right fade-in duration-300">
             <div className="text-center space-y-2 mb-6">
-                <h2 className="text-2xl font-bold text-slate-800">Análise de Break-Even</h2>
-                <p className="text-slate-500">Descubra o ponto exato onde cada parte atinge o equilíbrio financeiro.</p>
+                <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Análise de Break-Even</h2>
+                <p className="text-slate-500 dark:text-slate-400">Descubra o ponto exato onde cada parte atinge o equilíbrio financeiro.</p>
             </div>
 
-            <div className="flex bg-white p-1 rounded-2xl border border-slate-200 shadow-sm max-w-2xl mx-auto overflow-x-auto">
+            <div className="flex bg-white dark:bg-slate-800 p-1 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm max-w-2xl mx-auto overflow-x-auto">
                 {actors.map(actor => (
                     <button
                         key={actor.id}
                         onClick={() => setViewMode(actor.id)}
-                        className={`flex-1 px-4 py-3 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-2 ${viewMode === actor.id ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}
+                        className={`flex-1 px-4 py-3 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center justify-center gap-2 ${viewMode === actor.id ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
                     >
                         <div className="w-2 h-2 rounded-full" style={{ backgroundColor: actor.color }}></div>
                         {actor.label}
@@ -105,13 +105,13 @@ const Step3BreakEven: React.FC<Step3Props> = ({ data, results }) => {
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 <div className="lg:col-span-1 space-y-4">
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Ponto de Equilíbrio</span>
+                    <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                        <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block mb-1">Ponto de Equilíbrio</span>
                         <div className="flex items-baseline gap-1">
-                            <span className="text-3xl font-black text-slate-800">{bepInfo.exactBep === 99999 ? '∞' : bepInfo.exactBep}</span>
-                            <span className="text-sm font-bold text-slate-400">pax</span>
+                            <span className="text-3xl font-black text-slate-800 dark:text-slate-100">{bepInfo.exactBep === 99999 ? '∞' : bepInfo.exactBep}</span>
+                            <span className="text-sm font-bold text-slate-400 dark:text-slate-500">pax</span>
                         </div>
-                        <p className="text-xs text-slate-500 mt-2">Público necessário para pagar todos os custos.</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">Público necessário para pagar todos os custos.</p>
                     </div>
 
                     <div className={`p-5 rounded-2xl border shadow-sm transition-colors ${bepInfo.safetyMargin >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
@@ -144,9 +144,9 @@ const Step3BreakEven: React.FC<Step3Props> = ({ data, results }) => {
                     </div>
                 </div>
 
-                <div className="lg:col-span-3 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm h-[450px] flex flex-col">
+                <div className="lg:col-span-3 bg-white dark:bg-slate-800 p-6 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm h-[450px] flex flex-col">
                     <div className="flex justify-between items-center mb-6">
-                        <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                        <h3 className="font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2">
                             <TrendingUp size={20} className="text-indigo-600" /> Curva de Viabilidade: {activeActor.label}
                         </h3>
                         <div className="flex gap-4 text-xs font-bold">

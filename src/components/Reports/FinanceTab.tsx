@@ -86,6 +86,7 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({ financialStats, payments
                         <thead className="bg-gray-50">
                             <tr>
                                 <th className="px-4 py-2 text-left">Ref</th>
+                                <th className="px-4 py-2 text-left">Fornecedor</th>
                                 <th className="px-4 py-2 text-left">Data</th>
                                 <th className="px-4 py-2 text-left">Descrição/Nota</th>
                                 <th className="px-4 py-2 text-right">Valor</th>
@@ -95,13 +96,14 @@ export const FinanceTab: React.FC<FinanceTabProps> = ({ financialStats, payments
                             {topSupplierPayments.length > 0 ? topSupplierPayments.map(p => (
                                 <tr key={p.id} className="border-b">
                                     <td className="px-4 py-2 font-medium">{p.ref}</td>
+                                    <td className="px-4 py-2">{p.soc_name || (p.socid ? `#${p.socid}` : '-')}</td>
                                     <td className="px-4 py-2">{new Date(p.date_payment).toLocaleDateString()}</td>
                                     <td className="px-4 py-2 text-gray-500 truncate max-w-xs">{p.note || '-'}</td>
                                     <td className="px-4 py-2 text-right text-red-600 font-bold">{formatCurrency(Number(p.amount))}</td>
                                 </tr>
                             )) : (
                                 <tr>
-                                    <td colSpan={4} className="px-4 py-4 text-center text-gray-400">Nenhum pagamento encontrado no período.</td>
+                                    <td colSpan={5} className="px-4 py-4 text-center text-gray-400">Nenhum pagamento encontrado no período.</td>
                                 </tr>
                             )}
                         </tbody>
