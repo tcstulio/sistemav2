@@ -18,6 +18,10 @@ vi.mock('../../services/dbService', () => ({
     },
 }));
 
+vi.mock('../../config', () => ({
+    config: { API_BASE_URL: 'http://localhost:3001' },
+}));
+
 import * as core from '../../services/api/core';
 import { dbService } from '../../services/dbService';
 
@@ -516,6 +520,97 @@ describe('API Core', () => {
             const result = await core.updateObject({ apiUrl: '', apiKey: 'test' } as any, 'invoices', '1', { amount: 100 });
 
             expect(result).toEqual({ success: true });
+        });
+    });
+
+    describe('getDocumentBlob', () => {
+        it('returns a Blob when the PDF exists', async () => {
+            const blob = new Blob(['%PDF'], { type: 'application/pdf' });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                headers: { get: () => 'application/pdf' },
+                blob: () => Promise.resolve(blob),
+            });
+
+            const result = await core.getDocumentBlob('invoice', '42');
+
+            expect(mockFetch).toHaveBeenCalledWith(
+                'http://localhost:3001/api/documents/invoice/42/pdf',
+                { credentials: 'include' }
+            );
+            expect(result).toBe(blob);
+        });
+
+        it('throws an error when response is not ok', async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: false,
+                headers: { get: () => null },
+                blob: () => Promise.resolve(new Blob()),
+            });
+
+            await expect(core.getDocumentBlob('invoice', '42')).rejects.toThrow(
+                'PDF não disponível para este documento'
+            );
+        });
+
+        it('throws an error when Content-Type is not PDF', async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                headers: { get: () => 'text/html' },
+                blob: () => Promise.resolve(new Blob(['<html>'], { type: 'text/html' })),
+            });
+
+            await expect(core.getDocumentBlob('proposal', '5')).rejects.toThrow(
+                'PDF não disponível para este documento'
+            );
+        });
+    });
+
+    describe('downloadDocument', () => {
+        it('triggers browser download via anchor click', async () => {
+            const blob = new Blob(['%PDF'], { type: 'application/pdf' });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                headers: { get: () => 'application/pdf' },
+                blob: () => Promise.resolve(blob),
+            });
+
+            const objectUrl = 'blob:http://localhost/test-123';
+            const createObjectURL = vi.fn().mockReturnValue(objectUrl);
+            const revokeObjectURL = vi.fn();
+            Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, writable: true });
+            Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, writable: true });
+
+            const clickMock = vi.fn();
+            const appendChildSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((node) => node);
+            const removeChildSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((node) => node);
+            const createElementSpy = vi.spyOn(document, 'createElement').mockReturnValue({
+                href: '',
+                download: '',
+                click: clickMock,
+                remove: vi.fn(),
+            } as any);
+
+            await core.downloadDocument('order', 99);
+
+            expect(createObjectURL).toHaveBeenCalledWith(blob);
+            expect(clickMock).toHaveBeenCalled();
+
+            createElementSpy.mockRestore();
+            appendChildSpy.mockRestore();
+            removeChildSpy.mockRestore();
+        });
+
+        it('propagates error when PDF is not available', async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: false,
+                headers: { get: () => null },
+                blob: () => Promise.resolve(new Blob()),
+            });
+
+            await expect(core.downloadDocument('invoice', '1')).rejects.toThrow(
+                'PDF não disponível para este documento'
+            );
         });
     });
 });

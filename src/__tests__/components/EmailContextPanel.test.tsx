@@ -204,4 +204,91 @@ describe('EmailContextPanel', () => {
         fireEvent.click(screen.getByRole('button', { name: '' }));
         expect(mockOnClose).toHaveBeenCalled();
     });
+
+    it('calls onNavigate when clicking an invoice', () => {
+        const customer = createMockCustomer('Empresa Teste');
+        render(
+            <EmailContextPanel
+                isOpen={true}
+                onClose={mockOnClose}
+                contextData={{
+                    customer,
+                    invoices: [createMockInvoice('INV-001', '1')],
+                    orders: [],
+                    tickets: []
+                }}
+                onNavigate={mockOnNavigate}
+            />
+        );
+        fireEvent.click(screen.getByText('INV-001'));
+        expect(mockOnNavigate).toHaveBeenCalledWith('invoices', 'INV-001');
+    });
+
+    it('calls onNavigate when clicking an order', () => {
+        const customer = createMockCustomer('Empresa Teste');
+        render(
+            <EmailContextPanel
+                isOpen={true}
+                onClose={mockOnClose}
+                contextData={{
+                    customer,
+                    invoices: [],
+                    orders: [createMockOrder('ORD-001', '1')],
+                    tickets: []
+                }}
+                onNavigate={mockOnNavigate}
+            />
+        );
+        fireEvent.click(screen.getByText('ORD-001'));
+        expect(mockOnNavigate).toHaveBeenCalledWith('orders', 'ORD-001');
+    });
+
+    it('calls onNavigate when clicking a ticket', () => {
+        const customer = createMockCustomer('Empresa Teste');
+        render(
+            <EmailContextPanel
+                isOpen={true}
+                onClose={mockOnClose}
+                contextData={{
+                    customer,
+                    invoices: [],
+                    orders: [],
+                    tickets: [createMockTicket('TKT-001', '1')]
+                }}
+                onNavigate={mockOnNavigate}
+            />
+        );
+        fireEvent.click(screen.getByText('Test Ticket'));
+        expect(mockOnNavigate).toHaveBeenCalledWith('tickets', 'TKT-001');
+    });
+
+    it('calls onNavigate with "new" when clicking Criar Novo Ticket', () => {
+        const customer = createMockCustomer('Empresa Teste');
+        render(
+            <EmailContextPanel
+                isOpen={true}
+                onClose={mockOnClose}
+                contextData={{
+                    customer,
+                    invoices: [],
+                    orders: [],
+                    tickets: []
+                }}
+                onNavigate={mockOnNavigate}
+            />
+        );
+        fireEvent.click(screen.getByText(/Criar Novo Ticket/));
+        expect(mockOnNavigate).toHaveBeenCalledWith('tickets', 'new');
+    });
+
+    it('does not show "Vincular Manualmente" button when customer is not found', () => {
+        render(
+            <EmailContextPanel
+                isOpen={true}
+                onClose={mockOnClose}
+                contextData={null}
+            />
+        );
+        expect(screen.queryByText('Vincular Manualmente')).not.toBeInTheDocument();
+    });
 });

@@ -3,13 +3,14 @@ import { toast } from 'sonner';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Invoice, AppView } from '../types';
-import { FileText, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, Trash2, Loader2, CheckCircle, CreditCard, ShoppingCart, RefreshCcw, Truck, Copy } from 'lucide-react';
+import { FileText, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, Trash2, Loader2, CheckCircle, CreditCard, ShoppingCart, RefreshCcw, Truck, Copy, Eye } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { cloneInvoice } from '../services/api/commercial';
 import { useInvoiceMutations } from '../hooks/useMutations';
 import { useConfirm } from '../hooks/useConfirm';
 import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
+import { PdfPreviewModal } from './common/PdfPreviewModal';
 import { ClickTarget, ClickTargetPrimary, ClickTargetSecondary } from './common/ClickTarget';
 import { PaginationControls } from './common/PaginationControls';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -69,6 +70,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const [filterStatus, setFilterStatus] = useState<'all' | 'unpaid' | 'paid' | 'draft'>('all');
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
+    const [previewInvoice, setPreviewInvoice] = useState<{ id: string | number; ref: string } | null>(null);
 
     const { createInvoice } = useInvoiceMutations(config);
 
@@ -84,6 +86,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const [newInvoice, setNewInvoice] = useState({
         socid: '',
         date: new Date().toISOString().split('T')[0],
+        project_id: '',
+        date_lim_reglement: '',
         items: [] as { productId: string, desc: string, qty: number, price: number, remise_percent: number }[]
     });
 
@@ -94,6 +98,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
         ref: string;
         socid: string;
         date: string;
+        project_id: string;
+        date_lim_reglement: string;
         items: { id?: string, productId: string, desc: string, qty: number, price: number, remise_percent: number }[];
         deletedLineIds: string[];
     } | null>(null);
@@ -116,6 +122,10 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             setNewInvoice({
                 socid: prefill.data.socid || '',
                 date: prefill.data.date || new Date().toISOString().split('T')[0],
+                project_id: prefill.data.fk_project ? String(prefill.data.fk_project) : '',
+                date_lim_reglement: prefill.data.date_lim_reglement
+                    ? new Date(Number(prefill.data.date_lim_reglement) * 1000).toISOString().split('T')[0]
+                    : '',
                 items: lines.map((l: any) => ({
                     productId: l.fk_product ? String(l.fk_product) : '',
                     desc: l.desc || '',
@@ -212,10 +222,14 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     // =================================================================================================
     const openInDolibarr = (id: string) => openLink('invoice', id);
 
-    const handleDownloadPdf = (e: React.MouseEvent, ref: string) => {
+    const handleDownloadPdf = async (e: React.MouseEvent, id: string | number) => {
         e.stopPropagation();
         if (!config) return;
-        DolibarrService.downloadDocument(config, 'invoice', ref);
+        try {
+            await DolibarrService.downloadDocument('invoice', id);
+        } catch {
+            toast.error('Erro ao baixar PDF da fatura');
+        }
     };
 
     const handleValidate = async (e: React.MouseEvent, id: string) => {
@@ -301,6 +315,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                 socid: newInvoice.socid,
                 date: new Date(newInvoice.date).getTime() / 1000,
                 type: "0",
+                ...(newInvoice.project_id ? { fk_project: newInvoice.project_id } : {}),
+                ...(newInvoice.date_lim_reglement ? { date_lim_reglement: new Date(newInvoice.date_lim_reglement).getTime() / 1000 } : {}),
                 lines: newInvoice.items.map(item => ({
                     fk_product: item.productId || undefined,
                     desc: item.desc,
@@ -311,7 +327,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             });
             toast.success("Fatura Criada com Sucesso");
             setIsCreateModalOpen(false);
-            setNewInvoice({ socid: '', date: new Date().toISOString().split('T')[0], items: [] });
+            setNewInvoice({ socid: '', date: new Date().toISOString().split('T')[0], project_id: '', date_lim_reglement: '', items: [] });
         } catch (e: any) {
             log.error("Failed to create invoice", e);
             toast.error(`Falha ao criar fatura: ${e.message}`);
@@ -329,6 +345,10 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
             ref: invoice.ref,
             socid: invoice.socid,
             date: new Date(invoice.date * 1000).toISOString().split('T')[0],
+            project_id: invoice.project_id || '',
+            date_lim_reglement: invoice.date_lim_reglement
+                ? new Date(invoice.date_lim_reglement * 1000).toISOString().split('T')[0]
+                : '',
             items: lines.map(l => ({
                 id: l.id,
                 productId: l.product_id || '',
@@ -383,7 +403,11 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
         try {
             await DolibarrService.updateInvoice(config, editingInvoiceData.id, {
                 date: new Date(editingInvoiceData.date).getTime() / 1000,
-                socid: editingInvoiceData.socid
+                socid: editingInvoiceData.socid,
+                fk_project: editingInvoiceData.project_id || 0,
+                ...(editingInvoiceData.date_lim_reglement
+                    ? { date_lim_reglement: new Date(editingInvoiceData.date_lim_reglement).getTime() / 1000 }
+                    : { date_lim_reglement: 0 }),
             });
 
             for (const lineId of editingInvoiceData.deletedLineIds) {
@@ -707,7 +731,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 Reabrir
                             </Button>
                         )}
-                        <Button variant="ghost" size="sm" icon={<Download size={16} />} onClick={(e) => handleDownloadPdf(e, selectedInvoice.ref)} title="Baixar PDF" />
+                        <Button variant="ghost" size="sm" icon={<Eye size={16} />} onClick={() => setPreviewInvoice({ id: selectedInvoice.id, ref: selectedInvoice.ref })} title="Visualizar PDF" />
+                        <Button variant="ghost" size="sm" icon={<Download size={16} />} onClick={(e) => handleDownloadPdf(e, selectedInvoice.id)} title="Baixar PDF" />
                         <Button variant="ghost" size="sm" icon={<ExternalLink size={16} />} onClick={() => openInDolibarr(selectedInvoice.id)} title="Abrir no Dolibarr" />
                     </div>
                 }
@@ -722,9 +747,17 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 <p className="text-sm text-slate-500 uppercase font-bold mb-1">Valor da Fatura</p>
                                 <p className="text-3xl font-bold text-slate-900 dark:text-white">{formatCurrency(selectedInvoice.total_ttc)}</p>
                             </div>
-                            <div className="text-right">
-                                <p className="text-sm text-slate-500 uppercase font-bold mb-1">Data</p>
-                                <p className="text-lg font-medium text-slate-800 dark:text-white">{formatDateOnly(selectedInvoice.date)}</p>
+                            <div className="text-right flex flex-col gap-2">
+                                <div>
+                                    <p className="text-sm text-slate-500 uppercase font-bold mb-1">Data</p>
+                                    <p className="text-lg font-medium text-slate-800 dark:text-white">{formatDateOnly(selectedInvoice.date)}</p>
+                                </div>
+                                <div>
+                                    <p className="text-sm text-slate-500 uppercase font-bold mb-1">Vencimento</p>
+                                    <p className="text-lg font-medium text-slate-800 dark:text-white">
+                                        {selectedInvoice.date_lim_reglement ? formatDateOnly(selectedInvoice.date_lim_reglement) : <span className="text-slate-400 text-sm">—</span>}
+                                    </p>
+                                </div>
                             </div>
                         </div>
 
@@ -952,6 +985,15 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                 />
             </div>
 
+            {/* PDF Preview Modal */}
+            <PdfPreviewModal
+                entityType="invoice"
+                entityId={previewInvoice?.id ?? ''}
+                title={previewInvoice?.ref}
+                isOpen={!!previewInvoice}
+                onClose={() => setPreviewInvoice(null)}
+            />
+
             {/* Create Modal */}
             <Modal
                 isOpen={isCreateModalOpen}
@@ -981,6 +1023,26 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 value={newInvoice.date}
                                 onChange={e => setNewInvoice({ ...newInvoice, date: e.target.value })}
                                 required
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Projeto (opcional)</label>
+                            <select
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={newInvoice.project_id}
+                                onChange={e => setNewInvoice({ ...newInvoice, project_id: e.target.value })}
+                            >
+                                <option value="">Sem projeto</option>
+                                {projects.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data de Vencimento (opcional)</label>
+                            <input
+                                type="date"
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={newInvoice.date_lim_reglement}
+                                onChange={e => setNewInvoice({ ...newInvoice, date_lim_reglement: e.target.value })}
                             />
                         </div>
                     </div>
@@ -1075,6 +1137,26 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     value={editingInvoiceData.date}
                                     onChange={e => setEditingInvoiceData({ ...editingInvoiceData, date: e.target.value })}
                                     required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Projeto (opcional)</label>
+                                <select
+                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                    value={editingInvoiceData.project_id}
+                                    onChange={e => setEditingInvoiceData({ ...editingInvoiceData, project_id: e.target.value })}
+                                >
+                                    <option value="">Sem projeto</option>
+                                    {projects.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data de Vencimento (opcional)</label>
+                                <input
+                                    type="date"
+                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                    value={editingInvoiceData.date_lim_reglement}
+                                    onChange={e => setEditingInvoiceData({ ...editingInvoiceData, date_lim_reglement: e.target.value })}
                                 />
                             </div>
                         </div>

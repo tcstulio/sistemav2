@@ -2,12 +2,13 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { toast } from 'sonner';
 import { Order, AppView } from '../types';
-import { ShoppingCart, ExternalLink, Package, CheckCircle, Truck, Clock, FilePlus, Download, Receipt, Lock, CheckSquare, Trash2, Plus, Pencil } from 'lucide-react';
+import { ShoppingCart, ExternalLink, Package, CheckCircle, Truck, Clock, FilePlus, Download, Receipt, Lock, CheckSquare, Trash2, Plus, Pencil, Eye } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useOrders, useCustomers, useShipments, useInvoices, useUsers, useProjects } from '../hooks/dolibarr';
 import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
+import { PdfPreviewModal } from './common/PdfPreviewModal';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { formatCurrency } from '../utils/formatUtils';
 import { logger } from '../utils/logger';
@@ -60,7 +61,8 @@ const OrderDetail: React.FC<{
     onEdit: () => void;
     onCreateShipment: () => void;
     onClassifyDelivered: () => void;
-    onDownloadPdf: (ref: string) => void;
+    onDownloadPdf: (id: string | number) => void;
+    onPreviewPdf: (id: string | number, ref: string) => void;
     onOpenDolibarr: (id: string) => void;
     onDeleteShipment: (id: string) => void;
     onCreateInvoice: (id: string) => void;
@@ -81,6 +83,7 @@ const OrderDetail: React.FC<{
     onCreateShipment,
     onClassifyDelivered,
     onDownloadPdf,
+    onPreviewPdf,
     onOpenDolibarr,
     onDeleteShipment,
     onCreateInvoice,
@@ -192,7 +195,8 @@ const OrderDetail: React.FC<{
                                     Entregue
                                 </Button>
                             )}
-                            <Button variant="ghost" size="sm" icon={<Download size={20} />} onClick={() => onDownloadPdf(order.ref)} />
+                            <Button variant="ghost" size="sm" icon={<Eye size={20} />} onClick={() => onPreviewPdf(order.id, order.ref)} title="Visualizar PDF" />
+                            <Button variant="ghost" size="sm" icon={<Download size={20} />} onClick={() => onDownloadPdf(order.id)} title="Baixar PDF" />
                             <Button variant="ghost" size="sm" icon={<ExternalLink size={20} />} onClick={() => onOpenDolibarr(order.id)} />
                         </div>
                     }
@@ -359,6 +363,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     const [filterStatus, setFilterStatus] = useState<'all' | 'validated' | 'processing' | 'delivered'>('all');
     const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
+    const [previewOrder, setPreviewOrder] = useState<{ id: string | number; ref: string } | null>(null);
 
     // Shipment Creation State
     const [isShipmentModalOpen, setIsShipmentModalOpen] = useState(false);
@@ -537,8 +542,16 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
         }
     };
 
-    const handleDownloadPdf = (ref: string) => {
-        DolibarrService.downloadDocument(config, 'order', ref);
+    const handleDownloadPdf = async (id: string | number) => {
+        try {
+            await DolibarrService.downloadDocument('order', id);
+        } catch {
+            toast.error('Erro ao baixar PDF do pedido');
+        }
+    };
+
+    const handlePreviewPdf = (id: string | number, ref: string) => {
+        setPreviewOrder({ id, ref });
     };
 
     // --- Shipment Logic ---
@@ -614,6 +627,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     };
 
     return (
+        <>
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
 
             {/* Create/Edit Order Modal (#57/#78) */}
@@ -818,6 +832,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                             onCreateShipment={openShipmentModal}
                             onClassifyDelivered={handleClassifyDelivered}
                             onDownloadPdf={handleDownloadPdf}
+                            onPreviewPdf={handlePreviewPdf}
                             onOpenDolibarr={openInDolibarr}
                             onDeleteShipment={handleDeleteShipment}
                             onCreateInvoice={handleCreateInvoice}
@@ -828,6 +843,16 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                 }
             />
         </div>
+
+        {/* PDF Preview Modal */}
+        <PdfPreviewModal
+            entityType="order"
+            entityId={previewOrder?.id ?? ''}
+            title={previewOrder?.ref}
+            isOpen={!!previewOrder}
+            onClose={() => setPreviewOrder(null)}
+        />
+        </>
     );
 };
 

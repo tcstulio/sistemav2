@@ -329,7 +329,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                                 expenseReportLines={expenseReportLines}
                                 expenseReportPayments={expenseReportPayments}
                                 projects={projects}
-                                variant="side"
+                                variant="embedded"
                             />
                         )}
                     </div>
