@@ -286,6 +286,11 @@ const ProjectDetail: React.FC<{
                     }
                 />
 
+                {activeTab === 'chat' ? (
+                    <div className="flex-1 min-h-0 p-4 md:p-6 bg-slate-50 dark:bg-slate-950/50">
+                        <ProjectChatTab project={project} />
+                    </div>
+                ) : (
                 <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-50 dark:bg-slate-950/50">
                     <div className="max-w-4xl mx-auto space-y-6">
                         {activeTab === 'team' && (
@@ -297,7 +302,6 @@ const ProjectDetail: React.FC<{
                             />
                         )}
                         {activeTab === 'debug' && <ProjectDebugTab project={project} links={links} />}
-                        {activeTab === 'chat' && <ProjectChatTab project={project} />}
                         {activeTab === 'overview' && (
                             <ProjectOverviewTab
                                 project={project}
@@ -365,6 +369,7 @@ const ProjectDetail: React.FC<{
                         )}
                     </div>
                 </div>
+                )}
             </>
         );
     };
@@ -426,7 +431,7 @@ const ProjectList: React.FC<{
     // Checking original code: CreateProjectModal took onSubmit(form).
 
     // Check original EditProjectModal form
-    const [editProjectForm, setEditProjectForm] = useState({ title: '', status: '0', date_start: '', date_end: '', description: '' });
+    const [editProjectForm, setEditProjectForm] = useState({ title: '', status: '0', date_start: '', date_end: '', description: '', budget_amount: '' });
 
     // Deeplink HITL do agente (#57): aplica o prefill UMA vez por token.
     const prefill = usePrefill();
@@ -471,7 +476,8 @@ const ProjectList: React.FC<{
                 status: current.statut,
                 date_start: current.date_start ? formatDateForInput(current.date_start) : '',
                 date_end: current.date_end ? formatDateForInput(current.date_end) : '',
-                description: '',
+                description: current.description ?? '',
+                budget_amount: current.budget_amount != null ? String(current.budget_amount) : '',
             });
             setIsEditModalOpen(true);
             toast.info('Revise as mudanças sugeridas e salve.');
@@ -561,11 +567,20 @@ const ProjectList: React.FC<{
     }, [filteredProjects, page, limit]);
 
     // Actions
-    const handleCreateProject = async (form: { ref: string; title: string; socid: string }) => {
+    const handleCreateProject = async (form: { ref: string; title: string; socid: string; description: string; date_start: string; date_end: string; budget_amount: string }) => {
         if (!form.title || !form.socid || !config) return;
         setIsSubmitting(true);
         try {
-            await DolibarrService.createProject(config, form);
+            const payload: Record<string, unknown> = {
+                ref: form.ref,
+                title: form.title,
+                socid: form.socid,
+            };
+            if (form.description) payload.description = form.description;
+            if (form.date_start) payload.dateo = Math.floor(new Date(form.date_start).getTime() / 1000);
+            if (form.date_end) payload.datee = Math.floor(new Date(form.date_end).getTime() / 1000);
+            if (form.budget_amount) payload.budget_amount = parseFloat(form.budget_amount);
+            await DolibarrService.createProject(config, payload);
             toast.success("Projeto Criado");
             setIsCreateModalOpen(false);
             if (refreshData) refreshData();
@@ -611,7 +626,8 @@ const ProjectList: React.FC<{
             status: selectedProject.statut,
             date_start: selectedProject.date_start ? formatDateForInput(selectedProject.date_start) : '',
             date_end: selectedProject.date_end ? formatDateForInput(selectedProject.date_end) : '',
-            description: ''
+            description: selectedProject.description ?? '',
+            budget_amount: selectedProject.budget_amount != null ? String(selectedProject.budget_amount) : '',
         });
         setIsEditModalOpen(true);
     };
@@ -624,9 +640,11 @@ const ProjectList: React.FC<{
             const payload: any = {
                 title: editProjectForm.title,
                 statut: editProjectForm.status,
+                description: editProjectForm.description,
             };
             if (editProjectForm.date_start) payload.dateo = Math.floor(new Date(editProjectForm.date_start).getTime() / 1000);
             if (editProjectForm.date_end) payload.datee = Math.floor(new Date(editProjectForm.date_end).getTime() / 1000);
+            if (editProjectForm.budget_amount !== '') payload.budget_amount = parseFloat(editProjectForm.budget_amount);
 
             await DolibarrService.updateProject(config, selectedProject.id, payload);
             toast.success("Atualizado");

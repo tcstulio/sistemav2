@@ -250,6 +250,8 @@ export const fetchOrders = async (config: DolibarrConfig): Promise<Order[]> => {
         date: parseInt(d.date),
         total_ttc: parseFloat(d.total_ttc),
         statut: String(d.statut) as any,
+        fk_user_author: d.fk_user_author ? String(d.fk_user_author) : undefined,
+        fk_user_valid: d.fk_user_valid ? String(d.fk_user_valid) : undefined,
         array_options: d.array_options,
         lines: d.lines ? d.lines.map((l: Record<string, any>) => ({
             id: String(l.id || l.rowid),

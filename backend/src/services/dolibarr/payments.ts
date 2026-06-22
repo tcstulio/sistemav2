@@ -69,4 +69,27 @@ export class DolibarrPaymentsService extends DolibarrServiceBase {
             return [];
         }
     }
+
+    /**
+     * Persist reconciliation state of a bank line via Dolibarr REST API.
+     * Uses PUT bankaccounts/{accountId}/lines/{lineId} with num_releve to mark
+     * the line as reconciled (num_releve='OUI') or unreconciled (num_releve='').
+     */
+    async reconcileBankLine(accountId: string, lineId: string, reconciled: boolean, userKey?: string): Promise<boolean> {
+        try {
+            const url = `${this.baseUrl}bankaccounts/${accountId}/lines/${lineId}`;
+            const data = { num_releve: reconciled ? 'OUI' : '' };
+            const headers = this.getHeaders(userKey);
+            const response = await axios.put(url, data, {
+                headers,
+                httpsAgent: this.httpsAgent,
+                validateStatus: (s) => s < 300
+            });
+            log.info(`Bank line ${lineId} reconciled=${reconciled}`, { status: response.status });
+            return true;
+        } catch (error: any) {
+            log.error('reconcileBankLine Error', { accountId, lineId, reconciled, message: error?.message });
+            return false;
+        }
+    }
 }

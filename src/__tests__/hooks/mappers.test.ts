@@ -375,6 +375,55 @@ describe('Dolibarr Mappers', () => {
             expect(result.id).toBe('1');
             expect(result.ref).toBe('CTR001');
         });
+
+        it('populates lines from raw contract with lines array', () => {
+            const raw = {
+                id: '10',
+                ref: 'CTR010',
+                fk_soc: '5',
+                statut: '1',
+                lines: [
+                    { id: '100', description: 'Suporte mensal', qty: 1, subprice: 500 },
+                    { id: '101', description: 'Licença anual', qty: 3, subprice: 200 },
+                ],
+            };
+            const result = mappers.mapContract(raw);
+            expect(result.lines).toHaveLength(2);
+            expect(result.lines![0].desc).toBe('Suporte mensal');
+            expect(result.lines![0].qty).toBe(1);
+            expect(result.lines![0].price).toBe(500);
+            expect(result.lines![1].desc).toBe('Licença anual');
+            expect(result.lines![1].qty).toBe(3);
+        });
+
+        it('sets lines to empty array when raw has no lines', () => {
+            const raw = { id: '11', ref: 'CTR011', statut: '0' };
+            const result = mappers.mapContract(raw);
+            expect(result.lines).toEqual([]);
+        });
+
+        it('populates array_options from raw contract', () => {
+            const raw = {
+                id: '12',
+                ref: 'CTR012',
+                statut: '1',
+                array_options: { options_custom_field: 'valor123' },
+            };
+            const result = mappers.mapContract(raw);
+            expect(result.array_options).toEqual({ options_custom_field: 'valor123' });
+        });
+
+        it('leaves array_options undefined when not present', () => {
+            const raw = { id: '13', ref: 'CTR013', statut: '0' };
+            const result = mappers.mapContract(raw);
+            expect(result.array_options).toBeUndefined();
+        });
+
+        it('maps project_id from raw contract', () => {
+            const raw = { id: '14', ref: 'CTR014', statut: '1', project_id: '42' };
+            const result = mappers.mapContract(raw);
+            expect(result.project_id).toBe('42');
+        });
     });
 
     describe('Intervention mappers', () => {
