@@ -4,7 +4,47 @@ import { useDolibarr } from '../../context/DolibarrContext';
 import { useVATPayments, useSocialContributionPayments, useBankAccounts } from '../../hooks/dolibarr';
 import { ArrowLeft, Calendar, Landmark, CreditCard } from 'lucide-react';
 import { formatDate, formatCurrency } from '../../utils/formatUtils';
-import { toast } from 'sonner';
+import { formatDateOnly } from '../../utils/dateUtils';
+
+/** Exibe o bloco de Origem de forma legível: rótulo + período quando disponíveis, ID como fallback */
+interface OrigemBlockProps {
+    payment: {
+        type: 'VAT' | 'SOCIAL';
+        fk_tva?: string;
+        fk_charge?: string;
+        label_origem?: string;
+        periodo_inicio?: number;
+        periodo_fim?: number;
+    };
+}
+
+const OrigemBlock: React.FC<OrigemBlockProps> = ({ payment }) => {
+    const rawId = payment.fk_tva || payment.fk_charge;
+    const tipoLabel = payment.type === 'VAT' ? 'IVA' : 'Encargo Social';
+
+    // Rótulo legível: prefere label_origem (para encargos), senão usa o tipo + período
+    let rotulo: string | null = null;
+    if (payment.label_origem) {
+        rotulo = payment.label_origem;
+    } else if (payment.periodo_inicio) {
+        rotulo = `${tipoLabel} — ${formatDateOnly(payment.periodo_inicio)}${payment.periodo_fim ? ` a ${formatDateOnly(payment.periodo_fim)}` : ''}`;
+    }
+
+    return (
+        <div>
+            {rotulo ? (
+                <>
+                    <div className="font-medium text-sm text-slate-800 dark:text-white" data-testid="origem-rotulo">{rotulo}</div>
+                    {rawId && <div className="text-xs text-slate-400 font-mono mt-0.5">ID: {rawId}</div>}
+                </>
+            ) : (
+                <div className="font-mono text-sm text-slate-800 dark:text-white" data-testid="origem-id-fallback">
+                    {tipoLabel} #{rawId || '-'}
+                </div>
+            )}
+        </div>
+    );
+};
 
 interface TaxPaymentDetailProps {
     onNavigate?: (view: string, id: string) => void;
@@ -21,7 +61,13 @@ const TaxPaymentDetail: React.FC<TaxPaymentDetailProps> = ({ onNavigate }) => {
     const { data: bankAccounts } = useBankAccounts(config);
 
     // Find payment in either list
-    const payment = useMemo((): { type: 'VAT' | 'SOCIAL'; label: string; id: string; ref: string; amount: number; date_payment: number; fk_bank: string; fk_tva?: string; fk_charge?: string } | null => {
+    const payment = useMemo((): {
+        type: 'VAT' | 'SOCIAL'; label: string;
+        id: string; ref: string; amount: number; date_payment: number; fk_bank: string;
+        fk_tva?: string; fk_charge?: string;
+        num_payment?: string; label_origem?: string;
+        periodo_inicio?: number; periodo_fim?: number;
+    } | null => {
         const vatFound = vatPayments?.find(p => String(p.id) === String(id));
         if (vatFound) return { ...vatFound, type: 'VAT' as const, label: 'Imposto (IVA)' };
 
@@ -98,16 +144,21 @@ const TaxPaymentDetail: React.FC<TaxPaymentDetailProps> = ({ onNavigate }) => {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                                <div className="text-xs text-slate-500">ID Referência (Origem)</div>
-                                <div className="font-mono text-sm text-slate-800 dark:text-white">
-                                    {(payment as any).fk_tva || (payment as any).fk_charge || '-'}
-                                </div>
+                                <div className="text-xs text-slate-500">Origem</div>
+                                <OrigemBlock payment={payment} />
                             </div>
 
                             <div>
                                 <div className="text-xs text-slate-500">Data</div>
                                 <div className="font-medium text-slate-800 dark:text-white">{formatDate(payment.date_payment)}</div>
                             </div>
+
+                            {payment.num_payment && (
+                                <div>
+                                    <div className="text-xs text-slate-500">Comprovante / Nº Documento</div>
+                                    <div className="font-mono text-sm text-slate-800 dark:text-white">{payment.num_payment}</div>
+                                </div>
+                            )}
                         </div>
                     </div>
 

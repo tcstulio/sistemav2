@@ -22,26 +22,26 @@ const ExtratoDetalhado: React.FC<Props> = ({ dados, onClose }) => {
 
     return (
         <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-xl w-full max-w-md shadow-2xl flex flex-col max-h-[90vh] ring-1 ring-gray-200 print-area">
-                <div className="flex justify-between items-center p-4 border-b border-gray-100">
-                    <h3 className="font-bold text-gray-800 flex items-center gap-2 text-lg">
+            <div className="bg-white dark:bg-slate-800 rounded-xl w-full max-w-md shadow-2xl flex flex-col max-h-[90vh] ring-1 ring-gray-200 dark:ring-slate-700 print-area">
+                <div className="flex justify-between items-center p-4 border-b border-gray-100 dark:border-slate-700">
+                    <h3 className="font-bold text-gray-800 dark:text-slate-100 flex items-center gap-2 text-lg">
                         <FileText size={20} className="text-indigo-600" /> Extrato Financeiro (DRE)
                     </h3>
                     <div className="flex gap-2 no-print">
                         <button
                             onClick={handlePrint}
-                            className="p-2 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors flex items-center gap-1"
+                            className="p-2 text-gray-500 dark:text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-slate-700 rounded-lg transition-colors flex items-center gap-1"
                             title="Imprimir ou Salvar como PDF"
                         >
                             <Printer size={18} />
                         </button>
-                        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors p-2 hover:bg-gray-100 rounded-lg">
+                        <button onClick={onClose} className="text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-slate-200 transition-colors p-2 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">
                             <X size={20} />
                         </button>
                     </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-6 space-y-1 text-sm bg-white">
+                <div className="flex-1 overflow-y-auto p-6 space-y-1 text-sm bg-white dark:bg-slate-800">
                     <div className="mb-4 pb-4 border-b border-gray-100 hidden print:block">
                         <h1 className="text-2xl font-bold text-gray-900">Simulador CoolGroove</h1>
                         <p className="text-sm text-gray-500">Relatório Gerencial de Evento</p>

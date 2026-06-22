@@ -20,7 +20,7 @@ vi.mock('sonner', () => ({ toast: toastMock }));
 vi.mock('../../services/dolibarrService', () => ({
     DolibarrService: {
         createIntervention: vi.fn(),
-        updateObject: vi.fn(),
+        updateIntervention: vi.fn(),
         validateIntervention: vi.fn(),
         deleteIntervention: vi.fn(),
     },
@@ -258,6 +258,34 @@ describe('InterventionList', () => {
                 expect.objectContaining({ description: expect.stringContaining('Erro servidor') }),
             );
         });
+        expect(alertSpy).not.toHaveBeenCalled();
+        alertSpy.mockRestore();
+    });
+
+    it('updates an intervention via updateIntervention (not updateObject) and shows toast.success', async () => {
+        const user = userEvent.setup();
+        vi.mocked(DolibarrService.updateIntervention).mockResolvedValue({} as any);
+        const onRefresh = vi.fn();
+        const alertSpy = vi.spyOn(window, 'alert');
+
+        renderList({ onRefresh });
+
+        await waitFor(() => screen.getByText('INT-001'));
+        await user.click(screen.getByText('INT-001'));
+
+        await user.click(await screen.findByRole('button', { name: /^Editar$/i }));
+
+        await user.click(await screen.findByRole('button', { name: /Salvar/i }));
+
+        await waitFor(() => {
+            expect(DolibarrService.updateIntervention).toHaveBeenCalledTimes(1);
+            expect(toastMock.success).toHaveBeenCalledWith('Intervenção atualizada');
+        });
+
+        const [cfg, id] = vi.mocked(DolibarrService.updateIntervention).mock.calls[0];
+        expect(cfg).toMatchObject({ apiKey: 'key' });
+        expect(id).toBe('1');
+        expect(onRefresh).toHaveBeenCalled();
         expect(alertSpy).not.toHaveBeenCalled();
         alertSpy.mockRestore();
     });

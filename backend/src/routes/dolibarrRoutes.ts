@@ -295,6 +295,31 @@ router.post('/tasks/:id/delegation/decline',
         }
     });
 
+// --- Interventions: update via custom_sync (issue #656) ---
+// A REST padrão do Dolibarr NÃO expõe PUT /interventions/{id}; gravamos via
+// custom_sync (action=update_intervention). Esta rota vem ANTES do wildcard '/*'
+// para não cair no proxy genérico (que rotearia para o endpoint inexistente).
+const InterventionUpdateSchema = z.object({
+    socid: z.union([z.string(), z.number()]).optional(),
+    date: z.union([z.string(), z.number()]).optional(),
+    fk_project: z.union([z.string(), z.number()]).optional(),
+    description: z.string().max(8000).optional(),
+}).refine(
+    (v) => v.socid != null || v.date != null || v.fk_project != null || v.description != null,
+    { message: 'Ao menos um campo deve ser informado para atualização' }
+);
+
+// PUT /api/dolibarr/interventions/:id — edita uma intervenção (issue #656)
+router.put('/interventions/:id', validate(InterventionUpdateSchema), async (req, res) => {
+    try {
+        const result = await dolibarrService.updateIntervention(req.params.id, req.body);
+        res.json(result);
+    } catch (error: any) {
+        const status = error.status || 500;
+        res.status(status).json({ error: error.message, details: error.details });
+    }
+});
+
 // --- Delta Sync Custom Endpoint ---
 // Routes to custom_sync.php at Dolibarr root (not /api/index.php)
 router.get('/custom_sync.php', async (req, res) => {

@@ -17,34 +17,44 @@ export const SalesTab: React.FC<SalesTabProps> = ({ salesStats, proposals, order
 
     const COLORS = ['#94A3B8', '#10B981'];
 
+    // Protect against negative values in the funnel
+    const notConverted = Math.max(0, salesStats.proposalsCount - salesStats.ordersCount);
+    const noData = salesStats.proposalsCount === 0 && salesStats.ordersCount === 0;
+
     return (
         <div className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-lg shadow border border-gray-100">
                     <h3 className="text-lg font-semibold mb-4">Funil de Conversão (Qtd)</h3>
-                    <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={[
-                                        { name: 'Não Convertido', value: salesStats.proposalsCount - salesStats.ordersCount },
-                                        { name: 'Vendas Fechadas', value: salesStats.ordersCount }
-                                    ]}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={0}
-                                    outerRadius={80}
-                                    dataKey="value"
-                                >
-                                    {[0, 1].map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip />
-                                <Legend />
-                            </PieChart>
-                        </ResponsiveContainer>
-                    </div>
+                    {noData ? (
+                        <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
+                            Sem dados para o período selecionado.
+                        </div>
+                    ) : (
+                        <div className="h-64">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={[
+                                            { name: 'Não Convertido', value: notConverted },
+                                            { name: 'Vendas Fechadas', value: salesStats.ordersCount }
+                                        ]}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={0}
+                                        outerRadius={80}
+                                        dataKey="value"
+                                    >
+                                        {[0, 1].map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip />
+                                    <Legend />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        </div>
+                    )}
                     <div className="text-center mt-2 text-sm text-gray-500">
                         Taxa de Conversão: <span className="font-bold text-gray-800">{salesStats.conversionRate.toFixed(1)}%</span>
                     </div>
@@ -89,7 +99,7 @@ export const SalesTab: React.FC<SalesTabProps> = ({ salesStats, proposals, order
                             {topOrders.length > 0 ? topOrders.map(o => (
                                 <tr key={o.id} className="border-b">
                                     <td className="px-4 py-2 font-medium">{o.ref}</td>
-                                    <td className="px-4 py-2">{o.socid ? `Cliente #${o.socid}` : '-'}</td>
+                                    <td className="px-4 py-2">{o.soc_name || (o.socid ? `#${o.socid}` : '-')}</td>
                                     <td className="px-4 py-2">{new Date(o.date_commande || o.datec || 0).toLocaleDateString()}</td>
                                     <td className="px-4 py-2 text-right text-emerald-600 font-bold">{formatCurrency(Number(o.total_ttc))}</td>
                                 </tr>
