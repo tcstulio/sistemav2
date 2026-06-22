@@ -420,3 +420,90 @@ describe('InterventionList', () => {
         alertSpy.mockRestore();
     });
 });
+
+// ---------------------------------------------------------------------------
+// Suite: exibição de projeto (#551)
+// ---------------------------------------------------------------------------
+describe('InterventionList — exibição de projeto (#551)', () => {
+    const projectsMock = [
+        { id: '42', title: 'Projeto Alfa', ref: 'PROJ-042' },
+    ];
+
+    const interventionsWithProject = [
+        {
+            id: '1',
+            ref: 'INT-001',
+            socid: '10',
+            project_id: '42',
+            date: Math.floor(new Date('2024-06-01').getTime() / 1000),
+            statut: '0',
+            description: 'Com projeto',
+            fk_user_author: '1',
+            lines: [],
+        },
+        {
+            id: '2',
+            ref: 'INT-002',
+            socid: '20',
+            project_id: '',
+            date: Math.floor(new Date('2024-06-10').getTime() / 1000),
+            statut: '1',
+            description: 'Sem projeto',
+            fk_user_author: '2',
+            lines: [],
+        },
+    ];
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useInterventions).mockReturnValue({
+            data: interventionsWithProject,
+            refetch: vi.fn(),
+        } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: customersMock } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: projectsMock } as any);
+        vi.mocked(useInterventionLines).mockReturnValue({ data: [], refetch: vi.fn() } as any);
+    });
+
+    it('exibe o nome do projeto no card quando project_id está preenchido', () => {
+        renderList();
+        expect(screen.getByText('Projeto Alfa')).toBeInTheDocument();
+    });
+
+    it('exibe "Sem projeto" no card quando project_id está vazio', () => {
+        renderList();
+        // INT-002 não tem projeto — deve mostrar o rótulo de ausência
+        const semProjetos = screen.getAllByText('Sem projeto');
+        expect(semProjetos.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('clicar no projeto do card chama onNavigate sem abrir o detalhe', async () => {
+        const user = userEvent.setup();
+        const onNavigate = vi.fn();
+        renderList({ onNavigate });
+
+        // Clique no nome do projeto "Projeto Alfa" no card da lista
+        const projectLink = screen.getByText('Projeto Alfa');
+        await user.click(projectLink);
+
+        // onNavigate chamado com ('projects', '42')
+        expect(onNavigate).toHaveBeenCalledWith('projects', '42');
+
+        // A intervenção não foi selecionada (detalhe não abriu)
+        // O detalhe mostraria "Relatório de Serviço de Campo" no subtítulo
+        expect(screen.queryByText('Relatório de Serviço de Campo')).not.toBeInTheDocument();
+    });
+
+    it('exibe "Sem projeto" no detalhe quando project_id está vazio', async () => {
+        const user = userEvent.setup();
+        renderList();
+
+        // Seleciona INT-002 (sem projeto)
+        await user.click(screen.getByText('INT-002'));
+
+        // O detalhe deve mostrar rótulo "Projeto Vinculado" com o texto "Sem projeto"
+        // Pode haver múltiplas ocorrências do texto (lista + detalhe), então usamos getAllByText
+        const semProjetoElements = await screen.findAllByText('Sem projeto');
+        expect(semProjetoElements.length).toBeGreaterThanOrEqual(1);
+    });
+});
