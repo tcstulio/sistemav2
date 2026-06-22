@@ -14,6 +14,7 @@ const mockDolibarrService = vi.hoisted(() => ({
     setTaskContact: vi.fn(() => true),
     getTaskContacts: vi.fn(() => [{ id: '7', task_id: '123', user_id: '45', type_id: '45' }]),
     removeTaskContact: vi.fn(() => true),
+    updateIntervention: vi.fn(() => ({ success: true })),
     proxyCustomSync: vi.fn(() => ({ status: 200, data: {} })),
     proxyRequest: vi.fn(() => ({ status: 200, data: {} })),
 }));
@@ -322,6 +323,41 @@ describe('dolibarrRoutes', () => {
                 .query({ action: 'test' });
 
             expect(res.status).toBe(200);
+        });
+    });
+
+    describe('Interventions — update via custom_sync (issue #656)', () => {
+        // A REST padrão do Dolibarr NÃO expõe PUT /interventions/{id}; a rota grava
+        // via updateIntervention (custom_sync) e NÃO pode cair no wildcard proxyRequest.
+        it('PUT /interventions/:id responde 200 { success: true } quando gravação sucede', async () => {
+            const res = await request(app)
+                .put('/api/dolibarr/interventions/42')
+                .send({ socid: '1', description: 'Editado' });
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({ success: true });
+            expect(mockDolibarrService.updateIntervention).toHaveBeenCalledWith('42', { socid: '1', description: 'Editado' });
+            expect(mockDolibarrService.proxyRequest).not.toHaveBeenCalled();
+        });
+
+        it('PUT /interventions/:id propaga status de erro do Dolibarr (não 200)', async () => {
+            mockDolibarrService.updateIntervention.mockRejectedValueOnce({ status: 500, message: 'DB down' } as any);
+            const res = await request(app)
+                .put('/api/dolibarr/interventions/42')
+                .send({ socid: '1' });
+
+            expect(res.status).toBe(500);
+            expect(res.body.error).toBe('DB down');
+            expect(mockDolibarrService.proxyRequest).not.toHaveBeenCalled();
+        });
+
+        it('PUT /interventions/:id responde 400 quando nenhum campo informado', async () => {
+            const res = await request(app)
+                .put('/api/dolibarr/interventions/42')
+                .send({});
+
+            expect(res.status).toBe(400);
+            expect(mockDolibarrService.updateIntervention).not.toHaveBeenCalled();
         });
     });
 });
