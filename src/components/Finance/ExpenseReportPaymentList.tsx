@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { AppView, ExpenseReportPayment, ExpenseReport } from '../../types';
 import { ExpenseDetailModal } from '../HR/modals/ExpenseDetailModal';
 
-import { Calendar, FileText, Wallet, Receipt, X, CreditCard, User, Copy, Hash } from 'lucide-react';
+import { Calendar, FileText, Wallet, Receipt, X, CreditCard, User, Copy, Hash, AlertCircle, Briefcase } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useExpenseReportPayments, useExpenseReports, useExpenseReportPaymentLinks, useBankAccounts, useUsers, useExpenseReportLines, useProjects } from '../../hooks/dolibarr';
 import { useListControls } from '../../hooks/useListControls';
@@ -25,7 +25,7 @@ const ExpenseReportPaymentList: React.FC<ExpenseReportPaymentListProps> = ({ onN
     const { config } = useDolibarr();
 
     // Data Hooks
-    const { data: paymentsData = [] } = useExpenseReportPayments(config);
+    const { data: paymentsData = [], isLoading: isLoadingPayments, error: paymentsError } = useExpenseReportPayments(config);
     const { data: reports = [] } = useExpenseReports(config);
     const { data: links = [] } = useExpenseReportPaymentLinks(config);
     const { data: bankAccounts = [] } = useBankAccounts(config);
@@ -101,8 +101,28 @@ const ExpenseReportPaymentList: React.FC<ExpenseReportPaymentListProps> = ({ onN
             : null;
         const linkedReports = getLinkedReports(selectedPayment);
 
-        return { bankAccount, author, linkedReports };
-    }, [selectedPayment, bankAccounts, users, links, reports]);
+        // Collect unique project IDs from linked expense reports
+        const projectIds = Array.from(new Set(
+            linkedReports
+                .map(({ report }) => report?.project_id)
+                .filter((id): id is string => !!id)
+        ));
+        const linkedProjects = projectIds
+            .map(id => projects.find(p => String(p.id) === String(id)))
+            .filter((p): p is NonNullable<typeof p> => !!p);
+
+        // Collect unique user (employee) IDs from linked expense reports
+        const userIds = Array.from(new Set(
+            linkedReports
+                .map(({ report }) => report?.fk_user_author)
+                .filter((id): id is string => !!id)
+        ));
+        const linkedUsers = userIds
+            .map(id => users.find(u => String(u.id) === String(id)))
+            .filter((u): u is NonNullable<typeof u> => !!u);
+
+        return { bankAccount, author, linkedReports, linkedProjects, linkedUsers };
+    }, [selectedPayment, bankAccounts, users, links, reports, projects]);
 
     return (
         <>
@@ -136,7 +156,17 @@ const ExpenseReportPaymentList: React.FC<ExpenseReportPaymentListProps> = ({ onN
                     listWidth="1/3"
                     list={
                         <div className="h-full">
-                            {payments.length === 0 ? (
+                            {isLoadingPayments ? (
+                                <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-3 p-6">
+                                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                                    <p className="text-sm">Carregando pagamentos...</p>
+                                </div>
+                            ) : paymentsError ? (
+                                <div className="flex flex-col items-center justify-center h-full text-red-400 gap-3 p-6">
+                                    <AlertCircle size={32} className="opacity-50" />
+                                    <p className="text-sm">Erro ao carregar pagamentos. Tente novamente.</p>
+                                </div>
+                            ) : payments.length === 0 ? (
                                 <div className="p-6">
                                     <EmptyState
                                         icon={Wallet}
@@ -254,6 +284,42 @@ const ExpenseReportPaymentList: React.FC<ExpenseReportPaymentListProps> = ({ onN
                                                 </p>
                                             )}
                                         </Card>
+
+                                        {/* Project & Employee Info */}
+                                        {(detailData.linkedProjects.length > 0 || detailData.linkedUsers.length > 0) && (
+                                            <Card header="Contexto">
+                                                <div className="space-y-3">
+                                                    {detailData.linkedProjects.length > 0 && (
+                                                        <div>
+                                                            <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+                                                                <Briefcase size={12} /> Projeto{detailData.linkedProjects.length > 1 ? 's' : ''}
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                {detailData.linkedProjects.map(p => (
+                                                                    <div key={p.id} className="font-medium text-indigo-600 dark:text-indigo-400 text-sm">
+                                                                        {p.title}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {detailData.linkedUsers.length > 0 && (
+                                                        <div>
+                                                            <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+                                                                <User size={12} /> Funcionário{detailData.linkedUsers.length > 1 ? 's' : ''}
+                                                            </div>
+                                                            <div className="space-y-1">
+                                                                {detailData.linkedUsers.map(u => (
+                                                                    <div key={u.id} className="font-medium text-slate-700 dark:text-slate-300 text-sm">
+                                                                        {u.firstname && u.lastname ? `${u.firstname} ${u.lastname}` : u.login}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </Card>
+                                        )}
 
                                         {/* Transaction Details */}
                                         <Card header="Detalhes da Transação">
