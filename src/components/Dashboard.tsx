@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { AppView } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useInvoices, useSupplierInvoices, useTasks, useProducts, useBankAccounts, useInterventions, useTickets, useBankLines } from '../hooks/dolibarr';
+import { useInvoices, useSupplierInvoices, useTasks, useProducts, useBankAccounts, useInterventions, useTickets, useBankLines, useProjects, useCustomers } from '../hooks/dolibarr';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
 import { DollarSign, Users, FileText, TrendingUp, Sparkles, Loader2, Minus, FolderKanban, AlertOctagon, Clock, Package, Landmark, ClipboardList, Wrench, Ticket as TicketIcon, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { AiService } from '../services/aiService';
@@ -64,6 +64,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     const interventions = interventionsData || [];
     const { data: ticketsData } = useTickets(config);
     const tickets = ticketsData || [];
+    const { data: projectsData } = useProjects(config);
+    const projects = projectsData || [];
+    const { data: customersData } = useCustomers(config);
+    const customers = customersData || [];
 
     const [forecast, setForecast] = useState<ForecastData | null>(null);
     const [loadingForecast, setLoadingForecast] = useState(false);
@@ -101,18 +105,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         const totalExpense = Math.abs(bankLines.filter(l => l.amount < 0).reduce((acc, curr) => acc + curr.amount, 0));
         const totalCash = bankAccounts.reduce((acc, curr) => acc + (curr.solde || 0), 0);
 
-        const now = new Date();
-        const unpaidInvoices = invoices.filter(i => {
-            if (i.statut !== '1') return false;
-            const dueDate = i.date_lim_reglement || (i.date + 30 * 24 * 60 * 60);
-            const d = dueDate < 100000000000 ? dueDate * 1000 : dueDate;
-            return d < now.getTime();
-        }).length + supplierInvoices.filter(i => {
-            if (i.statut !== '1') return false;
-            const dueDate = i.date_lim_reglement || (i.date + 30 * 24 * 60 * 60);
-            const d = dueDate < 100000000000 ? dueDate * 1000 : dueDate;
-            return d < now.getTime();
-        }).length;
+        const unpaidInvoices = invoices.filter(i => i.statut === '1').length
+            + supplierInvoices.filter(i => i.statut === '1').length;
 
         return { totalRevenue, totalExpense, totalCash, unpaidInvoices };
     }, [invoices, supplierInvoices, bankAccounts, bankLines]);
@@ -227,6 +221,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         };
     }, [tasks, interventions, tickets, config, canAccess]);
 
+    // #599 — lookup maps para projeto/cliente sem N+1
+    const projectMap = useMemo(() => new Map(projects.map(p => [String(p.id), p.title])), [projects]);
+    const customerMap = useMemo(() => new Map(customers.map(c => [String(c.id), c.name])), [customers]);
 
     // Prepare Financial Context for AI
     const financialContext = useMemo(() => {
@@ -433,6 +430,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                             <span className="text-[10px] text-slate-500">{formatDateOnly(i.date)}</span>
                                         </div>
                                         <div className="text-sm font-medium text-slate-800 dark:text-white mt-1 line-clamp-1">{i.description || 'Intervenção'}</div>
+                                        <div className="flex gap-2 mt-1 flex-wrap">
+                                            <span className="text-[10px] text-orange-600 dark:text-orange-400 truncate max-w-[45%]">{i.project_id ? projectMap.get(String(i.project_id)) ?? 'Sem projeto' : 'Sem projeto'}</span>
+                                            <span className="text-[10px] text-slate-500 truncate max-w-[45%]">{i.socid ? customerMap.get(String(i.socid)) ?? 'Sem cliente' : 'Sem cliente'}</span>
+                                        </div>
                                     </div>
                                 ))}
                                 {myAssignments.tickets.map(t => (
@@ -442,6 +443,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                             <span className="text-[10px] text-slate-500">{formatDateTime(t.datec)}</span>
                                         </div>
                                         <div className="text-sm font-medium text-slate-800 dark:text-white mt-1 line-clamp-1">{t.subject}</div>
+                                        <div className="flex gap-2 mt-1 flex-wrap">
+                                            <span className="text-[10px] text-blue-600 dark:text-blue-400 truncate max-w-[45%]">{t.project_id ? projectMap.get(String(t.project_id)) ?? 'Sem projeto' : 'Sem projeto'}</span>
+                                            <span className="text-[10px] text-slate-500 truncate max-w-[45%]">{t.socid ? customerMap.get(String(t.socid)) ?? 'Sem cliente' : 'Sem cliente'}</span>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
