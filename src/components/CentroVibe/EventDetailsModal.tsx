@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { VenueEvent, Artist, TicketBatch, EventCluster } from '../../types/centrovibe';
 import { CLUSTERS } from './constants';
 import { Modal, Button, Input } from '../ui';
-import { Clock, MapPin, Ticket, User, Instagram, Users, Mic2, Plus, Trash2, Search, Edit2, X } from 'lucide-react';
+import { Clock, MapPin, Ticket, User, Instagram, Users, Mic2, Plus, Trash2, Search, Edit2, X, AlertTriangle } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatUtils';
 
 interface EventDetailsModalProps {
   event: VenueEvent | null;
   onClose: () => void;
   onUpdateEvent: (event: VenueEvent) => void;
+  onDeleteEvent?: (eventId: string) => void;
   allArtists: Artist[];
 }
 
@@ -18,7 +19,7 @@ const DiscIcon = ({ size }: { size: number }) => (
   </svg>
 );
 
-const EventDetailsModal: React.FC<EventDetailsModalProps> = ({ event, onClose, onUpdateEvent, allArtists }) => {
+const EventDetailsModal: React.FC<EventDetailsModalProps> = ({ event, onClose, onUpdateEvent, onDeleteEvent, allArtists }) => {
   const [localTickets, setLocalTickets] = useState<TicketBatch[]>([]);
   const [isAddingArtist, setIsAddingArtist] = useState(false);
   const [artistSearch, setArtistSearch] = useState('');
@@ -98,9 +99,25 @@ const EventDetailsModal: React.FC<EventDetailsModalProps> = ({ event, onClose, o
             <input value={event.title} onChange={(e) => onUpdateEvent({ ...event, title: e.target.value })}
               className="text-3xl font-bold text-slate-800 dark:text-white leading-none bg-transparent outline-none border-b border-transparent hover:border-slate-300 dark:hover:border-white/20 focus:border-indigo-500 transition-all w-full placeholder-slate-400 dark:placeholder-white/50" placeholder="Nome do Evento" />
           </div>
-          <button onClick={onClose} className="bg-black/20 dark:bg-black/40 hover:bg-black/30 dark:hover:bg-black/60 text-slate-600 dark:text-white p-2 rounded-full backdrop-blur-md transition-colors border border-slate-300 dark:border-white/10 shrink-0 mb-1">
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-2 mb-1">
+            {onDeleteEvent && (
+              <button
+                onClick={() => {
+                  if (window.confirm('Excluir este evento da agenda?')) {
+                    onDeleteEvent(event.id);
+                    onClose();
+                  }
+                }}
+                className="bg-red-500/20 hover:bg-red-500/40 text-red-600 dark:text-red-300 p-2 rounded-full backdrop-blur-md transition-colors border border-red-400/30 shrink-0"
+                title="Excluir evento"
+              >
+                <AlertTriangle size={18} />
+              </button>
+            )}
+            <button onClick={onClose} className="bg-black/20 dark:bg-black/40 hover:bg-black/30 dark:hover:bg-black/60 text-slate-600 dark:text-white p-2 rounded-full backdrop-blur-md transition-colors border border-slate-300 dark:border-white/10 shrink-0">
+              <X size={20} />
+            </button>
+          </div>
         </div>
       </div>
 

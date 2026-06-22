@@ -70,6 +70,10 @@ const PER_TASK_EVENT_CAP = 40;
 // Índice tarefa→usuários envolvidos é a única parte com I/O de rede (custom_sync); micro-cache p/
 // amortizar rajadas de re-fetch disparadas por socket (tempo real).
 const TASK_USER_INDEX_TTL_MS = 30_000;
+// Mapa userId/login→nome (listUsers). Best-effort no backend (a fonte completa vive no cliente,
+// via useUsers); aqui só evita vazar ID cru/'unknown' na resposta da API. Micro-cache p/ não
+// martelar o Dolibarr a cada re-fetch em tempo real.
+const USER_NAME_TTL_MS = 60_000;
 
 /** Converte ms | ISO | Date para ISO; retorna null se inválido (evento é descartado, nunca quebra o feed). */
 function toIso(v: number | string | Date | undefined | null): string | null {
@@ -99,7 +103,7 @@ class SystemEventsService {
             if (!ts) return [];
             return [{
                 id: `audit_${e.id}`, timestamp: ts, source: 'audit' as const,
-                actor: { id: e.adminId, name: e.adminLogin || e.adminId },
+                actor: { id: e.adminId, name: e.adminLogin || 'Sistema' },
                 type: e.action, entityId: e.target,
                 description: e.summary || e.action, severity: 'info' as const,
                 metadata: e.changes ? { changes: e.changes } : undefined,
@@ -115,7 +119,7 @@ class SystemEventsService {
                 if (!ts) return [];
                 return [{
                     id: `agent_${a.id}`, timestamp: ts, source: 'agent' as const,
-                    actor: { id: a.userId, name: a.userName || a.userId },
+                    actor: { id: a.userId, name: (a.userName && a.userName !== 'unknown') ? a.userName : 'Agente' },
                     type: a.tool, entityType: a.entityType, entityId: a.entityId,
                     description: a.description, status: a.result,
                     severity: (a.result === 'error' ? 'error' : 'info') as 'info' | 'error',
@@ -158,6 +162,48 @@ class SystemEventsService {
         return index;
     }
 
+    private userNameCache: { at: number; index: Map<string, string> } | null = null;
+
+    /**
+     * Mapa userId E login → nome legível, via um único listUsers(). Micro-cache TTL p/ não
+     * martelar o Dolibarr em rajadas de re-fetch. Best-effort: o listUsers é limitado, então a
+     * resolução autoritativa de TODOS os usuários fica no cliente (useUsers → userMap); o backend
+     * usa isto apenas para não vazar um ID numérico cru ou 'unknown' como actor.name.
+     */
+    private async getUserNameIndex(): Promise<Map<string, string>> {
+        const now = Date.now();
+        if (this.userNameCache && now - this.userNameCache.at < USER_NAME_TTL_MS) {
+            return this.userNameCache.index;
+        }
+        const index = new Map<string, string>();
+        try {
+            const users = await dolibarrService.listUsers();
+            for (const u of users || []) {
+                const name = `${u.firstname || ''} ${u.lastname || ''}`.trim() || u.login || '';
+                if (!name) continue;
+                if (u.id) index.set(String(u.id), name);
+                if (u.login) index.set(String(u.login), name);
+            }
+        } catch (e: any) {
+            log.warn(`getUserNameIndex falhou: ${e?.message || e}`);
+        }
+        this.userNameCache = { at: now, index };
+        return index;
+    }
+
+    /**
+     * Resolve um id/login para o nome legível. Retorna '' quando o valor é vazio/'unknown'
+     * (quem chama aplica o rótulo de sistema apropriado). Quando há um autor mas o nome não está
+     * no índice, devolve uma referência rotulada '#<id>' (legível, não é o ID cru) que o cliente
+     * ainda resolve via userMap. Valores não-numéricos (logins/nomes já gravados) passam direto.
+     */
+    private lookupName(index: Map<string, string>, idOrName?: string | null): string {
+        const v = idOrName ? String(idOrName).trim() : '';
+        if (!v || v === 'unknown') return '';
+        if (index.has(v)) return index.get(v)!;
+        return /^\d+$/.test(v) ? `#${v}` : v;
+    }
+
     private async collectDelegation(user: SystemUser): Promise<SystemEvent[]> {
         let rows = delegationEventsService.listAll(PER_SOURCE_CAP);
         if (!user.isAdmin) {
@@ -165,24 +211,27 @@ class SystemEventsService {
             // visível se o usuário agiu (by), é o destinatário (to), ou está envolvido na tarefa.
             rows = rows.filter((e) => e.by === user.id || e.to === user.id || index.get(String(e.taskId))?.has(user.id));
         }
-        return rows.flatMap((e, i) => {
+        const names = await this.getUserNameIndex();
+        const out: SystemEvent[] = [];
+        rows.forEach((e, i) => {
             const ts = toIso(e.at);
-            if (!ts) return [];
+            if (!ts) return;
             // Enriquecimento: destinatário (to) + objetivo da delegação (do store local), p/ o
             // card mostrar "Sistema → Fulano (Responsável) · <objetivo>". (#526 + card)
             const objetivo = delegationService.get(String(e.taskId))?.objetivo;
             const meta: Record<string, any> = {};
             if (e.to) meta.to = e.to;
             if (objetivo) meta.objetivo = objetivo;
-            return [{
+            out.push({
                 id: `deleg_${e.taskId}_${e.at}_${i}`, timestamp: ts, source: 'delegation' as const,
-                actor: { id: e.by || 'system', name: e.by ? e.by : 'Sistema' },
+                actor: { id: e.by || 'system', name: e.by ? (this.lookupName(names, e.by) || 'Sistema') : 'Sistema' },
                 type: e.type, entityType: 'task', entityId: e.taskId,
                 description: e.note ? `${e.type} — ${e.note}` : e.type,
                 linkTo: `tasks/${e.taskId}`, severity: 'info' as const,
                 metadata: Object.keys(meta).length ? meta : undefined,
-            }];
+            });
         });
+        return out;
     }
 
     private async collectNotification(user: SystemUser): Promise<SystemEvent[]> {
@@ -190,17 +239,23 @@ class SystemEventsService {
         const list = user.isAdmin
             ? notificationService.getAll(PER_SOURCE_CAP)
             : notificationService.getForUser(user.id, PER_SOURCE_CAP);
-        return list.flatMap((n) => {
+        const names = await this.getUserNameIndex();
+        const out: SystemEvent[] = [];
+        list.forEach((n) => {
             const ts = toIso(n.createdAt);
-            if (!ts) return [];
-            return [{
+            if (!ts) return;
+            const senderLabel = n.senderName
+                ? (n.senderName !== 'unknown' ? n.senderName : this.lookupName(names, n.senderId) || 'Sistema')
+                : (n.senderId ? this.lookupName(names, n.senderId) || 'Sistema' : 'Sistema');
+            out.push({
                 id: `notif_${n.id}`, timestamp: ts, source: 'notification' as const,
-                actor: { id: n.senderId || 'system', name: n.senderName || 'Sistema' },
+                actor: { id: n.senderId || 'system', name: senderLabel },
                 type: n.event, entityType: n.entityType, entityId: n.entityId,
                 description: n.title, linkTo: n.linkTo, status: n.read ? 'read' : 'unread',
                 severity: (n.priority === 'high' ? 'warn' : 'info') as 'info' | 'warn',
-            }];
+            });
         });
+        return out;
     }
 
     private async collectScheduler(): Promise<SystemEvent[]> {
@@ -219,12 +274,13 @@ class SystemEventsService {
 
     private async collectApproval(): Promise<SystemEvent[]> {
         const history = await approvalService.getActionHistory({ limit: PER_SOURCE_CAP });
+        const names = await this.getUserNameIndex();
         return history.flatMap((a) => {
             const ts = toIso(a.requestedAt as any);
             if (!ts) return [];
             return [{
                 id: `appr_${a.id}`, timestamp: ts, source: 'approval' as const,
-                actor: { id: a.requestedBy, name: a.requestedBy },
+                actor: { id: a.requestedBy, name: this.lookupName(names, a.requestedBy) || 'Sistema' },
                 type: a.type, description: a.description, status: a.status,
                 severity: (a.riskLevel === 'high' ? 'warn' : 'info') as 'info' | 'warn',
                 metadata: { banco: a.banco, riskLevel: a.riskLevel },
