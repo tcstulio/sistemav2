@@ -255,4 +255,67 @@ describe('ProjectOverviewTab', () => {
             expect(marginEl?.className).toContain('text-red-500');
         });
     });
+
+    describe('#624 — descrição e orçamento na Visão Geral', () => {
+        it('renders description when project has description', () => {
+            const project = createMockProject({ description: 'Descrição do projeto teste' });
+            render(
+                <ProjectOverviewTab
+                    project={project}
+                    customerName="Empresa Teste"
+                    totalInvoiced={0}
+                    totalSupplierBills={0}
+                    totalExpenses={0}
+                    onNavigate={mockOnNavigate}
+                />
+            );
+            expect(screen.getByText('Descrição')).toBeInTheDocument();
+            expect(screen.getByText('Descrição do projeto teste')).toBeInTheDocument();
+        });
+
+        it('does not render description section when project has no description', () => {
+            const project = createMockProject({ description: undefined });
+            render(
+                <ProjectOverviewTab
+                    project={project}
+                    customerName="Empresa Teste"
+                    totalInvoiced={0}
+                    totalSupplierBills={0}
+                    totalExpenses={0}
+                    onNavigate={mockOnNavigate}
+                />
+            );
+            expect(screen.queryByText('Descrição')).not.toBeInTheDocument();
+        });
+
+        it('renders budget when project has budget_amount > 0', () => {
+            const project = createMockProject({ budget_amount: 50000 });
+            render(
+                <ProjectOverviewTab
+                    project={project}
+                    customerName="Empresa Teste"
+                    totalInvoiced={0}
+                    totalSupplierBills={0}
+                    totalExpenses={0}
+                    onNavigate={mockOnNavigate}
+                />
+            );
+            expect(screen.getByText('Orçamento')).toBeInTheDocument();
+        });
+
+        it('does not render budget section when project has no budget_amount', () => {
+            const project = createMockProject({ budget_amount: undefined });
+            render(
+                <ProjectOverviewTab
+                    project={project}
+                    customerName="Empresa Teste"
+                    totalInvoiced={0}
+                    totalSupplierBills={0}
+                    totalExpenses={0}
+                    onNavigate={mockOnNavigate}
+                />
+            );
+            expect(screen.queryByText('Orçamento')).not.toBeInTheDocument();
+        });
+    });
 });

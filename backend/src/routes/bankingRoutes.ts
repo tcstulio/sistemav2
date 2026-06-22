@@ -4,6 +4,7 @@ import multer from 'multer';
 import { createLogger } from '../utils/logger';
 import { createFileFilter, validateFileUpload, containsExecutableCode, sanitizeFilename } from '../utils/fileValidation';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { dolibarrService } from '../services/dolibarr';
 
 const log = createLogger('Banking');
 const router = Router();
@@ -269,7 +270,7 @@ router.post('/reconcile/suggest', async (req: Request, res: Response) => {
     }
 });
 
-// Save reconciliation
+// Save reconciliation (legacy: requires invoiceId)
 router.post('/reconcile/save', async (req: Request, res: Response) => {
     try {
         const { lineId, invoiceId } = req.body;
@@ -288,6 +289,28 @@ router.post('/reconcile/save', async (req: Request, res: Response) => {
     } catch (error: any) {
         log.error('Save reconciliation error', { error: error.message, stack: error.stack });
         res.status(500).json({ error: error.message || 'Falha ao salvar conciliação' });
+    }
+});
+
+// Toggle reconciliation state of a bank line — persists directly to Dolibarr
+router.post('/reconcile/toggle', async (req: Request, res: Response) => {
+    try {
+        const { accountId, lineId, reconciled } = req.body;
+        const userApiKey = req.headers['dolapikey'] as string;
+
+        if (!accountId || !lineId || typeof reconciled !== 'boolean') {
+            return res.status(400).json({ error: 'accountId, lineId and reconciled (boolean) are required' });
+        }
+
+        const success = await dolibarrService.reconcileBankLine(accountId, lineId, reconciled, userApiKey);
+
+        res.json({
+            success,
+            message: success ? 'Conciliação atualizada com sucesso' : 'Falha ao atualizar conciliação'
+        });
+    } catch (error: any) {
+        log.error('Toggle reconciliation error', { error: error.message, stack: error.stack });
+        res.status(500).json({ error: error.message || 'Falha ao atualizar conciliação' });
     }
 });
 
