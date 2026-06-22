@@ -33,3 +33,19 @@ export const typeToForm = (t: string | number): string => {
 export const formToType = (formVal: string): string => {
     return FORM_TO_CODE.get(formVal) ?? '0';
 };
+
+/**
+ * Mapeamento de tipo de categoria (valor do form) para a AppView de destino.
+ * `null` = sem tela de destino nesta versão (botão desabilitado).
+ * Usa somente valores presentes em AppView.
+ */
+export const CATEGORY_VIEW_MAP: Record<string, string | null> = {
+    product: 'products',
+    supplier: 'suppliers',
+    customer: 'customers',
+    member: 'hr',            // Membros ficam em RH
+    contact: 'customers',    // Contatos são exibidos na mesma tela de clientes (/contacts)
+    bank_account: 'bank_accounts',
+    project: 'projects',
+    warehouse: 'inventory',
+};

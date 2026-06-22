@@ -531,6 +531,70 @@ describe('Dolibarr Mappers', () => {
             const result = mappers.mapSalaryPayment(raw as any);
             expect(result.fk_typepayment).toBeUndefined();
         });
+
+        it('preserves fk_salary when present in raw (#568)', () => {
+            const raw = {
+                id: 20,
+                ref: 'SAL020',
+                fk_user: '',
+                fk_salary: '42',
+                date_payment: '2024-03-01 00:00:00',
+                amount: 4000,
+                salary: 4500,
+                fk_bank: 8,
+            };
+            const result = mappers.mapSalaryPayment(raw as any);
+            expect(result.fk_salary).toBe('42');
+            expect(result.fk_user).toBe('');
+        });
+
+        it('leaves fk_salary undefined when absent in raw (#568)', () => {
+            const raw = { id: 21, ref: 'SAL021', fk_user: '3', amount: 2000, salary: 2200, fk_bank: 9 };
+            const result = mappers.mapSalaryPayment(raw as any);
+            expect(result.fk_salary).toBeUndefined();
+            expect(result.fk_user).toBe('3');
+        });
+
+        it('maps fk_user correctly when present (#568)', () => {
+            const raw = {
+                id: 22,
+                ref: 'SAL022',
+                fk_user: '7',
+                fk_salary: '55',
+                amount: 5000,
+                salary: 5500,
+                fk_bank: 10,
+            };
+            const result = mappers.mapSalaryPayment(raw as any);
+            expect(result.fk_user).toBe('7');
+            expect(result.fk_salary).toBe('55');
+        });
+    });
+
+    describe('Salary mappers', () => {
+        it('maps raw salary record with fk_user (#568)', () => {
+            const raw = {
+                id: 42,
+                ref: 'SAL-2024-01',
+                fk_user: 7,
+                amount: 5000,
+                tms: '2024-01-31 00:00:00',
+            };
+            const result = mappers.mapSalary(raw as any);
+            expect(result.id).toBe('42');
+            expect(result.ref).toBe('SAL-2024-01');
+            expect(result.fk_user).toBe('7');
+            expect(result.amount).toBe(5000);
+        });
+
+        it('handles missing optional fields', () => {
+            const raw = { id: '43', fk_user: '5', amount: 3000 };
+            const result = mappers.mapSalary(raw as any);
+            expect(result.id).toBe('43');
+            expect(result.fk_user).toBe('5');
+            expect(result.ref).toBe('');
+            expect(result.date_modification).toBe(0);
+        });
     });
 
     describe('Line item mappers', () => {

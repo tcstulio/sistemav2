@@ -3,9 +3,11 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { AppView, SupplierInvoice } from '../types';
-import { FileText, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, X, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, RefreshCcw, Landmark, Receipt, User, Upload } from 'lucide-react';
+import { FileText, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, X, Trash2, Loader2, CheckCircle, CreditCard, ArrowDown, RefreshCcw, Landmark, Receipt, User, Upload, Eye } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
+import { config as AppConfig } from '../config';
 import { LinkedObjects } from './common/LinkedObjects';
+import { PdfPreviewModal } from './common/PdfPreviewModal';
 import { PaginationControls } from './common/PaginationControls';
 import { useListControls } from '../hooks/useListControls';
 
@@ -50,6 +52,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
 
     const [filterStatus, setFilterStatus] = useState<'all' | 'unpaid' | 'paid' | 'draft'>('all');
     const [selectedInvoice, setSelectedInvoice] = useState<SupplierInvoice | null>(null);
+    const [previewSupplierInvoice, setPreviewSupplierInvoice] = useState<{ id: string | number; ref: string } | null>(null);
 
     // Pagination State
     const [page, setPage] = useState(0);
@@ -541,6 +544,8 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                 Reabrir
                             </Button>
                         )}
+                        <Button variant="ghost" size="sm" icon={<Eye size={16} />} onClick={() => setPreviewSupplierInvoice({ id: selectedInvoice.id, ref: selectedInvoice.ref })} title="Visualizar PDF" />
+                        <Button variant="ghost" size="sm" icon={<Download size={16} />} onClick={async () => { try { await DolibarrService.downloadDocument('supplier_invoice', selectedInvoice.id); } catch { toast.error('Erro ao baixar PDF'); } }} title="Baixar PDF" />
                         <Button variant="ghost" size="sm" icon={<ExternalLink size={16} />} onClick={() => openInDolibarr(selectedInvoice.id)} title="Abrir no Dolibarr" />
                         {selectedInvoice.statut === '0' && (
                             <ConfirmDeleteButton
@@ -790,18 +795,8 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                             </div>
                                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                 <a
-                                                    href={`${config.apiUrl}/documents/download?module_part=supplier_invoice&original_file=${selectedInvoice.ref}/${doc.name}`}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    onClick={async (e) => {
-                                                        e.preventDefault();
-                                                        // Use service to handle auth headers if needed, otherwise direct link might fail if API key not in query/cookie
-                                                        try {
-                                                            await DolibarrService.downloadDocument(config, 'supplier_invoice', `${selectedInvoice.ref}/${doc.name}`);
-                                                        } catch (err) {
-                                                            notifyError('Baixar documento', err);
-                                                        }
-                                                    }}
+                                                    href={`${AppConfig.API_BASE_URL}/api/documents/supplier_invoice/${selectedInvoice.id}/pdf`}
+                                                    download={doc.name}
                                                     className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg"
                                                     title="Baixar"
                                                 >
@@ -849,6 +844,15 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                     onCloseDetail={() => setSelectedInvoice(null)}
                 />
             </div>
+            {/* PDF Preview Modal */}
+            <PdfPreviewModal
+                entityType="supplier_invoice"
+                entityId={previewSupplierInvoice?.id ?? ''}
+                title={previewSupplierInvoice?.ref}
+                isOpen={!!previewSupplierInvoice}
+                onClose={() => setPreviewSupplierInvoice(null)}
+            />
+
             {/* Receipt Scanner */}
             {
                 isScannerOpen && (

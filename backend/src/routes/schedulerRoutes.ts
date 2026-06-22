@@ -283,6 +283,21 @@ router.get('/templates', (req: Request, res: Response) => {
     }
 });
 
+router.put('/templates/:id', (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { name, content, category, channel, subject } = req.body;
+        const updated = schedulerService.updateTemplate(id, { name, content, category, channel, subject });
+        if (updated) {
+            res.json({ success: true, data: updated });
+        } else {
+            res.status(404).json({ error: 'Template not found' });
+        }
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 router.delete('/templates/:id', (req: Request, res: Response) => {
     try {
         const { id } = req.params;

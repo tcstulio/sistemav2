@@ -10,7 +10,7 @@ import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { toast } from 'sonner';
 import { logger } from '../utils/logger';
-import { typeToForm, formToType, CATEGORY_TYPE_OPTIONS } from '../utils/categoryType';
+import { typeToForm, formToType, CATEGORY_TYPE_OPTIONS, CATEGORY_VIEW_MAP } from '../utils/categoryType';
 
 const log = logger.child('CategoryList');
 
@@ -28,9 +28,14 @@ interface CategoryListProps {
 
 const getTypeBadge = (type: string | number) => {
     const t = String(type);
-    if (t === '0' || t === 'product') return <span className="flex items-center gap-1 text-[10px] uppercase font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded"><Box size={10} /> Produto</span>;
-    if (t === '2' || t === 'customer') return <span className="flex items-center gap-1 text-[10px] uppercase font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded"><User size={10} /> Cliente</span>;
-    if (t === '1' || t === 'supplier') return <span className="flex items-center gap-1 text-[10px] uppercase font-bold bg-orange-100 text-orange-700 px-2 py-0.5 rounded"><User size={10} /> Fornecedor</span>;
+    if (t === '0' || t === 'product')      return <span className="flex items-center gap-1 text-[10px] uppercase font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded"><Box size={10} /> Produto</span>;
+    if (t === '1' || t === 'supplier')     return <span className="flex items-center gap-1 text-[10px] uppercase font-bold bg-orange-100 text-orange-700 px-2 py-0.5 rounded"><User size={10} /> Fornecedor</span>;
+    if (t === '2' || t === 'customer')     return <span className="flex items-center gap-1 text-[10px] uppercase font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded"><User size={10} /> Cliente</span>;
+    if (t === '3' || t === 'member')       return <span className="flex items-center gap-1 text-[10px] uppercase font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded"><User size={10} /> Membro</span>;
+    if (t === '4' || t === 'contact')      return <span className="flex items-center gap-1 text-[10px] uppercase font-bold bg-teal-100 text-teal-700 px-2 py-0.5 rounded"><User size={10} /> Contato</span>;
+    if (t === '5' || t === 'bank_account') return <span className="text-[10px] uppercase font-bold bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded">Conta</span>;
+    if (t === '6' || t === 'project')      return <span className="text-[10px] uppercase font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">Projeto</span>;
+    if (t === '7' || t === 'warehouse')    return <span className="text-[10px] uppercase font-bold bg-slate-200 text-slate-700 px-2 py-0.5 rounded">Armazém</span>;
     return <span className="text-[10px] uppercase font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded">Outro ({t})</span>;
 };
 
@@ -81,7 +86,7 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
     const { data: categoriesData, isLoading } = useCategories(config);
     const categories = categoriesData || [];
 
-    const [filterType, setFilterType] = useState<'all' | 'product' | 'customer' | 'supplier'>('all');
+    const [filterType, setFilterType] = useState<'all' | 'product' | 'customer' | 'supplier' | 'member' | 'contact' | 'bank_account' | 'project' | 'warehouse'>('all');
     const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
 
     // Create State
@@ -100,14 +105,13 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
 
     // Pré-filtro por tipo (tabs); busca + ordenação ficam no useListControls (#121).
     const baseCategories = useMemo(() => {
+        if (filterType === 'all') return categories;
+        // Resolve o código numérico esperado para o tipo selecionado (ex: 'project' → '6')
+        const expectedCode = formToType(filterType);
         return categories.filter(c => {
-            // Dolibarr Type Mapping: 0=Product, 1=Supplier, 2=Customer, 3=Member, 4=Contact, 5=Account, 6=Project
-            let matchesType = true;
-            if (filterType === 'product') matchesType = String(c.type) === '0' || String(c.type) === 'product';
-            if (filterType === 'customer') matchesType = String(c.type) === '2' || String(c.type) === 'customer';
-            if (filterType === 'supplier') matchesType = String(c.type) === '1' || String(c.type) === 'supplier';
-
-            return matchesType;
+            const ct = String(c.type);
+            // aceita tanto o código numérico quanto o valor textual do form
+            return ct === expectedCode || ct === filterType;
         });
     }, [categories, filterType]);
 
@@ -341,6 +345,11 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                             <Tab value="product">Produtos</Tab>
                             <Tab value="customer">Clientes</Tab>
                             <Tab value="supplier">Fornecedores</Tab>
+                            <Tab value="member">Membros</Tab>
+                            <Tab value="contact">Contatos</Tab>
+                            <Tab value="project">Projetos</Tab>
+                            <Tab value="warehouse">Armazéns</Tab>
+                            <Tab value="bank_account">Contas</Tab>
                         </Tabs>
                     }
                 />
@@ -418,20 +427,29 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
 
                                     <div className="space-y-4">
                                         <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Ações Relacionadas</h4>
-                                        <Button
-                                            fullWidth
-                                            variant="outline"
-                                            className="justify-between"
-                                            iconRight={<ArrowUpRight size={16} />}
-                                            onClick={() => {
-                                                const t = String(selectedCategory.type);
-                                                if ((t === '0' || t === 'product') && onNavigate) onNavigate('products', '');
-                                                if ((t === '2' || t === 'customer') && onNavigate) onNavigate('customers', '');
-                                                if ((t === '1' || t === 'supplier') && onNavigate) onNavigate('suppliers', '');
-                                            }}
-                                        >
-                                            Ver itens desta categoria
-                                        </Button>
+                                        {(() => {
+                                            const formType = typeToForm(selectedCategory.type);
+                                            const targetView = CATEGORY_VIEW_MAP[formType] ?? null;
+                                            return (
+                                                <Button
+                                                    fullWidth
+                                                    variant="outline"
+                                                    className="justify-between"
+                                                    iconRight={<ArrowUpRight size={16} />}
+                                                    disabled={!targetView || !onNavigate}
+                                                    title={!targetView ? 'Navegação para este tipo de categoria não está disponível nesta versão.' : undefined}
+                                                    onClick={() => {
+                                                        if (targetView && onNavigate) {
+                                                            onNavigate(targetView as AppView, String(selectedCategory.id));
+                                                        }
+                                                    }}
+                                                >
+                                                    {targetView
+                                                        ? 'Ver itens desta categoria'
+                                                        : 'Ver itens (tipo sem tela dedicada)'}
+                                                </Button>
+                                            );
+                                        })()}
                                     </div>
 
                                     <div className="pt-6 border-t border-slate-200 dark:border-slate-800">

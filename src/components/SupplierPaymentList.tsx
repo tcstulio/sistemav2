@@ -11,7 +11,7 @@ import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, EmptyState, ListToolbar } from './ui';
+import { PageHeader, MasterDetailLayout, Card, EmptyState, ListToolbar, Spinner, ErrorState } from './ui';
 
 // Safety-net: garante uma altura mínima para a lista virtualizada mesmo quando o
 // AutoSizer ainda reporta height = 0 (cadeia flex sem altura resolvida). Evita que
@@ -40,7 +40,13 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
     const { config } = useDolibarr();
 
     // Data Hooks
-    const { data: paymentsData } = useSupplierPayments(config);
+    const {
+        data: paymentsData,
+        isLoading: paymentsLoading,
+        isError,
+        error: paymentsError,
+        refetch,
+    } = useSupplierPayments(config);
     const rawPayments = paymentsData || [];
 
     const { data: invoicesData } = useSupplierInvoices(config);
@@ -128,7 +134,35 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
     }, [selectedPayment, bankAccounts, users, links, invoices]);
 
     // Guard após todos os hooks (evita "rendered fewer hooks").
-    if (!config) return <div className="p-8 text-center flex items-center justify-center gap-2 text-slate-500"><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-500"></div> Carregando...</div>;
+    if (!config) {
+        return (
+            <div className="p-8 text-center flex items-center justify-center gap-2 text-slate-500">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-500" /> Carregando...
+            </div>
+        );
+    }
+
+    // Primeira carga dos pagamentos (sem dados ainda) -> spinner centralizado.
+    if (paymentsLoading && !paymentsData) {
+        return (
+            <div className="flex flex-col h-full items-center justify-center gap-3 p-8 bg-slate-50 dark:bg-slate-950">
+                <Spinner size="lg" />
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Carregando pagamentos de fornecedor…</p>
+            </div>
+        );
+    }
+
+    // Erro na query -> card de erro amigável + botão de retry.
+    if (isError) {
+        const errorMessage =
+            (paymentsError instanceof Error ? paymentsError.message : (paymentsError ? String(paymentsError) : '')) ||
+            'Não foi possível carregar os pagamentos de fornecedor.';
+        return (
+            <div className="flex flex-col h-full items-center justify-center p-8 bg-slate-50 dark:bg-slate-950">
+                <ErrorState message={errorMessage} onRetry={() => refetch()} />
+            </div>
+        );
+    }
 
     return (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
@@ -197,6 +231,11 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
                                                                 </div>
                                                                 <div className="min-w-0">
                                                                     <h4 className="font-bold text-slate-800 dark:text-white text-sm truncate">{p.ref}</h4>
+                                                                    {p.soc_name && (
+                                                                        <div className="flex items-center gap-1 text-xs text-slate-600 dark:text-slate-400 font-medium truncate mt-0.5">
+                                                                            <User size={10} /> {p.soc_name}
+                                                                        </div>
+                                                                    )}
                                                                     <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
                                                                         <Calendar size={10} /> {formatDateOnly(p.date_payment)}
                                                                     </div>
@@ -240,6 +279,21 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
 
                             <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-50 dark:bg-slate-950/50">
                                 <div className="max-w-3xl mx-auto space-y-6">
+
+                                    {/* Supplier Context Card */}
+                                    {selectedPayment.soc_name && (
+                                        <Card>
+                                            <div className="flex items-center gap-3">
+                                                <div className="p-2 rounded-full bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 shrink-0">
+                                                    <User size={16} />
+                                                </div>
+                                                <div>
+                                                    <div className="text-xs text-slate-500">Fornecedor</div>
+                                                    <div className="font-semibold text-slate-800 dark:text-white text-sm">{selectedPayment.soc_name}</div>
+                                                </div>
+                                            </div>
+                                        </Card>
+                                    )}
 
                                     {/* Allocations Card */}
                                     <Card header={

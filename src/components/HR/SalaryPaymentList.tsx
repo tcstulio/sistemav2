@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { AppView, SalaryPayment } from '../../types';
 import { Calendar, User, Wallet, DollarSign, CreditCard, Hash, Copy } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
-import { useSalaryPayments, useUsers, useBankAccounts } from '../../hooks/dolibarr';
+import { useSalaryPayments, useSalaries, useUsers, useBankAccounts } from '../../hooks/dolibarr';
 import { useListControls } from '../../hooks/useListControls';
 import { formatDateOnly } from '../../utils/dateUtils';
 import { formatCurrency, formatDate } from '../../utils/formatUtils';
@@ -23,6 +23,7 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
 
     // Data Hooks
     const { data: salaryPayments = [] } = useSalaryPayments(config);
+    const { data: salaries = [] } = useSalaries(config);
     const { data: users = [] } = useUsers(config);
     const { data: bankAccounts = [] } = useBankAccounts(config);
 
@@ -123,9 +124,16 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
 
     // --- Detail Panel ---
     const renderDetail = selectedPayment ? (() => {
-        const employee = selectedPayment.fk_user
+        // Resolve employee: prefer fk_user direct lookup; fall back via fk_salary → Salary.fk_user
+        let employee = selectedPayment.fk_user
             ? users.find(u => String(u.id) === String(selectedPayment.fk_user))
-            : null;
+            : undefined;
+        if (!employee && selectedPayment.fk_salary) {
+            const salaryRecord = salaries.find(s => String(s.id) === String(selectedPayment.fk_salary));
+            if (salaryRecord?.fk_user) {
+                employee = users.find(u => String(u.id) === String(salaryRecord.fk_user));
+            }
+        }
 
         const bankAccount = selectedPayment.fk_bank
             ? bankAccounts.find(b => String(b.id) === String(selectedPayment.fk_bank))
@@ -177,7 +185,7 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
                                     </div>
                                 </div>
                             ) : (
-                                <div className="text-slate-500 italic">Colaborador não encontrado (ID: {selectedPayment.fk_user})</div>
+                                <div className="text-slate-500 italic">Colaborador não vinculado a este pagamento</div>
                             )}
                         </Card>
 
