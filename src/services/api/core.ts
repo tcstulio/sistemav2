@@ -544,32 +544,36 @@ export const linkObjectToCategory = async (config: DolibarrConfig, categoryId: s
 };
 
 // -- Documents --
-export const downloadDocument = async (config: DolibarrConfig, modulePart: string, originalRef: string) => {
-    // V1 API for documents: /documents/download?module_part={part}&original_file={file}
-    // original_file needs to be relative path, usually derived from ref.
-    // E.g. invoices: 'FA2310-0001/FA2310-0001.pdf'
-    // This helper logic was likely complex in original service.
 
-    // Fallback simple implementation assuming exact path passing or ref guessing
-    // If originalRef is "FA2310-0001", file is likely "FA2310-0001/FA2310-0001.pdf" (standard structure)
-    // But check if originalRef is already the path.
+/**
+ * Busca o PDF de um documento via proxy de backend e retorna um Blob.
+ * Rota: GET /api/documents/:entityType/:entityId/pdf
+ */
+export const getDocumentBlob = async (entityType: string, entityId: string | number): Promise<Blob> => {
+    const url = `${AppConfig.API_BASE_URL}/api/documents/${entityType}/${entityId}/pdf`;
+    const response = await fetch(url, { credentials: 'include' });
 
-    const url = `${sanitizeUrl(config.apiUrl)}/documents/download?module_part=${modulePart}&original_file=${originalRef}`;
+    if (!response.ok || !response.headers.get('Content-Type')?.includes('application/pdf')) {
+        throw new Error('PDF não disponível para este documento');
+    }
 
-    // Note: This returns a binary/blob, need to handle it.
-    const response = await fetch(url, { headers: getHeaders(config.apiKey) });
-    if (!response.ok) throw new Error('Falha ao baixar documento');
+    return response.blob();
+};
 
-    const blob = await response.blob();
-    // Create link to download
-    const downloadUrl = window.URL.createObjectURL(blob);
+/**
+ * Baixa o PDF de um documento disparando um download no navegador.
+ * Assinatura nova: (entityType, entityId) — usa o proxy de backend.
+ */
+export const downloadDocument = async (entityType: string, entityId: string | number): Promise<void> => {
+    const blob = await getDocumentBlob(entityType, entityId);
+    const downloadUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = downloadUrl;
-    a.download = originalRef.split('/').pop() || 'document.pdf';
+    a.download = `${entityType}_${entityId}.pdf`;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 100);
+    setTimeout(() => URL.revokeObjectURL(downloadUrl), 100);
 };
 
 export const fetchDocuments = async (config: DolibarrConfig, modulePart: string, id: string, ref: string) => {
