@@ -43,7 +43,7 @@ export const ChatConversation: React.FC = () => {
     }
 
     return (
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full min-h-0 flex-1">
             <ChatInterface
                 elementId={id}
                 elementType={type}
