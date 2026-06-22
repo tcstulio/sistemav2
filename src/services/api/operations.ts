@@ -28,20 +28,27 @@ export const updateTicket = async (config: DolibarrConfig, id: string, data: Par
     });
 };
 
-export const addTicketMessage = async (config: DolibarrConfig, ticketId: string, message: string) => {
-    // There isn't a direct "add message" endpoint usually, passing it as an update or specific endpoint
-    // Standard Dolibarr API: POST /tickets/{id}/newMessage might exist or PUT /tickets/{id}
-    // Let's assume a custom or standard pattern. Often it is "newMessage".
-    // Checking previous codebase knowledge... standard is often just updating the ticket or specific endpoint.
-    // If not sure, we can try /tickets/{id}/messages
-    // Based on TicketList usage, it expects a promise.
-    const url = `${sanitizeUrl(config.apiUrl)}/tickets/${ticketId}/messages`; // Hypothetical standard
-    // Fallback: PUT to ticket with specific note field?
-    // Let's uset standard POST for new message if supported.
+/**
+ * Add a message/reply to an existing ticket.
+ *
+ * Dolibarr REST: POST /tickets/newmessage
+ * Body fields (mandatory): track_id, message
+ * The ticket is identified by track_id in the body (NOT by path param).
+ * Reference: ticket/class/api_tickets.class.php:346 (postNewMessage)
+ *
+ * @param trackId - The ticket's track_id string (e.g. "TIC-0000001-xxxxxxxx").
+ *                  If the ticket has no track_id, the call is rejected (null/undefined)
+ *                  to avoid silently sending an invalid request.
+ */
+export const addTicketMessage = async (config: DolibarrConfig, trackId: string | undefined | null, message: string) => {
+    if (!trackId) {
+        throw new Error('addTicketMessage: track_id é obrigatório. O chamado não possui track_id.');
+    }
+    const url = `${sanitizeUrl(config.apiUrl)}/tickets/newmessage`;
     return request(url, {
         method: 'POST',
         headers: getHeaders(config.apiKey),
-        body: JSON.stringify({ message })
+        body: JSON.stringify({ track_id: trackId, message })
     });
 };
 
@@ -51,6 +58,26 @@ export const createIntervention = async (config: DolibarrConfig, data: Record<st
         method: 'POST',
         headers: getHeaders(config.apiKey),
         body: JSON.stringify(data)
+    });
+};
+
+export interface InterventionUpdatePayload {
+    socid?: string;
+    date?: string | number;
+    fk_project?: string;
+    description?: string;
+}
+
+export const updateIntervention = async (
+    config: DolibarrConfig,
+    id: string,
+    payload: InterventionUpdatePayload
+) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/interventions/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(payload)
     });
 };
 
