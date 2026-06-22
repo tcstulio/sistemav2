@@ -53,6 +53,8 @@ export interface SupplierPayment {
     mode_id?: number;
     user_author_id?: number;
     date_modification?: number;
+    socid?: string;
+    soc_name?: string; // Joined supplier name
 }
 
 export interface PaymentInvoiceLink {
