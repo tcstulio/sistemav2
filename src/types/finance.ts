@@ -102,6 +102,12 @@ export interface VATPayment {
     date_payment: number;
     amount: number;
     fk_bank: string;
+    /** Número do comprovante/documento de pagamento (llx_tva_payment.num_payment) */
+    num_payment?: string;
+    /** Período de início da apuração do IVA (llx_tva.date_debut via raw) */
+    periodo_inicio?: number;
+    /** Período de fim da apuração do IVA (llx_tva.date_fin via raw) */
+    periodo_fim?: number;
     date_modification?: number;
 }
 
@@ -128,6 +134,14 @@ export interface SocialContributionPayment {
     date_payment: number;
     amount: number;
     fk_bank: string;
+    /** Número do comprovante/documento de pagamento (llx_paiementcharge.num_payment) */
+    num_payment?: string;
+    /** Rótulo/tipo do encargo social (llx_chargesociales.libelle via raw) */
+    label_origem?: string;
+    /** Período de início do encargo social (llx_chargesociales.date_debut via raw) */
+    periodo_inicio?: number;
+    /** Período de fim do encargo social (llx_chargesociales.date_fin via raw) */
+    periodo_fim?: number;
     date_modification?: number;
 }
 
