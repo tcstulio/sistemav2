@@ -78,6 +78,13 @@ export const fetchCustomers = async (config: DolibarrConfig, lastModified: numbe
         town: d.town,
         email: d.email,
         phone: d.phone,
+        phone_mobile: d.phone_mobile,
+        fax: d.fax,
+        url: d.url,
+        idprof1: d.idprof1,
+        idprof2: d.idprof2,
+        typent_id: d.typent_id != null ? String(d.typent_id) : undefined,
+        socialnetworks: d.socialnetworks ?? undefined,
         code_client: d.code_client,
         client: String(d.client),
         fournisseur: String(d.fournisseur),
@@ -87,6 +94,7 @@ export const fetchCustomers = async (config: DolibarrConfig, lastModified: numbe
         tva_intra: d.tva_intra,
         date_creation: Number(d.date_creation),
         date_modification: Number(d.date_modification),
+        array_options: d.array_options ?? undefined,
     }));
 };
 
@@ -95,11 +103,20 @@ export const fetchSuppliers = async (config: DolibarrConfig): Promise<ThirdParty
     return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         name: d.name,
+        name_alias: d.name_alias,
         address: d.address,
         zip: d.zip,
         town: d.town,
         email: d.email,
         phone: d.phone,
+        phone_mobile: d.phone_mobile,
+        fax: d.fax,
+        url: d.url,
+        idprof1: d.idprof1,
+        idprof2: d.idprof2,
+        typent_id: d.typent_id != null ? String(d.typent_id) : undefined,
+        socialnetworks: d.socialnetworks ?? undefined,
+        code_client: d.code_client,
         code_fournisseur: d.code_fournisseur,
         client: String(d.client),
         fournisseur: String(d.fournisseur),
@@ -109,6 +126,7 @@ export const fetchSuppliers = async (config: DolibarrConfig): Promise<ThirdParty
         tva_intra: d.tva_intra,
         date_creation: Number(d.date_creation),
         date_modification: Number(d.date_modification),
+        array_options: d.array_options ?? undefined,
     }));
 };
 
