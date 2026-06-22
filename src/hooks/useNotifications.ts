@@ -23,6 +23,8 @@ function backendToAppNotification(raw: any): AppNotification {
         linkTo: parseLinkTo(raw.linkTo || raw.link_to),
         senderName: raw.senderName,
         channels: raw.channels || raw.deliveredTo,
+        recipient: raw.recipient,
+        scope: raw.scope,
     };
 }
 

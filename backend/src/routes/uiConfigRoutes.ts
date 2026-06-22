@@ -2,6 +2,7 @@
  * UI Config Routes — leitura por qualquer usuário logado; escrita só admin.
  * GET  /api/ui-config  -> config de UI da organização (branding/tema)
  * PUT  /api/ui-config  -> admin atualiza o padrão da organização
+ * GET  /api/ui-config/admin/users-missing-phone -> diagnóstico de usuários sem telefone (admin)
  */
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
@@ -9,6 +10,8 @@ import { uiConfigService } from '../services/uiConfigService';
 import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
 import { adminAuditService } from '../services/adminAuditService';
 import { createLogger } from '../utils/logger';
+import axios from 'axios';
+import { config as envConfig } from '../config/env';
 
 const log = createLogger('UiConfig');
 const router = Router();
@@ -89,6 +92,59 @@ router.put('/', requireDolibarrAdmin, (req: Request, res: Response) => {
         res.json(updated);
     } catch (e: any) {
         res.status(400).json({ error: e?.message || 'Dados inválidos' });
+    }
+});
+
+/**
+ * GET /api/ui-config/admin/users-missing-phone
+ * Admin-only: lista todos os usuários ativos do Dolibarr que não têm phone_mobile nem user_mobile.
+ * Útil para diagnosticar quem não receberá notificações via WhatsApp.
+ * Pagina automaticamente para não fazer N+1 caro.
+ */
+router.get('/admin/users-missing-phone', requireDolibarrAdmin, async (req: Request, res: Response) => {
+    try {
+        // dolibarrUrl já inclui /api/index.php (ex.: https://sistema.coolgroove.com.br/api/index.php)
+        const baseUrl = (envConfig.dolibarrUrl || '').replace(/\/$/, '') + '/';
+        const doliKey = envConfig.dolibarrKey;
+        if (!baseUrl || !doliKey) {
+            return res.status(503).json({ error: 'Dolibarr não configurado' });
+        }
+
+        const PAGE_SIZE = 100;
+        let page = 0;
+        let allUsers: any[] = [];
+        let keepGoing = true;
+
+        while (keepGoing) {
+            const response = await axios.get(`${baseUrl}users`, {
+                headers: { DOLAPIKEY: doliKey },
+                params: { limit: PAGE_SIZE, page, sqlfilters: '(t.statut:=:1)' },
+                validateStatus: (s) => s === 200,
+            });
+            const batch: any[] = Array.isArray(response.data) ? response.data : [];
+            allUsers = allUsers.concat(batch);
+            keepGoing = batch.length === PAGE_SIZE;
+            page++;
+            // Proteção contra loops infinitos em instâncias Dolibarr muito grandes
+            if (page > 50) break;
+        }
+
+        const missing = allUsers
+            .filter(u => {
+                const mobile = (u.phone_mobile || u.user_mobile || '').toString().trim();
+                return !mobile;
+            })
+            .map(u => ({
+                id: u.id,
+                login: u.login,
+                name: [u.firstname, u.lastname].filter(Boolean).join(' ') || u.login,
+                email: u.email || null,
+            }));
+
+        res.json({ total: allUsers.length, missingCount: missing.length, users: missing });
+    } catch (e: any) {
+        log.error('GET /admin/users-missing-phone error', e.message);
+        res.status(500).json({ error: e?.message || 'Erro ao buscar usuários' });
     }
 });
 
