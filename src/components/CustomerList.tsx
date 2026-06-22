@@ -50,7 +50,7 @@ const CustomerRow: React.FC<{
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${customer.client === '1' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
-                        {customer.client === '1' ? 'Cliente' : 'Prospect'}
+                        {customer.client === '1' ? 'Cliente' : 'Prospecto'}
                     </span>
                     <ConfirmDeleteButton onDelete={onDelete} onDeleted={onDeleted} itemLabel={customer.name} />
                 </div>
@@ -418,10 +418,10 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
 
     const renderHeader = (
         <PageHeader
-            title="Clientes & Prospects"
+            title="Clientes & Prospectos"
             subtitle="Gerencie seu relacionamento comercial"
             actions={
-                <div className="flex items-center gap-2">
+                <div className="flex items-center flex-wrap gap-2">
                     <ListToolbar controls={controls} searchPlaceholder="Buscar cliente..." />
                     <Button icon={<UserPlus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                         Novo
@@ -432,7 +432,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                 <Tabs value={filterType} onChange={(v) => setFilterType(v as any)}>
                     <Tab value="all">Todos</Tab>
                     <Tab value="customer">Clientes</Tab>
-                    <Tab value="prospect">Prospects</Tab>
+                    <Tab value="prospect">Prospecto</Tab>
                 </Tabs>
             }
         />
@@ -808,7 +808,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                             onChange={e => setCreateForm({ ...createForm, client: e.target.value as any })}
                         >
                             <option value="1">Cliente</option>
-                            <option value="2">Prospect</option>
+                            <option value="2">Prospecto</option>
                             <option value="3">Ambos</option>
                         </select>
                     </div>
