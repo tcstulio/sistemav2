@@ -91,6 +91,7 @@ vi.mock('../../hooks/dolibarr', () => ({
     useInvoices: vi.fn(() => ({ data: [] })),
     useOrders: vi.fn(() => ({ data: [] })),
     useTickets: vi.fn(() => ({ data: [] })),
+    useProjects: vi.fn(() => ({ data: [] })),
 }));
 
 // Capture callback props from sub-components so we can invoke them in tests

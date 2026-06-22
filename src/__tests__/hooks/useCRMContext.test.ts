@@ -106,4 +106,40 @@ describe('useCRMContext', () => {
         const { result } = renderHook(() => useCRMContext(conversation, customers, invoices, [], []));
         expect(result.current?.invoices).toHaveLength(5);
     });
+
+    it('resolves customer by customer_id when set on conversation', () => {
+        const conversation = { ...createMockConversation('Unknown Name', '5500000000000'), customer_id: '42' };
+        const customers = [
+            createMockCustomer('1', 'Other Customer', '5511111111111'),
+            createMockCustomer('42', 'Linked Customer', '5522222222222'),
+        ];
+        const { result } = renderHook(() => useCRMContext(conversation, customers, [], [], []));
+        expect(result.current).not.toBeNull();
+        expect(result.current?.customer.id).toBe('42');
+    });
+
+    it('returns related projects for matched customer', () => {
+        const conversation = createMockConversation('John Doe', '5511999999999');
+        const customers = [createMockCustomer('1', 'John Doe')];
+        const Project = { id: 'p1', ref: 'PRJ-001', title: 'Test Project', socid: '1', statut: '1' as const, progress: 50 };
+        const { result } = renderHook(() =>
+            useCRMContext(conversation, customers, [], [], [], [Project])
+        );
+        expect(result.current?.projects).toHaveLength(1);
+        expect(result.current?.projects?.[0].ref).toBe('PRJ-001');
+    });
+
+    it('excludes closed projects from context', () => {
+        const conversation = createMockConversation('John Doe', '5511999999999');
+        const customers = [createMockCustomer('1', 'John Doe')];
+        const projects = [
+            { id: 'p1', ref: 'PRJ-001', title: 'Active Project', socid: '1', statut: '1' as const, progress: 50 },
+            { id: 'p2', ref: 'PRJ-002', title: 'Closed Project', socid: '1', statut: '2' as const, progress: 100 },
+        ];
+        const { result } = renderHook(() =>
+            useCRMContext(conversation, customers, [], [], [], projects)
+        );
+        expect(result.current?.projects).toHaveLength(1);
+        expect(result.current?.projects?.[0].ref).toBe('PRJ-001');
+    });
 });
