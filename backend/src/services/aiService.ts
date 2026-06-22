@@ -104,7 +104,7 @@ function getContextWindow(model?: string): number {
 }
 
 interface AIProvider {
-    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<GenerateReplyResult>;
+    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult>;
     analyzeSystem(query: string, fileContext: string, options?: { provider?: string, model?: string }): Promise<string>;
     analyzeSentiment(text: string): Promise<{ score: number; label: string }>;
     extractCustomerInfo(text: string): Promise<any>;
@@ -141,7 +141,7 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<GenerateReplyResult> {
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult> {
         if (!this.ai) {
             log.error('Google AI not configured.');
             throw new Error("Google AI not configured.");
@@ -788,6 +788,7 @@ class GoogleProvider implements AIProvider {
 // --- Local LLM Provider (OpenAI Compatible) ---
 
 import { isQuotaError, markQuotaExhausted, clearQuotaExhausted } from './llmQuotaState';
+import { llmCallLogService } from './llmCallLogService';
 
 export class LocalProvider implements AIProvider {
     private baseUrl: string;
@@ -836,17 +837,27 @@ export class LocalProvider implements AIProvider {
     // configurado, refaz a MESMA chamada no fallback (MiniMax M3). Lança se ambos falharem.
     // Efeito colateral: SUCESSO limpa o sinal global de cota; FALHA por cota (429/1310/402/...)
     // o marca — para o TaskRunner segurar o dispatch e retomar quando a API voltar.
-    private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string }): Promise<any> {
+    // Código de erro curto (status HTTP ou code de rede) p/ o log durável (#710).
+    private errCode(err: any): string {
+        return err?.response?.status ? String(err.response.status) : (err?.code || 'error');
+    }
+
+    private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string; origin?: string }): Promise<any> {
         const buildBody = (model: string) => ({ model, messages, temperature });
+        const primaryModel = options?.model || this.modelName;
+        const origin = options?.origin;
+        const t0 = Date.now();
         let primaryErr: any;
         try {
-            const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(options?.model || this.modelName), { headers: this.getHeaders(), timeout: 180000 });
+            const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(primaryModel), { headers: this.getHeaders(), timeout: 180000 });
             clearQuotaExhausted(); // sucesso -> cota OK
+            llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: true, latencyMs: Date.now() - t0, origin, totalTokens: r.data?.usage?.total_tokens });
             return r;
         } catch (err: any) {
             primaryErr = err;
             if (!this.fallbackConfig || !this.isRetryableError(err)) {
                 if (isQuotaError(this.errDetail(err))) markQuotaExhausted(`primário ${this.modelName}: ${this.errDetail(err)}`);
+                llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: false, latencyMs: Date.now() - t0, origin, errorCode: this.errCode(err), errorDetail: this.errDetail(err).slice(0, 300) });
                 throw err;
             }
             const reason = err?.response?.status || err?.code || err?.message || 'erro';
@@ -855,16 +866,19 @@ export class LocalProvider implements AIProvider {
         // Fallback (MiniMax M3)
         const fbHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
         if (this.fallbackConfig!.apiKey) fbHeaders['Authorization'] = `Bearer ${this.fallbackConfig!.apiKey}`;
+        const tFb = Date.now();
         try {
             const resp = await axios.post(`${this.fallbackConfig!.baseUrl}/chat/completions`, buildBody(this.fallbackConfig!.model), { headers: fbHeaders, timeout: 180000 });
             log.info(`LLM fallback OK: ${this.fallbackConfig!.model} respondeu no lugar de ${this.modelName}`);
             clearQuotaExhausted(); // fallback respondeu -> ainda há cota (no MiniMax)
+            llmCallLogService.record({ model: this.fallbackConfig!.model, primaryModel, fellBack: true, ok: true, latencyMs: Date.now() - tFb, origin, errorDetail: `primário ${primaryModel}: ${this.errDetail(primaryErr)}`.slice(0, 300), totalTokens: resp.data?.usage?.total_tokens });
             return resp;
         } catch (fbErr: any) {
             // Ambos falharam: se qualquer um foi erro de cota, sinaliza esgotamento GLOBAL.
             if (isQuotaError(this.errDetail(fbErr)) || isQuotaError(this.errDetail(primaryErr))) {
                 markQuotaExhausted(`primário+fallback esgotados — ${this.errDetail(fbErr)}`);
             }
+            llmCallLogService.record({ model: this.fallbackConfig!.model, primaryModel, fellBack: true, ok: false, latencyMs: Date.now() - tFb, origin, errorCode: this.errCode(fbErr), errorDetail: this.errDetail(fbErr).slice(0, 300) });
             throw fbErr;
         }
     }
@@ -901,7 +915,7 @@ export class LocalProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<GenerateReplyResult> {
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult> {
         const toolsPrompt = TOOLS_PROMPT;
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
@@ -1424,12 +1438,12 @@ export const aiService = {
             const mm = getMultimodalProvider();
             if (mm) {
                 log.info(`generateReply: imagem presente e provider '${providerName}' sem visão -> roteando para Google.`);
-                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel });
+                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName });
             }
             log.warn(`generateReply: imagem presente mas nenhum provider com visão disponível (sem googleApiKey) -> seguindo com '${providerName}'.`);
         }
 
-        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName });
+        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName });
     },
 
     analyzeSystem: async (query: string, rootPath: string = '../src') => {

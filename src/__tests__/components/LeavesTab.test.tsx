@@ -173,4 +173,42 @@ describe('LeavesTab', () => {
 
         await waitFor(() => expect(mockNotifyError).toHaveBeenCalledWith('Recusar solicitação', expect.any(Error)));
     });
+
+    it('chama onRefresh após aprovar licença (#622)', async () => {
+        const onRefresh = vi.fn();
+        render(<LeavesTab {...defaultProps} leaveRequests={[pendingLeave]} onRefresh={onRefresh} />);
+        fireEvent.click(screen.getByTitle('Aprovar'));
+
+        await waitFor(() => expect(approveLeaveRequest).toHaveBeenCalledWith(mockConfig, '20'));
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('chama onRefresh após recusar licença (#622)', async () => {
+        const onRefresh = vi.fn();
+        render(<LeavesTab {...defaultProps} leaveRequests={[pendingLeave]} onRefresh={onRefresh} />);
+        fireEvent.click(screen.getByTitle('Recusar'));
+
+        await waitFor(() => expect(refuseLeaveRequest).toHaveBeenCalledWith(mockConfig, '20'));
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('chama onRefresh após enviar para aprovação (#622)', async () => {
+        const onRefresh = vi.fn();
+        render(<LeavesTab {...defaultProps} leaveRequests={[draftLeave]} onRefresh={onRefresh} />);
+        fireEvent.click(screen.getByTitle('Enviar para Aprovação'));
+
+        await waitFor(() => expect(validateLeaveRequest).toHaveBeenCalledWith(mockConfig, '10'));
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('não chama onRefresh se confirmação for cancelada (#622)', async () => {
+        confirmState.result = false;
+        const onRefresh = vi.fn();
+        render(<LeavesTab {...defaultProps} leaveRequests={[pendingLeave]} onRefresh={onRefresh} />);
+        fireEvent.click(screen.getByTitle('Aprovar'));
+
+        await waitFor(() => expect(mockConfirm).toHaveBeenCalled());
+        expect(approveLeaveRequest).not.toHaveBeenCalled();
+        expect(onRefresh).not.toHaveBeenCalled();
+    });
 });
