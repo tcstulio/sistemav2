@@ -3,7 +3,7 @@ import { DolibarrConfig, AppView, Task } from '../types';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { dbService } from '../services/dbService';
 import { mapTask } from '../hooks/dolibarr/mappers';
-import { ChevronLeft, Calendar as CalendarIcon, Clock, User, FolderKanban, FileText, CheckSquare, Settings, Timer, Plus, X, Loader2, Users, Edit, Save, MessageSquare } from 'lucide-react';
+import { ChevronLeft, Calendar as CalendarIcon, Clock, User, FolderKanban, FileText, CheckSquare, Settings, Timer, Plus, X, Loader2, Users, Edit, Save, MessageSquare, Trash2 } from 'lucide-react';
 import { RichTextEditor } from './common/RichTextEditor';
 import { LinkedObjects } from './common/LinkedObjects';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
@@ -28,9 +28,10 @@ interface TaskDetailProps {
     onNavigate: (view: AppView, id: string) => void;
     onClose?: () => void;
     isEmbedded?: boolean;
+    onDeleted?: () => void;
 }
 
-const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNavigate, onClose, isEmbedded }) => {
+const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNavigate, onClose, isEmbedded, onDeleted }) => {
     const { openLink } = useDolibarrLink(config);
     const [task, setTask] = useState<Task | null>(null);
     const [loading, setLoading] = useState(true);
@@ -64,6 +65,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
     const [scheduleForm, setScheduleForm] = useState({ date_start: '', date_end: '', planned_workload_h: 0, progress: 0 });
 
     const [activeTab, setActiveTab] = useState<'overview' | 'time' | 'chat' | 'contacts' | 'documents'>('overview');
+    const [isDeletingTask, setIsDeletingTask] = useState(false);
 
 
     const taskLogs = timeLogs.filter(log => String(log.task_id) === String(initialItemId)).sort((a, b) => b.date - a.date);
@@ -191,6 +193,24 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
         }
     };
 
+    const handleDeleteTask = async () => {
+        if (!task) return;
+        const confirmed = window.confirm(`Tem certeza que deseja excluir a tarefa "${task.label || task.ref}"? Esta ação não pode ser desfeita.`);
+        if (!confirmed) return;
+        setIsDeletingTask(true);
+        try {
+            await DolibarrService.deleteTask(config, task.id);
+            toast.success('Tarefa excluída com sucesso!');
+            if (onDeleted) onDeleted();
+            else if (onClose) onClose();
+            else if (task.project_id) onNavigate('projects', task.project_id);
+        } catch (err: any) {
+            toast.error('Erro ao excluir tarefa: ' + (err?.message || String(err)));
+        } finally {
+            setIsDeletingTask(false);
+        }
+    };
+
     if (loading) {
         return (
             <div className="flex items-center justify-center h-full text-slate-400">
@@ -260,6 +280,14 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
                         </div>
                         <button onClick={() => openLink('task', task.id)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors min-h-[36px] sm:min-h-0" title="Abrir no Dolibarr">
                             <Settings size={20} />
+                        </button>
+                        <button
+                            onClick={handleDeleteTask}
+                            disabled={isDeletingTask}
+                            className="p-2 text-slate-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors min-h-[36px] sm:min-h-0 disabled:opacity-50"
+                            title="Excluir tarefa"
+                        >
+                            {isDeletingTask ? <Loader2 size={20} className="animate-spin" /> : <Trash2 size={20} />}
                         </button>
                     </div>
                 </div>
