@@ -4,7 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import InvoiceList from '../../components/InvoiceList';
 import { cloneInvoice } from '../../services/api/commercial';
-import { useInvoices } from '../../hooks/dolibarr';
+import { useInvoices, useProjects } from '../../hooks/dolibarr';
+import { useInvoiceMutations } from '../../hooks/useMutations';
+import { DolibarrService } from '../../services/dolibarrService';
 import { formatCurrency } from '../../utils/formatUtils';
 
 const { toastMock } = vi.hoisted(() => ({
@@ -80,11 +82,19 @@ vi.mock('../../services/dolibarrService', () => ({
         deleteInvoice: vi.fn(),
         validateInvoice: vi.fn(),
         downloadDocument: vi.fn(),
+        updateInvoice: vi.fn().mockResolvedValue({}),
+        deleteInvoiceLine: vi.fn().mockResolvedValue({}),
+        updateInvoiceLine: vi.fn().mockResolvedValue({}),
+        addInvoiceLine: vi.fn().mockResolvedValue({}),
     },
 }));
 
 vi.mock('../../utils/sanitizeHtml', () => ({
     sanitizeHtml: (html: string) => html,
+}));
+
+vi.mock('../../components/common/LinkedObjects', () => ({
+    LinkedObjects: () => null,
 }));
 
 const mockConfig = { apiUrl: 'http://test', apiKey: 'key' };
@@ -264,5 +274,210 @@ describe('InvoiceList — Final currency sweep (#643)', () => {
         expect(text.match(/(?<!R)\$/g)).toBeNull();
         // Exactly 2 decimal places (pt-BR format: ",dd")
         expect(formatCurrency(1234.56)).toMatch(/^R\$\s[\d.]+,\d{2}$/);
+    });
+});
+
+describe('InvoiceList — #613 projeto e vencimento nos modais', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useProjects).mockReturnValue({
+            data: [{ id: 'proj1', title: 'Projeto Alpha' }],
+        } as any);
+        vi.mocked(useInvoices).mockReturnValue({
+            data: [
+                {
+                    id: 'inv1',
+                    ref: 'FA2501-0001',
+                    socid: 'cust1',
+                    date: 1700000000,
+                    total_ttc: 1200,
+                    statut: '0', // draft so edit button appears
+                    type: '0',
+                    project_id: null,
+                    order_id: null,
+                    date_lim_reglement: null,
+                },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+    });
+
+    it('criação com projeto: mutateAsync chamado com fk_project', async () => {
+        const mockMutateAsync = vi.fn().mockResolvedValue({});
+        vi.mocked(useInvoiceMutations).mockReturnValue({
+            createInvoice: { mutateAsync: mockMutateAsync },
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        const novoBtn = await screen.findByText('Novo');
+        await user.click(novoBtn);
+
+        // Select customer — first combobox in create modal
+        const combos = await screen.findAllByRole('combobox');
+        // combos order in create modal: [Cliente, Projeto, (sort toolbar)]
+        // The sort select is in the header; modal combos start after it
+        const clienteSelect = combos.find(s => s.querySelector('option[value="cust1"]') || Array.from((s as HTMLSelectElement).options || []).some((o: any) => o.value === 'cust1'));
+        expect(clienteSelect).toBeTruthy();
+        await user.selectOptions(clienteSelect!, 'cust1');
+
+        // Select project
+        const projetoSelect = combos.find(s => Array.from((s as HTMLSelectElement).options).some((o: any) => o.value === 'proj1'));
+        expect(projetoSelect).toBeTruthy();
+        await user.selectOptions(projetoSelect!, 'proj1');
+
+        const submitBtn = screen.getByRole('button', { name: /Criar Fatura/i });
+        await user.click(submitBtn);
+
+        await waitFor(() => {
+            expect(mockMutateAsync).toHaveBeenCalledWith(
+                expect.objectContaining({ fk_project: 'proj1' })
+            );
+        });
+    });
+
+    it('criação com vencimento: mutateAsync chamado com date_lim_reglement', async () => {
+        const mockMutateAsync = vi.fn().mockResolvedValue({});
+        vi.mocked(useInvoiceMutations).mockReturnValue({
+            createInvoice: { mutateAsync: mockMutateAsync },
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        const novoBtn = await screen.findByText('Novo');
+        await user.click(novoBtn);
+
+        // Select customer
+        const combos = await screen.findAllByRole('combobox');
+        const clienteSelect = combos.find(s => Array.from((s as HTMLSelectElement).options).some((o: any) => o.value === 'cust1'));
+        await user.selectOptions(clienteSelect!, 'cust1');
+
+        // Fill due date — find date inputs in the modal
+        const dateInputs = screen.getAllByDisplayValue('') as HTMLInputElement[];
+        const vencInput = dateInputs.find(el => el.type === 'date' && el !== dateInputs[0]);
+        // Use the label text to find the input
+        const vencLabel = screen.getByText('Data de Vencimento (opcional)');
+        const vencimentoInput = vencLabel.parentElement!.querySelector('input[type="date"]') as HTMLInputElement;
+        expect(vencimentoInput).toBeTruthy();
+        await user.clear(vencimentoInput);
+        await user.type(vencimentoInput, '2025-12-31');
+
+        const submitBtn = screen.getByRole('button', { name: /Criar Fatura/i });
+        await user.click(submitBtn);
+
+        await waitFor(() => {
+            expect(mockMutateAsync).toHaveBeenCalledWith(
+                expect.objectContaining({ date_lim_reglement: expect.any(Number) })
+            );
+        });
+    });
+
+    it('criação sem projeto: mutateAsync chamado sem fk_project', async () => {
+        const mockMutateAsync = vi.fn().mockResolvedValue({});
+        vi.mocked(useInvoiceMutations).mockReturnValue({
+            createInvoice: { mutateAsync: mockMutateAsync },
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        const novoBtn = await screen.findByText('Novo');
+        await user.click(novoBtn);
+
+        const combos = await screen.findAllByRole('combobox');
+        const clienteSelect = combos.find(s => Array.from((s as HTMLSelectElement).options).some((o: any) => o.value === 'cust1'));
+        await user.selectOptions(clienteSelect!, 'cust1');
+
+        const submitBtn = screen.getByRole('button', { name: /Criar Fatura/i });
+        await user.click(submitBtn);
+
+        await waitFor(() => {
+            const call = mockMutateAsync.mock.calls[0]?.[0];
+            expect(call).toBeDefined();
+            expect(call.fk_project).toBeUndefined();
+        });
+    });
+
+    it('edição de projeto: updateInvoice chamado com fk_project', async () => {
+        vi.mocked(DolibarrService.updateInvoice as any).mockResolvedValue({});
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        // Click on the invoice card to open detail
+        const card = await screen.findByText('FA2501-0001');
+        await user.click(card);
+
+        // Click Editar button
+        const editBtn = await screen.findByText('Editar');
+        await user.click(editBtn);
+
+        // Find project select in the edit modal
+        const combos = await screen.findAllByRole('combobox');
+        const projetoSelect = combos.find(s => Array.from((s as HTMLSelectElement).options).some((o: any) => o.value === 'proj1'));
+        expect(projetoSelect).toBeTruthy();
+        await user.selectOptions(projetoSelect!, 'proj1');
+
+        const saveBtn = screen.getByRole('button', { name: /Salvar Alterações/i });
+        await user.click(saveBtn);
+
+        await waitFor(() => {
+            expect(DolibarrService.updateInvoice).toHaveBeenCalledWith(
+                expect.anything(),
+                'inv1',
+                expect.objectContaining({ fk_project: 'proj1' })
+            );
+        });
+    });
+
+    it('detalhe exibe vencimento quando date_lim_reglement está preenchido', async () => {
+        vi.mocked(useInvoices).mockReturnValue({
+            data: [
+                {
+                    id: 'inv2',
+                    ref: 'FA2501-0002',
+                    socid: 'cust1',
+                    date: 1700000000,
+                    total_ttc: 500,
+                    statut: '1',
+                    type: '0',
+                    project_id: null,
+                    order_id: null,
+                    date_lim_reglement: 1735689600, // 2025-01-01 UTC
+                },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('FA2501-0002');
+        await user.click(card);
+
+        // The detail section shows "Vencimento" label
+        const vencLabel = await screen.findByText('Vencimento');
+        expect(vencLabel).toBeTruthy();
+        // Should NOT show the "—" dash (since date is set)
+        const allText = document.body.textContent || '';
+        expect(allText).toContain('Vencimento');
+    });
+
+    it('detalhe mostra "—" quando date_lim_reglement está ausente', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('FA2501-0001');
+        await user.click(card);
+
+        const vencLabel = await screen.findByText('Vencimento');
+        expect(vencLabel).toBeTruthy();
+        // The dash "—" appears when no due date
+        const dash = await screen.findByText('—');
+        expect(dash).toBeTruthy();
     });
 });
