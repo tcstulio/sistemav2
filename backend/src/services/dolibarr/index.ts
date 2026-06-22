@@ -91,6 +91,10 @@ export class DolibarrService extends DolibarrServiceBase {
     listEvents = (limit?: number) => this.operations.listEvents(limit);
     createAgendaEvent = (data: Parameters<DolibarrOperationsService['createAgendaEvent']>[0], userKey?: string) => this.operations.createAgendaEvent(data, userKey);
     listInterventions = (search?: string) => this.operations.listInterventions(search);
+    updateIntervention = (
+        id: string,
+        payload: { socid?: string | number; date?: string | number; fk_project?: string | number; description?: string }
+    ) => this.operations.updateIntervention(id, payload);
 
     // === HR ===
     getUserById = (id: string) => this.hr.getUserById(id);

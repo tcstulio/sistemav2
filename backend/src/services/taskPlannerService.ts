@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { createHash } from 'crypto';
 import { logger } from '../utils/logger';
 import { aiService } from './aiService';
 import { aiJobService } from './aiJobService';
@@ -86,8 +87,41 @@ function fileOverlap(a: string[], b: string[]): string[] {
     return b.filter(f => setA.has(normalize(f)));
 }
 
+// --- Cache de decisões do Planner (#712) -------------------------------------
+// Analisar uma task é caro: gh (PRs/diffs) + 1 chamada de LLM. A decisão é
+// determinística para o MESMO corpo de issue (mesma issue → mesma análise), então
+// `POST /planner/analyze/:n` clicado N vezes não precisa de N chamadas de LLM.
+// Chave: issueNumber. Invalida quando o corpo muda (hash diferente) ou por TTL.
+// `reevaluateWaiting` (pós-merge) força análise fresca via { noCache: true } — o
+// conjunto de PRs abertos muda com merges, então re-checar é o objetivo lá.
+const PLANNER_CACHE_TTL_MS = Number(process.env.PLANNER_CACHE_TTL_MS) || 60 * 60 * 1000; // 1h
+// Teto de tasks LLM-reanalisadas por chamada de reevaluateWaiting (com ~95 na fila,
+// re-analisar todas a cada merge multiplica chamadas de LLM). 0/negativo = sem teto.
+const PLANNER_REEVAL_MAX = Number(process.env.PLANNER_REEVAL_MAX ?? 20);
+
+interface CacheEntry { bodyHash: string; ts: number; decision: PlannerDecision; }
+const plannerCache = new Map<number, CacheEntry>();
+
+function hashBody(body: string): string {
+    return createHash('sha1').update(body || '').digest('hex');
+}
+function cloneDecision(d: PlannerDecision): PlannerDecision {
+    return {
+        ...d,
+        blockedBy: [...d.blockedBy],
+        overlappingFiles: [...d.overlappingFiles],
+        filesEstimate: [...d.filesEstimate],
+    };
+}
+
+/** Invalida o cache do Planner — uma issue específica ou tudo. Chamável após merges/edições. */
+export function invalidatePlannerCache(issueNumber?: number): void {
+    if (issueNumber === undefined) plannerCache.clear();
+    else plannerCache.delete(issueNumber);
+}
+
 export const taskPlannerService = {
-    async analyzeTask(task: Task): Promise<PlannerDecision> {
+    async analyzeTask(task: Task, opts?: { noCache?: boolean }): Promise<PlannerDecision> {
         const decision: PlannerDecision = {
             action: 'go',
             reason: 'Sem conflitos detectados.',
@@ -98,6 +132,20 @@ export const taskPlannerService = {
             filesEstimate: [],
             isEpic: false,
             epicReason: '',
+        };
+
+        // Cache (#712): mesma issue + mesmo corpo, dentro do TTL → reaproveita (sem gh/LLM).
+        const bodyHash = hashBody(task.body || '');
+        if (!opts?.noCache) {
+            const hit = plannerCache.get(task.issueNumber);
+            if (hit && hit.bodyHash === bodyHash && Date.now() - hit.ts < PLANNER_CACHE_TTL_MS) {
+                log.info(`Planner #${task.issueNumber}: cache hit (${hit.decision.action}) — sem nova chamada de LLM.`);
+                return cloneDecision(hit.decision);
+            }
+        }
+        const store = (d: PlannerDecision): PlannerDecision => {
+            plannerCache.set(task.issueNumber, { bodyHash, ts: Date.now(), decision: cloneDecision(d) });
+            return d;
         };
 
         try {
@@ -128,7 +176,7 @@ export const taskPlannerService = {
                     decision.action = 'wait';
                     decision.reason = `Conflito de arquivos com PR(s) em andamento: #${prNums.join(', #')} (overlap: ${decision.overlappingFiles.slice(0, 5).join(', ')}). Aguardando merge.`;
                     decision.priority = 100 + prNums[0];
-                    return decision;
+                    return store(decision);
                 }
             }
 
@@ -160,7 +208,7 @@ export const taskPlannerService = {
             }
 
             log.info(`Planner #${task.issueNumber}: ${decision.action} (priority=${decision.priority}) — ${decision.reason}`);
-            return decision;
+            return store(decision);
         } catch (e: any) {
             log.error(`Planner error #${task.issueNumber}`, e.message);
             return decision;
@@ -264,11 +312,21 @@ Rules:
 
     async reevaluateWaiting(): Promise<PlannerDecision[]> {
         const allTasks = taskRunnerService.getAllTasks();
-        const waiting = allTasks.filter(t => t.status === 'pending' && t.queuePriority && t.queuePriority >= 100);
+        const waiting = allTasks
+            .filter(t => t.status === 'pending' && t.queuePriority && t.queuePriority >= 100)
+            // Mais prioritárias (menor queuePriority) primeiro — o teto corta a cauda.
+            .sort((a, b) => (a.queuePriority ?? 0) - (b.queuePriority ?? 0));
         const results: PlannerDecision[] = [];
 
-        for (const task of waiting) {
-            const decision = await this.analyzeTask(task);
+        // Teto (#712): re-analisar TODAS as bloqueadas a cada merge multiplica chamadas de LLM.
+        const batch = PLANNER_REEVAL_MAX > 0 ? waiting.slice(0, PLANNER_REEVAL_MAX) : waiting;
+        if (batch.length < waiting.length) {
+            log.info(`reevaluateWaiting: ${waiting.length} bloqueadas, re-analisando as ${batch.length} mais prioritárias (teto PLANNER_REEVAL_MAX=${PLANNER_REEVAL_MAX}).`);
+        }
+
+        for (const task of batch) {
+            // noCache: pós-merge o conjunto de PRs abertos mudou — re-checar é o objetivo aqui.
+            const decision = await this.analyzeTask(task, { noCache: true });
             if (decision.action === 'go') {
                 task.queuePriority = decision.priority;
                 task.planReason = decision.reason;

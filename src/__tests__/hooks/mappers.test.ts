@@ -412,6 +412,30 @@ describe('Dolibarr Mappers', () => {
         });
     });
 
+    describe('SalaryPayment mappers', () => {
+        it('preserves fk_typepayment when present (#625)', () => {
+            const raw = {
+                id: 10,
+                ref: 'SAL010',
+                fk_user: 5,
+                date_payment: '2024-02-01 00:00:00',
+                amount: 3000,
+                salary: 3500,
+                fk_bank: 7,
+                fk_typepayment: 'PIX',
+            };
+            const result = mappers.mapSalaryPayment(raw as any);
+            expect(result.fk_typepayment).toBe('PIX');
+            expect(result.amount).toBe(3000);
+        });
+
+        it('leaves fk_typepayment undefined when absent (#625)', () => {
+            const raw = { id: 11, ref: 'SAL011', fk_user: 5, amount: 1000, salary: 1200, fk_bank: 7 };
+            const result = mappers.mapSalaryPayment(raw as any);
+            expect(result.fk_typepayment).toBeUndefined();
+        });
+    });
+
     describe('Line item mappers', () => {
         it('maps invoice line', () => {
             const raw = {

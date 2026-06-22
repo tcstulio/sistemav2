@@ -10,6 +10,7 @@ import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
 
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
+import { formatCurrency } from '../utils/formatUtils';
 import { toast } from 'sonner';
 import { logger } from '../utils/logger';
 import { notifyError } from '../utils/notifyError';
@@ -525,7 +526,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                         </div>
                                                         <div className="flex justify-between items-end">
                                                             <div className="text-xs text-slate-500">{formatDateTime(order.date_creation)}</div>
-                                                            <div className="font-bold text-slate-800 dark:text-white">${order.total_ttc.toLocaleString()}</div>
+                                                            <div className="font-bold text-slate-800 dark:text-white">{formatCurrency(order.total_ttc)}</div>
                                                         </div>
 
                                                         <div className="text-xs text-slate-500 mt-2 space-y-0.5 border-t border-slate-100 dark:border-slate-800 pt-2">
@@ -599,7 +600,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                                 <div className="text-xs text-slate-500 mt-1">{inv.label || 'Fatura'}</div>
                                                             </div>
                                                             <div className="text-right">
-                                                                <div className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString()}</div>
+                                                                <div className="font-bold text-slate-800 dark:text-white">{formatCurrency(inv.total_ttc)}</div>
                                                                 <StatusBadge
                                                                     status={inv.paye === '1' ? 'paid' : 'open'}
                                                                     config={{
@@ -628,7 +629,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                                 <div className="font-bold text-slate-800 dark:text-white text-sm">{p.label}</div>
                                                                 <div className="text-xs text-slate-500">{p.ref}</div>
                                                             </div>
-                                                            <div className="text-sm font-mono text-slate-600 dark:text-slate-400">${p.price.toLocaleString()}</div>
+                                                            <div className="text-sm font-mono text-slate-600 dark:text-slate-400">{formatCurrency(p.price)}</div>
                                                         </div>
                                                     </Card>
                                                 ))

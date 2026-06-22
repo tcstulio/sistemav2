@@ -6,6 +6,7 @@ import { SupplierOrder, Contract } from '../../../types/sales';
 import { Intervention } from '../../../types/projects';
 import { AppView } from '../../../types/common';
 import { formatDateOnly } from '../../../utils/dateUtils';
+import { formatCurrency } from '../../../utils/formatUtils';
 
 // Shipments Tab
 interface ProjectShipmentsTabProps {
@@ -67,7 +68,7 @@ export const ProjectPurchasesTab: React.FC<ProjectPurchasesTabProps> = ({ suppli
                         </div>
                     </div>
                     <div className="text-right">
-                        <div className="font-bold text-slate-700 dark:text-slate-300">${so.total_ttc.toLocaleString()}</div>
+                        <div className="font-bold text-slate-700 dark:text-slate-300">{formatCurrency(so.total_ttc)}</div>
                         <div className="text-xs text-slate-400">{so.statut}</div>
                     </div>
                 </div>

@@ -27,9 +27,9 @@ export const VIEW_REGISTRY: ViewRegistry = {
     ),
     '/customers': r(
         'Clientes',
-        'Lista todos os clientes e prospects cadastrados. Permite buscar, criar, editar e ver detalhes com faturas, projetos e agenda.',
+        'Lista todos os clientes e prospectos cadastrados. Permite buscar, criar, editar e ver detalhes com faturas, projetos e agenda.',
         ['listar clientes', 'buscar cliente', 'criar cliente', 'editar cliente', 'ver detalhes do cliente'],
-        ['nome', 'email', 'telefone', 'endereço', 'cidade', 'CEP', 'tipo (cliente/prospect)'],
+        ['nome', 'email', 'telefone', 'endereço', 'cidade', 'CEP', 'tipo (cliente/prospecto)', 'prospecto', 'prospect'],
         ['Use search_customer para buscar por nome. Use get_customer_details para ver faturas e projetos de um cliente.'],
     ),
     '/contacts': r(

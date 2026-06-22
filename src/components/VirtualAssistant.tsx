@@ -253,7 +253,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
       const result = await AiService.chatWithData(buildBootstrapPrompt(cfg), [], undefined, sid || undefined, pageContext);
       if ((result as any)?.contextWindow) setContextWindow((result as any).contextWindow);
       if (result?.reply) {
-        setMessages([{ role: 'model', text: result.reply, usage: (result as any).usage }]);
+        setMessages([{ role: 'model', text: result.reply, usage: (result as any).usage, model: (result as any).model, fellBack: (result as any).fellBack }]);
       }
     } catch {
       // Mantém a saudação estática em caso de erro (degradação graciosa).
@@ -329,8 +329,10 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
       }
       if (responseText) {
         const newUsage = (result as any).usage;
+        const newModel = (result as any).model as string | undefined;
+        const newFellBack = (result as any).fellBack as boolean | undefined;
         setMessages(prev => {
-          const updated: ChatMessage[] = [...prev, { role: 'model' as const, text: responseText, usage: newUsage }];
+          const updated: ChatMessage[] = [...prev, { role: 'model' as const, text: responseText, usage: newUsage, model: newModel, fellBack: newFellBack }];
           const total = updated.reduce((sum, m) => sum + (m.usage?.totalTokens || 0), 0);
           const pct = contextWindow > 0 ? (total / contextWindow) * 100 : 0;
           if (pct > 90) {
@@ -512,11 +514,22 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-none'
                     }`}>
                     {msg.role === 'model' ? renderMessageContent(msg.text, navigate) : msg.text}
-                    {msg.role === 'model' && msg.usage && (
-                      <div className="flex items-center gap-2 mt-1 pt-1 border-t border-slate-100 dark:border-slate-700/50">
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500" title="Tokens enviados / recebidos / total">
-                          ↑{msg.usage.promptTokens?.toLocaleString()} ↓{msg.usage.completionTokens?.toLocaleString()} · {msg.usage.totalTokens?.toLocaleString()} tokens
-                        </span>
+                    {msg.role === 'model' && (msg.usage || msg.model) && (
+                      <div className="flex items-center gap-2 mt-1 pt-1 border-t border-slate-100 dark:border-slate-700/50 flex-wrap">
+                        {msg.usage && (
+                          <span className="text-[10px] text-slate-400 dark:text-slate-500" title="Tokens enviados / recebidos / total">
+                            ↑{msg.usage.promptTokens?.toLocaleString()} ↓{msg.usage.completionTokens?.toLocaleString()} · {msg.usage.totalTokens?.toLocaleString()} tokens
+                          </span>
+                        )}
+                        {msg.model && (
+                          msg.fellBack
+                            ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-medium" title="Modelo primário indisponível; respondido pelo fallback">
+                                {msg.model} (fallback)
+                              </span>
+                            : <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400">
+                                {msg.model}
+                              </span>
+                        )}
                       </div>
                     )}
                   </div>

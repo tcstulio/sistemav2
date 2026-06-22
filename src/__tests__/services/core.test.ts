@@ -223,12 +223,25 @@ describe('API Core', () => {
             expect(result).toEqual([{ id: '1' }]);
         });
 
-        it('returns empty array on error', async () => {
+        it('rethrows on error instead of masking it (#559)', async () => {
             mockFetch.mockRejectedValue(new Error('Network error'));
 
-            const result = await core.fetchDelta({ apiUrl: '', apiKey: 'test' } as any, 'customers', 0);
+            await expect(
+                core.fetchDelta({ apiUrl: '', apiKey: 'test' } as any, 'customers', 0)
+            ).rejects.toThrow('Network error');
+        });
 
-            expect(result).toEqual([]);
+        it('rethrows on 404 so the hook fallback can activate (#559)', async () => {
+            mockFetch.mockResolvedValue({
+                ok: false,
+                status: 404,
+                json: () => Promise.resolve({ error: 'Not found' }),
+                text: () => Promise.resolve('Not found'),
+            });
+
+            await expect(
+                core.fetchDelta({ apiUrl: '', apiKey: 'test' } as any, 'supplier_invoices', 0)
+            ).rejects.toThrow();
         });
     });
 
