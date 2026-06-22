@@ -338,6 +338,7 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
                         <ManufacturingOrderDetail
                             order={selectedMO}
                             products={products}
+                            projects={projects}
                             stockMovements={stockMovements}
                             config={config}
                             onClose={() => setSelectedMO(null)}
