@@ -116,15 +116,15 @@ const Step2Negotiation: React.FC<Step2Props> = ({ data, setData }) => {
     return (
         <div className="space-y-8 animate-in slide-in-from-right fade-in duration-300">
             <div className="text-center space-y-2 mb-6">
-                <h2 className="text-2xl font-bold text-slate-800">Modelo de Negócio</h2>
-                <p className="text-slate-500">Como a casa será remunerada? Configure o acordo.</p>
+                <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Modelo de Negócio</h2>
+                <p className="text-slate-500 dark:text-slate-400">Como a casa será remunerada? Configure o acordo.</p>
             </div>
 
             <div className="grid grid-cols-1 gap-8">
-                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
                     <div className="flex items-center gap-2 mb-2">
                         <Briefcase size={20} className="text-indigo-600" />
-                        <h3 className="font-bold text-slate-700">Formato do Acordo</h3>
+                        <h3 className="font-bold text-slate-700 dark:text-slate-200">Formato do Acordo</h3>
                     </div>
                     <div className="grid grid-cols-3 gap-3">
                         <button onClick={() => handleModeChange('fixo')} className={`p-3 rounded-xl border-2 flex flex-col items-center justify-center gap-2 transition-all ${data.aluguelMode === 'fixo' ? 'border-indigo-50 border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-100 text-slate-500 hover:bg-slate-50'}`}><Coins size={24} /><span className="text-xs font-bold uppercase">Aluguel Fixo</span></button>
@@ -138,8 +138,8 @@ const Step2Negotiation: React.FC<Step2Props> = ({ data, setData }) => {
                     {data.aluguelMode === 'hibrido' && <p className="text-xs text-center text-indigo-600 bg-indigo-50 p-2 rounded-lg font-medium">*Híbrido: A Casa toma o <strong>maior valor</strong>. O split definido acima é a base da comparação.</p>}
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-6">
-                    <div className="flex justify-between items-center"><div className="flex items-center gap-2"><PieChart size={20} className="text-emerald-600" /><h3 className="font-bold text-slate-700">Distribuição da Bilheteria</h3></div><button onClick={addPartner} className="text-xs font-bold text-indigo-600 hover:bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center gap-1 transition-colors"><UserPlus size={14} /> Add Sócio</button></div>
+                <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-6">
+                    <div className="flex justify-between items-center"><div className="flex items-center gap-2"><PieChart size={20} className="text-emerald-600" /><h3 className="font-bold text-slate-700 dark:text-slate-200">Distribuição da Bilheteria</h3></div><button onClick={addPartner} className="text-xs font-bold text-indigo-600 hover:bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 flex items-center gap-1 transition-colors"><UserPlus size={14} /> Add Sócio</button></div>
                     <div className="space-y-2">
                         <label className="text-[10px] font-bold text-slate-400 uppercase">Proporção da Partilha (Share de Porta)</label>
                         <div className="h-6 w-full bg-slate-100 rounded-full flex overflow-hidden ring-1 ring-slate-200">{houseShare > 0 && <div style={{ width: `${houseShare}%` }} className="bg-indigo-500 h-full flex items-center justify-center text-[10px] font-bold text-white transition-all relative group cursor-help">{houseShare >= 10 && <span>Casa {houseShare}%</span>}<div className="absolute bottom-full mb-1 bg-indigo-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap z-10">Dedução Casa: {houseShare}%</div></div>}{data.partners.map((p: Partner, idx: number) => (
@@ -156,13 +156,13 @@ const Step2Negotiation: React.FC<Step2Props> = ({ data, setData }) => {
                             <input type="number" min="0" max="100" value={p.splitBar} onChange={e => updatePartner(p.id, 'splitBar', Number(e.target.value))} className="w-16 bg-white border border-slate-200 rounded p-1 text-center text-xs font-bold" /></div><button onClick={() => removePartner(p.id)} className="p-2 text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={16} /></button></div></div>))}</div>
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                    <div className="flex items-center gap-2 mb-2"><FileMinus size={20} className="text-orange-500" /><h3 className="font-bold text-slate-700">Deduções de Receita (Impostos)</h3></div>
+                <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
+                    <div className="flex items-center gap-2 mb-2"><FileMinus size={20} className="text-orange-500" /><h3 className="font-bold text-slate-700 dark:text-slate-200">Deduções de Receita (Impostos)</h3></div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-orange-50/50 p-4 rounded-xl border border-orange-100"><div className="flex flex-col gap-2"><label className="text-xs font-bold text-orange-800 uppercase flex items-center gap-2"><Ticket size={14} /> Taxa Bilheteria (%)</label><div className="relative"><input type="number" min="0" max="100" step="0.1" value={data.impostosTicket} onChange={e => setData({ ...data, impostosTicket: Number(e.target.value) })} className="w-full border border-orange-200 rounded-lg p-3 font-bold text-orange-900 outline-none focus:ring-2 focus:ring-orange-500 bg-white" /><span className="absolute right-3 top-3 text-orange-300 font-bold">%</span></div><p className="text-[10px] text-orange-600/80">Taxa da plataforma + ISS ingressos.</p></div><div className="flex flex-col gap-2"><label className="text-xs font-bold text-orange-800 uppercase flex items-center gap-2"><Beer size={14} /> Impostos Bar (%)</label><div className="relative"><input type="number" min="0" max="100" step="0.1" value={data.impostosBar} onChange={e => setData({ ...data, impostosBar: Number(e.target.value) })} className="w-full border border-orange-200 rounded-lg p-3 font-bold text-orange-900 outline-none focus:ring-2 focus:ring-orange-500 bg-white" /><span className="absolute right-3 top-3 text-orange-300 font-bold">%</span></div><p className="text-[10px] text-orange-600/80">Simples/ICMS F&B.</p></div><div className="flex flex-col gap-2"><label className="text-xs font-bold text-orange-800 uppercase flex items-center gap-2"><Building2 size={14} /> Impostos Aluguel (%)</label><div className="relative"><input type="number" min="0" max="100" step="0.1" value={data.impostosAluguel} onChange={e => setData({ ...data, impostosAluguel: Number(e.target.value) })} className="w-full border border-orange-200 rounded-lg p-3 font-bold text-orange-900 outline-none focus:ring-2 focus:ring-orange-500 bg-white" /><span className="absolute right-3 top-3 text-orange-300 font-bold">%</span></div><p className="text-[10px] text-orange-600/80">ISS/IR sobre locação.</p></div></div>
                 </div>
 
-                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-                    <div className="flex justify-between items-center mb-2"><div><h3 className="font-bold text-slate-700 flex items-center gap-2"><DollarSign size={20} className="text-rose-500" /> Custos Extras</h3><p className="text-xs text-slate-500 mt-1">Gerencie custos fixos ou compartilhados.</p></div><div className="bg-slate-100 text-slate-600 px-3 py-1 rounded-lg text-xs font-bold">{data.extraCosts.length} itens</div></div>
+                <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
+                    <div className="flex justify-between items-center mb-2"><div><h3 className="font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2"><DollarSign size={20} className="text-rose-500" /> Custos Extras</h3><p className="text-xs text-slate-500 mt-1">Gerencie custos fixos ou compartilhados.</p></div><div className="bg-slate-100 text-slate-600 px-3 py-1 rounded-lg text-xs font-bold">{data.extraCosts.length} itens</div></div>
                     <div className={`bg-slate-50 p-3 rounded-xl border ${editingId ? 'border-indigo-300 bg-indigo-50/30' : 'border-slate-200'} flex flex-col gap-2 transition-colors`}>
                         <div className="flex flex-wrap gap-2 items-center">
                             <input placeholder="Nome" value={costForm.item} onChange={e => setCostForm({ ...costForm, item: e.target.value })} className="flex-1 min-w-[150px] border border-slate-300 rounded-lg p-2 text-sm outline-none" />

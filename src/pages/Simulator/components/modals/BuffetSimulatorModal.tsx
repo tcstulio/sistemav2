@@ -115,19 +115,19 @@ const BuffetSimulatorModal: React.FC<Props> = ({ initialData, publicoEstimado, o
 
     return (
         <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-            <div className="bg-white rounded-xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+            <div className="bg-white dark:bg-slate-800 rounded-xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
 
                 {/* Header */}
-                <div className="flex justify-between items-center p-6 border-b bg-gray-50/50">
+                <div className="flex justify-between items-center p-6 border-b border-slate-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-900/50">
                     <div>
                         <h3 className="font-bold text-xl text-orange-600 flex items-center gap-2">
                             <Utensils size={24} /> Engenharia de Buffet
                         </h3>
-                        <p className="text-xs text-gray-500 mt-1">
+                        <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
                             Simulando custos de insumos e equipe para <strong>{publicoEstimado} pessoas</strong>.
                         </p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><X className="text-gray-500" /></button>
+                    <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-full transition-colors"><X className="text-gray-500 dark:text-slate-400" /></button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-6 space-y-8">
