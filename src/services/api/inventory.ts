@@ -263,3 +263,63 @@ export const deleteShipment = async (config: DolibarrConfig, id: string) => {
         headers: getHeaders(config.apiKey)
     });
 };
+
+export const deleteManufacturingOrder = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/mrp/mo/${id}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+export const deleteBOM = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/boms/${id}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+export const validateManufacturingOrder = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/mrp/mo/${id}/validate`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
+    });
+};
+
+export const cancelManufacturingOrder = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/mrp/mo/${id}/cancel`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
+    });
+};
+
+export const addBOMLine = async (config: DolibarrConfig, bomId: string, data: Record<string, unknown>) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/boms/${bomId}/lines`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const updateBOMLine = async (config: DolibarrConfig, bomId: string, lineId: string, data: Record<string, unknown>) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/boms/${bomId}/lines/${lineId}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const deleteBOMLine = async (config: DolibarrConfig, bomId: string, lineId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/boms/${bomId}/lines/${lineId}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
