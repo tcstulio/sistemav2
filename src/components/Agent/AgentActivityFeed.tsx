@@ -83,7 +83,7 @@ export const AgentActivityFeed: React.FC = () => {
                             <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-400">
                                 <Clock size={8} />
                                 <span>{new Date(a.createdAt).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
-                                <span>por {a.userName}</span>
+                                <span>por {a.userName && a.userName !== 'unknown' ? a.userName : 'Agente'}</span>
                                 {a.durationMs > 0 && <span>{(a.durationMs / 1000).toFixed(1)}s</span>}
                             </div>
                         </div>

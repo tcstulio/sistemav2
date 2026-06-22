@@ -19,6 +19,7 @@ import { dbService } from '../../services/dbService';
 import { DolibarrConfig } from '../../types';
 import { useEffect, useState, useRef } from 'react';
 import { logger } from '../../utils/logger';
+import { notifyError } from '../../utils/notifyError';
 
 const log = logger.child('DolibarrHook');
 
@@ -168,19 +169,29 @@ export function createDolibarrHook<TRaw, TEntity extends { date_modification?: n
                 } catch (error) {
                     log.error(`Sync error for ${queryKey}`, error);
 
-                    // Fallback: try to return local data
+                    // Fallback: try to return local data (silent degrade)
                     const localData = await dbService.getAll<TEntity>(storeName);
 
                     if (localData.length > 0) {
                         return localData.sort(sortFn);
                     }
 
-                    // Last resort: try full fetch if fallback is provided
+                    // Last resort: try full fetch if fallback is provided.
+                    // #559: o custom_sync.php pode nao reconhecer o tipo (404); o fallback
+                    // REST (ex.: `supplierinvoices`) devolve os dados e a tela segue funcional.
                     if (fallbackFetch && dolibarrConfig) {
-                        log.debug(`Attempting full fetch fallback for ${queryKey}`);
-                        return fallbackFetch(dolibarrConfig);
+                        try {
+                            log.debug(`Attempting full fetch fallback for ${queryKey}`);
+                            return await fallbackFetch(dolibarrConfig);
+                        } catch (fallbackError) {
+                            log.error(`Fallback also failed for ${queryKey}`, fallbackError);
+                        }
                     }
 
+                    // Nada a exibir e nenhuma fonte funcionando: sinaliza a falha ao usuario
+                    // em vez de esconder o endpoint quebrado de forma definitiva (#559).
+                    // O `notifyError` deduplica por contexto (id estavel), evitando pilha de toasts.
+                    notifyError(`Sincronização de ${queryKey}`, error);
                     return [];
                 }
             },

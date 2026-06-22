@@ -59,7 +59,7 @@ const AnalyzeSystemSchema = z.object({
 
 // Núcleo do chat: enriquece o contexto, roda o agente (com tool-calls) e salva a sessão.
 // Usado pela rota síncrona E pela assíncrona (job em background). Lança em erro; quem chama trata.
-async function runChatReply(body: any, user: any): Promise<{ reply: string; sessionId?: string; usage?: any; contextWindow?: any }> {
+async function runChatReply(body: any, user: any): Promise<{ reply: string; sessionId?: string; usage?: any; contextWindow?: any; model?: string; fellBack?: boolean }> {
         const { history, context, image, module, sessionId } = GenerateReplySchema.parse(body);
 
         let enrichedContext = context || '';
@@ -112,8 +112,8 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
             toolCalls.push({ tool, args, result: result.slice(0, 2000), duration });
             try {
                 agentActivityService.record({
-                    userId: user?.id || 'unknown',
-                    userName: [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'unknown',
+                    userId: user?.id || dolibarrUserId || '',
+                    userName: [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'Agente',
                     tool,
                     args,
                     result: result.slice(0, 500),
@@ -153,7 +153,7 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
             }
         }
 
-        return { reply: result.text, sessionId, usage: result.usage, contextWindow: result.contextWindow };
+        return { reply: result.text, sessionId, usage: result.usage, contextWindow: result.contextWindow, model: result.model, fellBack: result.fellBack };
 }
 
 // Mapeia erros do agente para a resposta HTTP (compartilhado pelas rotas).

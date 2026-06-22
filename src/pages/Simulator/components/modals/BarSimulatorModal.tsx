@@ -129,19 +129,19 @@ const BarSimulatorModal: React.FC<Props> = ({ initialData, onClose, onApply, isO
 
     return (
         <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-            <div className="bg-white rounded-xl p-0 w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
-                <div className="flex justify-between items-center p-6 border-b bg-gray-50/50">
+            <div className="bg-white dark:bg-slate-800 rounded-xl p-0 w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+                <div className="flex justify-between items-center p-6 border-b border-slate-200 dark:border-slate-700 bg-gray-50/50 dark:bg-slate-900/50">
                     <div>
-                        <h3 className="font-bold text-xl text-indigo-900 flex items-center gap-2">
+                        <h3 className="font-bold text-xl text-indigo-900 dark:text-indigo-300 flex items-center gap-2">
                             <Martini size={24} className="text-indigo-600" /> {isOpenBarMode ? 'Cálculo de Open Bar' : 'Engenharia de Menu (Bar)'}
                         </h3>
-                        <p className="text-xs text-gray-500 mt-1">
+                        <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
                             {isOpenBarMode
                                 ? 'Defina o custo por cabeça para precificar corretamente seu ingresso.'
                                 : 'Simule o Ticket Médio e ajuste o CMV do seu bar.'}
                         </p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors"><X className="text-gray-500" /></button>
+                    <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-full transition-colors"><X className="text-gray-500 dark:text-slate-400" /></button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -241,7 +241,7 @@ const BarSimulatorModal: React.FC<Props> = ({ initialData, onClose, onApply, isO
                         </div>
 
                         {/* Analysis Panel */}
-                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col justify-between">
+                        <div className="bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col justify-between">
                             {isOpenBarMode ? (
                                 <>
                                     <div>
