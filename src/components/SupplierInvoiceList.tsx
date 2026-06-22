@@ -422,12 +422,15 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                 <div className="grid grid-cols-1 gap-3">
                     {filteredInvoices.slice(page * limit, (page + 1) * limit).map((inv) => {
                         const projectName = getProjectName(inv.project_id);
+                        const isSelected = selectedInvoice?.id === inv.id;
                         return (
-                            <Card
+                            <div
                                 key={inv.id}
+                                role="button"
+                                tabIndex={0}
                                 onClick={() => setSelectedInvoice(inv)}
-                                selected={selectedInvoice?.id === inv.id}
-                                className="cursor-pointer"
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedInvoice(inv); } }}
+                                className={`bg-white dark:bg-slate-900 border rounded-xl p-4 hover:shadow-md cursor-pointer transition-all ${isSelected ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' : 'border-slate-200 dark:border-slate-800'}`}
                             >
                                 <div className="flex justify-between items-start mb-2">
                                     <div className="flex items-center gap-2">
@@ -437,23 +440,26 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                     <div className="flex items-center gap-2 text-xs text-slate-500">
                                         <span className="flex items-center"><Landmark size={12} className="mr-1" /> Fornecedor</span>
                                         {inv.statut === '0' && (
-                                            <ConfirmDeleteButton
-                                                onDelete={() => DolibarrService.deleteSupplierInvoice(config, inv.id)}
-                                                onDeleted={() => { if (selectedInvoice?.id === inv.id) setSelectedInvoice(null); refetchInvoices(); }}
-                                                itemLabel={inv.ref}
-                                            />
+                                            <span onClick={(e) => e.stopPropagation()}>
+                                                <ConfirmDeleteButton
+                                                    onDelete={() => DolibarrService.deleteSupplierInvoice(config, inv.id)}
+                                                    onDeleted={() => { if (selectedInvoice?.id === inv.id) setSelectedInvoice(null); refetchInvoices(); }}
+                                                    itemLabel={inv.ref}
+                                                />
+                                            </span>
                                         )}
                                     </div>
                                 </div>
-                                <h3
-                                    className="font-bold text-slate-800 dark:text-white text-sm mb-1 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                                <button
+                                    type="button"
+                                    className="font-bold text-indigo-600 dark:text-indigo-400 text-sm mb-1 hover:underline cursor-pointer text-left"
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         if (onNavigate) onNavigate('suppliers', inv.socid);
                                     }}
                                 >
                                     {getSupplierName(inv.socid)}
-                                </h3>
+                                </button>
                                 {projectName && (
                                     <div className="text-xs text-indigo-500 mb-2 flex items-center gap-1">
                                         <FolderKanban size={10} /> {projectName}
@@ -463,7 +469,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                     <span className="text-xs text-slate-500">{formatDateOnly(inv.date)}</span>
                                     <span className="font-bold text-slate-800 dark:text-white">{formatCurrency(inv.total_ttc)}</span>
                                 </div>
-                            </Card>
+                            </div>
                         )
                     })}
                 </div>
