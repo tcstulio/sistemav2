@@ -1,12 +1,18 @@
-import React, { useMemo } from 'react';
+﻿import React, { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInvoices, useSupplierInvoices, useCustomers, useProducts } from '../hooks/dolibarr';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-import { FileBarChart, Download, TrendingUp, Users, Package, DollarSign, Loader2 } from 'lucide-react';
+import { FileBarChart, Download, TrendingUp, Users, Package, DollarSign, Loader2, CalendarDays, ExternalLink } from 'lucide-react';
 import { formatCurrency } from '../utils/formatUtils';
+import PageLayout from './ui/PageLayout';
 
 const ReportsView: React.FC = () => {
     const { config } = useDolibarr();
+    const navigate = useNavigate();
+
+    const currentYear = new Date().getFullYear();
+    const [selectedYear, setSelectedYear] = useState<number>(currentYear);
 
     const { data: invoices = [], isLoading: isLoadingInvoices } = useInvoices(config || null, !!config);
     const { data: supplierInvoices = [], isLoading: isLoadingSupplierInvoices } = useSupplierInvoices(config || null, !!config);
@@ -15,11 +21,15 @@ const ReportsView: React.FC = () => {
 
     const isLoading = isLoadingInvoices || isLoadingSupplierInvoices || isLoadingCustomers || isLoadingProducts;
 
-    // 1. Sales by Month (Current Year)
+    // Build year options (current year going back 5 years)
+    const yearOptions = useMemo(() => {
+        return Array.from({ length: 6 }, (_, i) => currentYear - i);
+    }, [currentYear]);
+
+    // 1. Sales by Month (Selected Year)
     const salesByMonthData = useMemo(() => {
-        const currentYear = new Date().getFullYear();
         const months = Array.from({ length: 12 }, (_, i) => ({
-            name: new Date(0, i).toLocaleString('default', { month: 'short' }),
+            name: new Date(0, i).toLocaleString('pt-BR', { month: 'short' }),
             sales: 0,
             expenses: 0
         }));
@@ -27,7 +37,7 @@ const ReportsView: React.FC = () => {
         invoices.forEach(inv => {
             const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
             const date = new Date(dateVal);
-            if (date.getFullYear() === currentYear) {
+            if (date.getFullYear() === selectedYear) {
                 months[date.getMonth()].sales += inv.total_ttc;
             }
         });
@@ -35,20 +45,24 @@ const ReportsView: React.FC = () => {
         supplierInvoices.forEach(inv => {
             const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
             const date = new Date(dateVal);
-            if (date.getFullYear() === currentYear) {
+            if (date.getFullYear() === selectedYear) {
                 months[date.getMonth()].expenses += inv.total_ttc;
             }
         });
 
         return months;
-    }, [invoices, supplierInvoices]);
+    }, [invoices, supplierInvoices, selectedYear]);
 
-    // 2. Top Customers
+    // 2. Top Customers (filtered by selected year)
     const topCustomersData = useMemo(() => {
         const map: Record<string, number> = {};
         invoices.forEach(inv => {
             if (inv.socid) {
-                map[inv.socid] = (map[inv.socid] || 0) + inv.total_ttc;
+                const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
+                const date = new Date(dateVal);
+                if (date.getFullYear() === selectedYear) {
+                    map[inv.socid] = (map[inv.socid] || 0) + inv.total_ttc;
+                }
             }
         });
 
@@ -62,7 +76,7 @@ const ReportsView: React.FC = () => {
             })
             .sort((a, b) => b.value - a.value)
             .slice(0, 5);
-    }, [invoices, customers]);
+    }, [invoices, customers, selectedYear]);
 
     // 3. Product Type Distribution (Service vs Product in Catalog)
     const productTypeData = useMemo(() => {
@@ -81,15 +95,21 @@ const ReportsView: React.FC = () => {
     // COLORS
     const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
+    // Invoices filtered to selected year (for KPIs)
+    const invoicesForYear = useMemo(() => {
+        return invoices.filter(inv => {
+            const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
+            return new Date(dateVal).getFullYear() === selectedYear;
+        });
+    }, [invoices, selectedYear]);
+
     const handleExport = () => {
-        // Generate CSV Content
-        const currentYear = new Date().getFullYear();
-        let csvContent = `data:text/csv;charset=utf-8,Tipo de Relatorio,Mes,Valor\n`;
+        let csvContent = `data:text/csv;charset=utf-8,Tipo de Relatório,Mes,Valor (BRL)\n`;
 
         // Add Sales Data
         salesByMonthData.forEach(row => {
-            csvContent += `Vendas ${currentYear},${row.name},${row.sales.toFixed(2)}\n`;
-            csvContent += `Despesas ${currentYear},${row.name},${row.expenses.toFixed(2)}\n`;
+            csvContent += `Vendas ${selectedYear},${row.name},${row.sales.toFixed(2)}\n`;
+            csvContent += `Despesas ${selectedYear},${row.name},${row.expenses.toFixed(2)}\n`;
         });
 
         // Add Top Customers
@@ -100,7 +120,7 @@ const ReportsView: React.FC = () => {
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");
         link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `CoolGroove_Relatorio_${currentYear}.csv`);
+        link.setAttribute("download", `CoolGroove_Relatorio_${selectedYear}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -118,56 +138,98 @@ const ReportsView: React.FC = () => {
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-400">
                 <Loader2 size={48} className="animate-spin mb-4 text-indigo-500" />
-                <p>Carregando dados do relatório...</p>
+                <p>Carregando dados do Relatório...</p>
             </div>
         )
     }
 
-    return (
-        <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
+    const hasSalesData = salesByMonthData.some(m => m.sales > 0 || m.expenses > 0);
+    const hasCustomerData = topCustomersData.length > 0;
+    const hasProductData = products.length > 0;
 
+    return (
+        <PageLayout title="Relatórios" noPadding>
             {/* Header */}
             <div className="p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div>
                         <h2 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                            <FileBarChart className={`text-${config.themeColor}-600`} /> Relatórios Avançados
+                            <FileBarChart className={`text-${config.themeColor}-600`} /> Relatórios
                         </h2>
                         <p className="text-sm text-slate-500 dark:text-slate-400">Inteligência de Negócios & Análises</p>
                     </div>
-                    <button
-                        onClick={handleExport}
-                        className={`flex items-center gap-2 px-4 py-2 bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white rounded-lg shadow-sm transition-colors`}
-                    >
-                        <Download size={18} /> Exportar CSV
-                    </button>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                        {/* Period Selector */}
+                        <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 rounded-lg px-3 py-2">
+                            <CalendarDays size={16} className="text-slate-500 dark:text-slate-400 flex-shrink-0" />
+                            <label htmlFor="year-selector" className="sr-only">Período</label>
+                            <select
+                                id="year-selector"
+                                data-testid="year-selector"
+                                value={selectedYear}
+                                onChange={e => setSelectedYear(Number(e.target.value))}
+                                className="bg-transparent text-sm font-medium text-slate-700 dark:text-slate-200 focus:outline-none cursor-pointer"
+                                aria-label="Selecionar período"
+                            >
+                                {yearOptions.map(year => (
+                                    <option key={year} value={year}>{year}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Link to Monthly Report */}
+                        <button
+                            onClick={() => navigate('/monthly-report')}
+                            className="flex items-center gap-2 px-3 py-2 text-sm border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-lg transition-colors"
+                            data-testid="link-monthly-report"
+                        >
+                            <ExternalLink size={14} />
+                            Relatório Mensal
+                        </button>
+
+                        <button
+                            onClick={handleExport}
+                            className={`flex items-center gap-2 px-4 py-2 bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white rounded-lg shadow-sm transition-colors`}
+                        >
+                            <Download size={18} /> Exportar CSV
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 md:p-6">
+            <div className="p-4 md:p-6">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
 
                     {/* Sales vs Expenses Chart */}
                     <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
                         <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2">
-                            <TrendingUp size={18} className="text-emerald-500" /> Desempenho Financeiro ({new Date().getFullYear()})
+                            <TrendingUp size={18} className="text-emerald-500" /> Desempenho Financeiro ({selectedYear})
                         </h3>
-                        <div className="h-72 w-full">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={salesByMonthData}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.1} />
-                                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} tickFormatter={(val) => formatCurrency(val)} />
-                                    <Tooltip
-                                        contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: '#1e293b', color: '#f8fafc' }}
-                                        cursor={{ fill: 'rgba(0,0,0,0.05)' }}
-                                    />
-                                    <Legend />
-                                    <Bar dataKey="sales" name="Vendas" fill="#6366f1" radius={[4, 4, 0, 0]} />
-                                    <Bar dataKey="expenses" name="Despesas" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </div>
+                        {hasSalesData ? (
+                            <div className="h-72 w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={salesByMonthData}>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.1} />
+                                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
+                                        <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} tickFormatter={(val) => formatCurrency(val)} />
+                                        <Tooltip
+                                            contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: '#1e293b', color: '#f8fafc' }}
+                                            cursor={{ fill: 'rgba(0,0,0,0.05)' }}
+                                            formatter={(value: number) => [formatCurrency(value)]}
+                                        />
+                                        <Legend />
+                                        <Bar dataKey="sales" name="Vendas" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                                        <Bar dataKey="expenses" name="Despesas" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        ) : (
+                            <div className="h-72 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500" data-testid="empty-sales">
+                                <TrendingUp size={40} className="mb-3 opacity-40" />
+                                <p className="text-sm font-medium">Sem dados para o período</p>
+                                <p className="text-xs mt-1">Nenhuma fatura encontrada em {selectedYear}</p>
+                            </div>
+                        )}
                     </div>
 
                     {/* Top Customers */}
@@ -175,48 +237,59 @@ const ReportsView: React.FC = () => {
                         <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
                             <Users size={18} className="text-blue-500" /> Top 5 Clientes
                         </h3>
-                        <div className="flex flex-col sm:flex-row items-center gap-4 w-full">
-                            <div className="h-48 w-full sm:w-48 flex-shrink-0">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <PieChart>
-                                        <Pie
-                                            data={topCustomersData}
-                                            cx="50%"
-                                            cy="50%"
-                                            innerRadius={50}
-                                            outerRadius={70}
-                                            paddingAngle={5}
-                                            dataKey="value"
-                                        >
-                                            {topCustomersData.map((entry, index) => (
-                                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                            ))}
-                                        </Pie>
-                                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: '#1e293b', color: '#f8fafc' }} />
-                                    </PieChart>
-                                </ResponsiveContainer>
+                        {hasCustomerData ? (
+                            <div className="flex flex-col sm:flex-row items-center gap-4 w-full">
+                                <div className="h-48 w-full sm:w-48 flex-shrink-0">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                            <Pie
+                                                data={topCustomersData}
+                                                cx="50%"
+                                                cy="50%"
+                                                innerRadius={50}
+                                                outerRadius={70}
+                                                paddingAngle={5}
+                                                dataKey="value"
+                                            >
+                                                {topCustomersData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                                ))}
+                                            </Pie>
+                                            <Tooltip
+                                                contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: '#1e293b', color: '#f8fafc' }}
+                                                formatter={(value: number) => [formatCurrency(value)]}
+                                            />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+                                <ul className="flex-1 w-full min-w-0 space-y-2" aria-label="top-clientes-legenda">
+                                    {topCustomersData.map((entry, index) => (
+                                        <li key={`legend-${index}`} className="flex items-center gap-2 min-w-0">
+                                            <span
+                                                className="flex-shrink-0 w-3 h-3 rounded-full"
+                                                style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                                                aria-hidden="true"
+                                            />
+                                            <span
+                                                className="flex-1 text-sm text-slate-700 dark:text-slate-300 truncate"
+                                                title={entry.name}
+                                            >
+                                                {entry.name}
+                                            </span>
+                                            <span className="flex-shrink-0 text-xs text-slate-500 dark:text-slate-400 font-medium">
+                                                {formatCurrency(entry.value)}
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
                             </div>
-                            <ul className="flex-1 w-full min-w-0 space-y-2" aria-label="top-clientes-legenda">
-                                {topCustomersData.map((entry, index) => (
-                                    <li key={`legend-${index}`} className="flex items-center gap-2 min-w-0">
-                                        <span
-                                            className="flex-shrink-0 w-3 h-3 rounded-full"
-                                            style={{ backgroundColor: COLORS[index % COLORS.length] }}
-                                            aria-hidden="true"
-                                        />
-                                        <span
-                                            className="flex-1 text-sm text-slate-700 dark:text-slate-300 truncate"
-                                            title={entry.name}
-                                        >
-                                            {entry.name}
-                                        </span>
-                                        <span className="flex-shrink-0 text-xs text-slate-500 dark:text-slate-400 font-medium">
-                                            {formatCurrency(entry.value)}
-                                        </span>
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
+                        ) : (
+                            <div className="h-48 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500" data-testid="empty-customers">
+                                <Users size={36} className="mb-3 opacity-40" />
+                                <p className="text-sm font-medium">Sem dados para o período</p>
+                                <p className="text-xs mt-1">Nenhum cliente com vendas em {selectedYear}</p>
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -226,24 +299,31 @@ const ReportsView: React.FC = () => {
                         <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
                             <Package size={18} className="text-indigo-500" /> Mix do Catálogo
                         </h3>
-                        <div className="h-48 w-full">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                    <Pie
-                                        data={productTypeData}
-                                        cx="50%"
-                                        cy="50%"
-                                        outerRadius={60}
-                                        dataKey="value"
-                                        label={({ name, percent }) => `${name} ${((percent || 0) * 100).toFixed(0)}%`}
-                                    >
-                                        <Cell fill="#8b5cf6" />
-                                        <Cell fill="#f59e0b" />
-                                    </Pie>
-                                    <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: '#1e293b', color: '#f8fafc' }} />
-                                </PieChart>
-                            </ResponsiveContainer>
-                        </div>
+                        {hasProductData ? (
+                            <div className="h-48 w-full">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={productTypeData}
+                                            cx="50%"
+                                            cy="50%"
+                                            outerRadius={60}
+                                            dataKey="value"
+                                            label={({ name, percent }) => `${name} ${((percent || 0) * 100).toFixed(0)}%`}
+                                        >
+                                            <Cell fill="#8b5cf6" />
+                                            <Cell fill="#f59e0b" />
+                                        </Pie>
+                                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: '#1e293b', color: '#f8fafc' }} />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                        ) : (
+                            <div className="h-48 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500" data-testid="empty-products">
+                                <Package size={36} className="mb-3 opacity-40" />
+                                <p className="text-sm font-medium">Sem dados no catálogo</p>
+                            </div>
+                        )}
                     </div>
 
                     {/* KPI Cards */}
@@ -254,10 +334,10 @@ const ReportsView: React.FC = () => {
                                 <span className="font-medium">Valor Médio da Fatura</span>
                             </div>
                             <div className="text-3xl font-bold">
-                                {formatCurrency(invoices.length > 0 ? invoices.reduce((a, b) => a + b.total_ttc, 0) / invoices.length : 0)}
+                                {formatCurrency(invoicesForYear.length > 0 ? invoicesForYear.reduce((a, b) => a + b.total_ttc, 0) / invoicesForYear.length : 0)}
                             </div>
                             <div className="mt-4 text-xs bg-white/20 inline-block px-2 py-1 rounded">
-                                Em {invoices.length} faturas
+                                Em {invoicesForYear.length} faturas em {selectedYear}
                             </div>
                         </div>
 
@@ -266,14 +346,14 @@ const ReportsView: React.FC = () => {
                                 <TrendingUp size={24} />
                             </div>
                             <div className="text-2xl font-bold text-slate-800 dark:text-white">
-                                {invoices.filter(i => i.statut === '2').length} / {invoices.length}
+                                {invoicesForYear.filter(i => i.statut === '2').length} / {invoicesForYear.length}
                             </div>
                             <div className="text-sm text-slate-500 dark:text-slate-400">Proporção de Faturas Pagas</div>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
+        </PageLayout>
     );
 };
 
