@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 // --- hoisted mocks ---
@@ -43,11 +43,19 @@ vi.mock('../../utils/orderVisibility', () => ({
 vi.mock('../../utils/cashFlowBuckets', () => ({
     buildCashFlowBuckets: vi.fn(() => []),
 }));
+vi.mock('../../utils/screenPermissions', async () => {
+    const actual = await vi.importActual<typeof import('../../utils/screenPermissions')>('../../utils/screenPermissions');
+    return actual;
+});
 
 vi.mock('../../context/DolibarrContext', () => ({
     useDolibarr: vi.fn(() => ({
-        config: { baseUrl: 'http://test', apiKey: 'key', currentUser: { id: '42', login: 'tester' } },
+        config: { baseUrl: 'http://test', apiKey: 'key', currentUser: { id: '42', login: 'tester', admin: 1 } },
         canAccess: vi.fn(() => true),
+        previewTarget: null,
+        setPreviewTarget: vi.fn(),
+        orgScreenPerms: null,
+        userGroupIds: [],
     })),
 }));
 
@@ -67,6 +75,7 @@ vi.mock('../../hooks/dolibarr', () => ({
 const {
     useInvoices,
     useSupplierInvoices,
+    useTasks,
     useInterventions,
     useTickets,
     useProjects,
@@ -222,5 +231,59 @@ describe('Dashboard — Minhas Pendências: projeto/cliente nas Intervenções e
         expect(semProjeto.length).toBeGreaterThan(0);
         const semCliente = screen.getAllByText('Sem cliente');
         expect(semCliente.length).toBeGreaterThan(0);
+    });
+});
+
+describe('Dashboard — Minhas Pendências: projeto em tarefas (#539)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockGetDashboardArtifacts.mockResolvedValue(null);
+        vi.mocked(useInvoices).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierInvoices).mockReturnValue({ data: [] } as any);
+        vi.mocked(useInterventions).mockReturnValue({ data: [] } as any);
+        vi.mocked(useTickets).mockReturnValue({ data: [] } as any);
+    });
+
+    it('exibe o nome do projeto para uma tarefa com project_title', async () => {
+        vi.mocked(useTasks).mockReturnValue({
+            data: [
+                { id: '1', ref: 'T-001', fk_user_assign: '42', progress: 50, label: 'Tarefa Teste', project_id: '10', project_title: 'Projeto Alpha', project_ref: 'PRJ-10' } as any,
+            ],
+        } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [{ id: '10', ref: 'PRJ-10', title: 'Projeto Alpha' }] } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [] } as any);
+
+        render(<Dashboard />);
+
+        expect(await screen.findByText('Projeto Alpha')).toBeInTheDocument();
+    });
+
+    it('resolve o projeto via projectMap quando project_title ausente', async () => {
+        vi.mocked(useTasks).mockReturnValue({
+            data: [
+                { id: '2', ref: 'T-002', fk_user_assign: '42', progress: 20, label: 'Tarefa Sem Título', project_id: '20' } as any,
+            ],
+        } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [{ id: '20', ref: 'PRJ-20', title: 'Projeto Beta' }] } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [] } as any);
+
+        render(<Dashboard />);
+
+        expect(await screen.findByText('Projeto Beta')).toBeInTheDocument();
+    });
+
+    it('exibe "Sem projeto" quando tarefa não tem project_id', async () => {
+        vi.mocked(useTasks).mockReturnValue({
+            data: [
+                { id: '3', ref: 'T-003', fk_user_assign: '42', progress: 10, label: 'Tarefa Sem Projeto' } as any,
+            ],
+        } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [] } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [] } as any);
+
+        render(<Dashboard />);
+
+        const semProjeto = await screen.findAllByText('Sem projeto');
+        expect(semProjeto.length).toBeGreaterThan(0);
     });
 });

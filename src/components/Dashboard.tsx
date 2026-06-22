@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState, useMemo, useEffect } from 'react';
 import { AppView } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -15,6 +15,7 @@ import { applyOrderVisibility, getUserPrefs, OrderVisibilityPrefs } from '../uti
 import { buildCashFlowBuckets } from '../utils/cashFlowBuckets';
 import { DASHBOARD_WIDGETS } from '../config/dashboardWidgets';
 import { AgentActivityFeed } from './Agent/AgentActivityFeed';
+import { resolveScreenAccess } from '../utils/screenPermissions';
 
 const DASHBOARD_PREFS_KEY = 'coolgroove_dashboard_prefs';
 
@@ -35,7 +36,28 @@ interface ForecastData {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
-    const { config, canAccess } = useDolibarr();
+    const { config, canAccess, previewTarget, orgScreenPerms, userGroupIds } = useDolibarr();
+    const currentUser = config?.currentUser;
+    const isAdmin = !previewTarget && currentUser?.admin === 1;
+
+    // canSeeWidget: combines existing screen-based canAccess guard + a widget-level override
+    // via synthetic key `dashboard:<widgetId>`. Admin sees all; group/user overrides respected (#541).
+    // Financial widgets have a secure default (base=false for non-admin); others default to visible (base=true).
+    const FINANCIAL_WIDGETS = new Set(['kpis', 'cashflow', 'cashflow-forecast', 'financial-health', 'sales-forecast']);
+    const canSeeWidget = (widgetId: string): boolean => {
+        if (isAdmin) return true;
+        const base = !FINANCIAL_WIDGETS.has(widgetId); // non-financial default visible; financial default hidden
+        const effectiveUserId = previewTarget?.type === 'user' ? previewTarget.id : currentUser?.id;
+        const effectiveGroupIds = previewTarget ? previewTarget.groupIds : userGroupIds;
+        return resolveScreenAccess({
+            screenId: `dashboard:${widgetId}`,
+            base,
+            isAdmin: false,
+            userId: effectiveUserId,
+            groupIds: effectiveGroupIds,
+            perms: orgScreenPerms,
+        });
+    };
 
     // #111 — ordem + visibilidade dos widgets (admin define o padrão da org; usuário personaliza localmente).
     const orgBranding = useOrgBranding();
@@ -70,6 +92,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     const customers = customersData || [];
 
     const [forecast, setForecast] = useState<ForecastData | null>(null);
+    const [forecastError, setForecastError] = useState<string | null>(null);
     const [loadingForecast, setLoadingForecast] = useState(false);
     const [cashFlowMonths, setCashFlowMonths] = useState(12);
 
@@ -111,7 +134,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         return { totalRevenue, totalExpense, totalCash, unpaidInvoices };
     }, [invoices, supplierInvoices, bankAccounts, bankLines]);
 
-    const cashFlowData = useMemo(() => buildCashFlowBuckets(bankLines, cashFlowMonths), [bankLines, cashFlowMonths]);
+    const cashFlowData = useMemo(
+        () => buildCashFlowBuckets(bankLines, cashFlowMonths, new Date(), metrics.totalCash),
+        [bankLines, cashFlowMonths, metrics.totalCash]
+    );
 
     const recentActivityData = useMemo(() => {
         return invoices.slice(0, 5).map(inv => ({
@@ -246,15 +272,24 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
     const handleGenerateForecast = async () => {
         setLoadingForecast(true);
+        setForecastError(null);
         try {
             const result = await AiService.generateSalesForecast(invoices);
             if (result) {
                 const parsed = JSON.parse(result);
-                setForecast(parsed);
-                void saveSalesForecast(parsed); // persiste pra todos (org-wide)
+                // Empty forecast array means IA not configured or no data
+                if (!parsed.forecast || parsed.forecast.length === 0) {
+                    setForecastError(parsed.summary || 'IA não configurada ou dados insuficientes para gerar previsão.');
+                } else {
+                    setForecast(parsed);
+                    void saveSalesForecast(parsed); // persiste pra todos (org-wide)
+                }
+            } else {
+                setForecastError('Não foi possível gerar a previsão. Verifique se a IA está configurada.');
             }
         } catch (e) {
             log.error("Failed to generate forecast", e);
+            setForecastError('Erro ao gerar previsão de vendas. Tente novamente.');
         } finally {
             setLoadingForecast(false);
         }
@@ -343,6 +378,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                                 <stop offset="5%" stopColor="#ef4444" stopOpacity={0.8} />
                                                 <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
                                             </linearGradient>
+                                            <linearGradient id="colorCashBalance" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.6} />
+                                                <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                                            </linearGradient>
                                         </defs>
                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" strokeOpacity={0.2} />
                                         <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} dy={10} />
@@ -354,6 +393,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                             tickFormatter={(value) => new Intl.NumberFormat('pt-BR', { notation: 'compact', compactDisplay: 'short', style: 'currency', currency: 'BRL' }).format(value)}
                                         />
                                         <Tooltip content={<CustomTooltip />} />
+                                        {/* Saldo em Caixa derivado do saldo atual regredido pelos fluxos mensais (#535) */}
+                                        <Area type="monotone" dataKey="balance" stroke="#6366f1" strokeWidth={2} strokeDasharray="4 2" fillOpacity={1} fill="url(#colorCashBalance)" name="Saldo em Caixa" />
                                         <Area type="monotone" dataKey="income" stroke="#10b981" fillOpacity={1} fill="url(#colorIncome)" name="Receita" />
                                         <Area type="monotone" dataKey="expense" stroke="#ef4444" fillOpacity={1} fill="url(#colorExpense)" name="Despesas" />
                                     </AreaChart>
@@ -414,15 +455,33 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                 <ClipboardList size={18} className="text-orange-500" /> Minhas Pendências
                             </h3>
                             <div className="space-y-3">
-                                {myAssignments.tasks.map(task => (
-                                    <div key={task.id} className="p-3 bg-violet-50 dark:bg-violet-900/10 rounded-lg border border-violet-100 dark:border-violet-800 cursor-pointer hover:bg-violet-100 dark:hover:bg-violet-900/20" onClick={() => onNavigate && onNavigate('tasks', task.id)}>
-                                        <div className="flex justify-between items-start">
-                                            <span className="text-xs font-bold text-violet-700 dark:text-violet-400 flex items-center gap-1"><FolderKanban size={10} /> {task.ref}</span>
-                                            <span className="text-[10px] text-slate-500">{task.progress}%</span>
+                                {myAssignments.tasks.map(task => {
+                                    const taskProjectTitle = task.project_title || task.project_ref || (task.project_id ? projectMap.get(String(task.project_id)) : undefined);
+                                    return (
+                                        <div key={task.id} className="p-3 bg-violet-50 dark:bg-violet-900/10 rounded-lg border border-violet-100 dark:border-violet-800 cursor-pointer hover:bg-violet-100 dark:hover:bg-violet-900/20" onClick={() => onNavigate && onNavigate('tasks', task.id)}>
+                                            <div className="flex justify-between items-start">
+                                                <span className="text-xs font-bold text-violet-700 dark:text-violet-400 flex items-center gap-1"><FolderKanban size={10} /> {task.ref}</span>
+                                                <span className="text-[10px] text-slate-500">{task.progress}%</span>
+                                            </div>
+                                            <div className="text-sm font-medium text-slate-800 dark:text-white mt-1 line-clamp-1">{task.label}</div>
+                                            <div className="mt-1">
+                                                {task.project_id ? (
+                                                    <span
+                                                        role="link"
+                                                        tabIndex={0}
+                                                        className="text-[10px] text-violet-600 dark:text-violet-400 truncate max-w-full inline-block cursor-pointer hover:underline"
+                                                        onClick={(e) => { e.stopPropagation(); onNavigate && onNavigate('projects', task.project_id); }}
+                                                        onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onNavigate && onNavigate('projects', task.project_id); } }}
+                                                    >
+                                                        {taskProjectTitle ?? 'Sem projeto'}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-[10px] text-slate-400 dark:text-slate-500">Sem projeto</span>
+                                                )}
+                                            </div>
                                         </div>
-                                        <div className="text-sm font-medium text-slate-800 dark:text-white mt-1 line-clamp-1">{task.label}</div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                                 {myAssignments.interventions.map(i => (
                                     <div key={i.id} className="p-3 bg-orange-50 dark:bg-orange-900/10 rounded-lg border border-orange-100 dark:border-orange-800 cursor-pointer hover:bg-orange-100 dark:hover:bg-orange-900/20" onClick={() => onNavigate && onNavigate('interventions', i.id)}>
                                         <div className="flex justify-between items-start">
@@ -470,7 +529,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
 
                             {!forecast ? (
                                 <div className="text-center py-6 relative z-10">
-                                    <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Preveja a receita do próximo mês usando análise de IA.</p>
+                                    {forecastError ? (
+                                        <p className="text-sm text-amber-600 dark:text-amber-400 mb-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">{forecastError}</p>
+                                    ) : (
+                                        <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Preveja a receita do próximo mês usando análise de IA.</p>
+                                    )}
                                     <button
                                         onClick={handleGenerateForecast}
                                         disabled={loadingForecast}
@@ -602,13 +665,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     };
 
     // Ordena/filtra os widgets de cada região respeitando o padrão da org + override do usuário.
+    // canSeeWidget gate is applied AFTER ordering so group-hidden widgets never render,
+    // even if local user prefs mark them visible (#541).
     const orderedRegion = (region: 'full' | 'main' | 'sidebar') =>
         applyOrderVisibility(
             DASHBOARD_WIDGETS.filter((w) => w.region === region),
             (w) => w.id,
             orgPrefs,
             userPrefs,
-        ).map((w) => <React.Fragment key={w.id}>{widgetNodes[w.id]}</React.Fragment>);
+        )
+        .filter((w) => canSeeWidget(w.id))
+        .map((w) => <React.Fragment key={w.id}>{widgetNodes[w.id]}</React.Fragment>);
 
     return (
         <div className="p-4 md:p-6 space-y-6 overflow-y-auto h-full">
@@ -646,14 +713,14 @@ interface CardProps {
 }
 
 const Card: React.FC<CardProps> = ({ title, value, icon: Icon, color, onClick, subValue }) => (
-    <div onClick={onClick} className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 cursor-pointer hover:shadow-md transition-all">
-        <div className="flex justify-between items-start">
-            <div>
-                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{title}</p>
-                <h3 className="text-2xl font-bold text-slate-800 dark:text-white mt-1">{value}</h3>
-                {subValue && <p className="text-xs text-slate-400 mt-1">{subValue}</p>}
+    <div onClick={onClick} className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 cursor-pointer hover:shadow-md transition-all min-w-0">
+        <div className="flex justify-between items-start gap-2">
+            <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400 truncate">{title}</p>
+                <h3 className="text-2xl font-bold text-slate-800 dark:text-white mt-1 truncate">{value}</h3>
+                {subValue && <p className="text-xs text-slate-400 mt-1 truncate">{subValue}</p>}
             </div>
-            <div className={`p-3 rounded-lg ${color} bg-opacity-10`}>
+            <div className={`p-3 rounded-lg ${color} bg-opacity-10 shrink-0`}>
                 <Icon size={24} className={color.replace('bg-', 'text-')} />
             </div>
         </div>
