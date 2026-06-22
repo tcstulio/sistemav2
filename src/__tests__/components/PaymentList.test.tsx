@@ -33,6 +33,8 @@ vi.mock('../../hooks/dolibarr', () => ({
     usePaymentInvoiceLinks: vi.fn(() => ({ data: [] })),
     useBankAccounts: vi.fn(() => ({ data: [] })),
     useUsers: vi.fn(() => ({ data: [] })),
+    useCustomers: vi.fn(() => ({ data: [] })),
+    useProjects: vi.fn(() => ({ data: [] })),
 }));
 
 // AutoSizer mockado: reporta altura real para que o react-window renderize as linhas.

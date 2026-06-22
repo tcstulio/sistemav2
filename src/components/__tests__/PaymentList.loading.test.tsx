@@ -28,6 +28,8 @@ vi.mock('../../hooks/dolibarr', () => ({
     usePaymentInvoiceLinks: vi.fn(() => ({ data: [] })),
     useBankAccounts: vi.fn(() => ({ data: [] })),
     useUsers: vi.fn(() => ({ data: [] })),
+    useCustomers: vi.fn(() => ({ data: [] })),
+    useProjects: vi.fn(() => ({ data: [] })),
 }));
 
 beforeEach(() => {

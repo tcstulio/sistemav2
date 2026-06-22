@@ -12,7 +12,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Warehouse as WarehouseType, Product, AppView } from '../types';
-import { Warehouse, Search, MapPin, Package, Loader2, Boxes } from 'lucide-react';
+import { Warehouse, Search, MapPin, Package, Loader2, Boxes, Phone, Home } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useWarehouses, useProducts } from '../hooks/dolibarr';
@@ -110,6 +110,71 @@ const WarehouseDetail: React.FC<{
                             <div className="font-bold text-2xl dark:text-white mt-1">{totalQty.toLocaleString()}</div>
                         </Card>
                     </div>
+
+                    {/* Warehouse Info */}
+                    {(warehouse.description || warehouse.address || warehouse.zip || warehouse.town || warehouse.phone || warehouse.fax || (warehouse.array_options && Object.values(warehouse.array_options).some(v => v !== '' && v !== null && v !== undefined))) && (
+                        <Card padding="lg" data-testid="warehouse-info">
+                            <h3 className="font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+                                <Warehouse size={18} /> Informações do Armazém
+                            </h3>
+                            <div className="space-y-3 text-sm">
+                                {/* Status */}
+                                <div className="flex items-center gap-2">
+                                    <span className="text-slate-500 dark:text-slate-400 w-24 shrink-0">Status</span>
+                                    <span
+                                        className={`text-xs px-2 py-1 rounded-full font-medium ${
+                                            warehouse.statut === '1'
+                                                ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300'
+                                                : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                                        }`}
+                                        data-testid="warehouse-status"
+                                    >
+                                        {warehouse.statut === '1' ? 'Ativo' : 'Inativo'}
+                                    </span>
+                                </div>
+                                {/* Description */}
+                                {warehouse.description && (
+                                    <div className="flex items-start gap-2" data-testid="warehouse-description">
+                                        <span className="text-slate-500 dark:text-slate-400 w-24 shrink-0">Descrição</span>
+                                        <span className="text-slate-700 dark:text-slate-300">{warehouse.description}</span>
+                                    </div>
+                                )}
+                                {/* Address */}
+                                {(warehouse.address || warehouse.zip || warehouse.town) && (
+                                    <div className="flex items-start gap-2" data-testid="warehouse-address">
+                                        <Home size={14} className="text-slate-400 mt-0.5 shrink-0" />
+                                        <span className="text-slate-700 dark:text-slate-300">
+                                            {[warehouse.address, warehouse.zip && warehouse.town ? `${warehouse.zip} ${warehouse.town}` : (warehouse.zip || warehouse.town)].filter(Boolean).join(', ')}
+                                        </span>
+                                    </div>
+                                )}
+                                {/* Phone */}
+                                {warehouse.phone && (
+                                    <div className="flex items-center gap-2" data-testid="warehouse-phone">
+                                        <Phone size={14} className="text-slate-400 shrink-0" />
+                                        <span className="text-slate-700 dark:text-slate-300">{warehouse.phone}</span>
+                                    </div>
+                                )}
+                                {/* Fax */}
+                                {warehouse.fax && (
+                                    <div className="flex items-center gap-2" data-testid="warehouse-fax">
+                                        <span className="text-slate-500 dark:text-slate-400 w-24 shrink-0">Fax</span>
+                                        <span className="text-slate-700 dark:text-slate-300">{warehouse.fax}</span>
+                                    </div>
+                                )}
+                                {/* Extrafields */}
+                                {warehouse.array_options && Object.entries(warehouse.array_options)
+                                    .filter(([, v]) => v !== '' && v !== null && v !== undefined)
+                                    .map(([key, value]) => (
+                                        <div key={key} className="flex items-start gap-2" data-testid={`extrafield-${key}`}>
+                                            <span className="text-slate-500 dark:text-slate-400 w-24 shrink-0 capitalize">{key.replace(/^options_/, '').replace(/_/g, ' ')}</span>
+                                            <span className="text-slate-700 dark:text-slate-300">{String(value)}</span>
+                                        </div>
+                                    ))
+                                }
+                            </div>
+                        </Card>
+                    )}
 
                     {/* Items */}
                     <Card padding="lg">

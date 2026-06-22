@@ -38,6 +38,12 @@ export interface Payment {
     user_author_id?: number;
     date_creation?: number; // Creation timestamp
     date_modification?: number;
+    // Cliente e evento: não enviados pelo custom_sync.php payments (apenas via fatura vinculada).
+    // Presentes caso uma versão futura do SQL os inclua.
+    fk_soc?: number;
+    socid?: number;       // alias compatível
+    project_id?: number;
+    fk_projet?: number;   // alias compatível
 }
 
 export interface SupplierPayment {
