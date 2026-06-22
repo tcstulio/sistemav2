@@ -4,6 +4,7 @@ import { DolibarrUser, ExpenseReport, RecruitmentJobPosition, DolibarrConfig, Ta
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { ListControls } from '../hooks/useListControls';
 import { ListToolbar } from './ui';
+import { MasterDetailLayout } from './ui/MasterDetailLayout';
 import { Plus, UserCheck, Plane, BarChart3, Banknote, Briefcase, Scan, Users, Network } from 'lucide-react';
 import { TeamTab } from './HR/tabs/TeamTab';
 import { GroupsTab } from './HR/tabs/GroupsTab';
@@ -412,14 +413,11 @@ const HRList: React.FC<HRListProps> = ({
             <CandidateModal isOpen={isCandidateModalOpen} onClose={() => { setIsCandidateModalOpen(false); setCandidatePrefill(undefined); setCandidateEditId(undefined); }} config={config} jobPositions={jobPositions} onRefresh={onRefresh} initialForm={candidatePrefill} editId={candidateEditId} />
             <ExpenseModal isOpen={isExpenseModalOpen} onClose={() => { setIsExpenseModalOpen(false); setExpensePrefill(undefined); setExpenseEditId(undefined); }} config={config} users={users} onRefresh={onRefresh} initialForm={expensePrefill} editId={expenseEditId} />
             <ExpenseScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} config={config} currentUser={currentUser} users={users} onRefresh={onRefresh} />
-            <ExpenseScannerModal isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} config={config} currentUser={currentUser} users={users} onRefresh={onRefresh} />
-
-            <GroupModal isOpen={isGroupModalOpen} onClose={() => { setIsGroupModalOpen(false); setGroupPrefill(undefined); setGroupToEdit(null); }} config={config} groupToEdit={groupToEdit} onRefresh={onRefresh} initialForm={groupPrefill} />
 
             <GroupModal isOpen={isGroupModalOpen} onClose={() => { setIsGroupModalOpen(false); setGroupPrefill(undefined); setGroupToEdit(null); }} config={config} groupToEdit={groupToEdit} onRefresh={onRefresh} initialForm={groupPrefill} />
 
             {/* Header */}
-            <div className={`p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none ${(selectedUser || viewingCandidates) ? 'hidden lg:block' : 'block'}`}>
+            <div className="p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
                     <div>
                         <h2 className="text-2xl font-bold text-slate-800 dark:text-white">RH e Equipe</h2>
@@ -472,105 +470,111 @@ const HRList: React.FC<HRListProps> = ({
                 </div>
             </div>
 
-            <div className="flex-1 min-h-0 flex overflow-hidden">
-                {/* List Side */}
-                <div className={`flex-1 overflow-y-auto p-4 md:p-6 ${(selectedUser || viewingCandidates || selectedGroup || (activeTab === 'expenses' && selectedExpense)) ? 'hidden lg:block lg:w-1/3 xl:w-1/4 border-r border-slate-200 dark:border-slate-800' : 'w-full'}`}>
-                    {activeTab === 'team' && (
-                        <TeamTab
-                            users={users}
-                            searchTerm={searchTerm}
-                            sortConfig={sortConfig}
-                            displayLimit={displayLimit}
-                            selectedUserIds={selectedUserIds}
-                            config={config}
-                            onToggleUser={handleToggleUser}
-                            onSelectUser={(u) => {
-                                setSelectedUser(u);
-                            }}
-                            setDisplayLimit={setDisplayLimit}
-                        />
-                    )}
-                    {activeTab === 'hierarchy' && (
-                        <HierarchyTab
-                            users={users}
-                            config={config}
-                            onSelectUser={setSelectedUser}
-                        />
-                    )}
-                    {activeTab === 'expenses' && (
-                        <ExpensesTab
-                            expenseReports={expenseReports}
-                            users={users}
-                            searchTerm={searchTerm}
-                            sortConfig={sortConfig}
-                            displayLimit={displayLimit}
-                            onSelectExpense={setSelectedExpense}
-                            onOpenScanner={() => setIsScannerOpen(true)}
-                            expenseReportLines={expenseReportLines}
-                            expenseReportPayments={expenseReportPayments}
-                            projects={projects}
-                        />
-
-                    )}
-                    {activeTab === 'leaves' && (
-                        <LeavesTab
-                            leaveRequests={leaveRequests}
-                            users={users}
-                            searchTerm={searchTerm}
-                            sortConfig={sortConfig}
-                            onOpenLeaveModal={() => setIsLeaveModalOpen(true)}
-                            onRefresh={onRefresh}
-                        />
-                    )}
-                    {activeTab === 'recruitment' && (
-                        <RecruitmentJobsList
-                            jobPositions={jobPositions}
-                            candidates={candidates}
-                            searchTerm={searchTerm}
-                            sortConfig={sortConfig}
-                            displayLimit={displayLimit}
-                            viewingCandidatesId={viewingCandidates}
-                            config={config}
-                            onViewCandidates={setViewingCandidates}
-                            onOpenJobModal={() => setIsJobModalOpen(true)}
-                            setDisplayLimit={setDisplayLimit}
-                        />
-                    )}
-                    {activeTab === 'workload' && (
-                        <WorkloadTab
-                            users={users}
-                            tasks={tasks}
-                        />
-                    )}
-                    {activeTab === 'groups' && (
-                        <GroupsTab
-                            groups={userGroups}
-                            searchTerm={searchTerm}
-                            sortConfig={sortConfig}
-                            displayLimit={displayLimit}
-                            config={config}
-                            onSelectGroup={setSelectedGroup}
-                            onEditGroup={(g) => {
-                                setGroupToEdit(g);
-                                setIsGroupModalOpen(true);
-                            }}
-                            onDeleteGroup={async (id) => {
-                                if (!(await confirm({ message: 'Excluir Grupo?', danger: true }))) return;
-                                try {
-                                    await HRAdmin.deleteGroup(config, id);
-                                    onRefresh?.();
-                                } catch (e) {
-                                    notifyError('Excluir grupo', e);
-                                }
-                            }}
-                            setDisplayLimit={setDisplayLimit}
-                        />
-                    )}
-                </div>
-
-                {/* Detail View Side */}
-                <div className={`flex-1 bg-white dark:bg-slate-900 flex flex-col ${(selectedUser || viewingCandidates || selectedGroup || (activeTab === 'expenses' && selectedExpense)) ? 'block absolute inset-0 z-20 lg:static lg:inset-auto' : 'hidden lg:flex lg:items-center lg:justify-center'}`}>
-                    {selectedUser ? (
+            <MasterDetailLayout
+                showDetail={!!(selectedUser || viewingCandidates || selectedGroup || (activeTab === 'expenses' && selectedExpense))}
+                onCloseDetail={() => {
+                    setSelectedUser(null);
+                    setSelectedGroup(null);
+                    setViewingCandidates(null);
+                    setSelectedExpense(null);
+                }}
+                listWidth="1/3"
+                list={
+                    <div className="p-4 md:p-6">
+                        {activeTab === 'team' && (
+                            <TeamTab
+                                users={users}
+                                searchTerm={searchTerm}
+                                sortConfig={sortConfig}
+                                displayLimit={displayLimit}
+                                selectedUserIds={selectedUserIds}
+                                config={config}
+                                onToggleUser={handleToggleUser}
+                                onSelectUser={(u) => {
+                                    setSelectedUser(u);
+                                }}
+                                setDisplayLimit={setDisplayLimit}
+                            />
+                        )}
+                        {activeTab === 'hierarchy' && (
+                            <HierarchyTab
+                                users={users}
+                                config={config}
+                                onSelectUser={setSelectedUser}
+                            />
+                        )}
+                        {activeTab === 'expenses' && (
+                            <ExpensesTab
+                                expenseReports={expenseReports}
+                                users={users}
+                                searchTerm={searchTerm}
+                                sortConfig={sortConfig}
+                                displayLimit={displayLimit}
+                                onSelectExpense={setSelectedExpense}
+                                onOpenScanner={() => setIsScannerOpen(true)}
+                                expenseReportLines={expenseReportLines}
+                                expenseReportPayments={expenseReportPayments}
+                                projects={projects}
+                            />
+                        )}
+                        {activeTab === 'leaves' && (
+                            <LeavesTab
+                                leaveRequests={leaveRequests}
+                                users={users}
+                                searchTerm={searchTerm}
+                                sortConfig={sortConfig}
+                                onOpenLeaveModal={() => setIsLeaveModalOpen(true)}
+                                onRefresh={onRefresh}
+                            />
+                        )}
+                        {activeTab === 'recruitment' && (
+                            <RecruitmentJobsList
+                                jobPositions={jobPositions}
+                                candidates={candidates}
+                                searchTerm={searchTerm}
+                                sortConfig={sortConfig}
+                                displayLimit={displayLimit}
+                                viewingCandidatesId={viewingCandidates}
+                                config={config}
+                                onViewCandidates={setViewingCandidates}
+                                onOpenJobModal={() => setIsJobModalOpen(true)}
+                                setDisplayLimit={setDisplayLimit}
+                            />
+                        )}
+                        {activeTab === 'workload' && (
+                            <WorkloadTab
+                                users={users}
+                                tasks={tasks}
+                            />
+                        )}
+                        {activeTab === 'groups' && (
+                            <GroupsTab
+                                groups={userGroups}
+                                searchTerm={searchTerm}
+                                sortConfig={sortConfig}
+                                displayLimit={displayLimit}
+                                config={config}
+                                onSelectGroup={setSelectedGroup}
+                                onEditGroup={(g) => {
+                                    setGroupToEdit(g);
+                                    setIsGroupModalOpen(true);
+                                }}
+                                onDeleteGroup={async (id) => {
+                                    if (!(await confirm({ message: 'Excluir Grupo?', danger: true }))) return;
+                                    try {
+                                        await HRAdmin.deleteGroup(config, id);
+                                        onRefresh?.();
+                                    } catch (e) {
+                                        notifyError('Excluir grupo', e);
+                                    }
+                                }}
+                                setDisplayLimit={setDisplayLimit}
+                            />
+                        )}
+                    </div>
+                }
+                detail={
+                    selectedUser ? (
                         <UserDetail
                             user={selectedUser}
                             userTasks={userTasks}
@@ -616,19 +620,9 @@ const HRList: React.FC<HRListProps> = ({
                             onEditCandidate={openEditCandidate}
                             onClose={() => setViewingCandidates(null)}
                         />
-                    ) : (
-                        <div className="flex flex-col items-center justify-center h-full text-slate-400">
-                            {/* Empty State when no Detail selected */}
-                            {activeTab === 'team' && <><UserCheck size={48} className="mb-4 opacity-50" /><p>Selecione um membro da equipe</p></>}
-                            {activeTab === 'groups' && <><Users size={48} className="mb-4 opacity-50" /><p>Selecione um grupo para gerenciar membros</p></>}
-                            {activeTab === 'recruitment' && <><Briefcase size={48} className="mb-4 opacity-50" /><p>Selecione uma vaga para ver candidatos</p></>}
-                            {activeTab === 'leaves' && <><Plane size={48} className="mb-4 opacity-50" /><p>Selecione uma licença (não implementado detalhe)</p></>}
-                            {activeTab === 'expenses' && <><Banknote size={48} className="mb-4 opacity-50" /><p>Selecione uma despesa para ver detalhes</p></>}
-                            {activeTab === 'workload' && <><BarChart3 size={48} className="mb-4 opacity-50" /><p>Visualização de Carga de Trabalho</p></>}
-                        </div>
-                    )}
-                </div>
-            </div>
+                    ) : undefined
+                }
+            />
         </div>
     );
 };
