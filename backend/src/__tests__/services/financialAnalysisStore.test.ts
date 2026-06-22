@@ -103,18 +103,28 @@ describe('financialAnalysisStore', () => {
     });
 
     describe('save error handling', () => {
-        it('handles atomicWriteSync error gracefully', async () => {
-            vi.clearAllMocks();
+        it('propagates atomicWriteSync errors from saveAnalysis', async () => {
             vi.resetModules();
 
-            const mockAtomicWrite = vi.fn().mockImplementation(() => { throw new Error('write fail'); });
-            vi.doMock('../../utils/atomicWrite', () => ({ atomicWriteSync: mockAtomicWrite }));
-            mockedFs.existsSync.mockReturnValue(false);
+            const atomicMod = await import('../../utils/atomicWrite');
+            vi.mocked(atomicMod.atomicWriteSync).mockImplementationOnce(() => { throw new Error('write fail'); });
 
             const mod = await import('../../services/financialAnalysisStore');
             const svc = mod.financialAnalysisStore;
-            svc.saveAnalysis({ data: { x: 1 }, status: 'success' });
-            expect(mockAtomicWrite).toHaveBeenCalled();
+            expect(() => svc.saveAnalysis({ data: { x: 1 }, status: 'success' })).toThrow('write fail');
+            expect(atomicMod.atomicWriteSync).toHaveBeenCalled();
+        });
+
+        it('propagates atomicWriteSync errors from saveAutomationConfig', async () => {
+            vi.resetModules();
+
+            const atomicMod = await import('../../utils/atomicWrite');
+            vi.mocked(atomicMod.atomicWriteSync).mockImplementationOnce(() => { throw new Error('write fail'); });
+
+            const mod = await import('../../services/financialAnalysisStore');
+            const svc = mod.financialAnalysisStore;
+            expect(() => svc.saveAutomationConfig({ enabled: true })).toThrow('write fail');
+            expect(atomicMod.atomicWriteSync).toHaveBeenCalled();
         });
     });
 

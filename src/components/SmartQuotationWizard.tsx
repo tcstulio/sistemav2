@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useDolibarr } from '../context/DolibarrContext';
 import { AiService } from '../services/aiService';
+import { formatCurrency } from '../utils/formatUtils';
 import {
     Search,
     ShoppingCart,
@@ -387,7 +388,7 @@ export const SmartQuotationWizard: React.FC = () => {
                                                     <div className="text-xs text-slate-500">{offer.isNewSupplier ? '(Novo Fornecedor)' : '(Já Cadastrado)'}</div>
                                                 </div>
                                                 <div className="text-lg font-bold text-emerald-600">
-                                                    R$ {offer.price.toFixed(2)}
+                                                    {formatCurrency(offer.price)}
                                                 </div>
                                             </div>
                                             <div className="mt-2 flex items-center justify-between text-xs">

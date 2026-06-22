@@ -3,6 +3,7 @@ import { ExpenseReport, DolibarrUser } from '../../../types';
 import { getExpenseStatusBadge, getUserName } from '../utils';
 import { Receipt, Plus, Calendar, User } from 'lucide-react';
 import { formatDateOnly } from '../../../utils/dateUtils';
+import { formatCurrency } from '../../../utils/formatUtils';
 
 interface ExpensesTabProps {
     expenseReports: ExpenseReport[];
@@ -97,7 +98,7 @@ export const ExpensesTab: React.FC<ExpensesTabProps> = ({
                                 </div>
                             </div>
                             <div className="text-right">
-                                <span className="block text-xl font-bold text-slate-900 dark:text-white">${expense.total_ttc.toFixed(2)}</span>
+                                <span className="block text-xl font-bold text-slate-900 dark:text-white">{formatCurrency(expense.total_ttc)}</span>
                                 <span className="text-xs text-slate-500">Total TTC</span>
                             </div>
                         </div>

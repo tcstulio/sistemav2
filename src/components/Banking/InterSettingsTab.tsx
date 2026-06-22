@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useInterBank } from '../../hooks/useInterBank';
 import { saveBankingCredentials, getBankingCredentialsStatus } from '../../services/bankingConfigService';
+import { formatCurrency } from '../../utils/formatUtils';
 
 interface InterSettingsTabProps {
     onSave?: () => void;
@@ -90,7 +91,7 @@ export function InterSettingsTab({ onSave }: InterSettingsTabProps) {
             if (result.success) {
                 setTestResult({
                     success: true,
-                    message: `Conexão OK! Saldo disponível: R$ ${result.saldo?.disponivel?.toFixed(2) || '0.00'}`,
+                    message: `Conexão OK! Saldo disponível: ${formatCurrency(result.saldo?.disponivel ?? 0)}`,
                 });
             } else {
                 setTestResult({
@@ -188,7 +189,7 @@ export function InterSettingsTab({ onSave }: InterSettingsTabProps) {
                     <div className="mt-4 p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
                         <p className="text-sm text-slate-600 dark:text-slate-400">Saldo Disponível</p>
                         <p className="text-2xl font-bold text-green-600 dark:text-green-400">
-                            R$ {saldo.disponivel.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            {formatCurrency(saldo.disponivel)}
                         </p>
                     </div>
                 )}

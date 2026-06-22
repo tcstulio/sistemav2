@@ -1,11 +1,12 @@
 
 import { SimulationState, DualSimulationResult, FinancialResult, CostItem, EventModel, GlobalConfig, CalculationResult, ExtratoItem, Partner, ClientProposalState } from './types';
 import { logger } from '../../utils/logger';
+import { formatCurrency } from '../../utils/formatUtils';
 
 const log = logger.child('SimulatorUtils');
 
 export const money = (val: number) => {
-    return (val || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    return formatCurrency(val || 0);
 };
 
 export const percent = (val: number) => `${val.toFixed(0)}%`;

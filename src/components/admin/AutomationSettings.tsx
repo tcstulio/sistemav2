@@ -72,12 +72,19 @@ export const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config }
             setLoading(true);
             try {
                 const data = await AiService.getFinancialAnalysisAutomationConfig();
-                if (cancelled || !data) return;
+                if (cancelled) return;
+                // null => falha no carregamento. O service já logou; o componente decide a mensagem (#677).
+                // Este useEffect só roda no mount (deps=[isAdmin]); salvamentos não disparam re-fetch,
+                // então este toast não aparece após um salvamento bem-sucedido.
+                if (!data) {
+                    toast.error('Não foi possível carregar as configurações de automação.');
+                    return;
+                }
                 setCfg(data);
                 setDraft(data.schedule);
             } catch (e) {
                 log.error('Falha ao carregar config de automação', e);
-                toast.error('Falha ao carregar automações.');
+                if (!cancelled) toast.error('Não foi possível carregar as configurações de automação.');
             } finally {
                 if (!cancelled) setLoading(false);
             }
@@ -92,10 +99,15 @@ export const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config }
             const updated = await AiService.updateFinancialAnalysisAutomationConfig({ enabled: next });
             if (updated) {
                 setCfg(updated);
-                toast.success(next ? 'Análise Financeira IA ativada.' : 'Análise Financeira IA desativada.');
+                toast.success('Automação atualizada!');
+            } else {
+                // Falha ao persistir: como o toggle é controlado por cfg.enabled (que não mudou),
+                // a UI volta visualmente ao estado anterior automaticamente (#677).
+                toast.error('Falha ao salvar automação. Tente novamente.');
             }
         } catch (e: any) {
-            toast.error(`Falha ao alternar: ${e?.message || 'erro'}`);
+            log.error('Falha ao alternar automação', e);
+            toast.error('Falha ao salvar automação. Tente novamente.');
         } finally {
             setToggling(false);
         }
@@ -108,10 +120,13 @@ export const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config }
             if (updated) {
                 setCfg(updated);
                 setDraft(updated.schedule);
-                toast.success('Horário salvo.');
+                toast.success('Horário salvo com sucesso!');
+            } else {
+                toast.error('Falha ao salvar horário.');
             }
         } catch (e: any) {
-            toast.error(`Falha ao salvar horário: ${e?.message || 'erro'}`);
+            log.error('Falha ao salvar horário', e);
+            toast.error('Falha ao salvar horário.');
         } finally {
             setSavingSchedule(false);
         }

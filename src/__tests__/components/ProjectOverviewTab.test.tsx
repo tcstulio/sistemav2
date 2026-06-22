@@ -2,13 +2,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ProjectOverviewTab } from '../../components/Projects/tabs/ProjectOverviewTab';
 import { Project } from '../../types/projects';
+import { formatCurrency } from '../../utils/formatUtils';
 
 vi.mock('../../components/common/LinkedObjects', () => ({
     LinkedObjects: () => <div data-testid="linked-objects">LinkedObjects</div>
 }));
 
 vi.mock('../../utils/dateUtils', () => ({
-    formatDateOnly: vi.fn((date: number | null) => date ? '01/01/2024' : null)
+    formatDateOnly: vi.fn((date: number | null) => date ? '01/01/2024' : null),
+    formatDateLocal: vi.fn(),
 }));
 
 describe('ProjectOverviewTab', () => {
@@ -182,5 +184,75 @@ describe('ProjectOverviewTab', () => {
             />
         );
         expect(screen.getByTestId('linked-objects')).toBeInTheDocument();
+    });
+
+    describe('Currency formatting (BRL/pt-BR) — issue #623', () => {
+        it('formats Faturado, Custos and Margem as BRL (R$) without raw $', () => {
+            const project = createMockProject();
+            const totalInvoiced = 1234.56;
+            const totalSupplierBills = 300.5;
+            const totalExpenses = 150;
+            const { container } = render(
+                <ProjectOverviewTab
+                    project={project}
+                    customerName="Empresa Teste"
+                    totalInvoiced={totalInvoiced}
+                    totalSupplierBills={totalSupplierBills}
+                    totalExpenses={totalExpenses}
+                    onNavigate={mockOnNavigate}
+                />
+            );
+
+            const invoicedFormatted = formatCurrency(totalInvoiced);
+            const costsFormatted = formatCurrency(totalSupplierBills + totalExpenses);
+            const marginFormatted = formatCurrency(totalInvoiced - totalSupplierBills - totalExpenses);
+
+            const allEls = Array.from(container.querySelectorAll('*'));
+            expect(allEls.some(el => el.textContent === invoicedFormatted)).toBe(true);
+            expect(allEls.some(el => el.textContent === costsFormatted)).toBe(true);
+            expect(allEls.some(el => el.textContent === marginFormatted)).toBe(true);
+
+            expect(container.textContent).toContain('R$');
+            expect(container.textContent).not.toContain('$1,234.56');
+        });
+
+        it('renders pt-BR thousand/decimal separators', () => {
+            const project = createMockProject();
+            const { container } = render(
+                <ProjectOverviewTab
+                    project={project}
+                    customerName="Empresa Teste"
+                    totalInvoiced={1234.56}
+                    totalSupplierBills={0}
+                    totalExpenses={0}
+                    onNavigate={mockOnNavigate}
+                />
+            );
+
+            const formatted = formatCurrency(1234.56);
+            expect(formatted).toContain('1.234,56');
+            expect(container.textContent).toContain('1.234,56');
+        });
+
+        it('keeps negative margin in red', () => {
+            const project = createMockProject();
+            const { container } = render(
+                <ProjectOverviewTab
+                    project={project}
+                    customerName="Empresa Teste"
+                    totalInvoiced={100}
+                    totalSupplierBills={500}
+                    totalExpenses={200}
+                    onNavigate={mockOnNavigate}
+                />
+            );
+
+            const marginFormatted = formatCurrency(100 - 500 - 200);
+            const marginEl = Array.from(container.querySelectorAll('span')).find(
+                el => el.textContent === marginFormatted
+            );
+            expect(marginEl).toBeDefined();
+            expect(marginEl?.className).toContain('text-red-500');
+        });
     });
 });

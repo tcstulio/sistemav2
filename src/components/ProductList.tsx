@@ -35,6 +35,7 @@ import {
 } from './ui';
 import { SafeHtml } from '../utils/sanitizeHtml';
 import { notifyError } from '../utils/notifyError';
+import { formatCurrency } from '../utils/formatUtils';
 
 // ============================================
 // Types
@@ -91,7 +92,7 @@ const ProductRow: React.FC<{
                         </div>
                         <div className="shrink-0">{getStockBadge()}</div>
                     </div>
-                    <div className="mt-2 font-bold text-slate-900 dark:text-white">${product.price?.toLocaleString() || 0}</div>
+                    <div className="mt-2 font-bold text-slate-900 dark:text-white">{formatCurrency(product.price ?? 0)}</div>
                 </div>
             </div>
         </Card>
@@ -162,7 +163,7 @@ const ProductDetail: React.FC<{
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
                                     <span className="text-xs text-slate-500 uppercase font-bold">Preço</span>
-                                    <div className="font-bold text-xl dark:text-white mt-1">${product.price?.toLocaleString() || 0}</div>
+                                    <div className="font-bold text-xl dark:text-white mt-1">{formatCurrency(product.price ?? 0)}</div>
                                 </div>
                                 <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
                                     <span className="text-xs text-slate-500 uppercase font-bold">Tipo</span>

@@ -4,7 +4,7 @@ import { AppView } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInvoices, useSupplierInvoices, useTasks, useProducts, useBankAccounts, useInterventions, useTickets, useBankLines } from '../hooks/dolibarr';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, AreaChart, Area } from 'recharts';
-import { DollarSign, Users, FileText, TrendingUp, Sparkles, Loader2, Minus, FolderKanban, Pencil, Save, X, AlertOctagon, Clock, Package, Landmark, MessageSquare, ClipboardList, Wrench, Ticket as TicketIcon, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { DollarSign, Users, FileText, TrendingUp, Sparkles, Loader2, Minus, FolderKanban, AlertOctagon, Clock, Package, Landmark, ClipboardList, Wrench, Ticket as TicketIcon, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { AiService } from '../services/aiService';
 import { FinancialHealthWidget } from './Finance/FinancialHealthWidget';
 import { getDashboardArtifacts, saveSalesForecast } from '../services/dashboardArtifacts';
@@ -14,7 +14,6 @@ import { useOrgBranding } from '../hooks/useOrgBranding';
 import { applyOrderVisibility, getUserPrefs, OrderVisibilityPrefs } from '../utils/orderVisibility';
 import { buildCashFlowBuckets } from '../utils/cashFlowBuckets';
 import { DASHBOARD_WIDGETS } from '../config/dashboardWidgets';
-import { GithubService, GitHubIssue, IssueStats } from '../services/githubService';
 import { AgentActivityFeed } from './Agent/AgentActivityFeed';
 
 const DASHBOARD_PREFS_KEY = 'coolgroove_dashboard_prefs';
@@ -592,64 +591,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             </React.Fragment>
         ),
 
-        'quick-actions': (
-            <React.Fragment key="quick-actions">
-                {/* Quick Actions */}
-                <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 transition-colors">
-                        <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4">Ações Rápidas</h3>
-                        <div className="space-y-3">
-                            {canAccess('invoices') && (
-                                <button
-                                    className="w-full text-left p-3 rounded-lg border border-slate-100 dark:border-slate-800 hover:border-indigo-100 dark:hover:border-indigo-900 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all flex items-center gap-3 group"
-                                    onClick={() => onNavigate && onNavigate('invoices', '')}
-                                >
-                                    <div className="bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 p-2 rounded-lg group-hover:bg-white dark:group-hover:bg-slate-800 transition-colors">
-                                        <FileText size={18} />
-                                    </div>
-                                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Criar Nova Fatura</span>
-                                </button>
-                            )}
-                            {canAccess('customers') && (
-                                <button
-                                    className="w-full text-left p-3 rounded-lg border border-slate-100 dark:border-slate-800 hover:border-indigo-100 dark:hover:border-indigo-900 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all flex items-center gap-3 group"
-                                    onClick={() => onNavigate && onNavigate('customers', '')}
-                                >
-                                    <div className="bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 p-2 rounded-lg group-hover:bg-white dark:group-hover:bg-slate-800 transition-colors">
-                                        <Users size={18} />
-                                    </div>
-                                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Adicionar Cliente</span>
-                                </button>
-                            )}
-                            {canAccess('projects') && (
-                                <button
-                                    className="w-full text-left p-3 rounded-lg border border-slate-100 dark:border-slate-800 hover:border-indigo-100 dark:hover:border-indigo-900 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all flex items-center gap-3 group"
-                                    onClick={() => onNavigate && onNavigate('projects', '')}
-                                >
-                                    <div className="bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400 p-2 rounded-lg group-hover:bg-white dark:group-hover:bg-slate-800 transition-colors">
-                                        <FolderKanban size={18} />
-                                    </div>
-                                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Novo Projeto</span>
-                                </button>
-                            )}
-                            {/* WhatsApp Quick Action */}
-                            <button
-                                className="w-full text-left p-3 rounded-lg border border-slate-100 dark:border-slate-800 hover:border-green-100 dark:hover:border-green-900 hover:bg-green-50 dark:hover:bg-green-900/20 transition-all flex items-center gap-3 group"
-                                onClick={() => onNavigate && onNavigate('whatsapp', '')}
-                            >
-                                <div className="bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400 p-2 rounded-lg group-hover:bg-white dark:group-hover:bg-slate-800 transition-colors">
-                                    <MessageSquare size={18} />
-                                </div>
-                                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Abrir WhatsApp</span>
-                            </button>
-                        </div>
-                    </div>
-            </React.Fragment>
-        ),
-
-        'project-evolution': (
-            <ProjectEvolutionWidget key="project-evolution" />
-        ),
-
         'agent-activity': (
             <AgentActivityFeed key="agent-activity" />
         ),
@@ -715,106 +656,3 @@ const Card: React.FC<CardProps> = ({ title, value, icon: Icon, color, onClick, s
 );
 
 export default Dashboard;
-
-const LABEL_COLORS: Record<string, string> = {
-    bug: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400',
-    enhancement: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400',
-    security: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
-    question: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
-};
-
-const ProjectEvolutionWidget: React.FC = () => {
-    const [stats, setStats] = useState<IssueStats | null>(null);
-    const [recent, setRecent] = useState<GitHubIssue[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [showAll, setShowAll] = useState(false);
-
-    useEffect(() => {
-        (async () => {
-            const [s, issues] = await Promise.all([
-                GithubService.getStats(),
-                GithubService.getIssues({ state: 'all', limit: 20 }),
-            ]);
-            setStats(s);
-            setRecent(issues);
-            setLoading(false);
-        })();
-    }, []);
-
-    if (loading) {
-        return (
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
-                <div className="flex items-center justify-center h-24 text-sm text-slate-400">
-                    <Loader2 size={18} className="animate-spin mr-2" /> Carregando...
-                </div>
-            </div>
-        );
-    }
-
-    if (!stats) return null;
-
-    const visibleIssues = showAll ? recent : recent.slice(0, 5);
-
-    return (
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
-            <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-slate-800 dark:text-white">Evolução do Projeto</h3>
-                <div className="flex items-center gap-3 text-xs">
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" />{stats.totalClosed} fechados</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" />{stats.totalOpen} abertos</span>
-                </div>
-            </div>
-
-            <div className="space-y-1.5">
-                {visibleIssues.map(issue => (
-                    <a
-                        key={issue.number}
-                        href={issue.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-start gap-2 p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group"
-                    >
-                        <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${issue.state === 'OPEN' ? 'bg-amber-500' : 'bg-green-500'}`} />
-                        <div className="flex-1 min-w-0">
-                            <p className="text-sm text-slate-700 dark:text-slate-300 truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
-                                <span className="text-slate-400 mr-1">#{issue.number}</span>{issue.title}
-                            </p>
-                            {(issue.labels || []).length > 0 && (
-                                <div className="flex gap-1 mt-0.5 flex-wrap">
-                                    {(issue.labels || []).map((l: any) => (
-                                        <span key={l.name} className={`text-[10px] px-1.5 py-0.5 rounded ${LABEL_COLORS[l.name] || 'bg-slate-100 text-slate-500'}`}>
-                                            {l.name}
-                                        </span>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    </a>
-                ))}
-            </div>
-
-            {recent.length > 5 && (
-                <button
-                    onClick={() => setShowAll(!showAll)}
-                    className="w-full text-center text-xs text-indigo-600 dark:text-indigo-400 hover:underline mt-2 py-1"
-                >
-                    {showAll ? 'Mostrar menos' : `Ver mais ${recent.length - 5} issues`}
-                </button>
-            )}
-
-            {Object.keys(stats.byLabel).length > 0 && (
-                <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800">
-                    <p className="text-xs text-slate-400 mb-2">Por categoria</p>
-                    <div className="grid grid-cols-2 gap-1.5">
-                        {Object.entries(stats.byLabel).map(([label, counts]) => (
-                            <div key={label} className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                                <span className="truncate">{label}</span>
-                                <span>{counts.closed}✓ {counts.open > 0 ? `${counts.open}⏳` : ''}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-};

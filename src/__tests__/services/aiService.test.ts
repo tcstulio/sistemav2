@@ -675,4 +675,63 @@ describe('AiService', () => {
             expect(result).toBe(0);
         });
     });
+
+    // #677: estes métodos NÃO disparam toast no service — quem decide a mensagem é o componente.
+    describe('financial analysis automation config (#677)', () => {
+        const sampleConfig = {
+            enabled: true,
+            schedule: { dayOfWeek: 1, hour: 8, minute: 0 },
+            lastRunAt: null,
+            lastRunStatus: null,
+        };
+
+        describe('getFinancialAnalysisAutomationConfig', () => {
+            it('returns the config on success without toasting', async () => {
+                mockAxios.get.mockResolvedValue({ data: sampleConfig });
+
+                const result = await AiService.getFinancialAnalysisAutomationConfig();
+
+                expect(result).toEqual(sampleConfig);
+                expect(mockAxios.get).toHaveBeenCalledWith(
+                    expect.stringContaining('/analyze/financial-analysis/automation-config'),
+                    expect.any(Object)
+                );
+                expect(toast.error).not.toHaveBeenCalled();
+            });
+
+            it('returns null on error WITHOUT firing a toast (component decides)', async () => {
+                mockAxios.get.mockRejectedValue(new Error('load failed'));
+
+                const result = await AiService.getFinancialAnalysisAutomationConfig();
+
+                expect(result).toBeNull();
+                expect(toast.error).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('updateFinancialAnalysisAutomationConfig', () => {
+            it('returns the merged config on success without toasting', async () => {
+                mockAxios.put.mockResolvedValue({ data: { ...sampleConfig, enabled: true } });
+
+                const result = await AiService.updateFinancialAnalysisAutomationConfig({ enabled: true });
+
+                expect(result).toEqual({ ...sampleConfig, enabled: true });
+                expect(mockAxios.put).toHaveBeenCalledWith(
+                    expect.stringContaining('/analyze/financial-analysis/automation-config'),
+                    { enabled: true },
+                    expect.any(Object)
+                );
+                expect(toast.error).not.toHaveBeenCalled();
+            });
+
+            it('returns null on error WITHOUT firing a toast (component decides)', async () => {
+                mockAxios.put.mockRejectedValue(new Error('save failed'));
+
+                const result = await AiService.updateFinancialAnalysisAutomationConfig({ enabled: false });
+
+                expect(result).toBeNull();
+                expect(toast.error).not.toHaveBeenCalled();
+            });
+        });
+    });
 });
