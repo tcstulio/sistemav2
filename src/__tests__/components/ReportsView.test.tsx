@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import ReportsView from '../../components/ReportsView';
 import { useInvoices, useCustomers } from '../../hooks/dolibarr';
 import { formatCurrency } from '../../utils/formatUtils';
@@ -32,20 +33,27 @@ vi.mock('../../hooks/dolibarr', () => ({
     useProducts: vi.fn(() => ({ data: [], isLoading: false })),
 }));
 
-describe('ReportsView — Currency standardization (#639)', () => {
+const renderWithRouter = (ui: React.ReactNode) =>
+    render(<MemoryRouter>{ui}</MemoryRouter>);
+
+describe('ReportsView — Currency standardization (#628)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        // Re-establish default mocks after clear
+        vi.mocked(useInvoices).mockReturnValue({ data: [], isLoading: false } as any);
     });
 
     it('renders average invoice value in BRL via formatCurrency (no raw $ prefix)', async () => {
+        const currentYear = new Date().getFullYear();
+        const ts = Math.floor(new Date(currentYear, 5, 1).getTime() / 1000);
         vi.mocked(useInvoices).mockReturnValue({
             data: [
-                { id: 'inv1', ref: 'FA001', socid: 'cust1', date: 1700000000, total_ttc: 2469.12, statut: '1', type: '0' },
+                { id: 'inv1', ref: 'FA001', socid: 'cust1', date: ts, total_ttc: 2469.12, statut: '1', type: '0' },
             ],
             isLoading: false,
         } as any);
 
-        const { container } = render(<ReportsView />);
+        const { container } = renderWithRouter(<ReportsView />);
 
         await screen.findByText('Valor Médio da Fatura');
 
@@ -54,13 +62,80 @@ describe('ReportsView — Currency standardization (#639)', () => {
     });
 });
 
+describe('ReportsView — Period selector (#628)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useInvoices).mockReturnValue({ data: [], isLoading: false } as any);
+    });
+
+    it('renders a year selector with the current year selected by default', () => {
+        renderWithRouter(<ReportsView />);
+        const selector = screen.getByTestId('year-selector') as HTMLSelectElement;
+        expect(selector).toBeTruthy();
+        expect(Number(selector.value)).toBe(new Date().getFullYear());
+    });
+
+    it('year selector offers at least 2 year options', () => {
+        renderWithRouter(<ReportsView />);
+        const selector = screen.getByTestId('year-selector') as HTMLSelectElement;
+        expect(selector.options.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('changing the year selector updates the displayed year in the chart title', () => {
+        renderWithRouter(<ReportsView />);
+        const selector = screen.getByTestId('year-selector') as HTMLSelectElement;
+        const prevYear = String(new Date().getFullYear() - 1);
+        fireEvent.change(selector, { target: { value: prevYear } });
+        expect(screen.getByText(`Desempenho Financeiro (${prevYear})`)).toBeTruthy();
+    });
+});
+
+describe('ReportsView — Empty states (#628)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useInvoices).mockReturnValue({ data: [], isLoading: false } as any);
+    });
+
+    it('shows empty state for sales chart when no invoices for the period', () => {
+        renderWithRouter(<ReportsView />);
+        expect(screen.getByTestId('empty-sales')).toBeTruthy();
+    });
+
+    it('shows empty state for customers when no invoices for the period', () => {
+        renderWithRouter(<ReportsView />);
+        expect(screen.getByTestId('empty-customers')).toBeTruthy();
+    });
+
+    it('shows empty state for product catalog when no products', () => {
+        renderWithRouter(<ReportsView />);
+        expect(screen.getByTestId('empty-products')).toBeTruthy();
+    });
+});
+
+describe('ReportsView — Monthly report link (#628)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useInvoices).mockReturnValue({ data: [], isLoading: false } as any);
+    });
+
+    it('renders a button/link to the monthly report', () => {
+        renderWithRouter(<ReportsView />);
+        const link = screen.getByTestId('link-monthly-report');
+        expect(link).toBeTruthy();
+        expect(link.textContent).toContain('Mensal');
+    });
+});
+
 describe('ReportsView — Top 5 Clientes responsivo (#562)', () => {
+    const currentYear = new Date().getFullYear();
+    const ts = (y: number, m: number) => Math.floor(new Date(y, m, 1).getTime() / 1000);
+
     const longNameInvoices = [
-        { id: 'inv1', ref: 'FA001', socid: '10', date: 1700000000, total_ttc: 5000, statut: '2', type: '0' },
-        { id: 'inv2', ref: 'FA002', socid: '20', date: 1700000000, total_ttc: 4000, statut: '2', type: '0' },
-        { id: 'inv3', ref: 'FA003', socid: '30', date: 1700000000, total_ttc: 3000, statut: '2', type: '0' },
-        { id: 'inv4', ref: 'FA004', socid: '40', date: 1700000000, total_ttc: 2000, statut: '2', type: '0' },
-        { id: 'inv5', ref: 'FA005', socid: '50', date: 1700000000, total_ttc: 1000, statut: '2', type: '0' },
+        { id: 'inv1', ref: 'FA001', socid: '10', date: ts(currentYear, 5), total_ttc: 5000, statut: '2', type: '0' },
+        { id: 'inv2', ref: 'FA002', socid: '20', date: ts(currentYear, 5), total_ttc: 4000, statut: '2', type: '0' },
+        { id: 'inv3', ref: 'FA003', socid: '30', date: ts(currentYear, 5), total_ttc: 3000, statut: '2', type: '0' },
+        { id: 'inv4', ref: 'FA004', socid: '40', date: ts(currentYear, 5), total_ttc: 2000, statut: '2', type: '0' },
+        { id: 'inv5', ref: 'FA005', socid: '50', date: ts(currentYear, 5), total_ttc: 1000, statut: '2', type: '0' },
     ];
     const longNameCustomers = [
         { id: '10', name: 'Empresa Distribuidora de Materiais de Construção Ltda' },
@@ -77,24 +152,24 @@ describe('ReportsView — Top 5 Clientes responsivo (#562)', () => {
     });
 
     it('renders the "Top 5 Clientes" heading', async () => {
-        render(<ReportsView />);
+        renderWithRouter(<ReportsView />);
         expect(screen.getByText('Top 5 Clientes')).toBeTruthy();
     });
 
     it('renders the responsive legend list with aria-label', async () => {
-        render(<ReportsView />);
+        renderWithRouter(<ReportsView />);
         expect(screen.getByRole('list', { name: 'top-clientes-legenda' })).toBeTruthy();
     });
 
     it('renders all 5 customer names as list items', async () => {
-        render(<ReportsView />);
+        renderWithRouter(<ReportsView />);
         const list = screen.getByRole('list', { name: 'top-clientes-legenda' });
         const items = list.querySelectorAll('li');
         expect(items.length).toBe(5);
     });
 
     it('renders customer names with title attribute for long-name tooltip', async () => {
-        render(<ReportsView />);
+        renderWithRouter(<ReportsView />);
         const list = screen.getByRole('list', { name: 'top-clientes-legenda' });
         const nameSpans = list.querySelectorAll('span.truncate');
         expect(nameSpans.length).toBeGreaterThan(0);
@@ -104,15 +179,14 @@ describe('ReportsView — Top 5 Clientes responsivo (#562)', () => {
     });
 
     it('renders customer names with truncate class for overflow control', async () => {
-        render(<ReportsView />);
+        renderWithRouter(<ReportsView />);
         const list = screen.getByRole('list', { name: 'top-clientes-legenda' });
         const truncatedSpans = list.querySelectorAll('span.truncate');
         expect(truncatedSpans.length).toBe(5);
     });
 
     it('renders currency values for each customer entry', async () => {
-        render(<ReportsView />);
-        // Top customer should have R$ 5.000,00 or equivalent
+        renderWithRouter(<ReportsView />);
         const container = screen.getByRole('list', { name: 'top-clientes-legenda' });
         expect(container.textContent).toContain(formatCurrency(5000));
         expect(container.textContent).toContain(formatCurrency(4000));
@@ -120,9 +194,8 @@ describe('ReportsView — Top 5 Clientes responsivo (#562)', () => {
 
     it('falls back to "ID: <socid>" for unknown customer with title attribute', async () => {
         vi.mocked(useCustomers).mockReturnValue({ data: [], isLoading: false } as any);
-        render(<ReportsView />);
+        renderWithRouter(<ReportsView />);
         const list = screen.getByRole('list', { name: 'top-clientes-legenda' });
-        // All items should show "ID: <socid>" for unknown customers
         const nameSpans = list.querySelectorAll('span.truncate');
         expect(nameSpans.length).toBeGreaterThan(0);
         nameSpans.forEach(span => {
