@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useInvoices, useSupplierInvoices } from '../hooks/dolibarr';
-import { ArrowUpRight, ArrowDownRight, Clock, AlertCircle, CheckCircle2, Search, Filter, Calendar } from 'lucide-react';
+import { useInvoices, useSupplierInvoices, useCustomers, useSuppliers, useProjects } from '../hooks/dolibarr';
+import { ArrowUpRight, ArrowDownRight, Clock, AlertCircle, CheckCircle2, Search, Filter, Calendar, X, FileText, Briefcase, Building2 } from 'lucide-react';
 import { formatDateOnly } from '../utils/dateUtils';
 
 interface PendingPaymentsProps {
@@ -12,9 +12,13 @@ export const PendingPayments: React.FC<PendingPaymentsProps> = ({ onNavigate }) 
     const { config } = useDolibarr();
     const [activeTab, setActiveTab] = useState<'receivables' | 'payables'>('receivables');
     const [searchTerm, setSearchTerm] = useState('');
+    const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
-    const { data: invoicesData, isLoading: isLoadingInvoices } = useInvoices(config);
-    const { data: supplierInvoicesData, isLoading: isLoadingSupplier } = useSupplierInvoices(config);
+    const { data: invoicesData, isLoading: isLoadingInvoices, error: errorInvoices } = useInvoices(config);
+    const { data: supplierInvoicesData, isLoading: isLoadingSupplier, error: errorSupplier } = useSupplierInvoices(config);
+    const { data: customers = [] } = useCustomers(config);
+    const { data: suppliers = [] } = useSuppliers(config);
+    const { data: projects = [] } = useProjects(config);
 
     // Helper to check if date is past
     const isOverdue = (date: number) => {
@@ -29,6 +33,25 @@ export const PendingPayments: React.FC<PendingPaymentsProps> = ({ onNavigate }) 
         }).format(value);
     };
 
+    // Lookup helpers
+    const getCustomerName = (socid: string) => {
+        if (!socid) return null;
+        const found = customers.find(c => String(c.id) === String(socid));
+        return found ? found.name : null;
+    };
+
+    const getSupplierName = (socid: string) => {
+        if (!socid) return null;
+        const found = suppliers.find(s => String(s.id) === String(socid));
+        return found ? found.name : null;
+    };
+
+    const getProjectName = (projectId?: string) => {
+        if (!projectId) return null;
+        const found = projects.find(p => String(p.id) === String(projectId));
+        return found ? found.title : null;
+    };
+
     // Filter Receivables (Customer Invoices)
     const receivables = useMemo(() => {
         if (!invoicesData) return [];
@@ -36,15 +59,17 @@ export const PendingPayments: React.FC<PendingPaymentsProps> = ({ onNavigate }) 
             .filter(inv => inv.statut === '1') // Unpaid
             .map(inv => {
                 const dueDate = inv.date_lim_reglement || (inv.date + 30 * 24 * 60 * 60);
+                const resolvedName = getCustomerName(inv.socid) || inv.soc_name || null;
                 return {
                     ...inv,
                     type: 'receivable',
                     dueDate: dueDate,
-                    isOverdue: isOverdue(dueDate)
+                    isOverdue: isOverdue(dueDate),
+                    resolvedName,
                 };
             })
             .sort((a, b) => (a.dueDate || 0) - (b.dueDate || 0));
-    }, [invoicesData]);
+    }, [invoicesData, customers]);
 
     // Filter Payables (Supplier Invoices)
     const payables = useMemo(() => {
@@ -53,15 +78,17 @@ export const PendingPayments: React.FC<PendingPaymentsProps> = ({ onNavigate }) 
             .filter(inv => inv.statut === '1') // Unpaid
             .map(inv => {
                 const dueDate = inv.date_lim_reglement || (inv.date + 30 * 24 * 60 * 60);
+                const resolvedName = getSupplierName(inv.socid) || inv.soc_name || null;
                 return {
                     ...inv,
                     type: 'payable',
                     dueDate: dueDate,
-                    isOverdue: isOverdue(dueDate)
+                    isOverdue: isOverdue(dueDate),
+                    resolvedName,
                 };
             })
             .sort((a, b) => (a.dueDate || 0) - (b.dueDate || 0));
-    }, [supplierInvoicesData]);
+    }, [supplierInvoicesData, suppliers]);
 
     const displayedItems = useMemo(() => {
         const source = activeTab === 'receivables' ? receivables : payables;
@@ -69,7 +96,7 @@ export const PendingPayments: React.FC<PendingPaymentsProps> = ({ onNavigate }) 
         const lowerTerm = searchTerm.toLowerCase();
         return source.filter(item =>
             item.ref.toLowerCase().includes(lowerTerm) ||
-            (item.soc_name || '').toLowerCase().includes(lowerTerm)
+            (item.resolvedName || '').toLowerCase().includes(lowerTerm)
         );
     }, [activeTab, receivables, payables, searchTerm]);
 
@@ -77,6 +104,14 @@ export const PendingPayments: React.FC<PendingPaymentsProps> = ({ onNavigate }) 
     const totalPayables = payables.reduce((sum, item) => sum + item.total_ttc, 0);
     const totalOverdueReceivables = receivables.filter(i => i.isOverdue).reduce((sum, item) => sum + item.total_ttc, 0);
     const totalOverduePayables = payables.filter(i => i.isOverdue).reduce((sum, item) => sum + item.total_ttc, 0);
+
+    const isLoading = activeTab === 'receivables' ? isLoadingInvoices : isLoadingSupplier;
+    const error = activeTab === 'receivables' ? errorInvoices : errorSupplier;
+
+    const selectedItem = useMemo(() => {
+        if (!selectedItemId) return null;
+        return displayedItems.find(i => i.id === selectedItemId) ?? null;
+    }, [selectedItemId, displayedItems]);
 
     return (
         <div className="p-4 md:p-6 space-y-6 h-full overflow-y-auto">
@@ -134,85 +169,208 @@ export const PendingPayments: React.FC<PendingPaymentsProps> = ({ onNavigate }) 
                 </div>
             </div>
 
-            {/* List Section */}
-            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col h-[calc(100%-240px)] min-h-[400px]">
+            {/* List + Detail Section */}
+            <div className="flex gap-4 h-[calc(100%-240px)] min-h-[400px]">
 
-                {/* Toolbar */}
-                <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2">
-                        <h2 className="font-bold text-slate-800 dark:text-white">
-                            {activeTab === 'receivables' ? 'Faturas de Clientes (Entrada)' : 'Faturas de Fornecedores (Saída)'}
-                        </h2>
-                        <span className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs px-2 py-1 rounded-full font-medium">
-                            {displayedItems.length}
-                        </span>
-                    </div>
-                    <div className="relative max-w-xs w-full">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                        <input
-                            type="text"
-                            placeholder="Buscar por ref ou nome..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg py-2 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                    </div>
-                </div>
+                {/* List Panel */}
+                <div className={`bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col transition-all ${selectedItem ? 'w-1/2 lg:w-2/5' : 'flex-1'}`}>
 
-                {/* List Header */}
-                <div className="grid grid-cols-12 gap-4 p-4 bg-slate-50 dark:bg-slate-950/50 text-xs font-medium text-slate-500 uppercase tracking-wide border-b border-slate-200 dark:border-slate-800">
-                    <div className="col-span-2">Referência</div>
-                    <div className="col-span-4">{activeTab === 'receivables' ? 'Cliente' : 'Fornecedor'}</div>
-                    <div className="col-span-2 text-right">Valor</div>
-                    <div className="col-span-3">Vencimento</div>
-                    <div className="col-span-1 text-center">Status</div>
-                </div>
-
-                {/* List Content */}
-                <div className="overflow-y-auto flex-1 p-2 space-y-2">
-                    {displayedItems.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-full text-slate-400 py-12">
-                            <CheckCircle2 size={48} className="mb-4 opacity-20" />
-                            <p>Nenhum pagamento pendente encontrado.</p>
+                    {/* Toolbar */}
+                    <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-2">
+                            <h2 className="font-bold text-slate-800 dark:text-white">
+                                {activeTab === 'receivables' ? 'Faturas de Clientes (Entrada)' : 'Faturas de Fornecedores (Saída)'}
+                            </h2>
+                            <span className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs px-2 py-1 rounded-full font-medium">
+                                {displayedItems.length}
+                            </span>
                         </div>
-                    ) : (
-                        displayedItems.map((item) => (
-                            <div
-                                key={item.id}
-                                onClick={() => onNavigate && onNavigate(activeTab === 'receivables' ? 'invoices' : 'supplier_invoices', item.id)}
-                                className={`grid grid-cols-12 gap-4 p-3 rounded-lg border items-center cursor-pointer transition-colors ${item.isOverdue
-                                    ? 'bg-red-50/50 dark:bg-red-900/5 border-red-100 dark:border-red-900/30 hover:bg-red-50 dark:hover:bg-red-900/10'
-                                    : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-900 hover:shadow-sm'
+                        <div className="relative max-w-xs w-full">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                            <input
+                                type="text"
+                                placeholder="Buscar por ref ou nome..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg py-2 pl-9 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                        </div>
+                    </div>
+
+                    {/* List Header */}
+                    <div className="grid grid-cols-12 gap-4 p-4 bg-slate-50 dark:bg-slate-950/50 text-xs font-medium text-slate-500 uppercase tracking-wide border-b border-slate-200 dark:border-slate-800">
+                        <div className="col-span-2">Referência</div>
+                        <div className="col-span-4">{activeTab === 'receivables' ? 'Cliente' : 'Fornecedor'}</div>
+                        <div className="col-span-2 text-right">Valor</div>
+                        <div className="col-span-3">Vencimento</div>
+                        <div className="col-span-1 text-center">Status</div>
+                    </div>
+
+                    {/* List Content */}
+                    <div className="overflow-y-auto flex-1 p-2 space-y-2">
+                        {isLoading ? (
+                            <div className="flex flex-col items-center justify-center h-full text-slate-400 py-12 gap-3">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+                                <p className="text-sm">Carregando...</p>
+                            </div>
+                        ) : error ? (
+                            <div className="flex flex-col items-center justify-center h-full text-red-400 py-12 gap-3">
+                                <AlertCircle size={32} className="opacity-50" />
+                                <p className="text-sm">Erro ao carregar dados. Tente novamente.</p>
+                            </div>
+                        ) : displayedItems.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-full text-slate-400 py-12">
+                                <CheckCircle2 size={48} className="mb-4 opacity-20" />
+                                <p>Nenhum pagamento pendente encontrado.</p>
+                            </div>
+                        ) : (
+                            displayedItems.map((item) => (
+                                <div
+                                    key={item.id}
+                                    onClick={() => setSelectedItemId(item.id === selectedItemId ? null : item.id)}
+                                    className={`grid grid-cols-12 gap-4 p-3 rounded-lg border items-center cursor-pointer transition-colors ${
+                                        item.id === selectedItemId
+                                            ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800 ring-1 ring-indigo-300 dark:ring-indigo-700'
+                                            : item.isOverdue
+                                            ? 'bg-red-50/50 dark:bg-red-900/5 border-red-100 dark:border-red-900/30 hover:bg-red-50 dark:hover:bg-red-900/10'
+                                            : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-900 hover:shadow-sm'
                                     }`}
-                            >
-                                <div className="col-span-2 font-medium text-slate-800 dark:text-white flex items-center gap-2">
-                                    {item.ref}
-                                </div>
-                                <div className="col-span-4 text-sm text-slate-600 dark:text-slate-300 truncate font-medium">
-                                    {item.soc_name || '-'}
-                                </div>
-                                <div className="col-span-2 text-right font-mono font-medium text-slate-800 dark:text-white">
-                                    {formatCurrency(item.total_ttc)}
-                                </div>
-                                <div className="col-span-3 text-sm flex items-center gap-2">
-                                    <div className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium ${item.isOverdue
-                                        ? 'text-red-700 bg-red-100 dark:text-red-400 dark:bg-red-900/30'
-                                        : 'text-slate-600 bg-slate-100 dark:text-slate-400 dark:bg-slate-800'
-                                        }`}>
-                                        <Calendar size={12} />
-                                        {formatDateOnly(item.dueDate)}
+                                >
+                                    <div className="col-span-2 font-medium text-slate-800 dark:text-white flex items-center gap-2">
+                                        {item.ref}
                                     </div>
-                                    {item.isOverdue && (
-                                        <span className="text-[10px] font-bold text-red-600 uppercase tracking-tighter">Atrasado</span>
-                                    )}
+                                    <div className="col-span-4 text-sm text-slate-600 dark:text-slate-300 truncate font-medium">
+                                        {item.resolvedName || '-'}
+                                    </div>
+                                    <div className="col-span-2 text-right font-mono font-medium text-slate-800 dark:text-white">
+                                        {formatCurrency(item.total_ttc)}
+                                    </div>
+                                    <div className="col-span-3 text-sm flex items-center gap-2">
+                                        <div className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium ${item.isOverdue
+                                            ? 'text-red-700 bg-red-100 dark:text-red-400 dark:bg-red-900/30'
+                                            : 'text-slate-600 bg-slate-100 dark:text-slate-400 dark:bg-slate-800'
+                                            }`}>
+                                            <Calendar size={12} />
+                                            {formatDateOnly(item.dueDate)}
+                                        </div>
+                                        {item.isOverdue && (
+                                            <span className="text-[10px] font-bold text-red-600 uppercase tracking-tighter">Atrasado</span>
+                                        )}
+                                    </div>
+                                    <div className="col-span-1 flex justify-center">
+                                        <div className="w-2 h-2 rounded-full bg-orange-500" title="Pendente"></div>
+                                    </div>
                                 </div>
-                                <div className="col-span-1 flex justify-center">
-                                    <div className="w-2 h-2 rounded-full bg-orange-500" title="Pendente"></div>
+                            ))
+                        )}
+                    </div>
+                </div>
+
+                {/* Detail Panel */}
+                {selectedItem && (
+                    <div className="flex-1 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col">
+                        {/* Detail Header */}
+                        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className={`p-2 rounded-lg ${selectedItem.isOverdue ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400' : 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400'}`}>
+                                    <FileText size={20} />
+                                </div>
+                                <div>
+                                    <h2 className="font-bold text-slate-800 dark:text-white">{selectedItem.ref}</h2>
+                                    <p className="text-xs text-slate-500">
+                                        {activeTab === 'receivables' ? 'Fatura de Cliente' : 'Fatura de Fornecedor'}
+                                        {selectedItem.isOverdue && (
+                                            <span className="ml-2 text-red-600 font-bold uppercase">• Atrasado</span>
+                                        )}
+                                    </p>
                                 </div>
                             </div>
-                        ))
-                    )}
-                </div>
+                            <button
+                                onClick={() => setSelectedItemId(null)}
+                                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                                aria-label="Fechar detalhes"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {/* Detail Content */}
+                        <div className="overflow-y-auto flex-1 p-4 space-y-4">
+
+                            {/* Amount + Due */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4">
+                                    <p className="text-xs text-slate-500 mb-1">Valor Total</p>
+                                    <p className="text-xl font-bold text-slate-800 dark:text-white font-mono">{formatCurrency(selectedItem.total_ttc)}</p>
+                                </div>
+                                <div className={`rounded-xl p-4 ${selectedItem.isOverdue ? 'bg-red-50 dark:bg-red-900/20' : 'bg-slate-50 dark:bg-slate-800/50'}`}>
+                                    <p className="text-xs text-slate-500 mb-1">Vencimento</p>
+                                    <p className={`text-xl font-bold font-mono ${selectedItem.isOverdue ? 'text-red-600 dark:text-red-400' : 'text-slate-800 dark:text-white'}`}>
+                                        {formatDateOnly(selectedItem.dueDate)}
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Client / Supplier */}
+                            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <Building2 size={14} className="text-slate-400" />
+                                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                                        {activeTab === 'receivables' ? 'Cliente' : 'Fornecedor'}
+                                    </p>
+                                </div>
+                                <p className="text-sm font-semibold text-slate-800 dark:text-white">
+                                    {selectedItem.resolvedName || (
+                                        <span className="text-slate-400 italic">
+                                            {selectedItem.socid ? `ID: ${selectedItem.socid}` : 'Não informado'}
+                                        </span>
+                                    )}
+                                </p>
+                            </div>
+
+                            {/* Project */}
+                            {selectedItem.project_id && (
+                                <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <Briefcase size={14} className="text-slate-400" />
+                                        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Projeto</p>
+                                    </div>
+                                    <p className="text-sm font-semibold text-slate-800 dark:text-white">
+                                        {getProjectName(selectedItem.project_id) || (
+                                            <span className="text-slate-400 italic">ID: {selectedItem.project_id}</span>
+                                        )}
+                                    </p>
+                                </div>
+                            )}
+
+                            {/* Dates */}
+                            <div className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4 space-y-3">
+                                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Datas</p>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs text-slate-500">Emissão</span>
+                                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{formatDateOnly(selectedItem.date)}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs text-slate-500">Vencimento</span>
+                                    <span className={`text-sm font-medium ${selectedItem.isOverdue ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                                        {formatDateOnly(selectedItem.dueDate)}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Open in full view button */}
+                            {onNavigate && (
+                                <button
+                                    onClick={() => onNavigate(activeTab === 'receivables' ? 'invoices' : 'supplier_invoices', selectedItem.id)}
+                                    className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium text-sm transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <FileText size={16} />
+                                    Ver fatura completa
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );
