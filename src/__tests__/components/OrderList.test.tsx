@@ -64,6 +64,9 @@ vi.mock('../../services/dolibarrService', () => ({
         deleteShipment: vi.fn(),
         classifyOrderDelivered: vi.fn(),
         updateObject: vi.fn(),
+        addOrderLine: vi.fn(),
+        updateOrderLine: vi.fn(),
+        deleteOrderLine: vi.fn(),
     },
 }));
 
@@ -301,5 +304,236 @@ describe('OrderList — mapeamento fk_user_author e fk_user_valid (#608)', () =>
             const names = screen.getAllByText('João Silva');
             expect(names.length).toBeGreaterThanOrEqual(1);
         });
+    });
+});
+
+// ─────────────────────────────────────────────
+// 5. Criar pedido (#552)
+// ─────────────────────────────────────────────
+describe('OrderList — Criar pedido (#552)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useOrders).mockReturnValue({ data: [], isRefetching: false, refetch: mockRefetch } as any);
+    });
+
+    it('abre o modal ao clicar em Novo', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const novoBtn = await screen.findByRole('button', { name: /Novo/i });
+        await user.click(novoBtn);
+
+        await waitFor(() => {
+            expect(screen.getByText('Novo Pedido (Rascunho)')).toBeTruthy();
+        });
+    });
+
+    it('chama createOrder com payload correto ao submeter', async () => {
+        vi.mocked(DolibarrService.createOrder).mockResolvedValue({ id: 'new-ord' } as any);
+        const user = userEvent.setup();
+        renderComponent();
+
+        const novoBtn = await screen.findByRole('button', { name: /Novo/i });
+        await user.click(novoBtn);
+
+        // Seleciona cliente — usa label para ser específico entre múltiplos combobox
+        // O select de cliente é o que tem a option "Selecione o Cliente..."
+        const allSelects = await screen.findAllByRole('combobox');
+        const clienteSelect = allSelects.find(s => s.querySelector('option[value=""]')?.textContent?.includes('Selecione o Cliente'))!;
+        await user.selectOptions(clienteSelect, 'cust1');
+
+        // Adiciona item
+        const addItemBtn = screen.getByRole('button', { name: /Adicionar Item/i });
+        await user.click(addItemBtn);
+
+        const descInputs = screen.getAllByPlaceholderText('Descrição do item');
+        await user.clear(descInputs[0]);
+        await user.type(descInputs[0], 'Produto Teste');
+
+        // Submit
+        const criarBtn = screen.getByRole('button', { name: /Criar Pedido/i });
+        await user.click(criarBtn);
+
+        await waitFor(() => {
+            expect(DolibarrService.createOrder).toHaveBeenCalledWith(
+                mockConfig,
+                expect.objectContaining({ socid: 'cust1' })
+            );
+            expect(toastMock.success).toHaveBeenCalledWith('Pedido criado com sucesso');
+        });
+    });
+
+    it('exibe toast.error e mantém modal aberto quando createOrder falha', async () => {
+        vi.mocked(DolibarrService.createOrder).mockRejectedValue(new Error('API Error'));
+        const user = userEvent.setup();
+        renderComponent();
+
+        const novoBtn = await screen.findByRole('button', { name: /Novo/i });
+        await user.click(novoBtn);
+
+        // O select de cliente é o que tem a option "Selecione o Cliente..."
+        const allSelects = await screen.findAllByRole('combobox');
+        const clienteSelect = allSelects.find(s => s.querySelector('option[value=""]')?.textContent?.includes('Selecione o Cliente'))!;
+        await user.selectOptions(clienteSelect, 'cust1');
+
+        const criarBtn = screen.getByRole('button', { name: /Criar Pedido/i });
+        await user.click(criarBtn);
+
+        await waitFor(() => {
+            expect(toastMock.error).toHaveBeenCalledWith('Erro ao criar pedido');
+        });
+        // Modal ainda aberto
+        expect(screen.getByText('Novo Pedido (Rascunho)')).toBeTruthy();
+    });
+});
+
+// ─────────────────────────────────────────────
+// 6. Editar pedido com itens (#552)
+// ─────────────────────────────────────────────
+describe('OrderList — Editar pedido com itens (#552)', () => {
+    const draftOrderWithLines = {
+        id: 'ord-draft',
+        ref: 'CO2501-DRAFT',
+        socid: 'cust1',
+        date: 1700000000,
+        total_ttc: 500,
+        statut: '0' as const,
+        project_id: undefined as string | undefined,
+        fk_user_author: 'user1',
+        fk_user_valid: undefined as string | undefined,
+        lines: [
+            { id: 'line1', desc: 'Item Existente', qty: 2, price: 100, subprice: 100 },
+        ],
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useOrders).mockReturnValue({
+            data: [draftOrderWithLines],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+        vi.mocked(DolibarrService.updateObject).mockResolvedValue({} as any);
+        vi.mocked(DolibarrService.addOrderLine).mockResolvedValue({ id: 'new-line' } as any);
+        vi.mocked(DolibarrService.updateOrderLine).mockResolvedValue({} as any);
+        vi.mocked(DolibarrService.deleteOrderLine).mockResolvedValue({} as any);
+    });
+
+    it('botão Editar visível em rascunho sem depender de xl breakpoint', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('CO2501-DRAFT');
+        await user.click(card);
+
+        await waitFor(() => {
+            const editarBtn = screen.getByRole('button', { name: /Editar/i });
+            expect(editarBtn).toBeTruthy();
+            // Não deve ter a classe hidden xl:flex
+            expect(editarBtn.className).not.toContain('hidden');
+        });
+    });
+
+    it('abre modal com linhas existentes ao clicar em Editar', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('CO2501-DRAFT');
+        await user.click(card);
+
+        const editarBtn = await screen.findByRole('button', { name: /Editar/i });
+        await user.click(editarBtn);
+
+        await waitFor(() => {
+            expect(screen.getByText('Editar Pedido')).toBeTruthy();
+            const descInput = screen.getAllByPlaceholderText('Descrição do item')[0];
+            expect((descInput as HTMLInputElement).value).toBe('Item Existente');
+        });
+    });
+
+    it('chama addOrderLine ao adicionar nova linha e salvar', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('CO2501-DRAFT');
+        await user.click(card);
+
+        const editarBtn = await screen.findByRole('button', { name: /Editar/i });
+        await user.click(editarBtn);
+
+        // Adicionar novo item
+        const addItemBtn = await screen.findByRole('button', { name: /Adicionar Item/i });
+        await user.click(addItemBtn);
+
+        const descInputs = screen.getAllByPlaceholderText('Descrição do item');
+        const newInput = descInputs[descInputs.length - 1];
+        await user.clear(newInput);
+        await user.type(newInput, 'Nova Linha');
+
+        const salvarBtn = screen.getByRole('button', { name: /Salvar/i });
+        await user.click(salvarBtn);
+
+        await waitFor(() => {
+            expect(DolibarrService.addOrderLine).toHaveBeenCalledWith(
+                mockConfig,
+                'ord-draft',
+                expect.objectContaining({ desc: 'Nova Linha' })
+            );
+            expect(toastMock.success).toHaveBeenCalledWith('Pedido atualizado com sucesso');
+        });
+    });
+
+    it('chama deleteOrderLine ao remover linha existente e salvar', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('CO2501-DRAFT');
+        await user.click(card);
+
+        const editarBtn = await screen.findByRole('button', { name: /Editar/i });
+        await user.click(editarBtn);
+
+        await screen.findByText('Editar Pedido');
+
+        // O input de descrição da linha existente deve estar presente
+        const descInput = await screen.findByDisplayValue('Item Existente');
+        // O botão de remoção (Trash2) está na mesma linha — subindo para o container e localizando o button
+        const lineContainer = descInput.closest('.flex.gap-2') as HTMLElement;
+        expect(lineContainer).toBeTruthy();
+        const removeBtn = lineContainer.querySelector('button[type="button"]') as HTMLButtonElement;
+        expect(removeBtn).toBeTruthy();
+        await user.click(removeBtn);
+
+        const salvarBtn = screen.getByRole('button', { name: /Salvar/i });
+        await user.click(salvarBtn);
+
+        await waitFor(() => {
+            expect(DolibarrService.deleteOrderLine).toHaveBeenCalledWith(
+                mockConfig,
+                'ord-draft',
+                'line1'
+            );
+        });
+    });
+
+    it('exibe toast.error e mantém modal aberto quando updateObject falha', async () => {
+        vi.mocked(DolibarrService.updateObject).mockRejectedValue(new Error('API Error'));
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('CO2501-DRAFT');
+        await user.click(card);
+
+        const editarBtn = await screen.findByRole('button', { name: /Editar/i });
+        await user.click(editarBtn);
+
+        const salvarBtn = await screen.findByRole('button', { name: /Salvar/i });
+        await user.click(salvarBtn);
+
+        await waitFor(() => {
+            expect(toastMock.error).toHaveBeenCalledWith('Erro ao atualizar pedido');
+        });
+        // Modal deve permanecer aberto
+        expect(screen.getByText('Editar Pedido')).toBeTruthy();
     });
 });

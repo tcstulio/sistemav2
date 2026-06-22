@@ -595,6 +595,32 @@ export const shipOrder = async (config: DolibarrConfig, id: string, shipmentData
     });
 };
 
+export const addOrderLine = async (config: DolibarrConfig, orderId: string, data: Record<string, unknown>) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/orders/${orderId}/lines`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const updateOrderLine = async (config: DolibarrConfig, orderId: string, lineId: string, data: Record<string, unknown>) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/orders/${orderId}/lines/${lineId}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const deleteOrderLine = async (config: DolibarrConfig, orderId: string, lineId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/orders/${orderId}/lines/${lineId}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
 // -- Supplier Orders --
 export const createSupplierOrder = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/supplierorders`;
