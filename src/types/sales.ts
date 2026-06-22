@@ -232,6 +232,7 @@ export interface SupplierProposal {
     total_ttc: number;
     total_tva: number;
     statut: '0' | '1' | '2' | '3' | '4'; // 0=Draft, 1=Validated, 2=Approved, 3=Refused, 4=Ordered
+    note_public?: string;
     lines?: SupplierProposalLine[];
     fk_user_author?: string;
     fk_user_valid?: string;
