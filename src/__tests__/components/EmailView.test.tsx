@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import EmailView from '../../components/Email/EmailView';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import { EmailService } from '../../services/emailService';
@@ -86,9 +87,11 @@ const setupEmailServiceMocks = () => {
 
 const renderWithProvider = () =>
     render(
-        <ConfirmProvider>
-            <EmailView />
-        </ConfirmProvider>
+        <MemoryRouter>
+            <ConfirmProvider>
+                <EmailView />
+            </ConfirmProvider>
+        </MemoryRouter>
     );
 
 const enterSelectionModeAndSelectMessage = async (user: ReturnType<typeof userEvent.setup>) => {
