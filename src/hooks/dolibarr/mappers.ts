@@ -613,8 +613,14 @@ export const mapWarehouse = (raw: RawDolibarrRecord): Warehouse => ({
     label: raw.label || raw.lieu || '',
     description: raw.description,
     lieu: raw.lieu || '',
+    address: raw.address || undefined,
+    zip: raw.zip || undefined,
+    town: raw.town || undefined,
+    phone: raw.phone || undefined,
+    fax: raw.fax || undefined,
     statut: toString(raw.statut) as '0' | '1',
     date_modification: toTimestamp(raw.tms),
+    array_options: raw.array_options || undefined,
 });
 
 /**

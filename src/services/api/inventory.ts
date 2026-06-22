@@ -9,6 +9,11 @@ export const fetchWarehouses = async (config: DolibarrConfig): Promise<Warehouse
         description: d.description,
         statut: String(d.statut) as any,
         lieu: d.lieu,
+        address: d.address || undefined,
+        zip: d.zip || undefined,
+        town: d.town || undefined,
+        phone: d.phone || undefined,
+        fax: d.fax || undefined,
         array_options: d.array_options
     }));
 };
