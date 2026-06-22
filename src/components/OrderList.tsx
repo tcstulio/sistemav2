@@ -151,7 +151,7 @@ const OrderDetail: React.FC<{
                                 <Button
                                     onClick={onEdit}
                                     icon={<Pencil size={18} />}
-                                    className="hidden xl:flex text-slate-600 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700"
+                                    className="text-slate-600 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700"
                                 >
                                     Editar
                                 </Button>
@@ -370,18 +370,20 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     const [shipmentLines, setShipmentLines] = useState<{ id: string, qty: number, label: string }[]>([]);
     const [isSubmittingShipment, setIsSubmittingShipment] = useState(false);
 
-    // Order Creation/Edit State (#57/#78). editOrderId presente => modal salva só o cabeçalho.
+    // Order Creation/Edit State (#57/#78/#552).
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
     const [editOrderId, setEditOrderId] = useState<string | undefined>(undefined);
     const isEditingOrder = !!editOrderId;
+    // existingLines: linhas já salvas no Dolibarr (edição); rastreamos por id para diff no submit.
+    const [existingLines, setExistingLines] = useState<{ id: string, desc: string, qty: number, price: number }[]>([]);
     const [newOrder, setNewOrder] = useState({
         socid: '',
         date: new Date().toISOString().split('T')[0],
-        items: [] as { productId: string, desc: string, qty: number, price: number }[],
+        items: [] as { id?: string, productId: string, desc: string, qty: number, price: number }[],
     });
 
-    const closeOrderModal = () => { setIsCreateModalOpen(false); setEditOrderId(undefined); };
+    const closeOrderModal = () => { setIsCreateModalOpen(false); setEditOrderId(undefined); setExistingLines([]); };
 
     const handleAddOrderItem = () => setNewOrder(prev => ({ ...prev, items: [...prev.items, { productId: '', desc: '', qty: 1, price: 0 }] }));
     const handleUpdateOrderItem = (idx: number, field: 'desc' | 'qty' | 'price', value: string | number) => {
@@ -392,16 +394,60 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     const handleRemoveOrderItem = (idx: number) => setNewOrder({ ...newOrder, items: newOrder.items.filter((_, i) => i !== idx) });
     const calculateOrderTotal = () => newOrder.items.reduce((acc, it) => acc + (it.price * it.qty), 0);
 
+    // Retorna true se linha mudou em relação ao snapshot original (para edição).
+    const lineChanged = (item: { id?: string, desc: string, qty: number, price: number }) => {
+        if (!item.id) return false;
+        const orig = existingLines.find(l => l.id === item.id);
+        if (!orig) return false;
+        return orig.desc !== item.desc || orig.qty !== item.qty || orig.price !== item.price;
+    };
+
     const handleCreateOrder = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!isEditingOrder && !newOrder.socid) return toast.error('Selecione um cliente');
+        const invalidItem = newOrder.items.find(it => it.qty <= 0);
+        if (invalidItem) return toast.error('Quantidade deve ser maior que zero');
         setIsSubmittingOrder(true);
         try {
             if (isEditingOrder) {
-                // edição header-only: cliente e itens são imutáveis na tela; só atualiza a data.
+                // Atualiza cabeçalho (data)
                 await DolibarrService.updateObject(config, 'orders', editOrderId!, {
                     date: Math.floor(new Date(newOrder.date).getTime() / 1000),
                 });
+
+                // Linhas removidas: presentes no snapshot original mas ausentes em items
+                const removedLineIds = existingLines
+                    .filter(l => !newOrder.items.some(it => it.id === l.id))
+                    .map(l => l.id);
+                for (const lineId of removedLineIds) {
+                    await DolibarrService.deleteOrderLine(config, editOrderId!, lineId);
+                }
+
+                // Linhas alteradas: presentes em items com id e com diff
+                for (const item of newOrder.items) {
+                    if (item.id && lineChanged(item)) {
+                        await DolibarrService.updateOrderLine(config, editOrderId!, item.id, {
+                            desc: item.desc,
+                            qty: item.qty,
+                            subprice: item.price,
+                            product_type: 0,
+                        });
+                    }
+                }
+
+                // Novas linhas: sem id
+                for (const item of newOrder.items) {
+                    if (!item.id) {
+                        await DolibarrService.addOrderLine(config, editOrderId!, {
+                            fk_product: item.productId || undefined,
+                            desc: item.desc,
+                            qty: item.qty,
+                            subprice: item.price,
+                            product_type: 0,
+                        });
+                    }
+                }
+
                 toast.success('Pedido atualizado com sucesso');
                 if (selectedOrder && String(selectedOrder.id) === String(editOrderId)) {
                     setSelectedOrder({ ...selectedOrder, date: Math.floor(new Date(newOrder.date).getTime() / 1000) });
@@ -423,14 +469,23 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
             closeOrderModal();
             setNewOrder({ socid: '', date: new Date().toISOString().split('T')[0], items: [] });
             if (onRefresh) onRefresh();
-        } catch (e) { log.error('Failed to save order', e); toast.error(isEditingOrder ? 'Erro ao atualizar pedido' : 'Erro ao criar pedido'); } finally { setIsSubmittingOrder(false); }
+        } catch (err) { log.error('Failed to save order', err); toast.error(isEditingOrder ? 'Erro ao atualizar pedido' : 'Erro ao criar pedido'); } finally { setIsSubmittingOrder(false); }
     };
 
-    // Abre o modal em modo edição (cabeçalho) — usado pelo deeplink edit_order e pelo botão "Editar".
+    // Abre o modal em modo edição — inclui linhas existentes para edição (#552).
     const openOrderEditor = (ord: Order, dateOverride?: string) => {
         const dateStr = dateOverride
             || (ord.date ? new Date(ord.date * 1000).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
-        setNewOrder({ socid: String(ord.socid), date: dateStr, items: [] });
+        const lines = Array.isArray(ord.lines) ? ord.lines : [];
+        const mappedLines = lines.map((l: any) => ({
+            id: String(l.id),
+            productId: l.fk_product ? String(l.fk_product) : '',
+            desc: l.desc || l.label || '',
+            qty: Number(l.qty) || 1,
+            price: Number(l.price || l.subprice || 0),
+        }));
+        setExistingLines(mappedLines.map(l => ({ id: l.id, desc: l.desc, qty: l.qty, price: l.price })));
+        setNewOrder({ socid: String(ord.socid), date: dateStr, items: mappedLines });
         setEditOrderId(String(ord.id));
         setIsCreateModalOpen(true);
     };
@@ -634,7 +689,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
             <Modal
                 isOpen={isCreateModalOpen}
                 onClose={closeOrderModal}
-                title={isEditingOrder ? "Editar Pedido (Cabeçalho)" : "Novo Pedido (Rascunho)"}
+                title={isEditingOrder ? "Editar Pedido" : "Novo Pedido (Rascunho)"}
                 size="xl"
             >
                 <form onSubmit={handleCreateOrder} className="space-y-4">
@@ -652,9 +707,6 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                             <input type="date" className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={newOrder.date} onChange={e => setNewOrder({ ...newOrder, date: e.target.value })} required />
                         </div>
                     </div>
-                    {isEditingOrder ? (
-                        <p className="text-sm text-slate-400 italic border-t border-slate-100 dark:border-slate-800 pt-4">Os itens do pedido não são editados por esta tela — apenas o cabeçalho (data).</p>
-                    ) : (
                     <div className="border-t border-slate-100 dark:border-slate-800 pt-4">
                         <div className="flex justify-between items-center mb-2">
                             <h4 className="font-bold text-sm text-slate-700 dark:text-slate-300">Itens</h4>
@@ -663,7 +715,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                         <div className="space-y-2">
                             {newOrder.items.length === 0 && <p className="text-sm text-slate-400 italic text-center py-4">Nenhum item adicionado.</p>}
                             {newOrder.items.map((item, idx) => (
-                                <div key={idx} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
+                                <div key={item.id ?? idx} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
                                     <div className="flex-1">
                                         <input className="w-full p-1 text-sm border rounded dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Descrição do item" value={item.desc} onChange={e => handleUpdateOrderItem(idx, 'desc', e.target.value)} />
                                     </div>
@@ -684,7 +736,6 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                             </div>
                         </div>
                     </div>
-                    )}
                     <div className="flex justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
                         <Button type="button" variant="secondary" onClick={closeOrderModal}>Cancelar</Button>
                         <Button type="submit" variant="primary" loading={isSubmittingOrder} icon={<CheckCircle size={16} />}>{isEditingOrder ? 'Salvar' : 'Criar Pedido'}</Button>
