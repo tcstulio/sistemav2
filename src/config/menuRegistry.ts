@@ -53,7 +53,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
             { id: 'shipments', path: '/shipments', label: 'Envios' },
             { id: 'contracts', path: '/contracts', label: 'Contratos' },
             { id: 'interventions', path: '/interventions', label: 'Intervenções' },
-            { id: 'tickets', path: '/tickets', label: 'Chamados' },
+            { id: 'tickets', path: '/tickets', label: 'Conversas com clientes' },
         ],
     },
     {
