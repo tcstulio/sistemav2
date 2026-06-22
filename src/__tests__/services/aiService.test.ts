@@ -632,6 +632,89 @@ describe('AiService', () => {
         });
     });
 
+    // #594: getChatSession deve preservar userId e usage nas mensagens
+    describe('getChatSession (#594)', () => {
+        it('preserva o userId da sessão retornado pelo backend', async () => {
+            const sessionData = {
+                id: 'chat_abc',
+                userId: 'alice',
+                title: 'Minha Sessão',
+                messages: [
+                    {
+                        role: 'user',
+                        content: 'Olá',
+                        timestamp: 1700000000000,
+                        metadata: undefined,
+                    },
+                ],
+            };
+            mockAxios.get.mockResolvedValue({ data: { data: sessionData } });
+
+            const result = await AiService.getChatSession('chat_abc');
+
+            expect(result).not.toBeNull();
+            expect(result!.userId).toBe('alice');
+            expect(result!.messages).toHaveLength(1);
+        });
+
+        it('retorna userId vazio quando ausente no backend', async () => {
+            const sessionData = {
+                id: 'chat_xyz',
+                title: 'Sessão Sem Owner',
+                messages: [],
+            };
+            mockAxios.get.mockResolvedValue({ data: { data: sessionData } });
+
+            const result = await AiService.getChatSession('chat_xyz');
+
+            expect(result!.userId).toBe('');
+        });
+
+        it('preserva metadata.usage nas mensagens', async () => {
+            const sessionData = {
+                id: 'chat_tok',
+                userId: 'bob',
+                messages: [
+                    {
+                        role: 'model',
+                        content: 'Resposta',
+                        timestamp: 1700000000000,
+                        metadata: {
+                            usage: {
+                                promptTokens: 100,
+                                completionTokens: 50,
+                                totalTokens: 150,
+                            },
+                        },
+                    },
+                ],
+            };
+            mockAxios.get.mockResolvedValue({ data: { data: sessionData } });
+
+            const result = await AiService.getChatSession('chat_tok');
+
+            expect(result!.messages[0].metadata?.usage?.totalTokens).toBe(150);
+        });
+
+        it('retorna null quando backend retorna data nula', async () => {
+            mockAxios.get.mockResolvedValue({ data: { data: null } });
+
+            const result = await AiService.getChatSession('chat_404');
+
+            expect(result).toBeNull();
+        });
+
+        it('retorna null e dispara toast em caso de erro', async () => {
+            mockAxios.get.mockRejectedValue(new Error('Session load failed'));
+            toast.error = vi.fn();
+
+            const result = await AiService.getChatSession('chat_err');
+
+            expect(result).toBeNull();
+            expect(toast.error).toHaveBeenCalled();
+        });
+    });
+
     describe('deleteChatSession', () => {
         it('deletes a single session', async () => {
             mockAxios.delete.mockResolvedValue({ data: { success: true } });
