@@ -8,6 +8,9 @@ const mockConfigService = vi.hoisted(() => ({
     getAllPrompts: vi.fn(() => ({})),
     setPrompts: vi.fn(),
     resetModulesToGlobal: vi.fn(),
+    getFallbackChain: vi.fn((moduleName: string) => [moduleName === 'banking' ? 'google' : 'local']),
+    setFallbackChain: vi.fn(),
+    getAllFallbackChains: vi.fn(() => ({})),
 }));
 
 vi.mock('../../services/configService', () => ({

@@ -399,6 +399,39 @@ router.post('/config/llm/modules', (req, res) => {
     }
 });
 
+// Get/Set module-specific fallback chains (resolvido em runtime por configService.getFallbackChain)
+router.get('/config/llm/fallback-chain', (req, res) => {
+    const modules = ['chat', 'banking', 'system_analysis', 'proposals'];
+    const result: Record<string, string[]> = {};
+    for (const m of modules) {
+        result[m] = configService.getFallbackChain(m);
+    }
+    res.json(result);
+});
+
+router.post('/config/llm/fallback-chain', (req, res) => {
+    const { module: moduleName, chain } = req.body;
+    const validModules = new Set(['chat', 'banking', 'system_analysis', 'proposals']);
+    const validProviders = new Set(['local', 'google', 'glm', 'minimax']);
+
+    if (!moduleName || !validModules.has(moduleName)) {
+        return res.status(400).json({ error: 'Invalid module. Use "chat", "banking", "system_analysis" or "proposals".' });
+    }
+    if (!Array.isArray(chain) || chain.length === 0) {
+        return res.status(400).json({ error: 'chain must be a non-empty array' });
+    }
+    if (!chain.every((p) => typeof p === 'string' && validProviders.has(p))) {
+        return res.status(400).json({ error: 'chain contains invalid provider. Use "local", "google", "glm" or "minimax".' });
+    }
+    const dedup: string[] = [];
+    const seen = new Set<string>();
+    for (const p of chain) {
+        if (!seen.has(p)) { seen.add(p); dedup.push(p); }
+    }
+    configService.setFallbackChain(moduleName, dedup);
+    res.json({ success: true, module: moduleName, chain: configService.getFallbackChain(moduleName) });
+});
+
 // Get/Set custom prompts
 router.get('/config/llm/prompts', (req, res) => {
     res.json(configService.getAllPrompts());
