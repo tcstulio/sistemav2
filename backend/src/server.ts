@@ -222,6 +222,9 @@ app.use('/api/notifications', notificationRoutes);
 import systemEventsRoutes from './routes/systemEventsRoutes';
 app.use('/api/system-events', systemEventsRoutes);
 
+import simulatorRoutes from './routes/simulatorRoutes';
+app.use('/api/simulator', simulatorRoutes);
+
 app.use('/api/github', githubRoutes);
 
 // Health Check
