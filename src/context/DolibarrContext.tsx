@@ -22,6 +22,7 @@ interface DolibarrContextType {
   config: DolibarrConfig | null;
   setConfig: (config: DolibarrConfig | null) => void;
   isLoading: boolean;
+  error: string | null;
   notifications: AppNotification[];
   setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>;
   refreshData: (options?: { forceFull?: boolean, limit?: number, page?: number, query?: string }) => Promise<void>;
@@ -373,13 +374,13 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   const contextValue = useMemo(() => ({
     config, setConfig,
     currentUser, canAccess, logout,
-    isLoading, isSyncing, isSyncPaused, toggleSyncPause,
+    isLoading, error, isSyncing, isSyncPaused, toggleSyncPause,
     notifications, setNotifications,
     refreshData,
     isInitialized
   }), [
     config, setConfig, currentUser, canAccess, logout,
-    isLoading, isSyncing, isSyncPaused, toggleSyncPause,
+    isLoading, error, isSyncing, isSyncPaused, toggleSyncPause,
     notifications, refreshData, isInitialized
   ]);
 

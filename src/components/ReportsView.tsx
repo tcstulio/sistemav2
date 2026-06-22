@@ -172,29 +172,50 @@ const ReportsView: React.FC = () => {
 
                     {/* Top Customers */}
                     <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                        <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-6 flex items-center gap-2">
+                        <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
                             <Users size={18} className="text-blue-500" /> Top 5 Clientes
                         </h3>
-                        <div className="h-72 w-full flex items-center justify-center">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                    <Pie
-                                        data={topCustomersData}
-                                        cx="50%"
-                                        cy="50%"
-                                        innerRadius={60}
-                                        outerRadius={80}
-                                        paddingAngle={5}
-                                        dataKey="value"
-                                    >
-                                        {topCustomersData.map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                        ))}
-                                    </Pie>
-                                    <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: '#1e293b', color: '#f8fafc' }} />
-                                    <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ fontSize: '12px' }} />
-                                </PieChart>
-                            </ResponsiveContainer>
+                        <div className="flex flex-col sm:flex-row items-center gap-4 w-full">
+                            <div className="h-48 w-full sm:w-48 flex-shrink-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={topCustomersData}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={50}
+                                            outerRadius={70}
+                                            paddingAngle={5}
+                                            dataKey="value"
+                                        >
+                                            {topCustomersData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: '#1e293b', color: '#f8fafc' }} />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                            <ul className="flex-1 w-full min-w-0 space-y-2" aria-label="top-clientes-legenda">
+                                {topCustomersData.map((entry, index) => (
+                                    <li key={`legend-${index}`} className="flex items-center gap-2 min-w-0">
+                                        <span
+                                            className="flex-shrink-0 w-3 h-3 rounded-full"
+                                            style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                                            aria-hidden="true"
+                                        />
+                                        <span
+                                            className="flex-1 text-sm text-slate-700 dark:text-slate-300 truncate"
+                                            title={entry.name}
+                                        >
+                                            {entry.name}
+                                        </span>
+                                        <span className="flex-shrink-0 text-xs text-slate-500 dark:text-slate-400 font-medium">
+                                            {formatCurrency(entry.value)}
+                                        </span>
+                                    </li>
+                                ))}
+                            </ul>
                         </div>
                     </div>
                 </div>

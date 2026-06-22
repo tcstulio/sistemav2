@@ -8,6 +8,7 @@ import {
 import axios from 'axios';
 import { toast } from 'sonner';
 import { logger } from '../../utils/logger';
+import { formatCurrency } from '../../utils/formatUtils';
 
 const log = logger.child('LlmSettingsTab');
 
@@ -915,7 +916,7 @@ export const LlmSettingsTab: React.FC = () => {
                                             <span className="text-xs font-medium">Custo Est.</span>
                                         </div>
                                         <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">
-                                            R$ {stats.estimatedCost.toFixed(2)}
+                                            {formatCurrency(stats.estimatedCost)}
                                         </p>
                                     </div>
                                     <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-xl">

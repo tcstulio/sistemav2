@@ -8,6 +8,7 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useBankAccounts, useBankLines, useInvoices, useSupplierInvoices } from '../hooks/dolibarr';
 import { useListControls } from '../hooks/useListControls';
 import { formatDateOnly } from '../utils/dateUtils';
+import { formatCurrency } from '../utils/formatUtils';
 import { logger } from '../utils/logger';
 
 const log = logger.child('BankAccountList');
@@ -521,7 +522,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                 <div className="flex justify-between font-medium text-sm mb-2">
                                                     <span className="text-slate-600 dark:text-slate-300">{selectedTransactionForLink.label}</span>
                                                     <span className={selectedTransactionForLink.amount > 0 ? 'text-emerald-600' : 'text-red-500'}>
-                                                        ${Math.abs(selectedTransactionForLink.amount).toFixed(2)}
+                                                        {formatCurrency(Math.abs(selectedTransactionForLink.amount))}
                                                     </span>
                                                 </div>
                                                 <Input
@@ -547,7 +548,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                                 <div className="text-xs text-slate-500">{formatDateOnly(item.date)}</div>
                                                             </div>
                                                             <div className="text-right">
-                                                                <div className="font-bold text-slate-800 dark:text-white text-sm">${item.total_ttc}</div>
+                                                                <div className="font-bold text-slate-800 dark:text-white text-sm">{formatCurrency(item.total_ttc)}</div>
                                                                 <span className="text-[10px] text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">Selecionar</span>
                                                             </div>
                                                         </button>
@@ -572,7 +573,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                 </div>
                                                 <div>
                                                     <p className="text-[10px] text-emerald-800 dark:text-emerald-300 font-medium uppercase tracking-wide">Total</p>
-                                                    <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400">${totalBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                                                    <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400">{formatCurrency(totalBalance)}</p>
                                                 </div>
                                             </div>
                                             <button
@@ -644,7 +645,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                         <div className="p-4">
                                                             <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Saldo</p>
                                                             <div className={`text-2xl font-bold ${account.solde >= 0 ? 'text-slate-800 dark:text-white' : 'text-red-500'}`}>
-                                                                ${account.solde.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                {formatCurrency(account.solde)}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -748,7 +749,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                                                 </div>
                                                                                 <div className="text-right">
                                                                                     <div className={`font-bold ${line.amount > 0 ? 'text-green-600 dark:text-green-400' : 'text-slate-800 dark:text-slate-200'}`}>
-                                                                                        {line.amount > 0 ? '+' : ''}{line.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                                                        {line.amount > 0 ? '+' : ''}{formatCurrency(line.amount)}
                                                                                     </div>
                                                                                     {activeTab === 'reconcile' && (
                                                                                         <button
@@ -783,7 +784,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                                                                             </span>
                                                                                                         </div>
                                                                                                         <div className="flex items-center gap-3">
-                                                                                                            <span className="text-xs font-bold">${inv.total_ttc}</span>
+                                                                                                            <span className="text-xs font-bold">{formatCurrency(inv.total_ttc)}</span>
                                                                                                             <button
                                                                                                                 onClick={(e) => {
                                                                                                                     e.stopPropagation();

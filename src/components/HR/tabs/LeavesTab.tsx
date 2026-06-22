@@ -14,6 +14,7 @@ interface LeavesTabProps {
     searchTerm: string;
     sortConfig: { key: string, direction: 'asc' | 'desc' };
     onOpenLeaveModal: () => void;
+    onRefresh?: () => void;
 }
 
 export const LeavesTab: React.FC<LeavesTabProps> = ({
@@ -21,7 +22,8 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
     users,
     searchTerm,
     sortConfig,
-    onOpenLeaveModal
+    onOpenLeaveModal,
+    onRefresh
 }) => {
     const { config } = useDolibarr();
     const confirm = useConfirm();
@@ -56,6 +58,7 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
         try {
             await DolibarrService.validateLeaveRequest(config, id);
             toast.success('Solicitação enviada!');
+            onRefresh?.();
         } catch (e) { notifyError('Enviar solicitação para aprovação', e); }
         finally { setProcessingId(null); }
     };
@@ -66,6 +69,7 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
         try {
             await DolibarrService.approveLeaveRequest(config, id);
             toast.success('Solicitação aprovada!');
+            onRefresh?.();
         } catch (e) { notifyError('Aprovar solicitação', e); }
         finally { setProcessingId(null); }
     };
@@ -76,6 +80,7 @@ export const LeavesTab: React.FC<LeavesTabProps> = ({
         try {
             await DolibarrService.refuseLeaveRequest(config, id);
             toast.success('Solicitação recusada!');
+            onRefresh?.();
         } catch (e) { notifyError('Recusar solicitação', e); }
         finally { setProcessingId(null); }
     };

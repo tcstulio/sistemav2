@@ -78,4 +78,20 @@ describe('MasterDetailLayout', () => {
         expect(container.firstChild).toBeInTheDocument();
     });
 
+    it('list panel resolves height via min-h-0 (#651)', () => {
+        const { container } = render(
+            <MasterDetailLayout
+                list={<div>List</div>}
+                showDetail={false}
+            />
+        );
+        // The list panel is the first child of the outer flex container and must
+        // carry min-h-0 so the flex chain yields a resolved height for virtualized lists.
+        const listPanel = (container.firstChild as HTMLElement).firstElementChild as HTMLElement;
+        expect(listPanel).toBeTruthy();
+        expect(listPanel).toHaveClass('min-h-0');
+        expect(listPanel).toHaveClass('flex-1');
+        expect(listPanel).toHaveClass('overflow-y-auto');
+    });
+
 });

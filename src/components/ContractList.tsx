@@ -10,6 +10,7 @@ import { useContracts, useCustomers, useProjects, useInvoices } from '../hooks/d
 import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
 import { formatDateOnly } from '../utils/dateUtils';
+import { formatCurrency } from '../utils/formatUtils';
 import { logger } from '../utils/logger';
 import { notifyError } from '../utils/notifyError';
 import { useConfirm } from '../hooks/useConfirm';
@@ -414,7 +415,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                                                 <div className="text-xs text-slate-500 mt-1">{formatDateOnly(inv.date)}</div>
                                             </div>
                                             <div className="flex items-center gap-4">
-                                                <span className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString()}</span>
+                                                <span className="font-bold text-slate-800 dark:text-white">{formatCurrency(inv.total_ttc)}</span>
                                                 <ExternalLink size={14} className="text-slate-400" />
                                             </div>
                                         </div>

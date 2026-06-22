@@ -13,6 +13,8 @@ import {
     PricingLabels
 } from '../types/venue';
 import { fetchList } from '../services/api/core';
+import { getThirdParty } from '../services/api/commercial';
+import { formatCurrency } from '../utils/formatUtils';
 import { AppView } from '../types';
 import { formatDateOnly } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
@@ -25,9 +27,10 @@ import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, Li
 interface VenueListProps {
     onNavigate?: (view: AppView, id: string) => void;
     onSelectVenue?: (venue: VenuePartnership) => void;
+    initialItemId?: string;
 }
 
-export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue }) => {
+export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue, initialItemId }) => {
     const { config } = useDolibarr();
     const [venues, setVenues] = useState<VenuePartnership[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -35,6 +38,7 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue 
 
     const [selectedVenue, setSelectedVenue] = useState<VenuePartnership | null>(null);
     const [activeTab, setActiveTab] = useState<'overview' | 'capacity' | 'pricing' | 'ratings'>('overview');
+    const [clientName, setClientName] = useState<string | null>(null);
 
     useEffect(() => {
         const fetchVenues = async () => {
@@ -54,6 +58,32 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue 
         };
         fetchVenues();
     }, [config]);
+
+    useEffect(() => {
+        if (initialItemId && venues.length > 0) {
+            const target = venues.find(v => String(v.id) === String(initialItemId));
+            if (target) {
+                setSelectedVenue(target);
+                setActiveTab('overview');
+            }
+        }
+    }, [initialItemId, venues]);
+
+    useEffect(() => {
+        if (!selectedVenue || !config) {
+            setClientName(null);
+            return;
+        }
+        if (!selectedVenue.fkSoc || selectedVenue.fkSoc === '0') {
+            setClientName(null);
+            return;
+        }
+        let cancelled = false;
+        getThirdParty(config, String(selectedVenue.fkSoc))
+            .then((tp: any) => { if (!cancelled) setClientName(tp?.name || String(selectedVenue.fkSoc)); })
+            .catch(() => { if (!cancelled) setClientName(String(selectedVenue.fkSoc)); });
+        return () => { cancelled = true; };
+    }, [selectedVenue, config]);
 
     const transformPartnership = (raw: any): VenuePartnership => {
         const opts = raw.array_options || {};
@@ -161,7 +191,7 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue 
 
     const formatPrice = (price: number | null) => {
         if (price === null) return 'Sob consulta';
-        return `R$ ${price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+        return formatCurrency(price);
     };
 
     const handleSelectForSimulator = () => {
@@ -277,6 +307,18 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue 
                                 </div>
                             )}
 
+                            {(selectedVenue.fkSoc && selectedVenue.fkSoc !== '0') && (
+                                <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex items-center gap-3">
+                                    <Building2 size={18} className="text-indigo-400 shrink-0" />
+                                    <div>
+                                        <div className="text-xs text-slate-500 mb-0.5">Cliente / Empresa</div>
+                                        <div className="text-sm font-medium text-slate-800 dark:text-white">
+                                            {clientName ?? '—'}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
                                 <h3 className="font-bold text-slate-800 dark:text-white mb-4">Contato</h3>
                                 <div className="space-y-3">
@@ -366,9 +408,9 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue 
                                 <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800">
                                     <h4 className="font-medium text-slate-800 dark:text-white mb-3">Serviços Inclusos</h4>
                                     <div className="flex flex-wrap gap-2">
-                                        {selectedVenue.includedServices.map(serviceId => (
-                                            <span key={serviceId} className="px-2 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded text-xs">
-                                                Serviço #{serviceId}
+                                        {selectedVenue.includedServices.map((service, idx) => (
+                                            <span key={idx} className="px-2 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded text-xs">
+                                                {service}
                                             </span>
                                         ))}
                                     </div>

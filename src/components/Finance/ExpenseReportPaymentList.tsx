@@ -120,7 +120,7 @@ const ExpenseReportPaymentList: React.FC<ExpenseReportPaymentListProps> = ({ onN
                         actions={
                             <div className="flex items-center gap-3">
                                 <div className="flex items-center gap-2 bg-purple-50 dark:bg-purple-900/20 px-4 py-2 rounded-xl border border-purple-100 dark:border-purple-800">
-                                    <div className="text-purple-600 dark:text-purple-400 font-bold text-lg">${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                    <div className="text-purple-600 dark:text-purple-400 font-bold text-lg">{formatCurrency(totalPaid)}</div>
                                     <div className="text-xs text-purple-800 dark:text-purple-300 uppercase font-bold tracking-wide">Total</div>
                                 </div>
                                 <ListToolbar controls={controls} searchPlaceholder="Buscar ref/número..." />
@@ -177,7 +177,7 @@ const ExpenseReportPaymentList: React.FC<ExpenseReportPaymentListProps> = ({ onN
                                                                     </div>
                                                                 </div>
                                                                 <div className="text-right shrink-0">
-                                                                    <div className="font-bold text-slate-700 dark:text-slate-300 text-sm">-${p.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                                                    <div className="font-bold text-slate-700 dark:text-slate-300 text-sm">-{formatCurrency(p.amount)}</div>
                                                                 </div>
                                                             </div>
                                                         </Card>

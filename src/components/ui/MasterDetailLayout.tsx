@@ -54,10 +54,15 @@ export const MasterDetailLayout: React.FC<MasterDetailLayoutProps> = ({
 
     return (
         <div className={`flex-1 min-h-0 flex overflow-hidden ${className}`}>
-            {/* List Panel */}
+            {/* List Panel
+                min-h-0 é CRÍTICO (#651): sem ele, o flex item tem min-height:auto
+                (tamanho do conteúdo), o painel cresce com o conteúdo em vez de ser
+                limitado à altura do container e o overflow-y-auto nunca "estoura".
+                Isso deixava filhos baseados em h-full/AutoSizer (ex.: react-window)
+                sem altura resolvida (height=0) e a tela "travava". NÃO remover. */}
             <div
                 className={`
-                    flex-1 overflow-y-auto
+                    flex-1 min-h-0 overflow-y-auto
                     ${hasDetail ? 'hidden lg:block' : 'block'}
                     ${hasDetail && !hideListOnDetail ? `lg:flex-none ${listWidthClasses[listWidth]} lg:border-r lg:border-slate-200 lg:dark:border-slate-800` : ''}
                     ${hasDetail && hideListOnDetail ? 'hidden' : ''}
