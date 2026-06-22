@@ -455,7 +455,7 @@ router.post('/config/llm/playground', async (req, res) => {
             aiService.setConfig(provider as 'local' | 'google' | 'glm' | 'minimax', config.localLlmUrl, config.googleApiKey, model);
         }
 
-        const response = await aiService.analyzeSystem(prompt, '');
+        const response = await aiService.analyzeSystem(prompt, '', 'chat');
 
         if (provider && provider !== originalProvider) {
             aiService.setConfig(originalProvider as 'local' | 'google' | 'glm' | 'minimax', config.localLlmUrl, config.googleApiKey, config.localModelName);

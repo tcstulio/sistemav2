@@ -30,7 +30,7 @@ export async function runSalesForecastAnalysis(): Promise<SalesForecastAnalysisR
 
     const invoices = await dolibarrService.listInvoices({ limit: 200 });
     const referenceDate = new Date().toISOString();
-    const result = await aiService.generateSalesForecast(invoices, { referenceDate });
+    const result = await aiService.generateSalesForecast(invoices, { referenceDate }, 'banking');
 
     const snapshot = financialAnalysisStore.saveAnalysis({
         data: safeJsonParse(result),
