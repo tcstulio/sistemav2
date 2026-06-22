@@ -31,7 +31,6 @@ const VenueList = React.lazy(() => import('./VenueList').then(m => ({ default: m
 const SupplierInvoiceList = React.lazy(() => import('./SupplierInvoiceList'));
 const SettingsView = React.lazy(() => import('./Settings'));
 const HRList = React.lazy(() => import('./HRList'));
-const InventoryView = React.lazy(() => import('./InventoryView').then(m => ({ default: m.InventoryView })));
 const ReportsView = React.lazy(() => import('./ReportsView'));
 const DevelopmentView = React.lazy(() => import('./DevelopmentView'));
 const ManufacturingView = React.lazy(() => import('./ManufacturingView'));
@@ -221,7 +220,8 @@ const App: React.FC = () => {
                         <Route path="/categories/new" element={<ViewWrapper Component={CategoryList} viewId="categories" />} />
                         <Route path="/categories/:id/edit" element={<ViewWrapper Component={CategoryList} viewId="categories" />} />
 
-                        <Route path="/inventory" element={<ViewWrapper Component={InventoryView} viewId="inventory" />} />
+                        {/* /inventory foi unificado em /warehouses (#564) — redirecionar para não quebrar links salvos */}
+                        <Route path="/inventory" element={<Navigate to="/warehouses" replace />} />
                         <Route path="/warehouses" element={<ViewWrapper Component={WarehouseList} viewId="inventory" />} />
 
                         <Route path="/batch/new" element={<ViewWrapper Component={BatchCreateView} viewId="dashboard" />} />
