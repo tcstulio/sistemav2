@@ -27,7 +27,9 @@ const makeProject = (id: string, title: string): Project => ({
     id,
     ref: `PROJ-${id}`,
     title,
-    status: 1,
+    statut: '1',
+    socid: '0',
+    progress: 0,
     date_start: 0,
     date_end: 0,
 });
@@ -58,6 +60,7 @@ const makeUser = (id: string, firstname: string): DolibarrUser => ({
     id,
     login: `user${id}`,
     firstname,
+    statut: '1',
 });
 
 // ── many projects with long names ──────────────────────────────────────────
