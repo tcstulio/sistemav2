@@ -305,11 +305,19 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
         if (!selectedCustomer) return;
         setEditForm({
             name: selectedCustomer.name,
+            name_alias: selectedCustomer.name_alias,
             address: selectedCustomer.address,
             zip: selectedCustomer.zip,
             town: selectedCustomer.town,
             phone: selectedCustomer.phone,
-            email: selectedCustomer.email
+            phone_mobile: selectedCustomer.phone_mobile,
+            fax: selectedCustomer.fax,
+            email: selectedCustomer.email,
+            url: selectedCustomer.url,
+            idprof1: selectedCustomer.idprof1,
+            typent_id: selectedCustomer.typent_id,
+            socialnetworks: selectedCustomer.socialnetworks,
+            array_options: selectedCustomer.array_options,
         });
         setIsEditModalOpen(true);
     };
@@ -762,6 +770,32 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
 
                 {/* Form Fields */}
                 <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo de Pessoa</label>
+                            <select
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={createForm.typent_id || ''}
+                                onChange={e => setCreateForm({ ...createForm, typent_id: e.target.value || undefined })}
+                            >
+                                <option value="">Não definido</option>
+                                <option value="8">Pessoa Física</option>
+                                <option value="5">Empresa (PJ)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
+                            <select
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={createForm.client}
+                                onChange={e => setCreateForm({ ...createForm, client: e.target.value as any })}
+                            >
+                                <option value="1">Cliente</option>
+                                <option value="2">Prospecto</option>
+                                <option value="3">Ambos</option>
+                            </select>
+                        </div>
+                    </div>
                     <Input
                         label="Nome da Empresa / Pessoa"
                         required
@@ -769,6 +803,30 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                         onChange={e => setCreateForm({ ...createForm, name: e.target.value })}
                         placeholder="Ex: Acme Corp"
                     />
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input
+                            label="Nome Fantasia / Complemento"
+                            value={createForm.name_alias || ''}
+                            onChange={e => setCreateForm({ ...createForm, name_alias: e.target.value })}
+                        />
+                        <Input
+                            label="CNPJ / CPF"
+                            value={createForm.idprof1 || ''}
+                            onChange={e => setCreateForm({ ...createForm, idprof1: e.target.value })}
+                            placeholder="00.000.000/0001-00"
+                        />
+                    </div>
+                    {createForm.typent_id !== '8' && (
+                        <Input
+                            label="Responsável Legal (Assinante de Contrato)"
+                            value={createForm.array_options?.options_assinante || ''}
+                            onChange={e => setCreateForm({
+                                ...createForm,
+                                array_options: { ...createForm.array_options, options_assinante: e.target.value }
+                            })}
+                            placeholder="Nome de quem assina os contratos"
+                        />
+                    )}
                     <div className="grid grid-cols-2 gap-4">
                         <Input
                             label="Email"
@@ -780,6 +838,36 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                             label="Telefone"
                             value={createForm.phone || ''}
                             onChange={e => setCreateForm({ ...createForm, phone: e.target.value })}
+                        />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input
+                            label="WhatsApp / Celular"
+                            value={createForm.phone_mobile || ''}
+                            onChange={e => setCreateForm({ ...createForm, phone_mobile: e.target.value })}
+                            placeholder="+55 11 99999-9999"
+                        />
+                        <Input
+                            label="Outro Telefone / Fax"
+                            value={createForm.fax || ''}
+                            onChange={e => setCreateForm({ ...createForm, fax: e.target.value })}
+                        />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input
+                            label="Site"
+                            value={createForm.url || ''}
+                            onChange={e => setCreateForm({ ...createForm, url: e.target.value })}
+                            placeholder="https://..."
+                        />
+                        <Input
+                            label="LinkedIn / Rede Social"
+                            value={createForm.socialnetworks?.linkedin || ''}
+                            onChange={e => setCreateForm({
+                                ...createForm,
+                                socialnetworks: { ...createForm.socialnetworks, linkedin: e.target.value }
+                            })}
+                            placeholder="URL do perfil"
                         />
                     </div>
                     <Input
@@ -799,18 +887,6 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                             value={createForm.zip || ''}
                             onChange={e => setCreateForm({ ...createForm, zip: e.target.value })}
                         />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
-                        <select
-                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                            value={createForm.client}
-                            onChange={e => setCreateForm({ ...createForm, client: e.target.value as any })}
-                        >
-                            <option value="1">Cliente</option>
-                            <option value="2">Prospecto</option>
-                            <option value="3">Ambos</option>
-                        </select>
                     </div>
                 </div>
             </Modal>
@@ -1064,10 +1140,53 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                 }
             >
                 <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo de Pessoa</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={editForm.typent_id || ''}
+                            onChange={e => setEditForm({ ...editForm, typent_id: e.target.value || undefined })}
+                        >
+                            <option value="">Não definido</option>
+                            <option value="8">Pessoa Física</option>
+                            <option value="5">Empresa (PJ)</option>
+                        </select>
+                    </div>
                     <Input label="Nome" required value={editForm.name || ''} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input label="Nome Fantasia / Complemento" value={editForm.name_alias || ''} onChange={e => setEditForm({ ...editForm, name_alias: e.target.value })} />
+                        <Input label="CNPJ / CPF" value={editForm.idprof1 || ''} onChange={e => setEditForm({ ...editForm, idprof1: e.target.value })} placeholder="00.000.000/0001-00" />
+                    </div>
+                    {editForm.typent_id !== '8' && (
+                        <Input
+                            label="Responsável Legal (Assinante de Contrato)"
+                            value={editForm.array_options?.options_assinante || ''}
+                            onChange={e => setEditForm({
+                                ...editForm,
+                                array_options: { ...editForm.array_options, options_assinante: e.target.value }
+                            })}
+                            placeholder="Nome de quem assina os contratos"
+                        />
+                    )}
                     <div className="grid grid-cols-2 gap-4">
                         <Input label="Email" type="email" value={editForm.email || ''} onChange={e => setEditForm({ ...editForm, email: e.target.value })} />
                         <Input label="Telefone" value={editForm.phone || ''} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input label="WhatsApp / Celular" value={editForm.phone_mobile || ''} onChange={e => setEditForm({ ...editForm, phone_mobile: e.target.value })} placeholder="+55 11 99999-9999" />
+                        <Input label="Outro Telefone / Fax" value={editForm.fax || ''} onChange={e => setEditForm({ ...editForm, fax: e.target.value })} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <Input label="Site" value={editForm.url || ''} onChange={e => setEditForm({ ...editForm, url: e.target.value })} placeholder="https://..." />
+                        <Input
+                            label="LinkedIn / Rede Social"
+                            value={editForm.socialnetworks?.linkedin || ''}
+                            onChange={e => setEditForm({
+                                ...editForm,
+                                socialnetworks: { ...editForm.socialnetworks, linkedin: e.target.value }
+                            })}
+                            placeholder="URL do perfil"
+                        />
                     </div>
                     <Input label="Endereço" value={editForm.address || ''} onChange={e => setEditForm({ ...editForm, address: e.target.value })} />
                     <div className="grid grid-cols-2 gap-4">
