@@ -407,12 +407,12 @@ export const AiService = {
         }
     },
 
-    getChatSession: async (id: string): Promise<{ messages: any[] } | null> => {
+    getChatSession: async (id: string): Promise<{ userId: string; messages: any[] } | null> => {
         try {
             const response = await axios.get(`${API_URL}/sessions/${id}`, getAuthHeaders());
             const session = response.data.data;
             if (!session) return null;
-            return { messages: session.messages || [] };
+            return { userId: session.userId || '', messages: session.messages || [] };
         } catch (error: any) {
             handleAiError('Carregar sessão', error);
             return null;

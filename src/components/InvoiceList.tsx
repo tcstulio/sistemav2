@@ -10,6 +10,7 @@ import { useInvoiceMutations } from '../hooks/useMutations';
 import { useConfirm } from '../hooks/useConfirm';
 import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
+import { ClickTarget, ClickTargetPrimary, ClickTargetSecondary } from './common/ClickTarget';
 import { PaginationControls } from './common/PaginationControls';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInvoices, useCustomers, useProjects, useProducts, useShipments, useInvoiceLines, useUsers, usePayments, usePaymentInvoiceLinks } from '../hooks/dolibarr';
@@ -20,7 +21,6 @@ import { RichTextEditor } from './common/RichTextEditor';
 import { CustomerPaymentModal } from './Modals/CustomerPaymentModal';
 import { MasterDetailLayout } from './ui/MasterDetailLayout';
 import { PageHeader } from './ui/PageHeader';
-import { Card } from './ui/Card';
 import { Button } from './ui/Button';
 import { Modal } from './ui/Modal';
 import { Tabs, Tab } from './ui/Tabs';
@@ -482,30 +482,39 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                 <div className="grid grid-cols-1 gap-3 p-4">
                     {filteredInvoices.map((inv) => {
                         const projectName = getProjectName(inv.project_id);
+                        const isDraft = inv.statut === '0';
+                        const customerName = getCustomerName(inv.socid);
                         return (
-                            <Card
+                            <ClickTarget
                                 key={inv.id}
-                                onClick={() => setSelectedInvoice(inv)}
                                 selected={selectedInvoice?.id === inv.id}
                                 hoverable
                             >
                                 <div className="flex justify-between items-start mb-2">
                                     <div className="flex items-center gap-2">
-                                        <span className="font-mono text-xs text-slate-400">{inv.ref}</span>
+                                        {/* Alvo primário (esticado sobre todo o card): abrir a FATURA */}
+                                        <ClickTargetPrimary
+                                            onClick={() => setSelectedInvoice(inv)}
+                                            aria-label={`Abrir fatura ${inv.ref}`}
+                                            className="font-mono text-xs text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors inline-flex items-center gap-1"
+                                        >
+                                            <FileText size={12} aria-hidden="true" /> {inv.ref}
+                                        </ClickTargetPrimary>
                                         <StatusBadge status={getInvoiceStatusKey(inv)} config={invoiceStatuses} />
                                     </div>
-                                    <div className="flex items-center gap-1">
+                                    {/* Alvos secundários: ficam acima do ::after do primário (z-10) */}
+                                    <ClickTargetSecondary className="flex items-center gap-1">
                                         <Button
                                             variant="ghost"
                                             size="sm"
                                             icon={<Copy size={16} />}
-                                            onClick={(e) => { e.stopPropagation(); handleDuplicate(inv.id); }}
+                                            onClick={() => handleDuplicate(inv.id)}
                                             title="Duplicar"
                                             aria-label="Duplicar"
                                             loading={processingId === inv.id}
                                             disabled={!!processingId}
                                         />
-                                        {inv.statut === '0' && (
+                                        {isDraft ? (
                                             <ConfirmDeleteButton
                                                 onDelete={() => DolibarrService.deleteInvoice(config, inv.id)}
                                                 onDeleted={() => {
@@ -514,18 +523,31 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                                 }}
                                                 itemLabel={inv.ref}
                                             />
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                disabled
+                                                aria-label="Excluir indisponível"
+                                                title="Apenas faturas em rascunho podem ser excluídas. Reabra como rascunho ou use 'Abandonar/Cancelar' no detalhe."
+                                                className="p-1 text-slate-300 dark:text-slate-600 cursor-not-allowed"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
                                         )}
-                                    </div>
+                                    </ClickTargetSecondary>
                                 </div>
-                                <h3
-                                    className="font-bold text-slate-800 dark:text-white text-sm mb-1 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (onNavigate) onNavigate('customers', inv.socid);
-                                    }}
-                                >
-                                    {getCustomerName(inv.socid)}
-                                </h3>
+                                {/* Alvo secundário distinto: nome do CLIENTE como link próprio */}
+                                <ClickTargetSecondary className="block mb-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => onNavigate?.('customers', inv.socid)}
+                                        aria-label={`Abrir cliente ${customerName}`}
+                                        className="inline-flex items-center gap-1 font-bold text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
+                                    >
+                                        {customerName}
+                                        <ExternalLink size={12} aria-hidden="true" />
+                                    </button>
+                                </ClickTargetSecondary>
                                 {projectName && (
                                     <div className="text-xs text-indigo-500 mb-2 flex items-center gap-1">
                                         <FolderKanban size={10} /> {projectName}
@@ -535,7 +557,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     <span className="text-xs text-slate-500">{formatDateOnly(inv.date)}</span>
                                     <span className="font-bold text-slate-800 dark:text-white">{formatCurrency(inv.total_ttc)}</span>
                                 </div>
-                            </Card>
+                            </ClickTarget>
                         );
                     })}
                 </div>
@@ -563,12 +585,14 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                     </span>
                 }
                 subtitle={
-                    <span
-                        className="cursor-pointer hover:underline hover:text-indigo-500"
-                        onClick={() => onNavigate && onNavigate('customers', selectedInvoice.socid)}
+                    <button
+                        type="button"
+                        onClick={() => onNavigate?.('customers', selectedInvoice.socid)}
+                        className="cursor-pointer hover:underline hover:text-indigo-500 text-left inline-flex items-center gap-1"
                     >
                         Cliente: {getCustomerName(selectedInvoice.socid)}
-                    </span>
+                        <ExternalLink size={12} aria-hidden="true" />
+                    </button>
                 }
                 actions={
                     <div className="flex items-center gap-2">
@@ -593,14 +617,27 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 >
                                     Editar
                                 </Button>
-                                <ConfirmDeleteButton
-                                    withLabel
-                                    onDelete={() => DolibarrService.deleteInvoice(config, selectedInvoice.id)}
-                                    onDeleted={() => { setSelectedInvoice(null); refetchInvoices(); }}
-                                    itemLabel={selectedInvoice.ref}
-                                    className="px-2 py-1"
-                                />
                             </>
+                        )}
+                        {selectedInvoice.statut === '0' ? (
+                            <ConfirmDeleteButton
+                                withLabel
+                                onDelete={() => DolibarrService.deleteInvoice(config, selectedInvoice.id)}
+                                onDeleted={() => { setSelectedInvoice(null); refetchInvoices(); }}
+                                itemLabel={selectedInvoice.ref}
+                                className="px-2 py-1"
+                            />
+                        ) : (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                icon={<Trash2 size={16} />}
+                                disabled
+                                title="Apenas faturas em rascunho podem ser excluídas. Reabra como rascunho ou use 'Abandonar/Cancelar'."
+                                className="!text-slate-300 dark:!text-slate-600 cursor-not-allowed"
+                            >
+                                Excluir
+                            </Button>
                         )}
                         {selectedInvoice.statut === '1' && selectedInvoice.type !== '2' && (
                             <>
