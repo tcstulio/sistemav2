@@ -45,6 +45,7 @@ vi.mock('../../services/dolibarrService', () => ({
         createProduct: vi.fn(),
         updateProduct: vi.fn(),
         deleteProduct: vi.fn(),
+        createSupplierOrder: vi.fn(),
     },
 }));
 
@@ -64,6 +65,7 @@ vi.mock('react-virtualized-auto-sizer', () => ({
 }));
 
 const { notifyError } = await import('../../utils/notifyError');
+const { useSuppliers } = await import('../../hooks/dolibarr');
 
 const mockProducts: Product[] = [
     { id: '1', ref: 'PRD-001', label: 'Produto Alpha', type: '0', price: 100, stock_reel: 10, tosell: '1', tobuy: '1' },
@@ -74,6 +76,8 @@ describe('ProductList — no native alert/confirm', () => {
         vi.clearAllMocks();
         vi.mocked(DolibarrService.createProduct).mockResolvedValue({ id: '99' } as any);
         vi.mocked(DolibarrService.updateProduct).mockResolvedValue({} as any);
+        vi.mocked(DolibarrService.createSupplierOrder).mockResolvedValue({ id: '55' } as any);
+        vi.mocked(useSuppliers).mockReturnValue({ data: [] } as any);
     });
 
     it('renders the page header', () => {
@@ -181,5 +185,65 @@ describe('ProductList — no native alert/confirm', () => {
 
         alertSpy.mockRestore();
         confirmSpy.mockRestore();
+    });
+
+    // #632 — moeda R$ na lista de produtos
+    it('exibe preco do produto com R$ (formatCurrency) na lista', () => {
+        render(<ProductList />);
+        // R$ 100,00 é o formato pt-BR/BRL para 100
+        expect(screen.getByText(/R\$\s*100/)).toBeInTheDocument();
+        // garante ausência do cifrão US hardcoded
+        expect(screen.queryByText(/\$100/)).not.toBeInTheDocument();
+    });
+
+    // #632 — moeda R$ no detalhe (card Preço)
+    it('exibe preco com R$ no card de detalhe do produto', async () => {
+        const user = userEvent.setup();
+        render(<ProductList />);
+        await user.click(screen.getByText('Produto Alpha'));
+        // Card "Preço" no painel de detalhe
+        await waitFor(() => {
+            expect(screen.getAllByText(/R\$\s*100/).length).toBeGreaterThanOrEqual(1);
+        });
+    });
+
+    // #632 — botão Repor abre modal e Criar Pedido chama createSupplierOrder
+    it('botao Repor abre modal e Criar Pedido chama createSupplierOrder', async () => {
+        const user = userEvent.setup();
+        vi.mocked(useSuppliers).mockReturnValue({
+            data: [{ id: 'SUP-1', name: 'Fornecedor Teste', status: '1' }],
+        } as any);
+
+        render(<ProductList />);
+        // Selecionar produto para abrir detalhe
+        await user.click(screen.getByText('Produto Alpha'));
+
+        // Navegar para aba Fornecedores
+        await waitFor(() => {
+            expect(screen.getByText('Fornecedores')).toBeInTheDocument();
+        });
+        await user.click(screen.getByText('Fornecedores'));
+
+        // Clicar Repor
+        await waitFor(() => {
+            expect(screen.getByText('Repor')).toBeInTheDocument();
+        });
+        await user.click(screen.getByText('Repor'));
+
+        // Modal aparece
+        await waitFor(() => {
+            expect(screen.getByText('Repor Produto')).toBeInTheDocument();
+        });
+
+        // Clicar Criar Pedido
+        await user.click(screen.getByText('Criar Pedido'));
+
+        await waitFor(() => {
+            expect(DolibarrService.createSupplierOrder).toHaveBeenCalledWith(
+                expect.objectContaining({ apiUrl: expect.any(String) }),
+                expect.objectContaining({ socid: 'SUP-1' })
+            );
+        });
+        expect(toast.success).toHaveBeenCalledWith('Pedido de reposição criado com sucesso!');
     });
 });

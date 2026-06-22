@@ -375,4 +375,47 @@ describe('DolibarrOperationsService', () => {
             expect(await service.listUserTasks('7')).toEqual([]);
         });
     });
+
+    describe('updateIntervention (#656)', () => {
+        // A REST padrão do Dolibarr NÃO expõe PUT /interventions/{id}. A gravação
+        // roda via custom_sync.php (action=update_intervention). O service PROPAGA
+        // erro ({message,status}) quando falha — para o handler responder com status
+        // HTTP apropriado (diferente dos outros writes best-effort que só retornam false).
+        it('retorna { success: true } quando o custom_sync confirma sucesso', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: { success: true } });
+            const result = await service.updateIntervention('42', { socid: '1', description: 'Editado' });
+            expect(result).toEqual({ success: true });
+
+            // grava via custom_sync.php (NÃO via REST PUT inexistente)
+            const [url, opts] = mockAxios.get.mock.calls[0] as [string, any];
+            expect(url).toContain('custom_sync.php');
+            expect(opts.params.action).toBe('update_intervention');
+            expect(opts.params.intervention_id).toBe('42');
+            expect(opts.params.socid).toBe('1');
+            expect(opts.params.description).toBe('Editado');
+        });
+
+        it('propaga erro com status do Dolibarr quando o custom_sync rejeita', async () => {
+            mockAxios.get.mockResolvedValue({ status: 500, data: { error: 'DB down' } });
+            await expect(service.updateIntervention('42', { socid: '1' })).rejects.toMatchObject({
+                status: 500,
+                message: 'DB down',
+            });
+        });
+
+        it('responde 502 quando o custom_sync não confirma sucesso (script ausente)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: { success: false } });
+            await expect(service.updateIntervention('42', { socid: '1' })).rejects.toMatchObject({
+                status: 502,
+            });
+        });
+
+        it('propaga erro de rede (axios reject) como status 502/500', async () => {
+            mockAxios.get.mockRejectedValue(new Error('ECONNREFUSED'));
+            // proxyCustomSync captura o reject e devolve {status:500} → service vira throw
+            await expect(service.updateIntervention('42', { socid: '1' })).rejects.toMatchObject({
+                status: expect.any(Number),
+            });
+        });
+    });
 });
