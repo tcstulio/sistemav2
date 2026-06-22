@@ -1847,13 +1847,42 @@ Return ONLY a JSON:
                     return;
                 }
             } else {
-                // Esgotou as 3 re-avaliações sem score parseável → escala p/ revisão humana (não estaciona em silêncio).
+                // Esgotou as 3 re-avaliações sem score parseável.
+                // Distingue INFRA (LLM não respondeu — 429/timeout/5xx) de QUALIDADE (respondeu mas
+                // não produziu JSON): em infra, devolve a task à fila (não marca reviewing) — o PR
+                // fica vivo e o Judge é re-executado na próxima retomada. Em qualidade, escala.
+                if (isQuotaExhausted()) {
+                    log.warn(`Judge #${task.issueNumber}: cota/infra esgotada — devolvendo à fila para re-julgar`);
+                    task.status = 'pending';
+                    task.startedAt = undefined;
+                    task.updatedAt = new Date().toISOString();
+                    this.recordEvent(task, 'quota_hold', '⏸️ Judge: cota/infra — re-enfileirado para re-julgamento quando a API voltar', { quotaHold: true, judgeInfra: true });
+                    this.emitLog(task.issueNumber, 'warn', 'Judge: cota/infra — re-enfileirado (retoma automaticamente).');
+                    this.save();
+                    this.emitStatus(task);
+                    return;
+                }
+                // Falha de qualidade (LLM respondeu mas sem JSON/score): escala p/ revisão humana.
                 task.status = 'reviewing';
                 task.judgeReview = 'Judge falhou em avaliar após 3 tentativas — requer revisão humana.';
                 this.recordEvent(task, 'judge_error', 'Judge: 3 tentativas sem score parseável — escalado p/ revisão humana');
             }
         } catch (e: any) {
             log.error(`Judge error for #${task.issueNumber}`, e);
+            // Distingue erro de INFRA (429/timeout/5xx/conexão) de falha inesperada:
+            // em infra, devolve à fila em vez de marcar reviewing — o PR fica vivo.
+            if (isQuotaExhausted() || isQuotaError(e?.message)) {
+                markQuotaExhausted(e?.message || 'judge infra error');
+                log.warn(`Judge #${task.issueNumber}: erro de infra — devolvendo à fila para re-julgar`);
+                task.status = 'pending';
+                task.startedAt = undefined;
+                task.updatedAt = new Date().toISOString();
+                this.recordEvent(task, 'quota_hold', `⏸️ Judge: erro de infra (${e.message?.slice(0, 80)}) — re-enfileirado para re-julgamento`, { quotaHold: true, judgeInfra: true, error: e.message });
+                this.emitLog(task.issueNumber, 'warn', `Judge: erro de infra (${e.message?.slice(0, 60)}) — re-enfileirado (retoma automaticamente).`);
+                this.save();
+                this.emitStatus(task);
+                return;
+            }
             task.status = 'reviewing';
             task.judgeReview = `Judge error: ${e.message}`;
             this.recordEvent(task, 'judge_error', `Judge error: ${e.message}`, { error: e.message });

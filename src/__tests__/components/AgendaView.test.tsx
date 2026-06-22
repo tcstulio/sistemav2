@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import AgendaView from '../../components/AgendaView';
 
 // --- Mock sonner ---
@@ -34,9 +34,17 @@ vi.mock('../../hooks/usePrefill', () => ({
 }));
 
 // --- Mock DolibarrService ---
+const mockCreateEvent = vi.hoisted(() => vi.fn().mockResolvedValue({}));
+const mockGetEventTypes = vi.hoisted(() =>
+    vi.fn().mockResolvedValue([
+        { code: 'AC_RDV', label: 'Reunião' },
+        { code: 'AC_TEL', label: 'Chamada' },
+    ])
+);
 vi.mock('../../services/dolibarrService', () => ({
     DolibarrService: {
-        createEvent: vi.fn(),
+        createEvent: (...args: any[]) => mockCreateEvent(...args),
+        getEventTypes: (...args: any[]) => mockGetEventTypes(...args),
     },
 }));
 
@@ -192,5 +200,181 @@ describe('AgendaView — exibição de projeto/cliente nos itens (#600)', () => 
         // The intervention row should show the project name chip
         expect(screen.getByText('Projeto Alfa')).toBeInTheDocument();
         expect(screen.queryByText(/undefined/i)).not.toBeInTheDocument();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// #546 — List mode layout: full-width, no half-screen placeholder
+// ---------------------------------------------------------------------------
+describe('AgendaView — #546: List mode full-width layout', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 500 });
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false } as any);
+        vi.mocked(useTasks).mockReturnValue({ data: [], isLoading: false } as any);
+        vi.mocked(useInterventions).mockReturnValue({ data: [], isLoading: false } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [], isLoading: false } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [] } as any);
+    });
+
+    const renderAgendaView = () => render(<AgendaView onNavigate={vi.fn()} />);
+
+    it('renders full-width list container (data-testid=agenda-list-container) when no item selected', () => {
+        renderAgendaView();
+        expect(screen.getByTestId('agenda-list-container')).toBeInTheDocument();
+    });
+
+    it('full-width container has overflow-y-auto class for proper scrolling', () => {
+        renderAgendaView();
+        const container = screen.getByTestId('agenda-list-container');
+        expect(container.className).toContain('overflow-y-auto');
+    });
+
+    it('placeholder "Selecione um item para ver detalhes" is NOT shown when no item is selected', () => {
+        renderAgendaView();
+        expect(screen.queryByText(/selecione um item para ver detalhes/i)).not.toBeInTheDocument();
+    });
+
+    it('list view toggle button renders in active state', () => {
+        renderAgendaView();
+        const listBtn = screen.getByTitle('Visualização em Lista');
+        expect(listBtn).toBeInTheDocument();
+    });
+
+    it('switching to calendar hides the full-width list container', () => {
+        renderAgendaView();
+        fireEvent.click(screen.getByTitle('Visualização em Calendário'));
+        expect(screen.queryByTestId('agenda-list-container')).not.toBeInTheDocument();
+    });
+
+    it('switching back to list restores the full-width list container', () => {
+        renderAgendaView();
+        fireEvent.click(screen.getByTitle('Visualização em Calendário'));
+        fireEvent.click(screen.getByTitle('Visualização em Lista'));
+        expect(screen.getByTestId('agenda-list-container')).toBeInTheDocument();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// #550 — New event: types from Dolibarr, extra fields
+// ---------------------------------------------------------------------------
+describe('AgendaView — #550: New event modal with Dolibarr types', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 500 });
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false } as any);
+        vi.mocked(useTasks).mockReturnValue({ data: [], isLoading: false } as any);
+        vi.mocked(useInterventions).mockReturnValue({ data: [], isLoading: false } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [], isLoading: false } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [] } as any);
+        mockGetEventTypes.mockResolvedValue([
+            { code: 'AC_RDV', label: 'Reunião' },
+            { code: 'AC_TEL', label: 'Chamada' },
+        ]);
+        mockCreateEvent.mockResolvedValue({});
+    });
+
+    const renderAgendaView = () => render(<AgendaView onNavigate={vi.fn()} />);
+
+    it('renders the "Novo Evento" button', () => {
+        renderAgendaView();
+        expect(screen.getByTitle('Visualização em Lista')).toBeInTheDocument();
+        // The "Novo Evento" button should exist
+        const btn = screen.getAllByRole('button').find(b => b.textContent?.match(/novo/i));
+        expect(btn).toBeTruthy();
+    });
+
+    it('populates type select with options from getEventTypes on modal open', async () => {
+        renderAgendaView();
+        const newBtn = screen.getAllByRole('button').find(b => b.textContent?.match(/novo/i));
+        fireEvent.click(newBtn!);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('event-type-select')).toBeInTheDocument();
+        });
+
+        await waitFor(() => {
+            const select = screen.getByTestId('event-type-select') as HTMLSelectElement;
+            const options = Array.from(select.options).map(o => o.text);
+            expect(options).toContain('Reunião');
+            expect(options).toContain('Chamada');
+        });
+    });
+
+    it('falls back gracefully when getEventTypes rejects (modal still opens)', async () => {
+        mockGetEventTypes.mockRejectedValueOnce(new Error('Network error'));
+        renderAgendaView();
+        const newBtn = screen.getAllByRole('button').find(b => b.textContent?.match(/novo/i));
+        fireEvent.click(newBtn!);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('event-type-select')).toBeInTheDocument();
+        });
+
+        // Form should still work even with fallback types
+        const select = screen.getByTestId('event-type-select') as HTMLSelectElement;
+        expect(select.options.length).toBeGreaterThan(0);
+    });
+
+    it('calls createEvent with type_code from select and extra fields', async () => {
+        renderAgendaView();
+        const newBtn = screen.getAllByRole('button').find(b => b.textContent?.match(/novo/i));
+        fireEvent.click(newBtn!);
+
+        await waitFor(() => expect(screen.getByTestId('event-type-select')).toBeInTheDocument());
+
+        // Fill required fields
+        const subjectInput = screen.getByPlaceholderText(/título da reunião/i);
+        fireEvent.change(subjectInput, { target: { value: 'Kick-off' } });
+        const startInput = screen.getByLabelText(/início/i);
+        fireEvent.change(startInput, { target: { value: '2026-06-22T10:00' } });
+
+        // Select type
+        await waitFor(() => {
+            const select = screen.getByTestId('event-type-select') as HTMLSelectElement;
+            expect(Array.from(select.options).some(o => o.value === 'AC_TEL')).toBe(true);
+        });
+        fireEvent.change(screen.getByTestId('event-type-select'), { target: { value: 'AC_TEL' } });
+
+        // Fill location
+        fireEvent.change(screen.getByPlaceholderText(/endereço ou link/i), { target: { value: 'Sala A' } });
+
+        // Click create — use the last matching button (modal footer) to avoid ambiguity with EmptyState button
+        const createBtns = screen.getAllByRole('button', { name: /criar evento/i });
+        fireEvent.click(createBtns[createBtns.length - 1]);
+
+        await waitFor(() => {
+            expect(mockCreateEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ apiUrl: 'http://test' }),
+                expect.objectContaining({
+                    label: 'Kick-off',
+                    type_code: 'AC_TEL',
+                    location: 'Sala A',
+                })
+            );
+        });
+    });
+
+    it('includes fulldayevent=1 when checkbox is checked', async () => {
+        renderAgendaView();
+        const newBtn = screen.getAllByRole('button').find(b => b.textContent?.match(/novo/i));
+        fireEvent.click(newBtn!);
+
+        await waitFor(() => expect(screen.getByTestId('fulldayevent-checkbox')).toBeInTheDocument());
+
+        fireEvent.change(screen.getByPlaceholderText(/título da reunião/i), { target: { value: 'Feriado' } });
+        fireEvent.change(screen.getByLabelText(/início/i), { target: { value: '2026-06-22T00:00' } });
+        fireEvent.click(screen.getByTestId('fulldayevent-checkbox'));
+
+        // Click create — use the last matching button (modal footer)
+        const createBtns = screen.getAllByRole('button', { name: /criar evento/i });
+        fireEvent.click(createBtns[createBtns.length - 1]);
+
+        await waitFor(() => {
+            expect(mockCreateEvent).toHaveBeenCalledWith(
+                expect.anything(),
+                expect.objectContaining({ fulldayevent: 1 })
+            );
+        });
     });
 });

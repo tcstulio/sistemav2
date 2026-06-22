@@ -846,33 +846,67 @@ export class LocalProvider implements AIProvider {
         return err?.response?.status ? String(err.response.status) : (err?.code || 'error');
     }
 
+    // Backoff exponencial para erros de infra (429/timeout/5xx): tenta o primário ANTES do
+    // fallback, com esperas 2s→4s→8s... até o DEADLINE de re-tentativas. Não é um loop infinito:
+    // quando o deadline estoura, desiste e passa para o fallback (se houver) ou lança.
+    // Não toca o fallback em erro não-recuperável (4xx exceto 429, JSON inválido, etc.).
     private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string; origin?: string }): Promise<{ data: any; modelUsed: string; fellBack: boolean }> {
         const buildBody = (model: string) => ({ model, messages, temperature });
         const primaryModel = options?.model || this.modelName;
         const origin = options?.origin;
+        const primaryTimeoutMs = config.llmPrimaryTimeoutMs ?? 180000;
+        const retryDeadlineMs = config.llmRetryDeadlineMs ?? 60000;
+        const retryDeadline = Date.now() + retryDeadlineMs;
         const t0 = Date.now();
+
         let primaryErr: any;
-        try {
-            const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(primaryModel), { headers: this.getHeaders(), timeout: 180000 });
-            clearQuotaExhausted(); // sucesso -> cota OK
-            llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: true, latencyMs: Date.now() - t0, origin, totalTokens: r.data?.usage?.total_tokens });
-            return { data: r.data, modelUsed: primaryModel, fellBack: false };
-        } catch (err: any) {
-            primaryErr = err;
-            if (!this.fallbackConfig || !this.isRetryableError(err)) {
-                if (isQuotaError(this.errDetail(err))) markQuotaExhausted(`primário ${this.modelName}: ${this.errDetail(err)}`);
-                llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: false, latencyMs: Date.now() - t0, origin, errorCode: this.errCode(err), errorDetail: this.errDetail(err).slice(0, 300) });
-                throw err;
+        let retryDelay = 2000; // backoff inicial: 2s
+
+        // Tenta o primário com backoff exponencial dentro do deadline.
+        while (true) {
+            try {
+                const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(primaryModel), { headers: this.getHeaders(), timeout: primaryTimeoutMs });
+                clearQuotaExhausted(); // sucesso -> cota OK
+                llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: true, latencyMs: Date.now() - t0, origin, totalTokens: r.data?.usage?.total_tokens });
+                return { data: r.data, modelUsed: primaryModel, fellBack: false };
+            } catch (err: any) {
+                primaryErr = err;
+                // Erro não-recuperável (400/401/403 etc.): não tenta fallback, lança imediatamente.
+                if (!this.isRetryableError(err)) {
+                    if (isQuotaError(this.errDetail(err))) markQuotaExhausted(`primário ${this.modelName}: ${this.errDetail(err)}`);
+                    llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: false, latencyMs: Date.now() - t0, origin, errorCode: this.errCode(err), errorDetail: this.errDetail(err).slice(0, 300) });
+                    throw err;
+                }
+
+                const reason = err?.response?.status || err?.code || err?.message || 'erro';
+                const remaining = retryDeadline - Date.now();
+
+                if (remaining > retryDelay) {
+                    // Ainda há tempo dentro do deadline — aguarda backoff e tenta de novo.
+                    log.warn(`LLM primário (${this.modelName}) falhou [${reason}] — backoff ${retryDelay}ms (deadline restante: ${Math.round(remaining / 1000)}s)`);
+                    await new Promise((res) => setTimeout(res, retryDelay));
+                    retryDelay = Math.min(retryDelay * 2, 32000); // cap em 32s
+                } else {
+                    // Deadline esgotado: passa para fallback (se houver) ou lança.
+                    log.warn(`LLM primário (${this.modelName}) falhou [${reason}] — deadline de retry esgotado -> ${this.fallbackConfig ? `fallback para ${this.fallbackConfig.model}` : 'lançando erro'}`);
+                    break;
+                }
             }
-            const reason = err?.response?.status || err?.code || err?.message || 'erro';
-            log.warn(`LLM primário (${this.modelName}) falhou [${reason}] -> fallback para ${this.fallbackConfig.model}`);
         }
+
+        // Sem fallback configurado: registra e lança o erro do primário.
+        if (!this.fallbackConfig) {
+            if (isQuotaError(this.errDetail(primaryErr))) markQuotaExhausted(`primário ${this.modelName}: ${this.errDetail(primaryErr)}`);
+            llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: false, latencyMs: Date.now() - t0, origin, errorCode: this.errCode(primaryErr), errorDetail: this.errDetail(primaryErr).slice(0, 300) });
+            throw primaryErr;
+        }
+
         // Fallback (MiniMax M3)
         const fbHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
         if (this.fallbackConfig!.apiKey) fbHeaders['Authorization'] = `Bearer ${this.fallbackConfig!.apiKey}`;
         const tFb = Date.now();
         try {
-            const resp = await axios.post(`${this.fallbackConfig!.baseUrl}/chat/completions`, buildBody(this.fallbackConfig!.model), { headers: fbHeaders, timeout: 180000 });
+            const resp = await axios.post(`${this.fallbackConfig!.baseUrl}/chat/completions`, buildBody(this.fallbackConfig!.model), { headers: fbHeaders, timeout: primaryTimeoutMs });
             log.info(`LLM fallback OK: ${this.fallbackConfig!.model} respondeu no lugar de ${this.modelName}`);
             clearQuotaExhausted(); // fallback respondeu -> ainda há cota (no MiniMax)
             llmCallLogService.record({ model: this.fallbackConfig!.model, primaryModel, fellBack: true, ok: true, latencyMs: Date.now() - tFb, origin, errorDetail: `primário ${primaryModel}: ${this.errDetail(primaryErr)}`.slice(0, 300), totalTokens: resp.data?.usage?.total_tokens });

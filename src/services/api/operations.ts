@@ -202,6 +202,29 @@ export const deleteEvent = async (config: DolibarrConfig, id: string) => {
     });
 };
 
+export interface EventType {
+    code: string;
+    label: string;
+}
+
+/**
+ * Fetch event types from Dolibarr dictionary.
+ * GET /setup/dictionary/event_types
+ */
+export const getEventTypes = async (config: DolibarrConfig): Promise<EventType[]> => {
+    const url = `${sanitizeUrl(config.apiUrl)}/setup/dictionary/event_types?limit=100`;
+    const data = await request(url, {
+        headers: getHeaders(config.apiKey)
+    });
+    if (!Array.isArray(data)) return [];
+    return (data as Array<Record<string, unknown>>)
+        .filter(item => item.code && item.label)
+        .map(item => ({
+            code: String(item.code),
+            label: String(item.label),
+        }));
+};
+
 // -- Deletions --
 export const deleteProject = async (config: DolibarrConfig, id: string) => {
     const url = `${sanitizeUrl(config.apiUrl)}/projects/${id}`;
