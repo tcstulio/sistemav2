@@ -3,10 +3,11 @@ import { toast } from 'sonner';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Proposal, AppView } from '../types';
-import { FileText, Search, PenTool, CheckCircle, XCircle, Send, Archive, Kanban, List, ShoppingCart, Download, Loader2, FileSignature, Scale, Plus, Trash2, FolderKanban, Ban, Save, Edit, Copy } from 'lucide-react';
+import { FileText, Search, PenTool, CheckCircle, XCircle, Send, Archive, Kanban, List, ShoppingCart, Download, Loader2, FileSignature, Scale, Plus, Trash2, FolderKanban, Ban, Save, Edit, Copy, Eye } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { AiService } from '../services/aiService';
 import { LinkedObjects } from './common/LinkedObjects';
+import { PdfPreviewModal } from './common/PdfPreviewModal';
 import { RichTextEditor } from './common/RichTextEditor';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
@@ -69,6 +70,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
     const [auditPayload, setAuditPayload] = useState<any>(null);
     const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
     const [showDebug, setShowDebug] = useState(false);
+    const [previewProposal, setPreviewProposal] = useState<{ id: string | number; ref: string } | null>(null);
 
     // Deep Link Effect
     useEffect(() => {
@@ -350,9 +352,13 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
         } catch (err) { log.error("Failed to audit proposal", err); } finally { setProcessingId(null); }
     };
 
-    const handleDownloadPdf = (e: React.MouseEvent | KeyboardEvent, ref: string) => {
+    const handleDownloadPdf = async (e: React.MouseEvent | KeyboardEvent, id: string | number) => {
         if (e && 'stopPropagation' in e) e.stopPropagation();
-        DolibarrService.downloadDocument(config, 'proposal', ref);
+        try {
+            await DolibarrService.downloadDocument('proposal', id);
+        } catch {
+            toast.error('Erro ao baixar PDF da proposta');
+        }
     };
 
     const handleCloseProposal = async (status: '2' | '3') => {
@@ -525,7 +531,8 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                         </div>
                         <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
                         <Button variant="ghost" size="sm" icon={<Scale size={18} />} onClick={(e) => handleAudit(e, prop)} className="!text-violet-600" />
-                        <Button variant="ghost" size="sm" icon={<Download size={18} />} onClick={(e) => handleDownloadPdf(e, prop.ref)} />
+                        <Button variant="ghost" size="sm" icon={<Eye size={18} />} onClick={(e) => { e.stopPropagation(); setPreviewProposal({ id: prop.id, ref: prop.ref }); }} title="Visualizar PDF" />
+                        <Button variant="ghost" size="sm" icon={<Download size={18} />} onClick={(e) => handleDownloadPdf(e, prop.id)} title="Baixar PDF" />
                     </div>
                 </Card>
             </div>
@@ -844,7 +851,10 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                 {/* Footer */}
                 <div className="flex justify-end gap-2 mt-auto pt-6 border-t border-slate-200 dark:border-slate-800">
                     <LinkedObjects id={selectedProposal.id} type="propal" onNavigate={onNavigate} />
-                    <Button variant="secondary" icon={<Download size={16} />} onClick={(e) => handleDownloadPdf(e, selectedProposal.ref)}>
+                    <Button variant="secondary" icon={<Eye size={16} />} onClick={() => setPreviewProposal({ id: selectedProposal.id, ref: selectedProposal.ref })}>
+                        Visualizar PDF
+                    </Button>
+                    <Button variant="secondary" icon={<Download size={16} />} onClick={(e) => handleDownloadPdf(e, selectedProposal.id)}>
                         Baixar PDF
                     </Button>
                 </div>
@@ -866,6 +876,15 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                     onCloseDetail={() => setSelectedProposal(null)}
                 />
             </div>
+
+            {/* PDF Preview Modal */}
+            <PdfPreviewModal
+                entityType="proposal"
+                entityId={previewProposal?.id ?? ''}
+                title={previewProposal?.ref}
+                isOpen={!!previewProposal}
+                onClose={() => setPreviewProposal(null)}
+            />
 
             {/* Create/Edit Modal */}
             <Modal

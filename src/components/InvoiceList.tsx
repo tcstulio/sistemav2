@@ -3,13 +3,14 @@ import { toast } from 'sonner';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Invoice, AppView } from '../types';
-import { FileText, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, Trash2, Loader2, CheckCircle, CreditCard, ShoppingCart, RefreshCcw, Truck, Copy } from 'lucide-react';
+import { FileText, CheckCircle2, Clock, FileEdit, ExternalLink, Download, FolderKanban, Plus, Trash2, Loader2, CheckCircle, CreditCard, ShoppingCart, RefreshCcw, Truck, Copy, Eye } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { cloneInvoice } from '../services/api/commercial';
 import { useInvoiceMutations } from '../hooks/useMutations';
 import { useConfirm } from '../hooks/useConfirm';
 import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
+import { PdfPreviewModal } from './common/PdfPreviewModal';
 import { ClickTarget, ClickTargetPrimary, ClickTargetSecondary } from './common/ClickTarget';
 import { PaginationControls } from './common/PaginationControls';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -69,6 +70,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const [filterStatus, setFilterStatus] = useState<'all' | 'unpaid' | 'paid' | 'draft'>('all');
     const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
+    const [previewInvoice, setPreviewInvoice] = useState<{ id: string | number; ref: string } | null>(null);
 
     const { createInvoice } = useInvoiceMutations(config);
 
@@ -212,10 +214,14 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     // =================================================================================================
     const openInDolibarr = (id: string) => openLink('invoice', id);
 
-    const handleDownloadPdf = (e: React.MouseEvent, ref: string) => {
+    const handleDownloadPdf = async (e: React.MouseEvent, id: string | number) => {
         e.stopPropagation();
         if (!config) return;
-        DolibarrService.downloadDocument(config, 'invoice', ref);
+        try {
+            await DolibarrService.downloadDocument('invoice', id);
+        } catch {
+            toast.error('Erro ao baixar PDF da fatura');
+        }
     };
 
     const handleValidate = async (e: React.MouseEvent, id: string) => {
@@ -707,7 +713,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 Reabrir
                             </Button>
                         )}
-                        <Button variant="ghost" size="sm" icon={<Download size={16} />} onClick={(e) => handleDownloadPdf(e, selectedInvoice.ref)} title="Baixar PDF" />
+                        <Button variant="ghost" size="sm" icon={<Eye size={16} />} onClick={() => setPreviewInvoice({ id: selectedInvoice.id, ref: selectedInvoice.ref })} title="Visualizar PDF" />
+                        <Button variant="ghost" size="sm" icon={<Download size={16} />} onClick={(e) => handleDownloadPdf(e, selectedInvoice.id)} title="Baixar PDF" />
                         <Button variant="ghost" size="sm" icon={<ExternalLink size={16} />} onClick={() => openInDolibarr(selectedInvoice.id)} title="Abrir no Dolibarr" />
                     </div>
                 }
@@ -951,6 +958,15 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                     onCloseDetail={() => setSelectedInvoice(null)}
                 />
             </div>
+
+            {/* PDF Preview Modal */}
+            <PdfPreviewModal
+                entityType="invoice"
+                entityId={previewInvoice?.id ?? ''}
+                title={previewInvoice?.ref}
+                isOpen={!!previewInvoice}
+                onClose={() => setPreviewInvoice(null)}
+            />
 
             {/* Create Modal */}
             <Modal

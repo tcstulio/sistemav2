@@ -1,11 +1,12 @@
 
 import React, { useState } from 'react';
 import { Shipment, AppView } from '../types';
-import { Truck, ExternalLink, Calendar, Package, Loader2, FilePlus, CheckCircle2, FolderKanban } from 'lucide-react';
+import { Truck, ExternalLink, Calendar, Package, Loader2, FilePlus, CheckCircle2, FolderKanban, Download, Eye } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useShipments, useCustomers, useOrders, useUsers, useProjects } from '../hooks/dolibarr';
 import { LinkedObjects } from './common/LinkedObjects';
+import { PdfPreviewModal } from './common/PdfPreviewModal';
 import { useListControls } from '../hooks/useListControls';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { logger } from '../utils/logger';
@@ -47,6 +48,7 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
     const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+    const [previewShipment, setPreviewShipment] = useState<{ id: string | number; ref: string } | null>(null);
 
     const getCustomerName = (socid: string) => {
         const customer = customers.find(c => String(c.id) === String(socid));
@@ -98,9 +100,13 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
     });
     const filteredShipments = controls.result;
 
-    const handleDownloadPdf = (e: React.MouseEvent, ref: string) => {
+    const handleDownloadPdf = async (e: React.MouseEvent, id: string | number) => {
         e.stopPropagation();
-        DolibarrService.downloadDocument(config, 'shipment', ref);
+        try {
+            await DolibarrService.downloadDocument('shipment', id);
+        } catch {
+            toast.error('Erro ao baixar PDF da expedição');
+        }
     };
 
     const handleCreateInvoice = async () => {
@@ -256,7 +262,8 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                                 Faturar
                             </Button>
                         )}
-                        <Button variant="ghost" size="sm" icon={<ExternalLink size={16} />} onClick={(e) => handleDownloadPdf(e, selectedShipment.ref)} title="Baixar PDF" />
+                        <Button variant="ghost" size="sm" icon={<Eye size={16} />} onClick={() => setPreviewShipment({ id: selectedShipment.id, ref: selectedShipment.ref })} title="Visualizar PDF" />
+                        <Button variant="ghost" size="sm" icon={<Download size={16} />} onClick={(e) => handleDownloadPdf(e, selectedShipment.id)} title="Baixar PDF" />
                         {selectedShipment.status === '0' && (
                             <ConfirmDeleteButton
                                 onDelete={() => DolibarrService.deleteShipment(config, selectedShipment.id)}
@@ -385,15 +392,26 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
     ) : null;
 
     return (
-        <div className="flex flex-col h-full">
-            {renderHeader}
-            <MasterDetailLayout
-                list={renderList}
-                detail={renderDetail}
-                showDetail={!!selectedShipment}
-                onCloseDetail={() => setSelectedShipment(null)}
+        <>
+            <div className="flex flex-col h-full">
+                {renderHeader}
+                <MasterDetailLayout
+                    list={renderList}
+                    detail={renderDetail}
+                    showDetail={!!selectedShipment}
+                    onCloseDetail={() => setSelectedShipment(null)}
+                />
+            </div>
+
+            {/* PDF Preview Modal */}
+            <PdfPreviewModal
+                entityType="shipment"
+                entityId={previewShipment?.id ?? ''}
+                title={previewShipment?.ref}
+                isOpen={!!previewShipment}
+                onClose={() => setPreviewShipment(null)}
             />
-        </div>
+        </>
     );
 };
 
