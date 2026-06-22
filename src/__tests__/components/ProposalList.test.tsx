@@ -250,6 +250,91 @@ describe('ProposalList — Currency standardization (#639)', () => {
     });
 });
 
+const defaultProposal = {
+    id: 'prop1',
+    ref: 'PR2501-0001',
+    socid: 'cust1',
+    date: 1700000000,
+    total_ht: 1000,
+    total_ttc: 1200,
+    statut: '1',
+    project_id: null,
+    fk_user_author: null,
+};
+
+describe('ProposalList — Responsividade (#545)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        // Restore default mock data (previous tests may have overridden it with mockReturnValue)
+        vi.mocked(useProposals).mockReturnValue({
+            data: [defaultProposal],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+    });
+
+    it('renders proposal list with ref, customer name, and total', async () => {
+        renderComponent();
+
+        // Wait for list to be fully rendered (Duplicar button is inside the Row component)
+        const dupBtn = await screen.findByLabelText('Duplicar');
+        expect(dupBtn).toBeTruthy();
+
+        // Ref da proposta — text is in a span inside the Row
+        const refEls = screen.queryAllByText(/PR2501-0001/);
+        expect(refEls.length).toBeGreaterThanOrEqual(1);
+        // Nome do cliente
+        const customerEls = screen.queryAllByText(/Cliente Teste/);
+        expect(customerEls.length).toBeGreaterThanOrEqual(1);
+        // Total formatado deve aparecer (pelo menos uma vez no card da lista)
+        // Usa regex para tolerar diferenças de espaço/encoding no formatCurrency
+        const totals = screen.queryAllByText(/1[.,]200/);
+        expect(totals.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('actions (Editar, Duplicar, Excluir) are accessible without hover — not hidden behind opacity-0 in DOM', async () => {
+        renderComponent();
+
+        // Wait for render
+        await screen.findByTestId('list-total-bar');
+
+        // findByLabelText para garantir que o botão está renderizado e acessível
+        const dupBtn = screen.getByLabelText('Duplicar');
+        expect(dupBtn).toBeTruthy();
+
+        // O contêiner pai das ações NÃO deve ter a classe opacity-0 isolada (sem md: prefix)
+        // Verificamos que o wrapper das ações não tem `opacity-0` puro (o qual bloquearia touch)
+        const actionsWrapper = dupBtn.closest('[class*="opacity"]') || dupBtn.parentElement;
+        if (actionsWrapper) {
+            // A classe deve ser md:opacity-0 (prefixada), nunca só opacity-0 sem prefixo breakpoint
+            const cls = actionsWrapper.getAttribute('class') || '';
+            expect(cls).not.toMatch(/(?:^|\s)opacity-0(?:\s|$)/);
+        }
+    });
+
+    it('card row has responsive flex classes (flex-col mobile / md:flex-row desktop)', async () => {
+        const { container } = renderComponent();
+
+        // Wait for render
+        await screen.findByTestId('list-total-bar');
+
+        // O card do item da lista deve ter as classes de layout responsivo
+        const cardWithResponsiveLayout = container.querySelector('[class*="flex-col"][class*="md:flex-row"]');
+        expect(cardWithResponsiveLayout).not.toBeNull();
+    });
+
+    it('header actions container has flex-wrap for reflow on narrow screens', async () => {
+        const { container } = renderComponent();
+
+        // Wait for render
+        await screen.findByTestId('list-total-bar');
+
+        // O wrapper das actions do PageHeader deve ter flex-wrap
+        const wrapEl = container.querySelector('[class*="flex-wrap"]');
+        expect(wrapEl).not.toBeNull();
+    });
+});
+
 describe('ProposalList — Edit date conversion (#626)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
