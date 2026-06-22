@@ -23,6 +23,8 @@ vi.mock('../../services/dolibarrService', () => ({
         updateIntervention: vi.fn(),
         validateIntervention: vi.fn(),
         deleteIntervention: vi.fn(),
+        addInterventionLine: vi.fn(),
+        deleteInterventionLine: vi.fn(),
     },
 }));
 
@@ -36,7 +38,7 @@ vi.mock('../../hooks/dolibarr', () => ({
     useInterventions: vi.fn(() => ({ data: [], refetch: vi.fn() })),
     useCustomers: vi.fn(() => ({ data: [] })),
     useProjects: vi.fn(() => ({ data: [] })),
-    useInterventionLines: vi.fn(() => ({ data: [] })),
+    useInterventionLines: vi.fn(() => ({ data: [], refetch: vi.fn() })),
 }));
 
 vi.mock('../../hooks/usePrefill', () => ({
@@ -84,6 +86,8 @@ const customersMock = [
     { id: '20', name: 'Cliente Beta' },
 ];
 
+const refetchLinesMock = vi.fn();
+
 const setupMocks = () => {
     vi.mocked(useInterventions).mockReturnValue({
         data: interventionsMock,
@@ -91,7 +95,7 @@ const setupMocks = () => {
     } as any);
     vi.mocked(useCustomers).mockReturnValue({ data: customersMock } as any);
     vi.mocked(useProjects).mockReturnValue({ data: [] } as any);
-    vi.mocked(useInterventionLines).mockReturnValue({ data: [] } as any);
+    vi.mocked(useInterventionLines).mockReturnValue({ data: [], refetch: refetchLinesMock } as any);
 };
 
 const renderList = (props?: { onNavigate?: any; onRefresh?: any }) =>
@@ -286,6 +290,132 @@ describe('InterventionList', () => {
         expect(cfg).toMatchObject({ apiKey: 'key' });
         expect(id).toBe('1');
         expect(onRefresh).toHaveBeenCalled();
+        expect(alertSpy).not.toHaveBeenCalled();
+        alertSpy.mockRestore();
+    });
+
+    it('shows notifyError (not native alert) when editing fails', async () => {
+        const user = userEvent.setup();
+        vi.mocked(DolibarrService.updateIntervention).mockRejectedValue(
+            new Error('Erro de conexão') as any
+        );
+        const alertSpy = vi.spyOn(window, 'alert');
+
+        renderList();
+
+        await waitFor(() => screen.getByText('INT-001'));
+        await user.click(screen.getByText('INT-001'));
+
+        await user.click(await screen.findByRole('button', { name: /^Editar$/i }));
+        await user.click(await screen.findByRole('button', { name: /Salvar/i }));
+
+        await waitFor(() => {
+            expect(toastMock.error).toHaveBeenCalledWith(
+                'Salvar intervenção falhou.',
+                expect.objectContaining({ description: expect.stringContaining('Erro de conexão') }),
+            );
+        });
+        expect(alertSpy).not.toHaveBeenCalled();
+        alertSpy.mockRestore();
+    });
+
+    // --- #610: Add line tests ---
+
+    it('shows total duration from lines in the detail view', async () => {
+        const user = userEvent.setup();
+        const linesMock = [
+            { id: 'l1', parent_id: '1', desc: 'Configuração', duration: 3600 }, // 1h
+            { id: 'l2', parent_id: '1', desc: 'Instalação', duration: 1800 },   // 30m
+        ];
+        vi.mocked(useInterventionLines).mockReturnValue({ data: linesMock, refetch: refetchLinesMock } as any);
+        vi.mocked(useInterventions).mockReturnValue({
+            data: [{ ...interventionsMock[0], lines: linesMock }],
+            refetch: vi.fn(),
+        } as any);
+
+        renderList();
+
+        await waitFor(() => screen.getByText('INT-001'));
+        await user.click(screen.getByText('INT-001'));
+
+        await waitFor(() => {
+            const durationEl = screen.getByTestId('total-duration');
+            expect(durationEl).toHaveTextContent('1h 30m');
+        });
+    });
+
+    it('adds an intervention line and shows toast.success', async () => {
+        const user = userEvent.setup();
+        vi.mocked(DolibarrService.addInterventionLine).mockResolvedValue({ id: 'new-line' } as any);
+        const onRefresh = vi.fn();
+        const alertSpy = vi.spyOn(window, 'alert');
+
+        renderList({ onRefresh });
+
+        await waitFor(() => screen.getByText('INT-001'));
+        await user.click(screen.getByText('INT-001'));
+
+        // Click "Adicionar item" button
+        await user.click(await screen.findByRole('button', { name: /Adicionar item/i }));
+
+        // Fill in the form
+        const descTextarea = await screen.findByPlaceholderText(/Descreva o serviço realizado/i);
+        await user.type(descTextarea, 'Reparo do sistema');
+
+        const hoursInput = screen.getByLabelText('Horas');
+        await user.clear(hoursInput);
+        await user.type(hoursInput, '2');
+
+        const minutesInput = screen.getByLabelText('Minutos');
+        await user.clear(minutesInput);
+        await user.type(minutesInput, '30');
+
+        // Click Confirmar
+        await user.click(screen.getByRole('button', { name: /Confirmar/i }));
+
+        await waitFor(() => {
+            expect(DolibarrService.addInterventionLine).toHaveBeenCalledTimes(1);
+            expect(toastMock.success).toHaveBeenCalledWith('Item adicionado com sucesso');
+        });
+
+        const [cfg, intId, payload] = vi.mocked(DolibarrService.addInterventionLine).mock.calls[0];
+        expect(cfg).toMatchObject({ apiKey: 'key' });
+        expect(intId).toBe('1');
+        expect(payload).toMatchObject({ desc: 'Reparo do sistema', duration: 9000 }); // 2h30m = 9000s
+        expect(onRefresh).toHaveBeenCalled();
+        expect(alertSpy).not.toHaveBeenCalled();
+        alertSpy.mockRestore();
+    });
+
+    it('shows notifyError when adding a line fails', async () => {
+        const user = userEvent.setup();
+        vi.mocked(DolibarrService.addInterventionLine).mockRejectedValue(
+            new Error('Falha ao adicionar') as any
+        );
+        const alertSpy = vi.spyOn(window, 'alert');
+
+        renderList();
+
+        await waitFor(() => screen.getByText('INT-001'));
+        await user.click(screen.getByText('INT-001'));
+
+        await user.click(await screen.findByRole('button', { name: /Adicionar item/i }));
+
+        const descTextarea = await screen.findByPlaceholderText(/Descreva o serviço realizado/i);
+        await user.type(descTextarea, 'Serviço X');
+
+        const hoursInput = screen.getByLabelText('Horas');
+        await user.clear(hoursInput);
+        await user.type(hoursInput, '1');
+
+        await user.click(screen.getByRole('button', { name: /Confirmar/i }));
+
+        await waitFor(() => {
+            expect(toastMock.error).toHaveBeenCalledWith(
+                'Adicionar item falhou.',
+                expect.objectContaining({ description: expect.stringContaining('Falha ao adicionar') }),
+            );
+        });
         expect(alertSpy).not.toHaveBeenCalled();
         alertSpy.mockRestore();
     });

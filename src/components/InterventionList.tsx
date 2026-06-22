@@ -2,8 +2,8 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
-import { Intervention, AppView } from '../types';
-import { ClipboardList, Plus, Loader2, CheckCircle2, Calendar, FolderKanban, User, Pencil } from 'lucide-react';
+import { Intervention, InterventionLine, AppView } from '../types';
+import { ClipboardList, Plus, Loader2, CheckCircle2, Calendar, FolderKanban, User, Pencil, Clock, Trash2 } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInterventions, useCustomers, useProjects, useInterventionLines } from '../hooks/dolibarr';
@@ -38,9 +38,12 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
     const customers = customersData || [];
     const { data: projectsData } = useProjects(config);
     const projects = projectsData || [];
-    const { data: linesData } = useInterventionLines(config);
+    const { data: linesData, refetch: refetchLines } = useInterventionLines(config);
     const lines = linesData || [];
     const confirm = useConfirm();
+
+    // #658: fallback when backend does not support editing (501)
+    const [editSupported, setEditSupported] = useState(true);
 
     const handleSelectIntervention = (intervention: Intervention) => {
         const linkedLines = lines.filter(l => String(l.parent_id) === String(intervention.id));
@@ -70,6 +73,11 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
     const isEditIntervention = !!editInterventionId;
+
+    // #610: Add line modal state
+    const [isAddLineModalOpen, setIsAddLineModalOpen] = useState(false);
+    const [newLine, setNewLine] = useState({ desc: '', durationHours: '', durationMinutes: '', date: new Date().toISOString().split('T')[0] });
+    const [isSubmittingLine, setIsSubmittingLine] = useState(false);
 
     const tsToInput = (ts?: number) => (ts ? new Date(ts < 1e11 ? ts * 1000 : ts).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
 
@@ -177,9 +185,63 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
             setNewIntervention({ socid: '', project_id: '', date: new Date().toISOString().split('T')[0], description: '' });
             if (onRefresh) onRefresh();
         } catch (e: any) {
-            notifyError('Salvar intervenção', e);
+            // #658: Se backend retornar 501, desabilitar o botão Editar
+            if (e?.status === 501 || e?.message?.includes('501')) {
+                setEditSupported(false);
+                setIsCreateModalOpen(false);
+                setEditInterventionId(undefined);
+                toast.warning('Edição de intervenções não está disponível nesta instalação.');
+            } else {
+                notifyError('Salvar intervenção', e);
+            }
         } finally {
             setIsSubmitting(false);
+        }
+    };
+
+    // #610: Handle adding a line to an intervention
+    const handleAddLine = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedIntervention || !newLine.desc) return;
+        const hours = parseInt(newLine.durationHours || '0', 10) || 0;
+        const minutes = parseInt(newLine.durationMinutes || '0', 10) || 0;
+        const durationSeconds = hours * 3600 + minutes * 60;
+        if (durationSeconds <= 0) return;
+
+        setIsSubmittingLine(true);
+        try {
+            const payload: { desc: string; duration: number; date?: number } = {
+                desc: newLine.desc,
+                duration: durationSeconds,
+            };
+            if (newLine.date) {
+                payload.date = Math.floor(new Date(newLine.date).getTime() / 1000);
+            }
+            await DolibarrService.addInterventionLine(config, selectedIntervention.id, payload);
+            toast.success('Item adicionado com sucesso');
+            setIsAddLineModalOpen(false);
+            setNewLine({ desc: '', durationHours: '', durationMinutes: '', date: new Date().toISOString().split('T')[0] });
+            // Refetch lines and update selected intervention
+            await refetchLines();
+            if (onRefresh) onRefresh();
+        } catch (err: any) {
+            notifyError('Adicionar item', err);
+        } finally {
+            setIsSubmittingLine(false);
+        }
+    };
+
+    // #610: Handle deleting a line
+    const handleDeleteLine = async (line: InterventionLine) => {
+        if (!selectedIntervention) return;
+        if (!(await confirm('Remover este item da intervenção?'))) return;
+        try {
+            await DolibarrService.deleteInterventionLine(config, selectedIntervention.id, line.id);
+            toast.success('Item removido');
+            await refetchLines();
+            if (onRefresh) onRefresh();
+        } catch (err: any) {
+            notifyError('Remover item', err);
         }
     };
 
@@ -204,6 +266,12 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
         const h = Math.floor(seconds / 3600);
         const m = Math.floor((seconds % 3600) / 60);
         return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    };
+
+    // #610: compute total duration from lines
+    const computeTotalDuration = (interLines?: InterventionLine[]) => {
+        if (!interLines || interLines.length === 0) return 0;
+        return interLines.reduce((sum, l) => sum + (l.duration || 0), 0);
     };
 
     const renderHeader = (
@@ -282,6 +350,9 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
         </div>
     );
 
+    const selectedLines = selectedIntervention?.lines || [];
+    const totalDuration = computeTotalDuration(selectedLines);
+
     const renderDetail = selectedIntervention ? (
         <>
             <PageHeader
@@ -295,9 +366,15 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                 subtitle="Relatório de Serviço de Campo"
                 actions={
                     <div className="flex items-center gap-2">
-                        <Button variant="secondary" size="sm" icon={<Pencil size={14} />} onClick={() => openEditIntervention(selectedIntervention)}>
-                            Editar
-                        </Button>
+                        {editSupported ? (
+                            <Button variant="secondary" size="sm" icon={<Pencil size={14} />} onClick={() => openEditIntervention(selectedIntervention)}>
+                                Editar
+                            </Button>
+                        ) : (
+                            <Button variant="secondary" size="sm" icon={<Pencil size={14} />} disabled title="Edição não disponível nesta instalação">
+                                Editar
+                            </Button>
+                        )}
                         {selectedIntervention.statut === '0' && (
                             <Button size="sm" icon={processingId ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} onClick={handleValidate} disabled={!!processingId}>
                                 Validar
@@ -368,21 +445,44 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                         onNavigate={onNavigate}
                     />
 
+                    {/* #610: Items / Lines section with CRUD */}
                     <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
-                        <h3 className="font-bold text-slate-800 dark:text-white mb-4">Itens / Serviços Realizados</h3>
+                        <div className="flex justify-between items-center mb-4">
+                            <div>
+                                <h3 className="font-bold text-slate-800 dark:text-white">Itens / Serviços Realizados</h3>
+                                {/* #610: total duration display */}
+                                <div className="flex items-center gap-1 text-sm text-slate-500 mt-0.5" data-testid="total-duration">
+                                    <Clock size={13} />
+                                    <span>Duração total: <strong>{formatDuration(totalDuration)}</strong></span>
+                                </div>
+                            </div>
+                            <Button size="sm" icon={<Plus size={14} />} onClick={() => setIsAddLineModalOpen(true)}>
+                                Adicionar item
+                            </Button>
+                        </div>
                         <div className="space-y-2">
-                            {selectedIntervention.lines && selectedIntervention.lines.length > 0 ? (
-                                selectedIntervention.lines.map((line, idx) => (
-                                    <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
-                                        <div>
+                            {selectedLines.length > 0 ? (
+                                selectedLines.map((line, idx) => (
+                                    <div key={line.id || idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
+                                        <div className="flex-1 min-w-0">
                                             <div
                                                 className="font-medium text-slate-800 dark:text-white text-sm prose prose-slate prose-sm max-w-none dark:prose-invert [&>p]:m-0"
                                                 dangerouslySetInnerHTML={{ __html: sanitizeHtml(line.desc) }}
                                             />
-                                            <div className="text-xs text-slate-500">{formatDateOnly(line.date)}</div>
+                                            {line.date && <div className="text-xs text-slate-500">{formatDateOnly(line.date)}</div>}
                                         </div>
-                                        <div className="text-right">
-                                            <div className="font-bold text-slate-800 dark:text-white">{formatDuration(line.duration || 0)}</div>
+                                        <div className="flex items-center gap-3 ml-3 shrink-0">
+                                            <div className="text-right">
+                                                <div className="font-bold text-slate-800 dark:text-white">{formatDuration(line.duration || 0)}</div>
+                                            </div>
+                                            <button
+                                                className="text-slate-400 hover:text-red-500 transition-colors"
+                                                title="Remover item"
+                                                onClick={() => handleDeleteLine(line)}
+                                                aria-label="Remover item"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
                                         </div>
                                     </div>
                                 ))
@@ -408,6 +508,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                 />
             </div>
 
+            {/* Create / Edit Intervention Modal */}
             <Modal
                 isOpen={isCreateModalOpen}
                 onClose={() => { setIsCreateModalOpen(false); setEditInterventionId(undefined); }}
@@ -456,6 +557,71 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
                         <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white resize-none h-20" value={newIntervention.description} onChange={e => setNewIntervention({ ...newIntervention, description: e.target.value })} placeholder="Trabalho a ser feito..." />
+                    </div>
+                </div>
+            </Modal>
+
+            {/* #610: Add Line Modal */}
+            <Modal
+                isOpen={isAddLineModalOpen}
+                onClose={() => { setIsAddLineModalOpen(false); }}
+                title={
+                    <span className="flex items-center gap-2">
+                        <Clock size={18} className="text-indigo-600" /> Adicionar item
+                    </span>
+                }
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={() => setIsAddLineModalOpen(false)}>Cancelar</Button>
+                        <Button onClick={(e: any) => handleAddLine(e)} loading={isSubmittingLine} icon={<CheckCircle2 size={16} />}>Confirmar</Button>
+                    </>
+                }
+            >
+                <div className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição do serviço</label>
+                        <textarea
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white resize-none h-20"
+                            value={newLine.desc}
+                            onChange={e => setNewLine({ ...newLine, desc: e.target.value })}
+                            placeholder="Descreva o serviço realizado..."
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Duração</label>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="number"
+                                min="0"
+                                className="w-24 p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={newLine.durationHours}
+                                onChange={e => setNewLine({ ...newLine, durationHours: e.target.value })}
+                                placeholder="0"
+                                aria-label="Horas"
+                            />
+                            <span className="text-slate-600 dark:text-slate-300">h</span>
+                            <input
+                                type="number"
+                                min="0"
+                                max="59"
+                                className="w-24 p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={newLine.durationMinutes}
+                                onChange={e => setNewLine({ ...newLine, durationMinutes: e.target.value })}
+                                placeholder="0"
+                                aria-label="Minutos"
+                            />
+                            <span className="text-slate-600 dark:text-slate-300">min</span>
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Data (opcional)</label>
+                        <input
+                            type="date"
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={newLine.date}
+                            onChange={e => setNewLine({ ...newLine, date: e.target.value })}
+                        />
                     </div>
                 </div>
             </Modal>

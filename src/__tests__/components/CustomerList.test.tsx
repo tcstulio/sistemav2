@@ -120,4 +120,44 @@ describe('CustomerList', () => {
         expect(actionsDiv).not.toBeNull();
         expect(actionsDiv?.className).toContain('flex-wrap');
     });
+
+    it('formulário de criação renderiza campos estendidos (CNPJ, WhatsApp, Site)', async () => {
+        const user = userEvent.setup();
+        render(<CustomerList />);
+
+        const newButton = screen.getByRole('button', { name: /novo/i });
+        await user.click(newButton);
+
+        expect(screen.getByLabelText(/cnpj \/ cpf/i)).toBeInTheDocument();
+        expect(screen.getByLabelText(/whatsapp \/ celular/i)).toBeInTheDocument();
+        expect(screen.getByLabelText(/site/i)).toBeInTheDocument();
+        expect(screen.getByLabelText(/nome fantasia/i)).toBeInTheDocument();
+    });
+
+    it('campo Responsável Legal aparece para PJ e some para PF', async () => {
+        const user = userEvent.setup();
+        render(<CustomerList />);
+
+        const newButton = screen.getByRole('button', { name: /novo/i });
+        await user.click(newButton);
+
+        // Por padrão (sem typent_id) o campo deve aparecer
+        expect(screen.getByLabelText(/responsável legal/i)).toBeInTheDocument();
+
+        // Encontrar o select de Tipo de Pessoa pelo texto das options
+        const selects = screen.getAllByRole('combobox');
+        const tipoPessoa = selects.find(s => {
+            const opts = Array.from(s.querySelectorAll('option')).map(o => o.textContent);
+            return opts.includes('Pessoa Física') && opts.includes('Empresa (PJ)');
+        });
+        expect(tipoPessoa).toBeDefined();
+
+        // Selecionar Pessoa Física — campo some
+        await user.selectOptions(tipoPessoa!, '8');
+        expect(screen.queryByLabelText(/responsável legal/i)).not.toBeInTheDocument();
+
+        // Selecionar Empresa (PJ) — campo volta
+        await user.selectOptions(tipoPessoa!, '5');
+        expect(screen.getByLabelText(/responsável legal/i)).toBeInTheDocument();
+    });
 });

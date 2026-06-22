@@ -287,6 +287,8 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
     // Form State
     const [productForm, setProductForm] = useState<Partial<Product>>({ type: '0', price: 0 });
     const [restockSupplierId, setRestockSupplierId] = useState('');
+    const [restockQty, setRestockQty] = useState<number>(10);
+    const [restockDeliveryDate, setRestockDeliveryDate] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Initial item selection
@@ -405,7 +407,34 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
 
     const openRestockModal = (supplierId: string) => {
         setRestockSupplierId(supplierId);
+        setRestockQty(10);
+        setRestockDeliveryDate('');
         setIsRestockModalOpen(true);
+    };
+
+    const handleCreateRestockOrder = async () => {
+        if (!selectedProduct || !restockSupplierId || !config) return;
+        setIsSubmitting(true);
+        try {
+            await DolibarrService.createSupplierOrder(config, {
+                socid: restockSupplierId,
+                lines: [
+                    {
+                        fk_product: selectedProduct.id,
+                        qty: restockQty,
+                        pu_ht: selectedProduct.price ?? 0,
+                    }
+                ],
+                ...(restockDeliveryDate ? { date_livraison: Math.floor(new Date(restockDeliveryDate).getTime() / 1000) } : {}),
+            });
+            setIsRestockModalOpen(false);
+            toast.success('Pedido de reposição criado com sucesso!');
+            onRefresh?.();
+        } catch (e: any) {
+            notifyError('Criar pedido de reposição', e);
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     // Loading state
@@ -613,7 +642,13 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                 footer={
                     <>
                         <Button variant="secondary" onClick={() => setIsRestockModalOpen(false)}>Cancelar</Button>
-                        <Button icon={<ShoppingCart size={16} />}>Criar Pedido</Button>
+                        <Button
+                            icon={isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <ShoppingCart size={16} />}
+                            onClick={handleCreateRestockOrder}
+                            disabled={isSubmitting || restockQty <= 0}
+                        >
+                            Criar Pedido
+                        </Button>
                     </>
                 }
             >
@@ -621,8 +656,18 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                     <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
                         <span className="text-sm font-medium">{selectedProduct?.label}</span>
                     </div>
-                    <Input label="Quantidade" type="number" defaultValue={10} />
-                    <Input label="Entrega Esperada" type="date" />
+                    <Input
+                        label="Quantidade"
+                        type="number"
+                        value={restockQty}
+                        onChange={(e) => setRestockQty(Number(e.target.value))}
+                    />
+                    <Input
+                        label="Entrega Esperada"
+                        type="date"
+                        value={restockDeliveryDate}
+                        onChange={(e) => setRestockDeliveryDate(e.target.value)}
+                    />
                 </div>
             </Modal>
         </div>

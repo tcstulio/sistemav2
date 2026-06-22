@@ -146,17 +146,22 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
         setActive(prev => { const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n; });
     };
 
-    const handleClick = (e: SystemEvent) => {
-        if (!onNavigate) return;
+    /** Resolves the navigation target for an event, or returns null if non-navigable. */
+    const resolveTarget = (e: SystemEvent): { view: AppView; id: string } | null => {
         if (e.linkTo && e.linkTo.includes('/')) {
             const [view, id] = e.linkTo.split('/');
-            if (view) onNavigate(view as AppView, id || '');
-            return;
+            if (view) return { view: view as AppView, id: id || '' };
         }
-        if (e.source === 'dolibarr' && e.entityType && e.entityId) {
-            const link = getEntityLink(e.entityType, e.entityId);
-            if (link) onNavigate(link.view, link.id);
+        if (e.entityType && e.entityId) {
+            return getEntityLink(e.entityType, e.entityId);
         }
+        return null;
+    };
+
+    const handleClick = (e: SystemEvent) => {
+        if (!onNavigate) return;
+        const target = resolveTarget(e);
+        if (target) onNavigate(target.view, target.id);
     };
 
     return (
@@ -229,8 +234,9 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
                                     {paginated.map(ev => {
                                         const meta = SOURCE_META[ev.source];
                                         const Icon = meta.icon;
+                                        const navigable = !!resolveTarget(ev);
                                         return (
-                                            <div key={ev.id} onClick={() => handleClick(ev)} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group">
+                                            <div key={ev.id} onClick={() => handleClick(ev)} className={`p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${navigable ? 'cursor-pointer group' : 'cursor-default'}`}>
                                                 <div className="flex items-start gap-3">
                                                     <div className={`p-2 rounded-lg ${sevColor(ev.severity)} shrink-0`}><Icon size={14} /></div>
                                                     <div className="flex-1 min-w-0">
@@ -242,7 +248,7 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
                                                                     <span className="text-slate-500 dark:text-slate-400"> → {userMap[ev.metadata.to] || `#${ev.metadata.to}`}{DELEG_TO_ROLE[ev.type] ? ` (${DELEG_TO_ROLE[ev.type]})` : ''}</span>
                                                                 )}
                                                             </p>
-                                                            <ChevronRight size={14} className="text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                                                            {navigable && <ChevronRight size={14} className="text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />}
                                                         </div>
                                                         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                                                             <span className={`text-[10px] px-1.5 py-0.5 rounded-full text-white ${meta.dot}`}>{meta.label}</span>

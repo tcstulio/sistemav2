@@ -102,3 +102,49 @@ describe('SystemEventsView (#519)', () => {
         expect(container.textContent).not.toContain('#7');
     });
 });
+
+describe('SystemEventsView (#587) — cliques e navegação', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockSources.mockResolvedValue(['audit', 'agent', 'delegation', 'notification', 'scheduler', 'approval', 'task']);
+    });
+
+    it('evento agent com entityType=invoice e entityId=42 → onNavigate("invoices","42")', async () => {
+        const onNav = vi.fn();
+        mockEvents.mockResolvedValue({
+            events: [ev({ entityType: 'invoice', entityId: '42', description: 'criou fatura' })],
+            total: 1, sources: [],
+        });
+        render(<SystemEventsView onNavigate={onNav} />);
+        fireEvent.click(await screen.findByText('criou fatura'));
+        expect(onNav).toHaveBeenCalledWith('invoices', '42');
+    });
+
+    it('evento scheduler sem linkTo/entidade → clique NÃO chama onNavigate e card sem cursor-pointer', async () => {
+        const onNav = vi.fn();
+        mockEvents.mockResolvedValue({
+            events: [ev({ source: 'scheduler', description: 'job executado', entityType: undefined, entityId: undefined, linkTo: undefined })],
+            total: 1, sources: [],
+        });
+        render(<SystemEventsView onNavigate={onNav} />);
+        const text = await screen.findByText('job executado');
+        // Sobe ao container do card (div com p-4)
+        const card = text.closest('[class*="p-4"]');
+        expect(card).toBeTruthy();
+        fireEvent.click(card!);
+        expect(onNav).not.toHaveBeenCalled();
+        expect(card!.className).toContain('cursor-default');
+        expect(card!.className).not.toContain('cursor-pointer');
+    });
+
+    it('evento com linkTo válido continua navegando (regressão zero)', async () => {
+        const onNav = vi.fn();
+        mockEvents.mockResolvedValue({
+            events: [ev({ linkTo: 'tasks/99', description: 'delegação criada' })],
+            total: 1, sources: [],
+        });
+        render(<SystemEventsView onNavigate={onNav} />);
+        fireEvent.click(await screen.findByText('delegação criada'));
+        expect(onNav).toHaveBeenCalledWith('tasks', '99');
+    });
+});

@@ -16,7 +16,8 @@ describe('EditProjectModal', () => {
         status: '1',
         date_start: '2024-01-01',
         date_end: '2024-12-31',
-        description: ''
+        description: '',
+        budget_amount: ''
     };
 
     it('renders nothing when isOpen is false', () => {
@@ -149,5 +150,83 @@ describe('EditProjectModal', () => {
             />
         );
         expect(screen.getByText('Salvando...')).toBeInTheDocument();
+    });
+
+    // --- #624: new fields ---
+
+    it('renders description textarea field', () => {
+        render(
+            <EditProjectModal
+                isOpen={true}
+                onClose={mockOnClose}
+                onSubmit={mockOnSubmit}
+                form={defaultForm}
+                setForm={mockSetForm}
+                isSubmitting={false}
+            />
+        );
+        expect(screen.getByText('Descrição')).toBeInTheDocument();
+        expect(screen.getByPlaceholderText('Descrição do projeto (opcional)')).toBeInTheDocument();
+    });
+
+    it('calls setForm with updated description when description changes', () => {
+        render(
+            <EditProjectModal
+                isOpen={true}
+                onClose={mockOnClose}
+                onSubmit={mockOnSubmit}
+                form={defaultForm}
+                setForm={mockSetForm}
+                isSubmitting={false}
+            />
+        );
+        const textarea = screen.getByPlaceholderText('Descrição do projeto (opcional)');
+        fireEvent.change(textarea, { target: { value: 'Nova descrição do projeto' } });
+        expect(mockSetForm).toHaveBeenCalledWith(expect.objectContaining({ description: 'Nova descrição do projeto' }));
+    });
+
+    it('renders existing description when form has description', () => {
+        const formWithDescription = { ...defaultForm, description: 'Descrição existente' };
+        render(
+            <EditProjectModal
+                isOpen={true}
+                onClose={mockOnClose}
+                onSubmit={mockOnSubmit}
+                form={formWithDescription}
+                setForm={mockSetForm}
+                isSubmitting={false}
+            />
+        );
+        expect(screen.getByDisplayValue('Descrição existente')).toBeInTheDocument();
+    });
+
+    it('renders budget_amount field', () => {
+        render(
+            <EditProjectModal
+                isOpen={true}
+                onClose={mockOnClose}
+                onSubmit={mockOnSubmit}
+                form={defaultForm}
+                setForm={mockSetForm}
+                isSubmitting={false}
+            />
+        );
+        expect(screen.getByText('Orçamento (R$)')).toBeInTheDocument();
+    });
+
+    it('calls setForm with updated budget_amount when budget changes', () => {
+        render(
+            <EditProjectModal
+                isOpen={true}
+                onClose={mockOnClose}
+                onSubmit={mockOnSubmit}
+                form={defaultForm}
+                setForm={mockSetForm}
+                isSubmitting={false}
+            />
+        );
+        const budgetInput = screen.getByPlaceholderText('0,00');
+        fireEvent.change(budgetInput, { target: { value: '5000' } });
+        expect(mockSetForm).toHaveBeenCalledWith(expect.objectContaining({ budget_amount: '5000' }));
     });
 });
