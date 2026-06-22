@@ -5,7 +5,7 @@ import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronRight, CheckCi
 import { formatDateOnly, formatDateTime, formatDateLong } from '../utils/dateUtils';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useEvents, useTasks, useInterventions, useProjects } from '../hooks/dolibarr';
+import { useEvents, useTasks, useInterventions, useProjects, useCustomers } from '../hooks/dolibarr';
 import AgendaEntryDetail from './AgendaEntryDetail';
 import { logger } from '../utils/logger';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
@@ -57,6 +57,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     const { data: tasks = [], isLoading: isLoadingTasks } = useTasks(config || null, !!config);
     const { data: interventions = [], isLoading: isLoadingInterventions } = useInterventions(config || null, !!config);
     const { data: projects = [], isLoading: isLoadingProjects } = useProjects(config || null, !!config);
+    const { data: customers = [] } = useCustomers(config || null, !!config);
 
     const isLoading = isLoadingEvents || isLoadingTasks || isLoadingInterventions || isLoadingProjects;
 
@@ -142,6 +143,37 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
         return null;
     };
 
+    // Lookup helpers — resolve IDs to human-readable names
+    const projectById = useMemo(() => {
+        const map = new Map<string, string>();
+        projects.forEach(p => map.set(p.id, p.title || p.ref));
+        return map;
+    }, [projects]);
+
+    const customerById = useMemo(() => {
+        const map = new Map<string, string>();
+        customers.forEach(c => map.set(c.id, c.name));
+        return map;
+    }, [customers]);
+
+    /**
+     * Build a compact "Projeto / Cliente" label for an item.
+     * Returns undefined when no meaningful context can be resolved
+     * (avoids rendering "undefined" or raw numeric IDs).
+     */
+    const resolveParentRef = (projectId?: string, socId?: string): string | undefined => {
+        const parts: string[] = [];
+        if (projectId) {
+            const name = projectById.get(projectId);
+            if (name) parts.push(name);
+        }
+        if (socId) {
+            const name = customerById.get(socId);
+            if (name) parts.push(name);
+        }
+        return parts.length > 0 ? parts.join(' · ') : undefined;
+    };
+
     // Consolidate all time-based items into a single list
     const consolidatedItems = useMemo(() => {
         const items: AgendaItem[] = [];
@@ -159,6 +191,8 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
             const isLog = isSystemLog(e);
             if (isLog && !showSystemEvents) return;
             const context = getContextLink(e);
+            // Prefer resolved project/customer names; fall back to location (venue/address).
+            const resolvedRef = resolveParentRef(e.project_id, e.socid);
             items.push({
                 id: `evt-${e.id}`,
                 type: isLog ? 'system_log' : 'event',
@@ -169,7 +203,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                 description: e.description,
                 status: e.percentage === 100 ? 'done' : 'todo',
                 ref: e.id,
-                parentRef: e.location,
+                parentRef: resolvedRef ?? (e.location || undefined),
                 contextId: context?.id,
                 contextView: context?.view
             });
@@ -178,6 +212,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
         // 2. Tasks
         tasks.forEach(t => {
             if (t.date_start) {
+                const projectName = t.project_id ? projectById.get(t.project_id) : undefined;
                 items.push({
                     id: `tsk-${t.id}`,
                     type: 'task',
@@ -187,7 +222,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                     description: t.description,
                     status: t.progress === 100 ? 'done' : 'todo',
                     ref: t.ref,
-                    parentRef: `Projeto ${t.project_id}`,
+                    parentRef: projectName, // resolved name or undefined (never raw ID)
                     contextId: t.project_id,
                     contextView: 'projects'
                 });
@@ -196,6 +231,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
 
         // 3. Interventions
         interventions.forEach(i => {
+            const projectName = i.project_id ? projectById.get(i.project_id) : undefined;
             items.push({
                 id: `int-${i.id}`,
                 type: 'intervention',
@@ -204,6 +240,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                 description: i.description,
                 status: i.statut === '2' ? 'done' : 'todo',
                 ref: i.ref,
+                parentRef: projectName,
                 contextId: i.project_id,
                 contextView: 'interventions'
             });
@@ -226,7 +263,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
         });
 
         return items.sort((a, b) => a.date - b.date);
-    }, [events, tasks, interventions, projects, showSystemEvents]);
+    }, [events, tasks, interventions, projects, customers, showSystemEvents, projectById, customerById]);
 
     // Apply Filter Type
     const filteredItems = useMemo(() => {
@@ -502,6 +539,12 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                                                 {item.contextView === 'contracts' && <span className="text-xs bg-teal-50 text-teal-600 px-1.5 py-0.5 rounded border border-teal-100">Contrato</span>}
                                                 {item.contextView === 'invoices' && <span className="text-xs bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded border border-emerald-100">Fatura</span>}
                                                 {item.contextView === 'tickets' && <span className="text-xs bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded border border-purple-100">Chamado</span>}
+                                                {item.parentRef && (
+                                                    <span className="text-xs bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 px-1.5 py-0.5 rounded border border-violet-100 dark:border-violet-900/30 flex items-center gap-1 max-w-[200px] truncate" title={item.parentRef}>
+                                                        <FolderKanban size={10} className="flex-none" />
+                                                        <span className="truncate">{item.parentRef}</span>
+                                                    </span>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -717,7 +760,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                                                                         item.type === 'project_deadline' ? 'bg-red-50 text-red-700 border-red-100 dark:bg-red-900/20 dark:text-red-300 dark:border-red-900/30' :
                                                                             'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
                                                                     }`}
-                                                                title={item.title}
+                                                                title={item.parentRef ? `${item.title} — ${item.parentRef}` : item.title}
                                                             >
                                                                 {/* Mini Icons for Calendar */}
                                                                 {item.type === 'event' && (

@@ -213,6 +213,15 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
                                         {selectedPayment.salary ? formatCurrency(selectedPayment.salary) : '-'}
                                     </div>
                                 </div>
+
+                                {selectedPayment.fk_typepayment && (
+                                    <div>
+                                        <div className="text-xs text-slate-500">Forma de Pagamento</div>
+                                        <div className="font-medium text-slate-800 dark:text-white">
+                                            {selectedPayment.fk_typepayment}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </Card>
 
