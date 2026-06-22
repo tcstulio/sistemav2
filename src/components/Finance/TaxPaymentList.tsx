@@ -5,6 +5,7 @@ import { useDolibarr } from '../../context/DolibarrContext';
 import { useVATPayments, useSocialContributionPayments } from '../../hooks/dolibarr';
 import { useListControls } from '../../hooks/useListControls';
 import { formatDateOnly } from '../../utils/dateUtils';
+import { formatCurrency } from '../../utils/formatUtils';
 import { MasterDetailLayout } from '../ui/MasterDetailLayout';
 import { PageHeader } from '../ui/PageHeader';
 import { Card } from '../ui/Card';
@@ -75,7 +76,7 @@ const TaxPaymentList: React.FC<TaxPaymentListProps> = ({ onNavigate }) => {
             actions={
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-4 bg-orange-50 dark:bg-orange-900/20 px-4 py-2 rounded-xl border border-orange-100 dark:border-orange-800">
-                        <div className="text-orange-600 dark:text-orange-400 font-bold text-lg">${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                        <div className="text-orange-600 dark:text-orange-400 font-bold text-lg">{formatCurrency(totalPaid)}</div>
                         <div className="text-xs text-orange-800 dark:text-orange-300 uppercase font-bold tracking-wide">Total Pago</div>
                     </div>
                     <ListToolbar controls={controls} searchPlaceholder="Buscar ref..." />
@@ -118,7 +119,7 @@ const TaxPaymentList: React.FC<TaxPaymentListProps> = ({ onNavigate }) => {
                                 </div>
                             </div>
                             <div className="text-right">
-                                <div className="text-lg font-bold text-slate-700 dark:text-slate-300">-${p.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                <div className="text-lg font-bold text-slate-700 dark:text-slate-300">-{formatCurrency(p.amount)}</div>
                                 <div className="text-xs text-slate-400 uppercase font-bold tracking-wider">Pago</div>
                             </div>
                         </Card>

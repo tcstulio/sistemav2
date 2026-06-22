@@ -13,6 +13,7 @@
 
 import { createDolibarrHook } from './createDolibarrHook';
 import { DolibarrService } from '../../services/dolibarrService';
+import { fetchSupplierInvoices, fetchSupplierInvoiceLines } from '../../services/api/commercial';
 import * as mappers from './mappers';
 import type { RawDolibarrRecord } from './mappers';
 import {
@@ -371,6 +372,11 @@ export const useShipmentLines = createDolibarrHook<RawDolibarrRecord, ShipmentLi
 
 /**
  * Hook for fetching and syncing supplier invoices
+ *
+ * #559: custom_sync.php nao trata o tipo `supplier_invoices` (retorna 404), o que
+ * deixava a tela "Faturas de Fornecedor" sem dados. Como o `fetchDelta` agora
+ * relanca o erro, este fallback dispara via REST padrao (`supplierinvoices`),
+ * garantindo que a tela carregue e liste as faturas.
  */
 export const useSupplierInvoices = createDolibarrHook<RawDolibarrRecord, SupplierInvoice>({
     queryKey: 'supplier_invoices',
@@ -378,10 +384,15 @@ export const useSupplierInvoices = createDolibarrHook<RawDolibarrRecord, Supplie
     endpoint: 'supplier_invoices',
     dateField: 'date_modification',
     mapper: mappers.mapSupplierInvoice,
+    fallbackFetch: (config) => fetchSupplierInvoices(config),
 });
 
 /**
  * Hook for fetching and syncing supplier invoice lines
+ *
+ * #559: o custom_sync.php nao trata o tipo `supplier_invoice_lines` (404). Como o
+ * `fetchDelta` agora relanca o erro, este fallback deriva as linhas da lista REST
+ * `supplierinvoices` (sem underscore), mantendo o painel de detalhe populado.
  */
 export const useSupplierInvoiceLines = createDolibarrHook<RawDolibarrRecord, SupplierInvoiceLine>({
     queryKey: 'supplier_invoice_lines',
@@ -389,6 +400,7 @@ export const useSupplierInvoiceLines = createDolibarrHook<RawDolibarrRecord, Sup
     endpoint: 'supplier_invoice_lines',
     dateField: 'date_modification',
     mapper: mappers.mapSupplierInvoiceLine,
+    fallbackFetch: (config) => fetchSupplierInvoiceLines(config),
 });
 
 /**

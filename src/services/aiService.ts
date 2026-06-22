@@ -32,6 +32,10 @@ export interface ChatMessage {
         completionTokens: number;
         totalTokens: number;
     };
+    /** Modelo que efetivamente respondeu (ex.: "glm-5.2", "MiniMax-M3"). */
+    model?: string;
+    /** true quando o fallback automático foi acionado (GLM→MiniMax). */
+    fellBack?: boolean;
 }
 
 export interface ChatSessionInfo {
@@ -162,18 +166,19 @@ export const AiService = {
     },
 
     // Lê a config da automação de Análise Financeira IA (#497).
+    // Não dispara toast aqui: o chamador decide a mensagem (#677). Retorna null em caso de erro.
     getFinancialAnalysisAutomationConfig: async (): Promise<FinancialAnalysisAutomationConfig | null> => {
         try {
             const response = await axios.get(`${API_URL}/analyze/financial-analysis/automation-config`, getAuthHeaders());
             return response.data as FinancialAnalysisAutomationConfig;
         } catch (error: any) {
-            handleAiError('Config de automação financeira', error);
+            log.error('Config de automação financeira', error);
             return null;
         }
     },
 
     // Atualiza (parcial) a config da automação de Análise Financeira IA (#497).
-    // Retorna a config mergeada ou null em caso de erro.
+    // Não dispara toast aqui: o chamador decide a mensagem (#677). Retorna a config mergeada ou null em caso de erro.
     updateFinancialAnalysisAutomationConfig: async (
         patch: Partial<FinancialAnalysisAutomationConfig>
     ): Promise<FinancialAnalysisAutomationConfig | null> => {
@@ -181,7 +186,7 @@ export const AiService = {
             const response = await axios.put(`${API_URL}/analyze/financial-analysis/automation-config`, patch, getAuthHeaders());
             return response.data as FinancialAnalysisAutomationConfig;
         } catch (error: any) {
-            handleAiError('Salvar config de automação financeira', error);
+            log.error('Salvar config de automação financeira', error);
             return null;
         }
     },
@@ -366,7 +371,7 @@ export const AiService = {
                     throw pollErr;
                 }
                 if (job.status === 'done') {
-                    return { reply: job.reply, sessionId: job.sessionId, usage: job.usage, contextWindow: job.contextWindow };
+                    return { reply: job.reply, sessionId: job.sessionId, usage: job.usage, contextWindow: job.contextWindow, model: job.model, fellBack: job.fellBack };
                 }
                 if (job.status === 'error') {
                     throw new Error(job.error || 'O assistente falhou ao processar.');

@@ -10,6 +10,7 @@ import { FixedSizeList as ListWindow } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
 import { toast } from 'sonner';
 import { logger } from '../utils/logger';
+import { typeToForm, formToType, CATEGORY_TYPE_OPTIONS } from '../utils/categoryType';
 
 const log = logger.child('CategoryList');
 
@@ -123,10 +124,7 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
         if (!newCat.label) return;
         setIsSubmitting(true);
         try {
-            let typeVal = '0';
-            if (newCat.type === 'supplier') typeVal = '1';
-            if (newCat.type === 'customer') typeVal = '2';
-
+            const typeVal = formToType(newCat.type);
             await DolibarrService.createCategory(config!, { ...newCat, type: typeVal });
             toast.success("Categoria criada com sucesso!");
             setIsCreateModalOpen(false);
@@ -147,21 +145,11 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
         setSelectedCategory(null);
     };
 
-    // mapeia o código de tipo do Dolibarr (0/1/2) para o valor do <select> do form
-    const typeToForm = (t: string | number) => {
-        const s = String(t);
-        if (s === '1' || s === 'supplier') return 'supplier';
-        if (s === '2' || s === 'customer') return 'customer';
-        return 'product';
-    };
-
     const handleEdit = async () => {
         if (!selectedCategory) return;
         setIsEditSubmitting(true);
         try {
-            let typeVal = '0';
-            if (editCat.type === 'supplier') typeVal = '1';
-            if (editCat.type === 'customer') typeVal = '2';
+            const typeVal = formToType(editCat.type);
             await DolibarrService.updateObject(config!, 'categories', selectedCategory.id, { ...editCat, type: typeVal });
             toast.success("Categoria atualizada com sucesso!");
             setIsEditModalOpen(false);
@@ -272,9 +260,9 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                             value={newCat.type}
                             onChange={e => setNewCat({ ...newCat, type: e.target.value })}
                         >
-                            <option value="product">Produto</option>
-                            <option value="customer">Cliente</option>
-                            <option value="supplier">Fornecedor</option>
+                            {CATEGORY_TYPE_OPTIONS.map(o => (
+                                <option key={o.code} value={o.value}>{o.label}</option>
+                            ))}
                         </select>
                     </div>
                     <div>
@@ -317,9 +305,9 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                             value={editCat.type}
                             onChange={e => setEditCat({ ...editCat, type: e.target.value })}
                         >
-                            <option value="product">Produto</option>
-                            <option value="customer">Cliente</option>
-                            <option value="supplier">Fornecedor</option>
+                            {CATEGORY_TYPE_OPTIONS.map(o => (
+                                <option key={o.code} value={o.value}>{o.label}</option>
+                            ))}
                         </select>
                     </div>
                     <div>

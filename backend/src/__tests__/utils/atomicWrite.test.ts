@@ -67,4 +67,34 @@ describe('atomicWriteSync', () => {
 
         expect(order).toEqual(['write', 'rename']);
     });
+
+    describe('directory creation', () => {
+        it('creates parent directory recursively when it does not exist', () => {
+            vi.mocked(fs.existsSync).mockReturnValue(false);
+
+            atomicWriteSync('/data/sub/nested/test.json', { key: 'value' });
+
+            expect(fs.mkdirSync).toHaveBeenCalledWith('/data/sub/nested', { recursive: true });
+        });
+
+        it('does not create directory when it already exists', () => {
+            vi.mocked(fs.existsSync).mockReturnValue(true);
+
+            atomicWriteSync('/data/test.json', { key: 'value' });
+
+            expect(fs.mkdirSync).not.toHaveBeenCalled();
+        });
+
+        it('creates directory before writing the temp file', () => {
+            const order: string[] = [];
+            vi.mocked(fs.existsSync).mockReturnValue(false);
+            vi.mocked(fs.mkdirSync).mockImplementation(() => { order.push('mkdir'); });
+            vi.mocked(fs.writeFileSync).mockImplementation(() => { order.push('write'); });
+            vi.mocked(fs.renameSync).mockImplementation(() => { order.push('rename'); });
+
+            atomicWriteSync('/data/order.json', {});
+
+            expect(order).toEqual(['mkdir', 'write', 'rename']);
+        });
+    });
 });

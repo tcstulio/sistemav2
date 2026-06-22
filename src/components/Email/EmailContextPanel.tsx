@@ -2,6 +2,7 @@ import React from 'react';
 import { X, ExternalLink, Briefcase, UserCircle, FileText, ShoppingCart, Ticket as TicketIcon, Plus } from 'lucide-react';
 import { ThirdParty, Invoice, Order, Ticket, AppView } from '../../types';
 import { formatDateOnly } from '../../utils/dateUtils';
+import { formatCurrency } from '../../utils/formatUtils';
 
 interface EmailContextPanelProps {
     isOpen: boolean;
@@ -94,7 +95,7 @@ export const EmailContextPanel: React.FC<EmailContextPanelProps> = ({ isOpen, on
                                         <div className="text-[10px] text-slate-500">{formatDateOnly(inv.date)}</div>
                                     </div>
                                     <div className="text-right">
-                                        <div className="text-xs font-bold text-slate-800 dark:text-white">${inv.total_ttc}</div>
+                                        <div className="text-xs font-bold text-slate-800 dark:text-white">{formatCurrency(inv.total_ttc)}</div>
                                         <span className={`text-[8px] px-1.5 py-0.5 rounded-full ${inv.statut === '2' ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700'}`}>
                                             {inv.statut === '2' ? 'Pago' : 'Aberto'}
                                         </span>
@@ -122,7 +123,7 @@ export const EmailContextPanel: React.FC<EmailContextPanelProps> = ({ isOpen, on
                                         <div className="text-xs font-bold text-slate-700 dark:text-slate-300">{ord.ref}</div>
                                         <div className="text-[10px] text-slate-500">{formatDateOnly(ord.date)}</div>
                                     </div>
-                                    <div className="text-xs font-bold text-slate-800 dark:text-white">${ord.total_ttc}</div>
+                                    <div className="text-xs font-bold text-slate-800 dark:text-white">{formatCurrency(ord.total_ttc)}</div>
                                 </div>
                             ))}
                         </div>

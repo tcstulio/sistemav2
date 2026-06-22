@@ -152,3 +152,42 @@ describe('ChatInterface — no native alert/confirm', () => {
         });
     });
 });
+
+describe('ChatInterface — flexbox structure (#662)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false, refetch: mockRefetch } as any);
+    });
+
+    it('root container has min-h-0 and flex flex-col', () => {
+        const { container } = renderChat();
+        const root = container.firstChild as HTMLElement;
+        expect(root.className).toContain('min-h-0');
+        expect(root.className).toContain('flex');
+        expect(root.className).toContain('flex-col');
+    });
+
+    it('default height is "100%" to inherit from parent', () => {
+        const { container } = renderChat();
+        const root = container.firstChild as HTMLElement;
+        expect((root.style as CSSStyleDeclaration).height).toBe('100%');
+    });
+
+    it('respects a custom height prop when provided', () => {
+        const { container } = renderChat({ height: '500px' });
+        const root = container.firstChild as HTMLElement;
+        expect((root.style as CSSStyleDeclaration).height).toBe('500px');
+    });
+
+    it('messages area has flex-1 min-h-0 overflow-y-auto', () => {
+        renderChat();
+        const messagesArea = document.querySelector('.flex-1.min-h-0.overflow-y-auto');
+        expect(messagesArea).not.toBeNull();
+    });
+
+    it('footer/input area has flex-shrink-0 so it is never pushed off-screen', () => {
+        renderChat();
+        const footer = screen.getByTestId('message-input').closest('.flex-shrink-0');
+        expect(footer).not.toBeNull();
+    });
+});

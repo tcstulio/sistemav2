@@ -25,6 +25,7 @@ import {
 import { useInterBank, TransacaoInter, PixRecebido, BoletoResponse } from '../../hooks/useInterBank';
 import { io } from 'socket.io-client';
 import { formatDateOnly, formatDateTime } from '../../utils/dateUtils';
+import { formatCurrency } from '../../utils/formatUtils';
 import { logger } from '../../utils/logger';
 import { safeStorage } from '../../utils/safeStorage';
 
@@ -315,7 +316,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                         <Loader2 className="h-6 w-6 animate-spin mt-2" />
                     ) : (
                         <p className="text-2xl font-bold mt-1">
-                            R$ {saldo?.disponivel?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}
+                            {formatCurrency(saldo?.disponivel ?? 0)}
                         </p>
                     )}
                 </div>
@@ -324,7 +325,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                     <div className="flex items-center gap-2 mt-1">
                         <TrendingUp className="h-5 w-5" />
                         <p className="text-2xl font-bold">
-                            R$ {stats.totalCreditos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            {formatCurrency(stats.totalCreditos)}
                         </p>
                     </div>
                 </div>
@@ -333,14 +334,14 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                     <div className="flex items-center gap-2 mt-1">
                         <TrendingDown className="h-5 w-5" />
                         <p className="text-2xl font-bold">
-                            R$ {stats.totalDebitos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            {formatCurrency(stats.totalDebitos)}
                         </p>
                     </div>
                 </div>
                 <div className="bg-white dark:bg-slate-800 rounded-xl p-5 border border-slate-200 dark:border-slate-700">
                     <p className="text-slate-500 dark:text-slate-400 text-sm">Limite Disponível</p>
                     <p className="text-2xl font-bold text-slate-800 dark:text-white mt-1">
-                        R$ {saldo?.limite?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}
+                        {formatCurrency(saldo?.limite ?? 0)}
                     </p>
                 </div>
             </div>
@@ -433,7 +434,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                                                 <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{t.titulo || t.descricao}</td>
                                                 <td className={`px-4 py-3 text-sm font-medium text-right ${t.tipoOperacao === 'C' ? 'text-green-600' : 'text-red-600'
                                                     }`}>
-                                                    {t.tipoOperacao === 'C' ? '+' : '-'} R$ {Number(t.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                    {t.tipoOperacao === 'C' ? '+' : '-'} {formatCurrency(Number(t.valor))}
                                                 </td>
                                             </tr>
                                         ))}
@@ -473,7 +474,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                                                 </td>
                                                 <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{p.pagador?.nome || 'N/A'}</td>
                                                 <td className="px-4 py-3 text-sm font-medium text-right text-green-600">
-                                                    R$ {parseFloat(p.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                    {formatCurrency(parseFloat(p.valor))}
                                                 </td>
                                             </tr>
                                         ))}
@@ -509,7 +510,7 @@ export function InterBankDashboard({ onOpenSettings }: InterBankDashboardProps) 
                                                     {formatDateOnly(b.dataVencimento)}
                                                 </td>
                                                 <td className="px-4 py-3 text-sm text-slate-800 dark:text-white">
-                                                    R$ {Number(b.valorNominal).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                    {formatCurrency(Number(b.valorNominal))}
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${b.situacao === 'PAGO' ? 'bg-green-100 text-green-700' :

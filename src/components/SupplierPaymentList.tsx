@@ -145,7 +145,7 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
                     actions={
                         <div className="flex items-center gap-3">
                             <div className="flex items-center gap-2 bg-rose-50 dark:bg-rose-900/20 px-4 py-2 rounded-xl border border-rose-100 dark:border-rose-800">
-                                <div className="text-rose-600 dark:text-rose-400 font-bold text-lg">-${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                                <div className="text-rose-600 dark:text-rose-400 font-bold text-lg">-{formatCurrency(totalPaid)}</div>
                                 <div className="text-xs text-rose-800 dark:text-rose-300 uppercase font-bold tracking-wide">Total</div>
                             </div>
                             <ListToolbar controls={controls} searchPlaceholder="Buscar ref/nota..." />
@@ -208,7 +208,7 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
                                                                 </div>
                                                             </div>
                                                             <div className="text-right shrink-0">
-                                                                <div className="font-bold text-rose-600 dark:text-rose-400 text-sm">-${Number(p.amount).toLocaleString()}</div>
+                                                                <div className="font-bold text-rose-600 dark:text-rose-400 text-sm">-{formatCurrency(Number(p.amount))}</div>
                                                             </div>
                                                         </div>
                                                     </Card>

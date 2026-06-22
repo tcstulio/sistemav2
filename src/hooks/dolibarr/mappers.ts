@@ -1044,6 +1044,10 @@ export const mapVATPayment = (raw: RawDolibarrRecord): VATPayment => ({
     date_payment: toTimestamp(raw.date_payment || raw.datep),
     amount: toNumber(raw.amount),
     fk_bank: toString(raw.fk_bank),
+    num_payment: raw.num_payment ? String(raw.num_payment) : undefined,
+    // Período de apuração do IVA (inline quando o Dolibarr retorna os campos da tva)
+    periodo_inicio: raw.date_debut ? toTimestamp(raw.date_debut) : undefined,
+    periodo_fim: raw.date_fin ? toTimestamp(raw.date_fin) : undefined,
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -1059,6 +1063,7 @@ export const mapSalaryPayment = (raw: RawDolibarrRecord): SalaryPayment => ({
     amount: toNumber(raw.amount),
     salary: toNumber(raw.salary),
     fk_bank: toString(raw.fk_bank),
+    fk_typepayment: raw.fk_typepayment || undefined,
     date_modification: toTimestamp(raw.tms),
 });
 
@@ -1072,6 +1077,12 @@ export const mapSocialContributionPayment = (raw: RawDolibarrRecord): SocialCont
     date_payment: toTimestamp(raw.date_payment || raw.datep),
     amount: toNumber(raw.amount),
     fk_bank: toString(raw.fk_bank),
+    num_payment: raw.num_payment ? String(raw.num_payment) : undefined,
+    // Rótulo do encargo social (inline quando Dolibarr retorna libelle da chargesociales)
+    label_origem: raw.libelle ? String(raw.libelle) : undefined,
+    // Período do encargo social (inline quando Dolibarr retorna date_debut/date_fin)
+    periodo_inicio: raw.date_debut ? toTimestamp(raw.date_debut) : undefined,
+    periodo_fim: raw.date_fin ? toTimestamp(raw.date_fin) : undefined,
     date_modification: toTimestamp(raw.tms),
 });
 

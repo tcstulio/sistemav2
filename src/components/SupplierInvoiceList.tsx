@@ -23,6 +23,7 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useSupplierInvoices, useSuppliers, useProjects, useSupplierInvoiceLines, useUsers, useSupplierPayments, useSupplierPaymentInvoiceLinks } from '../hooks/dolibarr';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
 import { formatDateOnly } from '../utils/dateUtils';
+import { formatCurrency } from '../utils/formatUtils';
 import { ReceiptWizard } from './Finance/ReceiptWizard';
 import { RichTextEditor } from './common/RichTextEditor';
 import { SupplierPaymentModal } from './Modals/SupplierPaymentModal';
@@ -460,7 +461,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                 )}
                                 <div className="flex justify-between items-end">
                                     <span className="text-xs text-slate-500">{formatDateOnly(inv.date)}</span>
-                                    <span className="font-bold text-slate-800 dark:text-white">${inv.total_ttc.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                                    <span className="font-bold text-slate-800 dark:text-white">{formatCurrency(inv.total_ttc)}</span>
                                 </div>
                             </Card>
                         )
@@ -559,7 +560,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                             <div className="flex justify-between items-start mb-6">
                                 <div>
                                     <p className="text-sm text-slate-500 uppercase font-bold mb-1">Valor Total</p>
-                                    <p className="text-3xl font-bold text-slate-900 dark:text-white">${selectedInvoice.total_ttc.toLocaleString()}</p>
+                                    <p className="text-3xl font-bold text-slate-900 dark:text-white">{formatCurrency(selectedInvoice.total_ttc)}</p>
                                 </div>
                                 <div className="text-right">
                                     <p className="text-sm text-slate-500 uppercase font-bold mb-1">Data</p>
@@ -638,13 +639,13 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                                         {line.qty}
                                                     </td>
                                                     <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">
-                                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(line.subprice || 0)}
+                                                        {formatCurrency(line.subprice || 0)}
                                                     </td>
                                                     <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-400 font-mono">
                                                         {(line as any).remise_percent ? `${(line as any).remise_percent}%` : '-'}
                                                     </td>
                                                     <td className="px-4 py-3 text-right font-medium text-slate-800 dark:text-white font-mono">
-                                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(line.total_ttc || 0)}
+                                                        {formatCurrency(line.total_ttc || 0)}
                                                     </td>
                                                 </tr>
                                             ))}
@@ -653,7 +654,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                             <tr>
                                                 <td colSpan={4} className="px-4 py-3 text-right font-bold text-slate-700 dark:text-slate-300 uppercase text-xs tracking-wider">Total Geral</td>
                                                 <td className="px-4 py-3 text-right font-bold text-emerald-600 dark:text-emerald-400 font-mono text-base">
-                                                    ${selectedInvoice.total_ttc?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                    {formatCurrency(selectedInvoice.total_ttc)}
                                                 </td>
                                             </tr>
                                         </tfoot>
@@ -717,7 +718,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                                     </div>
                                                     <div className="text-right">
                                                         <div className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">
-                                                            ${link.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                                            {formatCurrency(link.amount)}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -727,7 +728,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                         <div className="flex justify-between items-center pt-4 border-t border-slate-100 dark:border-slate-800">
                                             <div className="text-sm text-slate-500">Saldo Restante</div>
                                             <div className={`font-bold ${remaining > 0.01 ? 'text-orange-500' : 'text-emerald-500'} text-lg`}>
-                                                ${remaining > 0 ? remaining.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '0.00'}
+                                                {formatCurrency(Math.max(0, remaining))}
                                             </div>
                                         </div>
                                     </div>

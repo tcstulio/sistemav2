@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useItauBank, TransacaoItau, PixRecebidoItau, BoletoItau } from '../../hooks/useItauBank';
 import { formatDateOnly, formatDateTime } from '../../utils/dateUtils';
+import { formatCurrency } from '../../utils/formatUtils';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('ItauBankDashboard');
@@ -220,7 +221,7 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                         <Loader2 className="h-6 w-6 animate-spin mt-2" />
                     ) : (
                         <p className="text-2xl font-bold mt-1">
-                            R$ {saldo?.disponivel?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}
+                            {formatCurrency(saldo?.disponivel ?? 0)}
                         </p>
                     )}
                 </div>
@@ -229,7 +230,7 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                     <div className="flex items-center gap-2 mt-1">
                         <TrendingUp className="h-5 w-5" />
                         <p className="text-2xl font-bold">
-                            R$ {stats.totalCreditos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            {formatCurrency(stats.totalCreditos)}
                         </p>
                     </div>
                 </div>
@@ -238,14 +239,14 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                     <div className="flex items-center gap-2 mt-1">
                         <TrendingDown className="h-5 w-5" />
                         <p className="text-2xl font-bold">
-                            R$ {stats.totalDebitos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            {formatCurrency(stats.totalDebitos)}
                         </p>
                     </div>
                 </div>
                 <div className="bg-white dark:bg-slate-800 rounded-xl p-5 border border-slate-200 dark:border-slate-700">
                     <p className="text-slate-500 dark:text-slate-400 text-sm">Limite Disponível</p>
                     <p className="text-2xl font-bold text-slate-800 dark:text-white mt-1">
-                        R$ {saldo?.limite?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}
+                        {formatCurrency(saldo?.limite ?? 0)}
                     </p>
                 </div>
             </div>
@@ -338,7 +339,7 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                                                 <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{t.descricao}</td>
                                                 <td className={`px-4 py-3 text-sm font-medium text-right ${t.tipoOperacao === 'C' ? 'text-green-600' : 'text-red-600'
                                                     }`}>
-                                                    {t.tipoOperacao === 'C' ? '+' : '-'} R$ {t.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                    {t.tipoOperacao === 'C' ? '+' : '-'} {formatCurrency(t.valor)}
                                                 </td>
                                             </tr>
                                         ))}
@@ -378,7 +379,7 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                                                 </td>
                                                 <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{p.pagador?.nome || 'N/A'}</td>
                                                 <td className="px-4 py-3 text-sm font-medium text-right text-green-600">
-                                                    R$ {parseFloat(p.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                    {formatCurrency(parseFloat(p.valor))}
                                                 </td>
                                             </tr>
                                         ))}
@@ -414,7 +415,7 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                                                     {formatDateOnly(b.data_vencimento)}
                                                 </td>
                                                 <td className="px-4 py-3 text-sm text-slate-800 dark:text-white">
-                                                    R$ {b.valor_titulo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                                    {formatCurrency(b.valor_titulo)}
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${b.situacao_geral_boleto === 'liquidado' ? 'bg-green-100 text-green-700' :

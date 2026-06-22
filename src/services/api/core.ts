@@ -363,8 +363,13 @@ export const fetchDelta = async (config: DolibarrConfig, entityType: string, las
 
         return allData;
     } catch (error) {
+        // #559: nao engolir o erro silenciosamente. Devolver [] escondia endpoints
+        // quebrados (ex.: custom_sync.php 404 para supplier_invoices) de forma
+        // definitiva, impedindo o mecanismo de fallback dos hooks e deixando a
+        // tela sempre vazia sem sinalizar a falha. Relanca para que o hook trate
+        // (log + fallbackFetch) e o reporter in-app (pushFailedRequest) permaneca visivel.
         log.error(`Delta failed for ${entityType}`, error);
-        return [];
+        throw error;
     }
 };
 
