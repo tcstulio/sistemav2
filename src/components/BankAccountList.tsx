@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { BankAccount, DolibarrConfig, BankLine, Invoice, SupplierInvoice, AppView } from '../types';
-import { Landmark, Wallet, ArrowUpRight, ArrowDownRight, ArrowLeft, CheckCircle2, Split, Wand2, RefreshCcw, FileText, Link, Plus, Loader2, ArrowRightLeft, ExternalLink, Upload, BarChart3, Sparkles, Settings } from 'lucide-react';
+import { Landmark, Wallet, ArrowUpRight, ArrowDownRight, ArrowLeft, CheckCircle2, Split, Wand2, RefreshCcw, FileText, Link, Plus, Loader2, ArrowRightLeft, ExternalLink, Upload, BarChart3, Sparkles, Settings, Pencil } from 'lucide-react';
 import { BankStatementImport, CashFlowChart, BankingInsightsPanel, InterBankDashboard, ItauBankDashboard, InterSettingsTab, ItauSettingsTab } from './Banking';
 import { DolibarrService } from '../services/dolibarrService';
 import { reconcileBankLine } from '../services/api/hrAdmin';
@@ -15,7 +15,7 @@ import { logger } from '../utils/logger';
 const log = logger.child('BankAccountList');
 
 // Design System
-import { PageHeader, Card, Button, Input, Modal, EmptyState, ListToolbar, ConfirmDeleteButton } from './ui';
+import { PageHeader, Card, Button, Input, Modal, EmptyState, ListToolbar, ConfirmDeleteButton, MasterDetailLayout } from './ui';
 
 interface BankAccountListProps {
     onRefresh?: () => void;
@@ -60,6 +60,12 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [newAccountForm, setNewAccountForm] = useState<Partial<BankAccount>>({ currency_code: 'BRL', solde: 0 });
     const [isCreating, setIsCreating] = useState(false);
+
+    // Edit Account Modal
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editAccountForm, setEditAccountForm] = useState<Partial<BankAccount>>({});
+    const [editAccountId, setEditAccountId] = useState<string | null>(null);
+    const [isEditing, setIsEditing] = useState(false);
 
     // Transfer Modal State
     const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
@@ -258,6 +264,33 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
             log.error("Failed to create bank account", e);
         } finally {
             setIsCreating(false);
+        }
+    };
+
+    const openEditModal = (account: BankAccount, e: React.MouseEvent) => {
+        e.stopPropagation();
+        setEditAccountId(String(account.id));
+        setEditAccountForm({ label: account.label, bank: account.bank, number: account.number, currency_code: account.currency_code, status: account.status });
+        setIsEditModalOpen(true);
+    };
+
+    const handleEditAccount = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!config || !editAccountId) return;
+        if (!editAccountForm.label || !editAccountForm.bank) return;
+        setIsEditing(true);
+        try {
+            await DolibarrService.updateBankAccount(config, editAccountId, editAccountForm);
+            toast.success("Conta atualizada com sucesso");
+            setIsEditModalOpen(false);
+            setEditAccountId(null);
+            refetchAccounts();
+            if (onRefresh) onRefresh();
+        } catch (e) {
+            log.error("Failed to update bank account", e);
+            toast.error("Falha ao atualizar conta. Tente novamente.");
+        } finally {
+            setIsEditing(false);
         }
     };
 
@@ -494,6 +527,51 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                     </div>
                                 </Modal>
 
+                                {/* Edit Account Modal */}
+                                <Modal
+                                    isOpen={isEditModalOpen}
+                                    onClose={() => setIsEditModalOpen(false)}
+                                    title={<span className="flex items-center gap-2"><Pencil size={18} className="text-indigo-600" /> Editar Conta Bancária</span>}
+                                    footer={
+                                        <>
+                                            <Button variant="secondary" onClick={() => setIsEditModalOpen(false)}>Cancelar</Button>
+                                            <Button loading={isEditing} icon={<CheckCircle2 size={16} />} onClick={handleEditAccount}>Salvar</Button>
+                                        </>
+                                    }
+                                >
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Rótulo</label>
+                                            <Input required value={editAccountForm.label || ''} onChange={e => setEditAccountForm({ ...editAccountForm, label: e.target.value })} placeholder="Conta Principal" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome do Banco</label>
+                                            <Input required value={editAccountForm.bank || ''} onChange={e => setEditAccountForm({ ...editAccountForm, bank: e.target.value })} placeholder="Itaú, Bradesco, etc." />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Moeda</label>
+                                                <Input value={editAccountForm.currency_code || ''} onChange={e => setEditAccountForm({ ...editAccountForm, currency_code: e.target.value })} />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Situação</label>
+                                                <select
+                                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                                    value={editAccountForm.status || '0'}
+                                                    onChange={e => setEditAccountForm({ ...editAccountForm, status: e.target.value as '0' | '1' })}
+                                                >
+                                                    <option value="0">Aberta</option>
+                                                    <option value="1">Fechada</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Número da Conta</label>
+                                            <Input value={editAccountForm.number || ''} onChange={e => setEditAccountForm({ ...editAccountForm, number: e.target.value })} />
+                                        </div>
+                                    </div>
+                                </Modal>
+
                                 {/* Transfer Modal */}
                                 <Modal
                                     isOpen={isTransferModalOpen}
@@ -659,9 +737,11 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                     )}
                                 </div>
 
-                                <div className="flex-1 min-h-0 flex overflow-hidden">
-                                    {/* Account List */}
-                                    <div className={`flex-1 overflow-y-auto p-4 md:p-6 ${selectedAccount ? 'hidden lg:block lg:w-1/3 xl:w-1/4 border-r border-slate-200 dark:border-slate-800' : 'w-full'}`}>
+                                <MasterDetailLayout
+                                    showDetail={!!selectedAccount}
+                                    onCloseDetail={() => setSelectedAccount(null)}
+                                    listWidth="1/3"
+                                    list={<div className="p-4 md:p-6">
                                         {accounts.length === 0 ? (
                                             <EmptyState
                                                 icon={Landmark}
@@ -696,15 +776,24 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                                     <p className="text-xs text-slate-500 font-mono">{account.currency_code}</p>
                                                                 </div>
                                                             </div>
-                                                            <ConfirmDeleteButton
-                                                                onDelete={() => DolibarrService.deleteBankAccount(config, account.id)}
-                                                                onDeleted={() => {
-                                                                    if (selectedAccount?.id === account.id) setSelectedAccount(null);
-                                                                    refetchAccounts();
-                                                                    if (onRefresh) onRefresh();
-                                                                }}
-                                                                itemLabel={account.label}
-                                                            />
+                                                            <div className="flex items-center gap-1">
+                                                                <button
+                                                                    onClick={(e) => openEditModal(account, e)}
+                                                                    className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+                                                                    title="Editar conta"
+                                                                >
+                                                                    <Pencil size={14} />
+                                                                </button>
+                                                                <ConfirmDeleteButton
+                                                                    onDelete={() => DolibarrService.deleteBankAccount(config, account.id)}
+                                                                    onDeleted={() => {
+                                                                        if (selectedAccount?.id === account.id) setSelectedAccount(null);
+                                                                        refetchAccounts();
+                                                                        if (onRefresh) onRefresh();
+                                                                    }}
+                                                                    itemLabel={account.label}
+                                                                />
+                                                            </div>
                                                         </div>
                                                         <div className="p-4">
                                                             <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Saldo</p>
@@ -716,12 +805,9 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                 ))}
                                             </div>
                                         )}
-                                    </div>
-
-                                    {/* Detail / Reconciliation View */}
-                                    <div className={`flex-1 bg-white dark:bg-slate-900 overflow-y-auto ${selectedAccount ? 'block absolute inset-0 z-20 lg:static lg:inset-auto' : 'hidden lg:flex lg:items-center lg:justify-center'}`}>
-                                        {selectedAccount ? (
-                                            <div className="h-full flex flex-col animate-in slide-in-from-right-4 fade-in duration-300">
+                                    </div>}
+                                    detail={selectedAccount && (
+                                        <div className="h-full flex flex-col">
 
                                                 {/* Detail Header */}
                                                 <PageHeader
@@ -910,15 +996,8 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
 
                                                 </div>
                                             </div>
-                                        ) : (
-                                            <div className="text-center p-8 max-w-sm mx-auto">
-                                                <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300 dark:text-slate-600"><Landmark size={32} /></div>
-                                                <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-1">Selecione uma Conta Dolibarr</h3>
-                                                <p className="text-slate-500 dark:text-slate-400 text-sm">Visualize detalhes e realize conciliação bancária.</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
+                                    )}
+                                />
                             </div>
                         )}
                     </>
