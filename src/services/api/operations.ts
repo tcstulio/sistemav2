@@ -54,6 +54,26 @@ export const createIntervention = async (config: DolibarrConfig, data: Record<st
     });
 };
 
+export interface InterventionUpdatePayload {
+    socid?: string;
+    date?: string | number;
+    fk_project?: string;
+    description?: string;
+}
+
+export const updateIntervention = async (
+    config: DolibarrConfig,
+    id: string,
+    payload: InterventionUpdatePayload
+) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/interventions/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(payload)
+    });
+};
+
 export const fetchTicketEvents = async (config: DolibarrConfig, ticketId: string) => {
     // Fetches linked events/logs for the ticket
     // Uses agendaevents generic endpoint with filter for elementtype 'ticket'
