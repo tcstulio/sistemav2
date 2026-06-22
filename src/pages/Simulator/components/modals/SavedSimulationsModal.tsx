@@ -123,21 +123,21 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
 
     return (
         <div className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh] overflow-hidden border border-slate-200">
+            <div className="bg-white dark:bg-slate-800 rounded-3xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh] overflow-hidden border border-slate-200 dark:border-slate-700">
 
-                <div className="flex justify-between items-center p-6 border-b bg-slate-50">
+                <div className="flex justify-between items-center p-6 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
                     <div>
-                        <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                        <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
                             <FolderOpen size={24} className="text-indigo-600" /> Biblioteca de Cenários
                         </h3>
-                        <p className="text-sm text-slate-500">
+                        <p className="text-sm text-slate-500 dark:text-slate-400">
                             {isAdmin ? 'Gerencie todos os cenários do sistema.' : 'Simulações salvas no navegador.'}
                         </p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400 hover:text-slate-600"><X size={24} /></button>
+                    <button onClick={onClose} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors text-slate-400 hover:text-slate-600"><X size={24} /></button>
                 </div>
 
-                <div className="p-2 bg-white border-b border-slate-100 flex gap-2">
+                <div className="p-2 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 flex gap-2">
                     <button
                         onClick={() => setView('list')}
                         className={`flex-1 py-3 text-sm font-bold rounded-xl transition-all ${view === 'list' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-500 hover:bg-slate-50'}`}
@@ -152,12 +152,12 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
                     </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-6 bg-slate-50 custom-scrollbar">
+                <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-900 custom-scrollbar">
                     {view === 'save' && (
                         <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
-                            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm text-center">
-                                <div className="text-xs font-bold text-slate-400 uppercase mb-2">Resumo para Salvar</div>
-                                <h4 className="text-xl font-bold text-slate-800 mb-1">{currentSummary.modelLabel}</h4>
+                            <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm text-center">
+                                <div className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase mb-2">Resumo para Salvar</div>
+                                <h4 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-1">{currentSummary.modelLabel}</h4>
                                 <div className={`text-3xl font-black mb-6 ${currentSummary.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                     {money(currentSummary.profit)}
                                 </div>
@@ -273,8 +273,8 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
                     )}
                 </div>
 
-                <div className="p-4 bg-slate-50 border-t border-slate-100 text-center">
-                    <p className="text-[10px] text-slate-400 italic">Simulações salvas localmente por @{userName}.</p>
+                <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-700 text-center">
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 italic">Simulações salvas localmente por @{userName}.</p>
                 </div>
             </div>
         </div>

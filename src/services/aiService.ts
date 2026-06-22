@@ -32,6 +32,10 @@ export interface ChatMessage {
         completionTokens: number;
         totalTokens: number;
     };
+    /** Modelo que efetivamente respondeu (ex.: "glm-5.2", "MiniMax-M3"). */
+    model?: string;
+    /** true quando o fallback automático foi acionado (GLM→MiniMax). */
+    fellBack?: boolean;
 }
 
 export interface ChatSessionInfo {
@@ -367,7 +371,7 @@ export const AiService = {
                     throw pollErr;
                 }
                 if (job.status === 'done') {
-                    return { reply: job.reply, sessionId: job.sessionId, usage: job.usage, contextWindow: job.contextWindow };
+                    return { reply: job.reply, sessionId: job.sessionId, usage: job.usage, contextWindow: job.contextWindow, model: job.model, fellBack: job.fellBack };
                 }
                 if (job.status === 'error') {
                     throw new Error(job.error || 'O assistente falhou ao processar.');
