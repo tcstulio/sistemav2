@@ -111,6 +111,53 @@ function defaultFetchHandler(url: string, _opts?: RequestInit) {
 // Import after mocks
 import { SchedulerAdmin } from '../../components/SchedulerAdmin';
 
+describe('SchedulerAdmin — #534 layout', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockFetch.mockImplementation(defaultFetchHandler);
+    });
+
+    it('renderiza dentro do PageLayout (role=main) com título correto', async () => {
+        render(<SchedulerAdmin />);
+        const main = document.querySelector('[role="main"]');
+        expect(main).toBeTruthy();
+        expect(main?.getAttribute('aria-label')).toBe('Automação de Mensagens');
+    });
+
+    it('renderiza o título "Automação de Mensagens" no PageHeader', () => {
+        render(<SchedulerAdmin />);
+        expect(screen.getByText('📅 Automação de Mensagens')).toBeTruthy();
+    });
+
+    it('root não tem overflowY:auto nem height:100% inline', () => {
+        render(<SchedulerAdmin />);
+        const main = document.querySelector('[role="main"]');
+        expect(main).toBeTruthy();
+        const style = (main as HTMLElement).style;
+        expect(style.overflowY).toBe('');
+        expect(style.height).toBe('');
+        expect(style.background).toBe('');
+    });
+
+    it('troca de aba para Templates exibe o conteúdo correto', async () => {
+        render(<SchedulerAdmin />);
+        const tabTemplates = await screen.findByText('📝 Templates');
+        await userEvent.click(tabTemplates);
+        await waitFor(() => {
+            expect(screen.queryByText('Modelo Inicial')).toBeTruthy();
+        }, { timeout: 5000 });
+    });
+
+    it('troca de aba para Agendar exibe o formulário de nova mensagem', async () => {
+        render(<SchedulerAdmin />);
+        const tabAgendar = await screen.findByText('➕ Agendar');
+        await userEvent.click(tabAgendar);
+        await waitFor(() => {
+            expect(screen.queryByText('Agendar Nova Mensagem')).toBeTruthy();
+        }, { timeout: 5000 });
+    });
+});
+
 describe('SchedulerAdmin', () => {
     beforeEach(() => {
         vi.clearAllMocks();
