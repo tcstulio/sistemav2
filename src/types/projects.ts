@@ -3,6 +3,7 @@ export interface Project {
     id: string;
     ref: string;
     title: string;
+    description?: string;
     socid: string;
     parent_id?: string;
     date_start?: number;
