@@ -4,6 +4,7 @@ import { BankAccount, DolibarrConfig, BankLine, Invoice, SupplierInvoice, AppVie
 import { Landmark, Wallet, ArrowUpRight, ArrowDownRight, ArrowLeft, CheckCircle2, Split, Wand2, RefreshCcw, FileText, Link, Plus, Loader2, ArrowRightLeft, ExternalLink, Upload, BarChart3, Sparkles, Settings } from 'lucide-react';
 import { BankStatementImport, CashFlowChart, BankingInsightsPanel, InterBankDashboard, ItauBankDashboard, InterSettingsTab, ItauSettingsTab } from './Banking';
 import { DolibarrService } from '../services/dolibarrService';
+import { reconcileBankLine } from '../services/api/hrAdmin';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useBankAccounts, useBankLines, useInvoices, useSupplierInvoices } from '../hooks/dolibarr';
 import { useListControls } from '../hooks/useListControls';
@@ -31,7 +32,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
     // --- DOLIBARR BANK ACCOUNTS LOGIC ---
     const { data: accountsData, refetch: refetchAccounts } = useBankAccounts(config);
     const accounts = accountsData || [];
-    const { data: linesData } = useBankLines(config, !!config);
+    const { data: linesData, refetch: refetchLines } = useBankLines(config, !!config);
     const lines = linesData || [];
     const { data: invoicesData } = useInvoices(config);
     const invoices = invoicesData || [];
@@ -141,28 +142,71 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
         return items;
     }, [selectedTransactionForLink, invoices, supplierInvoices, linkSearchTerm]);
 
-    const handleMagicMatch = () => {
-        const newMatches = new Set(reconciledLines);
-        accountLines.forEach(line => {
-            if (!line.reconciled) {
-                const matches = getPotentialMatches(line);
-                if (matches.length === 1) {
-                    newMatches.add(line.id);
-                }
-            }
+    const handleMagicMatch = async () => {
+        if (!config || !selectedAccount) return;
+        const candidates = accountLines.filter(line => {
+            if (line.reconciled || reconciledLines.has(line.id)) return false;
+            const matches = getPotentialMatches(line);
+            return matches.length === 1;
         });
+        let successCount = 0;
+        const newMatches = new Set(reconciledLines);
+        for (const line of candidates) {
+            try {
+                const ok = await reconcileBankLine(config, String(selectedAccount.id), line.id, true);
+                if (ok) {
+                    newMatches.add(line.id);
+                    successCount++;
+                }
+            } catch {
+                // individual failure — keep going, count only successes
+            }
+        }
         setReconciledLines(newMatches);
-        toast.success(`Auto-conciliadas ${newMatches.size - reconciledLines.size} transações!`);
+        if (successCount > 0) {
+            toast.success(`Auto-conciliadas ${successCount} transações!`);
+            refetchLines();
+        } else if (candidates.length > 0) {
+            toast.error('Falha ao persistir conciliação. Tente novamente.');
+        } else {
+            toast.info('Nenhuma correspondência automática encontrada.');
+        }
     };
 
-    const toggleReconcile = (lineId: string) => {
+    const toggleReconcile = async (lineId: string) => {
+        if (!config || !selectedAccount) return;
+        const currentlyReconciled = reconciledLines.has(lineId);
+        const line = accountLines.find(l => l.id === lineId);
+        const alreadyPersistedReconciled = line?.reconciled ?? false;
+        const newReconciled = currentlyReconciled ? false : true;
+
+        // Optimistic UI update
         const newSet = new Set(reconciledLines);
-        if (newSet.has(lineId)) {
-            newSet.delete(lineId);
-        } else {
+        if (newReconciled) {
             newSet.add(lineId);
+        } else {
+            newSet.delete(lineId);
         }
         setReconciledLines(newSet);
+
+        try {
+            const ok = await reconcileBankLine(config, String(selectedAccount.id), lineId, newReconciled);
+            if (!ok) {
+                throw new Error('Backend retornou falha');
+            }
+            refetchLines();
+        } catch (err) {
+            // Rollback optimistic update
+            const rolledBack = new Set(reconciledLines);
+            if (alreadyPersistedReconciled || currentlyReconciled) {
+                rolledBack.add(lineId);
+            } else {
+                rolledBack.delete(lineId);
+            }
+            setReconciledLines(rolledBack);
+            toast.error('Erro ao persistir conciliação. Tente novamente.');
+            log.error('toggleReconcile failed', err);
+        }
     };
 
     const openLinkModal = (line: BankLine) => {
@@ -171,11 +215,31 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
         setIsLinkModalOpen(true);
     };
 
-    const handleManualLink = (invoiceId: string) => {
-        if (selectedTransactionForLink) {
-            toggleReconcile(selectedTransactionForLink.id);
-            setIsLinkModalOpen(false);
-            setSelectedTransactionForLink(null);
+    const handleManualLink = async (invoiceId: string) => {
+        if (!selectedTransactionForLink || !config || !selectedAccount) return;
+        const lineId = selectedTransactionForLink.id;
+        setIsLinkModalOpen(false);
+        setSelectedTransactionForLink(null);
+
+        // Optimistic UI update
+        const newSet = new Set(reconciledLines);
+        newSet.add(lineId);
+        setReconciledLines(newSet);
+
+        try {
+            const ok = await reconcileBankLine(config, String(selectedAccount.id), lineId, true);
+            if (!ok) {
+                throw new Error('Backend retornou falha');
+            }
+            toast.success('Linha vinculada e conciliada com sucesso.');
+            refetchLines();
+        } catch (err) {
+            // Rollback
+            const rolledBack = new Set(reconciledLines);
+            rolledBack.delete(lineId);
+            setReconciledLines(rolledBack);
+            toast.error('Erro ao vincular linha. Tente novamente.');
+            log.error('handleManualLink failed', { lineId, invoiceId, err });
         }
     };
 

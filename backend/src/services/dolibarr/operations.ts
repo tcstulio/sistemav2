@@ -338,4 +338,38 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
             return [];
         }
     }
+
+    /**
+     * Atualiza uma intervenção (fichinter). A REST padrão do Dolibarr NÃO expõe
+     * PUT /interventions/{id} (issue #656), então gravamos via custom_sync.php
+     * (action=update_intervention), no mesmo padrão do setTaskContact. Ao contrário
+     * dos outros writes best-effort, este PROPAGA um erro ({message,status,details})
+     * quando a gravação falha — para que o handler da rota responda com status HTTP
+     * apropriado (critério de aceite do #656).
+     */
+    async updateIntervention(
+        id: string,
+        payload: { socid?: string | number; date?: string | number; fk_project?: string | number; description?: string }
+    ): Promise<{ success: true }> {
+        const res: any = await this.proxyCustomSync(
+            {
+                action: 'update_intervention',
+                intervention_id: id,
+                socid: payload.socid,
+                date: payload.date,
+                fk_project: payload.fk_project,
+                description: payload.description,
+            },
+            this.getHeaders()
+        );
+
+        const ok = res?.data?.success === true;
+        if (!ok) {
+            const status = res?.status && res.status >= 400 ? res.status : 502;
+            const message = res?.data?.error || res?.data?.message || 'Falha ao atualizar a intervenção no Dolibarr';
+            log.error(`updateIntervention Error intervention=${id}`, message);
+            throw { message, status, details: res?.data };
+        }
+        return { success: true };
+    }
 }

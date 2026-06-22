@@ -238,5 +238,92 @@ describe('financialAnalysisStore', () => {
             expect(lastCall.automationConfig.enabled).toBe(true);
             expect(lastCall.automationConfig.schedule).toEqual({ dayOfWeek: 1, hour: 8, minute: 0 });
         });
+
+        it('saveAutomationConfig persists the config to file and returns the merged config', async () => {
+            const { atomicWriteSync } = await import('../../utils/atomicWrite');
+            const writeSpy = vi.mocked(atomicWriteSync);
+            writeSpy.mockClear();
+
+            const result = financialAnalysisStore.saveAutomationConfig({
+                enabled: true,
+                schedule: { dayOfWeek: 2, hour: 9, minute: 30 }
+            });
+
+            // returns the merged config (caminho sucesso)
+            expect(result).toEqual({
+                enabled: true,
+                schedule: { dayOfWeek: 2, hour: 9, minute: 30 },
+                lastRunAt: null,
+                lastRunStatus: null
+            });
+
+            // persists the config to file via atomicWriteSync
+            expect(writeSpy).toHaveBeenCalledTimes(1);
+            const persisted = writeSpy.mock.calls[0][1] as any;
+            expect(persisted.automationConfig).toEqual(result);
+            expect(persisted.automationConfig.enabled).toBe(true);
+            expect(persisted.automationConfig.schedule).toEqual({ dayOfWeek: 2, hour: 9, minute: 30 });
+        });
+    });
+});
+
+// Integration tests against the REAL filesystem / REAL atomicWriteSync.
+// These run last and unmock the file-level mocks within their own bodies, so
+// they do not interfere with the mocked tests above (mock state is per-file and
+// vitest runs tests in definition order).
+describe('financialAnalysisStore — real filesystem (atomicWriteSync & save() error propagation)', () => {
+    it('save() propagates the error when fs.writeFileSync fails (not silenced)', async () => {
+        // Use the REAL atomicWriteSync (which calls fs.writeFileSync) while keeping fs
+        // mocked so we can force writeFileSync to throw.
+        vi.doUnmock('../../utils/atomicWrite');
+        vi.resetModules();
+
+        const fs = await import('fs');
+        vi.mocked(fs.existsSync).mockReturnValue(false);
+        vi.mocked(fs.mkdirSync).mockImplementation(() => undefined);
+        vi.mocked(fs.writeFileSync).mockImplementationOnce(() => {
+            throw new Error('disk write failed');
+        });
+
+        const mod = await import('../../services/financialAnalysisStore');
+        const svc = mod.financialAnalysisStore;
+
+        expect(() => svc.saveAutomationConfig({ enabled: true })).toThrow('disk write failed');
+        // writeFileSync was actually invoked → the error went through fs.writeFileSync, not silenced
+        expect(fs.writeFileSync).toHaveBeenCalled();
+    });
+
+    it('atomicWriteSync creates the parent directory recursively when it does not exist (isolated tmpdir)', async () => {
+        vi.doUnmock('fs');
+        vi.doUnmock('../../utils/atomicWrite');
+        vi.resetModules();
+
+        const fs = await import('fs');
+        const path = await import('path');
+        const os = await import('os');
+        const { atomicWriteSync } = await import('../../utils/atomicWrite');
+
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fastore-realdir-'));
+        const nested = path.join(tmp, 'deep', 'nested', 'dir', 'config.json');
+
+        try {
+            expect(fs.existsSync(path.dirname(nested))).toBe(false);
+
+            atomicWriteSync(nested, {
+                enabled: true,
+                schedule: { dayOfWeek: 2, hour: 9, minute: 30 }
+            });
+
+            // the file was written ...
+            expect(fs.existsSync(nested)).toBe(true);
+            expect(JSON.parse(fs.readFileSync(nested, 'utf-8'))).toEqual({
+                enabled: true,
+                schedule: { dayOfWeek: 2, hour: 9, minute: 30 }
+            });
+            // ... and the previously-missing directory was created
+            expect(fs.existsSync(path.dirname(nested))).toBe(true);
+        } finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
     });
 });
