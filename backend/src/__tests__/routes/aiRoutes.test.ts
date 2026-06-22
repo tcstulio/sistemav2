@@ -459,6 +459,28 @@ describe('aiRoutes', () => {
     });
 
     describe('PUT /api/analyze/financial-analysis/automation-config', () => {
+        it('com payload válido (enabled + schedule) retorna 200 e config persistida', async () => {
+            const persisted = {
+                enabled: true,
+                schedule: { dayOfWeek: 3, hour: 14, minute: 30 },
+                lastRunAt: null,
+                lastRunStatus: null,
+            };
+            mockFinancialAnalysisStore.saveAutomationConfig.mockReturnValue(persisted);
+
+            const res = await request(app)
+                .put('/api/analyze/financial-analysis/automation-config')
+                .send({ enabled: true, schedule: { dayOfWeek: 3, hour: 14, minute: 30 } });
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual(persisted);
+            expect(mockFinancialAnalysisStore.saveAutomationConfig).toHaveBeenCalledTimes(1);
+            expect(mockFinancialAnalysisStore.saveAutomationConfig).toHaveBeenCalledWith({
+                enabled: true,
+                schedule: { dayOfWeek: 3, hour: 14, minute: 30 },
+            });
+        });
+
         it('updates enabled and returns 200 with merged config', async () => {
             const merged = { enabled: true, schedule: { dayOfWeek: 1, hour: 8, minute: 0 }, lastRunAt: null, lastRunStatus: null };
             mockFinancialAnalysisStore.saveAutomationConfig.mockReturnValue(merged);

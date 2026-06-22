@@ -78,6 +78,10 @@ export interface GenerateReplyResult {
     text: string;
     usage?: TokenUsage;
     contextWindow?: number;
+    /** Modelo que efetivamente respondeu (ex.: "glm-5.2", "MiniMax-M3"). */
+    model?: string;
+    /** true quando o fallback automático foi acionado (GLM→MiniMax). */
+    fellBack?: boolean;
 }
 
 const CONTEXT_WINDOWS: Record<string, number> = {
@@ -104,7 +108,7 @@ function getContextWindow(model?: string): number {
 }
 
 interface AIProvider {
-    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<GenerateReplyResult>;
+    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult>;
     analyzeSystem(query: string, fileContext: string, options?: { provider?: string, model?: string }): Promise<string>;
     analyzeSentiment(text: string): Promise<{ score: number; label: string }>;
     extractCustomerInfo(text: string): Promise<any>;
@@ -141,7 +145,7 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<GenerateReplyResult> {
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult> {
         if (!this.ai) {
             log.error('Google AI not configured.');
             throw new Error("Google AI not configured.");
@@ -787,6 +791,9 @@ class GoogleProvider implements AIProvider {
 
 // --- Local LLM Provider (OpenAI Compatible) ---
 
+import { isQuotaError, markQuotaExhausted, clearQuotaExhausted } from './llmQuotaState';
+import { llmCallLogService } from './llmCallLogService';
+
 export class LocalProvider implements AIProvider {
     private baseUrl: string;
     private modelName: string;
@@ -795,14 +802,89 @@ export class LocalProvider implements AIProvider {
     // suportar OCR/análise de imagem direto (sem fallback p/ Google). Usa uma base
     // própria pois o modelo multimodal vive em endpoint diferente do de texto.
     private visionConfig?: { baseUrl: string; model: string };
+    // Fallback de TEXTO (ex.: MiniMax M3) acionado quando o provider primário (GLM/Z.AI)
+    // falha de forma RECUPERÁVEL — tipicamente HTTP 429 (rate limit) ou timeout/5xx. Mantém
+    // Judge/Planner/chat funcionando quando a cota do GLM estoura. Endpoint próprio (modelo
+    // e chave diferentes do primário).
+    private fallbackConfig?: { baseUrl: string; model: string; apiKey?: string };
 
-    constructor(baseUrl: string, modelName: string = 'llama3', apiKey?: string, visionConfig?: { baseUrl: string; model: string }) {
+    constructor(baseUrl: string, modelName: string = 'llama3', apiKey?: string, visionConfig?: { baseUrl: string; model: string }, fallbackConfig?: { baseUrl: string; model: string; apiKey?: string }) {
         this.baseUrl = (baseUrl || '').replace(/\/+$/, ''); // remove barra final -> evita //chat/completions
         this.modelName = modelName;
         this.apiKey = apiKey;
         this.visionConfig = visionConfig && visionConfig.baseUrl
             ? { baseUrl: visionConfig.baseUrl.replace(/\/+$/, ''), model: visionConfig.model }
             : undefined;
+        this.fallbackConfig = fallbackConfig && fallbackConfig.baseUrl && process.env.LLM_FALLBACK_ENABLED !== 'false'
+            ? { baseUrl: fallbackConfig.baseUrl.replace(/\/+$/, ''), model: fallbackConfig.model, apiKey: fallbackConfig.apiKey }
+            : undefined;
+    }
+
+    // Erro recuperável -> vale tentar o fallback: rate limit (429), erro de servidor (5xx),
+    // ou timeout/queda de conexão. 4xx (exceto 429) NÃO é recuperável (request inválido).
+    private isRetryableError(err: any): boolean {
+        const status = err?.response?.status;
+        if (status === 429) return true;
+        if (typeof status === 'number' && status >= 500 && status < 600) return true;
+        const code = err?.code;
+        return code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'ECONNREFUSED';
+    }
+
+    // Detalhe legível do erro (status HTTP + corpo, ou code/message) — usado p/ detectar cota.
+    private errDetail(err: any): string {
+        return err?.response
+            ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data || '').slice(0, 200)}`
+            : (err?.code || err?.message || String(err));
+    }
+
+    // POST /chat/completions no primário; se falhar de forma recuperável e houver fallback
+    // configurado, refaz a MESMA chamada no fallback (MiniMax M3). Lança se ambos falharem.
+    // Efeito colateral: SUCESSO limpa o sinal global de cota; FALHA por cota (429/1310/402/...)
+    // o marca — para o TaskRunner segurar o dispatch e retomar quando a API voltar.
+    // Código de erro curto (status HTTP ou code de rede) p/ o log durável (#710).
+    private errCode(err: any): string {
+        return err?.response?.status ? String(err.response.status) : (err?.code || 'error');
+    }
+
+    private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string; origin?: string }): Promise<{ data: any; modelUsed: string; fellBack: boolean }> {
+        const buildBody = (model: string) => ({ model, messages, temperature });
+        const primaryModel = options?.model || this.modelName;
+        const origin = options?.origin;
+        const t0 = Date.now();
+        let primaryErr: any;
+        try {
+            const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(primaryModel), { headers: this.getHeaders(), timeout: 180000 });
+            clearQuotaExhausted(); // sucesso -> cota OK
+            llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: true, latencyMs: Date.now() - t0, origin, totalTokens: r.data?.usage?.total_tokens });
+            return { data: r.data, modelUsed: primaryModel, fellBack: false };
+        } catch (err: any) {
+            primaryErr = err;
+            if (!this.fallbackConfig || !this.isRetryableError(err)) {
+                if (isQuotaError(this.errDetail(err))) markQuotaExhausted(`primário ${this.modelName}: ${this.errDetail(err)}`);
+                llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: false, latencyMs: Date.now() - t0, origin, errorCode: this.errCode(err), errorDetail: this.errDetail(err).slice(0, 300) });
+                throw err;
+            }
+            const reason = err?.response?.status || err?.code || err?.message || 'erro';
+            log.warn(`LLM primário (${this.modelName}) falhou [${reason}] -> fallback para ${this.fallbackConfig.model}`);
+        }
+        // Fallback (MiniMax M3)
+        const fbHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (this.fallbackConfig!.apiKey) fbHeaders['Authorization'] = `Bearer ${this.fallbackConfig!.apiKey}`;
+        const tFb = Date.now();
+        try {
+            const resp = await axios.post(`${this.fallbackConfig!.baseUrl}/chat/completions`, buildBody(this.fallbackConfig!.model), { headers: fbHeaders, timeout: 180000 });
+            log.info(`LLM fallback OK: ${this.fallbackConfig!.model} respondeu no lugar de ${this.modelName}`);
+            clearQuotaExhausted(); // fallback respondeu -> ainda há cota (no MiniMax)
+            llmCallLogService.record({ model: this.fallbackConfig!.model, primaryModel, fellBack: true, ok: true, latencyMs: Date.now() - tFb, origin, errorDetail: `primário ${primaryModel}: ${this.errDetail(primaryErr)}`.slice(0, 300), totalTokens: resp.data?.usage?.total_tokens });
+            return { data: resp.data, modelUsed: this.fallbackConfig!.model, fellBack: true };
+        } catch (fbErr: any) {
+            // Ambos falharam: se qualquer um foi erro de cota, sinaliza esgotamento GLOBAL.
+            if (isQuotaError(this.errDetail(fbErr)) || isQuotaError(this.errDetail(primaryErr))) {
+                markQuotaExhausted(`primário+fallback esgotados — ${this.errDetail(fbErr)}`);
+            }
+            llmCallLogService.record({ model: this.fallbackConfig!.model, primaryModel, fellBack: true, ok: false, latencyMs: Date.now() - tFb, origin, errorCode: this.errCode(fbErr), errorDetail: this.errDetail(fbErr).slice(0, 300) });
+            throw fbErr;
+        }
     }
 
     // true quando o provider tem um modelo de visão configurado + chave (ex.: GLM-4.6V).
@@ -837,7 +919,7 @@ export class LocalProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string }): Promise<GenerateReplyResult> {
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult> {
         const toolsPrompt = TOOLS_PROMPT;
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
@@ -847,6 +929,9 @@ export class LocalProvider implements AIProvider {
         const MAX_ITERATIONS = 5;
         const seenToolCalls = new Set<string>();
         const accUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        // Track which model actually responded and whether fallback was used.
+        let lastModelUsed: string = options?.model || this.modelName;
+        let lastFellBack = false;
 
         const accumulate = (usage: any) => {
             if (!usage) return;
@@ -870,18 +955,13 @@ export class LocalProvider implements AIProvider {
             }
 
             try {
-                const response = await axios.post(`${this.baseUrl}/chat/completions`, {
-                    model: options?.model || this.modelName,
-                    messages: messages,
-                    temperature: 0.5
-                }, {
-                    headers: this.getHeaders(),
-                    timeout: 180000
-                });
+                const { data, modelUsed, fellBack } = await this.postChatCompletion(messages, 0.5, options);
+                lastModelUsed = modelUsed;
+                lastFellBack = fellBack;
 
-                accumulate(response.data.usage);
+                accumulate(data.usage);
 
-                const reply = response.data.choices[0].message.content;
+                const reply = data.choices[0].message.content;
 
                 const toolCall = extractToolCall(reply);
 
@@ -896,7 +976,7 @@ export class LocalProvider implements AIProvider {
                         const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
                         if (String(toolCall.tool).startsWith('prepare_')) {
-                            return { text: toolResult, usage: accUsage, contextWindow: ctxWindow };
+                            return { text: toolResult, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                         }
 
                         currentContext += `\n\n[TOOL RESULT]: ${toolResult}`;
@@ -905,21 +985,21 @@ export class LocalProvider implements AIProvider {
 
                     } catch (e: any) {
                         if (e.name === 'AskUserInterrupt') {
-                            return { text: e.question, usage: accUsage, contextWindow: ctxWindow };
+                            return { text: e.question, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                         }
                         log.error("Local LLM Tool Error", e);
-                        return { text: reply, usage: accUsage, contextWindow: ctxWindow };
+                        return { text: reply, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                     }
                 }
 
-                return { text: reply, usage: accUsage, contextWindow: ctxWindow };
+                return { text: reply, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
 
             } catch (error: any) {
                 const detail = error?.response
                     ? `HTTP ${error.response.status} ${JSON.stringify(error.response.data)?.slice(0, 300)}`
                     : (error?.code || error?.message || String(error));
                 log.error(`Local LLM Error [url=${this.baseUrl}/chat/completions model=${this.modelName}]: ${detail}`);
-                return { text: `Erro LLM Local: ${detail}`, usage: accUsage, contextWindow: ctxWindow };
+                return { text: `Erro LLM Local: ${detail}`, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
             }
         }
         try {
@@ -936,18 +1016,14 @@ export class LocalProvider implements AIProvider {
             while (finalMessages.length > 1 && finalMessages[1].role === 'assistant') {
                 finalMessages.splice(1, 1);
             }
-            const finalResp = await axios.post(`${this.baseUrl}/chat/completions`, {
-                model: options?.model || this.modelName,
-                messages: finalMessages,
-                temperature: 0.3,
-            }, { headers: this.getHeaders(), timeout: 180000 });
-            accumulate(finalResp.data?.usage);
-            const finalText = finalResp.data?.choices?.[0]?.message?.content;
-            if (finalText) return { text: finalText, usage: accUsage, contextWindow: ctxWindow };
+            const { data: finalData, modelUsed: finalModel, fellBack: finalFellBack } = await this.postChatCompletion(finalMessages, 0.3, options);
+            accumulate(finalData?.usage);
+            const finalText = finalData?.choices?.[0]?.message?.content;
+            if (finalText) return { text: finalText, usage: accUsage, contextWindow: ctxWindow, model: finalModel, fellBack: finalFellBack };
         } catch (e: any) {
             log.error('Local LLM final-answer fallback error', e?.message || e);
         }
-        return { text: 'Não consegui completar a solicitação com as ferramentas disponíveis. Pode reformular ou dar mais detalhes (ex.: o projeto, cliente ou período)?', usage: accUsage, contextWindow: ctxWindow };
+        return { text: 'Não consegui completar a solicitação com as ferramentas disponíveis. Pode reformular ou dar mais detalhes (ex.: o projeto, cliente ou período)?', usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
     }
 
     async analyzeSystem(query: string, fileContext: string): Promise<string> {
@@ -1288,9 +1364,14 @@ const glmVisionConfig = (apiKey?: string) => apiKey
     ? { baseUrl: (config as any).zaiVisionBaseUrl || 'https://api.z.ai/api/paas/v4', model: (config as any).zaiVisionModel || 'glm-4.6v' }
     : undefined;
 
+// Fallback de texto p/ o GLM: MiniMax M3 (quando há chave configurada). Acionado em 429/timeout/5xx.
+const minimaxFallbackConfig = () => (config.minimaxApiKey && config.minimaxBaseUrl)
+    ? { baseUrl: config.minimaxBaseUrl, model: config.minimaxModel, apiKey: config.minimaxApiKey }
+    : undefined;
+
 function createProvider(name: string, url?: string, key?: string, modelName?: string): AIProvider {
     if (name === 'google') return new GoogleProvider(key || config.googleApiKey, modelName);
-    if (name === 'glm') return new LocalProvider(url || config.zaiBaseUrl, modelName || config.zaiModel, key || config.zaiApiKey, glmVisionConfig(key || config.zaiApiKey));
+    if (name === 'glm') return new LocalProvider(url || config.zaiBaseUrl, modelName || config.zaiModel, key || config.zaiApiKey, glmVisionConfig(key || config.zaiApiKey), minimaxFallbackConfig());
     if (name === 'minimax') return new LocalProvider(url || config.minimaxBaseUrl, modelName || config.minimaxModel, key || config.minimaxApiKey);
     return new LocalProvider(url || config.localLlmUrl, modelName || config.localModelName);
 }
@@ -1366,12 +1447,12 @@ export const aiService = {
             const mm = getMultimodalProvider();
             if (mm) {
                 log.info(`generateReply: imagem presente e provider '${providerName}' sem visão -> roteando para Google.`);
-                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel });
+                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName });
             }
             log.warn(`generateReply: imagem presente mas nenhum provider com visão disponível (sem googleApiKey) -> seguindo com '${providerName}'.`);
         }
 
-        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName });
+        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName });
     },
 
     analyzeSystem: async (query: string, rootPath: string = '../src') => {

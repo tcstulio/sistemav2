@@ -21,6 +21,7 @@ import { tulipaService } from '../services/tulipaService';
 import { userPermissionsService } from '../services/userPermissionsService';
 import { dolibarrService } from '../services/dolibarrService';
 import { adminAuditService } from '../services/adminAuditService';
+import { llmCallLogService } from '../services/llmCallLogService';
 
 const router = express.Router();
 
@@ -720,6 +721,24 @@ router.get('/audit', (req, res) => {
         res.json({ entries: adminAuditService.list({ limit, action, target }) });
     } catch (e: any) {
         log.error('Get audit error', { error: e.message });
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/admin/llm-calls — log durável de chamadas de LLM (#710), mais recentes primeiro.
+// Query: ?limit=, ?onlyErrors=true, ?model=, ?sinceMs= (epoch ms). ?summary=true → agregado.
+router.get('/llm-calls', (req, res) => {
+    try {
+        if (req.query.summary === 'true') {
+            return res.json({ summary: llmCallLogService.summary() });
+        }
+        const limit = req.query.limit ? Number(req.query.limit) : 100;
+        const onlyErrors = req.query.onlyErrors === 'true';
+        const model = typeof req.query.model === 'string' ? req.query.model : undefined;
+        const since = req.query.sinceMs ? Number(req.query.sinceMs) : undefined;
+        res.json({ entries: llmCallLogService.list({ limit, onlyErrors, model, since }) });
+    } catch (e: any) {
+        log.error('Get llm-calls error', { error: e.message });
         res.status(500).json({ error: e.message });
     }
 });

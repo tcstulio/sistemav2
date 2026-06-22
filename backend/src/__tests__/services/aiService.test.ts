@@ -584,5 +584,38 @@ describe('AiService', () => {
             expect(result.text).toBe('Não encontrei usuários chamados marcus.');
             expect(result.text).not.toContain('Max iterations');
         });
+
+        // #718: GenerateReplyResult deve incluir model e fellBack ─────────────────────────────────
+
+        it('generateReply: inclui model e fellBack=false quando o primário responde', async () => {
+            (axios.post as any).mockResolvedValue({
+                data: { choices: [{ message: { content: 'Resposta do primário.' } }], usage: {} },
+            });
+            const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2');
+            const result = await provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
+            expect(result.text).toBe('Resposta do primário.');
+            expect(result.model).toBe('glm-5.2');
+            expect(result.fellBack).toBe(false);
+        });
+
+        it('generateReply: inclui model=fallback e fellBack=true quando o primário falha com 429', async () => {
+            const fallbackConfig = { baseUrl: 'https://api.minimax.io/v1', model: 'MiniMax-M3', apiKey: 'fb-key' };
+            (axios.post as any).mockImplementation(async (url: string) => {
+                if (url.includes('localhost')) {
+                    // Primário retorna 429 (retryable → aciona fallback)
+                    const err: any = new Error('Rate limited');
+                    err.response = { status: 429, data: {} };
+                    throw err;
+                }
+                // Fallback (MiniMax)
+                return { data: { choices: [{ message: { content: 'Resposta do MiniMax.' } }], usage: {} } };
+            });
+            // constructor: (baseUrl, modelName, apiKey?, visionConfig?, fallbackConfig?)
+            const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2', undefined, undefined, fallbackConfig);
+            const result = await provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
+            expect(result.text).toBe('Resposta do MiniMax.');
+            expect(result.model).toBe('MiniMax-M3');
+            expect(result.fellBack).toBe(true);
+        });
     });
 });
