@@ -78,6 +78,10 @@ export interface GenerateReplyResult {
     text: string;
     usage?: TokenUsage;
     contextWindow?: number;
+    /** Modelo que efetivamente respondeu (ex.: "glm-5.2", "MiniMax-M3"). */
+    model?: string;
+    /** true quando o fallback automático foi acionado (GLM→MiniMax). */
+    fellBack?: boolean;
 }
 
 const CONTEXT_WINDOWS: Record<string, number> = {
@@ -842,7 +846,7 @@ export class LocalProvider implements AIProvider {
         return err?.response?.status ? String(err.response.status) : (err?.code || 'error');
     }
 
-    private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string; origin?: string }): Promise<any> {
+    private async postChatCompletion(messages: any[], temperature: number, options?: { model?: string; origin?: string }): Promise<{ data: any; modelUsed: string; fellBack: boolean }> {
         const buildBody = (model: string) => ({ model, messages, temperature });
         const primaryModel = options?.model || this.modelName;
         const origin = options?.origin;
@@ -852,7 +856,7 @@ export class LocalProvider implements AIProvider {
             const r = await axios.post(`${this.baseUrl}/chat/completions`, buildBody(primaryModel), { headers: this.getHeaders(), timeout: 180000 });
             clearQuotaExhausted(); // sucesso -> cota OK
             llmCallLogService.record({ model: primaryModel, primaryModel, fellBack: false, ok: true, latencyMs: Date.now() - t0, origin, totalTokens: r.data?.usage?.total_tokens });
-            return r;
+            return { data: r.data, modelUsed: primaryModel, fellBack: false };
         } catch (err: any) {
             primaryErr = err;
             if (!this.fallbackConfig || !this.isRetryableError(err)) {
@@ -872,7 +876,7 @@ export class LocalProvider implements AIProvider {
             log.info(`LLM fallback OK: ${this.fallbackConfig!.model} respondeu no lugar de ${this.modelName}`);
             clearQuotaExhausted(); // fallback respondeu -> ainda há cota (no MiniMax)
             llmCallLogService.record({ model: this.fallbackConfig!.model, primaryModel, fellBack: true, ok: true, latencyMs: Date.now() - tFb, origin, errorDetail: `primário ${primaryModel}: ${this.errDetail(primaryErr)}`.slice(0, 300), totalTokens: resp.data?.usage?.total_tokens });
-            return resp;
+            return { data: resp.data, modelUsed: this.fallbackConfig!.model, fellBack: true };
         } catch (fbErr: any) {
             // Ambos falharam: se qualquer um foi erro de cota, sinaliza esgotamento GLOBAL.
             if (isQuotaError(this.errDetail(fbErr)) || isQuotaError(this.errDetail(primaryErr))) {
@@ -925,6 +929,9 @@ export class LocalProvider implements AIProvider {
         const MAX_ITERATIONS = 5;
         const seenToolCalls = new Set<string>();
         const accUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        // Track which model actually responded and whether fallback was used.
+        let lastModelUsed: string = options?.model || this.modelName;
+        let lastFellBack = false;
 
         const accumulate = (usage: any) => {
             if (!usage) return;
@@ -948,11 +955,13 @@ export class LocalProvider implements AIProvider {
             }
 
             try {
-                const response = await this.postChatCompletion(messages, 0.5, options);
+                const { data, modelUsed, fellBack } = await this.postChatCompletion(messages, 0.5, options);
+                lastModelUsed = modelUsed;
+                lastFellBack = fellBack;
 
-                accumulate(response.data.usage);
+                accumulate(data.usage);
 
-                const reply = response.data.choices[0].message.content;
+                const reply = data.choices[0].message.content;
 
                 const toolCall = extractToolCall(reply);
 
@@ -967,7 +976,7 @@ export class LocalProvider implements AIProvider {
                         const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
                         if (String(toolCall.tool).startsWith('prepare_')) {
-                            return { text: toolResult, usage: accUsage, contextWindow: ctxWindow };
+                            return { text: toolResult, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                         }
 
                         currentContext += `\n\n[TOOL RESULT]: ${toolResult}`;
@@ -976,21 +985,21 @@ export class LocalProvider implements AIProvider {
 
                     } catch (e: any) {
                         if (e.name === 'AskUserInterrupt') {
-                            return { text: e.question, usage: accUsage, contextWindow: ctxWindow };
+                            return { text: e.question, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                         }
                         log.error("Local LLM Tool Error", e);
-                        return { text: reply, usage: accUsage, contextWindow: ctxWindow };
+                        return { text: reply, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                     }
                 }
 
-                return { text: reply, usage: accUsage, contextWindow: ctxWindow };
+                return { text: reply, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
 
             } catch (error: any) {
                 const detail = error?.response
                     ? `HTTP ${error.response.status} ${JSON.stringify(error.response.data)?.slice(0, 300)}`
                     : (error?.code || error?.message || String(error));
                 log.error(`Local LLM Error [url=${this.baseUrl}/chat/completions model=${this.modelName}]: ${detail}`);
-                return { text: `Erro LLM Local: ${detail}`, usage: accUsage, contextWindow: ctxWindow };
+                return { text: `Erro LLM Local: ${detail}`, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
             }
         }
         try {
@@ -1007,14 +1016,14 @@ export class LocalProvider implements AIProvider {
             while (finalMessages.length > 1 && finalMessages[1].role === 'assistant') {
                 finalMessages.splice(1, 1);
             }
-            const finalResp = await this.postChatCompletion(finalMessages, 0.3, options);
-            accumulate(finalResp.data?.usage);
-            const finalText = finalResp.data?.choices?.[0]?.message?.content;
-            if (finalText) return { text: finalText, usage: accUsage, contextWindow: ctxWindow };
+            const { data: finalData, modelUsed: finalModel, fellBack: finalFellBack } = await this.postChatCompletion(finalMessages, 0.3, options);
+            accumulate(finalData?.usage);
+            const finalText = finalData?.choices?.[0]?.message?.content;
+            if (finalText) return { text: finalText, usage: accUsage, contextWindow: ctxWindow, model: finalModel, fellBack: finalFellBack };
         } catch (e: any) {
             log.error('Local LLM final-answer fallback error', e?.message || e);
         }
-        return { text: 'Não consegui completar a solicitação com as ferramentas disponíveis. Pode reformular ou dar mais detalhes (ex.: o projeto, cliente ou período)?', usage: accUsage, contextWindow: ctxWindow };
+        return { text: 'Não consegui completar a solicitação com as ferramentas disponíveis. Pode reformular ou dar mais detalhes (ex.: o projeto, cliente ou período)?', usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
     }
 
     async analyzeSystem(query: string, fileContext: string): Promise<string> {
