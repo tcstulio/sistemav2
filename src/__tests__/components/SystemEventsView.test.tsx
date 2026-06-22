@@ -101,4 +101,69 @@ describe('SystemEventsView (#519)', () => {
         // o ID cru / referência rotulada não vaza: o nome resolvido aparece no lugar
         expect(container.textContent).not.toContain('#7');
     });
+
+    it('(#544) actor.name "unknown" vira "Sistema" quando userMap não resolve o ID', async () => {
+        mockUsers.mockReturnValue({ data: [] }); // sem userMap
+        mockEvents.mockResolvedValue({ events: [ev({ actor: { id: 'x', name: 'unknown' }, description: 'ação sem autor' })], total: 1, sources: [] });
+        const { container } = render(<SystemEventsView onNavigate={vi.fn()} />);
+        await screen.findByText(/ação sem autor/);
+        expect(container.textContent).not.toContain('unknown');
+        expect(screen.getByText(/Sistema/)).toBeTruthy();
+    });
+
+    it('(#544) actor.name numérico cru sem entrada no userMap vira "Sistema"', async () => {
+        mockUsers.mockReturnValue({ data: [] }); // userMap vazio
+        mockEvents.mockResolvedValue({ events: [ev({ actor: { id: '42', name: '42' }, description: 'ação numérica' })], total: 1, sources: [] });
+        const { container } = render(<SystemEventsView onNavigate={vi.fn()} />);
+        await screen.findByText(/ação numérica/);
+        // nome numérico cru nunca deve aparecer como nome de exibição
+        expect(container.textContent).not.toMatch(/\b42\b.*\b42\b/); // não exibe '42 42'
+        expect(screen.getByText(/Sistema/)).toBeTruthy();
+    });
+});
+
+describe('SystemEventsView (#587) — cliques e navegação', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockSources.mockResolvedValue(['audit', 'agent', 'delegation', 'notification', 'scheduler', 'approval', 'task']);
+    });
+
+    it('evento agent com entityType=invoice e entityId=42 → onNavigate("invoices","42")', async () => {
+        const onNav = vi.fn();
+        mockEvents.mockResolvedValue({
+            events: [ev({ entityType: 'invoice', entityId: '42', description: 'criou fatura' })],
+            total: 1, sources: [],
+        });
+        render(<SystemEventsView onNavigate={onNav} />);
+        fireEvent.click(await screen.findByText('criou fatura'));
+        expect(onNav).toHaveBeenCalledWith('invoices', '42');
+    });
+
+    it('evento scheduler sem linkTo/entidade → clique NÃO chama onNavigate e card sem cursor-pointer', async () => {
+        const onNav = vi.fn();
+        mockEvents.mockResolvedValue({
+            events: [ev({ source: 'scheduler', description: 'job executado', entityType: undefined, entityId: undefined, linkTo: undefined })],
+            total: 1, sources: [],
+        });
+        render(<SystemEventsView onNavigate={onNav} />);
+        const text = await screen.findByText('job executado');
+        // Sobe ao container do card (div com p-4)
+        const card = text.closest('[class*="p-4"]');
+        expect(card).toBeTruthy();
+        fireEvent.click(card!);
+        expect(onNav).not.toHaveBeenCalled();
+        expect(card!.className).toContain('cursor-default');
+        expect(card!.className).not.toContain('cursor-pointer');
+    });
+
+    it('evento com linkTo válido continua navegando (regressão zero)', async () => {
+        const onNav = vi.fn();
+        mockEvents.mockResolvedValue({
+            events: [ev({ linkTo: 'tasks/99', description: 'delegação criada' })],
+            total: 1, sources: [],
+        });
+        render(<SystemEventsView onNavigate={onNav} />);
+        fireEvent.click(await screen.findByText('delegação criada'));
+        expect(onNav).toHaveBeenCalledWith('tasks', '99');
+    });
 });

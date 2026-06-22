@@ -9,9 +9,16 @@ export interface ThirdParty {
     email?: string;
     phone?: string;
     phone_mobile?: string;
+    fax?: string;
+    url?: string;
+    idprof1?: string; // CNPJ (PJ) ou CPF (PF)
+    idprof2?: string;
+    typent_id?: string; // tipo entidade: distingue PF (=8) de PJ
+    socialnetworks?: Record<string, string>;
     status: '0' | '1'; // 0=inactive, 1=active
     client: string; // '0'|'1'|'2'|'3'
     fournisseur: string; // '0'|'1'
+
     code_client?: string;
     code_fournisseur?: string;
     state_id?: string;

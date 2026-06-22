@@ -102,6 +102,34 @@ export const getProduct = async (config: DolibarrConfig, id: string) => {
     return request(url, { headers: getHeaders(config.apiKey) });
 };
 
+export const getShipment = async (config: DolibarrConfig, id: string): Promise<Shipment> => {
+    const url = `${sanitizeUrl(config.apiUrl)}/shipments/${id}`;
+    const d = await request(url, { headers: getHeaders(config.apiKey) });
+    return {
+        id: String(d.id),
+        ref: d.ref,
+        socid: String(d.socid),
+        fk_commande: d.fk_commande ? String(d.fk_commande) : undefined,
+        project_id: d.fk_projet ? String(d.fk_projet) : undefined,
+        date_creation: parseInt(d.date_creation),
+        date_delivery: d.date_delivery ? parseInt(d.date_delivery) : undefined,
+        status: String(d.statut) as any,
+        tracking_number: d.tracking_number,
+        fk_user_author: d.fk_user_author ? String(d.fk_user_author) : undefined,
+        fk_user_valid: d.fk_user_valid ? String(d.fk_user_valid) : undefined,
+        lines: d.lines ? d.lines.map((l: Record<string, any>) => ({
+            id: String(l.id),
+            parent_id: String(l.fk_expedition ?? l.parent_id ?? id),
+            product_id: String(l.fk_product),
+            label: l.label ?? '',
+            description: l.description ?? '',
+            qty: parseFloat(l.qty_shipped ?? l.qty ?? 0),
+            date_modification: l.date_modification ? parseInt(l.date_modification) : undefined,
+        })) : [],
+        array_options: d.array_options,
+    };
+};
+
 export const getProductStock = async (config: DolibarrConfig, id: string) => {
     const url = `${sanitizeUrl(config.apiUrl)}/products/${id}/stock`;
     return request(url, { headers: getHeaders(config.apiKey) });
@@ -258,6 +286,66 @@ export const createBOM = async (config: DolibarrConfig, data: Record<string, unk
 
 export const deleteShipment = async (config: DolibarrConfig, id: string) => {
     const url = `${sanitizeUrl(config.apiUrl)}/shipments/${id}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+export const deleteManufacturingOrder = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/mrp/mo/${id}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+export const deleteBOM = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/boms/${id}`;
+    return request(url, {
+        method: 'DELETE',
+        headers: getHeaders(config.apiKey)
+    });
+};
+
+export const validateManufacturingOrder = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/mrp/mo/${id}/validate`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
+    });
+};
+
+export const cancelManufacturingOrder = async (config: DolibarrConfig, id: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/mrp/mo/${id}/cancel`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify({})
+    });
+};
+
+export const addBOMLine = async (config: DolibarrConfig, bomId: string, data: Record<string, unknown>) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/boms/${bomId}/lines`;
+    return request(url, {
+        method: 'POST',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const updateBOMLine = async (config: DolibarrConfig, bomId: string, lineId: string, data: Record<string, unknown>) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/boms/${bomId}/lines/${lineId}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
+export const deleteBOMLine = async (config: DolibarrConfig, bomId: string, lineId: string) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/boms/${bomId}/lines/${lineId}`;
     return request(url, {
         method: 'DELETE',
         headers: getHeaders(config.apiKey)

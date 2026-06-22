@@ -25,6 +25,54 @@ describe('Dolibarr Mappers', () => {
             expect(result.id).toBe('2');
             expect(result.name).toBe('');
         });
+
+        it('maps extended fields (url, idprof1, typent_id, phone_mobile, fax, socialnetworks, array_options)', () => {
+            const raw = {
+                id: '3',
+                name: 'Empresa XYZ',
+                client: '1',
+                fournisseur: '0',
+                url: 'https://empresa.com',
+                idprof1: '12.345.678/0001-99',
+                typent_id: '5',
+                phone_mobile: '+5511999999999',
+                fax: '+551133334444',
+                socialnetworks: { linkedin: 'https://linkedin.com/in/xyz' },
+                array_options: { options_assinante: 'João Silva' },
+            };
+            const result = mappers.mapThirdParty(raw as any);
+            expect(result.url).toBe('https://empresa.com');
+            expect(result.idprof1).toBe('12.345.678/0001-99');
+            expect(result.typent_id).toBe('5');
+            expect(result.phone_mobile).toBe('+5511999999999');
+            expect(result.fax).toBe('+551133334444');
+            expect(result.socialnetworks?.linkedin).toBe('https://linkedin.com/in/xyz');
+            expect(result.array_options?.options_assinante).toBe('João Silva');
+        });
+
+        it('mapSupplier maps extended fields', () => {
+            const raw = {
+                id: '10',
+                name: 'Fornecedor ABC',
+                client: '0',
+                fournisseur: '1',
+                url: 'https://fornecedor.com',
+                idprof1: '98.765.432/0001-11',
+                typent_id: '8',
+                phone_mobile: '+5521988887777',
+                fax: undefined,
+                socialnetworks: undefined,
+                array_options: undefined,
+            };
+            const result = mappers.mapSupplier(raw as any);
+            expect(result.url).toBe('https://fornecedor.com');
+            expect(result.idprof1).toBe('98.765.432/0001-11');
+            expect(result.typent_id).toBe('8');
+            expect(result.phone_mobile).toBe('+5521988887777');
+            expect(result.fax).toBeUndefined();
+            expect(result.socialnetworks).toBeUndefined();
+            expect(result.array_options).toBeUndefined();
+        });
     });
 
     describe('Invoice mappers', () => {
@@ -326,6 +374,55 @@ describe('Dolibarr Mappers', () => {
             const result = mappers.mapContract(raw);
             expect(result.id).toBe('1');
             expect(result.ref).toBe('CTR001');
+        });
+
+        it('populates lines from raw contract with lines array', () => {
+            const raw = {
+                id: '10',
+                ref: 'CTR010',
+                fk_soc: '5',
+                statut: '1',
+                lines: [
+                    { id: '100', description: 'Suporte mensal', qty: 1, subprice: 500 },
+                    { id: '101', description: 'Licença anual', qty: 3, subprice: 200 },
+                ],
+            };
+            const result = mappers.mapContract(raw);
+            expect(result.lines).toHaveLength(2);
+            expect(result.lines![0].desc).toBe('Suporte mensal');
+            expect(result.lines![0].qty).toBe(1);
+            expect(result.lines![0].price).toBe(500);
+            expect(result.lines![1].desc).toBe('Licença anual');
+            expect(result.lines![1].qty).toBe(3);
+        });
+
+        it('sets lines to empty array when raw has no lines', () => {
+            const raw = { id: '11', ref: 'CTR011', statut: '0' };
+            const result = mappers.mapContract(raw);
+            expect(result.lines).toEqual([]);
+        });
+
+        it('populates array_options from raw contract', () => {
+            const raw = {
+                id: '12',
+                ref: 'CTR012',
+                statut: '1',
+                array_options: { options_custom_field: 'valor123' },
+            };
+            const result = mappers.mapContract(raw);
+            expect(result.array_options).toEqual({ options_custom_field: 'valor123' });
+        });
+
+        it('leaves array_options undefined when not present', () => {
+            const raw = { id: '13', ref: 'CTR013', statut: '0' };
+            const result = mappers.mapContract(raw);
+            expect(result.array_options).toBeUndefined();
+        });
+
+        it('maps project_id from raw contract', () => {
+            const raw = { id: '14', ref: 'CTR014', statut: '1', project_id: '42' };
+            const result = mappers.mapContract(raw);
+            expect(result.project_id).toBe('42');
         });
     });
 

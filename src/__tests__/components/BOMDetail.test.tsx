@@ -44,6 +44,45 @@ const bom: BOM = {
     ],
 };
 
+describe('BOMDetail — Delete (#585)', () => {
+    it('shows Excluir button when onDelete is provided', () => {
+        const onDelete = vi.fn();
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={config} onClose={vi.fn()} onDelete={onDelete} />
+        );
+        expect(screen.getByTestId('bom-delete-btn')).toBeInTheDocument();
+    });
+
+    it('shows confirmation banner after clicking Excluir', () => {
+        const onDelete = vi.fn();
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={config} onClose={vi.fn()} onDelete={onDelete} />
+        );
+        fireEvent.click(screen.getByTestId('bom-delete-btn'));
+        expect(screen.getByTestId('bom-delete-confirm-btn')).toBeInTheDocument();
+    });
+
+    it('calls onDelete after confirming', () => {
+        const onDelete = vi.fn();
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={config} onClose={vi.fn()} onDelete={onDelete} />
+        );
+        fireEvent.click(screen.getByTestId('bom-delete-btn'));
+        fireEvent.click(screen.getByTestId('bom-delete-confirm-btn'));
+        expect(onDelete).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not call onDelete when confirmation is cancelled', () => {
+        const onDelete = vi.fn();
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={config} onClose={vi.fn()} onDelete={onDelete} />
+        );
+        fireEvent.click(screen.getByTestId('bom-delete-btn'));
+        fireEvent.click(screen.getByText('Cancelar'));
+        expect(onDelete).not.toHaveBeenCalled();
+    });
+});
+
 describe('BOMDetail — Currency standardization (#642)', () => {
     it('renders estimated total cost in BRL via formatCurrency on overview (no $ prefix)', () => {
         const { container } = render(

@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import InvoiceList from '../../components/InvoiceList';
 import { cloneInvoice } from '../../services/api/commercial';
+import { DolibarrService } from '../../services/dolibarrService';
 import { useInvoices, useProjects } from '../../hooks/dolibarr';
 import { useInvoiceMutations } from '../../hooks/useMutations';
-import { DolibarrService } from '../../services/dolibarrService';
 import { formatCurrency } from '../../utils/formatUtils';
 
 const { toastMock } = vi.hoisted(() => ({
@@ -65,6 +65,10 @@ vi.mock('../../hooks/usePrefill', () => ({
 
 vi.mock('../../hooks/useDolibarrLink', () => ({
     useDolibarrLink: vi.fn(() => ({ openLink: vi.fn() })),
+}));
+
+vi.mock('../../components/common/LinkedObjects', () => ({
+    LinkedObjects: () => <div data-testid="linked-objects-mock" />,
 }));
 
 vi.mock('../../hooks/useMutations', () => ({
@@ -274,6 +278,106 @@ describe('InvoiceList — Final currency sweep (#643)', () => {
         expect(text.match(/(?<!R)\$/g)).toBeNull();
         // Exactly 2 decimal places (pt-BR format: ",dd")
         expect(formatCurrency(1234.56)).toMatch(/^R\$\s[\d.]+,\d{2}$/);
+    });
+});
+
+describe('InvoiceList — alvos de clique e exclusão (#553)', () => {
+    const defaultInvoice = {
+        id: 'inv1',
+        ref: 'FA2501-0001',
+        socid: 'cust1',
+        date: 1700000000,
+        total_ttc: 1200,
+        statut: '1',
+        type: '0',
+        project_id: null,
+        order_id: null,
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        // Garante estado isolado: clearAllMocks não reseta mockReturnValue de
+        // describes anteriores, então redefinimos a lista padrão aqui.
+        vi.mocked(useInvoices).mockReturnValue({
+            data: [defaultInvoice],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+    });
+
+    it('renderiza a lista de faturas reutilizando os mocks de useInvoices/useCustomers', async () => {
+        renderComponent();
+
+        // ref da fatura aparece como área "abrir fatura"
+        expect(await screen.findByRole('button', { name: 'Abrir fatura FA2501-0001' })).toBeTruthy();
+        // nome do cliente aparece como alvo "abrir cliente"
+        expect(screen.getByRole('button', { name: 'Abrir cliente Cliente Teste' })).toBeTruthy();
+    });
+
+    it('clicar na área principal do card (abrir fatura) abre o detalhe e NÃO navega para o cliente', async () => {
+        const onNavigate = vi.fn();
+        const user = userEvent.setup();
+        renderComponent({ onNavigate });
+
+        // Detalhe ainda não está visível
+        expect(screen.queryByText('Valor da Fatura')).toBeNull();
+
+        await user.click(await screen.findByRole('button', { name: 'Abrir fatura FA2501-0001' }));
+
+        // Detalhe da fatura aparece
+        await waitFor(() => {
+            expect(screen.getByText('Valor da Fatura')).toBeTruthy();
+        });
+        // Não navegou para o cliente
+        expect(onNavigate).not.toHaveBeenCalled();
+    });
+
+    it('clicar no nome do cliente chama onNavigate("customers", socid) e NÃO abre o detalhe da fatura', async () => {
+        const onNavigate = vi.fn();
+        const user = userEvent.setup();
+        renderComponent({ onNavigate });
+
+        await user.click(screen.getByRole('button', { name: 'Abrir cliente Cliente Teste' }));
+
+        expect(onNavigate).toHaveBeenCalledWith('customers', 'cust1');
+        expect(onNavigate).toHaveBeenCalledTimes(1);
+        // Detalhe da fatura não abre
+        expect(screen.queryByText('Valor da Fatura')).toBeNull();
+    });
+
+    it('exibe o botão de excluir DESABILITADO com título explicativo para fatura não-rascunho', async () => {
+        renderComponent();
+
+        const btn = await screen.findByRole('button', { name: 'Excluir indisponível' });
+        expect((btn as HTMLButtonElement).disabled).toBe(true);
+        expect(btn.getAttribute('title')).toContain('rascunho');
+    });
+
+    it('exclui fatura em rascunho: confirma no modal, chama deleteInvoice e refaz a lista', async () => {
+        vi.mocked(useInvoices).mockReturnValue({
+            data: [
+                { id: 'invDraft', ref: 'FA-DRAFT', socid: 'cust1', date: 1700000000, total_ttc: 500, statut: '0', type: '0', project_id: null, order_id: null },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+        vi.mocked(DolibarrService.deleteInvoice).mockResolvedValue(true as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        // Abre a confirmação do botão de excluir (rascunho -> habilitado)
+        const trash = await screen.findByRole('button', { name: 'Excluir' });
+        await user.click(trash);
+
+        // Confirma no modal (dialog) -> botão "Excluir"
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByRole('button', { name: 'Excluir' }));
+
+        await waitFor(() => {
+            expect(DolibarrService.deleteInvoice).toHaveBeenCalledWith(mockConfig, 'invDraft');
+            expect(mockRefetch).toHaveBeenCalled();
+        });
     });
 });
 
