@@ -20,7 +20,6 @@ import { logger } from '../utils/logger';
 const log = logger.child('CustomerList');
 
 // Common Components
-import { PaginationControls } from './common/PaginationControls';
 import { LinkedObjects } from './common/LinkedObjects';
 import { ThirdPartyContacts } from './common/ThirdPartyContacts';
 
@@ -91,22 +90,21 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
     const { data: contacts = [] } = useContacts(config, !!config);
 
 
-    // Pagination
-    const [page, setPage] = useState(0);
-    const [limit, setLimit] = useState(20);
-
     // Selection
     const [selectedCustomer, setSelectedCustomer] = useState<ThirdParty | null>(null);
 
     // Status filter via Tabs (cliente "3" = ambos, mantido fora do toolbar)
     const [filterType, setFilterType] = useState<'all' | 'customer' | 'prospect'>('all');
 
-    // Tab State
-    const [activeTab, setActiveTabState] = useState<'overview' | 'timeline' | 'contacts' | 'invoices' | 'proposals' | 'orders' | 'shipments' | 'projects' | 'tickets'>(() => {
-        return (localStorage.getItem('coolgroove_customer_tab') as any) || 'overview';
+    // Tab State — valid tabs currently rendered in the detail panel
+    const VALID_TABS = ['overview', 'contacts', 'projects', 'invoices', 'orders', 'proposals'] as const;
+    type ValidTab = typeof VALID_TABS[number];
+    const [activeTab, setActiveTabState] = useState<ValidTab>(() => {
+        const stored = localStorage.getItem('coolgroove_customer_tab');
+        return (VALID_TABS as readonly string[]).includes(stored ?? '') ? (stored as ValidTab) : 'overview';
     });
 
-    const setActiveTab = (tab: typeof activeTab) => {
+    const setActiveTab = (tab: ValidTab) => {
         setActiveTabState(tab);
         localStorage.setItem('coolgroove_customer_tab', tab);
     };
@@ -217,12 +215,6 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
         initialSortKey: 'name',
     });
     const filteredCustomers = controls.result;
-    const searchTerm = controls.search;
-
-    // Reset page on search change
-    useEffect(() => {
-        setPage(0);
-    }, [searchTerm]);
 
     const customerInvoices = useMemo(() => selectedCustomer ? invoices.filter(i => String(i.socid) === String(selectedCustomer.id)) : [], [selectedCustomer, invoices]);
     const customerProjects = useMemo(() => selectedCustomer ? projects.filter(p => String(p.socid) === String(selectedCustomer.id)) : [], [selectedCustomer, projects]);
@@ -698,16 +690,6 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                     <div className="flex flex-col h-full">
                         <div className="flex-1 min-h-0">
                             {renderListContent}
-                        </div>
-                        <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-                            <PaginationControls
-                                page={page}
-                                limit={limit}
-                                onPageChange={setPage}
-                                onLimitChange={setLimit}
-                                hasNext={customers.length >= limit}
-                                hasPrev={page > 0}
-                            />
                         </div>
                     </div>
                 }

@@ -63,6 +63,18 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
 
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
+    // Detect narrow viewport for responsive row height in the virtualised list.
+    // The card stacks vertically on mobile (< md = 768px) and needs more height.
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+    useEffect(() => {
+        const mq = window.matchMedia('(max-width: 767px)');
+        const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+        mq.addEventListener('change', handler);
+        return () => mq.removeEventListener('change', handler);
+    }, []);
+    // Row height: desktop row fits in 110px; mobile stacked layout needs ~185px.
+    const rowItemSize = isMobile ? 185 : 110;
+
     const [filterStatus, setFilterStatus] = useState<'all' | 'open' | 'signed' | 'draft' | 'declined'>('all');
     const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list');
     const [processingId, setProcessingId] = useState<string | null>(null);
@@ -489,18 +501,19 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                     selected={selectedProposal?.id === prop.id}
                     onClick={() => setSelectedProposal(prop)}
                     hoverable
-                    className="h-full flex flex-col md:flex-row md:items-center justify-between gap-4 group"
+                    className="h-full flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-4 group"
                 >
-                    <div className="flex items-start gap-4">
-                        <div className="p-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600">
-                            <FileText size={24} />
+                    <div className="flex items-start gap-3 md:gap-4 min-w-0 flex-1">
+                        <div className="p-2 md:p-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 shrink-0">
+                            <FileText size={20} className="md:hidden" />
+                            <FileText size={24} className="hidden md:block" />
                         </div>
-                        <div>
-                            <div className="flex items-center gap-2 mb-1">
+                        <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
                                 <span className="font-bold text-slate-800 dark:text-white">{prop.ref}</span>
                                 <StatusBadge status={prop.statut} config={proposalStatuses} />
                             </div>
-                            <div className="text-slate-600 dark:text-slate-300 font-medium">{getCustomerName(prop.socid)}</div>
+                            <div className="text-slate-600 dark:text-slate-300 font-medium truncate">{getCustomerName(prop.socid)}</div>
                             {prop.project_id && (
                                 <div className="text-xs text-indigo-500 mt-1 flex items-center gap-1">
                                     <FolderKanban size={10} /> {getProjectName(prop.project_id)}
@@ -509,14 +522,15 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-3">
-                        <div className="text-right mr-3">
+                    <div className="flex items-center gap-2 md:gap-3 shrink-0">
+                        <div className="text-right mr-1 md:mr-3">
                             <div className="text-xs text-slate-500">Total</div>
-                            <div className="text-lg font-bold text-slate-800 dark:text-white">
+                            <div className="text-base md:text-lg font-bold text-slate-800 dark:text-white">
                                 {formatCurrency(prop.total_ttc)}
                             </div>
                         </div>
-                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        {/* Actions: always visible on touch/mobile, hover-only on md+ */}
+                        <div className="flex items-center md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                             <Button variant="ghost" size="sm" icon={<Edit size={18} />} onClick={(e) => { e.stopPropagation(); handleOpenEdit(prop); }} />
                             <Button variant="ghost" size="sm" icon={<Copy size={18} />} onClick={(e) => { e.stopPropagation(); handleDuplicate(prop.id); }} title="Duplicar" aria-label="Duplicar" loading={processingId === prop.id} disabled={!!processingId} />
                             <ConfirmDeleteButton
@@ -549,24 +563,28 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                 title="Propostas Comerciais"
                 subtitle={`${filteredProposals.length} proposta${filteredProposals.length !== 1 ? 's' : ''}`}
                 actions={
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                         <ListToolbar controls={controls} searchPlaceholder="Buscar ref ou cliente..." />
-                        <Button variant="primary" icon={<Plus size={18} />} onClick={handleOpenCreate}>
-                            Nova
-                        </Button>
-                        <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
-                            <button
-                                onClick={() => setViewMode('list')}
-                                className={`p-2 rounded-md ${viewMode === 'list' ? 'bg-white dark:bg-slate-700 shadow-sm' : ''}`}
-                            >
-                                <List size={18} />
-                            </button>
-                            <button
-                                onClick={() => setViewMode('kanban')}
-                                className={`p-2 rounded-md ${viewMode === 'kanban' ? 'bg-white dark:bg-slate-700 shadow-sm' : ''}`}
-                            >
-                                <Kanban size={18} />
-                            </button>
+                        <div className="flex items-center gap-2">
+                            <Button variant="primary" icon={<Plus size={18} />} onClick={handleOpenCreate}>
+                                Nova
+                            </Button>
+                            <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1 shrink-0">
+                                <button
+                                    onClick={() => setViewMode('list')}
+                                    className={`p-2 rounded-md ${viewMode === 'list' ? 'bg-white dark:bg-slate-700 shadow-sm' : ''}`}
+                                    title="Vista de lista"
+                                >
+                                    <List size={18} />
+                                </button>
+                                <button
+                                    onClick={() => setViewMode('kanban')}
+                                    className={`p-2 rounded-md ${viewMode === 'kanban' ? 'bg-white dark:bg-slate-700 shadow-sm' : ''}`}
+                                    title="Vista Kanban"
+                                >
+                                    <Kanban size={18} />
+                                </button>
+                            </div>
                         </div>
                     </div>
                 }
@@ -599,7 +617,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                                 height={height}
                                 width={width}
                                 itemCount={filteredProposals.length}
-                                itemSize={110}
+                                itemSize={rowItemSize}
                             >
                                 {Row}
                             </ListWindow>

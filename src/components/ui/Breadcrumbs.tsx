@@ -52,7 +52,7 @@ const ROUTE_LABELS: Record<string, string> = {
     // Projects
     'projects': 'Projetos',
     'tasks': 'Tarefas',
-    'tickets': 'Chamados',
+    'tickets': 'Conversas com clientes',
     'interventions': 'Intervenções',
 
     // Products

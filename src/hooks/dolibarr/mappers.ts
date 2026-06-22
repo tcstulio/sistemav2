@@ -153,6 +153,7 @@ export const mapSupplier = (raw: RawDolibarrRecord): ThirdParty => ({
     date_modification: toTimestamp(raw.tms),
     fournisseur: toString(raw.fournisseur) || '1',
     array_options: raw.array_options ?? undefined,
+    category_ids: raw.category_ids ? String(raw.category_ids).split(',').filter(Boolean) : undefined,
 });
 
 /**
@@ -183,6 +184,7 @@ export const mapThirdParty = (raw: RawDolibarrRecord): ThirdParty => ({
     date_modification: toTimestamp(raw.tms),
     fournisseur: toString(raw.fournisseur) || '0',
     array_options: raw.array_options ?? undefined,
+    category_ids: raw.category_ids ? String(raw.category_ids).split(',').filter(Boolean) : undefined,
 });
 
 /**

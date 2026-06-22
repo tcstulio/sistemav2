@@ -58,6 +58,10 @@ vi.mock('../../services/aiService', () => ({
     },
 }));
 
+vi.mock('../../components/common/LinkedObjects', () => ({
+    LinkedObjects: () => <div data-testid="linked-objects" />,
+}));
+
 vi.mock('react-window', () => ({
     FixedSizeList: ({ children, itemCount }: any) => (
         <div data-testid="virtual-list">
@@ -76,6 +80,7 @@ vi.mock('react-virtualized-auto-sizer', () => ({
 describe('CustomerList', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        localStorage.clear();
     });
 
     it('renderiza o rótulo "Prospecto" para cliente com client=2', () => {
@@ -159,5 +164,68 @@ describe('CustomerList', () => {
         // Selecionar Empresa (PJ) — campo volta
         await user.selectOptions(tipoPessoa!, '5');
         expect(screen.getByLabelText(/responsável legal/i)).toBeInTheDocument();
+    });
+
+    // ── Issue #606: Paginação morta removida ──────────────────────────────────
+    it('#606 (A) não renderiza controles de paginação no rodapé da lista', () => {
+        render(<CustomerList />);
+        // PaginationControls foi removido — não deve haver select com opções "10", "20", "50"
+        const selects = screen.queryAllByRole('combobox');
+        const pagSelect = selects.find(s => {
+            const opts = Array.from(s.querySelectorAll('option')).map(o => o.textContent?.trim());
+            return opts.includes('10') && opts.includes('20') && opts.includes('50');
+        });
+        expect(pagSelect).toBeUndefined();
+    });
+
+    it('#606 (A) com múltiplos clientes todos aparecem via scroll (sem paginação)', () => {
+        // O mock de react-window renderiza todos os itens — confirma que ambos os clientes estão no DOM
+        render(<CustomerList />);
+        expect(screen.getByText('ACME Ltda')).toBeInTheDocument();
+        expect(screen.getByText('Prospecto XYZ')).toBeInTheDocument();
+    });
+
+    // ── Issue #606: Aba inválida no localStorage → fallback para overview ──────
+    it('#606 aba inválida "timeline" no localStorage cai para overview e exibe conteúdo', async () => {
+        // Simula versão anterior que persistiu "timeline" (aba removida)
+        localStorage.setItem('coolgroove_customer_tab', 'timeline');
+        const user = userEvent.setup();
+        render(<CustomerList />);
+
+        // Clica no primeiro cliente para abrir o painel de detalhe
+        const customerCard = screen.getByText('ACME Ltda');
+        await user.click(customerCard);
+
+        // O painel de detalhe deve renderizar conteúdo — o bloco overview exibe "Informações"
+        await waitFor(() => {
+            expect(screen.getByText('Informações')).toBeInTheDocument();
+        });
+    });
+
+    it('#606 aba desconhecida "shipments" no localStorage cai para overview', async () => {
+        localStorage.setItem('coolgroove_customer_tab', 'shipments');
+        const user = userEvent.setup();
+        render(<CustomerList />);
+
+        const customerCard = screen.getByText('ACME Ltda');
+        await user.click(customerCard);
+
+        await waitFor(() => {
+            expect(screen.getByText('Informações')).toBeInTheDocument();
+        });
+    });
+
+    it('#606 aba válida "invoices" no localStorage mantém a aba correta', async () => {
+        localStorage.setItem('coolgroove_customer_tab', 'invoices');
+        const user = userEvent.setup();
+        render(<CustomerList />);
+
+        const customerCard = screen.getByText('ACME Ltda');
+        await user.click(customerCard);
+
+        // A aba Faturas deve ficar ativa — "Nenhuma fatura encontrada" aparece (dados mock vazios)
+        await waitFor(() => {
+            expect(screen.getByText(/nenhuma fatura encontrada/i)).toBeInTheDocument();
+        });
     });
 });
