@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { BOM, DolibarrConfig, Product } from '../../../types';
-import { ArrowLeft, X, Hammer, Layers, Coins, Package, Pencil } from 'lucide-react';
+import { ArrowLeft, X, Hammer, Layers, Coins, Package, Pencil, Trash2 } from 'lucide-react';
 import { getProductName, getProductPrice } from '../utils';
 import { formatCurrency } from '../../../utils/formatUtils';
 
@@ -10,6 +10,7 @@ interface BOMDetailProps {
     config: DolibarrConfig;
     onClose: () => void;
     onEdit?: () => void;
+    onDelete?: () => void;
 }
 
 export const BOMDetail: React.FC<BOMDetailProps> = ({
@@ -17,9 +18,11 @@ export const BOMDetail: React.FC<BOMDetailProps> = ({
     products,
     config,
     onClose,
-    onEdit
+    onEdit,
+    onDelete
 }) => {
     const [bomDetailTab, setBomDetailTab] = useState<'overview' | 'components'>('overview');
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
     // Calculate estimated cost of BOM
     const bomTotalCost = useMemo(() => {
@@ -47,12 +50,43 @@ export const BOMDetail: React.FC<BOMDetailProps> = ({
                             <Pencil size={12} /> Editar
                         </button>
                     )}
+                    {onDelete && (
+                        <button
+                            onClick={() => setShowDeleteConfirm(true)}
+                            className="flex items-center gap-1 text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-800/40 px-3 py-1.5 rounded font-medium transition-colors"
+                            data-testid="bom-delete-btn"
+                        >
+                            <Trash2 size={12} /> Excluir
+                        </button>
+                    )}
                     <button className="flex items-center gap-1 text-xs bg-indigo-100 text-indigo-700 px-3 py-1 rounded font-bold">
                         <Hammer size={12} /> V{1}
                     </button>
                     <button onClick={onClose} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
                 </div>
             </div>
+
+            {/* Delete Confirmation */}
+            {showDeleteConfirm && (
+                <div className="flex-none bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 px-4 py-3 flex items-center justify-between gap-4">
+                    <span className="text-sm text-red-700 dark:text-red-300">Tem certeza que deseja excluir a BOM <strong>{bom.ref}</strong>?</span>
+                    <div className="flex gap-2 flex-shrink-0">
+                        <button
+                            onClick={() => setShowDeleteConfirm(false)}
+                            className="text-xs px-3 py-1.5 border border-slate-300 rounded hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300"
+                        >
+                            Cancelar
+                        </button>
+                        <button
+                            onClick={() => { setShowDeleteConfirm(false); onDelete?.(); }}
+                            className="text-xs px-3 py-1.5 bg-red-600 text-white rounded hover:bg-red-700"
+                            data-testid="bom-delete-confirm-btn"
+                        >
+                            Excluir
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* Tabs */}
             <div className="flex border-b border-slate-100 dark:border-slate-800 px-4 overflow-x-auto flex-none bg-slate-50 dark:bg-slate-800/30">

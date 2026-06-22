@@ -667,36 +667,38 @@ describe('aiRoutes', () => {
         });
     });
 
-    describe('toolListener userName resolution (#358)', () => {
+    describe('toolListener userName resolution (#358/#544)', () => {
         it('formats userName as firstname + lastname when both present', () => {
             const user = { id: '1', login: 'jdoe', firstname: 'John', lastname: 'Doe', email: 'j@t.com' };
-            const userName = [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'unknown';
+            const userName = [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'Agente';
             expect(userName).toBe('John Doe');
         });
 
         it('formats userName as firstname only when lastname missing', () => {
             const user = { id: '1', login: 'jdoe', firstname: 'John', email: 'j@t.com' } as any;
-            const userName = [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'unknown';
+            const userName = [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'Agente';
             expect(userName).toBe('John');
         });
 
         it('falls back to login when no firstname/lastname', () => {
             const user = { id: '1', login: 'jdoe', email: 'j@t.com' } as any;
-            const userName = [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'unknown';
+            const userName = [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'Agente';
             expect(userName).toBe('jdoe');
         });
 
-        it('falls back to unknown when nothing is available', () => {
+        it('falls back to "Agente" (never "unknown") when nothing is available', () => {
             const user = {} as any;
-            const userId = user?.id || 'unknown';
-            const userName = [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'unknown';
-            expect(userId).toBe('unknown');
-            expect(userName).toBe('unknown');
+            const dolibarrUserId = '';
+            const userId = user?.id || dolibarrUserId || '';
+            const userName = [user?.firstname, user?.lastname].filter(Boolean).join(' ') || user?.login || 'Agente';
+            expect(userId).toBe('');
+            expect(userName).toBe('Agente');
         });
 
         it('uses user.id directly as userId', () => {
             const user = { id: '99', login: 'admin' } as any;
-            const userId = user?.id || 'unknown';
+            const dolibarrUserId = '';
+            const userId = user?.id || dolibarrUserId || '';
             expect(userId).toBe('99');
         });
     });
@@ -740,7 +742,7 @@ describe('aiRoutes', () => {
             );
         });
 
-        it('falls back to unknown when user is null', async () => {
+        it('(#544) falls back to "Agente" (never "unknown") when user is null', async () => {
             mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
                 req.user = null;
                 next();
@@ -753,8 +755,29 @@ describe('aiRoutes', () => {
             const { agentActivityService } = await import('../../services/agentActivityService');
             expect(agentActivityService.record).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    userId: 'unknown',
-                    userName: 'unknown',
+                    userId: '',
+                    userName: 'Agente',
+                })
+            );
+        });
+
+        it('(#544) usa dolibarrUserId resolvido quando user.id está ausente (nunca "unknown")', async () => {
+            mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+                req.user = { login: 'jdoe', firstname: 'John', lastname: 'Doe', admin: '0' };
+                next();
+            });
+            const { dolibarrService } = await import('../../services/dolibarr');
+            (dolibarrService.findUserByLoginOrEmail as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ id: '300', login: 'jdoe' });
+
+            await request(app)
+                .post('/api/generate-reply')
+                .send({ sessionId: 'sess_doli', module: 'chat', context: 'test' });
+
+            const { agentActivityService } = await import('../../services/agentActivityService');
+            expect(agentActivityService.record).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    userId: '300',
+                    userName: 'John Doe',
                 })
             );
         });
