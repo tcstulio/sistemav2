@@ -24,6 +24,12 @@ export interface SaldoItau {
 
 // ===== Banking - Extrato =====
 
+export interface TransacaoVinculo {
+    projeto?: string;
+    cliente?: string;
+    finalidade: string;
+}
+
 export interface TransacaoItau {
     dataMovimento: string;
     dataLancamento: string;
@@ -35,6 +41,7 @@ export interface TransacaoItau {
     saldoParcial?: number;
     numeroDocumento?: string;
     complemento?: string;
+    vinculo?: TransacaoVinculo;
 }
 
 export interface ExtratoItau {

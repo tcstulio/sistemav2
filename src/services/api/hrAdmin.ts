@@ -206,6 +206,15 @@ export const createBankAccount = async (config: DolibarrConfig, data: Record<str
     });
 };
 
+export const updateBankAccount = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
+    const url = `${sanitizeUrl(config.apiUrl)}/bankaccounts/${id}`;
+    return request(url, {
+        method: 'PUT',
+        headers: getHeaders(config.apiKey),
+        body: JSON.stringify(data)
+    });
+};
+
 export const createExpenseReport = async (config: DolibarrConfig, data: Record<string, unknown>) => {
     const url = `${sanitizeUrl(config.apiUrl)}/expensereports`;
     return request(url, {
