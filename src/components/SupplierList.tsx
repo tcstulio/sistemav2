@@ -4,10 +4,11 @@ import { usePrefill, PrefillResult } from '../hooks/usePrefill';
 import { Truck, Search, MapPin, Mail, Phone, Package, ShoppingCart, Receipt, X, ArrowDownCircle, CheckCircle2, Loader2, CheckSquare, Clock, Pencil, Trash2, PlusCircle } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useSuppliers, useProducts, useSupplierInvoices, useSupplierOrders, useWarehouses, useUsers } from '../hooks/dolibarr';
+import { useSuppliers, useProducts, useSupplierInvoices, useSupplierOrders, useWarehouses, useUsers, useContacts } from '../hooks/dolibarr';
 import { useSupplierMutations } from '../hooks/useMutations';
 import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
+import { ThirdPartyContacts } from './common/ThirdPartyContacts';
 
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { formatCurrency } from '../utils/formatUtils';
@@ -54,8 +55,10 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
 
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
+    const { data: contacts = [] } = useContacts(config);
+
     const [selectedSupplier, setSelectedSupplier] = useState<ThirdParty | null>(null);
-    const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'invoices' | 'products'>('overview');
+    const [activeTab, setActiveTab] = useState<'overview' | 'contacts' | 'orders' | 'invoices' | 'products'>('overview');
 
     // CRUD State
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -125,6 +128,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
     // Derived data for selected supplier
     const currentSupplierInvoices = useMemo(() => selectedSupplier ? supplierInvoices.filter(i => String(i.socid) === String(selectedSupplier.id)) : [], [selectedSupplier, supplierInvoices]);
     const currentSupplierOrders = useMemo(() => selectedSupplier ? supplierOrders.filter(o => String(o.socid) === String(selectedSupplier.id)) : [], [selectedSupplier, supplierOrders]);
+    const currentSupplierContacts = useMemo(() => selectedSupplier ? contacts.filter(c => String(c.socid) === String(selectedSupplier.id)) : [], [selectedSupplier, contacts]);
 
     // Selected Order Object
     const selectedOrder = useMemo(() => {
@@ -572,6 +576,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                 tabs={
                                     <Tabs value={activeTab} onChange={(v) => setActiveTab(v as any)}>
                                         <Tab value="overview">Visão Geral</Tab>
+                                        <Tab value="contacts" badge={currentSupplierContacts.length}>Responsáveis</Tab>
                                         <Tab value="orders">Pedidos ({currentSupplierOrders.length})</Tab>
                                         <Tab value="invoices">Faturas ({currentSupplierInvoices.length})</Tab>
                                         <Tab value="products">Produtos ({currentSupplierProducts.length})</Tab>
@@ -581,6 +586,10 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
 
                             <div className="flex-1 overflow-y-auto p-6 bg-slate-50 dark:bg-slate-950/50">
                                 <div className="max-w-3xl mx-auto space-y-6">
+                                    {activeTab === 'contacts' && (
+                                        <ThirdPartyContacts socid={selectedSupplier.id} config={config} />
+                                    )}
+
                                     {activeTab === 'overview' && (
                                         <>
                                             <Card header="Contatos">

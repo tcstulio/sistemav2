@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ManufacturingOrderDetail } from '../../components/Manufacturing/details/ManufacturingOrderDetail';
-import { ManufacturingOrder, DolibarrConfig, Product, StockMovement } from '../../types';
+import { ManufacturingOrder, DolibarrConfig, Product, StockMovement, Project } from '../../types';
 
 const config: DolibarrConfig = {
     apiUrl: 'https://api.example.com',
@@ -13,6 +13,10 @@ const config: DolibarrConfig = {
 
 const products: Product[] = [
     { id: '1', ref: 'P1', label: 'Produto Final', type: '0', price: 100, price_ttc: 100, stock_reel: 0 },
+];
+
+const projects: Project[] = [
+    { id: 'proj1', ref: 'PROJ-001', title: 'Projeto Alpha', socid: '10', statut: '1', progress: 0 },
 ];
 
 const stockMovements: StockMovement[] = [];
@@ -49,6 +53,7 @@ describe('ManufacturingOrderDetail — #585 Delete & Status', () => {
             <ManufacturingOrderDetail
                 order={draftOrder}
                 products={products}
+                projects={projects}
                 stockMovements={stockMovements}
                 config={config}
                 onClose={mockOnClose}
@@ -65,6 +70,7 @@ describe('ManufacturingOrderDetail — #585 Delete & Status', () => {
             <ManufacturingOrderDetail
                 order={draftOrder}
                 products={products}
+                projects={projects}
                 stockMovements={stockMovements}
                 config={config}
                 onClose={mockOnClose}
@@ -85,6 +91,7 @@ describe('ManufacturingOrderDetail — #585 Delete & Status', () => {
             <ManufacturingOrderDetail
                 order={draftOrder}
                 products={products}
+                projects={projects}
                 stockMovements={stockMovements}
                 config={config}
                 onClose={mockOnClose}
@@ -103,6 +110,7 @@ describe('ManufacturingOrderDetail — #585 Delete & Status', () => {
             <ManufacturingOrderDetail
                 order={draftOrder}
                 products={products}
+                projects={projects}
                 stockMovements={stockMovements}
                 config={config}
                 onClose={mockOnClose}
@@ -121,6 +129,7 @@ describe('ManufacturingOrderDetail — #585 Delete & Status', () => {
             <ManufacturingOrderDetail
                 order={draftOrder}
                 products={products}
+                projects={projects}
                 stockMovements={stockMovements}
                 config={config}
                 onClose={mockOnClose}
@@ -137,6 +146,7 @@ describe('ManufacturingOrderDetail — #585 Delete & Status', () => {
             <ManufacturingOrderDetail
                 order={draftOrder}
                 products={products}
+                projects={projects}
                 stockMovements={stockMovements}
                 config={config}
                 onClose={mockOnClose}
@@ -154,6 +164,7 @@ describe('ManufacturingOrderDetail — #585 Delete & Status', () => {
             <ManufacturingOrderDetail
                 order={validatedOrder}
                 products={products}
+                projects={projects}
                 stockMovements={stockMovements}
                 config={config}
                 onClose={mockOnClose}
@@ -170,6 +181,7 @@ describe('ManufacturingOrderDetail — #585 Delete & Status', () => {
             <ManufacturingOrderDetail
                 order={draftOrder}
                 products={products}
+                projects={projects}
                 stockMovements={stockMovements}
                 config={config}
                 onClose={mockOnClose}
@@ -179,5 +191,91 @@ describe('ManufacturingOrderDetail — #585 Delete & Status', () => {
             />
         );
         expect(screen.getByTestId('mo-cancel-btn')).toBeInTheDocument();
+    });
+});
+
+describe('ManufacturingOrderDetail — #591 Project/Dates', () => {
+    const mockOnClose = vi.fn();
+    const mockOnOpenConsume = vi.fn();
+    const mockOnOpenProduce = vi.fn();
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('shows project name when project_id matches a project', () => {
+        const orderWithProject: ManufacturingOrder = {
+            ...draftOrder,
+            project_id: 'proj1',
+        };
+        render(
+            <ManufacturingOrderDetail
+                order={orderWithProject}
+                products={products}
+                projects={projects}
+                stockMovements={stockMovements}
+                config={config}
+                onClose={mockOnClose}
+                onOpenConsume={mockOnOpenConsume}
+                onOpenProduce={mockOnOpenProduce}
+            />
+        );
+        expect(screen.getByTestId('mo-project-name')).toBeInTheDocument();
+        expect(screen.getByTestId('mo-project-name').textContent).toBe('Projeto Alpha');
+    });
+
+    it('shows placeholder when no project_id', () => {
+        render(
+            <ManufacturingOrderDetail
+                order={draftOrder}
+                products={products}
+                projects={projects}
+                stockMovements={stockMovements}
+                config={config}
+                onClose={mockOnClose}
+                onOpenConsume={mockOnOpenConsume}
+                onOpenProduce={mockOnOpenProduce}
+            />
+        );
+        expect(screen.queryByTestId('mo-project-name')).not.toBeInTheDocument();
+    });
+
+    it('shows date_start when provided', () => {
+        const orderWithDates: ManufacturingOrder = {
+            ...draftOrder,
+            date_start: 1700000000,
+            date_end: 1700500000,
+        };
+        render(
+            <ManufacturingOrderDetail
+                order={orderWithDates}
+                products={products}
+                projects={projects}
+                stockMovements={stockMovements}
+                config={config}
+                onClose={mockOnClose}
+                onOpenConsume={mockOnOpenConsume}
+                onOpenProduce={mockOnOpenProduce}
+            />
+        );
+        expect(screen.getByTestId('mo-date-start')).toBeInTheDocument();
+        expect(screen.getByTestId('mo-date-end')).toBeInTheDocument();
+    });
+
+    it('shows placeholder when no dates provided', () => {
+        render(
+            <ManufacturingOrderDetail
+                order={draftOrder}
+                products={products}
+                projects={projects}
+                stockMovements={stockMovements}
+                config={config}
+                onClose={mockOnClose}
+                onOpenConsume={mockOnOpenConsume}
+                onOpenProduce={mockOnOpenProduce}
+            />
+        );
+        expect(screen.queryByTestId('mo-date-start')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('mo-date-end')).not.toBeInTheDocument();
     });
 });
