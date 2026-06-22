@@ -35,4 +35,15 @@ describe('AgentActivityFeed — atribuição de autor (#544)', () => {
         expect(screen.getByText(/Agente/)).toBeTruthy();
         expect(container.textContent).not.toContain('unknown');
     });
+
+    it('NÃO exibe ID numérico cru; mostra "Agente" quando userName é um número', async () => {
+        (global.fetch as any).mockResolvedValue(okJson({
+            activities: [{ id: '4', tool: 'list_invoices', action: 'read', description: 'Listou faturas', result: 'success', userName: '42', durationMs: 30, createdAt: Date.now() }],
+        }));
+        const { container } = render(<AgentActivityFeed />);
+        await screen.findByText(/Listou faturas/);
+        expect(screen.getByText(/Agente/)).toBeTruthy();
+        // o ID numérico cru nunca aparece como nome
+        expect(container.textContent).not.toMatch(/por 42\b/);
+    });
 });
