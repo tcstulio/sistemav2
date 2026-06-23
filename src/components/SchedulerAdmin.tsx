@@ -3,8 +3,9 @@ import { toast } from 'sonner';
 import { WhatsAppService } from '../services/whatsappService';
 import { EmailService } from '../services/emailService'; // New
 import { formatDateTime } from '../utils/dateUtils';
-import { Mail, MessageCircle, Send } from 'lucide-react'; // Icons
+import { Mail, MessageCircle, Send, RefreshCw } from 'lucide-react'; // Icons
 import { logger } from '../utils/logger';
+import { PageLayout, PageHeader, Card, Button } from './ui';
 
 const log = logger.child('SchedulerAdmin');
 
@@ -584,70 +585,44 @@ export const SchedulerAdmin: React.FC = () => {
     const formatDate = (ts: number) => formatDateTime(ts);
     const formatPhone = (chatId: string) => chatId.replace('@c.us', '').replace('@g.us', ' (Grupo)');
 
-    const inputStyle: React.CSSProperties = {
-        padding: '10px 12px',
-        borderRadius: '8px',
-        border: '1px solid #e2e8f0',
-        fontSize: '14px',
-        width: '100%',
-        boxSizing: 'border-box'
-    };
-
-    const buttonStyle: React.CSSProperties = {
-        padding: '10px 20px',
-        borderRadius: '8px',
-        border: 'none',
-        cursor: 'pointer',
-        fontWeight: 'bold',
-        fontSize: '14px'
-    };
-
-    const cardStyle: React.CSSProperties = {
-        padding: '20px',
-        background: 'white',
-        borderRadius: '12px',
-        border: '1px solid #e2e8f0',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-    };
+    const inputCls = 'w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500';
 
     return (
-        <div style={{ padding: '20px', maxWidth: '1400px', margin: '0 auto', background: '#f8fafc', height: '100%', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>
-                <h1 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', color: '#1e293b' }}>
-                    📅 Automação de Mensagens
-                    <button onClick={fetchData} style={{ ...buttonStyle, background: '#f1f5f9', color: '#475569', fontSize: '12px', padding: '6px 12px' }}>🔄 Atualizar</button>
-                </h1>
-
-            </div>
+        <PageLayout title="Automação de Mensagens" maxWidth="xl" noPadding>
+            <PageHeader
+                title="📅 Automação de Mensagens"
+                subtitle="Regras, templates, fluxos e agendamentos de mensagens"
+                actions={
+                    <Button variant="secondary" size="sm" icon={<RefreshCw size={14} />} onClick={fetchData}>
+                        Atualizar
+                    </Button>
+                }
+            />
+            <div className="p-4 md:p-6">
 
             {/* Stats Cards */}
             {stats && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '25px' }}>
-                    <StatCard label="Pendentes" value={stats.pending} color="#f59e0b" />
-                    <StatCard label="Enviados Hoje" value={stats.logsSentToday} color="#10b981" />
-                    <StatCard label="Falhas Hoje" value={stats.logsFailedToday} color="#ef4444" />
-                    <StatCard label="Templates" value={stats.templates} color="#6366f1" />
-                    <StatCard label="Regras Ativas" value={stats.activeRules} color="#8b5cf6" />
-                    <StatCard label="Fluxos" value={stats.chatFlows} color="#ec4899" />
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+                    <StatCard label="Pendentes" value={stats.pending} colorClass="border-amber-400 text-amber-500" />
+                    <StatCard label="Enviados Hoje" value={stats.logsSentToday} colorClass="border-emerald-500 text-emerald-600" />
+                    <StatCard label="Falhas Hoje" value={stats.logsFailedToday} colorClass="border-red-500 text-red-500" />
+                    <StatCard label="Templates" value={stats.templates} colorClass="border-indigo-500 text-indigo-600" />
+                    <StatCard label="Regras Ativas" value={stats.activeRules} colorClass="border-violet-500 text-violet-600" />
+                    <StatCard label="Fluxos" value={stats.chatFlows} colorClass="border-pink-500 text-pink-600" />
                 </div>
             )}
 
             {/* Tabs */}
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '2px solid #e5e7eb', paddingBottom: '10px', flexWrap: 'wrap' }}>
+            <div className="flex flex-wrap gap-2 mb-5 pb-3 border-b border-slate-200 dark:border-slate-800">
                 {(['rules', 'pending', 'logs', 'templates', 'flows', 'broadcast', 'schedule'] as const).map(tab => (
                     <button
                         key={tab}
                         onClick={() => setActiveTab(tab)}
-                        style={{
-                            padding: '10px 18px',
-                            border: 'none',
-                            background: activeTab === tab ? '#3b82f6' : '#f3f4f6',
-                            color: activeTab === tab ? 'white' : '#374151',
-                            borderRadius: '8px',
-                            cursor: 'pointer',
-                            fontWeight: activeTab === tab ? 'bold' : 'normal',
-                            fontSize: '13px'
-                        }}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                            activeTab === tab
+                                ? 'bg-indigo-600 text-white shadow-sm'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                        }`}
                     >
                         {tab === 'rules' && '⚡ Regras'}
                         {tab === 'pending' && '⏳ Pendentes'}
@@ -668,10 +643,10 @@ export const SchedulerAdmin: React.FC = () => {
                     {activeTab === 'rules' && (
                         <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                                <h3 style={{ margin: 0, color: '#1e293b' }}>Regras de Automação</h3>
+                                <h3 className="m-0 text-slate-800 dark:text-slate-100">Regras de Automação</h3>
                                 <button
                                     onClick={() => setShowNewRuleForm(!showNewRuleForm)}
-                                    style={{ ...buttonStyle, background: '#10b981', color: 'white' }}
+                                    className="px-4 py-2 text-sm font-semibold rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white cursor-pointer border-none"
                                 >
                                     {showNewRuleForm ? '✕ Cancelar' : '+ Nova Regra'}
                                 </button>
@@ -679,24 +654,24 @@ export const SchedulerAdmin: React.FC = () => {
 
                             {/* New Rule Form */}
                             {showNewRuleForm && (
-                                <div style={{ ...cardStyle, marginBottom: '20px', background: '#f0fdf4' }}>
+                                <div className="mb-5 p-5 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
                                     <h4 style={{ marginTop: 0, color: '#166534' }}>Criar Nova Regra</h4>
                                     <div style={{ display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Nome</label>
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Nome</label>
                                             <input
                                                 value={newRule.name}
                                                 onChange={e => setNewRule({ ...newRule, name: e.target.value })}
                                                 placeholder="Ex: Notificação de Pedido"
-                                                style={inputStyle}
+                                                className={inputCls}
                                             />
                                         </div>
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Evento</label>
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Evento</label>
                                             <select
                                                 value={newRule.event}
                                                 onChange={e => setNewRule({ ...newRule, event: e.target.value })}
-                                                style={inputStyle}
+                                                className={inputCls}
                                             >
                                                 {AVAILABLE_EVENTS.map(ev => (
                                                     <option key={ev.value} value={ev.value}>{ev.label}</option>
@@ -704,16 +679,16 @@ export const SchedulerAdmin: React.FC = () => {
                                             </select>
                                         </div>
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Delay (min)</label>
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Delay (min)</label>
                                             <input
                                                 type="number"
                                                 value={newRule.delay}
                                                 onChange={e => setNewRule({ ...newRule, delay: parseInt(e.target.value) || 0 })}
-                                                style={inputStyle}
+                                                className={inputCls}
                                             />
                                         </div>
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Canal</label>
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Canal</label>
                                             <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                                                 <button
                                                     onClick={() => setNewRule({ ...newRule, channel: 'whatsapp' })}
@@ -750,7 +725,7 @@ export const SchedulerAdmin: React.FC = () => {
                                             </div>
                                         </div>
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">
                                                 {newRule.channel === 'email' ? 'Conta de Email' : 'Conta WhatsApp'}
                                             </label>
 
@@ -758,7 +733,7 @@ export const SchedulerAdmin: React.FC = () => {
                                                 <select
                                                     value={selectedEmailAccountId}
                                                     onChange={e => setSelectedEmailAccountId(e.target.value)}
-                                                    style={inputStyle}
+                                                    className={inputCls}
                                                 >
                                                     {emailAccounts.map(acc => (
                                                         <option key={acc.id} value={acc.id}>{acc.name} ({acc.email})</option>
@@ -785,26 +760,26 @@ export const SchedulerAdmin: React.FC = () => {
 
                                     {newRule.channel === 'email' && (
                                         <div style={{ marginTop: '12px' }}>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Assunto</label>
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Assunto</label>
                                             <input
                                                 value={newRule.subject}
                                                 onChange={e => setNewRule({ ...newRule, subject: e.target.value })}
                                                 placeholder="Ex: Confirmação de Pedido #{{ref}}"
-                                                style={inputStyle}
+                                                className={inputCls}
                                             />
                                         </div>
                                     )}
                                     <div style={{ marginTop: '12px' }}>
-                                        <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Mensagem (use {'{{variável}}'} para dados dinâmicos)</label>
+                                        <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Mensagem (use {'{{variável}}'} para dados dinâmicos)</label>
                                         <textarea
                                             value={newRule.message}
                                             onChange={e => setNewRule({ ...newRule, message: e.target.value })}
                                             placeholder="Olá {{customerName}}! Seu pedido {{ref}} foi criado."
                                             rows={3}
-                                            style={{ ...inputStyle, resize: 'vertical' }}
+                                            className={`${inputCls} resize-y`}
                                         />
                                     </div>
-                                    <button onClick={createRule} style={{ ...buttonStyle, background: '#10b981', color: 'white', marginTop: '12px' }}>
+                                    <button onClick={createRule} className="mt-3 px-4 py-2 text-sm font-semibold rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white cursor-pointer border-none">
                                         ✓ Criar Regra
                                     </button>
                                 </div>
@@ -812,7 +787,7 @@ export const SchedulerAdmin: React.FC = () => {
 
                             <div style={{ display: 'grid', gap: '15px' }}>
                                 {rules.map(rule => (
-                                    <div key={rule.id} style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                    <div key={rule.id} className="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col gap-3">
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
                                             <div>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -841,32 +816,26 @@ export const SchedulerAdmin: React.FC = () => {
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                 <button
                                                     onClick={() => setEditingRule(rule)}
-                                                    style={{ ...buttonStyle, background: '#f1f5f9', color: '#475569', padding: '6px 12px', fontSize: '12px' }}
+                                                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 cursor-pointer border-none"
                                                 >
                                                     ✏️ Editar
                                                 </button>
                                                 <button
                                                     onClick={() => deleteRule(rule.id)}
-                                                    style={{ ...buttonStyle, background: '#fee2e2', color: '#dc2626', padding: '6px 12px', fontSize: '12px' }}
+                                                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-100 dark:bg-red-900/30 hover:bg-red-200 text-red-600 dark:text-red-400 cursor-pointer border-none"
                                                 >
                                                     🗑️
                                                 </button>
                                                 <button
                                                     onClick={() => testRule(rule.id)}
-                                                    style={{ ...buttonStyle, background: '#dbeafe', color: '#1d4ed8', padding: '6px 12px', fontSize: '12px' }}
+                                                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-100 dark:bg-blue-900/30 hover:bg-blue-200 text-blue-700 dark:text-blue-400 cursor-pointer border-none"
                                                     title="Testar regra sem enviar mensagem"
                                                 >
                                                     🧪 Testar
                                                 </button>
                                                 <button
                                                     onClick={() => toggleRule(rule.id)}
-                                                    style={{
-                                                        ...buttonStyle,
-                                                        padding: '6px 14px',
-                                                        fontSize: '12px',
-                                                        background: rule.enabled ? '#dcfce7' : '#f1f5f9',
-                                                        color: rule.enabled ? '#15803d' : '#64748b'
-                                                    }}
+                                                    className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg cursor-pointer border-none ${rule.enabled ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}`}
                                                 >
                                                     {rule.enabled ? '✓ ATIVO' : 'INATIVO'}
                                                 </button>
@@ -907,29 +876,29 @@ export const SchedulerAdmin: React.FC = () => {
                             justifyContent: 'center',
                             zIndex: 1000
                         }}>
-                            <div style={{ ...cardStyle, width: '90%', maxWidth: '600px', maxHeight: '90vh', overflow: 'auto' }}>
-                                <h3 style={{ marginTop: 0, color: '#1e293b' }}>Editar Regra</h3>
+                            <div className="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm w-[90%] max-w-[600px] max-h-[90vh] overflow-auto">
+                                <h3 className="mt-0 text-slate-800 dark:text-slate-100">Editar Regra</h3>
                                 <div style={{ display: 'grid', gap: '12px' }}>
                                     <div>
-                                        <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Nome</label>
+                                        <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Nome</label>
                                         <input
                                             value={editingRule.name}
                                             onChange={e => setEditingRule({ ...editingRule, name: e.target.value })}
-                                            style={inputStyle}
+                                            className={inputCls}
                                         />
                                     </div>
                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Delay (minutos)</label>
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Delay (minutos)</label>
                                             <input
                                                 type="number"
                                                 value={editingRule.delay || 0}
                                                 onChange={e => setEditingRule({ ...editingRule, delay: parseInt(e.target.value) || 0 })}
-                                                style={inputStyle}
+                                                className={inputCls}
                                             />
                                         </div>
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Canal</label>
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Canal</label>
                                             <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                                                 <button
                                                     onClick={() => setEditingRule({ ...editingRule, channel: 'whatsapp' })}
@@ -966,7 +935,7 @@ export const SchedulerAdmin: React.FC = () => {
                                             </div>
                                         </div>
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">
                                                 {editingRule.channel === 'email' ? 'Conta de Email' : 'Conta WhatsApp'}
                                             </label>
 
@@ -977,7 +946,7 @@ export const SchedulerAdmin: React.FC = () => {
                                                         setSelectedEmailAccountId(e.target.value);
                                                         setEditingRule({ ...editingRule, sessionId: e.target.value });
                                                     }}
-                                                    style={inputStyle}
+                                                    className={inputCls}
                                                 >
                                                     {emailAccounts.map(acc => (
                                                         <option key={acc.id} value={acc.id}>{acc.name} ({acc.email})</option>
@@ -988,7 +957,7 @@ export const SchedulerAdmin: React.FC = () => {
                                                 <select
                                                     value={editingRule.sessionId}
                                                     onChange={e => setEditingRule({ ...editingRule, sessionId: e.target.value })}
-                                                    style={inputStyle}
+                                                    className={inputCls}
                                                 >
                                                     <option value="default">default</option>
                                                     {sessions.map(s => (
@@ -1002,31 +971,31 @@ export const SchedulerAdmin: React.FC = () => {
                                     </div>
                                     {editingRule.channel === 'email' && (
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Assunto</label>
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Assunto</label>
                                             <input
                                                 value={editingRule.subject || ''}
                                                 onChange={e => setEditingRule({ ...editingRule, subject: e.target.value })}
                                                 placeholder="Ex: Confirmação de Pedido #{{ref}}"
-                                                style={inputStyle}
+                                                className={inputCls}
                                             />
                                         </div>
                                     )}
                                     <div>
-                                        <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Mensagem</label>
+                                        <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Mensagem</label>
                                         <textarea
                                             value={editingRule.message || ''}
                                             onChange={e => setEditingRule({ ...editingRule, message: e.target.value })}
                                             rows={5}
-                                            style={{ ...inputStyle, resize: 'vertical' }}
+                                            className={`${inputCls} resize-y`}
                                         />
                                         <small style={{ color: '#64748b' }}>Variáveis: {'{{customerName}}'}, {'{{ref}}'}, {'{{total}}'}, {'{{subject}}'}</small>
                                     </div>
                                 </div>
                                 <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                                    <button onClick={saveRule} style={{ ...buttonStyle, background: '#3b82f6', color: 'white', flex: 1 }}>
+                                    <button onClick={saveRule} className="flex-1 px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white cursor-pointer border-none">
                                         💾 Salvar
                                     </button>
-                                    <button onClick={() => setEditingRule(null)} style={{ ...buttonStyle, background: '#f1f5f9', color: '#475569', flex: 1 }}>
+                                    <button onClick={() => setEditingRule(null)} className="flex-1 px-4 py-2 text-sm font-semibold rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-600 dark:text-slate-300 cursor-pointer border-none">
                                         Cancelar
                                     </button>
                                 </div>
@@ -1037,20 +1006,13 @@ export const SchedulerAdmin: React.FC = () => {
                     {/* Logs / History Tab */}
                     {activeTab === 'logs' && (
                         <div>
-                            <h3 style={{ marginBottom: '20px', color: '#1e293b' }}>📊 Histórico de Mensagens</h3>
+                            <h3 className="mb-5 text-slate-800 dark:text-slate-100">📊 Histórico de Mensagens</h3>
                             {logs.length === 0 ? (
                                 <p style={{ color: '#64748b', textAlign: 'center', padding: '40px' }}>Nenhum log encontrado.</p>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                     {logs.map(log => (
-                                        <div key={log.id} style={{
-                                            ...cardStyle,
-                                            padding: '12px 16px',
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            background: log.status === 'sent' ? '#f0fdf4' : log.status === 'failed' ? '#fef2f2' : '#fefce8'
-                                        }}>
+                                        <div key={log.id} className={`px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex justify-between items-center ${log.status === 'sent' ? 'bg-emerald-50 dark:bg-emerald-900/20' : log.status === 'failed' ? 'bg-red-50 dark:bg-red-900/20' : 'bg-yellow-50 dark:bg-yellow-900/20'}`}>
                                             <div style={{ flex: 1 }}>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                     <span style={{
@@ -1083,18 +1045,13 @@ export const SchedulerAdmin: React.FC = () => {
                     {/* Pending Messages */}
                     {activeTab === 'pending' && (
                         <div>
-                            <h3 style={{ marginBottom: '20px', color: '#1e293b' }}>Mensagens Pendentes ({pending.length})</h3>
+                            <h3 className="mb-5 text-slate-800 dark:text-slate-100">Mensagens Pendentes ({pending.length})</h3>
                             {pending.length === 0 ? (
                                 <p style={{ color: '#64748b', textAlign: 'center', padding: '40px' }}>Nenhuma mensagem agendada.</p>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                                     {pending.map(msg => (
-                                        <div key={msg.id} style={{
-                                            ...cardStyle,
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center'
-                                        }}>
+                                        <div key={msg.id} className="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex justify-between items-center">
                                             <div>
                                                 <div style={{ fontWeight: 'bold', color: '#1e293b' }}>{formatPhone(msg.chatId)}</div>
                                                 <div style={{ color: '#64748b', fontSize: '14px' }}>{msg.message.substring(0, 80)}...</div>
@@ -1104,7 +1061,7 @@ export const SchedulerAdmin: React.FC = () => {
                                             </div>
                                             <button
                                                 onClick={() => cancelMessage(msg.id)}
-                                                style={{ ...buttonStyle, background: '#ef4444', color: 'white' }}
+                                                className="px-4 py-2 text-sm font-semibold rounded-lg bg-red-500 hover:bg-red-600 text-white cursor-pointer border-none"
                                             >
                                                 Cancelar
                                             </button>
@@ -1118,8 +1075,8 @@ export const SchedulerAdmin: React.FC = () => {
                     {/* Templates */}
                     {activeTab === 'templates' && (
                         <div>
-                            <h3 style={{ marginBottom: '20px', color: '#1e293b' }}>Templates de Mensagem</h3>
-                            <div style={{ ...cardStyle, marginBottom: '20px' }}>
+                            <h3 className="mb-5 text-slate-800 dark:text-slate-100">Templates de Mensagem</h3>
+                            <div className="mb-5 p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
                                 <div style={{ marginBottom: '12px' }}>
                                     <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '6px' }}>Canal</label>
                                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -1162,12 +1119,12 @@ export const SchedulerAdmin: React.FC = () => {
                                         placeholder="Nome do template"
                                         value={newTemplate.name}
                                         onChange={e => setNewTemplate({ ...newTemplate, name: e.target.value })}
-                                        style={inputStyle}
+                                        className={inputCls}
                                     />
                                     <select
                                         value={newTemplate.category}
                                         onChange={e => setNewTemplate({ ...newTemplate, category: e.target.value })}
-                                        style={inputStyle}
+                                        className={inputCls}
                                     >
                                         <option value="general">Geral</option>
                                         <option value="reminder">Lembrete</option>
@@ -1181,7 +1138,7 @@ export const SchedulerAdmin: React.FC = () => {
                                             placeholder="Assunto do email"
                                             value={newTemplate.subject}
                                             onChange={e => setNewTemplate({ ...newTemplate, subject: e.target.value })}
-                                            style={inputStyle}
+                                            className={inputCls}
                                         />
                                     </div>
                                 )}
@@ -1190,15 +1147,15 @@ export const SchedulerAdmin: React.FC = () => {
                                     value={newTemplate.content}
                                     onChange={e => setNewTemplate({ ...newTemplate, content: e.target.value })}
                                     rows={3}
-                                    style={{ ...inputStyle, marginTop: '12px', resize: 'vertical' }}
+                                    className={`${inputCls} mt-3 resize-y`}
                                 />
-                                <button onClick={createTemplate} style={{ ...buttonStyle, background: '#10b981', color: 'white', marginTop: '12px' }}>
+                                <button onClick={createTemplate} className="mt-3 px-4 py-2 text-sm font-semibold rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white cursor-pointer border-none">
                                     + Criar Template
                                 </button>
                             </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                                 {templates.map(tpl => (
-                                    <div key={tpl.id} style={{ ...cardStyle, display: 'flex', justifyContent: 'space-between', background: '#f0fdf4' }}>
+                                    <div key={tpl.id} className="p-5 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex justify-between items-start">
                                         <div>
                                             <div style={{ fontWeight: 'bold', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                 {tpl.channel === 'email' ? <Mail size={14} color="#3b82f6" /> : <MessageCircle size={14} color="#10b981" />}
@@ -1213,10 +1170,10 @@ export const SchedulerAdmin: React.FC = () => {
                                             <span style={{ fontSize: '11px', background: '#e0f2fe', color: '#0369a1', padding: '2px 6px', borderRadius: '4px' }}>{tpl.category}</span>
                                         </div>
                                         <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
-                                            <button onClick={() => setEditingTemplate({ ...tpl })} style={{ ...buttonStyle, background: '#3b82f6', color: 'white' }}>
+                                            <button onClick={() => setEditingTemplate({ ...tpl })} className="px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white cursor-pointer border-none">
                                                 Editar
                                             </button>
-                                            <button onClick={() => deleteTemplate(tpl.id)} style={{ ...buttonStyle, background: '#ef4444', color: 'white' }}>
+                                            <button onClick={() => deleteTemplate(tpl.id)} className="px-4 py-2 text-sm font-semibold rounded-lg bg-red-500 hover:bg-red-600 text-white cursor-pointer border-none">
                                                 Excluir
                                             </button>
                                         </div>
@@ -1230,39 +1187,39 @@ export const SchedulerAdmin: React.FC = () => {
                     {activeTab === 'flows' && (
                         <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                                <h3 style={{ margin: 0, color: '#1e293b' }}>Fluxos de Chatbot</h3>
+                                <h3 className="m-0 text-slate-800 dark:text-slate-100">Fluxos de Chatbot</h3>
                                 <button
                                     onClick={() => setShowNewFlowForm(!showNewFlowForm)}
-                                    style={{ ...buttonStyle, background: '#ec4899', color: 'white' }}
+                                    className="px-4 py-2 text-sm font-semibold rounded-lg bg-pink-500 hover:bg-pink-600 text-white cursor-pointer border-none"
                                 >
                                     {showNewFlowForm ? '✕ Cancelar' : '+ Novo Fluxo'}
                                 </button>
                             </div>
 
                             {showNewFlowForm && (
-                                <div style={{ ...cardStyle, marginBottom: '20px', background: '#fdf4ff' }}>
+                                <div className="mb-5 p-5 bg-fuchsia-50 dark:bg-fuchsia-900/20 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
                                     <h4 style={{ marginTop: 0, color: '#86198f' }}>Criar Novo Fluxo</h4>
                                     <div style={{ display: 'grid', gap: '12px' }}>
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Nome do Fluxo</label>
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Nome do Fluxo</label>
                                             <input
                                                 value={newFlow.name}
                                                 onChange={e => setNewFlow({ ...newFlow, name: e.target.value })}
                                                 placeholder="Ex: Atendimento Inicial"
-                                                style={inputStyle}
+                                                className={inputCls}
                                             />
                                         </div>
                                         <div>
-                                            <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Palavras-chave (separadas por vírgula)</label>
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Palavras-chave (separadas por vírgula)</label>
                                             <input
                                                 value={newFlow.triggerKeywords}
                                                 onChange={e => setNewFlow({ ...newFlow, triggerKeywords: e.target.value })}
                                                 placeholder="oi, olá, menu, ajuda"
-                                                style={inputStyle}
+                                                className={inputCls}
                                             />
                                         </div>
                                     </div>
-                                    <button onClick={createFlow} style={{ ...buttonStyle, background: '#ec4899', color: 'white', marginTop: '12px' }}>
+                                    <button onClick={createFlow} className="mt-3 px-4 py-2 text-sm font-semibold rounded-lg bg-pink-500 hover:bg-pink-600 text-white cursor-pointer border-none">
                                         ✓ Criar Fluxo
                                     </button>
                                 </div>
@@ -1273,13 +1230,7 @@ export const SchedulerAdmin: React.FC = () => {
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                                     {flows.map(flow => (
-                                        <div key={flow.id} style={{
-                                            ...cardStyle,
-                                            display: 'flex',
-                                            justifyContent: 'space-between',
-                                            alignItems: 'center',
-                                            background: flow.enabled ? '#eff6ff' : '#f3f4f6'
-                                        }}>
+                                        <div key={flow.id} className={`p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex justify-between items-center ${flow.enabled ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-slate-100 dark:bg-slate-800'}`}>
                                             <div>
                                                 <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', color: '#1e293b' }}>
                                                     {flow.name}
@@ -1304,19 +1255,19 @@ export const SchedulerAdmin: React.FC = () => {
                                                         triggerKeywordsStr: flow.triggerKeywords.join(', '),
                                                         initialMessage: flow.steps[0]?.message ?? '',
                                                     })}
-                                                    style={{ ...buttonStyle, background: '#3b82f6', color: 'white' }}
+                                                    className="px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white cursor-pointer border-none"
                                                 >
                                                     Editar
                                                 </button>
                                                 <button
                                                     onClick={() => toggleFlow(flow.id)}
-                                                    style={{ ...buttonStyle, background: flow.enabled ? '#f59e0b' : '#10b981', color: 'white' }}
+                                                    className={`px-4 py-2 text-sm font-semibold rounded-lg text-white cursor-pointer border-none ${flow.enabled ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-500 hover:bg-emerald-600'}`}
                                                 >
                                                     {flow.enabled ? 'Desativar' : 'Ativar'}
                                                 </button>
                                                 <button
                                                     onClick={() => deleteFlow(flow.id)}
-                                                    style={{ ...buttonStyle, background: '#fee2e2', color: '#dc2626' }}
+                                                    className="px-4 py-2 text-sm font-semibold rounded-lg bg-red-100 dark:bg-red-900/30 hover:bg-red-200 text-red-600 dark:text-red-400 cursor-pointer border-none"
                                                 >
                                                     🗑️
                                                 </button>
@@ -1331,8 +1282,8 @@ export const SchedulerAdmin: React.FC = () => {
                     {/* Broadcast */}
                     {activeTab === 'broadcast' && (
                         <div>
-                            <h3 style={{ marginBottom: '20px', color: '#1e293b' }}>📢 Envio em Massa (Broadcast)</h3>
-                            <div style={cardStyle}>
+                            <h3 className="mb-5 text-slate-800 dark:text-slate-100">📢 Envio em Massa (Broadcast)</h3>
+                            <div className="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
                                 <div style={{ marginBottom: '16px' }}>
                                     <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '6px' }}>
                                         Conta de Envio (WhatsApp)
@@ -1340,7 +1291,7 @@ export const SchedulerAdmin: React.FC = () => {
                                     <select
                                         value={selectedSessionId}
                                         onChange={e => setSelectedSessionId(e.target.value)}
-                                        style={inputStyle}
+                                        className={inputCls}
                                     >
                                         {sessions.map(s => (
                                             <option key={s.id} value={s.id}>
@@ -1361,7 +1312,7 @@ export const SchedulerAdmin: React.FC = () => {
 nome,telefone
 João,5511777776666"
                                         rows={6}
-                                        style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace' }}
+                                        className={`${inputCls} resize-y font-mono`}
                                     />
                                     <small style={{ color: '#64748b' }}>Cole números de telefone (com DDD) ou dados CSV com coluna "telefone" ou "phone"</small>
                                 </div>
@@ -1374,7 +1325,7 @@ João,5511777776666"
                                         onChange={e => setBroadcast({ ...broadcast, message: e.target.value })}
                                         placeholder="Digite a mensagem que será enviada para todos..."
                                         rows={4}
-                                        style={{ ...inputStyle, resize: 'vertical' }}
+                                        className={`${inputCls} resize-y`}
                                     />
                                 </div>
                                 <div style={{ marginBottom: '16px' }}>
@@ -1387,17 +1338,17 @@ João,5511777776666"
                                         onChange={e => setBroadcast({ ...broadcast, delayBetween: parseInt(e.target.value) || 3 })}
                                         min={1}
                                         max={60}
-                                        style={{ ...inputStyle, maxWidth: '120px' }}
+                                        className={`${inputCls} max-w-[120px]`}
                                     />
                                 </div>
-                                <button onClick={sendBroadcast} style={{ ...buttonStyle, background: '#3b82f6', color: 'white', width: '100%', padding: '14px' }}>
+                                <button onClick={sendBroadcast} className="w-full py-3.5 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white cursor-pointer border-none">
                                     📤 Enviar Broadcast
                                 </button>
                             </div>
 
                             {/* Previous Broadcasts */}
                             {broadcasts.length > 0 && (
-                                <div style={{ ...cardStyle, marginTop: '20px' }}>
+                                <div className="mt-5 p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
                                     <h4 style={{ marginTop: 0, marginBottom: '15px', color: '#1e293b' }}>📋 Broadcasts Anteriores</h4>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                         {broadcasts.map(b => (
@@ -1441,11 +1392,11 @@ João,5511777776666"
                     {/* Schedule New */}
                     {activeTab === 'schedule' && (
                         <div>
-                            <h3 style={{ marginBottom: '20px', color: '#1e293b' }}>Agendar Nova Mensagem</h3>
-                            <div style={{ ...cardStyle, maxWidth: '500px' }}>
+                            <h3 className="mb-5 text-slate-800 dark:text-slate-100">Agendar Nova Mensagem</h3>
+                            <div className="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm max-w-[500px]">
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                                     <div>
-                                        <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Canal</label>
+                                        <label className="text-xs font-bold text-slate-600 dark:text-slate-400">Canal</label>
                                         <div style={{ display: 'flex', gap: '8px', marginTop: '4px', marginBottom: '12px' }}>
                                             <button
                                                 onClick={() => setNewMessage({ ...newMessage, channel: 'whatsapp' })}
@@ -1487,7 +1438,7 @@ João,5511777776666"
                                             placeholder={newMessage.channel === 'email' ? "exemplo@email.com" : "5511999999999"}
                                             value={newMessage.chatId}
                                             onChange={e => setNewMessage({ ...newMessage, chatId: e.target.value })}
-                                            style={inputStyle}
+                                            className={inputCls}
                                         />
                                     </div>
                                     <div style={{ marginBottom: '5px' }}>
@@ -1497,7 +1448,7 @@ João,5511777776666"
                                         <select
                                             value={newMessage.channel === 'email' ? selectedEmailAccountId : selectedSessionId}
                                             onChange={e => newMessage.channel === 'email' ? setSelectedEmailAccountId(e.target.value) : setSelectedSessionId(e.target.value)}
-                                            style={inputStyle}
+                                            className={inputCls}
                                         >
                                             <option value="">Selecione...</option>
                                             {newMessage.channel === 'email' ? (
@@ -1518,7 +1469,7 @@ João,5511777776666"
                                                 placeholder="Assunto da mensagem"
                                                 value={newMessage.subject}
                                                 onChange={e => setNewMessage({ ...newMessage, subject: e.target.value })}
-                                                style={inputStyle}
+                                                className={inputCls}
                                             />
                                         </div>
                                     )}
@@ -1529,7 +1480,7 @@ João,5511777776666"
                                             value={newMessage.message}
                                             onChange={e => setNewMessage({ ...newMessage, message: e.target.value })}
                                             rows={4}
-                                            style={{ ...inputStyle, resize: 'vertical' }}
+                                            className={`${inputCls} resize-y`}
                                         />
                                     </div>
                                     <div>
@@ -1538,13 +1489,13 @@ João,5511777776666"
                                             type="datetime-local"
                                             value={newMessage.scheduledAt}
                                             onChange={e => setNewMessage({ ...newMessage, scheduledAt: e.target.value })}
-                                            style={inputStyle}
+                                            className={inputCls}
                                         />
                                         <small style={{ color: '#64748b' }}>Deixe vazio para enviar imediatamente</small>
                                     </div>
                                     <button
                                         onClick={scheduleMessage}
-                                        style={{ ...buttonStyle, padding: '15px', background: '#3b82f6', color: 'white', fontSize: '16px' }}
+                                        className="w-full py-4 text-base font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white cursor-pointer border-none"
                                     >
                                         📤 Agendar Mensagem
                                     </button>
@@ -1568,7 +1519,7 @@ João,5511777776666"
                         justifyContent: 'center',
                         zIndex: 1000
                     }}>
-                        <div style={{ ...cardStyle, width: '90%', maxWidth: '600px', maxHeight: '90vh', overflow: 'auto' }}>
+                        <div className="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm w-[90%] max-w-[600px] max-h-[90vh] overflow-auto">
                             <h3 style={{ marginTop: 0, color: '#1e293b', display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 🧪 Resultado do Teste
                                 {testResult.dryRun && (
@@ -1617,7 +1568,7 @@ João,5511777776666"
 
                             <button
                                 onClick={() => setTestResult(null)}
-                                style={{ ...buttonStyle, background: '#3b82f6', color: 'white', width: '100%' }}
+                                className="w-full px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white cursor-pointer border-none"
                             >
                                 Fechar
                             </button>
@@ -1638,8 +1589,8 @@ João,5511777776666"
                         justifyContent: 'center',
                         zIndex: 1000
                     }}>
-                        <div style={{ ...cardStyle, width: '90%', maxWidth: '700px', maxHeight: '90vh', overflow: 'auto' }}>
-                            <h3 style={{ marginTop: 0, color: '#1e293b' }}>
+                        <div className="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm w-[90%] max-w-[700px] max-h-[90vh] overflow-auto">
+                            <h3 className="mt-0 text-slate-800 dark:text-slate-100">
                                 📢 Broadcast: {selectedBroadcast.broadcastId}
                             </h3>
 
@@ -1695,7 +1646,7 @@ João,5511777776666"
 
                             <button
                                 onClick={() => setSelectedBroadcast(null)}
-                                style={{ ...buttonStyle, background: '#3b82f6', color: 'white', width: '100%', marginTop: '15px' }}
+                                className="mt-4 w-full px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white cursor-pointer border-none"
                             >
                                 Fechar
                             </button>
@@ -1710,8 +1661,8 @@ João,5511777776666"
                     background: 'rgba(0,0,0,0.5)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
                 }}>
-                    <div style={{ ...cardStyle, width: '90%', maxWidth: '440px' }}>
-                        <h3 style={{ marginTop: 0, color: '#1e293b' }}>🧪 Testar Regra</h3>
+                    <div className="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm w-[90%] max-w-[440px]">
+                        <h3 className="mt-0 text-slate-800 dark:text-slate-100">🧪 Testar Regra</h3>
                         <p style={{ color: '#64748b', fontSize: '14px' }}>
                             {testTargetModal.channel === 'email'
                                 ? 'Digite o email de destino para envio real (deixe vazio para simulação):'
@@ -1722,14 +1673,14 @@ João,5511777776666"
                             placeholder={testTargetModal.channel === 'email' ? 'email@destino.com' : '5511999998888'}
                             value={testTargetValue}
                             onChange={e => setTestTargetValue(e.target.value)}
-                            style={inputStyle}
+                            className={inputCls}
                             autoFocus
                         />
                         <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-                            <button onClick={submitTestRule} style={{ ...buttonStyle, background: '#3b82f6', color: 'white', flex: 1 }}>
+                            <button onClick={submitTestRule} className="flex-1 px-4 py-2 text-sm font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white cursor-pointer border-none">
                                 {testTargetValue.trim() ? 'Enviar de Verdade' : 'Simular (Dry-Run)'}
                             </button>
-                            <button onClick={() => setTestTargetModal(null)} style={{ ...buttonStyle, background: '#f1f5f9', color: '#475569' }}>
+                            <button onClick={() => setTestTargetModal(null)} className="px-4 py-2 text-sm font-semibold rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-600 dark:text-slate-300 cursor-pointer border-none">
                                 Cancelar
                             </button>
                         </div>
@@ -1744,20 +1695,20 @@ João,5511777776666"
                     background: 'rgba(0,0,0,0.5)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
                 }}>
-                    <div style={{ ...cardStyle, width: '90%', maxWidth: '560px' }}>
-                        <h3 style={{ marginTop: 0, color: '#1e293b' }}>✏️ Editar Template</h3>
+                    <div className="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm w-[90%] max-w-[560px]">
+                        <h3 className="mt-0 text-slate-800 dark:text-slate-100">✏️ Editar Template</h3>
                         <div style={{ display: 'grid', gap: '12px' }}>
                             <div>
-                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Nome</label>
+                                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">Nome</label>
                                 <input
                                     data-testid="edit-template-name"
                                     value={editingTemplate.name}
                                     onChange={e => setEditingTemplate({ ...editingTemplate, name: e.target.value })}
-                                    style={inputStyle}
+                                    className={inputCls}
                                 />
                             </div>
                             <div>
-                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Canal</label>
+                                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">Canal</label>
                                 <div style={{ display: 'flex', gap: '8px' }}>
                                     <button
                                         onClick={() => setEditingTemplate({ ...editingTemplate, channel: 'whatsapp' })}
@@ -1784,8 +1735,8 @@ João,5511777776666"
                                 </div>
                             </div>
                             <div>
-                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Categoria</label>
-                                <select value={editingTemplate.category} onChange={e => setEditingTemplate({ ...editingTemplate, category: e.target.value })} style={inputStyle}>
+                                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">Categoria</label>
+                                <select value={editingTemplate.category} onChange={e => setEditingTemplate({ ...editingTemplate, category: e.target.value })} className={inputCls}>
                                     <option value="general">Geral</option>
                                     <option value="reminder">Lembrete</option>
                                     <option value="confirmation">Confirmação</option>
@@ -1794,23 +1745,23 @@ João,5511777776666"
                             </div>
                             {editingTemplate.channel === 'email' && (
                                 <div>
-                                    <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Assunto</label>
-                                    <input value={editingTemplate.subject ?? ''} onChange={e => setEditingTemplate({ ...editingTemplate, subject: e.target.value })} style={inputStyle} />
+                                    <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">Assunto</label>
+                                    <input value={editingTemplate.subject ?? ''} onChange={e => setEditingTemplate({ ...editingTemplate, subject: e.target.value })} className={inputCls} />
                                 </div>
                             )}
                             <div>
-                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Conteúdo</label>
+                                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">Conteúdo</label>
                                 <textarea
                                     value={editingTemplate.content}
                                     onChange={e => setEditingTemplate({ ...editingTemplate, content: e.target.value })}
                                     rows={4}
-                                    style={{ ...inputStyle, resize: 'vertical' }}
+                                    className={`${inputCls} resize-y`}
                                 />
                             </div>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-                            <button onClick={saveTemplate} style={{ ...buttonStyle, background: '#10b981', color: 'white', flex: 1 }}>Salvar</button>
-                            <button onClick={() => setEditingTemplate(null)} style={{ ...buttonStyle, background: '#f1f5f9', color: '#475569' }}>Cancelar</button>
+                            <button onClick={saveTemplate} className="flex-1 px-4 py-2 text-sm font-semibold rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white cursor-pointer border-none">Salvar</button>
+                            <button onClick={() => setEditingTemplate(null)} className="px-4 py-2 text-sm font-semibold rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-600 dark:text-slate-300 cursor-pointer border-none">Cancelar</button>
                         </div>
                     </div>
                 </div>
@@ -1823,59 +1774,54 @@ João,5511777776666"
                     background: 'rgba(0,0,0,0.5)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
                 }}>
-                    <div style={{ ...cardStyle, width: '90%', maxWidth: '520px' }}>
-                        <h3 style={{ marginTop: 0, color: '#1e293b' }}>✏️ Editar Fluxo</h3>
+                    <div className="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm w-[90%] max-w-[520px]">
+                        <h3 className="mt-0 text-slate-800 dark:text-slate-100">✏️ Editar Fluxo</h3>
                         <div style={{ display: 'grid', gap: '12px' }}>
                             <div>
-                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Nome</label>
+                                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">Nome</label>
                                 <input
                                     data-testid="edit-flow-name"
                                     value={editingFlow.name}
                                     onChange={e => setEditingFlow({ ...editingFlow, name: e.target.value })}
-                                    style={inputStyle}
+                                    className={inputCls}
                                 />
                             </div>
                             <div>
-                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Palavras-chave (separadas por vírgula)</label>
+                                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">Palavras-chave (separadas por vírgula)</label>
                                 <input
                                     data-testid="edit-flow-keywords"
                                     value={editingFlow.triggerKeywordsStr}
                                     onChange={e => setEditingFlow({ ...editingFlow, triggerKeywordsStr: e.target.value })}
                                     placeholder="oi, olá, menu"
-                                    style={inputStyle}
+                                    className={inputCls}
                                 />
                             </div>
                             <div>
-                                <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>Mensagem inicial</label>
+                                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">Mensagem inicial</label>
                                 <textarea
                                     value={editingFlow.initialMessage}
                                     onChange={e => setEditingFlow({ ...editingFlow, initialMessage: e.target.value })}
                                     rows={3}
-                                    style={{ ...inputStyle, resize: 'vertical' }}
+                                    className={`${inputCls} resize-y`}
                                 />
                             </div>
                         </div>
                         <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-                            <button onClick={saveFlow} style={{ ...buttonStyle, background: '#10b981', color: 'white', flex: 1 }}>Salvar</button>
-                            <button onClick={() => setEditingFlow(null)} style={{ ...buttonStyle, background: '#f1f5f9', color: '#475569' }}>Cancelar</button>
+                            <button onClick={saveFlow} className="flex-1 px-4 py-2 text-sm font-semibold rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white cursor-pointer border-none">Salvar</button>
+                            <button onClick={() => setEditingFlow(null)} className="px-4 py-2 text-sm font-semibold rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-600 dark:text-slate-300 cursor-pointer border-none">Cancelar</button>
                         </div>
                     </div>
                 </div>
             )}
-        </div >
+            </div>
+    </PageLayout>
     );
 };
 
-const StatCard: React.FC<{ label: string; value: number; color: string }> = ({ label, value, color }) => (
-    <div style={{
-        padding: '16px',
-        background: 'white',
-        borderRadius: '12px',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-        borderLeft: `4px solid ${color}`
-    }}>
-        <div style={{ fontSize: '24px', fontWeight: 'bold', color }}>{value}</div>
-        <div style={{ color: '#64748b', fontSize: '13px' }}>{label}</div>
+const StatCard: React.FC<{ label: string; value: number; colorClass: string }> = ({ label, value, colorClass }) => (
+    <div className={`bg-white dark:bg-slate-900 rounded-xl shadow-sm border-l-4 p-4 ${colorClass}`}>
+        <div className={`text-2xl font-bold ${colorClass.split(' ')[1]}`}>{value}</div>
+        <div className="text-slate-500 dark:text-slate-400 text-sm mt-0.5">{label}</div>
     </div>
 );
 

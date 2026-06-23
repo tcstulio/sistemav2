@@ -34,6 +34,16 @@ vi.mock('../../hooks/useConfirm', () => ({
     ConfirmProvider: ({ children }: any) => children,
 }));
 
+// Mock simulatorApi so SavedSimulationsModal receives an array (not a raw fetch object)
+vi.mock('../../services/simulatorApi', () => ({
+    simulatorApi: {
+        list: vi.fn(async () => []),
+        create: vi.fn(async (s: any) => s),
+        update: vi.fn(async (_id: string, updates: any) => ({ id: _id, ...updates })),
+        delete: vi.fn(async () => undefined),
+    },
+}));
+
 describe('Simulator layout regression (#605)', () => {
     beforeEach(() => {
         localStorage.clear();

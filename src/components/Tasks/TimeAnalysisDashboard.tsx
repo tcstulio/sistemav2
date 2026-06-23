@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import {
-    BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
+    BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
     PieChart, Pie, Cell, ReferenceLine
 } from 'recharts';
 import { TaskTimeLog, Project, Task, DolibarrUser } from '../../types';
@@ -82,19 +82,20 @@ export const TimeAnalysisDashboard: React.FC<TimeAnalysisDashboardProps> = ({
 
     // Aggregate Data for Project Pie Chart
     const projectData = useMemo(() => {
-        const projMap = new Map<string, number>();
+        const projMap = new Map<string, { seconds: number; fullName: string }>();
 
         filteredLogs.forEach(log => {
             const task = tasks.find(t => t.id === log.task_id);
             const projectId = task?.project_id || 'unknown';
-            const projectTitle = projects.find(p => p.id === projectId)?.title || 'Sem Projeto';
+            const fullName = projects.find(p => p.id === projectId)?.title || 'Sem Projeto';
 
-            const current = projMap.get(projectTitle) || 0;
-            projMap.set(projectTitle, current + log.duration);
+            const current = projMap.get(fullName) || { seconds: 0, fullName };
+            projMap.set(fullName, { seconds: current.seconds + log.duration, fullName });
         });
 
-        return Array.from(projMap.entries()).map(([name, seconds]) => ({
-            name,
+        return Array.from(projMap.values()).map(({ fullName, seconds }) => ({
+            name: fullName.length > 28 ? fullName.slice(0, 26) + '…' : fullName,
+            fullName,
             value: Number((seconds / 3600).toFixed(2))
         })).sort((a, b) => b.value - a.value);
     }, [filteredLogs, tasks, projects]);
@@ -318,28 +319,69 @@ export const TimeAnalysisDashboard: React.FC<TimeAnalysisDashboardProps> = ({
 
                 {/* Pie Chart: Project Distribution */}
                 <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col">
-                    <h3 className="text-base sm:text-lg font-bold text-slate-800 dark:text-white mb-6 px-2 border-l-4 border-purple-500">Por Projeto</h3>
-                    <div className="flex-1 w-full min-h-[300px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                                <Pie
-                                    data={projectData}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={60}
-                                    outerRadius={90}
-                                    paddingAngle={5}
-                                    dataKey="value"
-                                >
-                                    {projectData.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', backgroundColor: 'rgba(255, 255, 255, 0.96)' }} />
-                                <Legend verticalAlign="bottom" align="center" iconType="circle" />
-                            </PieChart>
-                        </ResponsiveContainer>
-                    </div>
+                    <h3 className="text-base sm:text-lg font-bold text-slate-800 dark:text-white mb-4 px-2 border-l-4 border-purple-500">Por Projeto</h3>
+                    {projectData.length === 0 ? (
+                        <div className="flex-1 flex items-center justify-center text-slate-400 dark:text-slate-500 text-sm">
+                            Nenhum dado no período
+                        </div>
+                    ) : (
+                        <div className="flex flex-col flex-1 gap-3 min-h-0">
+                            {/* Rosca — altura fixa para o gráfico não competir com a legenda */}
+                            <div className="w-full h-[220px] shrink-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={projectData}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={55}
+                                            outerRadius={85}
+                                            paddingAngle={4}
+                                            dataKey="value"
+                                        >
+                                            {projectData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip
+                                            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', backgroundColor: 'rgba(255, 255, 255, 0.96)' }}
+                                            formatter={(value: number, _name: string, props: any) => [
+                                                `${value}h`,
+                                                props.payload?.fullName || props.payload?.name
+                                            ]}
+                                        />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                            {/* Legenda externa — scroll controlado, sem sobreposição */}
+                            <ul
+                                className="overflow-y-auto max-h-[160px] pr-1 space-y-1 custom-scrollbar"
+                                data-testid="project-legend"
+                            >
+                                {projectData.map((entry, index) => (
+                                    <li
+                                        key={entry.fullName}
+                                        className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300"
+                                    >
+                                        <span
+                                            className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                                            style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                                            aria-hidden="true"
+                                        />
+                                        <span
+                                            className="truncate"
+                                            title={entry.fullName}
+                                        >
+                                            {entry.name}
+                                        </span>
+                                        <span className="ml-auto shrink-0 font-medium tabular-nums">
+                                            {entry.value}h
+                                        </span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
                 </div>
             </div>
 

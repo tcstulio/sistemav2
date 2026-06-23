@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { AppView, SupplierPayment } from '../types';
-import { ArrowUpRight, Calendar, TrendingDown, Wallet, Link2, X, FileText, StickyNote, Hash, CreditCard, User, Copy } from 'lucide-react';
+import { ArrowUpRight, Calendar, TrendingDown, Wallet, Link2, X, FileText, StickyNote, Hash, CreditCard, User, Copy, FolderKanban } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useSupplierPayments, useSupplierInvoices, useSupplierPaymentInvoiceLinks, useBankAccounts, useUsers } from '../hooks/dolibarr';
+import { useSupplierPayments, useSupplierInvoices, useSupplierPaymentInvoiceLinks, useBankAccounts, useUsers, useProjects } from '../hooks/dolibarr';
 import { useListControls } from '../hooks/useListControls';
 import { formatDateOnly } from '../utils/dateUtils';
 import { formatCurrency, formatDate } from '../utils/formatUtils';
@@ -57,6 +57,8 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
 
     const { data: bankAccounts } = useBankAccounts(config);
     const { data: users } = useUsers(config);
+    const { data: projectsData } = useProjects(config);
+    const projects = projectsData || [];
 
     const [selectedPayment, setSelectedPayment] = useState<SupplierPayment | null>(null);
     const [showDebug, setShowDebug] = useState(false);
@@ -130,8 +132,22 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
 
         const allocations = getLinkedInvoices(String(selectedPayment.id));
 
-        return { bankAccount, author, paymentModeLabel, allocations };
-    }, [selectedPayment, bankAccounts, users, links, invoices]);
+        // Derive project from linked invoices (first match wins)
+        let project: { id: string; title: string } | null = null;
+        for (const { invoice } of allocations) {
+            if (invoice?.project_id) {
+                const found = projects.find(p => String(p.id) === String(invoice.project_id));
+                if (found) {
+                    project = { id: String(found.id), title: found.title };
+                } else {
+                    project = { id: String(invoice.project_id), title: `Projeto #${invoice.project_id}` };
+                }
+                break;
+            }
+        }
+
+        return { bankAccount, author, paymentModeLabel, allocations, project };
+    }, [selectedPayment, bankAccounts, users, links, invoices, projects]);
 
     // Guard após todos os hooks (evita "rendered fewer hooks").
     if (!config) {
@@ -290,6 +306,30 @@ const SupplierPaymentList: React.FC<SupplierPaymentListProps> = ({ onNavigate, i
                                                 <div>
                                                     <div className="text-xs text-slate-500">Fornecedor</div>
                                                     <div className="font-semibold text-slate-800 dark:text-white text-sm">{selectedPayment.soc_name}</div>
+                                                </div>
+                                            </div>
+                                        </Card>
+                                    )}
+
+                                    {/* Project Context Card */}
+                                    {detailData.project && (
+                                        <Card>
+                                            <div className="flex items-center gap-3">
+                                                <div className="p-2 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 shrink-0">
+                                                    <FolderKanban size={16} />
+                                                </div>
+                                                <div>
+                                                    <div className="text-xs text-slate-500">Projeto</div>
+                                                    {onNavigate ? (
+                                                        <div
+                                                            className="font-semibold text-indigo-600 dark:text-indigo-400 text-sm cursor-pointer hover:underline"
+                                                            onClick={() => onNavigate('projects', detailData.project!.id)}
+                                                        >
+                                                            {detailData.project.title}
+                                                        </div>
+                                                    ) : (
+                                                        <div className="font-semibold text-slate-800 dark:text-white text-sm">{detailData.project.title}</div>
+                                                    )}
                                                 </div>
                                             </div>
                                         </Card>

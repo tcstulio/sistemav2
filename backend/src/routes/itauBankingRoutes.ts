@@ -11,6 +11,7 @@ import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import { itauApiService } from '../services/itauApiService';
+import { dolibarrService } from '../services/dolibarr';
 import {
     PixCobrancaItauRequest,
     PixPagamentoItauRequest,
@@ -254,7 +255,32 @@ router.get('/extrato', async (req: Request, res: Response) => {
             dataFim as string
         );
 
-        res.json({ transacoes });
+        // Batch-fetch payables and enrich debits without N+1
+        let payables: Awaited<ReturnType<typeof dolibarrService.getAccountsPayable>> = [];
+        try {
+            payables = await dolibarrService.getAccountsPayable(dataInicio as string, dataFim as string);
+        } catch {
+            // enrichment is best-effort — don't fail the whole request
+        }
+
+        const payablesByValue = new Map<number, typeof payables[0]>();
+        for (const p of payables) {
+            payablesByValue.set(Math.round(p.totalTtc * 100), p);
+        }
+
+        const transacoesEnriquecidas = transacoes.map(t => {
+            if (t.tipoOperacao !== 'D') return t;
+            const match = payablesByValue.get(Math.round(t.valor * 100));
+            return {
+                ...t,
+                vinculo: {
+                    cliente: match?.socName || undefined,
+                    finalidade: t.complemento || t.descricao,
+                },
+            };
+        });
+
+        res.json({ transacoes: transacoesEnriquecidas });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
