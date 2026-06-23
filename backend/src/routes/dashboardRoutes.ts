@@ -5,6 +5,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { dashboardArtifactsService } from '../services/dashboardArtifactsService';
+import { financialAnalysisStore } from '../services/financialAnalysisStore';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { createLogger } from '../utils/logger';
 
@@ -24,10 +25,12 @@ router.get('/artifacts', (_req: Request, res: Response) => {
 });
 
 // PUT /api/dashboard/artifacts/financial — persiste a análise financeira gerada (texto markdown).
+// Also writes to financialAnalysisStore so GET /analyze/financial-analysis/latest returns it (#538).
 router.put('/artifacts/financial', (req: Request, res: Response) => {
     try {
         const { text } = z.object({ text: z.string().min(1) }).parse(req.body);
         const a = dashboardArtifactsService.setFinancialAnalysis(text, who(req));
+        financialAnalysisStore.saveAnalysis({ data: text, status: 'success', lastRunAt: new Date(a.generatedAt).toISOString() });
         log.info(`Análise financeira regerada por ${a.generatedBy}`);
         res.json(a);
     } catch (e: any) {

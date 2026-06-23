@@ -44,8 +44,15 @@ export interface Warehouse {
     description?: string;
     statut: '0' | '1';
     lieu?: string;
+    address?: string;
+    zip?: string;
+    town?: string;
+    phone?: string;
+    fax?: string;
     date_modification?: number;
     array_options?: Record<string, any>;
+    /** ID do armazém-pai (Dolibarr fk_parent); undefined = armazém raiz */
+    fk_parent?: string;
 }
 
 export interface StockMovement {

@@ -36,6 +36,7 @@ vi.mock('../../hooks/dolibarr', () => ({
     useSupplierPaymentInvoiceLinks: vi.fn(() => ({ data: [] })),
     useBankAccounts: vi.fn(() => ({ data: [] })),
     useUsers: vi.fn(() => ({ data: [] })),
+    useProjects: vi.fn(() => ({ data: [] })),
 }));
 
 // Altura que o AutoSizer (mockado) vai reportar. Mutada por teste para simular os

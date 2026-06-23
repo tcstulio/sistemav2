@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
-import { Building2, MapPin, Users, Star, DollarSign, ExternalLink, Globe, Phone, Mail, Calendar, PartyPopper, Briefcase, Music, Loader2 } from 'lucide-react';
+import { Building2, MapPin, Users, Star, DollarSign, ExternalLink, Globe, Phone, Mail, Calendar, PartyPopper, Briefcase, Music, Loader2, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useListControls } from '../hooks/useListControls';
 import {
@@ -13,6 +13,7 @@ import {
     PricingLabels
 } from '../types/venue';
 import { fetchList } from '../services/api/core';
+import { createVenue, updateVenue, deleteVenue, VenuePayload } from '../services/api/venues';
 import { getThirdParty } from '../services/api/commercial';
 import { formatCurrency } from '../utils/formatUtils';
 import { AppView } from '../types';
@@ -22,13 +23,149 @@ import { logger } from '../utils/logger';
 const log = logger.child('VenueList');
 
 // Design System
-import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, ListToolbar } from './ui';
+import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, ListToolbar, Modal, ConfirmModal, Input } from './ui';
 
 interface VenueListProps {
     onNavigate?: (view: AppView, id: string) => void;
     onSelectVenue?: (venue: VenuePartnership) => void;
     initialItemId?: string;
 }
+
+// ---- Form state ----
+interface VenueFormData {
+    nome: string;
+    descricao: string;
+    endereco: string;
+    site: string;
+    whatsapp: string;
+    email: string;
+    lotacaoEmPe: string;
+    lotacaoMesaJantar: string;
+    lotacaoMesaPequena: string;
+    qtdePessoas: string;
+    precoSemana: string;
+    precoFimSemana: string;
+    precoCorporativo: string;
+    precoFesta: string;
+    precoCultural: string;
+    precoParceria: string;
+    pacoteDatas: string;
+}
+
+interface VenueFormErrors {
+    nome?: string;
+    email?: string;
+    site?: string;
+    lotacaoEmPe?: string;
+    lotacaoMesaJantar?: string;
+    lotacaoMesaPequena?: string;
+    qtdePessoas?: string;
+    precoSemana?: string;
+    precoFimSemana?: string;
+    precoCorporativo?: string;
+    precoFesta?: string;
+    precoCultural?: string;
+    precoParceria?: string;
+    pacoteDatas?: string;
+}
+
+const emptyForm = (): VenueFormData => ({
+    nome: '',
+    descricao: '',
+    endereco: '',
+    site: '',
+    whatsapp: '',
+    email: '',
+    lotacaoEmPe: '',
+    lotacaoMesaJantar: '',
+    lotacaoMesaPequena: '',
+    qtdePessoas: '',
+    precoSemana: '',
+    precoFimSemana: '',
+    precoCorporativo: '',
+    precoFesta: '',
+    precoCultural: '',
+    precoParceria: '',
+    pacoteDatas: '',
+});
+
+const venueToForm = (v: VenuePartnership): VenueFormData => ({
+    nome: v.name || '',
+    descricao: v.description || '',
+    endereco: v.contact.address || '',
+    site: v.contact.site || '',
+    whatsapp: v.contact.whatsapp || '',
+    email: v.contact.email || '',
+    lotacaoEmPe: v.capacity.standing != null ? String(v.capacity.standing) : '',
+    lotacaoMesaJantar: v.capacity.dinnerTable != null ? String(v.capacity.dinnerTable) : '',
+    lotacaoMesaPequena: v.capacity.smallTable != null ? String(v.capacity.smallTable) : '',
+    qtdePessoas: v.capacity.reference != null ? String(v.capacity.reference) : '',
+    precoSemana: v.pricing.weekday != null ? String(v.pricing.weekday) : '',
+    precoFimSemana: v.pricing.weekend != null ? String(v.pricing.weekend) : '',
+    precoCorporativo: v.pricing.corporate != null ? String(v.pricing.corporate) : '',
+    precoFesta: v.pricing.party != null ? String(v.pricing.party) : '',
+    precoCultural: v.pricing.cultural != null ? String(v.pricing.cultural) : '',
+    precoParceria: v.pricing.partnership != null ? String(v.pricing.partnership) : '',
+    pacoteDatas: v.pricing.package != null ? String(v.pricing.package) : '',
+});
+
+const formToPayload = (f: VenueFormData, fkSoc?: string): VenuePayload => {
+    const numOpt = (v: string) => (v.trim() !== '' ? v.trim() : undefined);
+    return {
+        fk_soc: fkSoc || '0',
+        array_options: {
+            options_nome_espaco: f.nome.trim() || undefined,
+            options_descreva: f.descricao.trim() || undefined,
+            options_endereco: f.endereco.trim() || undefined,
+            options_site: f.site.trim() || undefined,
+            options_whatsapp: f.whatsapp.trim() || undefined,
+            options_email: f.email.trim() || undefined,
+            options_lotacao_em_pe: numOpt(f.lotacaoEmPe),
+            options_lotacao_mesa_jantar: numOpt(f.lotacaoMesaJantar),
+            options_lotacao_mesa_pequena: numOpt(f.lotacaoMesaPequena),
+            options_quantidade_pessoas: numOpt(f.qtdePessoas),
+            options_negociacao_dia_da_semana: numOpt(f.precoSemana),
+            options_negociacao_final_de_semana: numOpt(f.precoFimSemana),
+            options_negociacao_corporativo: numOpt(f.precoCorporativo),
+            options_negociacao_festa: numOpt(f.precoFesta),
+            options_negociacao_cultural: numOpt(f.precoCultural),
+            options_negociacao_parceria: numOpt(f.precoParceria),
+            options_negociacao_pacote_datas: numOpt(f.pacoteDatas),
+        },
+    };
+};
+
+const validateForm = (f: VenueFormData): VenueFormErrors => {
+    const errors: VenueFormErrors = {};
+
+    if (!f.nome.trim()) {
+        errors.nome = 'Nome do espaço é obrigatório';
+    }
+
+    if (f.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim())) {
+        errors.email = 'E-mail inválido';
+    }
+
+    if (f.site.trim() && !/^https?:\/\/.+/.test(f.site.trim())) {
+        errors.site = 'Site deve começar com http:// ou https://';
+    }
+
+    const numFields: (keyof VenueFormErrors & keyof VenueFormData)[] = [
+        'lotacaoEmPe', 'lotacaoMesaJantar', 'lotacaoMesaPequena', 'qtdePessoas',
+        'precoSemana', 'precoFimSemana', 'precoCorporativo', 'precoFesta',
+        'precoCultural', 'precoParceria', 'pacoteDatas',
+    ];
+    for (const field of numFields) {
+        const v = f[field] as string;
+        if (v.trim() !== '' && (isNaN(Number(v)) || Number(v) < 0)) {
+            errors[field] = 'Deve ser um número válido';
+        }
+    }
+
+    return errors;
+};
+
+// ---- Main component ----
 
 export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue, initialItemId }) => {
     const { config } = useDolibarr();
@@ -40,22 +177,35 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue,
     const [activeTab, setActiveTab] = useState<'overview' | 'capacity' | 'pricing' | 'ratings'>('overview');
     const [clientName, setClientName] = useState<string | null>(null);
 
+    // CRUD modal state
+    const [isFormOpen, setIsFormOpen] = useState(false);
+    const [editingVenue, setEditingVenue] = useState<VenuePartnership | null>(null);
+    const [formData, setFormData] = useState<VenueFormData>(emptyForm());
+    const [formErrors, setFormErrors] = useState<VenueFormErrors>({});
+    const [isSaving, setIsSaving] = useState(false);
+    const [saveError, setSaveError] = useState<string | null>(null);
+
+    // Delete confirmation state
+    const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    const fetchVenues = async () => {
+        if (!config) return;
+        setIsLoading(true);
+        setError(null);
+        try {
+            const response = await fetchList(config, 'partnerships/partnerships');
+            const transformed = (response || []).map((p: any) => transformPartnership(p));
+            setVenues(transformed);
+        } catch (e: any) {
+            log.error('Erro ao buscar espaços:', e);
+            setError(e.message || 'Erro ao buscar espaços');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     useEffect(() => {
-        const fetchVenues = async () => {
-            if (!config) return;
-            setIsLoading(true);
-            setError(null);
-            try {
-                const response = await fetchList(config, 'partnerships/partnerships');
-                const transformed = (response || []).map((p: any) => transformPartnership(p));
-                setVenues(transformed);
-            } catch (e: any) {
-                log.error('Erro ao buscar espaços:', e);
-                setError(e.message || 'Erro ao buscar espaços');
-            } finally {
-                setIsLoading(false);
-            }
-        };
         fetchVenues();
     }, [config]);
 
@@ -200,7 +350,302 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue,
         }
     };
 
+    // ---- CRUD handlers ----
+
+    const openCreateForm = () => {
+        setEditingVenue(null);
+        setFormData(emptyForm());
+        setFormErrors({});
+        setSaveError(null);
+        setIsFormOpen(true);
+    };
+
+    const openEditForm = () => {
+        if (!selectedVenue) return;
+        setEditingVenue(selectedVenue);
+        setFormData(venueToForm(selectedVenue));
+        setFormErrors({});
+        setSaveError(null);
+        setIsFormOpen(true);
+    };
+
+    const closeForm = () => {
+        setIsFormOpen(false);
+        setEditingVenue(null);
+    };
+
+    const handleFormChange = (field: keyof VenueFormData) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+        setFormData(prev => ({ ...prev, [field]: e.target.value }));
+        // Clear field error on change
+        if (formErrors[field as keyof VenueFormErrors]) {
+            setFormErrors(prev => ({ ...prev, [field]: undefined }));
+        }
+    };
+
+    const handleFormSubmit = async () => {
+        if (!config) return;
+
+        const errors = validateForm(formData);
+        if (Object.keys(errors).length > 0) {
+            setFormErrors(errors);
+            return;
+        }
+
+        setIsSaving(true);
+        setSaveError(null);
+        try {
+            const payload = formToPayload(formData, editingVenue?.fkSoc);
+            if (editingVenue) {
+                await updateVenue(config, String(editingVenue.id), payload);
+            } else {
+                await createVenue(config, payload);
+            }
+            closeForm();
+            // Reload list and update detail if editing
+            await fetchVenues();
+            if (editingVenue) {
+                // selectedVenue will be refreshed via state after fetchVenues
+                setSelectedVenue(null);
+            }
+        } catch (e: any) {
+            log.error('Erro ao salvar espaço:', e);
+            setSaveError(e.message || 'Erro ao salvar espaço');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const openDeleteConfirm = () => {
+        setIsDeleteOpen(true);
+    };
+
+    const handleDeleteConfirm = async () => {
+        if (!config || !selectedVenue) return;
+        setIsDeleting(true);
+        setError(null);
+        try {
+            await deleteVenue(config, String(selectedVenue.id));
+            setIsDeleteOpen(false);
+            setSelectedVenue(null);
+            await fetchVenues();
+        } catch (e: any) {
+            log.error('Erro ao excluir espaço:', e);
+            setError(e.message || 'Erro ao excluir espaço');
+            setIsDeleteOpen(false);
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
     if (!config) return null;
+
+    // ---- Venue Form Modal ----
+
+    const renderFormModal = (
+        <Modal
+            isOpen={isFormOpen}
+            onClose={closeForm}
+            title={editingVenue ? 'Editar Espaço' : 'Novo Espaço'}
+            size="lg"
+            footer={
+                <>
+                    <Button variant="ghost" onClick={closeForm} disabled={isSaving}>
+                        Cancelar
+                    </Button>
+                    <Button
+                        variant="primary"
+                        onClick={handleFormSubmit}
+                        loading={isSaving}
+                        data-testid="venue-form-submit"
+                    >
+                        {editingVenue ? 'Salvar Alterações' : 'Criar Espaço'}
+                    </Button>
+                </>
+            }
+        >
+            {saveError && (
+                <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-600 dark:text-red-400" role="alert">
+                    {saveError}
+                </div>
+            )}
+            <div className="space-y-5">
+                <section>
+                    <h3 className="text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-3">Identificação</h3>
+                    <div className="space-y-3">
+                        <Input
+                            label="Nome do Espaço *"
+                            placeholder="Ex.: Salão Imperial"
+                            value={formData.nome}
+                            onChange={handleFormChange('nome')}
+                            error={formErrors.nome}
+                            data-testid="venue-input-nome"
+                        />
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                Descrição
+                            </label>
+                            <textarea
+                                className="w-full p-2 text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors resize-y min-h-[80px]"
+                                placeholder="Descreva o espaço..."
+                                value={formData.descricao}
+                                onChange={handleFormChange('descricao')}
+                            />
+                        </div>
+                    </div>
+                </section>
+
+                <section>
+                    <h3 className="text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-3">Contato</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <Input
+                            label="Endereço"
+                            placeholder="Rua, número, cidade"
+                            value={formData.endereco}
+                            onChange={handleFormChange('endereco')}
+                            icon={<MapPin size={14} />}
+                        />
+                        <Input
+                            label="WhatsApp"
+                            placeholder="+55 11 99999-9999"
+                            value={formData.whatsapp}
+                            onChange={handleFormChange('whatsapp')}
+                            icon={<Phone size={14} />}
+                        />
+                        <Input
+                            label="E-mail"
+                            type="email"
+                            placeholder="contato@espaco.com"
+                            value={formData.email}
+                            onChange={handleFormChange('email')}
+                            error={formErrors.email}
+                            icon={<Mail size={14} />}
+                        />
+                        <Input
+                            label="Site"
+                            placeholder="https://espaco.com"
+                            value={formData.site}
+                            onChange={handleFormChange('site')}
+                            error={formErrors.site}
+                            icon={<Globe size={14} />}
+                        />
+                    </div>
+                </section>
+
+                <section>
+                    <h3 className="text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-3">Capacidade</h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <Input
+                            label="Em pé"
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={formData.lotacaoEmPe}
+                            onChange={handleFormChange('lotacaoEmPe')}
+                            error={formErrors.lotacaoEmPe}
+                        />
+                        <Input
+                            label="Mesa Jantar"
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={formData.lotacaoMesaJantar}
+                            onChange={handleFormChange('lotacaoMesaJantar')}
+                            error={formErrors.lotacaoMesaJantar}
+                        />
+                        <Input
+                            label="Mesa Coquetel"
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={formData.lotacaoMesaPequena}
+                            onChange={handleFormChange('lotacaoMesaPequena')}
+                            error={formErrors.lotacaoMesaPequena}
+                        />
+                        <Input
+                            label="Referência"
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={formData.qtdePessoas}
+                            onChange={handleFormChange('qtdePessoas')}
+                            error={formErrors.qtdePessoas}
+                        />
+                    </div>
+                </section>
+
+                <section>
+                    <h3 className="text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-3">Preços (R$)</h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <Input
+                            label="Dia de Semana"
+                            type="number"
+                            min="0"
+                            placeholder="0,00"
+                            value={formData.precoSemana}
+                            onChange={handleFormChange('precoSemana')}
+                            error={formErrors.precoSemana}
+                        />
+                        <Input
+                            label="Fim de Semana"
+                            type="number"
+                            min="0"
+                            placeholder="0,00"
+                            value={formData.precoFimSemana}
+                            onChange={handleFormChange('precoFimSemana')}
+                            error={formErrors.precoFimSemana}
+                        />
+                        <Input
+                            label="Corporativo"
+                            type="number"
+                            min="0"
+                            placeholder="0,00"
+                            value={formData.precoCorporativo}
+                            onChange={handleFormChange('precoCorporativo')}
+                            error={formErrors.precoCorporativo}
+                        />
+                        <Input
+                            label="Festa"
+                            type="number"
+                            min="0"
+                            placeholder="0,00"
+                            value={formData.precoFesta}
+                            onChange={handleFormChange('precoFesta')}
+                            error={formErrors.precoFesta}
+                        />
+                        <Input
+                            label="Cultural"
+                            type="number"
+                            min="0"
+                            placeholder="0,00"
+                            value={formData.precoCultural}
+                            onChange={handleFormChange('precoCultural')}
+                            error={formErrors.precoCultural}
+                        />
+                        <Input
+                            label="Parceria"
+                            type="number"
+                            min="0"
+                            placeholder="0,00"
+                            value={formData.precoParceria}
+                            onChange={handleFormChange('precoParceria')}
+                            error={formErrors.precoParceria}
+                        />
+                        <Input
+                            label="Pacote Datas"
+                            type="number"
+                            min="0"
+                            placeholder="0,00"
+                            value={formData.pacoteDatas}
+                            onChange={handleFormChange('pacoteDatas')}
+                            error={formErrors.pacoteDatas}
+                        />
+                    </div>
+                </section>
+            </div>
+        </Modal>
+    );
+
+    // ---- Header / List / Detail ----
 
     const renderHeader = (
         <div className={selectedVenue ? 'hidden lg:block' : 'block'}>
@@ -213,7 +658,17 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue,
                 }
                 subtitle={`${venues.length} espaços cadastrados`}
                 actions={
-                    <ListToolbar controls={controls} searchPlaceholder="Buscar espaços..." />
+                    <div className="flex items-center gap-2">
+                        <Button
+                            size="sm"
+                            icon={<Plus size={16} />}
+                            onClick={openCreateForm}
+                            data-testid="btn-novo-espaco"
+                        >
+                            Novo espaço
+                        </Button>
+                        <ListToolbar controls={controls} searchPlaceholder="Buscar espaços..." />
+                    </div>
                 }
             />
         </div>
@@ -227,7 +682,7 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue,
                     <p>Carregando espaços...</p>
                 </div>
             ) : error ? (
-                <div className="text-center py-20 text-red-500">
+                <div className="text-center py-20 text-red-500" role="alert">
                     <p>{error}</p>
                 </div>
             ) : filteredVenues.length === 0 ? (
@@ -278,11 +733,31 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue,
                 title={selectedVenue.name}
                 subtitle={`${selectedVenue.typeLabel} • ${selectedVenue.ref}`}
                 actions={
-                    onSelectVenue ? (
-                        <Button size="sm" icon={<PartyPopper size={16} />} onClick={handleSelectForSimulator}>
-                            Usar no Simulador
+                    <div className="flex items-center gap-2">
+                        {onSelectVenue && (
+                            <Button size="sm" icon={<PartyPopper size={16} />} onClick={handleSelectForSimulator}>
+                                Usar no Simulador
+                            </Button>
+                        )}
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            icon={<Pencil size={16} />}
+                            onClick={openEditForm}
+                            data-testid="btn-editar-espaco"
+                        >
+                            Editar
                         </Button>
-                    ) : undefined
+                        <Button
+                            size="sm"
+                            variant="danger"
+                            icon={<Trash2 size={16} />}
+                            onClick={openDeleteConfirm}
+                            data-testid="btn-excluir-espaco"
+                        >
+                            Excluir
+                        </Button>
+                    </div>
                 }
                 tabs={
                     <Tabs value={activeTab} onChange={(v) => setActiveTab(v as any)}>
@@ -472,6 +947,21 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue,
                 detail={renderDetail}
                 showDetail={!!selectedVenue}
                 onCloseDetail={() => setSelectedVenue(null)}
+            />
+
+            {/* Form Modal (create / edit) */}
+            {renderFormModal}
+
+            {/* Delete confirmation */}
+            <ConfirmModal
+                isOpen={isDeleteOpen}
+                onClose={() => setIsDeleteOpen(false)}
+                onConfirm={handleDeleteConfirm}
+                title="Excluir Espaço"
+                message={`Tem certeza que deseja excluir "${selectedVenue?.name}"? Esta ação não pode ser desfeita.`}
+                confirmLabel="Excluir"
+                isLoading={isDeleting}
+                variant="danger"
             />
         </div>
     );

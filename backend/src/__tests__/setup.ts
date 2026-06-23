@@ -90,7 +90,13 @@ vi.mock('fs', () => ({
     mkdirSync: vi.fn(),
 }));
 
-vi.mock('https', () => ({
-    default: { Agent: vi.fn(() => ({})) },
-    Agent: vi.fn(() => ({})),
-}));
+vi.mock('https', () => {
+    // https.Agent must be a constructor (used with `new`), so we use a regular function.
+    function AgentMock(_options?: any) {
+        return {};
+    }
+    return {
+        default: { Agent: AgentMock },
+        Agent: AgentMock,
+    };
+});

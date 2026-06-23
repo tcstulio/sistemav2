@@ -1,7 +1,8 @@
 /**
- * Testes para a tela InventoryView (#569)
+ * Testes para a tela InventoryView (#569, #634)
  * Cobre: lista de armazéns, drill-in ao clicar no card, estado vazio,
- * navegação de volta, e não conflito com botões Editar/Excluir.
+ * navegação de volta, não conflito com botões Editar/Excluir,
+ * cor de tema nas abas, abertura/fechamento dos modais (#634).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
@@ -56,6 +57,7 @@ vi.mock('../../hooks/useConfirm', () => ({
 }));
 
 import { InventoryView } from '../../components/InventoryView';
+import { useDolibarr } from '../../context/DolibarrContext';
 
 describe('InventoryView (#569) — drill-in de armazém', () => {
     beforeEach(() => {
@@ -178,6 +180,103 @@ describe('InventoryView (#569) — drill-in de armazém', () => {
         resolveStock!();
         await waitFor(() => {
             expect(screen.queryByTestId('loading-spinner')).not.toBeInTheDocument();
+        });
+    });
+});
+
+describe('InventoryView (#634) — cor de tema e modais padronizados', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('aba ativa usa classes estáticas da cor do tema (emerald)', () => {
+        // Mockar themeColor = emerald
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: { ...mockConfig, themeColor: 'emerald' },
+            refreshData: mockRefreshData,
+        } as any);
+
+        render(<InventoryView />);
+
+        const tabArmazens = screen.getByTestId('tab-warehouses');
+        // A aba ativa deve ter a classe estática correspondente ao emerald
+        expect(tabArmazens.className).toContain('text-emerald-600');
+        expect(tabArmazens.className).toContain('border-emerald-600');
+        // Não deve conter interpolação de string com $
+        expect(tabArmazens.className).not.toContain('${');
+    });
+
+    it('clicar em Movimentações troca a aba ativa', () => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: mockConfig,
+            refreshData: mockRefreshData,
+        } as any);
+
+        render(<InventoryView />);
+
+        const tabMovements = screen.getByTestId('tab-movements');
+        fireEvent.click(tabMovements);
+
+        // Depois de clicar, aba movimentações deve ficar ativa (contendo text-indigo-600)
+        expect(tabMovements.className).toContain('text-indigo-600');
+    });
+
+    it('clicar em Armazém abre o modal de criação', () => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: mockConfig,
+            refreshData: mockRefreshData,
+        } as any);
+
+        render(<InventoryView />);
+        fireEvent.click(screen.getByTestId('btn-new-warehouse'));
+
+        expect(screen.getByText('Novo Armazém')).toBeInTheDocument();
+    });
+
+    it('clicar em Transferir abre o modal de transferência', () => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: mockConfig,
+            refreshData: mockRefreshData,
+        } as any);
+
+        render(<InventoryView />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        expect(screen.getByText('Nova Transferência de Estoque')).toBeInTheDocument();
+    });
+
+    it('clicar em Ajustar abre o modal de correção', () => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: mockConfig,
+            refreshData: mockRefreshData,
+        } as any);
+
+        render(<InventoryView />);
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+
+        expect(screen.getByText('Correção de Estoque')).toBeInTheDocument();
+    });
+
+    it('submeter form de armazém chama createWarehouse com os valores', async () => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: mockConfig,
+            refreshData: mockRefreshData,
+        } as any);
+
+        render(<InventoryView />);
+        fireEvent.click(screen.getByTestId('btn-new-warehouse'));
+
+        const labelInput = screen.getByPlaceholderText('Armazém Principal');
+        fireEvent.change(labelInput, { target: { value: 'Armazém Teste' } });
+
+        const form = document.getElementById('warehouse-form') as HTMLFormElement;
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(mockSvc.createWarehouse).toHaveBeenCalledWith(
+                mockConfig,
+                expect.objectContaining({ label: 'Armazém Teste' })
+            );
         });
     });
 });

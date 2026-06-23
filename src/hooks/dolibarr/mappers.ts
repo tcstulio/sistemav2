@@ -153,6 +153,7 @@ export const mapSupplier = (raw: RawDolibarrRecord): ThirdParty => ({
     date_modification: toTimestamp(raw.tms),
     fournisseur: toString(raw.fournisseur) || '1',
     array_options: raw.array_options ?? undefined,
+    category_ids: raw.category_ids ? String(raw.category_ids).split(',').filter(Boolean) : undefined,
 });
 
 /**
@@ -183,6 +184,7 @@ export const mapThirdParty = (raw: RawDolibarrRecord): ThirdParty => ({
     date_modification: toTimestamp(raw.tms),
     fournisseur: toString(raw.fournisseur) || '0',
     array_options: raw.array_options ?? undefined,
+    category_ids: raw.category_ids ? String(raw.category_ids).split(',').filter(Boolean) : undefined,
 });
 
 /**
@@ -384,6 +386,13 @@ export const mapPayment = (data: any): Payment => ({
     mode_id: data.mode_id ? Number(data.mode_id) : undefined,
     user_author_id: data.user_author_id ? Number(data.user_author_id) : undefined,
     date_modification: toTimestamp(data.tms),
+    // Nota: o custom_sync.php/payments não envia fk_soc/fk_projet no payload bruto.
+    // Estes campos são mapeados aqui caso uma versão futura do SQL os inclua.
+    // A derivação via fatura vinculada (getPaymentContext) é a fonte primária atual.
+    fk_soc: data.fk_soc ? Number(data.fk_soc) : undefined,
+    socid: data.socid ? Number(data.socid) : undefined,
+    project_id: data.project_id ? Number(data.project_id) : undefined,
+    fk_projet: data.fk_projet ? Number(data.fk_projet) : undefined,
 });
 
 export const mapSupplierPayment = (data: any): SupplierPayment => ({
@@ -606,8 +615,15 @@ export const mapWarehouse = (raw: RawDolibarrRecord): Warehouse => ({
     label: raw.label || raw.lieu || '',
     description: raw.description,
     lieu: raw.lieu || '',
+    address: raw.address || undefined,
+    zip: raw.zip || undefined,
+    town: raw.town || undefined,
+    phone: raw.phone || undefined,
+    fax: raw.fax || undefined,
     statut: toString(raw.statut) as '0' | '1',
     date_modification: toTimestamp(raw.tms),
+    array_options: raw.array_options || undefined,
+    fk_parent: raw.fk_parent && String(raw.fk_parent) !== '0' ? toString(raw.fk_parent) : undefined,
 });
 
 /**
