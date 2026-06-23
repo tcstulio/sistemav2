@@ -793,6 +793,8 @@ class GoogleProvider implements AIProvider {
 
 import { isQuotaError, markQuotaExhausted, clearQuotaExhausted } from './llmQuotaState';
 import { llmCallLogService } from './llmCallLogService';
+import { llmHealthService } from './llmHealthService';
+import { configService as _configService } from './configService';
 
 export class LocalProvider implements AIProvider {
     private baseUrl: string;
@@ -1439,11 +1441,130 @@ const getMultimodalProvider = (): AIProvider | null => {
     return null;
 };
 
+/**
+ * Executa `exec(provider)` percorrendo a cadeia de fallback do módulo.
+ * Pula providers indisponíveis (em cooldown no LlmHealthService).
+ * Em erro de cota/infra registra no LlmHealthService e tenta o próximo.
+ * Sucesso registra recordSuccess e retorna o resultado.
+ * Se todos falharem, lança o último erro.
+ * Registra `chain` e `activeIndex` no llmCallLogService ao encerrar.
+ *
+ * NUNCA modifica postChatCompletion — é uma camada ACIMA do provider.
+ */
+async function runWithChain<T>(
+    moduleName: string,
+    exec: (provider: string) => Promise<T>,
+): Promise<T> {
+    const chain = _configService.getFallbackChain(moduleName);
+    let lastErr: any;
+    let activeIndex = -1;
+
+    for (let i = 0; i < chain.length; i++) {
+        const provider = chain[i];
+        if (!llmHealthService.isAvailable(provider)) {
+            log.warn(`runWithChain[${moduleName}]: provider '${provider}' em cooldown — pulando.`);
+            continue;
+        }
+        try {
+            const result = await exec(provider);
+            llmHealthService.recordSuccess(provider);
+            activeIndex = i;
+            // Registra encerramento da cadeia (aditivo ao log individual do provider)
+            try {
+                llmCallLogService.record({
+                    model: provider,
+                    primaryModel: chain[0],
+                    fellBack: i > 0,
+                    ok: true,
+                    latencyMs: 0,
+                    origin: moduleName,
+                    chain,
+                    activeIndex,
+                });
+            } catch { /* observabilidade não quebra chamada */ }
+            return result;
+        } catch (err: any) {
+            const detail = err?.response
+                ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data || '').slice(0, 200)}`
+                : (err?.code || err?.message || String(err));
+
+            if (isQuotaError(detail)) {
+                llmHealthService.recordQuotaError(provider, err);
+            } else {
+                llmHealthService.recordTransientError(provider, err);
+            }
+            lastErr = err;
+            log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${detail.slice(0, 120)}] — tentando próximo.`);
+        }
+    }
+
+    // Todos falharam
+    try {
+        llmCallLogService.record({
+            model: chain[chain.length - 1] ?? moduleName,
+            primaryModel: chain[0] ?? moduleName,
+            fellBack: chain.length > 1,
+            ok: false,
+            latencyMs: 0,
+            origin: moduleName,
+            chain,
+            activeIndex: -1,
+            errorDetail: lastErr?.message?.slice(0, 300),
+        });
+    } catch { /* observabilidade não quebra */ }
+
+    throw lastErr ?? new Error(`runWithChain[${moduleName}]: todos os providers falharam`);
+}
+
+/**
+ * Probe leve: testa se o provider responde (sem backoff de 2-32s).
+ * Usado pelo taskRunner para sondagem periódica de disponibilidade.
+ * Retorna true se o provider respondeu com qualquer texto, false caso contrário.
+ */
+async function probeProvider(provider: string): Promise<boolean> {
+    try {
+        const p = createProvider(provider);
+        // Chamada mínima: pergunta trivial com timeout curto (10s)
+        if ('generateReply' in p) {
+            const probe = p as AIProvider;
+            // Usa axios diretamente para um probe com timeout curto sem o backoff do postChatCompletion
+            if (p instanceof LocalProvider) {
+                const baseUrl = (p as any).baseUrl as string;
+                const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+                const apiKey = (p as any).apiKey as string | undefined;
+                if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+                const model = (p as any).modelName as string;
+                await axios.post(`${baseUrl}/chat/completions`, {
+                    model,
+                    messages: [{ role: 'user', content: 'ping' }],
+                    max_tokens: 1,
+                    temperature: 0,
+                }, { headers, timeout: 10000 });
+                return true;
+            }
+            // Para GoogleProvider: analisa sentimento de "ping" (leve)
+            if (p instanceof GoogleProvider) {
+                await probe.analyzeSentiment('ping');
+                return true;
+            }
+        }
+        return false;
+    } catch {
+        return false;
+    }
+}
+
 export const aiService = {
     setConfig: (providerName: 'local' | 'google' | 'glm' | 'minimax', url?: string, key?: string, modelName?: string) => {
         defaultProvider = createProvider(providerName, url, key, modelName);
         log.info(`AI Provider set to: ${providerName} (Model: ${modelName})`);
     },
+
+    /** Expõe runWithChain para uso externo (ex.: taskRunner, testes). */
+    runWithChain,
+
+    /** Expõe probeProvider para uso externo (ex.: taskRunner health check). */
+    probeProvider,
 
     getModels: async () => {
         const provider = getProvider();
@@ -1460,27 +1581,27 @@ export const aiService = {
             if (tunnelUrl) context = `${context}\n[INFRA] Endereço de acesso público atual (cloudflared): ${tunnelUrl}`;
         } catch { /* ignore */ }
 
-        // Dynamic Config Lookup
-        // We might want to import configService dynamically if needed, or assume it's available.
-        // But since this is inside a function, we can use the imported instance.
-        const { configService } = require('./configService');
-        const moduleConfig = configService.getModuleConfig(moduleName);
+        const configService = _configService;
 
-        // Determine which provider to use for this Specific Request
-        const providerName = moduleConfig.provider || config.llmProvider;
-        const modelName = moduleConfig.model; // Specific model for this module
-
-        // We can either switch the global provider (not thread safe) or get the specific provider instance.
-        // Better: getProvider(providerName)
-        let specificProvider = getProvider(providerName);
-
-        if (!specificProvider) {
-            // Fallback to default
-            specificProvider = getProvider();
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(moduleName, (providerName) => {
+                const moduleConfig = configService.getModuleConfig(moduleName);
+                const modelName = moduleConfig.model;
+                let specificProvider = getProvider(providerName);
+                if (imageBase64 && !providerSupportsVision(specificProvider)) {
+                    const mm = getMultimodalProvider();
+                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName });
+                }
+                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName });
+            });
         }
 
-        // Roteamento por capacidade: se há IMAGEM e o provider de texto (GLM/local)
-        // não tem visão, atende ESTA resposta com o Google (mesmo conjunto de tools).
+        const moduleConfig = configService.getModuleConfig(moduleName);
+        const providerName = moduleConfig.provider || config.llmProvider;
+        const modelName = moduleConfig.model;
+        let specificProvider = getProvider(providerName);
+        if (!specificProvider) specificProvider = getProvider();
+
         if (imageBase64 && !providerSupportsVision(specificProvider)) {
             const mm = getMultimodalProvider();
             if (mm) {
@@ -1494,19 +1615,25 @@ export const aiService = {
     },
 
     analyzeSystem: async (query: string, rootPath: string = '../src', module: string = 'system_analysis') => {
+        const configService = _configService;
         const fileContext = await readSystemContext(rootPath);
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => getProvider(p).analyzeSystem(query, fileContext, module));
+        }
         return getProvider().analyzeSystem(query, fileContext, module);
     },
 
     analyzeSentiment: async (message: string, module: string = 'chat') => {
+        const configService = _configService;
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => getProvider(p).analyzeSentiment(message, module));
+        }
         return getProvider().analyzeSentiment(message, module);
     },
 
     extractReceiptData: async (imageBase64: string, module: string = 'banking') => {
-        // Visão (OCR de recibo): o GLM-4.6V (LocalProvider com visão) atende direto;
-        // se o provider de texto não tem visão, roteia p/ Google (fallback multimodal).
-        // NB: só o caminho de OCR usa a visão do GLM; o chat-com-imagem (generateReply)
-        // continua no Google, pois o LocalProvider.generateReply não envia a imagem.
+        // OCR de recibo: GLM-4.6V (LocalProvider com visão) atende direto;
+        // se sem visão, roteia p/ Google. Não usa runWithChain pois depende de visão.
         let provider = getProvider();
         const canVision = providerSupportsVision(provider)
             || (typeof (provider as any).supportsVision === 'function' && (provider as any).supportsVision());
@@ -1521,25 +1648,42 @@ export const aiService = {
     },
 
     extractCustomerInfo: async (text: string, module: string = 'chat') => {
+        const configService = _configService;
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => getProvider(p).extractCustomerInfo(text, module));
+        }
         return getProvider().extractCustomerInfo(text, module);
     },
 
     analyzeFinancialHealth: async (data: any, module: string = 'banking') => {
+        const configService = _configService;
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => getProvider(p).analyzeFinancialHealth(data, module));
+        }
         return getProvider().analyzeFinancialHealth(data, module);
     },
 
     fixApiCall: async (logData: any, module: string = 'system_analysis') => {
+        const configService = _configService;
         const context = await readSystemContext('../src');
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => getProvider(p).fixApiCall(logData, context, module));
+        }
         return getProvider().fixApiCall(logData, context, module);
     },
 
     generateCode: async (endpoint: string, method: string, description?: string, module: string = 'system_analysis') => {
+        const configService = _configService;
         const context = await readSystemContext('../src');
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => getProvider(p).generateCode(endpoint, method, description, context, module));
+        }
         return getProvider().generateCode(endpoint, method, description, context, module);
     },
 
     transcribeAudio: async (audioBase64: string, mimeType: string = 'audio/ogg', module: string = 'chat') => {
         // Áudio: se o provider de texto (GLM/local) não transcreve, roteia p/ Google.
+        // Não usa runWithChain pois depende de capacidade multimodal específica.
         let provider = getProvider();
         if (!providerSupportsAudio(provider)) {
             const mm = getMultimodalProvider();
@@ -1554,8 +1698,15 @@ export const aiService = {
         throw new Error('Transcrição não disponível neste provider');
     },
 
-    // New AI methods
     draftCollectionEmail: async (customer: any, amount: number, module: string = 'banking') => {
+        const configService = _configService;
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => {
+                const pr = getProvider(p);
+                if (!('draftCollectionEmail' in pr && pr.draftCollectionEmail)) throw new Error('draftCollectionEmail indisponível');
+                return pr.draftCollectionEmail!(customer, amount, module);
+            });
+        }
         const provider = getProvider();
         if ('draftCollectionEmail' in provider && provider.draftCollectionEmail) {
             return provider.draftCollectionEmail(customer, amount, module);
@@ -1564,6 +1715,14 @@ export const aiService = {
     },
 
     generateSalesForecast: async (invoices: any[], context?: any, module: string = 'banking') => {
+        const configService = _configService;
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => {
+                const pr = getProvider(p);
+                if (!('generateSalesForecast' in pr && pr.generateSalesForecast)) throw new Error('generateSalesForecast indisponível');
+                return pr.generateSalesForecast!(invoices, context, module);
+            });
+        }
         const provider = getProvider();
         if ('generateSalesForecast' in provider && provider.generateSalesForecast) {
             return provider.generateSalesForecast(invoices, context, module);
@@ -1572,6 +1731,14 @@ export const aiService = {
     },
 
     analyzeCustomerSentiment: async (customer: any, invoices: any[], module: string = 'banking') => {
+        const configService = _configService;
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => {
+                const pr = getProvider(p);
+                if (!('analyzeCustomerSentiment' in pr && pr.analyzeCustomerSentiment)) throw new Error('analyzeCustomerSentiment indisponível');
+                return pr.analyzeCustomerSentiment!(customer, invoices, module);
+            });
+        }
         const provider = getProvider();
         if ('analyzeCustomerSentiment' in provider && provider.analyzeCustomerSentiment) {
             return provider.analyzeCustomerSentiment(customer, invoices, module);
@@ -1580,6 +1747,14 @@ export const aiService = {
     },
 
     auditProposal: async (proposal: any, module: string = 'proposals') => {
+        const configService = _configService;
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => {
+                const pr = getProvider(p);
+                if (!('auditProposal' in pr && pr.auditProposal)) throw new Error('auditProposal indisponível');
+                return pr.auditProposal!(proposal, module);
+            });
+        }
         const provider = getProvider();
         if ('auditProposal' in provider && provider.auditProposal) {
             return provider.auditProposal(proposal, module);
@@ -1588,6 +1763,14 @@ export const aiService = {
     },
 
     auditProject: async (project: any, tasks?: any[], projectInvoices?: any[], module: string = 'proposals') => {
+        const configService = _configService;
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => {
+                const pr = getProvider(p);
+                if (!('auditProject' in pr && pr.auditProject)) throw new Error('auditProject indisponível');
+                return pr.auditProject!(project, tasks, projectInvoices, module);
+            });
+        }
         const provider = getProvider();
         if ('auditProject' in provider && provider.auditProject) {
             return provider.auditProject(project, tasks, projectInvoices, module);
@@ -1596,6 +1779,14 @@ export const aiService = {
     },
 
     analyzeSystemLogs: async (logs: any[], module: string = 'system_analysis') => {
+        const configService = _configService;
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => {
+                const pr = getProvider(p);
+                if (!('analyzeSystemLogs' in pr && pr.analyzeSystemLogs)) throw new Error('analyzeSystemLogs indisponível');
+                return pr.analyzeSystemLogs!(logs, module);
+            });
+        }
         const provider = getProvider();
         if ('analyzeSystemLogs' in provider && provider.analyzeSystemLogs) {
             return provider.analyzeSystemLogs(logs, module);
@@ -1604,6 +1795,14 @@ export const aiService = {
     },
 
     analyzeMonthlyReport: async (data: any, module: string = 'system_analysis') => {
+        const configService = _configService;
+        if (configService.isRunWithChainEnabled()) {
+            return runWithChain(module, (p) => {
+                const pr = getProvider(p);
+                if (!('analyzeMonthlyReport' in pr && pr.analyzeMonthlyReport)) throw new Error('analyzeMonthlyReport indisponível');
+                return pr.analyzeMonthlyReport!(data, module);
+            });
+        }
         const provider = getProvider();
         if ('analyzeMonthlyReport' in provider && provider.analyzeMonthlyReport) {
             return provider.analyzeMonthlyReport(data, module);
