@@ -25,6 +25,8 @@ export interface LlmCallEntry {
     errorCode?: string;     // status HTTP ou code (ex.: '429', 'ETIMEDOUT')
     errorDetail?: string;   // detalhe truncado do erro
     totalTokens?: number;
+    chain?: string[];       // cadeia de fallback percorrida pelo runWithChain (#793)
+    activeIndex?: number;   // índice na cadeia que respondeu (ou -1 se todos falharam) (#793)
 }
 
 interface Store { entries: LlmCallEntry[]; }
