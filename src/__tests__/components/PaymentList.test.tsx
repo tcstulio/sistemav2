@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import PaymentList from '../../components/PaymentList';
 import { useDolibarr } from '../../context/DolibarrContext';
-import { usePayments } from '../../hooks/dolibarr';
+import { usePayments, useCustomers, useProjects } from '../../hooks/dolibarr';
 import { formatCurrency } from '../../utils/formatUtils';
 
 vi.mock('sonner', () => ({
@@ -33,6 +34,8 @@ vi.mock('../../hooks/dolibarr', () => ({
     usePaymentInvoiceLinks: vi.fn(() => ({ data: [] })),
     useBankAccounts: vi.fn(() => ({ data: [] })),
     useUsers: vi.fn(() => ({ data: [] })),
+    useCustomers: vi.fn(() => ({ data: [] })),
+    useProjects: vi.fn(() => ({ data: [] })),
 }));
 
 // AutoSizer mockado: reporta altura real para que o react-window renderize as linhas.
@@ -101,5 +104,109 @@ describe('PaymentList — Currency standardization (#639/#643)', () => {
         const { container } = render(<PaymentList />);
 
         expect(container.textContent).toContain(formatCurrency(0));
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Suite: loading / error states (#556)
+// ---------------------------------------------------------------------------
+describe('PaymentList — loading e erro (#556)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useDolibarr).mockReturnValue({ config: baseConfig, isLoading: false, error: null } as any);
+    });
+
+    it('exibe indicador de carregamento quando paymentsLoading=true e sem dados', () => {
+        vi.mocked(usePayments).mockReturnValue({
+            data: undefined,
+            isLoading: true,
+            isFetching: false,
+            isError: false,
+            error: null,
+            refetch: vi.fn(),
+        } as any);
+
+        const { container } = render(<PaymentList />);
+        expect(container.textContent).toMatch(/Carregando/i);
+    });
+
+    it('exibe estado de carregamento quando config não está disponível', () => {
+        vi.mocked(useDolibarr).mockReturnValue({ config: undefined, isLoading: true, error: null } as any);
+        vi.mocked(usePayments).mockReturnValue({
+            data: undefined,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+            error: null,
+            refetch: vi.fn(),
+        } as any);
+
+        const { container } = render(<PaymentList />);
+        expect(container.textContent).toMatch(/Carregando/i);
+    });
+
+    it('exibe estado de erro quando isError=true', () => {
+        vi.mocked(usePayments).mockReturnValue({
+            data: undefined,
+            isLoading: false,
+            isFetching: false,
+            isError: true,
+            error: new Error('Falha na sincronização'),
+            refetch: vi.fn(),
+        } as any);
+
+        const { container } = render(<PaymentList />);
+        expect(container.textContent).toContain('Falha na sincronização');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Suite: exibição de cliente/evento e clique (#556)
+// ---------------------------------------------------------------------------
+describe('PaymentList — cliente, evento e clique (#556)', () => {
+    const paymentsWithContext = [
+        { id: 1, ref: 'PAY-001', date_payment: '2024-01-15', amount: 1500, mode_id: 2, fk_soc: 10, project_id: 5 },
+    ];
+    const customersMock = [{ id: '10', name: 'Cliente Pagante', client: '1', status: '1', fournisseur: '0' }];
+    const projectsMock = [{ id: '5', title: 'Evento de Teste', ref: 'PROJ-005' }];
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useDolibarr).mockReturnValue({ config: baseConfig, isLoading: false, error: null } as any);
+        vi.mocked(usePayments).mockReturnValue({
+            data: paymentsWithContext,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+            error: null,
+            refetch: vi.fn(),
+        } as any);
+    });
+
+    it('exibe o nome do cliente no card do pagamento', () => {
+        vi.mocked(useCustomers).mockReturnValue({ data: customersMock } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: projectsMock } as any);
+        render(<PaymentList />);
+        expect(screen.getByText('Cliente Pagante')).toBeInTheDocument();
+    });
+
+    it('exibe o título do evento/projeto no card do pagamento', () => {
+        vi.mocked(useCustomers).mockReturnValue({ data: customersMock } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: projectsMock } as any);
+        render(<PaymentList />);
+        expect(screen.getByText('Evento de Teste')).toBeInTheDocument();
+    });
+
+    it('clicar em um pagamento abre o painel de detalhe', async () => {
+        const user = userEvent.setup();
+        vi.mocked(useCustomers).mockReturnValue({ data: customersMock } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: projectsMock } as any);
+        render(<PaymentList />);
+
+        const paymentRef = screen.getByText('PAY-001');
+        await user.click(paymentRef);
+
+        // O detalhe exibe "Cliente e Evento" no cabeçalho do card
+        expect(screen.getByText('Cliente e Evento')).toBeInTheDocument();
     });
 });

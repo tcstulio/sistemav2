@@ -53,7 +53,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
             { id: 'shipments', path: '/shipments', label: 'Envios' },
             { id: 'contracts', path: '/contracts', label: 'Contratos' },
             { id: 'interventions', path: '/interventions', label: 'Intervenções' },
-            { id: 'tickets', path: '/tickets', label: 'Chamados' },
+            { id: 'tickets', path: '/tickets', label: 'Conversas com clientes' },
         ],
     },
     {
@@ -95,7 +95,6 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
         items: [
             { id: 'products', path: '/products', label: 'Produtos' },
             { id: 'categories', path: '/categories', label: 'Categorias/Tags' },
-            { id: 'inventory', path: '/inventory', label: 'Estoque' },
             { id: 'warehouses', path: '/warehouses', label: 'Estoques' },
             { id: 'manufacturing', path: '/manufacturing', label: 'Produção' },
         ],

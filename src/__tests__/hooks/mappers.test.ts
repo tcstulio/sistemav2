@@ -333,7 +333,7 @@ describe('Dolibarr Mappers', () => {
     });
 
     describe('Warehouse mappers', () => {
-        it('maps raw warehouse', () => {
+        it('maps raw warehouse basic fields', () => {
             const raw = {
                 id: '1',
                 label: 'Almoxarifado Central',
@@ -342,6 +342,43 @@ describe('Dolibarr Mappers', () => {
             const result = mappers.mapWarehouse(raw);
             expect(result.id).toBe('1');
             expect(result.label).toBe('Almoxarifado Central');
+        });
+
+        it('preserves array_options (extrafields) in mapWarehouse', () => {
+            const raw = {
+                id: '2',
+                label: 'Armazém Norte',
+                statut: '1',
+                array_options: { options_setor: 'Eletrônicos', options_capacidade: '500' },
+            };
+            const result = mappers.mapWarehouse(raw as any);
+            expect(result.array_options).toEqual({ options_setor: 'Eletrônicos', options_capacidade: '500' });
+        });
+
+        it('maps address, zip, town, phone, fax fields', () => {
+            const raw = {
+                id: '3',
+                label: 'Depósito Sul',
+                statut: '0',
+                address: 'Av. Brasil, 200',
+                zip: '01000-000',
+                town: 'São Paulo',
+                phone: '(11) 99999-0000',
+                fax: '(11) 3333-0000',
+            };
+            const result = mappers.mapWarehouse(raw as any);
+            expect(result.address).toBe('Av. Brasil, 200');
+            expect(result.zip).toBe('01000-000');
+            expect(result.town).toBe('São Paulo');
+            expect(result.phone).toBe('(11) 99999-0000');
+            expect(result.fax).toBe('(11) 3333-0000');
+        });
+
+        it('omits undefined for missing optional fields', () => {
+            const raw = { id: '4', label: 'Simples' };
+            const result = mappers.mapWarehouse(raw as any);
+            expect(result.address).toBeUndefined();
+            expect(result.array_options).toBeUndefined();
         });
     });
 

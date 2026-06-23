@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Warehouse, AppView, Product } from '../types';
-import { Warehouse as WarehouseIcon, ArrowRightLeft, Search, MapPin, Package, User, Truck, X, Sliders, Plus, Edit2, Trash2, Loader2, Save, CalendarDays, Filter, RefreshCw, Layers, ArrowUpRight, ArrowDownRight, FileText, ArrowLeft, Boxes } from 'lucide-react';
+import { Warehouse as WarehouseIcon, ArrowRightLeft, Search, MapPin, Package, User, Truck, Sliders, Plus, Edit2, Trash2, Loader2, Save, ArrowLeft, Boxes } from 'lucide-react';
 import { formatDateTime } from '../utils/dateUtils';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -11,6 +11,22 @@ import { notifyError } from '../utils/notifyError';
 import { toast } from 'sonner';
 import { useConfirm } from '../hooks/useConfirm';
 import { mapWithConcurrency } from '../utils/mapWithConcurrency';
+import { PageHeader, Modal } from './ui';
+
+/** Static map of themeColor → Tailwind tab-active classes (avoids interpolation; Tailwind v4 needs literal classes). */
+const TAB_ACTIVE_CLASSES: Record<string, string> = {
+    indigo: 'border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400',
+    emerald: 'border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400',
+    blue: 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400',
+    rose: 'border-rose-600 text-rose-600 dark:border-rose-400 dark:text-rose-400',
+    violet: 'border-violet-600 text-violet-600 dark:border-violet-400 dark:text-violet-400',
+    amber: 'border-amber-600 text-amber-600 dark:border-amber-400 dark:text-amber-400',
+    teal: 'border-teal-600 text-teal-600 dark:border-teal-400 dark:text-teal-400',
+    orange: 'border-orange-600 text-orange-600 dark:border-orange-400 dark:text-orange-400',
+    pink: 'border-pink-600 text-pink-600 dark:border-pink-400 dark:text-pink-400',
+    sky: 'border-sky-600 text-sky-600 dark:border-sky-400 dark:text-sky-400',
+};
+const TAB_INACTIVE_CLASSES = 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200';
 
 const log = logger.child('InventoryView');
 
@@ -352,225 +368,227 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
         );
     }
 
-    return (
-        <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors relative">
+    const activeTabClasses = TAB_ACTIVE_CLASSES[config.themeColor] ?? TAB_ACTIVE_CLASSES['indigo'];
 
-            {/* Warehouse Modal */}
-            {isWarehouseModalOpen && (
-                <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
-                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                <WarehouseIcon size={18} className="text-indigo-600" /> {editingWarehouseId ? 'Editar Armazém' : 'Novo Armazém'}
-                            </h3>
-                            <button onClick={() => setIsWarehouseModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
-                        </div>
-                        <form onSubmit={handleWarehouseSubmit} className="p-6 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Rótulo</label>
-                                <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" required value={warehouseForm.label} onChange={e => setWarehouseForm({ ...warehouseForm, label: e.target.value })} placeholder="Armazém Principal" />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Localização</label>
-                                <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={warehouseForm.lieu || ''} onChange={e => setWarehouseForm({ ...warehouseForm, lieu: e.target.value })} placeholder="Cidade, Prédio..." />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
-                                <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white h-20 resize-none" value={warehouseForm.description || ''} onChange={e => setWarehouseForm({ ...warehouseForm, description: e.target.value })} />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Status</label>
-                                <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={warehouseForm.statut} onChange={e => setWarehouseForm({ ...warehouseForm, statut: e.target.value as any })}>
-                                    <option value="1">Ativo</option>
-                                    <option value="0">Fechado</option>
-                                </select>
-                            </div>
-                            <div className="flex justify-end gap-3 pt-2">
-                                <button type="button" onClick={() => setIsWarehouseModalOpen(false)} className="px-4 py-2 text-slate-500">Cancelar</button>
-                                <button type="submit" disabled={isSubmittingWarehouse} className="px-4 py-2 bg-indigo-600 text-white rounded-lg flex items-center gap-2">
-                                    {isSubmittingWarehouse ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Salvar
-                                </button>
-                            </div>
-                        </form>
+    return (
+        <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 transition-colors">
+
+            {/* Warehouse Modal — standard ui/Modal (portal, ESC, overlay close) */}
+            <Modal
+                isOpen={isWarehouseModalOpen}
+                onClose={() => setIsWarehouseModalOpen(false)}
+                title={
+                    <span className="flex items-center gap-2">
+                        <WarehouseIcon size={18} className="text-indigo-600" />
+                        {editingWarehouseId ? 'Editar Armazém' : 'Novo Armazém'}
+                    </span>
+                }
+                size="md"
+                footer={
+                    <>
+                        <button type="button" onClick={() => setIsWarehouseModalOpen(false)} className="px-4 py-2 text-slate-500">Cancelar</button>
+                        <button form="warehouse-form" type="submit" disabled={isSubmittingWarehouse} className="px-4 py-2 bg-indigo-600 text-white rounded-lg flex items-center gap-2">
+                            {isSubmittingWarehouse ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Salvar
+                        </button>
+                    </>
+                }
+            >
+                <form id="warehouse-form" onSubmit={handleWarehouseSubmit} className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Rótulo</label>
+                        <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" required value={warehouseForm.label} onChange={e => setWarehouseForm({ ...warehouseForm, label: e.target.value })} placeholder="Armazém Principal" />
                     </div>
-                </div>
-            )}
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Localização</label>
+                        <input className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={warehouseForm.lieu || ''} onChange={e => setWarehouseForm({ ...warehouseForm, lieu: e.target.value })} placeholder="Cidade, Prédio..." />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Descrição</label>
+                        <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white h-20 resize-none" value={warehouseForm.description || ''} onChange={e => setWarehouseForm({ ...warehouseForm, description: e.target.value })} />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Status</label>
+                        <select className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={warehouseForm.statut} onChange={e => setWarehouseForm({ ...warehouseForm, statut: e.target.value as any })}>
+                            <option value="1">Ativo</option>
+                            <option value="0">Fechado</option>
+                        </select>
+                    </div>
+                </form>
+            </Modal>
 
             {/* Transfer Modal */}
-            {isTransferModalOpen && (
-                <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
-                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                <Truck size={18} className="text-indigo-600" /> Nova Transferência de Estoque
-                            </h3>
-                            <button onClick={() => setIsTransferModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
-                        </div>
-                        <form onSubmit={handleTransfer} className="p-6 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Produto</label>
-                                <select
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={transferForm.productId}
-                                    onChange={e => setTransferForm({ ...transferForm, productId: e.target.value })}
-                                    required
-                                >
-                                    <option value="">Selecione o Produto...</option>
-                                    {products.filter(p => p.type === '0').map(p => (
-                                        <option key={p.id} value={p.id}>{p.label} ({p.ref})</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Origem</label>
-                                    <select
-                                        className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                        value={transferForm.sourceWarehouse}
-                                        onChange={e => setTransferForm({ ...transferForm, sourceWarehouse: e.target.value })}
-                                        required
-                                    >
-                                        <option value="">De...</option>
-                                        {warehouses.map(w => (
-                                            <option key={w.id} value={w.id} disabled={w.id === transferForm.targetWarehouse}>{w.label}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Destino</label>
-                                    <select
-                                        className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                        value={transferForm.targetWarehouse}
-                                        onChange={e => setTransferForm({ ...transferForm, targetWarehouse: e.target.value })}
-                                        required
-                                    >
-                                        <option value="">Para...</option>
-                                        {warehouses.map(w => (
-                                            <option key={w.id} value={w.id} disabled={w.id === transferForm.sourceWarehouse}>{w.label}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Quantidade</label>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={transferForm.qty}
-                                    onChange={e => setTransferForm({ ...transferForm, qty: parseInt(e.target.value) })}
-                                    required
-                                />
-                            </div>
-
-                            <div className="flex justify-end gap-3 pt-2">
-                                <button type="button" onClick={() => setIsTransferModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
-                                <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
-                                    {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <ArrowRightLeft size={16} />} Transferir
-                                </button>
-                            </div>
-                        </form>
+            <Modal
+                isOpen={isTransferModalOpen}
+                onClose={() => setIsTransferModalOpen(false)}
+                title={
+                    <span className="flex items-center gap-2">
+                        <Truck size={18} className="text-indigo-600" /> Nova Transferência de Estoque
+                    </span>
+                }
+                size="md"
+                footer={
+                    <>
+                        <button type="button" onClick={() => setIsTransferModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
+                        <button form="transfer-form" type="submit" disabled={isSubmitting} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
+                            {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <ArrowRightLeft size={16} />} Transferir
+                        </button>
+                    </>
+                }
+            >
+                <form id="transfer-form" onSubmit={handleTransfer} className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Produto</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={transferForm.productId}
+                            onChange={e => setTransferForm({ ...transferForm, productId: e.target.value })}
+                            required
+                        >
+                            <option value="">Selecione o Produto...</option>
+                            {products.filter(p => p.type === '0').map(p => (
+                                <option key={p.id} value={p.id}>{p.label} ({p.ref})</option>
+                            ))}
+                        </select>
                     </div>
-                </div>
-            )}
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Origem</label>
+                            <select
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={transferForm.sourceWarehouse}
+                                onChange={e => setTransferForm({ ...transferForm, sourceWarehouse: e.target.value })}
+                                required
+                            >
+                                <option value="">De...</option>
+                                {warehouses.map(w => (
+                                    <option key={w.id} value={w.id} disabled={w.id === transferForm.targetWarehouse}>{w.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Destino</label>
+                            <select
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={transferForm.targetWarehouse}
+                                onChange={e => setTransferForm({ ...transferForm, targetWarehouse: e.target.value })}
+                                required
+                            >
+                                <option value="">Para...</option>
+                                {warehouses.map(w => (
+                                    <option key={w.id} value={w.id} disabled={w.id === transferForm.sourceWarehouse}>{w.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Quantidade</label>
+                        <input
+                            type="number"
+                            min="1"
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={transferForm.qty}
+                            onChange={e => setTransferForm({ ...transferForm, qty: parseInt(e.target.value) })}
+                            required
+                        />
+                    </div>
+                </form>
+            </Modal>
 
             {/* Correction Modal */}
-            {isCorrectionModalOpen && (
-                <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 animate-in zoom-in-95">
-                        <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-t-xl">
-                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                                <Sliders size={18} className="text-orange-600" /> Correção de Estoque
-                            </h3>
-                            <button onClick={() => setIsCorrectionModalOpen(false)} className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded"><X size={20} /></button>
-                        </div>
-                        <form onSubmit={handleCorrection} className="p-6 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Produto</label>
-                                <select
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={correctionForm.productId}
-                                    onChange={e => setCorrectionForm({ ...correctionForm, productId: e.target.value })}
-                                    required
-                                >
-                                    <option value="">Selecione o Produto...</option>
-                                    {products.filter(p => p.type === '0').map(p => (
-                                        <option key={p.id} value={p.id}>{p.label} ({p.ref})</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Armazém</label>
-                                <select
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={correctionForm.warehouseId}
-                                    onChange={e => setCorrectionForm({ ...correctionForm, warehouseId: e.target.value })}
-                                    required
-                                >
-                                    <option value="">Selecione...</option>
-                                    {warehouses.map(w => (
-                                        <option key={w.id} value={w.id}>{w.label}</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
-                                    <select
-                                        className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                        value={correctionForm.type}
-                                        onChange={e => setCorrectionForm({ ...correctionForm, type: e.target.value })}
-                                    >
-                                        <option value="add">Adicionar (+)</option>
-                                        <option value="remove">Remover (-)</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Quantidade</label>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                        value={correctionForm.qty}
-                                        onChange={e => setCorrectionForm({ ...correctionForm, qty: parseInt(e.target.value) })}
-                                        required
-                                    />
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Etiqueta/Motivo</label>
-                                <input
-                                    type="text"
-                                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                                    value={correctionForm.label}
-                                    onChange={e => setCorrectionForm({ ...correctionForm, label: e.target.value })}
-                                />
-                            </div>
-
-                            <div className="flex justify-end gap-3 pt-2">
-                                <button type="button" onClick={() => setIsCorrectionModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
-                                <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
-                                    {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Ajustar
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* Header */}
-            <div className="p-4 md:p-6 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex-none">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+            <Modal
+                isOpen={isCorrectionModalOpen}
+                onClose={() => setIsCorrectionModalOpen(false)}
+                title={
+                    <span className="flex items-center gap-2">
+                        <Sliders size={18} className="text-orange-600" /> Correção de Estoque
+                    </span>
+                }
+                size="md"
+                footer={
+                    <>
+                        <button type="button" onClick={() => setIsCorrectionModalOpen(false)} className="px-4 py-2 text-slate-500 hover:text-slate-700 font-medium">Cancelar</button>
+                        <button form="correction-form" type="submit" disabled={isSubmitting} className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-medium shadow-sm flex items-center gap-2">
+                            {isSubmitting ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} Ajustar
+                        </button>
+                    </>
+                }
+            >
+                <form id="correction-form" onSubmit={handleCorrection} className="space-y-4">
                     <div>
-                        <h2 className="text-2xl font-bold text-slate-800 dark:text-white">Estoque e Inventário</h2>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">Gerencie armazéns e movimentações</p>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Produto</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={correctionForm.productId}
+                            onChange={e => setCorrectionForm({ ...correctionForm, productId: e.target.value })}
+                            required
+                        >
+                            <option value="">Selecione o Produto...</option>
+                            {products.filter(p => p.type === '0').map(p => (
+                                <option key={p.id} value={p.id}>{p.label} ({p.ref})</option>
+                            ))}
+                        </select>
                     </div>
-                    <div className="flex items-center gap-2">
+
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Armazém</label>
+                        <select
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={correctionForm.warehouseId}
+                            onChange={e => setCorrectionForm({ ...correctionForm, warehouseId: e.target.value })}
+                            required
+                        >
+                            <option value="">Selecione...</option>
+                            {warehouses.map(w => (
+                                <option key={w.id} value={w.id}>{w.label}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Tipo</label>
+                            <select
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={correctionForm.type}
+                                onChange={e => setCorrectionForm({ ...correctionForm, type: e.target.value })}
+                            >
+                                <option value="add">Adicionar (+)</option>
+                                <option value="remove">Remover (-)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Quantidade</label>
+                            <input
+                                type="number"
+                                min="1"
+                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                                value={correctionForm.qty}
+                                onChange={e => setCorrectionForm({ ...correctionForm, qty: parseInt(e.target.value) })}
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Etiqueta/Motivo</label>
+                        <input
+                            type="text"
+                            className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            value={correctionForm.label}
+                            onChange={e => setCorrectionForm({ ...correctionForm, label: e.target.value })}
+                        />
+                    </div>
+                </form>
+            </Modal>
+
+            {/* Header — standard PageHeader with tabs prop */}
+            <PageHeader
+                title="Estoque e Inventário"
+                subtitle="Gerencie armazéns e movimentações"
+                actions={
+                    <>
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                             <input
@@ -578,37 +596,39 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
                                 placeholder="Buscar..."
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
-                                className="pl-10 pr-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white w-64"
+                                className="pl-10 pr-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white w-48"
                             />
                         </div>
-
-                        <button onClick={() => setIsTransferModalOpen(true)} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors">
+                        <button onClick={() => setIsTransferModalOpen(true)} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors" data-testid="btn-transfer">
                             <ArrowRightLeft size={18} /> Transferir
                         </button>
-                        <button onClick={() => setIsCorrectionModalOpen(true)} className="flex items-center gap-1.5 px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors">
+                        <button onClick={() => setIsCorrectionModalOpen(true)} className="flex items-center gap-1.5 px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors" data-testid="btn-adjust">
                             <Sliders size={18} /> Ajustar
                         </button>
-                        <button onClick={() => openWarehouseModal()} className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors">
+                        <button onClick={() => openWarehouseModal()} className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors" data-testid="btn-new-warehouse">
                             <Plus size={18} /> Armazém
                         </button>
+                    </>
+                }
+                tabs={
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => setActiveTab('warehouses')}
+                            className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'warehouses' ? activeTabClasses : TAB_INACTIVE_CLASSES}`}
+                            data-testid="tab-warehouses"
+                        >
+                            Armazéns
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('movements')}
+                            className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'movements' ? activeTabClasses : TAB_INACTIVE_CLASSES}`}
+                            data-testid="tab-movements"
+                        >
+                            Movimentações
+                        </button>
                     </div>
-                </div>
-
-                <div className="flex gap-2 border-b border-slate-100 dark:border-slate-800">
-                    <button
-                        onClick={() => setActiveTab('warehouses')}
-                        className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'warehouses' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
-                    >
-                        Armazéns
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('movements')}
-                        className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'movements' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
-                    >
-                        Movimentações
-                    </button>
-                </div>
-            </div>
+                }
+            />
 
             <div className="flex-1 overflow-y-auto p-4 md:p-6">
                 {activeTab === 'warehouses' && (
