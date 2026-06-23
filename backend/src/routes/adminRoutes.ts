@@ -22,6 +22,7 @@ import { userPermissionsService } from '../services/userPermissionsService';
 import { dolibarrService } from '../services/dolibarrService';
 import { adminAuditService } from '../services/adminAuditService';
 import { llmCallLogService } from '../services/llmCallLogService';
+import { llmHealthService } from '../services/llmHealthService';
 
 const router = express.Router();
 
@@ -773,6 +774,27 @@ router.get('/llm-calls', (req, res) => {
         res.json({ entries: llmCallLogService.list({ limit, onlyErrors, model, since }) });
     } catch (e: any) {
         log.error('Get llm-calls error', { error: e.message });
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/admin/llm-health — saúde por provider, com filtro opcional por módulo.
+// ?module=chat → retorna apenas os providers da cadeia daquele módulo.
+router.get('/llm-health', (req, res) => {
+    try {
+        const module = typeof req.query.module === 'string' ? req.query.module : undefined;
+        if (module) {
+            const moduleStatus = llmHealthService.getStatusByModule(module);
+            return res.json({
+                providers: moduleStatus.providers,
+                modules: { [module]: { chain: moduleStatus.chain, active: moduleStatus.active } },
+            });
+        }
+        const providers = llmHealthService.getStatus() as import('../services/llmHealthService').ProviderHealth[];
+        const modules = llmHealthService.getModuleChains();
+        res.json({ providers, modules });
+    } catch (e: any) {
+        log.error('Get llm-health error', { error: e.message });
         res.status(500).json({ error: e.message });
     }
 });
