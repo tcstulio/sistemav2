@@ -6,6 +6,7 @@ import { logger } from '../../../../utils/logger';
 import { notifyError } from '../../../../utils/notifyError';
 import { useConfirm } from '../../../../hooks/useConfirm';
 import { toast } from 'sonner';
+import { simulatorApi } from '../../../../services/simulatorApi';
 
 const log = logger.child('SavedSimulations');
 
@@ -39,57 +40,82 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
     const [snapshots, setSnapshots] = useState<SimulationSnapshot[]>([]);
     const [newName, setNewName] = useState('');
     const [view, setView] = useState<'list' | 'save'>(initialView);
-    const [status, setStatus] = useState<'idle' | 'success'>('idle');
+    const [status, setStatus] = useState<'idle' | 'saving' | 'success'>('idle');
+    const [loading, setLoading] = useState(true);
 
+    // Load from backend; fall back to empty list on error
     useEffect(() => {
-        try {
-            const saved = localStorage.getItem(STORAGE_KEY_SNAPSHOTS);
-            if (saved) {
-                const allSnaps: SimulationSnapshot[] = JSON.parse(saved);
-                // All users see all saved snapshots (permission is managed via Dolibarr login)
-                setSnapshots(allSnaps);
-            }
-        } catch (e) {
-            log.error("Failed to load snapshots", e);
-        }
+        let cancelled = false;
+        setLoading(true);
+        simulatorApi.list()
+            .then(items => {
+                if (cancelled) return;
+                setSnapshots(items);
+
+                // Best-effort migration: import any localStorage snapshots not yet in backend
+                try {
+                    const raw = localStorage.getItem(STORAGE_KEY_SNAPSHOTS);
+                    if (raw) {
+                        const legacy: SimulationSnapshot[] = JSON.parse(raw);
+                        const existingIds = new Set(items.map(s => s.id));
+                        const toMigrate = legacy.filter(s => !existingIds.has(s.id));
+                        if (toMigrate.length > 0) {
+                            Promise.all(toMigrate.map(s => simulatorApi.create(s)))
+                                .then(created => {
+                                    if (!cancelled) {
+                                        setSnapshots(prev => [...created, ...prev]);
+                                    }
+                                    localStorage.removeItem(STORAGE_KEY_SNAPSHOTS);
+                                })
+                                .catch(e => log.warn('Migration partial failure', e));
+                        } else {
+                            localStorage.removeItem(STORAGE_KEY_SNAPSHOTS);
+                        }
+                    }
+                } catch (e) {
+                    log.warn('Migration skipped', e);
+                }
+            })
+            .catch(e => {
+                if (!cancelled) {
+                    log.error('Failed to load simulations from backend', e);
+                    // Fallback: try localStorage so the user isn't stranded
+                    try {
+                        const raw = localStorage.getItem(STORAGE_KEY_SNAPSHOTS);
+                        if (raw) setSnapshots(JSON.parse(raw));
+                    } catch { /* ignore */ }
+                }
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+        return () => { cancelled = true; };
     }, []);
 
-    const saveSnapshot = (isUpdate = false) => {
-        let updatedSnapshots: SimulationSnapshot[] = [];
-        const savedRaw = localStorage.getItem(STORAGE_KEY_SNAPSHOTS);
-        const fullList: SimulationSnapshot[] = savedRaw ? JSON.parse(savedRaw) : [];
-
-        if (isUpdate && activeSnapshotId) {
-            updatedSnapshots = fullList.map(s => {
-                if (s.id === activeSnapshotId) {
-                    return {
-                        ...s,
-                        date: Date.now(),
-                        data: { ...currentData },
-                        summary: { ...currentSummary }
-                    };
-                }
-                return s;
-            });
-        } else {
-            const nameToUse = newName.trim() || `${currentSummary.modelLabel} ${new Date().toLocaleDateString()}`;
-            const newSnapshot: SimulationSnapshot = {
-                id: Date.now().toString(),
-                name: nameToUse,
-                date: Date.now(),
-                data: { ...currentData },
-                summary: { ...currentSummary }
-            };
-            updatedSnapshots = [newSnapshot, ...fullList];
-        }
-
+    const saveSnapshot = async (isUpdate = false) => {
+        setStatus('saving');
         try {
-            localStorage.setItem(STORAGE_KEY_SNAPSHOTS, JSON.stringify(updatedSnapshots));
-
-            // Re-filter for local state
-            setSnapshots([...updatedSnapshots]);
-
-            toast.success(isUpdate ? 'Simulação atualizada com sucesso!' : 'Simulação salva com sucesso!');
+            if (isUpdate && activeSnapshotId) {
+                const updated = await simulatorApi.update(activeSnapshotId, {
+                    date: Date.now(),
+                    data: { ...currentData },
+                    summary: { ...currentSummary }
+                });
+                setSnapshots(prev => prev.map(s => s.id === activeSnapshotId ? updated : s));
+                toast.success('Simulação atualizada com sucesso!');
+            } else {
+                const nameToUse = newName.trim() || `${currentSummary.modelLabel} ${new Date().toLocaleDateString()}`;
+                const newSnapshot: SimulationSnapshot = {
+                    id: Date.now().toString(),
+                    name: nameToUse,
+                    date: Date.now(),
+                    data: { ...currentData },
+                    summary: { ...currentSummary }
+                };
+                const created = await simulatorApi.create(newSnapshot);
+                setSnapshots(prev => [created, ...prev]);
+                toast.success('Simulação salva com sucesso!');
+            }
 
             setStatus('success');
             setTimeout(() => {
@@ -98,6 +124,7 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
                 setNewName('');
             }, 1200);
         } catch (e) {
+            setStatus('idle');
             notifyError('Salvar simulação', e);
         }
     };
@@ -105,13 +132,12 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
     const deleteSnapshot = async (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
         if (!(await confirm('Tem certeza que deseja excluir este cenário permanentemente?'))) return;
-        const savedRaw = localStorage.getItem(STORAGE_KEY_SNAPSHOTS);
-        const fullList: SimulationSnapshot[] = savedRaw ? JSON.parse(savedRaw) : [];
-        const updated = fullList.filter(s => s.id !== id);
-        localStorage.setItem(STORAGE_KEY_SNAPSHOTS, JSON.stringify(updated));
-
-        // Update local filtered state
-        setSnapshots(snapshots.filter(s => s.id !== id));
+        try {
+            await simulatorApi.delete(id);
+            setSnapshots(prev => prev.filter(s => s.id !== id));
+        } catch (err) {
+            notifyError('Excluir simulação', err);
+        }
     };
 
     const loadSnapshot = (snapshot: SimulationSnapshot) => {
@@ -120,6 +146,7 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
     };
 
     const activeSnap = snapshots.find(s => s.id === activeSnapshotId);
+    const isSaving = status === 'saving';
 
     return (
         <div className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
@@ -131,7 +158,7 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
                             <FolderOpen size={24} className="text-indigo-600" /> Biblioteca de Cenários
                         </h3>
                         <p className="text-sm text-slate-500 dark:text-slate-400">
-                            {isAdmin ? 'Gerencie todos os cenários do sistema.' : 'Simulações salvas no navegador.'}
+                            {isAdmin ? 'Gerencie todos os cenários do sistema.' : 'Simulações salvas no servidor.'}
                         </p>
                     </div>
                     <button onClick={onClose} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors text-slate-400 hover:text-slate-600"><X size={24} /></button>
@@ -166,7 +193,7 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
                                     {activeSnapshotId && activeSnap && (
                                         <button
                                             onClick={() => saveSnapshot(true)}
-                                            disabled={status === 'success'}
+                                            disabled={isSaving || status === 'success'}
                                             className={`w-full py-4 rounded-2xl font-bold text-lg shadow-lg transition-all active:scale-95 flex items-center justify-center gap-3 border-2 ${status === 'success' ? 'bg-emerald-500 text-white border-emerald-600' : 'bg-white text-indigo-600 border-indigo-100 hover:bg-indigo-50 shadow-indigo-50'}`}
                                         >
                                             {status === 'success' ? (
@@ -197,11 +224,13 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
 
                                     <button
                                         onClick={() => saveSnapshot(false)}
-                                        disabled={status === 'success'}
+                                        disabled={isSaving || status === 'success'}
                                         className={`w-full py-4 rounded-2xl font-bold text-lg shadow-xl transition-all active:scale-95 flex items-center justify-center gap-3 ${status === 'success' ? 'bg-emerald-500 text-white' : 'bg-slate-900 text-white hover:bg-slate-800 shadow-slate-200'}`}
                                     >
                                         {status === 'success' ? (
                                             <> <Check size={24} /> Salvo com Sucesso! </>
+                                        ) : isSaving ? (
+                                            <> <RefreshCcw size={20} className="animate-spin" /> Salvando... </>
                                         ) : (
                                             <> <Save size={20} /> Salvar na Biblioteca </>
                                         )}
@@ -213,7 +242,14 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
 
                     {view === 'list' && (
                         <div className="space-y-4 animate-in slide-in-from-left-4 duration-300">
-                            {snapshots.length === 0 ? (
+                            {loading ? (
+                                <div className="text-center py-16 text-slate-400">
+                                    <div className="bg-slate-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+                                        <FolderOpen size={40} className="opacity-20" />
+                                    </div>
+                                    <p className="font-medium">Carregando cenários...</p>
+                                </div>
+                            ) : snapshots.length === 0 ? (
                                 <div className="text-center py-16 text-slate-400">
                                     <div className="bg-slate-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
                                         <FolderOpen size={40} className="opacity-20" />
@@ -274,7 +310,7 @@ const SavedSimulationsModal: React.FC<Props> = ({ currentData, currentSummary, a
                 </div>
 
                 <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-700 text-center">
-                    <p className="text-[10px] text-slate-400 dark:text-slate-500 italic">Simulações salvas localmente por @{userName}.</p>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 italic">Simulações salvas no servidor por @{userName}.</p>
                 </div>
             </div>
         </div>

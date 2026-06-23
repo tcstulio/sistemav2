@@ -24,14 +24,13 @@ const SupplierProposalList = React.lazy(() => import('./SupplierProposalList'));
 const SmartQuotationWizard = React.lazy(() => import('./SmartQuotationWizard').then(m => ({ default: m.SmartQuotationWizard })));
 const OrderList = React.lazy(() => import('./OrderList'));
 const ProjectList = React.lazy(() => import('./ProjectList'));
-const TicketList = React.lazy(() => import('./TicketList'));
+const CustomerConversations = React.lazy(() => import('./CustomerConversations'));
 const BankAccountList = React.lazy(() => import('./BankAccountList'));
 const SupplierList = React.lazy(() => import('./SupplierList').then(m => ({ default: m.SupplierList })));
 const VenueList = React.lazy(() => import('./VenueList').then(m => ({ default: m.VenueList })));
 const SupplierInvoiceList = React.lazy(() => import('./SupplierInvoiceList'));
 const SettingsView = React.lazy(() => import('./Settings'));
 const HRList = React.lazy(() => import('./HRList'));
-const InventoryView = React.lazy(() => import('./InventoryView').then(m => ({ default: m.InventoryView })));
 const ReportsView = React.lazy(() => import('./ReportsView'));
 const DevelopmentView = React.lazy(() => import('./DevelopmentView'));
 const ManufacturingView = React.lazy(() => import('./ManufacturingView'));
@@ -205,10 +204,7 @@ const App: React.FC = () => {
                         <Route path="/tasks/:id" element={<ViewWrapper Component={TaskDetail} viewId="projects" />} />
                         <Route path="/tasks/:id/edit" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
 
-                        <Route path="/tickets" element={<ViewWrapper Component={TicketList} viewId="tickets" />} />
-                        <Route path="/tickets/new" element={<ViewWrapper Component={TicketList} viewId="tickets" />} />
-                        <Route path="/tickets/:id/edit" element={<ViewWrapper Component={TicketList} viewId="tickets" />} />
-                        <Route path="/tickets/:id" element={<ViewWrapper Component={TicketList} viewId="tickets" />} />
+                        <Route path="/tickets" element={<ViewWrapper Component={CustomerConversations} viewId="tickets" />} />
 
                         <Route path="/bank_accounts" element={<ViewWrapper Component={BankAccountList} viewId="bank_accounts" />} />
 
@@ -224,7 +220,8 @@ const App: React.FC = () => {
                         <Route path="/categories/new" element={<ViewWrapper Component={CategoryList} viewId="categories" />} />
                         <Route path="/categories/:id/edit" element={<ViewWrapper Component={CategoryList} viewId="categories" />} />
 
-                        <Route path="/inventory" element={<ViewWrapper Component={InventoryView} viewId="inventory" />} />
+                        {/* /inventory foi unificado em /warehouses (#564) — redirecionar para não quebrar links salvos */}
+                        <Route path="/inventory" element={<Navigate to="/warehouses" replace />} />
                         <Route path="/warehouses" element={<ViewWrapper Component={WarehouseList} viewId="inventory" />} />
 
                         <Route path="/batch/new" element={<ViewWrapper Component={BatchCreateView} viewId="dashboard" />} />

@@ -18,6 +18,13 @@ const normalizeUser = (user: DolibarrUser): DolibarrUser => ({
   admin: (user.admin === 1 || user.admin === '1' || user.admin === true) ? 1 : 0
 } as DolibarrUser);
 
+export interface PreviewTarget {
+  type: 'user' | 'group';
+  id: string;
+  name: string;
+  groupIds: string[];
+}
+
 interface DolibarrContextType {
   config: DolibarrConfig | null;
   setConfig: (config: DolibarrConfig | null) => void;
@@ -33,6 +40,10 @@ interface DolibarrContextType {
   canAccess: (module: string) => boolean;
   logout: () => void;
   isInitialized: boolean;
+  previewTarget: PreviewTarget | null;
+  setPreviewTarget: (target: PreviewTarget | null) => void;
+  orgScreenPerms: import('../utils/screenPermissions').ScreenPermissions | null;
+  userGroupIds: string[];
 }
 
 const DolibarrContext = createContext<DolibarrContextType | undefined>(undefined);
@@ -46,6 +57,8 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   // #112 — overrides de tela por pessoa/grupo (org-wide) + grupos do usuário logado.
   const [orgScreenPerms, setOrgScreenPerms] = useState<ScreenPermissions | null>(null);
   const [userGroupIds, setUserGroupIds] = useState<string[]>([]);
+  // #540 — preview "Ver como" (read-only, only affects canAccess/rendering)
+  const [previewTarget, setPreviewTarget] = useState<PreviewTarget | null>(null);
 
   // 1. Permission Logic (Must be defined before data hook)
   // Acesso BASE (direitos Dolibarr), sem considerar os overrides de tela. Função pura por usuário.
@@ -164,8 +177,20 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   }, []);
 
   // canAccess = acesso base + overrides de tela por pessoa/grupo (#112).
+  // When previewTarget is active (#540), resolve as the simulated identity (not admin bypass).
   const canAccess = useCallback((module: string): boolean => {
     if (!config || !currentUser) return false;
+    if (previewTarget) {
+      // Preview mode: use simulated identity, no admin bypass, base access = false (no Dolibarr rights).
+      return resolveScreenAccess({
+        screenId: module,
+        base: false,
+        isAdmin: false,
+        userId: previewTarget.type === 'user' ? previewTarget.id : undefined,
+        groupIds: previewTarget.groupIds,
+        perms: orgScreenPerms,
+      });
+    }
     const base = computeBaseAccess(module, currentUser);
     return resolveScreenAccess({
       screenId: module,
@@ -175,7 +200,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
       groupIds: userGroupIds,
       perms: orgScreenPerms,
     });
-  }, [config, currentUser, userGroupIds, orgScreenPerms, computeBaseAccess]);
+  }, [config, currentUser, userGroupIds, orgScreenPerms, computeBaseAccess, previewTarget]);
 
   // 2. Data Hook (Reduced to Sync & Utility)
   const {
@@ -377,11 +402,14 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     isLoading, error, isSyncing, isSyncPaused, toggleSyncPause,
     notifications, setNotifications,
     refreshData,
-    isInitialized
+    isInitialized,
+    previewTarget, setPreviewTarget,
+    orgScreenPerms, userGroupIds,
   }), [
     config, setConfig, currentUser, canAccess, logout,
     isLoading, error, isSyncing, isSyncPaused, toggleSyncPause,
-    notifications, refreshData, isInitialized
+    notifications, refreshData, isInitialized,
+    previewTarget, orgScreenPerms, userGroupIds,
   ]);
 
 

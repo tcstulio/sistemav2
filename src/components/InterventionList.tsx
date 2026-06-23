@@ -343,6 +343,23 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                 </span>
                                 <span className="flex items-center gap-1"><Calendar size={10} /> {formatDateOnly(int.date)}</span>
                             </div>
+                            <div className="text-xs text-slate-500 flex items-center gap-1 mt-1">
+                                {int.project_id ? (
+                                    <span
+                                        className="flex items-center gap-1 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors cursor-pointer"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (onNavigate) onNavigate('projects', int.project_id!);
+                                        }}
+                                    >
+                                        <FolderKanban size={10} /> {getProjectName(int.project_id)}
+                                    </span>
+                                ) : (
+                                    <span className="flex items-center gap-1 italic text-slate-400">
+                                        <FolderKanban size={10} /> Sem projeto
+                                    </span>
+                                )}
+                            </div>
                         </Card>
                     ))}
                 </div>
@@ -418,17 +435,21 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                     {formatDateOnly(selectedIntervention.date)}
                                 </div>
                             </div>
-                            {selectedIntervention.project_id && (
-                                <div className="col-span-2">
+                            <div className="col-span-2">
                                     <label className="text-xs text-slate-500 uppercase font-bold">Projeto Vinculado</label>
-                                    <div
-                                        className="flex items-center gap-2 mt-1 text-indigo-600 dark:text-indigo-400 font-medium cursor-pointer hover:underline"
-                                        onClick={() => onNavigate && onNavigate('projects', selectedIntervention.project_id!)}
-                                    >
-                                        <FolderKanban size={16} /> {getProjectName(selectedIntervention.project_id)}
-                                    </div>
+                                    {selectedIntervention.project_id ? (
+                                        <div
+                                            className="flex items-center gap-2 mt-1 text-indigo-600 dark:text-indigo-400 font-medium cursor-pointer hover:underline"
+                                            onClick={() => onNavigate && onNavigate('projects', selectedIntervention.project_id!)}
+                                        >
+                                            <FolderKanban size={16} /> {getProjectName(selectedIntervention.project_id)}
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center gap-2 mt-1 text-slate-400 italic text-sm">
+                                            <FolderKanban size={16} /> Sem projeto
+                                        </div>
+                                    )}
                                 </div>
-                            )}
                             <div className="col-span-2">
                                 <label className="text-xs text-slate-500 uppercase font-bold">Descrição</label>
                                 <div

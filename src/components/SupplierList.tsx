@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ThirdParty, DolibarrConfig, SupplierInvoice, Product, SupplierOrder, AppView, Warehouse } from '../types';
 import { usePrefill, PrefillResult } from '../hooks/usePrefill';
-import { Truck, Search, MapPin, Mail, Phone, Package, ShoppingCart, Receipt, X, ArrowDownCircle, CheckCircle2, Loader2, CheckSquare, Clock, Pencil, Trash2, PlusCircle } from 'lucide-react';
+import { Truck, Search, MapPin, Mail, Phone, Package, ShoppingCart, Receipt, X, ArrowDownCircle, CheckCircle2, Loader2, CheckSquare, Clock, Pencil, Trash2, PlusCircle, FolderKanban } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
 import { useDolibarr } from '../context/DolibarrContext';
-import { useSuppliers, useProducts, useSupplierInvoices, useSupplierOrders, useWarehouses, useUsers, useContacts } from '../hooks/dolibarr';
+import { useSuppliers, useProducts, useSupplierInvoices, useSupplierOrders, useWarehouses, useUsers, useContacts, useCategories, useProjects } from '../hooks/dolibarr';
 import { useSupplierMutations } from '../hooks/useMutations';
 import { useListControls } from '../hooks/useListControls';
 import { LinkedObjects } from './common/LinkedObjects';
@@ -49,6 +49,10 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
     const { data: warehousesData } = useWarehouses(config);
     const warehouses = warehousesData || [];
     const { data: users = [] } = useUsers(config);
+    const { data: categoriesData } = useCategories(config);
+    const categories = categoriesData || [];
+    const { data: projectsData } = useProjects(config);
+    const projects = projectsData || [];
 
     // Mutations
     const { createSupplier, updateSupplier } = useSupplierMutations(config);
@@ -59,6 +63,9 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
 
     const [selectedSupplier, setSelectedSupplier] = useState<ThirdParty | null>(null);
     const [activeTab, setActiveTab] = useState<'overview' | 'contacts' | 'orders' | 'invoices' | 'products'>('overview');
+
+    // Category filter state (#555)
+    const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
     // CRUD State
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -113,8 +120,21 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
         return u ? (u.firstname ? `${u.firstname} ${u.lastname}` : u.login) : `User ${id}`;
     };
 
+    // Helper to resolve project name (#555)
+    const getProjectName = (projId?: string) => {
+        if (!projId) return null;
+        const p = projects.find(proj => String(proj.id) === String(projId));
+        return p ? p.title : null;
+    };
+
+    // Pré-filtro por categoria (#555); busca + ordenação ficam no useListControls (#121).
+    const baseSuppliers = useMemo(() => {
+        if (selectedCategory === 'all') return suppliers;
+        return suppliers.filter(s => s.category_ids?.includes(selectedCategory) ?? false);
+    }, [suppliers, selectedCategory]);
+
     // Busca + ordenação padronizadas (#121).
-    const controls = useListControls(suppliers, {
+    const controls = useListControls(baseSuppliers, {
         searchText: (s) => `${s.name || ''} ${s.email || ''} ${s.town || ''} ${s.code_fournisseur || ''}`,
         sorts: [
             { key: 'name', label: 'Nome', get: (s) => s.name },
@@ -488,8 +508,21 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                     title="Fornecedores"
                     subtitle="Gerencie vendedores e pedidos de compra"
                     actions={
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                             <ListToolbar controls={controls} searchPlaceholder="Buscar fornecedor..." />
+                            <select
+                                value={selectedCategory}
+                                onChange={(e) => setSelectedCategory(e.target.value)}
+                                className="px-3 py-2 border border-slate-300 dark:border-slate-700 dark:bg-slate-800 rounded-lg text-sm"
+                                aria-label="Filtrar por categoria"
+                            >
+                                <option value="all">Todas Categorias</option>
+                                {categories
+                                    .filter(c => c.type === 'supplier' || c.type === '1')
+                                    .map(c => (
+                                        <option key={c.id} value={c.id}>{c.label}</option>
+                                    ))}
+                            </select>
                             <Button icon={<PlusCircle size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                                 Novo Fornecedor
                             </Button>
@@ -695,27 +728,34 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                             {currentSupplierInvoices.length === 0 ? (
                                                 <EmptyState icon={Receipt} title="Nenhuma fatura encontrada" description="Não há faturas de fornecedor registradas." />
                                             ) : (
-                                                currentSupplierInvoices.map(inv => (
-                                                    <Card key={inv.id} padding="md">
-                                                        <div className="flex justify-between items-center">
-                                                            <div>
-                                                                <div className="font-bold text-slate-800 dark:text-white text-sm">{inv.ref}</div>
-                                                                <div className="text-xs text-slate-500 mt-1">{inv.label || 'Fatura'}</div>
+                                                currentSupplierInvoices.map(inv => {
+                                                    const projectName = getProjectName(inv.project_id);
+                                                    return (
+                                                        <Card key={inv.id} padding="md">
+                                                            <div className="flex justify-between items-center">
+                                                                <div>
+                                                                    <div className="font-bold text-slate-800 dark:text-white text-sm">{inv.ref}</div>
+                                                                    <div className="text-xs text-slate-500 mt-1">{inv.label || 'Fatura'}</div>
+                                                                </div>
+                                                                <div className="text-right">
+                                                                    <div className="font-bold text-slate-800 dark:text-white">{formatCurrency(inv.total_ttc)}</div>
+                                                                    <StatusBadge
+                                                                        status={inv.paye === '1' ? 'paid' : 'open'}
+                                                                        config={{
+                                                                            paid: { label: 'Pago', variant: 'emerald' },
+                                                                            open: { label: 'Aberto', variant: 'orange' },
+                                                                        }}
+                                                                        size="sm"
+                                                                    />
+                                                                </div>
                                                             </div>
-                                                            <div className="text-right">
-                                                                <div className="font-bold text-slate-800 dark:text-white">{formatCurrency(inv.total_ttc)}</div>
-                                                                <StatusBadge
-                                                                    status={inv.paye === '1' ? 'paid' : 'open'}
-                                                                    config={{
-                                                                        paid: { label: 'Pago', variant: 'emerald' },
-                                                                        open: { label: 'Aberto', variant: 'orange' },
-                                                                    }}
-                                                                    size="sm"
-                                                                />
+                                                            <div className="text-xs mt-2 flex items-center gap-1 text-indigo-500">
+                                                                <FolderKanban size={12} />
+                                                                {projectName ?? <span className="text-slate-400">Sem projeto</span>}
                                                             </div>
-                                                        </div>
-                                                    </Card>
-                                                ))
+                                                        </Card>
+                                                    );
+                                                })
                                             )}
                                         </div>
                                     )}
