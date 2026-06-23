@@ -109,22 +109,22 @@ function getContextWindow(model?: string): number {
 
 interface AIProvider {
     generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult>;
-    analyzeSystem(query: string, fileContext: string, options?: { provider?: string, model?: string }): Promise<string>;
-    analyzeSentiment(text: string): Promise<{ score: number; label: string }>;
-    extractCustomerInfo(text: string): Promise<any>;
-    extractReceiptData(imageBase64: string): Promise<any>;
-    analyzeFinancialHealth(data: any): Promise<string>;
-    fixApiCall(logData: any, context?: string): Promise<string>;
-    generateCode(endpoint: string, method: string, description?: string, context?: string): Promise<string>;
+    analyzeSystem(query: string, fileContext: string, module?: string): Promise<string>;
+    analyzeSentiment(text: string, module?: string): Promise<{ score: number; label: string }>;
+    extractCustomerInfo(text: string, module?: string): Promise<any>;
+    extractReceiptData(imageBase64: string, module?: string): Promise<any>;
+    analyzeFinancialHealth(data: any, module?: string): Promise<string>;
+    fixApiCall(logData: any, context?: string, module?: string): Promise<string>;
+    generateCode(endpoint: string, method: string, description?: string, context?: string, module?: string): Promise<string>;
     getModels?(): Promise<string[]>;
     // New methods
-    draftCollectionEmail?(customer: any, amount: number): Promise<string>;
-    generateSalesForecast?(invoices: any[], context?: any): Promise<string>;
-    analyzeCustomerSentiment?(customer: any, invoices: any[]): Promise<string>;
-    auditProposal?(proposal: any): Promise<string>;
-    auditProject?(project: any, tasks?: any[], projectInvoices?: any[]): Promise<string>;
-    analyzeSystemLogs?(logs: any[]): Promise<string>;
-    analyzeMonthlyReport?(data: any): Promise<string>;
+    draftCollectionEmail?(customer: any, amount: number, module?: string): Promise<string>;
+    generateSalesForecast?(invoices: any[], context?: any, module?: string): Promise<string>;
+    analyzeCustomerSentiment?(customer: any, invoices: any[], module?: string): Promise<string>;
+    auditProposal?(proposal: any, module?: string): Promise<string>;
+    auditProject?(project: any, tasks?: any[], projectInvoices?: any[], module?: string): Promise<string>;
+    analyzeSystemLogs?(logs: any[], module?: string): Promise<string>;
+    analyzeMonthlyReport?(data: any, module?: string): Promise<string>;
 }
 
 // --- Google GenAI Provider ---
@@ -261,7 +261,7 @@ class GoogleProvider implements AIProvider {
         return { text: "Desculpe, não consegui obter todas as informações necessárias após várias tentativas.", usage: accUsage, contextWindow: ctxWindow };
     }
 
-    async draftCollectionEmail(customer: any, amount: number): Promise<string> {
+    async draftCollectionEmail(customer: any, amount: number, _module?: string): Promise<string> {
         if (!this.ai) return JSON.stringify({ subject: "Erro", body: "IA não configurada" });
         const prompt = `
             Você é um especialista em cobranças amigáveis.
@@ -285,7 +285,7 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async generateSalesForecast(invoices: any[], context?: any): Promise<string> {
+    async generateSalesForecast(invoices: any[], context?: any, _module?: string): Promise<string> {
         if (!this.ai) return JSON.stringify({ forecast: [], summary: "IA não configurada" });
 
         // Group invoices by Month/Year for clearer token usage if needed, 
@@ -348,7 +348,7 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async analyzeCustomerSentiment(customer: any, invoices: any[]): Promise<string> {
+    async analyzeCustomerSentiment(customer: any, invoices: any[], _module?: string): Promise<string> {
         if (!this.ai) return JSON.stringify({ score: 50, label: "N/A", insights: "IA não configurada" });
         const relevantInvoices = invoices.slice(0, 20).map(i => ({
             ref: i.ref,
@@ -386,7 +386,7 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async auditProposal(proposal: any): Promise<string> {
+    async auditProposal(proposal: any, _module?: string): Promise<string> {
         if (!this.ai) return JSON.stringify({ score: 0, issues: ["IA não configurada"] });
         const prompt = `
             Você é um auditor de propostas comerciais.
@@ -415,7 +415,7 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async auditProject(project: any, tasks?: any[], projectInvoices?: any[]): Promise<string> {
+    async auditProject(project: any, tasks?: any[], projectInvoices?: any[], _module?: string): Promise<string> {
         if (!this.ai) return JSON.stringify({ health: "unknown", issues: ["IA não configurada"] });
         const prompt = `
             Você é um gerente de projetos experiente.
@@ -450,7 +450,7 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async analyzeSystemLogs(logs: any[]): Promise<string> {
+    async analyzeSystemLogs(logs: any[], _module?: string): Promise<string> {
         if (!this.ai) return "[]";
         const logsSummary = logs.slice(0, 50).map(l => ({
             type: l.endpoint_or_task || l.type,
@@ -1033,7 +1033,10 @@ export class LocalProvider implements AIProvider {
                     ? `HTTP ${error.response.status} ${JSON.stringify(error.response.data)?.slice(0, 300)}`
                     : (error?.code || error?.message || String(error));
                 log.error(`Local LLM Error [url=${this.baseUrl}/chat/completions model=${this.modelName}]: ${detail}`);
-                return { text: `Erro LLM Local: ${detail}`, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
+                // Re-lança para que wrappers (aiService.generateReply / runWithChain) possam
+                // acionar fallback ou roteamento para outro provider. Antes retornava
+                // `{ text: 'Erro LLM Local: ...' }` o que mascarava o erro e impedia fallback.
+                throw error;
             }
         }
         try {
@@ -1060,15 +1063,15 @@ export class LocalProvider implements AIProvider {
         return { text: 'Não consegui completar a solicitação com as ferramentas disponíveis. Pode reformular ou dar mais detalhes (ex.: o projeto, cliente ou período)?', usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
     }
 
-    async analyzeSystem(query: string, fileContext: string): Promise<string> {
+    async analyzeSystem(query: string, fileContext: string, _module?: string): Promise<string> {
         const prompt = `
             [INST]
             Você é um arquiteto de software sênior.
             Analise o seguinte código e responda a pergunta.
-            
+
             CÓDIGO:
             ${fileContext}
-            
+
             PERGUNTA:
             ${query}
             [/INST]
@@ -1085,17 +1088,17 @@ export class LocalProvider implements AIProvider {
             }, { headers: this.getHeaders() });
             return response.data.choices[0].message.content;
         } catch (error: any) {
-            log.error(`Local LLM Error: ${error.message}`);
-            return "Erro ao conectar com LLM Local.";
+            log.error(`Local LLM Error [analyzeSystem]: ${error.message}`);
+            throw error;
         }
     }
 
-    async analyzeSentiment(text: string): Promise<{ score: number; label: string }> {
+    async analyzeSentiment(text: string, _module?: string): Promise<{ score: number; label: string }> {
         const prompt = `
             [INST]
             Analise o sentimento desta mensagem (0-100).
             Responda APENAS JSON: { "score": number, "label": "Positive"|"Neutral"|"Negative" }
-            
+
             Msg: "${text}"
             [/INST]
         `;
@@ -1113,8 +1116,8 @@ export class LocalProvider implements AIProvider {
             const jsonStr = content.match(/\{[\s\S]*\}/)?.[0] || "{}";
             return JSON.parse(jsonStr);
         } catch (error: any) {
-            log.error(`Local LLM Error: ${error.message}`);
-            return { score: 50, label: 'Error' };
+            log.error(`Local LLM Error [analyzeSentiment]: ${error.message}`);
+            throw error;
         }
     }
 
@@ -1123,7 +1126,7 @@ export class LocalProvider implements AIProvider {
             [INST]
             Extraia dados de cliente: nome, email, telefone, endereco, cpf/cnpj.
             Retorne APENAS JSON.
-            
+
             Texto: "${text}"
             [/INST]
         `;
@@ -1140,12 +1143,12 @@ export class LocalProvider implements AIProvider {
             const jsonStr = content.match(/\{[\s\S]*\}/)?.[0] || "{}";
             return JSON.parse(jsonStr);
         } catch (error: any) {
-            log.error(`Local LLM Error: ${error.message}`);
-            return {};
+            log.error(`Local LLM Error [extractCustomerInfo]: ${error.message}`);
+            throw error;
         }
     }
 
-    async extractReceiptData(imageBase64: string): Promise<any> {
+    async extractReceiptData(imageBase64: string, _module?: string): Promise<any> {
         // Sem modelo de visão configurado (ex.: Ollama/llama3) -> não suporta; o serviço
         // faz o fallback p/ um provider multimodal (Google).
         if (!this.visionConfig || !this.apiKey) {
@@ -1194,11 +1197,11 @@ export class LocalProvider implements AIProvider {
                 ? `HTTP ${error.response.status} ${JSON.stringify(error.response.data)?.slice(0, 300)}`
                 : (error?.message || String(error));
             log.error(`GLM Vision (extractReceiptData) Error: ${detail}`);
-            return null;
+            throw error;
         }
     }
 
-    async analyzeFinancialHealth(data: any): Promise<string> {
+    async analyzeFinancialHealth(data: any, _module?: string): Promise<string> {
         const prompt = `
             [INST]
             Atue como CFO. Analise estes dados financeiros:
@@ -1217,16 +1220,16 @@ export class LocalProvider implements AIProvider {
             }, { headers: this.getHeaders() });
             return response.data.choices[0].message.content;
         } catch (error: any) {
-            log.error(`Local LLM Error: ${error.message}`);
-            return "Erro ao gerar análise financeira local.";
+            log.error(`Local LLM Error [analyzeFinancialHealth]: ${error.message}`);
+            throw error;
         }
     }
 
-    async fixApiCall(logData: any, context?: string): Promise<string> {
+    async fixApiCall(logData: any, context?: string, _module?: string): Promise<string> {
         const prompt = `
             [INST]
             You are a Senior Developer. Analyze this failed API log and fix it.
-            
+
             CONTEXT:
             ${context ? context.substring(0, 3000) : "N/A"}
 
@@ -1248,18 +1251,18 @@ export class LocalProvider implements AIProvider {
             return response.data.choices[0].message.content;
         } catch (error: any) {
             log.error("Local LLM fixApiCall Error", error);
-            return "Local diagnosis failed.";
+            throw error;
         }
     }
 
-    async generateCode(endpoint: string, method: string, description?: string, context?: string): Promise<string> {
+    async generateCode(endpoint: string, method: string, description?: string, context?: string, _module?: string): Promise<string> {
         const prompt = `
             [INST]
             Write TypeScript code for Dolibarr API:
             Endpoint: ${endpoint}
             Method: ${method}
             Desc: ${description}
-            
+
             Context:
             ${context ? context.substring(0, 2000) : ""}
             [/INST]
@@ -1275,11 +1278,12 @@ export class LocalProvider implements AIProvider {
             }, { headers: this.getHeaders() });
             return response.data.choices[0].message.content;
         } catch (error: any) {
-            return "// Local Gen Failed";
+            log.error("Local LLM generateCode Error", error);
+            throw error;
         }
     }
 
-    async transcribeAudio(audioBase64: string, mimeType: string = 'audio/ogg'): Promise<string> {
+    async transcribeAudio(audioBase64: string, mimeType: string = 'audio/ogg', _module?: string): Promise<string> {
         // LocalProvider doesn't support audio transcription natively
         // You could integrate with local Whisper API here if available
         log.warn("LocalProvider: Audio transcription not supported. Consider using Google provider.");
@@ -1309,11 +1313,11 @@ export class LocalProvider implements AIProvider {
             return raw.match(/\{[\s\S]*\}/)?.[0] || JSON.stringify({ subject: 'Lembrete de Pagamento', body: raw });
         } catch (e: any) {
             log.error('LocalProvider draftCollectionEmail Error', e?.message || e);
-            return JSON.stringify({ subject: 'Lembrete de Pagamento', body: 'Erro ao gerar email.' });
+            throw e;
         }
     }
 
-    async generateSalesForecast(invoices: any[], context?: any): Promise<string> {
+    async generateSalesForecast(invoices: any[], context?: any, _module?: string): Promise<string> {
         const invoicesSummary = (invoices || []).map((i) => ({ d: i.date || i.datec, v: i.total_ttc, s: i.status }));
         const refDate = context?.referenceDate ? new Date(context.referenceDate).toLocaleDateString('pt-BR') : 'Data Atual';
         const prompt = `Atue como analista financeiro sênior (sazonalidade e previsão de vendas).
@@ -1326,11 +1330,11 @@ Retorne APENAS JSON: { "forecast": [ { "month": "Nome Mês Ano", "predicted_reve
             return raw.match(/\{[\s\S]*\}/)?.[0] || JSON.stringify({ forecast: [], summary: 'Sem dados suficientes.' });
         } catch (e: any) {
             log.error('LocalProvider generateSalesForecast Error', e?.message || e);
-            return JSON.stringify({ forecast: [], summary: 'Erro na previsão.' });
+            throw e;
         }
     }
 
-    async analyzeCustomerSentiment(customer: any, invoices: any[]): Promise<string> {
+    async analyzeCustomerSentiment(customer: any, invoices: any[], _module?: string): Promise<string> {
         const relevant = (invoices || []).slice(0, 20).map((i) => ({ ref: i.ref, total: i.total_ttc, status: i.status, date: i.date }));
         const prompt = `Analise o relacionamento com este cliente.\nCLIENTE: ${customer?.name} | Status: ${customer?.status} | Desde: ${customer?.date_creation || 'N/A'}\nFATURAS: ${JSON.stringify(relevant)}\nRetorne APENAS JSON: { "score": 0-100, "label": "Positive|Neutral|Negative|At Risk", "insights": "...", "recommendations": ["..."] }`;
         try {
@@ -1338,7 +1342,7 @@ Retorne APENAS JSON: { "forecast": [ { "month": "Nome Mês Ano", "predicted_reve
             return raw.match(/\{[\s\S]*\}/)?.[0] || JSON.stringify({ score: 50, label: 'Neutral', insights: 'Sem dados.' });
         } catch (e: any) {
             log.error('LocalProvider analyzeCustomerSentiment Error', e?.message || e);
-            return JSON.stringify({ score: 50, label: 'Error', insights: 'Erro na análise.' });
+            throw e;
         }
     }
 
@@ -1349,22 +1353,22 @@ Retorne APENAS JSON: { "forecast": [ { "month": "Nome Mês Ano", "predicted_reve
             return raw.match(/\{[\s\S]*\}/)?.[0] || JSON.stringify({ score: 0, issues: ['Sem dados.'] });
         } catch (e: any) {
             log.error('LocalProvider auditProposal Error', e?.message || e);
-            return JSON.stringify({ score: 0, issues: ['Erro na auditoria.'] });
+            throw e;
         }
     }
 
-    async auditProject(project: any, tasks?: any[], projectInvoices?: any[]): Promise<string> {
+    async auditProject(project: any, tasks?: any[], projectInvoices?: any[], _module?: string): Promise<string> {
         const prompt = `Você é um gerente de projetos experiente. Analise a saúde do projeto e riscos.\nPROJETO: ${JSON.stringify(project)}\nTAREFAS (${tasks?.length || 0}): ${JSON.stringify(tasks?.slice(0, 20) || [])}\nFATURAS (${projectInvoices?.length || 0}): ${JSON.stringify(projectInvoices?.slice(0, 10) || [])}\nRetorne APENAS JSON: { "health": "Saudável|Atenção|Crítico", "score": 0-100, "risks": ["..."], "recommendations": ["..."], "summary": "..." }`;
         try {
             const raw = await this.complete(prompt, 'Output only JSON.', 0.3);
             return raw.match(/\{[\s\S]*\}/)?.[0] || JSON.stringify({ health: 'unknown', issues: ['Sem dados.'] });
         } catch (e: any) {
             log.error('LocalProvider auditProject Error', e?.message || e);
-            return JSON.stringify({ health: 'unknown', issues: ['Erro na análise.'] });
+            throw e;
         }
     }
 
-    async analyzeSystemLogs(logs: any[]): Promise<string> {
+    async analyzeSystemLogs(logs: any[], _module?: string): Promise<string> {
         const summary = (logs || []).slice(0, 50).map((l) => ({ type: l.endpoint_or_task || l.type, status: l.status, duration: l.duration_ms, error: l.error_message }));
         const prompt = `Você é especialista em otimização de sistemas. Analise estes logs de API e sugira otimizações.\nLOGS: ${JSON.stringify(summary)}\nRetorne APENAS um JSON array: [ { "type": "error|performance|pattern", "title": "...", "description": "...", "suggestion": "...", "priority": "high|medium|low" } ]`;
         try {
@@ -1372,7 +1376,7 @@ Retorne APENAS JSON: { "forecast": [ { "month": "Nome Mês Ano", "predicted_reve
             return raw.match(/\[[\s\S]*\]/)?.[0] || '[]';
         } catch (e: any) {
             log.error('LocalProvider analyzeSystemLogs Error', e?.message || e);
-            return '[]';
+            throw e;
         }
     }
 
@@ -1385,7 +1389,7 @@ Escreva um resumo executivo profissional em Markdown com as seções: ## 1. Resu
             return text || 'Não foi possível gerar o relatório.';
         } catch (e: any) {
             log.error('LocalProvider analyzeMonthlyReport Error', e?.message || e);
-            return 'Erro ao analisar o relatório mensal.';
+            throw e;
         }
     }
 }
@@ -1489,21 +1493,16 @@ export const aiService = {
         return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName });
     },
 
-    analyzeSystem: async (query: string, rootPath: string = '../src') => {
-        try {
-            const fileContext = await readSystemContext(rootPath);
-            return getProvider().analyzeSystem(query, fileContext);
-        } catch (e: any) {
-            log.error("Analysis Error", e);
-            throw new Error("Falha na análise do sistema.");
-        }
+    analyzeSystem: async (query: string, rootPath: string = '../src', module: string = 'system_analysis') => {
+        const fileContext = await readSystemContext(rootPath);
+        return getProvider().analyzeSystem(query, fileContext, module);
     },
 
-    analyzeSentiment: async (message: string) => {
-        return getProvider().analyzeSentiment(message);
+    analyzeSentiment: async (message: string, module: string = 'chat') => {
+        return getProvider().analyzeSentiment(message, module);
     },
 
-    extractReceiptData: async (imageBase64: string) => {
+    extractReceiptData: async (imageBase64: string, module: string = 'banking') => {
         // Visão (OCR de recibo): o GLM-4.6V (LocalProvider com visão) atende direto;
         // se o provider de texto não tem visão, roteia p/ Google (fallback multimodal).
         // NB: só o caminho de OCR usa a visão do GLM; o chat-com-imagem (generateReply)
@@ -1518,37 +1517,28 @@ export const aiService = {
                 provider = mm;
             }
         }
-        return provider.extractReceiptData(imageBase64);
+        return provider.extractReceiptData(imageBase64, module);
     },
 
-    extractCustomerInfo: async (text: string) => {
-        return getProvider().extractCustomerInfo(text);
+    extractCustomerInfo: async (text: string, module: string = 'chat') => {
+        return getProvider().extractCustomerInfo(text, module);
     },
 
-    analyzeFinancialHealth: async (data: any) => {
-        return getProvider().analyzeFinancialHealth(data);
+    analyzeFinancialHealth: async (data: any, module: string = 'banking') => {
+        return getProvider().analyzeFinancialHealth(data, module);
     },
 
-    fixApiCall: async (logData: any) => {
-        try {
-            const context = await readSystemContext('../src');
-            return getProvider().fixApiCall(logData, context);
-        } catch (e) {
-            log.error("fixApiCall Wrapper Error", e);
-            return "Could not perform analysis.";
-        }
+    fixApiCall: async (logData: any, module: string = 'system_analysis') => {
+        const context = await readSystemContext('../src');
+        return getProvider().fixApiCall(logData, context, module);
     },
 
-    generateCode: async (endpoint: string, method: string, description?: string) => {
-        try {
-            const context = await readSystemContext('../src');
-            return getProvider().generateCode(endpoint, method, description, context);
-        } catch (e) {
-            return "// Wrapper Error";
-        }
+    generateCode: async (endpoint: string, method: string, description?: string, module: string = 'system_analysis') => {
+        const context = await readSystemContext('../src');
+        return getProvider().generateCode(endpoint, method, description, context, module);
     },
 
-    transcribeAudio: async (audioBase64: string, mimeType: string = 'audio/ogg') => {
+    transcribeAudio: async (audioBase64: string, mimeType: string = 'audio/ogg', module: string = 'chat') => {
         // Áudio: se o provider de texto (GLM/local) não transcreve, roteia p/ Google.
         let provider = getProvider();
         if (!providerSupportsAudio(provider)) {
@@ -1559,66 +1549,66 @@ export const aiService = {
             }
         }
         if ('transcribeAudio' in provider) {
-            return (provider as any).transcribeAudio(audioBase64, mimeType);
+            return (provider as any).transcribeAudio(audioBase64, mimeType, module);
         }
-        return "[Transcrição não disponível]";
+        throw new Error('Transcrição não disponível neste provider');
     },
 
     // New AI methods
-    draftCollectionEmail: async (customer: any, amount: number) => {
+    draftCollectionEmail: async (customer: any, amount: number, module: string = 'banking') => {
         const provider = getProvider();
         if ('draftCollectionEmail' in provider && provider.draftCollectionEmail) {
-            return provider.draftCollectionEmail(customer, amount);
+            return provider.draftCollectionEmail(customer, amount, module);
         }
-        return JSON.stringify({ subject: "N/A", body: "Método não disponível neste provider." });
+        throw new Error('draftCollectionEmail não disponível neste provider');
     },
 
-    generateSalesForecast: async (invoices: any[], context?: any) => {
+    generateSalesForecast: async (invoices: any[], context?: any, module: string = 'banking') => {
         const provider = getProvider();
         if ('generateSalesForecast' in provider && provider.generateSalesForecast) {
-            return provider.generateSalesForecast(invoices, context);
+            return provider.generateSalesForecast(invoices, context, module);
         }
-        return JSON.stringify({ forecast: [], summary: "Método não disponível." });
+        throw new Error('generateSalesForecast não disponível neste provider');
     },
 
-    analyzeCustomerSentiment: async (customer: any, invoices: any[]) => {
+    analyzeCustomerSentiment: async (customer: any, invoices: any[], module: string = 'banking') => {
         const provider = getProvider();
         if ('analyzeCustomerSentiment' in provider && provider.analyzeCustomerSentiment) {
-            return provider.analyzeCustomerSentiment(customer, invoices);
+            return provider.analyzeCustomerSentiment(customer, invoices, module);
         }
-        return JSON.stringify({ score: 50, label: "N/A", insights: "Método não disponível." });
+        throw new Error('analyzeCustomerSentiment não disponível neste provider');
     },
 
-    auditProposal: async (proposal: any) => {
+    auditProposal: async (proposal: any, module: string = 'proposals') => {
         const provider = getProvider();
         if ('auditProposal' in provider && provider.auditProposal) {
-            return provider.auditProposal(proposal);
+            return provider.auditProposal(proposal, module);
         }
-        return JSON.stringify({ score: 0, issues: ["Método não disponível."] });
+        throw new Error('auditProposal não disponível neste provider');
     },
 
-    auditProject: async (project: any, tasks?: any[], projectInvoices?: any[]) => {
+    auditProject: async (project: any, tasks?: any[], projectInvoices?: any[], module: string = 'proposals') => {
         const provider = getProvider();
         if ('auditProject' in provider && provider.auditProject) {
-            return provider.auditProject(project, tasks, projectInvoices);
+            return provider.auditProject(project, tasks, projectInvoices, module);
         }
-        return JSON.stringify({ health: "unknown", issues: ["Método não disponível."] });
+        throw new Error('auditProject não disponível neste provider');
     },
 
-    analyzeSystemLogs: async (logs: any[]) => {
+    analyzeSystemLogs: async (logs: any[], module: string = 'system_analysis') => {
         const provider = getProvider();
         if ('analyzeSystemLogs' in provider && provider.analyzeSystemLogs) {
-            return provider.analyzeSystemLogs(logs);
+            return provider.analyzeSystemLogs(logs, module);
         }
-        return "[]";
+        throw new Error('analyzeSystemLogs não disponível neste provider');
     },
 
-    analyzeMonthlyReport: async (data: any) => {
+    analyzeMonthlyReport: async (data: any, module: string = 'system_analysis') => {
         const provider = getProvider();
         if ('analyzeMonthlyReport' in provider && provider.analyzeMonthlyReport) {
-            return provider.analyzeMonthlyReport(data);
+            return provider.analyzeMonthlyReport(data, module);
         }
-        return "Método não disponível neste provider.";
+        throw new Error('analyzeMonthlyReport não disponível neste provider');
     }
 };
 

@@ -51,6 +51,7 @@ describe('analyzeService.runSalesForecastAnalysis', () => {
         expect(mockGenerateSalesForecast).toHaveBeenCalledWith(
             [{ id: 1, total_ttc: '100' }],
             { referenceDate: expect.any(String) },
+            'banking',
         );
         expect(mockSaveAnalysis).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
         expect(snapshot.status).toBe('success');

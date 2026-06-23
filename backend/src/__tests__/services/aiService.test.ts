@@ -400,8 +400,7 @@ describe('AiService', () => {
 
         it('analyzeSystem handles error', async () => {
             (axios.post as any).mockRejectedValue(new Error('fail'));
-            const result = await aiService.analyzeSystem('test');
-            expect(typeof result).toBe('string');
+            await expect(aiService.analyzeSystem('test')).rejects.toThrow('fail');
         });
 
         it('analyzeSentiment returns result', async () => {
@@ -412,8 +411,7 @@ describe('AiService', () => {
 
         it('analyzeSentiment handles error', async () => {
             (axios.post as any).mockRejectedValue(new Error('fail'));
-            const result = await aiService.analyzeSentiment('test');
-            expect(result.label).toBe('Error');
+            await expect(aiService.analyzeSentiment('test')).rejects.toThrow('fail');
         });
 
         it('extractCustomerInfo returns result', async () => {
@@ -424,8 +422,7 @@ describe('AiService', () => {
 
         it('extractCustomerInfo handles error', async () => {
             (axios.post as any).mockRejectedValue(new Error('fail'));
-            const result = await aiService.extractCustomerInfo('test');
-            expect(result).toEqual({});
+            await expect(aiService.extractCustomerInfo('test')).rejects.toThrow('fail');
         });
 
         it('extractReceiptData roteia para Google quando provider de texto é local', async () => {
@@ -454,12 +451,12 @@ describe('AiService', () => {
             aiService.setConfig('local', 'http://localhost:11434/v1', undefined, 'llama3');
         });
 
-        it('extractReceiptData do glm cai p/ Google se a visão falhar (retorno null não force)', async () => {
-            // se o GLM retornar erro, o método devolve null (degradação graciosa, sem quebrar o fluxo).
+        it('extractReceiptData do glm lança erro se a visão falhar (deixa runWithChain rotear)', async () => {
+            // #786: LocalProvider re-lança erros em vez de devolver null. O wrapper
+            // runWithChain (WS-D) é quem decide se roteia para Google ou propaga.
             aiService.setConfig('glm', 'https://api.z.ai/api/coding/paas/v4', 'zkey', 'glm-5.1');
             (axios.post as any).mockRejectedValue(new Error('vision down'));
-            const result = await aiService.extractReceiptData('base64img');
-            expect(result).toBeNull();
+            await expect(aiService.extractReceiptData('base64img')).rejects.toThrow('vision down');
             aiService.setConfig('local', 'http://localhost:11434/v1', undefined, 'llama3');
         });
 
@@ -471,8 +468,7 @@ describe('AiService', () => {
 
         it('analyzeFinancialHealth handles error', async () => {
             (axios.post as any).mockRejectedValue(new Error('fail'));
-            const result = await aiService.analyzeFinancialHealth({});
-            expect(typeof result).toBe('string');
+            await expect(aiService.analyzeFinancialHealth({})).rejects.toThrow('fail');
         });
 
         it('fixApiCall returns result', async () => {
@@ -483,8 +479,7 @@ describe('AiService', () => {
 
         it('fixApiCall handles error', async () => {
             (axios.post as any).mockRejectedValue(new Error('fail'));
-            const result = await aiService.fixApiCall({});
-            expect(typeof result).toBe('string');
+            await expect(aiService.fixApiCall({})).rejects.toThrow('fail');
         });
 
         it('generateCode returns result', async () => {
@@ -495,8 +490,7 @@ describe('AiService', () => {
 
         it('generateCode handles error', async () => {
             (axios.post as any).mockRejectedValue(new Error('fail'));
-            const result = await aiService.generateCode('/api/test', 'GET');
-            expect(result).toBe('// Local Gen Failed');
+            await expect(aiService.generateCode('/api/test', 'GET')).rejects.toThrow('fail');
         });
 
         it('transcribeAudio roteia para Google quando provider de texto é local', async () => {
@@ -691,10 +685,8 @@ describe('AiService', () => {
                 return { data: { choices: [{ message: { content: 'NÃO DEVE CHEGAR AQUI' } }], usage: {} } };
             });
             const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2', undefined, undefined, fallbackConfig);
-            // generateReply captura o erro internamente e retorna texto de erro
-            const result = await provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
-            // O texto de erro não deve conter resposta do fallback
-            expect(result.text).not.toBe('NÃO DEVE CHEGAR AQUI');
+            // #786: generateReply re-lança o erro (antes capturava e devolvia texto sintético).
+            await expect(provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx')).rejects.toThrow('Bad Request');
             // O fallback NÃO foi chamado: só 1 chamada (primário)
             expect((axios.post as any).mock.calls.length).toBe(1);
         });
@@ -707,23 +699,21 @@ describe('AiService', () => {
                 throw err;
             });
             const providerSemFallback = new LocalProvider('http://localhost:11434/v1', 'glm-5.2');
-            const result = await providerSemFallback.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
-            // Sem fallback → generateReply captura e retorna erro
-            expect(result.text).toContain('Erro');
+            // #786: erro é lançado em vez de capturado como texto.
+            await expect(providerSemFallback.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx')).rejects.toThrow('rate limited');
             // Só 1 tentativa ao primário (deadline=0 → sem backoff)
             expect((axios.post as any).mock.calls.length).toBe(1);
         });
 
-        it('cenário 6: ambos falham (primário 429 + MiniMax 429) → erro lançado, não texto de fallback', async () => {
+        it('cenário 6: ambos falham (primário 429 + MiniMax 429) → erro lançado', async () => {
             (axios.post as any).mockImplementation(async () => {
                 const err: any = new Error('rate limited both');
                 err.response = { status: 429, data: {} };
                 throw err;
             });
             const provider = new LocalProvider('http://localhost:11434/v1', 'glm-5.2', undefined, undefined, fallbackConfig);
-            const result = await provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
-            // generateReply captura e retorna texto de erro (não staciona, não lança)
-            expect(result.text).toContain('Erro');
+            // #786: erro é lançado em vez de capturado como texto de fallback.
+            await expect(provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx')).rejects.toThrow('rate limited');
         });
 
         it('cenário 6b: backoff exponencial — 429 repetido dentro do deadline → eventualmente sucede', async () => {

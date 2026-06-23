@@ -221,7 +221,7 @@ router.get('/prefill', (req, res) => {
 router.post('/analyze-system', async (req, res) => {
     try {
         const { query } = AnalyzeSystemSchema.parse(req.body);
-        const result = await aiService.analyzeSystem(query);
+        const result = await aiService.analyzeSystem(query, '../src', 'system_analysis');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -238,7 +238,7 @@ const AnalyzeSentimentSchema = z.object({
 router.post('/analyze-sentiment', async (req, res) => {
     try {
         const { text } = AnalyzeSentimentSchema.parse(req.body);
-        const result = await aiService.analyzeSentiment(text);
+        const result = await aiService.analyzeSentiment(text, 'chat');
         res.json(result);
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -255,7 +255,7 @@ const ExtractCustomerSchema = z.object({
 router.post('/extract/customer', async (req, res) => {
     try {
         const { text } = ExtractCustomerSchema.parse(req.body);
-        const result = await aiService.extractCustomerInfo(text);
+        const result = await aiService.extractCustomerInfo(text, 'chat');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -274,7 +274,7 @@ const ExtractReceiptSchema = z.object({
 router.post('/extract/receipt', async (req, res) => {
     try {
         const { image } = ExtractReceiptSchema.parse(req.body);
-        const result = await aiService.extractReceiptData(image);
+        const result = await aiService.extractReceiptData(image, 'banking');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -292,7 +292,7 @@ const AnalyzeFinancialSchema = z.object({
 router.post('/analyze/financial', async (req, res) => {
     try {
         const { data } = AnalyzeFinancialSchema.parse(req.body);
-        const result = await aiService.analyzeFinancialHealth(data);
+        const result = await aiService.analyzeFinancialHealth(data, 'banking');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -309,7 +309,7 @@ const FixApiCallSchema = z.object({
 router.post('/fix/api-call', async (req, res) => {
     try {
         const { log } = FixApiCallSchema.parse(req.body);
-        const result = await aiService.fixApiCall(log);
+        const result = await aiService.fixApiCall(log, 'system_analysis');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -328,7 +328,7 @@ const GenerateCodeSchema = z.object({
 router.post('/generate/code', async (req, res) => {
     try {
         const { endpoint, method, description } = GenerateCodeSchema.parse(req.body);
-        const result = await aiService.generateCode(endpoint, method, description);
+        const result = await aiService.generateCode(endpoint, method, description, 'system_analysis');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -349,7 +349,7 @@ const TranscribeAudioSchema = z.object({
 router.post('/transcribe-audio', async (req, res) => {
     try {
         const { audio, mimeType } = TranscribeAudioSchema.parse(req.body);
-        const transcription = await aiService.transcribeAudio(audio, mimeType || 'audio/ogg');
+        const transcription = await aiService.transcribeAudio(audio, mimeType || 'audio/ogg', 'chat');
         res.json({ transcription });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -403,7 +403,7 @@ const DraftEmailSchema = z.object({
 router.post('/draft/collection-email', async (req, res) => {
     try {
         const { customer, amount } = DraftEmailSchema.parse(req.body);
-        const result = await aiService.draftCollectionEmail(customer, amount);
+        const result = await aiService.draftCollectionEmail(customer, amount, 'banking');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -424,7 +424,7 @@ router.post('/analyze/sales-forecast', async (req, res) => {
         const { invoices, context } = SalesForecastSchema.parse(req.body);
         // We pass context if the service supports it, or just invoices.
         // For now, service logic infers from dates, but we keep the route flexible.
-        const result = await aiService.generateSalesForecast(invoices, context);
+        const result = await aiService.generateSalesForecast(invoices, context, 'banking');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -495,7 +495,7 @@ const CustomerSentimentSchema = z.object({
 router.post('/analyze/customer-sentiment', async (req, res) => {
     try {
         const { customer, invoices } = CustomerSentimentSchema.parse(req.body);
-        const result = await aiService.analyzeCustomerSentiment(customer, invoices);
+        const result = await aiService.analyzeCustomerSentiment(customer, invoices, 'banking');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -513,7 +513,7 @@ const AuditProposalSchema = z.object({
 router.post('/audit/proposal', async (req, res) => {
     try {
         const { proposal } = AuditProposalSchema.parse(req.body);
-        const result = await aiService.auditProposal(proposal);
+        const result = await aiService.auditProposal(proposal, 'proposals');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -533,7 +533,7 @@ const AuditProjectSchema = z.object({
 router.post('/audit/project', async (req, res) => {
     try {
         const { project, tasks, invoices } = AuditProjectSchema.parse(req.body);
-        const result = await aiService.auditProject(project, tasks, invoices);
+        const result = await aiService.auditProject(project, tasks, invoices, 'proposals');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -551,7 +551,7 @@ const AnalyzeLogsSchema = z.object({
 router.post('/analyze/logs', async (req, res) => {
     try {
         const { logs } = AnalyzeLogsSchema.parse(req.body);
-        const result = await aiService.analyzeSystemLogs(logs);
+        const result = await aiService.analyzeSystemLogs(logs, 'system_analysis');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -569,7 +569,7 @@ const AnalyzeReportSchema = z.object({
 router.post('/analyze/monthly-report', async (req, res) => {
     try {
         const { data } = AnalyzeReportSchema.parse(req.body);
-        const result = await aiService.analyzeMonthlyReport(data);
+        const result = await aiService.analyzeMonthlyReport(data, 'system_analysis');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {

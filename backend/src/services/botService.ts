@@ -63,7 +63,7 @@ class BotService {
                             ? media.data.toString('base64')
                             : media.data;
                         const mimeType = media.contentType || 'audio/ogg';
-                        const transcription = await aiService.transcribeAudio(base64Audio, mimeType);
+                        const transcription = await aiService.transcribeAudio(base64Audio, mimeType, 'chat');
                         body = `[Áudio transcrito]: ${transcription}`;
                         log.debug(`Audio transcribed: ${transcription.substring(0, 50)}...`);
                     }

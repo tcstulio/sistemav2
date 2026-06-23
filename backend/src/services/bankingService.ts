@@ -278,7 +278,7 @@ Responda APENAS no formato JSON:
 [{"index": 1, "category": "Despesa Variável", "subcategory": "Fornecedores", "confidence": 0.9}, ...]`;
 
         try {
-            const response = await aiService.analyzeSystem(prompt, 'bank_categorization');
+            const response = await aiService.analyzeSystem(prompt, '../src', 'banking');
 
             // Parse JSON response
             const jsonMatch = response.match(/\[[\s\S]*\]/);
@@ -348,7 +348,7 @@ Identifique:
 
 Responda em JSON: [{"description": "...", "amount": 0, "reason": "...", "severity": "low|medium|high"}]`;
 
-                const response = await aiService.analyzeSystem(prompt, 'anomaly_detection');
+                const response = await aiService.analyzeSystem(prompt, '../src', 'banking');
                 const jsonMatch = response.match(/\[[\s\S]*\]/);
                 if (jsonMatch) {
                     const llmAnomalies = JSON.parse(jsonMatch[0]);
@@ -422,7 +422,7 @@ Forneça:
 Responda em JSON:
 {"trends": ["..."], "recommendations": ["..."], "riskFactors": ["..."]}`;
 
-            const response = await aiService.analyzeSystem(prompt, 'cash_flow_insights');
+            const response = await aiService.analyzeSystem(prompt, '../src', 'banking');
             const jsonMatch = response.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 const insights = JSON.parse(jsonMatch[0]);
@@ -497,7 +497,7 @@ Considere:
 Responda em JSON (apenas matches com confiança > 0.6):
 [{"lineId": "...", "invoiceId": "...", "confidence": 0.8, "reason": "..."}]`;
 
-                const response = await aiService.analyzeSystem(prompt, 'reconciliation');
+                const response = await aiService.analyzeSystem(prompt, '../src', 'banking');
                 const jsonMatch = response.match(/\[[\s\S]*\]/);
                 if (jsonMatch) {
                     const llmMatches = JSON.parse(jsonMatch[0]);
