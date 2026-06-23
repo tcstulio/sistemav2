@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Save, RefreshCw, Cpu, Server, CheckCircle, AlertTriangle, List,
     Play, MessageSquare, Landmark, FileSearch, FileText, Settings2,
     BarChart3, Zap, Clock, DollarSign, AlertCircle, Send, Loader2,
-    ChevronRight, Sparkles
+    ChevronRight, Sparkles, Heart, ChevronUp, ChevronDown, RotateCcw,
+    Activity, ShieldAlert, ShieldCheck, ShieldOff
 } from 'lucide-react';
 import axios from 'axios';
 import { toast } from 'sonner';
@@ -50,11 +51,322 @@ interface TestResult {
     latencyMs?: number;
 }
 
+interface ProviderHealth {
+    provider: string;
+    state: 'healthy' | 'exhausted';
+    exhaustedSince?: number;
+    consecutiveErrors: number;
+    lastError?: string;
+    cooldownMs?: number;
+    totalCalls: number;
+    totalErrors: number;
+    totalFallbacks: number;
+}
+
+interface HealthData {
+    providers: ProviderHealth[];
+    modules: Record<string, { chain: string[]; active?: string }>;
+}
+
+// --- Helpers ---
+
+const AVAILABLE_PROVIDERS = ['glm', 'minimax', 'google', 'local'] as const;
+const MODULES = ['chat', 'banking', 'system_analysis', 'proposals'] as const;
+type ModuleName = typeof MODULES[number];
+
+const MODULE_LABELS: Record<ModuleName, string> = {
+    chat: 'Chat / Atendimento',
+    banking: 'Análise Bancária',
+    system_analysis: 'Análise de Sistema',
+    proposals: 'Propostas / Projetos',
+};
+
+const PROVIDER_LABELS: Record<string, string> = {
+    glm: 'Z.AI (GLM)',
+    minimax: 'MiniMax',
+    google: 'Google Gemini',
+    local: 'Local LLM',
+};
+
+/** Returns how many ms of cooldown remain for an exhausted provider. */
+function cooldownRemaining(h: ProviderHealth): number {
+    if (h.state !== 'exhausted' || !h.exhaustedSince || !h.cooldownMs) return 0;
+    return Math.max(0, h.cooldownMs - (Date.now() - h.exhaustedSince));
+}
+
+/** Formats ms as "Xm Ys" or "Xs". */
+function formatMs(ms: number): string {
+    if (ms <= 0) return '0s';
+    const s = Math.ceil(ms / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return rem > 0 ? `${m}m ${rem}s` : `${m}m`;
+}
+
+/** Formats a timestamp as relative ("há 2 min"). */
+function relativeTime(ts: number): string {
+    const diffMs = Date.now() - ts;
+    const diffS = Math.floor(diffMs / 1000);
+    if (diffS < 60) return `há ${diffS}s`;
+    const diffM = Math.floor(diffS / 60);
+    if (diffM < 60) return `há ${diffM} min`;
+    const diffH = Math.floor(diffM / 60);
+    return `há ${diffH}h`;
+}
+
+// --- Sub-components ---
+
+interface ProviderCardProps {
+    health: ProviderHealth;
+    /** Whether the reset endpoint exists in the backend. */
+    resetEndpointAvailable: boolean;
+    onReset: (provider: string) => void;
+    isResetting: boolean;
+    /** Countdown tick to force re-render */
+    tick: number;
+}
+
+const ProviderCard: React.FC<ProviderCardProps> = ({
+    health,
+    resetEndpointAvailable,
+    onReset,
+    isResetting,
+    tick: _tick,
+}) => {
+    const isExhausted = health.state === 'exhausted';
+    const isDegraded = !isExhausted && health.consecutiveErrors > 0;
+    const remaining = cooldownRemaining(health);
+
+    const statusColor = isExhausted
+        ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+        : isDegraded
+        ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
+        : 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800';
+
+    const BadgeIcon = isExhausted ? ShieldOff : isDegraded ? ShieldAlert : ShieldCheck;
+    const badgeColor = isExhausted
+        ? 'text-red-600 dark:text-red-400'
+        : isDegraded
+        ? 'text-amber-600 dark:text-amber-400'
+        : 'text-emerald-600 dark:text-emerald-400';
+    const badgeLabel = isExhausted ? 'Exausto' : isDegraded ? 'Degradado' : 'Saudável';
+
+    return (
+        <div className={`p-4 rounded-xl border ${statusColor} space-y-3`}>
+            {/* Header */}
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <BadgeIcon size={18} className={badgeColor} />
+                    <span className="font-semibold text-slate-800 dark:text-white text-sm">
+                        {PROVIDER_LABELS[health.provider] ?? health.provider}
+                    </span>
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                        isExhausted ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' :
+                        isDegraded ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' :
+                        'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                    }`}>
+                        {badgeLabel}
+                    </span>
+                </div>
+                <button
+                    onClick={() => onReset(health.provider)}
+                    disabled={!resetEndpointAvailable || isResetting}
+                    title={!resetEndpointAvailable ? 'endpoint pendente' : 'Resetar cooldown'}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg
+                        bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600
+                        disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                >
+                    {isResetting ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
+                    Resetar cooldown
+                </button>
+            </div>
+
+            {/* Stats row */}
+            <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="bg-white/60 dark:bg-slate-900/40 rounded-lg p-2">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Chamadas</p>
+                    <p className="text-lg font-bold text-slate-800 dark:text-white">{health.totalCalls}</p>
+                </div>
+                <div className="bg-white/60 dark:bg-slate-900/40 rounded-lg p-2">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Erros</p>
+                    <p className={`text-lg font-bold ${health.totalErrors > 0 ? 'text-red-600 dark:text-red-400' : 'text-slate-800 dark:text-white'}`}>
+                        {health.totalErrors}
+                    </p>
+                </div>
+                <div className="bg-white/60 dark:bg-slate-900/40 rounded-lg p-2">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Fallbacks</p>
+                    <p className="text-lg font-bold text-slate-800 dark:text-white">{health.totalFallbacks}</p>
+                </div>
+            </div>
+
+            {/* Consecutive errors */}
+            {health.consecutiveErrors > 0 && (
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                    Erros consecutivos: <span className="font-semibold">{health.consecutiveErrors}</span>
+                </p>
+            )}
+
+            {/* Cooldown countdown */}
+            {isExhausted && remaining > 0 && (
+                <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
+                    <Clock size={12} />
+                    <span>Cooldown restante: <span className="font-mono font-bold">{formatMs(remaining)}</span></span>
+                </div>
+            )}
+
+            {/* Last error */}
+            {health.lastError && (
+                <div className="text-xs text-slate-500 dark:text-slate-400 bg-white/60 dark:bg-slate-900/40 rounded p-2 truncate" title={health.lastError}>
+                    <span className="font-medium">Último erro: </span>{health.lastError}
+                    {health.exhaustedSince && (
+                        <span className="ml-1 text-slate-400">({relativeTime(health.exhaustedSince)})</span>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
+// --- Fallback Chain Editor ---
+
+interface FallbackChainEditorProps {
+    chains: Record<string, string[]>;
+    onSave: (module: string, chain: string[]) => Promise<void>;
+    isSaving: boolean;
+}
+
+const FallbackChainEditor: React.FC<FallbackChainEditorProps> = ({ chains, onSave, isSaving }) => {
+    const [localChains, setLocalChains] = useState<Record<string, string[]>>(chains);
+    const [savingModule, setSavingModule] = useState<string | null>(null);
+
+    // Sync when parent data changes
+    useEffect(() => {
+        setLocalChains(chains);
+    }, [chains]);
+
+    const moveProvider = (module: string, idx: number, dir: -1 | 1) => {
+        const chain = [...(localChains[module] || [])];
+        const target = idx + dir;
+        if (target < 0 || target >= chain.length) return;
+        [chain[idx], chain[target]] = [chain[target], chain[idx]];
+        setLocalChains({ ...localChains, [module]: chain });
+    };
+
+    const addProvider = (module: string, provider: string) => {
+        const chain = localChains[module] || [];
+        if (chain.includes(provider)) return;
+        setLocalChains({ ...localChains, [module]: [...chain, provider] });
+    };
+
+    const removeProvider = (module: string, idx: number) => {
+        const chain = [...(localChains[module] || [])];
+        chain.splice(idx, 1);
+        setLocalChains({ ...localChains, [module]: chain });
+    };
+
+    const handleSave = async (module: string) => {
+        setSavingModule(module);
+        try {
+            await onSave(module, localChains[module] || []);
+        } finally {
+            setSavingModule(null);
+        }
+    };
+
+    return (
+        <div className="space-y-5">
+            {MODULES.map((module) => {
+                const chain = localChains[module] || [];
+                const available = AVAILABLE_PROVIDERS.filter((p) => !chain.includes(p));
+                return (
+                    <div key={module} className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-700">
+                        <div className="flex items-center justify-between mb-3">
+                            <span className="font-medium text-slate-700 dark:text-slate-300 text-sm">
+                                {MODULE_LABELS[module]}
+                            </span>
+                            <button
+                                onClick={() => handleSave(module)}
+                                disabled={isSaving || savingModule === module}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold disabled:opacity-50"
+                            >
+                                {savingModule === module ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                                Salvar Cadeia
+                            </button>
+                        </div>
+
+                        {/* Chain list */}
+                        <div className="space-y-1.5 mb-3">
+                            {chain.length === 0 && (
+                                <p className="text-xs text-slate-400 italic">Nenhum provider na cadeia</p>
+                            )}
+                            {chain.map((provider, idx) => (
+                                <div key={provider} className="flex items-center gap-2 bg-white dark:bg-slate-900 rounded-lg px-3 py-2 border border-slate-200 dark:border-slate-700">
+                                    <span className="text-xs font-mono font-medium text-slate-500 w-4">{idx + 1}.</span>
+                                    <span className="flex-1 text-sm text-slate-700 dark:text-slate-300">
+                                        {PROVIDER_LABELS[provider] ?? provider}
+                                    </span>
+                                    {idx === 0 && (
+                                        <span className="text-xs bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-1.5 py-0.5 rounded">
+                                            primário
+                                        </span>
+                                    )}
+                                    <div className="flex items-center gap-0.5">
+                                        <button
+                                            onClick={() => moveProvider(module, idx, -1)}
+                                            disabled={idx === 0}
+                                            className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded disabled:opacity-30"
+                                            title="Mover para cima"
+                                        >
+                                            <ChevronUp size={14} />
+                                        </button>
+                                        <button
+                                            onClick={() => moveProvider(module, idx, 1)}
+                                            disabled={idx === chain.length - 1}
+                                            className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded disabled:opacity-30"
+                                            title="Mover para baixo"
+                                        >
+                                            <ChevronDown size={14} />
+                                        </button>
+                                        <button
+                                            onClick={() => removeProvider(module, idx)}
+                                            className="p-1 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 rounded ml-1"
+                                            title="Remover"
+                                        >
+                                            ×
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Add provider */}
+                        {available.length > 0 && (
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-slate-400">Adicionar:</span>
+                                {available.map((p) => (
+                                    <button
+                                        key={p}
+                                        onClick={() => addProvider(module, p)}
+                                        className="text-xs px-2 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 rounded-lg text-slate-700 dark:text-slate-300"
+                                    >
+                                        + {PROVIDER_LABELS[p] ?? p}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    );
+};
+
 // --- Main Component ---
 
 export const LlmSettingsTab: React.FC = () => {
     // State
-    const [activeTab, setActiveTab] = useState<'provider' | 'modules' | 'prompts' | 'monitor' | 'test'>('provider');
+    const [activeTab, setActiveTab] = useState<'provider' | 'modules' | 'prompts' | 'monitor' | 'test' | 'health'>('provider');
 
     // Provider tab
     const [config, setConfig] = useState<LlmConfig>({
@@ -89,11 +401,34 @@ export const LlmSettingsTab: React.FC = () => {
     const [isTestingPrompt, setIsTestingPrompt] = useState(false);
     const [testLatency, setTestLatency] = useState(0);
 
+    // Health tab
+    const [healthData, setHealthData] = useState<HealthData | null>(null);
+    const [isLoadingHealth, setIsLoadingHealth] = useState(false);
+    const [healthError, setHealthError] = useState<string | null>(null);
+    const [resettingProvider, setResettingProvider] = useState<string | null>(null);
+    const [fallbackChains, setFallbackChains] = useState<Record<string, string[]>>({});
+    const [isSavingChain, setIsSavingChain] = useState(false);
+    /** Tick counter incremented every second to trigger countdown re-render */
+    const [tick, setTick] = useState(0);
+    /** Consecutive health-poll failures (for backoff) */
+    const healthErrorCountRef = useRef(0);
+    const healthIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const tickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    /**
+     * Whether the reset endpoint exists in the backend.
+     * Based on code review: POST /api/admin/llm-health/reset/:provider is NOT implemented.
+     * Set to true once the endpoint is merged.
+     */
+    const RESET_ENDPOINT_AVAILABLE = false;
+
     // Get auth token
     const getToken = () => {
         const savedConfig = JSON.parse(localStorage.getItem('coolgroove_config') || '{}');
         return savedConfig.apiKey || '';
     };
+
+    const authHeaders = () => ({ 'Authorization': 'Bearer ' + getToken() });
 
     // Backend sobrescreve config.XBaseUrl com o `url` enviado quando ele é truthy
     // (adminRoutes.ts:334-338). Para providers remotos (glm/minimax/google) a URL
@@ -117,7 +452,129 @@ export const LlmSettingsTab: React.FC = () => {
         loadModules();
         loadPrompts();
         loadStats();
+        loadFallbackChains();
     }, []);
+
+    // Health polling: start/stop based on active tab + visibility
+    useEffect(() => {
+        if (activeTab !== 'health') {
+            stopHealthPolling();
+            return;
+        }
+        // Initial load
+        fetchHealth();
+        // Start polling
+        startHealthPolling();
+        // Visibility-based pause
+        const handleVisibility = () => {
+            if (document.visibilityState === 'hidden') {
+                stopHealthPolling();
+            } else if (activeTab === 'health') {
+                fetchHealth();
+                startHealthPolling();
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibility);
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibility);
+            stopHealthPolling();
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
+
+    // Countdown tick every second while health tab is active
+    useEffect(() => {
+        if (activeTab !== 'health') {
+            if (tickIntervalRef.current) {
+                clearInterval(tickIntervalRef.current);
+                tickIntervalRef.current = null;
+            }
+            return;
+        }
+        tickIntervalRef.current = setInterval(() => setTick((t) => t + 1), 1000);
+        return () => {
+            if (tickIntervalRef.current) {
+                clearInterval(tickIntervalRef.current);
+                tickIntervalRef.current = null;
+            }
+        };
+    }, [activeTab]);
+
+    const stopHealthPolling = () => {
+        if (healthIntervalRef.current) {
+            clearInterval(healthIntervalRef.current);
+            healthIntervalRef.current = null;
+        }
+    };
+
+    const startHealthPolling = useCallback(() => {
+        stopHealthPolling();
+        // Base interval 5s; backoff to 30s after 3 failures
+        const intervalMs = healthErrorCountRef.current >= 3 ? 30_000 : 5_000;
+        healthIntervalRef.current = setInterval(() => {
+            fetchHealth();
+        }, intervalMs);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const fetchHealth = useCallback(async () => {
+        setIsLoadingHealth(true);
+        setHealthError(null);
+        try {
+            const res = await axios.get('/api/admin/llm-health', { headers: authHeaders() });
+            setHealthData(res.data);
+            healthErrorCountRef.current = 0;
+        } catch (e: any) {
+            healthErrorCountRef.current += 1;
+            const msg = e.response?.data?.error || e.message || 'Erro ao buscar saúde';
+            setHealthError(msg);
+            log.error('fetchHealth failed', e);
+            // Restart with backoff if too many failures
+            if (healthErrorCountRef.current === 3) {
+                stopHealthPolling();
+                startHealthPolling();
+            }
+        } finally {
+            setIsLoadingHealth(false);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const handleResetCooldown = async (provider: string) => {
+        if (!RESET_ENDPOINT_AVAILABLE) return;
+        setResettingProvider(provider);
+        try {
+            await axios.post(`/api/admin/llm-health/reset/${provider}`, {}, { headers: authHeaders() });
+            toast.success(`Cooldown de ${PROVIDER_LABELS[provider] ?? provider} resetado`);
+            await fetchHealth();
+        } catch (e: any) {
+            toast.error('Erro ao resetar: ' + (e.response?.data?.error || e.message));
+        } finally {
+            setResettingProvider(null);
+        }
+    };
+
+    const loadFallbackChains = async () => {
+        try {
+            const res = await axios.get('/api/admin/config/llm/fallback-chain', { headers: authHeaders() });
+            setFallbackChains(res.data);
+        } catch (e) {
+            log.error('Failed to load fallback chains', e);
+        }
+    };
+
+    const handleSaveChain = async (module: string, chain: string[]) => {
+        setIsSavingChain(true);
+        try {
+            await axios.post('/api/admin/config/llm/fallback-chain', { module, chain }, { headers: authHeaders() });
+            toast.success(`Cadeia de ${MODULE_LABELS[module as ModuleName] ?? module} salva!`);
+            setFallbackChains((prev) => ({ ...prev, [module]: chain }));
+        } catch (e: any) {
+            toast.error('Erro: ' + (e.response?.data?.error || e.message));
+        } finally {
+            setIsSavingChain(false);
+        }
+    };
 
     // --- Load Functions ---
 
@@ -125,7 +582,7 @@ export const LlmSettingsTab: React.FC = () => {
         setIsLoading(true);
         try {
             const response = await axios.get('/api/admin/config/llm', {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
+                headers: authHeaders()
             });
             setConfig({
                 provider: response.data.configProvider || 'local',
@@ -147,7 +604,7 @@ export const LlmSettingsTab: React.FC = () => {
     const loadModules = async () => {
         try {
             const response = await axios.get('/api/admin/config/llm/modules', {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
+                headers: authHeaders()
             });
             setModuleConfigs(response.data);
         } catch (e) {
@@ -158,7 +615,7 @@ export const LlmSettingsTab: React.FC = () => {
     const loadPrompts = async () => {
         try {
             const response = await axios.get('/api/admin/config/llm/prompts', {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
+                headers: authHeaders()
             });
             setCustomPrompts(response.data);
         } catch (e) {
@@ -169,7 +626,7 @@ export const LlmSettingsTab: React.FC = () => {
     const loadStats = async () => {
         try {
             const response = await axios.get('/api/admin/config/llm/stats', {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
+                headers: authHeaders()
             });
             setStats(response.data);
         } catch (e) {
@@ -182,7 +639,7 @@ export const LlmSettingsTab: React.FC = () => {
         setIsFetchingModels(true);
         try {
             const response = await axios.get(`/api/admin/config/llm/models?provider=${targetProvider}`, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
+                headers: authHeaders()
             });
 
             if (response.data?.models) {
@@ -235,7 +692,7 @@ export const LlmSettingsTab: React.FC = () => {
                 key: keyForProvider(config.provider),
                 modelName: config.modelName
             }, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
+                headers: authHeaders()
             });
             await loadConfig();
             toast.success("Configuração salva com sucesso!");
@@ -251,7 +708,7 @@ export const LlmSettingsTab: React.FC = () => {
             await axios.post('/api/admin/config/llm/modules', {
                 modules: moduleConfigs
             }, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
+                headers: authHeaders()
             });
             toast.success("Configurações de módulos salvas!");
         } catch (e: any) {
@@ -264,7 +721,7 @@ export const LlmSettingsTab: React.FC = () => {
             await axios.post('/api/admin/config/llm/prompts', {
                 prompts: customPrompts
             }, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
+                headers: authHeaders()
             });
             toast.success("Prompts salvos!");
         } catch (e: any) {
@@ -284,7 +741,7 @@ export const LlmSettingsTab: React.FC = () => {
                 model: config.modelName,
                 apiKey: keyForProvider(config.provider)
             }, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
+                headers: authHeaders()
             });
             setTestResult(response.data);
             if (response.data.success) {
@@ -313,7 +770,7 @@ export const LlmSettingsTab: React.FC = () => {
                 provider: config.provider,
                 model: config.modelName
             }, {
-                headers: { 'Authorization': 'Bearer ' + getToken() }
+                headers: authHeaders()
             });
             setTestResponse(response.data.response);
             setTestLatency(response.data.latencyMs);
@@ -325,17 +782,23 @@ export const LlmSettingsTab: React.FC = () => {
         }
     };
 
+    // --- Derived: exhausted providers for banner ---
+    const exhaustedProviders = (healthData?.providers ?? []).filter(
+        (p) => p.state === 'exhausted' && cooldownRemaining(p) > 0
+    );
+
     // --- Render Tabs ---
 
     const tabs = [
         { id: 'provider', label: 'Provider', icon: Server },
         { id: 'modules', label: 'Módulos', icon: Settings2 },
+        { id: 'health', label: 'Saúde', icon: Heart },
         { id: 'test', label: 'Playground', icon: Play },
         { id: 'monitor', label: 'Monitor', icon: BarChart3 },
         { id: 'prompts', label: 'Prompts', icon: FileText }
     ] as const;
 
-    const moduleIcons: Record<string, any> = {
+    const moduleIcons: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
         chat: MessageSquare,
         banking: Landmark,
         system_analysis: FileSearch,
@@ -385,21 +848,44 @@ export const LlmSettingsTab: React.FC = () => {
                     </div>
                 </div>
 
+                {/* Exhausted providers banner */}
+                {exhaustedProviders.length > 0 && (
+                    <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-xl">
+                        <AlertTriangle size={18} className="text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                        <div className="flex-1 text-sm">
+                            <span className="font-semibold text-amber-700 dark:text-amber-300">
+                                {exhaustedProviders.map((p) => PROVIDER_LABELS[p.provider] ?? p.provider).join(', ')} em cooldown
+                            </span>
+                            {healthData?.modules && Object.values(healthData.modules).some((m) => m.active) && (
+                                <span className="text-amber-600 dark:text-amber-400 ml-1">
+                                    — fallback ativo:{' '}
+                                    {[...new Set(Object.values(healthData.modules).map((m) => m.active).filter(Boolean))]
+                                        .map((p) => PROVIDER_LABELS[p!] ?? p)
+                                        .join(', ')}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {/* Tabs */}
-                <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+                <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl overflow-x-auto">
                     {tabs.map(tab => {
                         const Icon = tab.icon;
                         return (
                             <button
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id)}
-                                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${activeTab === tab.id
+                                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${activeTab === tab.id
                                     ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-400'
                                     : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
                                     }`}
                             >
                                 <Icon size={16} />
                                 <span className="hidden sm:inline">{tab.label}</span>
+                                {tab.id === 'health' && exhaustedProviders.length > 0 && (
+                                    <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                                )}
                             </button>
                         );
                     })}
@@ -828,6 +1314,142 @@ export const LlmSettingsTab: React.FC = () => {
                                     <Save size={16} />
                                     Salvar Módulos
                                 </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Health Tab */}
+                    {activeTab === 'health' && (
+                        <div className="p-6 space-y-6">
+                            {/* Health section */}
+                            <div>
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                                        <Activity size={18} className="text-indigo-600" />
+                                        Saúde dos Modelos
+                                    </h3>
+                                    <button
+                                        onClick={fetchHealth}
+                                        disabled={isLoadingHealth}
+                                        className="flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
+                                    >
+                                        <RefreshCw size={14} className={isLoadingHealth ? 'animate-spin' : ''} />
+                                        Atualizar
+                                    </button>
+                                </div>
+
+                                {healthError && (
+                                    <div className="flex items-center gap-2 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-600 dark:text-red-400 mb-4">
+                                        <AlertCircle size={16} className="flex-shrink-0" />
+                                        {healthError}
+                                    </div>
+                                )}
+
+                                {!healthData && !isLoadingHealth && !healthError && (
+                                    <div className="text-center py-8 text-slate-400 text-sm">
+                                        Carregando dados de saúde...
+                                    </div>
+                                )}
+
+                                {isLoadingHealth && !healthData && (
+                                    <div className="flex items-center justify-center gap-2 py-8 text-slate-400 text-sm">
+                                        <Loader2 size={18} className="animate-spin" />
+                                        Carregando...
+                                    </div>
+                                )}
+
+                                {healthData && (
+                                    <>
+                                        {healthData.providers.length === 0 ? (
+                                            <div className="text-center py-6 text-slate-400 text-sm">
+                                                Nenhum provider registrou chamadas ainda.
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                {healthData.providers.map((h) => (
+                                                    <ProviderCard
+                                                        key={h.provider}
+                                                        health={h}
+                                                        resetEndpointAvailable={RESET_ENDPOINT_AVAILABLE}
+                                                        onReset={handleResetCooldown}
+                                                        isResetting={resettingProvider === h.provider}
+                                                        tick={tick}
+                                                    />
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {/* Module chains status */}
+                                        {Object.keys(healthData.modules).length > 0 && (
+                                            <div className="mt-6">
+                                                <h4 className="text-sm font-semibold text-slate-600 dark:text-slate-400 mb-3">
+                                                    Cadeia ativa por módulo
+                                                </h4>
+                                                <div className="space-y-2">
+                                                    {Object.entries(healthData.modules).map(([mod, info]) => (
+                                                        <div key={mod} className="flex items-center gap-3 px-3 py-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg text-sm">
+                                                            <span className="text-slate-600 dark:text-slate-400 w-32 flex-shrink-0">
+                                                                {MODULE_LABELS[mod as ModuleName] ?? mod}
+                                                            </span>
+                                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                                {info.chain.map((p, i) => (
+                                                                    <React.Fragment key={p}>
+                                                                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                                                            p === info.active
+                                                                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                                                                : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400 line-through'
+                                                                        }`}>
+                                                                            {PROVIDER_LABELS[p] ?? p}
+                                                                        </span>
+                                                                        {i < info.chain.length - 1 && (
+                                                                            <ChevronRight size={12} className="text-slate-300" />
+                                                                        )}
+                                                                    </React.Fragment>
+                                                                ))}
+                                                                {!info.active && (
+                                                                    <span className="text-xs text-red-500 font-medium ml-2">
+                                                                        Todos exaustos!
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+
+                                <p className="text-xs text-slate-400 mt-4">
+                                    Polling automático a cada 5s. Pausado quando aba fica inativa.
+                                    {!RESET_ENDPOINT_AVAILABLE && (
+                                        <span className="ml-1 text-amber-500">
+                                            (Botão "Resetar cooldown" desativado — endpoint pendente)
+                                        </span>
+                                    )}
+                                </p>
+                            </div>
+
+                            {/* Separator */}
+                            <div className="border-t border-slate-100 dark:border-slate-800" />
+
+                            {/* Fallback chain editor */}
+                            <div>
+                                <div className="flex items-center gap-2 mb-4">
+                                    <Settings2 size={18} className="text-indigo-600" />
+                                    <h3 className="text-base font-semibold text-slate-700 dark:text-slate-300">
+                                        Editor de Cadeia de Fallback
+                                    </h3>
+                                </div>
+                                <p className="text-xs text-slate-400 mb-4">
+                                    Defina a ordem de tentativa de providers por módulo. Use os botões para reordenar.
+                                    O primeiro provider é o primário; os demais são usados em caso de falha.
+                                </p>
+                                <FallbackChainEditor
+                                    chains={fallbackChains}
+                                    onSave={handleSaveChain}
+                                    isSaving={isSavingChain}
+                                />
                             </div>
                         </div>
                     )}
