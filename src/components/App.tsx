@@ -198,7 +198,9 @@ const App: React.FC = () => {
                         <Route path="/projects/:id" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
                         <Route path="/projects/:id/edit" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
 
-                        <Route path="/tasks" element={<ViewWrapper Component={TaskDetail} viewId="projects" />} />
+                        {/* /tasks "nu" (sem :id) renderizava TaskDetail e travava em "Carregando tarefa...".
+                            /tasks é uma rota de DETALHE (/tasks/:id); a forma base redireciona p/ Minhas Tarefas. */}
+                        <Route path="/tasks" element={<Navigate to="/my-tasks" replace />} />
                         {/* criação/edição de tarefa via deeplink HITL abrem o TaskModal dentro do ProjectList */}
                         <Route path="/tasks/new" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
                         <Route path="/tasks/:id" element={<ViewWrapper Component={TaskDetail} viewId="projects" />} />

@@ -71,7 +71,9 @@ export const useNotifications = (
 
         const fetchNotifications = async () => {
             try {
-                const res = await fetch(`${API}/api/notifications?limit=50`);
+                // credentials:'include' garante o cookie de sessão (dolapikey) mesmo cross-origin;
+                // sem isso o feed dava 401 quando o app e o backend não são same-origin.
+                const res = await fetch(`${API}/api/notifications?limit=50`, { credentials: 'include' });
                 if (!res.ok) return;
                 const data = await res.json();
                 if (cancelled) return;

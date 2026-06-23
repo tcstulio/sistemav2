@@ -190,7 +190,12 @@ export class DolibarrServiceBase {
                 throw new Error(response.data?.error?.message || `Falha no login (${response.status})`);
             }
         } catch (error: any) {
-            log.error(`Login Exception: ${error.message}`);
+            const status = error.response?.status;
+            log.error(`Login Exception: ${error.message} (status ${status})`);
+            // Mapeia o erro cru do axios ("Request failed with status code 403") p/ mensagem clara.
+            if (status === 401 || status === 403) {
+                throw new Error('Usuário ou senha inválidos');
+            }
             throw new Error(error.message || 'Erro de conexão com Dolibarr');
         }
     }

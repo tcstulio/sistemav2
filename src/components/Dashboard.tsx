@@ -38,7 +38,9 @@ interface ForecastData {
 const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     const { config, canAccess, previewTarget, orgScreenPerms, userGroupIds } = useDolibarr();
     const currentUser = config?.currentUser;
-    const isAdmin = !previewTarget && currentUser?.admin === 1;
+    // admin pode vir como número 1, string "1" ou boolean (Dolibarr/refresh gravam cru em config.currentUser).
+    // O `=== 1` estrito tratava admins reais (admin:"1") como não-admin e ESCONDIA os widgets financeiros (#535).
+    const isAdmin = !previewTarget && (currentUser?.admin === 1 || currentUser?.admin === '1' || (currentUser?.admin as unknown) === true);
 
     // canSeeWidget: combines existing screen-based canAccess guard + a widget-level override
     // via synthetic key `dashboard:<widgetId>`. Admin sees all; group/user overrides respected (#541).

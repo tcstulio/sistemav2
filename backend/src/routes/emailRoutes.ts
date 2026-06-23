@@ -255,6 +255,11 @@ router.get('/:accountId/unread-count', async (req, res) => {
         const count = await emailService.getUnreadCount(accountId, folder);
         res.json({ count });
     } catch (error: any) {
+        // Conta inexistente é erro do cliente (accountId inválido / nenhuma conta configurada),
+        // não falha do servidor: degrada para 404 em vez de 500 (endpoint é polled pelo badge).
+        if (error?.message === 'Account not found') {
+            return res.status(404).json({ error: 'Account not found' });
+        }
         res.status(500).json({ error: error.message });
     }
 });

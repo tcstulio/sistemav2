@@ -22,7 +22,7 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
     const previewRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
 
-    const isAdmin = currentUser?.admin === 1;
+    const isAdmin = currentUser?.admin === 1 || currentUser?.admin === '1' || (currentUser?.admin as unknown) === true;
 
     // Close menus when clicking outside
     useEffect(() => {

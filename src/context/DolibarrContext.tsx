@@ -267,7 +267,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
                 try { // Synchronous refetch attempt
                   const freshUser = await DolibarrService.fetchCurrentUser(parsed, parsed.currentUser.login);
                   if (freshUser) {
-                    parsed.currentUser = freshUser;
+                    parsed.currentUser = normalizeUser(freshUser); // admin coerido p/ número (evita "1" string)
                     safeStorage.setJSON('coolgroove_config', parsed);
                   }
                 } catch (e) { log.error('User refresh failed', e); }
@@ -280,8 +280,11 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
             // Background User Refresh
             DolibarrService.fetchCurrentUser(parsed, parsed.currentUser?.login).then(u => {
               if (u) {
-                setCurrentUser(normalizeUser(u));
-                const updated = { ...parsed, currentUser: u };
+                const normalized = normalizeUser(u);
+                setCurrentUser(normalized);
+                // Persiste o usuário NORMALIZADO em config.currentUser (admin número), senão o
+                // refresh sobrescrevia com cru (admin:"1") e quebrava isAdmin no Dashboard/Header.
+                const updated = { ...parsed, currentUser: normalized };
                 setConfigState(updated);
                 safeStorage.setJSON('coolgroove_config', updated);
               }

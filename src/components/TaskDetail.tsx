@@ -73,7 +73,7 @@ const TaskDetail: React.FC<TaskDetailProps> = ({ config, initialItemId, onNaviga
 
     useEffect(() => {
         const fetchTask = async () => {
-            if (!initialItemId) return;
+            if (!initialItemId) { setLoading(false); return; } // sem id: não fica preso no spinner
             setLoading(true);
             setError(null);
             try {
