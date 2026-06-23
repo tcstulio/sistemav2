@@ -51,6 +51,25 @@ class ConfigService {
         this.moduleConfigs = { ...this.moduleConfigs, ...configs };
     }
 
+    /**
+     * Reaplica config.llmProvider atual a todos os módulos default.
+     * Chame após mutar config.llmProvider em runtime (ex.: POST /config/llm),
+     * para que aiService.generateReply — que usa moduleConfig.provider || config.llmProvider
+     * (aiService.ts:1423) — pare de usar o provider antigo cacheado no boot.
+     *
+     * Não sobrescreve overrides explícitos feitos via setModuleConfigs.
+     */
+    resetModulesToGlobal(): void {
+        const p = config.llmProvider;
+        const m = modelForProvider(p);
+        this.moduleConfigs = {
+            chat: { provider: p, model: m },
+            banking: { provider: p, model: config.googleApiKey ? 'gemini-2.0-flash' : m },
+            system_analysis: { provider: p, model: m },
+            proposals: { provider: p, model: m }
+        };
+    }
+
     getPrompt(promptName: string): string {
         return this.customPrompts[promptName] || '';
     }
