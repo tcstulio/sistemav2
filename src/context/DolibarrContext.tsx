@@ -181,10 +181,13 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   const canAccess = useCallback((module: string): boolean => {
     if (!config || !currentUser) return false;
     if (previewTarget) {
-      // Preview mode: use simulated identity, no admin bypass, base access = false (no Dolibarr rights).
+      // Preview ("ver como"): simula a identidade SEM bypass de admin. base=true para mostrar todas
+      // as telas EXCETO as ocultadas (hidden) p/ aquele grupo/pessoa — que é o propósito do recurso.
+      // Antes base=false bloqueava TUDO (toda rota caía em "Acesso Restrito") quando não havia
+      // overrides configurados (caso padrão). Telas protegidas continuam sempre visíveis.
       return resolveScreenAccess({
         screenId: module,
-        base: false,
+        base: true,
         isAdmin: false,
         userId: previewTarget.type === 'user' ? previewTarget.id : undefined,
         groupIds: previewTarget.groupIds,
