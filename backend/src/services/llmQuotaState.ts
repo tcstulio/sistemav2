@@ -1,16 +1,12 @@
-// Estado GLOBAL de esgotamento de cota/saldo de LLM.
+// Estado de esgotamento de cota/saldo de LLM — wrappers sobre llmHealthService.
 //
-// Problema que resolve: quando GLM/Z.AI (429 / code 1310 "limit exhausted" / 1302) E o
-// fallback MiniMax (402 "insufficient balance") estão esgotados, o robô NÃO deve marcar as
-// tasks como `failed` (terminal) — isso destruiria o backlog. Em vez disso, sinaliza
-// "esgotado", as tasks voltam para `pending`, o dispatch é segurado, e uma sonda periódica
-// retoma SOZINHO quando a API volta. Erro de cota é INFRA (temporário), não falha da task.
+// Preserva as 5 assinaturas usadas por taskRunnerService e demais call-sites.
+// CRÍTICO: isQuotaExhausted() retorna true APENAS quando TODOS os providers conhecidos
+// estão exhausted — TaskRunner não deve travar enquanto houver 1 provider saudável.
 
-let exhaustedSince: number | null = null;
-let lastReason = '';
+import { llmHealthService } from './llmHealthService';
 
 // Marcadores de erro de cota/saldo/transiente-de-infra (case-insensitive).
-// Textuais (inequívocos) + códigos específicos dos provedores.
 const QUOTA_MARKERS = [
   'rate limit',
   'limit exhausted',
@@ -35,22 +31,29 @@ export function isQuotaError(msg?: string | null): boolean {
   return QUOTA_MARKERS.some((k) => m.includes(k));
 }
 
-/** Sinaliza que a cota/saldo de LLM está esgotada (idempotente — preserva o 1º timestamp). */
+/** Sinaliza que a cota/saldo de LLM está esgotada.
+ *  Sem provider explícito → registra no provider 'global' (representa "todos"). */
 export function markQuotaExhausted(reason: string): void {
-  if (exhaustedSince === null) exhaustedSince = Date.now();
-  lastReason = reason || lastReason;
+  llmHealthService.recordQuotaError('global', reason);
 }
 
-/** Limpa o sinal — chamado quando uma chamada LLM volta a ter SUCESSO (cota voltou). */
+/** Limpa o sinal — chamado quando uma chamada LLM volta a ter SUCESSO. */
 export function clearQuotaExhausted(): void {
-  exhaustedSince = null;
-  lastReason = '';
+  llmHealthService.resetProvider('global');
 }
 
+/** true APENAS quando TODOS os providers conhecidos estão exhausted.
+ *  Se não há nenhum provider registrado, retorna false (estado inicial = saudável). */
 export function isQuotaExhausted(): boolean {
-  return exhaustedSince !== null;
+  return llmHealthService.allExhausted();
 }
 
 export function quotaStatus(): { exhausted: boolean; since: number | null; reason: string } {
-  return { exhausted: exhaustedSince !== null, since: exhaustedSince, reason: lastReason };
+  const h = llmHealthService.getStatus('global') as import('./llmHealthService').ProviderHealth;
+  const exhausted = h.state === 'exhausted';
+  return {
+    exhausted,
+    since: exhausted ? (h.exhaustedSince ?? null) : null,
+    reason: h.lastError || '',
+  };
 }

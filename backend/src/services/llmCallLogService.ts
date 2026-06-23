@@ -90,21 +90,45 @@ class LlmCallLogService {
         return entries.slice(0, limit);
     }
 
-    /** Resumo agregado: total, erros, latência média/p95 e contagem de fallback por modelo. */
-    summary(): { total: number; errors: number; fallbacks: number; avgLatencyMs: number; byModel: Record<string, { count: number; errors: number }> } {
+    /** Resumo agregado: total, erros, latência média e contagem de fallback por modelo e por provider. */
+    summary(): {
+        total: number;
+        errors: number;
+        fallbacks: number;
+        avgLatencyMs: number;
+        byModel: Record<string, { count: number; errors: number }>;
+        byProvider: Record<string, { totalCalls: number; errors: number; avgLatencyMs: number }>;
+    } {
         const entries = this.data.entries;
         const total = entries.length;
         const errors = entries.filter((e) => !e.ok).length;
         const fallbacks = entries.filter((e) => e.fellBack).length;
         const avgLatencyMs = total ? Math.round(entries.reduce((s, e) => s + (e.latencyMs || 0), 0) / total) : 0;
         const byModel: Record<string, { count: number; errors: number }> = {};
+        const byProvider: Record<string, { totalCalls: number; errors: number; avgLatencyMs: number; _latencySum: number }> = {};
         for (const e of entries) {
             const m = e.model || 'unknown';
             if (!byModel[m]) byModel[m] = { count: 0, errors: 0 };
             byModel[m].count++;
             if (!e.ok) byModel[m].errors++;
+
+            // Derive provider from model name: minimax → 'minimax', glm/default → 'glm'
+            const provider = m.toLowerCase().startsWith('minimax') ? 'minimax' : 'glm';
+            if (!byProvider[provider]) byProvider[provider] = { totalCalls: 0, errors: 0, avgLatencyMs: 0, _latencySum: 0 };
+            byProvider[provider].totalCalls++;
+            if (!e.ok) byProvider[provider].errors++;
+            byProvider[provider]._latencySum += e.latencyMs || 0;
         }
-        return { total, errors, fallbacks, avgLatencyMs, byModel };
+        // compute avgLatencyMs per provider and strip internal accumulator
+        const byProviderFinal: Record<string, { totalCalls: number; errors: number; avgLatencyMs: number }> = {};
+        for (const [p, v] of Object.entries(byProvider)) {
+            byProviderFinal[p] = {
+                totalCalls: v.totalCalls,
+                errors: v.errors,
+                avgLatencyMs: v.totalCalls ? Math.round(v._latencySum / v.totalCalls) : 0,
+            };
+        }
+        return { total, errors, fallbacks, avgLatencyMs, byModel, byProvider: byProviderFinal };
     }
 }
 
