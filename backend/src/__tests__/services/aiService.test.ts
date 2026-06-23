@@ -67,6 +67,16 @@ vi.mock('../../services/dolibarrService', () => ({
     },
 }));
 
+vi.mock('../../services/llmHealthService', () => ({
+    llmHealthService: {
+        isAvailable: vi.fn(() => true),
+        recordSuccess: vi.fn(),
+        recordQuotaError: vi.fn(),
+        recordTransientError: vi.fn(),
+        resetProvider: vi.fn(),
+    },
+}));
+
 vi.mock('../../services/configService', () => ({
     configService: {
         getModuleConfig: vi.fn().mockReturnValue({ provider: 'google', model: 'gemini-2.0-flash' }),
@@ -75,7 +85,10 @@ vi.mock('../../services/configService', () => ({
         getPrompt: vi.fn().mockReturnValue(''),
         getAllPrompts: vi.fn().mockReturnValue({}),
         setPrompts: vi.fn(),
+        isRunWithChainEnabled: vi.fn().mockReturnValue(false),
+        getFallbackChain: vi.fn().mockReturnValue(['google']),
     },
+    ConfigService: class {},
 }));
 
 vi.mock('../../utils/urlValidation', () => ({
