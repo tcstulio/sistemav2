@@ -81,6 +81,16 @@ const mockAdminAudit = vi.hoisted(() => ({
     list: vi.fn(() => [{ id: 'a1', ts: 1, adminId: '1', adminLogin: 'admin', action: 'user.permissions.update', target: '5' }]),
 }));
 
+const mockLlmHealthService = vi.hoisted(() => ({
+    getStatus: vi.fn(() => []),
+    getModuleChains: vi.fn(() => ({ chat: { chain: ['glm', 'minimax'], active: 'glm' } })),
+    getStatusByModule: vi.fn((module: string) => ({
+        chain: ['glm', 'minimax'],
+        active: 'glm',
+        providers: [],
+    })),
+}));
+
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrAdmin: mockRequireDolibarrAdmin,
 }));
@@ -119,6 +129,10 @@ vi.mock('../../services/dolibarrService', () => ({
 
 vi.mock('../../services/adminAuditService', () => ({
     adminAuditService: mockAdminAudit,
+}));
+
+vi.mock('../../services/llmHealthService', () => ({
+    llmHealthService: mockLlmHealthService,
 }));
 
 vi.mock('../../services/legacy/sessionService', () => ({
@@ -522,6 +536,24 @@ describe('adminRoutes', () => {
             const res = await request(app).get('/api/admin/integration/brain/stats');
 
             expect(res.status).toBe(400);
+        });
+    });
+
+    describe('GET /api/admin/llm-health', () => {
+        it('retorna 200 com providers e modules', async () => {
+            const res = await request(app).get('/api/admin/llm-health');
+            expect(res.status).toBe(200);
+            expect(Array.isArray(res.body.providers)).toBe(true);
+            expect(res.body.modules).toBeDefined();
+            expect(mockLlmHealthService.getStatus).toHaveBeenCalled();
+            expect(mockLlmHealthService.getModuleChains).toHaveBeenCalled();
+        });
+
+        it('com ?module=chat filtra pelo módulo', async () => {
+            const res = await request(app).get('/api/admin/llm-health?module=chat');
+            expect(res.status).toBe(200);
+            expect(res.body.modules['chat']).toBeDefined();
+            expect(mockLlmHealthService.getStatusByModule).toHaveBeenCalledWith('chat');
         });
     });
 });
