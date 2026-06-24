@@ -440,6 +440,23 @@ export const getUserGroups = async (config: DolibarrConfig, userId: string): Pro
     }));
 };
 
+// Busca UM usuário com permissões (rights + admin) — usado pelo "Ver como" p/ simular a
+// visão REAL do alvo (quais telas ele acessa), não um base genérico.
+export const getUserById = async (config: DolibarrConfig, userId: string): Promise<DolibarrUser | null> => {
+    try {
+        const url = `${sanitizeUrl(config.apiUrl)}/users/${userId}?includepermissions=1`;
+        const d: any = await request(url, { headers: getHeaders(config.apiKey) });
+        if (!d) return null;
+        return {
+            id: String(d.id), login: d.login, firstname: d.firstname, lastname: d.lastname,
+            admin: d.admin, rights: d.rights, statut: String(d.statut) as any,
+        } as DolibarrUser;
+    } catch (e) {
+        log.error('getUserById failed', e);
+        return null;
+    }
+};
+
 export const createGroup = async (config: DolibarrConfig, data: any) => {
     // Endpoint usually /users/groups
     const url = `${sanitizeUrl(config.apiUrl)}/users/groups`;

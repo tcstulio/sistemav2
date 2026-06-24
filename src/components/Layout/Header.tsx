@@ -55,11 +55,17 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
     const selectPreviewUser = async (user: { id: string; name: string }) => {
         if (!config) return;
         let groupIds: string[] = [];
+        let rights: any; let admin: any;
         try {
-            const groups = await DolibarrService.getUserGroups(config, user.id);
+            // Busca grupos + direitos REAIS do alvo (p/ o preview refletir o que ele realmente vê).
+            const [groups, full] = await Promise.all([
+                DolibarrService.getUserGroups(config, user.id),
+                DolibarrService.getUserById(config, user.id),
+            ]);
             groupIds = groups.map(g => String(g.id));
+            rights = full?.rights; admin = full?.admin;
         } catch {}
-        const target: PreviewTarget = { type: 'user', id: user.id, name: user.name, groupIds };
+        const target: PreviewTarget = { type: 'user', id: user.id, name: user.name, groupIds, rights, admin };
         setPreviewTarget(target);
         setIsPreviewMenuOpen(false);
     };

@@ -23,6 +23,10 @@ export interface PreviewTarget {
   id: string;
   name: string;
   groupIds: string[];
+  // #540 (preciso): direitos REAIS do alvo (só p/ type='user') p/ o preview refletir
+  // exatamente o que ele VÊ. Carregado ao entrar em preview; undefined enquanto carrega.
+  rights?: DolibarrUser['rights'];
+  admin?: number | string;
 }
 
 interface DolibarrContextType {
@@ -181,14 +185,19 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   const canAccess = useCallback((module: string): boolean => {
     if (!config || !currentUser) return false;
     if (previewTarget) {
-      // Preview ("ver como"): simula a identidade SEM bypass de admin. base=true para mostrar todas
-      // as telas EXCETO as ocultadas (hidden) p/ aquele grupo/pessoa — que é o propósito do recurso.
-      // Antes base=false bloqueava TUDO (toda rota caía em "Acesso Restrito") quando não havia
-      // overrides configurados (caso padrão). Telas protegidas continuam sempre visíveis.
+      // Preview ("ver como") PRECISO: simula a identidade do alvo SEM bypass do admin logado.
+      // Para usuário com rights carregados, base = acesso REAL dele (computeBaseAccess sobre os
+      // direitos do Dolibarr) e isAdmin reflete o próprio alvo. Enquanto os rights não chegam,
+      // ou para grupo, cai em base=true (mostra tudo menos o ocultado por override).
+      const targetIsAdmin = previewTarget.admin === 1 || previewTarget.admin === '1' || (previewTarget.admin as unknown) === true;
+      let base = true;
+      if (previewTarget.type === 'user' && previewTarget.rights) {
+        base = computeBaseAccess(module, { admin: targetIsAdmin ? 1 : 0, rights: previewTarget.rights, id: previewTarget.id } as unknown as DolibarrUser);
+      }
       return resolveScreenAccess({
         screenId: module,
-        base: true,
-        isAdmin: false,
+        base,
+        isAdmin: targetIsAdmin,
         userId: previewTarget.type === 'user' ? previewTarget.id : undefined,
         groupIds: previewTarget.groupIds,
         perms: orgScreenPerms,
