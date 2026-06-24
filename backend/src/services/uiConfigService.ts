@@ -93,7 +93,13 @@ export interface UiConfig {
     taskNotifications: TaskNotificationsConfig;
     taskNotificationsExternalEnabled: boolean;
     taskAutomation: TaskAutomationConfig;
+    // Concorrência otimista (#central-permissões): incrementa a cada save. A Central envia
+    // o version que leu; o backend rejeita (409) se mudou no meio — evita last-write-wins.
+    version: number;
 }
+
+// Limites expostos p/ a UI mostrar (em vez de truncar em silêncio).
+export const UI_CONFIG_LIMITS = { maxEntities: 500, maxIdsPerRule: 200, maxIdLen: 80 };
 
 // Entrada de update: branding parcial + prefs/permissões/páginas parciais (sanitizadas em update()).
 export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions' | 'customPages' | 'taskNotifications'>> & {
@@ -128,6 +134,7 @@ const DEFAULTS: UiConfig = {
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
     taskNotificationsExternalEnabled: false,
     taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8 },
+    version: 0,
 };
 
 // Sanitiza um array de ids vindo do cliente (string curta, sem duplicatas, limite de tamanho).
@@ -313,6 +320,7 @@ export class UiConfigService {
                     taskNotifications: sanitizeTaskNotifications(parsed.taskNotifications),
                     taskNotificationsExternalEnabled: parsed.taskNotificationsExternalEnabled === true,
                     taskAutomation: sanitizeTaskAutomation(parsed.taskAutomation),
+                    version: typeof parsed.version === 'number' ? parsed.version : 0,
                 };
             }
         } catch (error) {
@@ -364,9 +372,54 @@ export class UiConfigService {
         if (partial.taskAutomation !== undefined) {
             next.taskAutomation = sanitizeTaskAutomation(partial.taskAutomation);
         }
+        next.version = (this.data.version || 0) + 1;
         this.data = next;
         this.save();
         return this.get();
+    }
+
+    /**
+     * MERGE por-entidade do screenPermissions (Central de Permissões). Diferente do update(),
+     * NÃO substitui o mapa inteiro: toca apenas os grupos/usuários presentes no delta — assim
+     * dois admins editando entidades diferentes não se sobrescrevem. Regra vazia (sem hidden+
+     * allowed) REMOVE a entidade (= "Herdar tudo"). Concorrência: se expectedVersion for passado
+     * e não bater com a versão atual, retorna { conflict:true } sem gravar (a rota responde 409).
+     * Retorna também os ids efetivamente tocados (p/ auditoria com diff).
+     */
+    applyScreenPermissionsDelta(
+        delta: { groups?: Record<string, unknown>; users?: Record<string, unknown> },
+        expectedVersion?: number,
+    ): { config: UiConfig; conflict?: boolean; touched: { groups: string[]; users: string[] } } {
+        if (typeof expectedVersion === 'number' && expectedVersion !== (this.data.version || 0)) {
+            return { config: this.get(), conflict: true, touched: { groups: [], users: [] } };
+        }
+        const next: UiConfig = {
+            ...this.data,
+            screenPermissions: {
+                groups: { ...this.data.screenPermissions.groups },
+                users: { ...this.data.screenPermissions.users },
+            },
+        };
+        const touched = { groups: [] as string[], users: [] as string[] };
+        (['groups', 'users'] as const).forEach((scope) => {
+            const m = delta[scope];
+            if (!m || typeof m !== 'object') return;
+            for (const key of Object.keys(m)) {
+                const id = String(key).trim().slice(0, UI_CONFIG_LIMITS.maxIdLen);
+                if (!id) continue;
+                const rule = sanitizeRule((m as Record<string, unknown>)[key]);
+                if (rule.hidden.length === 0 && rule.allowed.length === 0) {
+                    delete next.screenPermissions[scope][id]; // sem regra = volta a herdar (remove override)
+                } else {
+                    next.screenPermissions[scope][id] = rule;
+                }
+                touched[scope].push(id);
+            }
+        });
+        next.version = (this.data.version || 0) + 1;
+        this.data = next;
+        this.save();
+        return { config: this.get(), touched };
     }
 }
 

@@ -95,6 +95,51 @@ router.put('/', requireDolibarrAdmin, (req: Request, res: Response) => {
     }
 });
 
+// Central de Permissões — MERGE por-entidade do screenPermissions (delta), com concorrência.
+// Diferente do PUT (substitui tudo), só toca os grupos/usuários enviados — seguro p/ edição
+// em massa por vários admins. expectedVersion: a versão que a UI leu (409 se mudou no meio).
+const ScreenPermsDeltaSchema = z.object({
+    delta: z.object({
+        groups: z.record(z.string(), RuleSchema).optional(),
+        users: z.record(z.string(), RuleSchema).optional(),
+    }),
+    expectedVersion: z.number().int().optional(),
+});
+
+router.patch('/screen-permissions', requireDolibarrAdmin, (req: Request, res: Response) => {
+    try {
+        const { delta, expectedVersion } = ScreenPermsDeltaSchema.parse(req.body);
+        const before = uiConfigService.get().screenPermissions;
+        const result = uiConfigService.applyScreenPermissionsDelta(delta as any, expectedVersion);
+        if (result.conflict) {
+            return res.status(409).json({
+                error: 'conflict',
+                message: 'A configuração mudou desde que você carregou. Recarregue e tente novamente.',
+                config: result.config,
+            });
+        }
+        // Auditoria com diff por-entidade (só os ids tocados) — reversível/visível.
+        const after = result.config.screenPermissions;
+        const changes: Record<string, { before: unknown; after: unknown }> = {};
+        (['groups', 'users'] as const).forEach((scope) => {
+            for (const id of result.touched[scope]) {
+                changes[`${scope}:${id}`] = { before: (before as any)[scope][id] || null, after: (after as any)[scope][id] || null };
+            }
+        });
+        const adminUser = (req as any).user || {};
+        adminAuditService.record({
+            adminId: String(adminUser.id || 'unknown'),
+            adminLogin: String(adminUser.login || 'unknown'),
+            action: 'ui-config.screen-permissions',
+            summary: `Permissões de tela alteradas: ${result.touched.groups.length} grupo(s), ${result.touched.users.length} usuário(s)`,
+            changes,
+        });
+        res.json(result.config);
+    } catch (e: any) {
+        res.status(400).json({ error: e?.message || 'Dados inválidos' });
+    }
+});
+
 /**
  * GET /api/ui-config/admin/users-missing-phone
  * Admin-only: lista todos os usuários ativos do Dolibarr que não têm phone_mobile nem user_mobile.
