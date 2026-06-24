@@ -4,6 +4,7 @@ import { DolibarrConfig, UserGroup } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useUsers, useGroupUsers } from '../../hooks/dolibarr';
+import { useInvalidatePermissions } from '../../hooks/dolibarr/useInvalidatePermissions';
 import { logger } from '../../utils/logger';
 import { notifyError } from '../../utils/notifyError';
 import {
@@ -23,6 +24,8 @@ const log = logger.child('GroupManager');
 
 interface GroupManagerProps {
     config: DolibarrConfig;
+    /** Quando true, renderiza sem PageLayout/PageHeader (p/ embutir numa aba, ex.: Central de Permissões). */
+    embedded?: boolean;
 }
 
 /**
@@ -31,8 +34,9 @@ interface GroupManagerProps {
  * Full CRUD: list / create / edit (name + note) / delete / members / permissions.
  * Card is clickable to open group detail panel.
  */
-export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
+export const GroupManager: React.FC<GroupManagerProps> = ({ config, embedded = false }) => {
     const { currentUser } = useDolibarr();
+    const invalidatePermissions = useInvalidatePermissions();
 
     const isAdmin =
         currentUser?.admin === 1 ||
@@ -106,6 +110,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
             setForm({ name: '', note: '' });
             setIsCreateOpen(false);
             await loadGroups();
+            await invalidatePermissions();
         } catch (err) {
             notifyError('Criar grupo', err);
         } finally {
@@ -124,6 +129,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
                 setSelectedGroup(null);
             }
             await loadGroups();
+            await invalidatePermissions();
         } catch (err) {
             notifyError('Excluir grupo', err);
         } finally {
@@ -157,59 +163,49 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
 
     // Access guard: ADMIN-ONLY
     if (!isAdmin) {
-        return (
-            <PageLayout title="Grupos" maxWidth="lg">
-                <div className="flex flex-col items-center justify-center text-center py-20 text-slate-500 dark:text-slate-400">
-                    <div className="bg-red-50 dark:bg-red-900/10 p-6 rounded-full mb-4">
-                        <Lock size={48} className="text-red-500" />
-                    </div>
-                    <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-2">
-                        Acesso Restrito
-                    </h2>
-                    <p className="max-w-md">
-                        A gestão de grupos está disponível apenas para administradores.
-                        Entre em contato com o administrador se acredita que isso é um erro.
-                    </p>
+        const restricted = (
+            <div className="flex flex-col items-center justify-center text-center py-20 text-slate-500 dark:text-slate-400">
+                <div className="bg-red-50 dark:bg-red-900/10 p-6 rounded-full mb-4">
+                    <Lock size={48} className="text-red-500" />
                 </div>
-            </PageLayout>
+                <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-2">
+                    Acesso Restrito
+                </h2>
+                <p className="max-w-md">
+                    A gestão de grupos está disponível apenas para administradores.
+                    Entre em contato com o administrador se acredita que isso é um erro.
+                </p>
+            </div>
         );
+        return embedded ? restricted : <PageLayout title="Grupos" maxWidth="lg">{restricted}</PageLayout>;
     }
 
-    return (
-        <PageLayout title="Grupos" maxWidth="lg" noPadding>
-            <PageHeader
-                title={
-                    <span className="flex items-center gap-2">
-                        <ShieldCheck size={24} className="text-indigo-500" />
-                        Grupos
-                    </span>
-                }
-                subtitle="Gerencie os grupos de usuários e suas permissões"
-                actions={
-                    <>
-                        <Button
-                            variant="outline"
-                            icon={<RefreshCw size={16} />}
-                            onClick={loadGroups}
-                            disabled={isLoading}
-                        >
-                            Atualizar
-                        </Button>
-                        <Button
-                            variant="primary"
-                            icon={<Plus size={16} />}
-                            onClick={() => {
-                                setForm({ name: '', note: '' });
-                                setIsCreateOpen(true);
-                            }}
-                        >
-                            Novo Grupo
-                        </Button>
-                    </>
-                }
-            />
+    const actions = (
+        <>
+            <Button
+                variant="outline"
+                icon={<RefreshCw size={16} />}
+                onClick={loadGroups}
+                disabled={isLoading}
+            >
+                Atualizar
+            </Button>
+            <Button
+                variant="primary"
+                icon={<Plus size={16} />}
+                onClick={() => {
+                    setForm({ name: '', note: '' });
+                    setIsCreateOpen(true);
+                }}
+            >
+                Novo Grupo
+            </Button>
+        </>
+    );
 
-            <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4">
+    const body = (
+        <>
+            <div className={embedded ? 'space-y-4' : 'p-4 md:p-6 max-w-4xl mx-auto space-y-4'}>
                 <Input
                     placeholder="Buscar grupo por nome ou descrição..."
                     icon={<Search size={16} />}
@@ -417,6 +413,36 @@ export const GroupManager: React.FC<GroupManagerProps> = ({ config }) => {
                 isLoading={isDeleting}
                 variant="danger"
             />
+        </>
+    );
+
+    if (embedded) {
+        return (
+            <div>
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                        Crie grupos, gerencie membros e os <strong>direitos do Dolibarr</strong> — que controlam o que cada pessoa vê e faz.
+                    </p>
+                    <div className="flex gap-2">{actions}</div>
+                </div>
+                {body}
+            </div>
+        );
+    }
+
+    return (
+        <PageLayout title="Grupos" maxWidth="lg" noPadding>
+            <PageHeader
+                title={
+                    <span className="flex items-center gap-2">
+                        <ShieldCheck size={24} className="text-indigo-500" />
+                        Grupos
+                    </span>
+                }
+                subtitle="Gerencie os grupos de usuários e suas permissões"
+                actions={actions}
+            />
+            {body}
         </PageLayout>
     );
 };

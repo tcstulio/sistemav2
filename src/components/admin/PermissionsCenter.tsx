@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ShieldCheck, Monitor, Bot, History, Search, User, KeyRound } from 'lucide-react';
+import { ShieldCheck, Monitor, Bot, History, Search, User, KeyRound, Users } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { DolibarrService } from '../../services/dolibarrService';
 import { DolibarrUser } from '../../types';
@@ -8,9 +8,10 @@ import { ScreenAccessMatrix } from './ScreenAccessMatrix';
 import { UserPermissionsEditor } from './UserPermissionsEditor';
 import { AuditLog } from './AuditLog';
 import { AppAccessTab } from './AppAccessTab';
+import GroupManager from './GroupManager';
 import { RestrictedAccess } from '../RestrictedAccess';
 
-type Tab = 'screens' | 'access' | 'agent' | 'audit';
+type Tab = 'screens' | 'groups' | 'access' | 'agent' | 'audit';
 
 // Aba Agente: escolhe uma PESSOA e configura o que o assistente pode fazer em nome dela.
 // O store do agente é per-user (extrafield Dolibarr), separado do VER — save próprio.
@@ -91,12 +92,14 @@ const PermissionsCenter: React.FC<{ config?: any }> = () => {
 
             <div className="flex gap-1 border-b dark:border-slate-800 mb-4 overflow-x-auto">
                 <TabBtn active={tab === 'screens'} onClick={() => setTab('screens')} icon={<Monitor size={15} />} label="Telas (Ver)" themeColor={themeColor} />
+                <TabBtn active={tab === 'groups'} onClick={() => setTab('groups')} icon={<Users size={15} />} label="Grupos & Permissões" themeColor={themeColor} />
                 <TabBtn active={tab === 'access'} onClick={() => setTab('access')} icon={<KeyRound size={15} />} label="Acesso ao App" themeColor={themeColor} />
                 <TabBtn active={tab === 'agent'} onClick={() => setTab('agent')} icon={<Bot size={15} />} label="Agente" themeColor={themeColor} />
                 <TabBtn active={tab === 'audit'} onClick={() => setTab('audit')} icon={<History size={15} />} label="Auditoria" themeColor={themeColor} />
             </div>
 
             {tab === 'screens' && <ScreenAccessMatrix isAdmin={isAdmin} themeColor={themeColor} />}
+            {tab === 'groups' && config && <GroupManager config={config} embedded />}
             {tab === 'access' && config && <AppAccessTab config={config} themeColor={themeColor} />}
             {tab === 'agent' && <AgentTab config={config} themeColor={themeColor} />}
             {tab === 'audit' && <AuditLog />}

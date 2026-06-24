@@ -156,6 +156,7 @@ app.use(auditMiddleware);
 
 // Routes
 import adminRoutes from './routes/adminRoutes';
+import groupsRoutes from './routes/groupsRoutes';
 import aiRoutes from './routes/aiRoutes';
 import authRoutes from './routes/authRoutes';
 import { authMiddleware, requireDolibarrLogin } from './middleware/authMiddleware';
@@ -169,6 +170,7 @@ const bankingAuthMiddleware = (req: any, res: any, next: any) => {
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/ai', aiLimiter, aiRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin', groupsRoutes); // grupos/direitos (sistemav2#820) — mesmo prefixo, paths distintos
 app.use('/api/auth', authLimiter, authRoutes);
 
 // Endereço público do túnel cloudflared (sem auth — a URL não é segredo)

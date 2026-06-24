@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { UserGroup, DolibarrUser, GroupUser, DolibarrConfig } from '../../types';
 import { X, ArrowLeft, UserPlus, Trash2, Save, Shield, Check, MinusCircle } from 'lucide-react';
 import { useGroupUsers, useGroups } from '../../hooks/dolibarr';
+import { useInvalidatePermissions } from '../../hooks/dolibarr/useInvalidatePermissions';
 import * as HRAdmin from '../../services/api/hrAdmin';
 import { UserAvatar } from './UserAvatar';
 import { PermissionManager } from './PermissionManager';
@@ -26,6 +27,7 @@ export const GroupDetail: React.FC<GroupDetailProps> = ({
     const { data: groupUsersLinks } = useGroupUsers(currentConfig);
     const { data: groups } = useGroups(currentConfig); // To check latest state if needed
     const confirm = useConfirm();
+    const invalidatePermissions = useInvalidatePermissions();
 
     // Local State
     const [isAddingMember, setIsAddingMember] = useState(false);
@@ -55,7 +57,7 @@ export const GroupDetail: React.FC<GroupDetailProps> = ({
         setIsSaving(true);
         try {
             await HRAdmin.addUserToGroup(currentConfig, group.id, selectedUserIdToAdd);
-            // Refresh sync to get new link
+            await invalidatePermissions(); // re-sync dos vínculos (delta não pega remoções)
             onRefresh();
             setIsAddingMember(false);
             setSelectedUserIdToAdd('');
@@ -71,6 +73,7 @@ export const GroupDetail: React.FC<GroupDetailProps> = ({
         setIsSaving(true);
         try {
             await HRAdmin.removeUserFromGroup(currentConfig, group.id, userId);
+            await invalidatePermissions(); // re-sync dos vínculos (delta não pega remoções)
             onRefresh();
         } catch (e) {
             notifyError('Remover membro', e);

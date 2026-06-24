@@ -51,6 +51,10 @@ interface DolibarrContextType {
   setPreviewTarget: (target: PreviewTarget | null) => void;
   orgScreenPerms: import('../utils/screenPermissions').ScreenPermissions | null;
   userGroupIds: string[];
+  // Re-resolvem direitos após edição de permissões (Central de Permissões), p/ canAccess/canDo e
+  // o "Ver como" refletirem na hora sem relogar.
+  refreshCurrentUser: () => Promise<void>;
+  refreshPreviewTarget: () => Promise<void>;
 }
 
 const DolibarrContext = createContext<DolibarrContextType | undefined>(undefined);
@@ -466,6 +470,36 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     setConfig(null);
   }, [setConfig]);
 
+  // Re-busca os direitos do usuário logado (após editar as permissões dele) — mantém canAccess/canDo
+  // coerentes sem precisar relogar.
+  const refreshCurrentUser = useCallback(async () => {
+    const login = currentUser?.login || config?.currentUser?.login;
+    if (!config || !login) return;
+    try {
+      const u = await DolibarrService.fetchCurrentUser(config, login);
+      if (u) setCurrentUser(normalizeUser(u));
+    } catch (e) {
+      log.warn('refreshCurrentUser falhou', e);
+    }
+  }, [config, currentUser]);
+
+  // Re-resolve os direitos do alvo do "Ver como" após uma edição (as stores já foram limpas pela
+  // invalidação → getGroupRights/getUserById retornam fresco).
+  const refreshPreviewTarget = useCallback(async () => {
+    if (!config || !previewTarget) return;
+    try {
+      if (previewTarget.type === 'group') {
+        const rights = await DolibarrService.getGroupRights(config, previewTarget.id);
+        setPreviewTarget({ ...previewTarget, rights: rights || {} });
+      } else {
+        const u = await DolibarrService.getUserById(config, previewTarget.id);
+        if (u) setPreviewTarget({ ...previewTarget, rights: (u as any).rights, admin: (u as any).admin });
+      }
+    } catch (e) {
+      log.warn('refreshPreviewTarget falhou', e);
+    }
+  }, [config, previewTarget]);
+
   const contextValue = useMemo(() => ({
     config, setConfig,
     currentUser, canAccess, canDo, logout,
@@ -475,11 +509,13 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     isInitialized,
     previewTarget, setPreviewTarget,
     orgScreenPerms, userGroupIds,
+    refreshCurrentUser, refreshPreviewTarget,
   }), [
     config, setConfig, currentUser, canAccess, canDo, logout,
     isLoading, error, isSyncing, isSyncPaused, toggleSyncPause,
     notifications, refreshData, isInitialized,
     previewTarget, orgScreenPerms, userGroupIds,
+    refreshCurrentUser, refreshPreviewTarget,
   ]);
 
 

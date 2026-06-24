@@ -92,6 +92,54 @@ export class DolibarrHRService extends DolibarrServiceBase {
     }
 
     /**
+     * Helper das escritas de grupo/direito via custom_groups.php (admin-gated, issue dolibarr#137).
+     * A REST do Dolibarr não expõe criar/editar/excluir grupo, remover de grupo, nem add/remove de
+     * direito; o script chama as classes UserGroup/User. Usa a chave de SERVIÇO (admin). NÃO envia
+     * `entity` → o PHP usa $conf->entity (uniforme em add+remove). Lança {message,status,details}
+     * em falha (mesmo padrão de updateIntervention).
+     */
+    private async groupsWrite(action: string, params: Record<string, any>): Promise<any> {
+        const res: any = await this.proxyCustomSync({ action, ...params }, this.getHeaders(), 'custom_groups.php');
+        const ok = res?.data?.success === true;
+        if (!ok) {
+            const status = res?.status && res.status >= 400 ? res.status : 502;
+            const message = res?.data?.error || res?.data?.message || `Falha em ${action}`;
+            log.error(`groupsWrite ${action} Error`, message);
+            throw { message, status, details: res?.data };
+        }
+        return res.data;
+    }
+
+    createGroup(data: { name: string; note?: string }) {
+        return this.groupsWrite('create_group', { name: data.name, note: data.note || '' });
+    }
+    updateGroup(id: string, data: { name?: string; note?: string }) {
+        return this.groupsWrite('update_group', { group_id: id, name: data.name, note: data.note });
+    }
+    deleteGroup(id: string) {
+        return this.groupsWrite('delete_group', { group_id: id });
+    }
+    /** Adiciona usuário a grupo via custom_groups (entity = $conf->entity, simétrico ao remove). */
+    addUserToGroup(groupId: string, userId: string) {
+        return this.groupsWrite('add_group_user', { group_id: groupId, user_id: userId });
+    }
+    removeUserFromGroup(groupId: string, userId: string) {
+        return this.groupsWrite('remove_group_user', { group_id: groupId, user_id: userId });
+    }
+    addGroupRight(groupId: string, rid: string) {
+        return this.groupsWrite('add_group_right', { group_id: groupId, rid });
+    }
+    removeGroupRight(groupId: string, rid: string) {
+        return this.groupsWrite('remove_group_right', { group_id: groupId, rid });
+    }
+    addUserRight(userId: string, rid: string) {
+        return this.groupsWrite('add_user_right', { user_id: userId, rid });
+    }
+    removeUserRight(userId: string, rid: string) {
+        return this.groupsWrite('remove_user_right', { user_id: userId, rid });
+    }
+
+    /**
      * Acha um usuário pelo login (ou e-mail) — usado p/ resolver o ID Dolibarr do
      * usuário logado quando o perfil não traz o id explícito. Best-effort: tenta login
      * exato, depois e-mail exato; confirma o match no resultado. (#300)

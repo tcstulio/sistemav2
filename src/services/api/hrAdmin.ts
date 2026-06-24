@@ -502,86 +502,54 @@ export const getGroupRights = async (config: DolibarrConfig, groupId: string): P
     }
 };
 
-export const createGroup = async (config: DolibarrConfig, data: any) => {
-    // Endpoint usually /users/groups
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups`;
-    return request(url, {
-        method: 'POST',
-        headers: getHeaders(config.apiKey),
-        body: JSON.stringify(data)
+/* --- GRUPOS & DIREITOS (escrita) ---
+ * A REST do Dolibarr NÃO expõe criar/editar/excluir grupo, remover de grupo, nem add/remove de
+ * direito. Tudo passa pelo NOSSO backend (/api/admin/*), que proxeia o custom_groups.php
+ * admin-gated (sistemav2#820). Nomes/assinaturas mantidos — PermissionManager/GroupManager/
+ * GroupDetail/GroupModal não mudam.
+ */
+async function adminWrite(config: DolibarrConfig, method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown) {
+    const res = await fetch(`/api/admin${path}`, {
+        method,
+        headers: {
+            'Content-Type': 'application/json',
+            'DOLAPIKEY': config.apiKey ? config.apiKey.trim() : '',
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
-};
+    if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { const j = await res.json(); msg = j?.error || j?.message || msg; } catch { /* sem corpo JSON */ }
+        throw new Error(msg);
+    }
+    return res.json().catch(() => ({}));
+}
 
-export const updateGroup = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${id}`;
-    return request(url, {
-        method: 'PUT',
-        headers: getHeaders(config.apiKey),
-        body: JSON.stringify(data)
-    });
-};
+export const createGroup = async (config: DolibarrConfig, data: any) =>
+    adminWrite(config, 'POST', '/groups', { name: data?.name ?? data?.nom, note: data?.note });
 
-export const deleteGroup = async (config: DolibarrConfig, id: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${id}`;
-    return request(url, {
-        method: 'DELETE',
-        headers: getHeaders(config.apiKey)
-    });
-};
+export const updateGroup = async (config: DolibarrConfig, id: string, data: Record<string, any>) =>
+    adminWrite(config, 'PUT', `/groups/${id}`, { name: data?.name ?? data?.nom, note: data?.note });
 
-export const addUserToGroup = async (config: DolibarrConfig, groupId: string, userId: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${groupId}/users/${userId}`;
-    return request(url, {
-        method: 'POST',
-        headers: getHeaders(config.apiKey)
-    });
-};
+export const deleteGroup = async (config: DolibarrConfig, id: string) =>
+    adminWrite(config, 'DELETE', `/groups/${id}`);
 
-export const removeUserFromGroup = async (config: DolibarrConfig, groupId: string, userId: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${groupId}/users/${userId}`;
-    return request(url, {
-        method: 'DELETE',
-        headers: getHeaders(config.apiKey)
-    });
-};
+export const addUserToGroup = async (config: DolibarrConfig, groupId: string, userId: string) =>
+    adminWrite(config, 'POST', `/groups/${groupId}/users/${userId}`);
 
-/* --- PERMISSIONS --- */
+export const removeUserFromGroup = async (config: DolibarrConfig, groupId: string, userId: string) =>
+    adminWrite(config, 'DELETE', `/groups/${groupId}/users/${userId}`);
 
-// Add Permission (to User or Group)
-// For User: POST /users/{id}/rights/{rightId} (or rightsdef id?)
-// For Group: POST /users/groups/{id}/rights/{rightId}
-// Note: Standard API is tricky with rights. Often requires module trigger.
-// Checking common format: POST /users/{id}/rights is used to add. But often needs body with right ID or module.
-// Assume endpoint /users/{id}/rights/{right_id} logic works if right_id is passed.
+/* --- PERMISSIONS (rightId = id de llx_rights_def) --- */
 
-export const addPermissionToUser = async (config: DolibarrConfig, userId: string, rightId: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/${userId}/rights/${rightId}`;
-    return request(url, {
-        method: 'POST',
-        headers: getHeaders(config.apiKey)
-    });
-};
+export const addPermissionToUser = async (config: DolibarrConfig, userId: string, rightId: string) =>
+    adminWrite(config, 'POST', `/users/${userId}/rights/${rightId}`);
 
-export const removePermissionFromUser = async (config: DolibarrConfig, userId: string, rightId: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/${userId}/rights/${rightId}`;
-    return request(url, {
-        method: 'DELETE',
-        headers: getHeaders(config.apiKey)
-    });
-};
+export const removePermissionFromUser = async (config: DolibarrConfig, userId: string, rightId: string) =>
+    adminWrite(config, 'DELETE', `/users/${userId}/rights/${rightId}`);
 
-export const addPermissionToGroup = async (config: DolibarrConfig, groupId: string, rightId: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${groupId}/rights/${rightId}`;
-    return request(url, {
-        method: 'POST',
-        headers: getHeaders(config.apiKey)
-    });
-};
+export const addPermissionToGroup = async (config: DolibarrConfig, groupId: string, rightId: string) =>
+    adminWrite(config, 'POST', `/groups/${groupId}/rights/${rightId}`);
 
-export const removePermissionFromGroup = async (config: DolibarrConfig, groupId: string, rightId: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${groupId}/rights/${rightId}`;
-    return request(url, {
-        method: 'DELETE',
-        headers: getHeaders(config.apiKey)
-    });
-};
+export const removePermissionFromGroup = async (config: DolibarrConfig, groupId: string, rightId: string) =>
+    adminWrite(config, 'DELETE', `/groups/${groupId}/rights/${rightId}`);

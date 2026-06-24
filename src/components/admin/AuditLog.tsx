@@ -6,6 +6,16 @@ const ACTION_LABELS: Record<string, string> = {
     'user.permissions.update': 'Permissões do agente',
     'ui-config.update': 'Config de UI',
     'ui-config.screen-permissions': 'Permissões de tela',
+    'user.enable-app-access': 'Acesso ao app habilitado',
+    'group.create': 'Grupo criado',
+    'group.update': 'Grupo atualizado',
+    'group.delete': 'Grupo excluído',
+    'group.user.add': 'Membro adicionado ao grupo',
+    'group.user.remove': 'Membro removido do grupo',
+    'group.right.add': 'Direito concedido ao grupo',
+    'group.right.remove': 'Direito removido do grupo',
+    'user.right.add': 'Direito concedido ao usuário',
+    'user.right.remove': 'Direito removido do usuário',
 };
 
 function fmtTs(ts: number): string {
