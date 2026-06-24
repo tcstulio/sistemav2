@@ -33,7 +33,7 @@ interface ContractListProps {
 }
 
 const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) => {
-    const { config } = useDolibarr();
+    const { config, canDo } = useDolibarr();
     const { data: contractsData, refetch: refetchContracts } = useContracts(config);
     const contracts = contractsData || [];
     const { data: customersData } = useCustomers(config);
@@ -224,9 +224,11 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                 actions={
                     <div className="flex items-center gap-2">
                         <ListToolbar controls={controls} searchPlaceholder="Buscar contrato..." />
+                        {canDo('create', 'contracts') && (
                         <Button icon={<Plus size={16} />} onClick={() => setIsCreateModalOpen(true)}>
                             Novo Contrato
                         </Button>
+                        )}
                     </div>
                 }
                 tabs={
@@ -258,7 +260,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                                 <h4 className="font-bold text-slate-800 dark:text-white text-sm">{contract.ref}</h4>
                                 <div className="flex items-center gap-1 shrink-0">
                                     <StatusBadge status={contract.statut} config={contractStatuses} size="sm" />
-                                    {(contract.statut === '0' || contract.statut === '2') && (
+                                    {canDo('delete', 'contracts') && (contract.statut === '0' || contract.statut === '2') && (
                                         <ConfirmDeleteButton
                                             itemLabel={contract.ref}
                                             onDelete={() => DolibarrService.deleteContract(config, contract.id)}
@@ -306,10 +308,12 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                 subtitle="Detalhes do Contrato"
                 actions={
                     <div className="flex items-center gap-2">
+                        {canDo('edit', 'contracts') && (
                         <Button variant="secondary" size="sm" icon={<Pencil size={14} />} onClick={() => openEditContract(selectedContract)}>
                             Editar
                         </Button>
-                        {selectedContract.statut === '0' && (
+                        )}
+                        {canDo('validate', 'contracts') && selectedContract.statut === '0' && (
                             <Button size="sm" icon={processingId ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} onClick={handleValidate} disabled={!!processingId}>
                                 Validar
                             </Button>
@@ -319,7 +323,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                                 Fechar
                             </Button>
                         )}
-                        {(selectedContract.statut === '0' || selectedContract.statut === '2') && (
+                        {canDo('delete', 'contracts') && (selectedContract.statut === '0' || selectedContract.statut === '2') && (
                             <ConfirmDeleteButton
                                 withLabel
                                 itemLabel={selectedContract.ref}

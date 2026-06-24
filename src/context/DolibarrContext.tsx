@@ -23,6 +23,10 @@ export interface PreviewTarget {
   id: string;
   name: string;
   groupIds: string[];
+  // #540 (preciso): direitos REAIS do alvo (só p/ type='user') p/ o preview refletir
+  // exatamente o que ele VÊ. Carregado ao entrar em preview; undefined enquanto carrega.
+  rights?: DolibarrUser['rights'];
+  admin?: number | string;
 }
 
 interface DolibarrContextType {
@@ -38,12 +42,19 @@ interface DolibarrContextType {
   isSyncing: boolean;
   currentUser?: DolibarrUser | null;
   canAccess: (module: string) => boolean;
+  // FAZER: pode executar a ação (Novo/Editar/Excluir/Validar) nesta tela? Gateado pelos
+  // direitos de escrita do Dolibarr (preview-aware). Default seguro: não bloqueia se não mapeado.
+  canDo: (action: 'create' | 'edit' | 'delete' | 'validate' | 'pay' | 'approve' | 'receive' | 'close' | 'reopen', screen: string) => boolean;
   logout: () => void;
   isInitialized: boolean;
   previewTarget: PreviewTarget | null;
   setPreviewTarget: (target: PreviewTarget | null) => void;
   orgScreenPerms: import('../utils/screenPermissions').ScreenPermissions | null;
   userGroupIds: string[];
+  // Re-resolvem direitos após edição de permissões (Central de Permissões), p/ canAccess/canDo e
+  // o "Ver como" refletirem na hora sem relogar.
+  refreshCurrentUser: () => Promise<void>;
+  refreshPreviewTarget: () => Promise<void>;
 }
 
 const DolibarrContext = createContext<DolibarrContextType | undefined>(undefined);
@@ -181,11 +192,20 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   const canAccess = useCallback((module: string): boolean => {
     if (!config || !currentUser) return false;
     if (previewTarget) {
-      // Preview mode: use simulated identity, no admin bypass, base access = false (no Dolibarr rights).
+      // Preview ("ver como") PRECISO: simula a identidade do alvo SEM bypass do admin logado.
+      // Para usuário com rights carregados, base = acesso REAL dele (computeBaseAccess sobre os
+      // direitos do Dolibarr) e isAdmin reflete o próprio alvo. Enquanto os rights não chegam,
+      // ou para grupo, cai em base=true (mostra tudo menos o ocultado por override).
+      const targetIsAdmin = previewTarget.admin === 1 || previewTarget.admin === '1' || (previewTarget.admin as unknown) === true;
+      let base = true;
+      // Usuário OU grupo com rights carregados: base = acesso REAL (rights do Dolibarr / do grupo).
+      if (previewTarget.rights) {
+        base = computeBaseAccess(module, { admin: targetIsAdmin ? 1 : 0, rights: previewTarget.rights, id: previewTarget.id } as unknown as DolibarrUser);
+      }
       return resolveScreenAccess({
         screenId: module,
-        base: false,
-        isAdmin: false,
+        base,
+        isAdmin: targetIsAdmin,
         userId: previewTarget.type === 'user' ? previewTarget.id : undefined,
         groupIds: previewTarget.groupIds,
         perms: orgScreenPerms,
@@ -201,6 +221,57 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
       perms: orgScreenPerms,
     });
   }, [config, currentUser, userGroupIds, orgScreenPerms, computeBaseAccess, previewTarget]);
+
+  // FAZER (#540) — pode executar a ação na tela? Gateia botões pelos direitos de ESCRITA do
+  // Dolibarr (creer = criar/editar, supprimer = excluir, valider = validar). Preview-aware:
+  // usa o alvo do "ver como". Default SEGURO: tela/ação sem mapeamento NÃO é bloqueada.
+  const canDo = useCallback((action: 'create' | 'edit' | 'delete' | 'validate' | 'pay' | 'approve' | 'receive' | 'close' | 'reopen', screen: string): boolean => {
+    if (!config) return false;
+    const inPreview = !!previewTarget && !!previewTarget.rights; // usuário OU grupo com rights carregados
+    const ident: any = inPreview ? { admin: previewTarget!.admin, rights: previewTarget!.rights } : currentUser;
+    if (!ident) return false;
+    const isAdminEff = ident.admin === 1 || ident.admin === '1' || ident.admin === true;
+    if (isAdminEff) return true;
+    if (!ident.rights) return true; // rights não carregados: não bloqueia (evita esconder por engano)
+    // Mapa de perms de ESCRITA por tela. Só perms confirmados/convenção sólida do Dolibarr
+    // (creer=criar/editar, supprimer=excluir, valider=validar; transições: paiement/cloturer/
+    // approuver/receptionner/approve). Ação/tela sem perm mapeado => NÃO bloqueia (seguro).
+    const WRITE: Record<string, { module: string; create?: string; delete?: string; validate?: string; pay?: string; approve?: string; receive?: string; close?: string; reopen?: string }> = {
+      customers: { module: 'societe', create: 'creer', delete: 'supprimer' },
+      contacts: { module: 'societe', create: 'contact.creer', delete: 'contact.supprimer' },
+      suppliers: { module: 'societe', create: 'creer', delete: 'supprimer' },
+      proposals: { module: 'propal', create: 'creer', delete: 'supprimer', validate: 'valider', close: 'cloturer' },
+      orders: { module: 'commande', create: 'creer', delete: 'supprimer', validate: 'valider', close: 'cloturer' },
+      invoices: { module: 'facture', create: 'creer', delete: 'supprimer', validate: 'valider', pay: 'paiement' },
+      supplier_invoices: { module: 'fournisseur', create: 'facture.creer', delete: 'facture.supprimer' },
+      supplier_orders: { module: 'fournisseur', create: 'commande.creer', delete: 'commande.supprimer', approve: 'commande.approuver', receive: 'commande.receptionner' },
+      supplier_proposals: { module: 'supplier_proposal', create: 'creer', delete: 'supprimer' },
+      projects: { module: 'projet', create: 'creer', delete: 'supprimer' },
+      tasks: { module: 'projet', create: 'creer', delete: 'supprimer' },
+      products: { module: 'produit', create: 'creer', delete: 'supprimer' },
+      services: { module: 'produit', create: 'creer', delete: 'supprimer' },
+      tickets: { module: 'ticket', create: 'creer', delete: 'supprimer' },
+      interventions: { module: 'ficheinter', create: 'creer', delete: 'supprimer' },
+      contracts: { module: 'contrat', create: 'creer', delete: 'supprimer' },
+      venues: { module: 'societe', create: 'creer', delete: 'supprimer' },
+      categories: { module: 'categorie', create: 'creer', delete: 'supprimer' },
+      shipments: { module: 'expedition', create: 'creer', delete: 'supprimer', validate: 'valider' },
+      warehouses: { module: 'stock', create: 'creer', delete: 'supprimer' },
+      expense_reports: { module: 'expensereport', create: 'creer', delete: 'supprimer', approve: 'approve' },
+    };
+    const map = WRITE[screen];
+    if (!map) return true; // tela não mapeada: não bloqueia
+    const perm = action === 'edit' ? map.create : (map as any)[action]; // Dolibarr usa 'creer' p/ criar+editar
+    if (!perm) return true; // ação não suportada nessa tela: não bloqueia
+    const moduleRights: any = ident.rights[map.module];
+    if (!moduleRights) return false;
+    let cur: any = moduleRights; // resolve perm aninhado (ex.: contact.creer, facture.creer)
+    for (const part of perm.split('.')) {
+      if (cur && typeof cur === 'object' && cur[part] !== undefined) cur = cur[part];
+      else return false;
+    }
+    return cur === '1' || cur === 1 || cur === true;
+  }, [config, currentUser, previewTarget]);
 
   // 2. Data Hook (Reduced to Sync & Utility)
   const {
@@ -267,7 +338,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
                 try { // Synchronous refetch attempt
                   const freshUser = await DolibarrService.fetchCurrentUser(parsed, parsed.currentUser.login);
                   if (freshUser) {
-                    parsed.currentUser = freshUser;
+                    parsed.currentUser = normalizeUser(freshUser); // admin coerido p/ número (evita "1" string)
                     safeStorage.setJSON('coolgroove_config', parsed);
                   }
                 } catch (e) { log.error('User refresh failed', e); }
@@ -280,8 +351,11 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
             // Background User Refresh
             DolibarrService.fetchCurrentUser(parsed, parsed.currentUser?.login).then(u => {
               if (u) {
-                setCurrentUser(normalizeUser(u));
-                const updated = { ...parsed, currentUser: u };
+                const normalized = normalizeUser(u);
+                setCurrentUser(normalized);
+                // Persiste o usuário NORMALIZADO em config.currentUser (admin número), senão o
+                // refresh sobrescrevia com cru (admin:"1") e quebrava isAdmin no Dashboard/Header.
+                const updated = { ...parsed, currentUser: normalized };
                 setConfigState(updated);
                 safeStorage.setJSON('coolgroove_config', updated);
               }
@@ -396,20 +470,52 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     setConfig(null);
   }, [setConfig]);
 
+  // Re-busca os direitos do usuário logado (após editar as permissões dele) — mantém canAccess/canDo
+  // coerentes sem precisar relogar.
+  const refreshCurrentUser = useCallback(async () => {
+    const login = currentUser?.login || config?.currentUser?.login;
+    if (!config || !login) return;
+    try {
+      const u = await DolibarrService.fetchCurrentUser(config, login);
+      if (u) setCurrentUser(normalizeUser(u));
+    } catch (e) {
+      log.warn('refreshCurrentUser falhou', e);
+    }
+  }, [config, currentUser]);
+
+  // Re-resolve os direitos do alvo do "Ver como" após uma edição (as stores já foram limpas pela
+  // invalidação → getGroupRights/getUserById retornam fresco).
+  const refreshPreviewTarget = useCallback(async () => {
+    if (!config || !previewTarget) return;
+    try {
+      if (previewTarget.type === 'group') {
+        const rights = await DolibarrService.getGroupRights(config, previewTarget.id);
+        setPreviewTarget({ ...previewTarget, rights: rights || {} });
+      } else {
+        const u = await DolibarrService.getUserById(config, previewTarget.id);
+        if (u) setPreviewTarget({ ...previewTarget, rights: (u as any).rights, admin: (u as any).admin });
+      }
+    } catch (e) {
+      log.warn('refreshPreviewTarget falhou', e);
+    }
+  }, [config, previewTarget]);
+
   const contextValue = useMemo(() => ({
     config, setConfig,
-    currentUser, canAccess, logout,
+    currentUser, canAccess, canDo, logout,
     isLoading, error, isSyncing, isSyncPaused, toggleSyncPause,
     notifications, setNotifications,
     refreshData,
     isInitialized,
     previewTarget, setPreviewTarget,
     orgScreenPerms, userGroupIds,
+    refreshCurrentUser, refreshPreviewTarget,
   }), [
-    config, setConfig, currentUser, canAccess, logout,
+    config, setConfig, currentUser, canAccess, canDo, logout,
     isLoading, error, isSyncing, isSyncPaused, toggleSyncPause,
     notifications, refreshData, isInitialized,
     previewTarget, orgScreenPerms, userGroupIds,
+    refreshCurrentUser, refreshPreviewTarget,
   ]);
 
 

@@ -6,7 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="CoolGroove - Sistema de gestão empresarial integrado com Dolibarr ERP" />
   <meta http-equiv="X-Content-Type-Options" content="nosniff" />
-  <meta http-equiv="X-Frame-Options" content="SAMEORIGIN" />
+  <!-- X-Frame-Options NÃO é válido via <meta http-equiv> (o navegador o ignora e loga erro no console).
+       A proteção contra clickjacking deve vir de um header HTTP no servidor/host que serve o frontend. -->
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <title>CoolGroove</title>
 </head>

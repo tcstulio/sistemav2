@@ -58,7 +58,7 @@ vi.mock('../../context/DolibarrContext', () => {
     // Stable config reference — important so that useEffect([config]) doesn't re-run on every render
     const cfg = { apiUrl: 'https://test.dolibarr.com/api', apiKey: 'test-key' };
     return {
-        useDolibarr: vi.fn(() => ({ config: cfg })),
+        useDolibarr: vi.fn(() => ({ config: cfg, canAccess: () => true, canDo: () => true })),
     };
 });
 

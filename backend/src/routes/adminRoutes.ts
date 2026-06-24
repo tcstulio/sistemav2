@@ -22,6 +22,7 @@ import { userPermissionsService } from '../services/userPermissionsService';
 import { dolibarrService } from '../services/dolibarrService';
 import { adminAuditService } from '../services/adminAuditService';
 import { llmCallLogService } from '../services/llmCallLogService';
+import { uiConfigService } from '../services/uiConfigService';
 import { llmHealthService } from '../services/llmHealthService';
 
 const router = express.Router();
@@ -778,6 +779,28 @@ router.get('/llm-calls', (req, res) => {
     }
 });
 
+// === Acesso ao App ("Habilitar acesso") =====================================================
+// O Dolibarr não deixa setar direitos por REST (não há endpoint /rights — verificado no fonte).
+// A única via automatizável é por GRUPO: existe um "Grupo de Acesso ao App" (configurado 1x na
+// tela do Dolibarr) que carrega o direito user->self->creer (342). "Habilitar" = setGroup do
+// usuário nesse grupo; no próximo /login (login+senha) a Chave de API dele nasce sozinha. O id
+// do grupo vive em ui_config.appAccessGroupId. Tudo usa a chave de serviço (admin) — operação
+// legitimamente administrativa, independente do enforcement por chave-do-usuário.
+
+// GET status: o usuário já pertence ao grupo de acesso ao app?
+router.get('/users/:userId/app-access-status', async (req, res) => {
+    try {
+        const userId = String(req.params.userId);
+        const groupId = uiConfigService.get().appAccessGroupId;
+        if (!groupId) return res.json({ configured: false, inGroup: false, groupId: null });
+        const groupIds = await dolibarrService.getUserGroupIds(userId);
+        res.json({ configured: true, groupId, inGroup: groupIds.includes(String(groupId)) });
+    } catch (e: any) {
+        log.error('app-access-status error', { error: e.message });
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // GET /api/admin/llm-health — saúde por provider, com filtro opcional por módulo.
 // ?module=chat → retorna apenas os providers da cadeia daquele módulo.
 router.get('/llm-health', (req, res) => {
@@ -796,6 +819,61 @@ router.get('/llm-health', (req, res) => {
     } catch (e: any) {
         log.error('Get llm-health error', { error: e.message });
         res.status(500).json({ error: e.message });
+    }
+});
+
+// POST habilitar: adiciona o usuário ao grupo de acesso ao app.
+// SEGURANÇA: o grupo é SEMPRE o configurado em ui_config — NÃO aceitamos groupId do corpo
+// (aceitar permitiria um admin jogar um usuário em qualquer grupo, ex.: administrativo, via
+// esta rota "de acesso"). Operações de grupo arbitrário continuam só na tela do Dolibarr.
+router.post('/users/:userId/enable-app-access', async (req, res) => {
+    try {
+        const userId = String(req.params.userId);
+        const groupId = uiConfigService.get().appAccessGroupId;
+        if (!groupId) {
+            return res.status(400).json({
+                error: 'NO_GROUP',
+                message: 'Configure o "Grupo de Acesso ao App" na Central de Permissões antes de habilitar.',
+            });
+        }
+        const user = await dolibarrService.getUserById(userId);
+        if (!user) {
+            return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'Usuário não encontrado no Dolibarr.' });
+        }
+
+        // Idempotência: se já está no grupo, não re-chama o Dolibarr nem polui a auditoria.
+        const currentGroups = await dolibarrService.getUserGroupIds(userId);
+        if (currentGroups.includes(String(groupId))) {
+            return res.json({
+                status: 'already-enabled',
+                userId,
+                groupId: String(groupId),
+                message: 'Usuário já está no grupo de acesso. A chave nasce no próximo login (se ainda não logou).',
+            });
+        }
+
+        await dolibarrService.setUserGroup(userId, String(groupId));
+
+        const adminUser = (req as any).user || {};
+        adminAuditService.record({
+            adminId: String(adminUser.id || 'unknown'),
+            adminLogin: String(adminUser.login || 'unknown'),
+            action: 'user.enable-app-access',
+            target: userId,
+            summary: `Acesso ao app habilitado para ${user.login || userId} (grupo ${groupId})`,
+            changes: { appAccessGroup: { before: null, after: String(groupId) } },
+        });
+
+        res.json({
+            status: 'enabled',
+            userId,
+            groupId: String(groupId),
+            message: 'Acesso habilitado. A Chave de API nasce no próximo login do usuário (login + senha).',
+        });
+    } catch (e: any) {
+        log.error('enable-app-access error', { error: e.message });
+        const status = e?.status === 403 ? 403 : 500;
+        res.status(status).json({ error: e?.message || 'Falha ao habilitar acesso ao app.' });
     }
 });
 

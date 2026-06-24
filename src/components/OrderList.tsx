@@ -91,6 +91,7 @@ const OrderDetail: React.FC<{
     onOrderDeleted
 }) => {
         const [activeTab, setActiveTab] = useState<'overview' | 'shipments' | 'invoices'>('overview');
+        const { canDo } = useDolibarr();
 
         const getCustomerName = (socid: string) => {
             const customer = customers.find(c => c.id === socid);
@@ -147,7 +148,7 @@ const OrderDetail: React.FC<{
                     onBack={onClose}
                     actions={
                         <div className="flex items-center gap-2">
-                            {order.statut === '0' && (
+                            {order.statut === '0' && canDo('edit', 'orders') && (
                                 <Button
                                     onClick={onEdit}
                                     icon={<Pencil size={18} />}
@@ -156,7 +157,7 @@ const OrderDetail: React.FC<{
                                     Editar
                                 </Button>
                             )}
-                            {order.statut === '0' && (
+                            {order.statut === '0' && canDo('validate', 'orders') && (
                                 <Button
                                     onClick={() => onValidate(order.id)}
                                     disabled={!!processingId}
@@ -167,7 +168,7 @@ const OrderDetail: React.FC<{
                                     Validar
                                 </Button>
                             )}
-                            {order.statut === '0' && (
+                            {order.statut === '0' && canDo('delete', 'orders') && (
                                 <ConfirmDeleteButton
                                     withLabel
                                     onDelete={onDeleteOrder}
@@ -344,7 +345,7 @@ const OrderDetail: React.FC<{
 // ============================================
 
 const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefresh }) => {
-    const { config } = useDolibarr();
+    const { config, canDo } = useDolibarr();
     const { data: ordersData, refetch: refetchOrders } = useOrders(config);
     const orders = ordersData || [];
     const { data: customersData } = useCustomers(config);
@@ -803,9 +804,11 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                     actions={
                         <div className="flex items-center gap-2">
                             <ListToolbar controls={controls} searchPlaceholder="Buscar pedido ou cliente..." />
+                            {canDo('create', 'orders') && (
                             <Button icon={<FilePlus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                                 Novo
                             </Button>
+                            )}
                         </div>
                     }
                     tabs={
@@ -845,7 +848,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                                             <span className="font-mono text-xs text-slate-400">{ord.ref}</span>
                                             <StatusBadge status={ord.statut} config={orderStatuses} size="sm" />
                                         </div>
-                                        {ord.statut === '0' && (
+                                        {ord.statut === '0' && canDo('delete', 'orders') && (
                                             <ConfirmDeleteButton
                                                 onDelete={() => DolibarrService.deleteOrder(config, ord.id)}
                                                 onDeleted={() => handleOrderDeleted(ord.id)}

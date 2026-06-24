@@ -39,6 +39,10 @@ vi.mock('../../hooks/dolibarr', () => ({
     })),
 }));
 
+vi.mock('../../hooks/dolibarr/useInvalidatePermissions', () => ({
+    useInvalidatePermissions: () => vi.fn(),
+}));
+
 // Stub heavy child components
 vi.mock('../../components/HR/GroupDetail', () => ({
     GroupDetail: ({ group, onClose }: { group: UserGroup; onClose: () => void }) => (

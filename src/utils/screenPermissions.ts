@@ -42,6 +42,12 @@ export function resolveScreenAccess(opts: ResolveScreenAccessOpts): boolean {
 
     // Admin enxerga tudo — overrides nunca bloqueiam admin.
     if (isAdmin) return true;
+
+    // Telas protegidas (dashboard/settings) SEMPRE acessíveis — nunca travar o usuário fora
+    // do próprio sistema. Antes isto só impedia `hidden`; com base=false (modo "ver como")
+    // o dashboard caía em "Acesso Restrito". Agora é acesso garantido.
+    if (PROTECTED_SCREENS.has(screenId)) return true;
+
     if (!perms) return base;
 
     const isProtected = PROTECTED_SCREENS.has(screenId);

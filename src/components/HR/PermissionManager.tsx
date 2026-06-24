@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { DolibarrConfig, PermissionDefinition } from '../../types';
 import { usePermissions, useGroupRights, useUserRights, useGroups, useGroupUsers } from '../../hooks/dolibarr';
+import { useInvalidatePermissions } from '../../hooks/dolibarr/useInvalidatePermissions';
 import * as HRAdmin from '../../services/api/hrAdmin';
 import { Lock, Check, Search, AlertCircle, Loader2, Users, CheckSquare, Square } from 'lucide-react';
 import { logger } from '../../utils/logger';
@@ -18,9 +19,10 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
     // Shared Data
     const { data: permissionsData, isLoading: isLoadingPerms } = usePermissions(config);
 
-    // Conditional Data Fetching
-    const { data: groupRightsData, isLoading: isLoadingGroupRights, refetch: refetchGroupRights } = useGroupRights(config);
-    const { data: userRightsData, isLoading: isLoadingUserRights, refetch: refetchUserRights } = useUserRights(config);
+    // Conditional Data Fetching (refetch agora é coberto por invalidatePermissions, que limpa as
+    // stores e força full re-sync — necessário p/ detectar remoções que o delta-sync não vê).
+    const { data: groupRightsData, isLoading: isLoadingGroupRights } = useGroupRights(config);
+    const { data: userRightsData, isLoading: isLoadingUserRights } = useUserRights(config);
 
     // Inheritance Data (Only for Users)
     const { data: allGroups } = useGroups(config);
@@ -29,6 +31,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
     const [searchTerm, setSearchTerm] = useState('');
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [bulkProcessingModule, setBulkProcessingModule] = useState<string | null>(null);
+    const invalidatePermissions = useInvalidatePermissions();
 
     // Determine Loading State
     const isLoadingRights = targetType === 'group' ? isLoadingGroupRights : isLoadingUserRights;
@@ -112,10 +115,17 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
 
     const handleTogglePermission = async (perm: PermissionDefinition) => {
         if (processingId) return;
-        setProcessingId(perm.id);
 
         const isAssigned = assignedRightIds.has(String(perm.id));
 
+        // Aviso: remover direito de auto-edição (user/self) pode impedir a geração da Chave de API
+        // no login → quebrar o acesso ao app de quem depende disso (ver "Acesso ao App").
+        if (isAssigned && perm.module === 'user' && perm.perms === 'self') {
+            const ok = window.confirm('Atenção: este é um direito de "editar o próprio cadastro". Removê-lo pode impedir o usuário de gerar a Chave de API e entrar no app. Remover mesmo assim?');
+            if (!ok) return;
+        }
+
+        setProcessingId(perm.id);
         try {
             if (targetType === 'group') {
                 if (isAssigned) {
@@ -123,15 +133,14 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
                 } else {
                     await HRAdmin.addPermissionToGroup(config, targetId, perm.id);
                 }
-                setTimeout(() => refetchGroupRights(), 1000);
             } else {
                 if (isAssigned) {
                     await HRAdmin.removePermissionFromUser(config, targetId, perm.id);
                 } else {
                     await HRAdmin.addPermissionToUser(config, targetId, perm.id);
                 }
-                setTimeout(() => refetchUserRights(), 1000);
             }
+            await invalidatePermissions();
         } catch (e) {
             log.error("Failed to toggle permission", e);
             notifyError('Alterar permissão', e);
@@ -142,6 +151,12 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
 
     const handleBulkAction = async (module: string, action: 'addAll' | 'removeAll') => {
         if (bulkProcessingModule) return;
+
+        if (action === 'removeAll' && module === 'user') {
+            const ok = window.confirm('Atenção: remover todos os direitos do módulo "Usuários" pode tirar a auto-edição e impedir o acesso ao app. Continuar?');
+            if (!ok) return;
+        }
+
         setBulkProcessingModule(module);
 
         const perms = groupedPermissions[module];
@@ -167,10 +182,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
 
         try {
             await Promise.all(promises);
-            setTimeout(() => {
-                if (targetType === 'group') refetchGroupRights();
-                else refetchUserRights();
-            }, 1000);
+            await invalidatePermissions();
         } catch (e) {
             log.error("Bulk action failed", e);
             notifyError('Atualização de permissões em massa', e);
@@ -271,7 +283,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({ targetId, 
                 {filteredPermissions.length === 0 && (
                     <div className="text-center py-12 text-slate-400">
                         <Lock size={48} className="mx-auto mb-3 opacity-20" />
-                        <p>Nenhuma permissão encontrada para "{searchTerm}"</p>
+                        <p>Nenhuma permissão encontrada para “{searchTerm}”</p>
                     </div>
                 )}
             </div>

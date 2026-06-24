@@ -67,6 +67,7 @@ const GroupManager = React.lazy(() => import('./admin/GroupManager').then(m => (
 const AuditLog = React.lazy(() => import('./admin/AuditLog').then(m => ({ default: m.AuditLog })));
 const AutomationSettings = React.lazy(() => import('./admin/AutomationSettings').then(m => ({ default: m.AutomationSettings })));
 const IssuesPage = React.lazy(() => import('./Issues/IssuesPage'));
+const PermissionsCenter = React.lazy(() => import('./admin/PermissionsCenter'));
 
 interface ViewWrapperProps {
     Component: React.ComponentType<{
@@ -198,7 +199,9 @@ const App: React.FC = () => {
                         <Route path="/projects/:id" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
                         <Route path="/projects/:id/edit" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
 
-                        <Route path="/tasks" element={<ViewWrapper Component={TaskDetail} viewId="projects" />} />
+                        {/* /tasks "nu" (sem :id) renderizava TaskDetail e travava em "Carregando tarefa...".
+                            /tasks é uma rota de DETALHE (/tasks/:id); a forma base redireciona p/ Minhas Tarefas. */}
+                        <Route path="/tasks" element={<Navigate to="/my-tasks" replace />} />
                         {/* criação/edição de tarefa via deeplink HITL abrem o TaskModal dentro do ProjectList */}
                         <Route path="/tasks/new" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
                         <Route path="/tasks/:id" element={<ViewWrapper Component={TaskDetail} viewId="projects" />} />
@@ -282,6 +285,8 @@ const App: React.FC = () => {
                         <Route path="/chat-sessions" element={<ViewWrapper Component={ChatSessionsView} viewId="development" />} />
 
                         <Route path="/settings" element={<ViewWrapper Component={SettingsView} viewId="settings" />} />
+                        {/* /permissions (fora de /admin: este prefixo é capturado pelo AdminApp em index.tsx) */}
+                        <Route path="/permissions" element={<ViewWrapper Component={PermissionsCenter} viewId="settings" />} />
                         <Route path="/admin/groups" element={<ViewWrapper Component={GroupManager} viewId="settings" />} />
                         <Route path="/admin/audit" element={<ViewWrapper Component={AuditLog} viewId="settings" />} />
                         <Route path="/admin/automations" element={<ViewWrapper Component={AutomationSettings} viewId="settings" />} />

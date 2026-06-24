@@ -4,6 +4,7 @@ import { getExpenseStatusBadge, getUserName } from '../utils';
 import { Receipt, Plus, Calendar, User } from 'lucide-react';
 import { formatDateOnly } from '../../../utils/dateUtils';
 import { formatCurrency } from '../../../utils/formatUtils';
+import { useDolibarr } from '../../../context/DolibarrContext';
 
 interface ExpensesTabProps {
     expenseReports: ExpenseReport[];
@@ -27,6 +28,7 @@ export const ExpensesTab: React.FC<ExpensesTabProps> = ({
     onSelectExpense,
     onOpenScanner
 }) => {
+    const { canDo } = useDolibarr();
 
     const filteredExpenses = useMemo(() => {
         let result = expenseReports.filter(e => {
@@ -64,12 +66,14 @@ export const ExpensesTab: React.FC<ExpensesTabProps> = ({
         <div className="space-y-4">
             <div className="flex justify-between items-center mb-4">
                 <h3 className="font-bold text-lg text-slate-800 dark:text-white">Relatórios de Despesas</h3>
-                <button
-                    onClick={onOpenScanner}
-                    className="flex items-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors"
-                >
-                    <Plus size={16} /> Nova Despesa
-                </button>
+                {canDo('create', 'expense_reports') && (
+                    <button
+                        onClick={onOpenScanner}
+                        className="flex items-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors"
+                    >
+                        <Plus size={16} /> Nova Despesa
+                    </button>
+                )}
             </div>
 
             {displayedExpenses.length === 0 ? (

@@ -94,8 +94,9 @@ const ProjectDetail: React.FC<{
     onEditTicket: (t: any) => void;
     onDeleteTicket: (id: string) => void;
     refreshData: () => void;
+    canDo: (action: 'create' | 'edit' | 'delete' | 'validate', screen: string) => boolean;
 }> = ({
-    project, onClose, onValidate, onDelete, onEdit, processingId, onNavigate, config,
+    project, onClose, onValidate, onDelete, onEdit, processingId, onNavigate, config, canDo,
     customers, users, contacts, tasks, invoices, supplierInvoices, interventions,
     expenseReports, manufacturingOrders, contracts, tickets, events, links, proposals,
     orders, shipments, supplierOrders, projectContacts,
@@ -249,7 +250,7 @@ const ProjectDetail: React.FC<{
                     }
                     actions={
                         <div className="flex items-center gap-2">
-                            {project.statut === '0' && (
+                            {project.statut === '0' && canDo('validate', 'projects') && (
                                 <Button
                                     onClick={onValidate}
                                     disabled={!!processingId}
@@ -260,8 +261,12 @@ const ProjectDetail: React.FC<{
                                     Validar
                                 </Button>
                             )}
+                            {canDo('edit', 'projects') && (
                             <Button variant="ghost" icon={<Pencil size={20} />} onClick={onEdit} title="Editar" />
+                            )}
+                            {canDo('delete', 'projects') && (
                             <Button variant="ghost" icon={<Trash2 size={20} />} onClick={onDelete} className="text-red-500 hover:text-red-600 hover:bg-red-50" title="Excluir" />
+                            )}
                             <Button variant="ghost" icon={<Settings size={20} />} />
                         </div>
                     }
@@ -382,7 +387,7 @@ const ProjectList: React.FC<{
     onNavigate?: (view: AppView, id: string) => void;
     initialItemId?: string;
 }> = ({ onNavigate, initialItemId }) => {
-    const { config, refreshData } = useDolibarr();
+    const { config, refreshData, canDo } = useDolibarr();
 
     // Data Hooks
     const { data: projects = [] } = useProjects(config);
@@ -826,7 +831,9 @@ const ProjectList: React.FC<{
                                 className="w-64"
                                 fullWidth={false}
                             />
+                            {canDo('create', 'projects') && (
                             <Button icon={<Plus size={18} />} onClick={() => setIsCreateModalOpen(true)}>Novo</Button>
+                            )}
                         </div>
                     }
                     tabs={
@@ -850,7 +857,7 @@ const ProjectList: React.FC<{
                             icon={FolderKanban}
                             title="Nenhum projeto encontrado"
                             description="Tente ajustar os filtros."
-                            action={<Button onClick={() => setIsCreateModalOpen(true)}>Novo Projeto</Button>}
+                            action={canDo('create', 'projects') ? <Button onClick={() => setIsCreateModalOpen(true)}>Novo Projeto</Button> : undefined}
                         />
                     ) : (
                         <div className="space-y-3 p-4 pb-8">
@@ -925,6 +932,7 @@ const ProjectList: React.FC<{
                             onEditTicket={(t) => openTicketModal(t)}
                             onDeleteTicket={handleDeleteTicket}
                             refreshData={refreshData}
+                            canDo={canDo}
                         />
                     )
                 }

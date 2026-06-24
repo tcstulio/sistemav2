@@ -4,6 +4,14 @@ import { UserDetail } from '../../components/HR/UserDetail';
 import { DolibarrUser, ExpenseReport, DolibarrConfig } from '../../types';
 import { formatCurrency } from '../../utils/formatUtils';
 
+vi.mock('../../context/DolibarrContext', () => ({
+    useDolibarr: vi.fn(() => ({
+        currentUser: { id: '99', admin: 1 },
+        canAccess: () => true,
+        canDo: () => true,
+    })),
+}));
+
 vi.mock('../../hooks/dolibarr', () => ({
     useGroups: () => ({ data: [] }),
     useGroupUsers: () => ({ data: [], refetch: vi.fn() }),

@@ -34,7 +34,8 @@ const CustomerRow: React.FC<{
     onSelect: () => void;
     onDelete: () => Promise<any>;
     onDeleted: () => void;
-}> = ({ customer, isSelected, onSelect, onDelete, onDeleted }) => {
+    canDelete?: boolean;
+}> = ({ customer, isSelected, onSelect, onDelete, onDeleted, canDelete }) => {
     return (
         <Card
             onClick={onSelect}
@@ -52,7 +53,9 @@ const CustomerRow: React.FC<{
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${customer.client === '1' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
                         {customer.client === '1' ? 'Cliente' : 'Prospecto'}
                     </span>
-                    <ConfirmDeleteButton onDelete={onDelete} onDeleted={onDeleted} itemLabel={customer.name} />
+                    {canDelete && (
+                        <ConfirmDeleteButton onDelete={onDelete} onDeleted={onDeleted} itemLabel={customer.name} />
+                    )}
                 </div>
             </div>
             <div className="text-xs text-slate-600 dark:text-slate-400 flex items-center gap-2 mb-1 ml-6">
@@ -76,7 +79,7 @@ interface CustomerListProps {
 }
 
 export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialItemId }) => {
-    const { config, refreshData } = useDolibarr();
+    const { config, refreshData, canDo } = useDolibarr();
 
     // Data Fetching
     const { data: customers = [], refetch: refetchCustomers } = useCustomers(config);
@@ -406,6 +409,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                     customer={customer}
                     isSelected={selectedCustomer?.id === customer.id}
                     onSelect={() => setSelectedCustomer(customer)}
+                    canDelete={canDo('delete', 'customers')}
                     onDelete={() => DolibarrService.deleteThirdParty(config!, customer.id)}
                     onDeleted={() => {
                         if (selectedCustomer?.id === customer.id) setSelectedCustomer(null);
@@ -425,9 +429,11 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
             actions={
                 <div className="flex items-center flex-wrap gap-2">
                     <ListToolbar controls={controls} searchPlaceholder="Buscar cliente..." />
+                    {canDo('create', 'customers') && (
                     <Button icon={<UserPlus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                         Novo
                     </Button>
+                    )}
                 </div>
             }
             tabs={
@@ -445,7 +451,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
             icon={UserCircle}
             title="Nenhum cliente encontrado"
             description="Tente ajustar os filtros ou adicione um novo cliente."
-            action={<Button onClick={() => setIsCreateModalOpen(true)}>Adicionar Cliente</Button>}
+            action={canDo('create', 'customers') ? <Button onClick={() => setIsCreateModalOpen(true)}>Adicionar Cliente</Button> : undefined}
         />
     ) : (
         <AutoSizer>
@@ -477,12 +483,14 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
                             onClick={() => handleOpenMessageConfig(selectedCustomer)}
                             title="Gerar Mensagem IA"
                         />
+                        {canDo('edit', 'customers') && (
                         <Button
                             variant="ghost"
                             size="sm"
                             icon={<Pencil size={18} />}
                             onClick={handleEditClick}
                         />
+                        )}
                     </div>
                 }
             />

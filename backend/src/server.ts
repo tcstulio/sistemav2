@@ -56,7 +56,9 @@ app.use(helmet({
 const allowedOrigins = [
     'https://app.coolgroove.com.br',
     'https://sistema.coolgroove.com.br',
-    ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000', 'http://localhost:5173'] : [])
+    // :3003 é a porta REAL do frontend dev (vite). Sem ela, PATCH/PUT/login (preflight CORS)
+    // do localhost:3003 eram rejeitados (500). :3000/:5173 mantidos por compatibilidade.
+    ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3003', 'http://localhost:3000', 'http://localhost:5173'] : [])
 ];
 
 app.use(cors({
@@ -154,6 +156,7 @@ app.use(auditMiddleware);
 
 // Routes
 import adminRoutes from './routes/adminRoutes';
+import groupsRoutes from './routes/groupsRoutes';
 import aiRoutes from './routes/aiRoutes';
 import authRoutes from './routes/authRoutes';
 import { authMiddleware, requireDolibarrLogin } from './middleware/authMiddleware';
@@ -167,6 +170,7 @@ const bankingAuthMiddleware = (req: any, res: any, next: any) => {
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/ai', aiLimiter, aiRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin', groupsRoutes); // grupos/direitos (sistemav2#820) — mesmo prefixo, paths distintos
 app.use('/api/auth', authLimiter, authRoutes);
 
 // Endereço público do túnel cloudflared (sem auth — a URL não é segredo)

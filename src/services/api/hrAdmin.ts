@@ -1,5 +1,5 @@
 import { DolibarrConfig, BankAccount, Contact, Invoice, SupplierInvoice, BankLine, Candidate, DolibarrUser, ExpenseReport, RecruitmentJobPosition, LeaveRequest, UserGroup } from '../../types';
-import { fetchList, fetchPage, request, getHeaders, sanitizeUrl } from './core';
+import { fetchList, fetchPage, request, getHeaders, sanitizeUrl, fetchDelta } from './core';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('HRAdmin');
@@ -430,6 +430,24 @@ export const listGroups = async (config: DolibarrConfig): Promise<UserGroup[]> =
     }));
 };
 
+// IDs dos usuários que pertencem a um grupo, via custom_sync (group_users: fk_usergroup -> fk_user).
+// Uma única chamada cobre todos os usuários — usado pela aba "Acesso ao App" p/ marcar quem já está
+// no grupo de acesso sem fazer N requisições /users/{id}/groups.
+export const getGroupMemberIds = async (config: DolibarrConfig, groupId: string): Promise<string[]> => {
+    try {
+        const links = await fetchDelta(config, 'group_users', 0);
+        // custom_sync.php (case 'group_users') aliasa as colunas: fk_user -> user_id, fk_usergroup -> group_id.
+        // (group_rights NÃO é aliasado — por isso getGroupRights usa fk_usergroup/fk_id; cuidado com a diferença.)
+        return (Array.isArray(links) ? links : [])
+            .filter((l: any) => String(l.group_id) === String(groupId))
+            .map((l: any) => String(l.user_id))
+            .filter(Boolean);
+    } catch (e) {
+        log.error('getGroupMemberIds failed', e);
+        return [];
+    }
+};
+
 // #112 — grupos de um usuário (GET /users/{id}/groups). Usado para resolver permissões de tela.
 export const getUserGroups = async (config: DolibarrConfig, userId: string): Promise<UserGroup[]> => {
     const data = await fetchList(config, `users/${userId}/groups`);
@@ -440,86 +458,98 @@ export const getUserGroups = async (config: DolibarrConfig, userId: string): Pro
     }));
 };
 
-export const createGroup = async (config: DolibarrConfig, data: any) => {
-    // Endpoint usually /users/groups
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups`;
-    return request(url, {
-        method: 'POST',
-        headers: getHeaders(config.apiKey),
-        body: JSON.stringify(data)
-    });
+// Busca UM usuário com permissões (rights + admin) — usado pelo "Ver como" p/ simular a
+// visão REAL do alvo (quais telas ele acessa), não um base genérico.
+export const getUserById = async (config: DolibarrConfig, userId: string): Promise<DolibarrUser | null> => {
+    try {
+        const url = `${sanitizeUrl(config.apiUrl)}/users/${userId}?includepermissions=1`;
+        const d: any = await request(url, { headers: getHeaders(config.apiKey) });
+        if (!d) return null;
+        return {
+            id: String(d.id), login: d.login, firstname: d.firstname, lastname: d.lastname,
+            admin: d.admin, rights: d.rights, statut: String(d.statut) as any,
+        } as DolibarrUser;
+    } catch (e) {
+        log.error('getUserById failed', e);
+        return null;
+    }
 };
 
-export const updateGroup = async (config: DolibarrConfig, id: string, data: Record<string, unknown>) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${id}`;
-    return request(url, {
-        method: 'PUT',
-        headers: getHeaders(config.apiKey),
-        body: JSON.stringify(data)
-    });
+// Direitos REAIS de um GRUPO. O REST não expõe (group.rights vem vazio); então monta a partir
+// do custom_sync.php: group_rights (grupo->right_id) + permissions (rights_def: right_id->module.perm),
+// no MESMO shape de user.rights — p/ o "ver como" grupo refletir o que o grupo realmente VÊ/FAZ.
+export const getGroupRights = async (config: DolibarrConfig, groupId: string): Promise<any> => {
+    try {
+        const [links, defs] = await Promise.all([
+            fetchDelta(config, 'group_rights', 0),
+            fetchDelta(config, 'permissions', 0),
+        ]);
+        const defById = new Map((defs || []).map((d: any) => [String(d.id), d]));
+        const rights: any = {};
+        for (const l of (links || [])) {
+            if (String(l.fk_usergroup) !== String(groupId)) continue;
+            const d: any = defById.get(String(l.fk_id));
+            if (!d || !d.module || !d.perms) continue;
+            const mod = d.module, perm = d.perms, sub = d.subperms;
+            rights[mod] = rights[mod] || {};
+            if (sub) { if (typeof rights[mod][perm] !== 'object') rights[mod][perm] = {}; rights[mod][perm][sub] = 1; }
+            else if (typeof rights[mod][perm] !== 'object') rights[mod][perm] = 1;
+        }
+        return rights;
+    } catch (e) {
+        log.error('getGroupRights failed', e);
+        return null;
+    }
 };
 
-export const deleteGroup = async (config: DolibarrConfig, id: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${id}`;
-    return request(url, {
-        method: 'DELETE',
-        headers: getHeaders(config.apiKey)
+/* --- GRUPOS & DIREITOS (escrita) ---
+ * A REST do Dolibarr NÃO expõe criar/editar/excluir grupo, remover de grupo, nem add/remove de
+ * direito. Tudo passa pelo NOSSO backend (/api/admin/*), que proxeia o custom_groups.php
+ * admin-gated (sistemav2#820). Nomes/assinaturas mantidos — PermissionManager/GroupManager/
+ * GroupDetail/GroupModal não mudam.
+ */
+async function adminWrite(config: DolibarrConfig, method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown) {
+    const res = await fetch(`/api/admin${path}`, {
+        method,
+        headers: {
+            'Content-Type': 'application/json',
+            'DOLAPIKEY': config.apiKey ? config.apiKey.trim() : '',
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
-};
+    if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try { const j = await res.json(); msg = j?.error || j?.message || msg; } catch { /* sem corpo JSON */ }
+        throw new Error(msg);
+    }
+    return res.json().catch(() => ({}));
+}
 
-export const addUserToGroup = async (config: DolibarrConfig, groupId: string, userId: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${groupId}/users/${userId}`;
-    return request(url, {
-        method: 'POST',
-        headers: getHeaders(config.apiKey)
-    });
-};
+export const createGroup = async (config: DolibarrConfig, data: any) =>
+    adminWrite(config, 'POST', '/groups', { name: data?.name ?? data?.nom, note: data?.note });
 
-export const removeUserFromGroup = async (config: DolibarrConfig, groupId: string, userId: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${groupId}/users/${userId}`;
-    return request(url, {
-        method: 'DELETE',
-        headers: getHeaders(config.apiKey)
-    });
-};
+export const updateGroup = async (config: DolibarrConfig, id: string, data: Record<string, any>) =>
+    adminWrite(config, 'PUT', `/groups/${id}`, { name: data?.name ?? data?.nom, note: data?.note });
 
-/* --- PERMISSIONS --- */
+export const deleteGroup = async (config: DolibarrConfig, id: string) =>
+    adminWrite(config, 'DELETE', `/groups/${id}`);
 
-// Add Permission (to User or Group)
-// For User: POST /users/{id}/rights/{rightId} (or rightsdef id?)
-// For Group: POST /users/groups/{id}/rights/{rightId}
-// Note: Standard API is tricky with rights. Often requires module trigger.
-// Checking common format: POST /users/{id}/rights is used to add. But often needs body with right ID or module.
-// Assume endpoint /users/{id}/rights/{right_id} logic works if right_id is passed.
+export const addUserToGroup = async (config: DolibarrConfig, groupId: string, userId: string) =>
+    adminWrite(config, 'POST', `/groups/${groupId}/users/${userId}`);
 
-export const addPermissionToUser = async (config: DolibarrConfig, userId: string, rightId: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/${userId}/rights/${rightId}`;
-    return request(url, {
-        method: 'POST',
-        headers: getHeaders(config.apiKey)
-    });
-};
+export const removeUserFromGroup = async (config: DolibarrConfig, groupId: string, userId: string) =>
+    adminWrite(config, 'DELETE', `/groups/${groupId}/users/${userId}`);
 
-export const removePermissionFromUser = async (config: DolibarrConfig, userId: string, rightId: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/${userId}/rights/${rightId}`;
-    return request(url, {
-        method: 'DELETE',
-        headers: getHeaders(config.apiKey)
-    });
-};
+/* --- PERMISSIONS (rightId = id de llx_rights_def) --- */
 
-export const addPermissionToGroup = async (config: DolibarrConfig, groupId: string, rightId: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${groupId}/rights/${rightId}`;
-    return request(url, {
-        method: 'POST',
-        headers: getHeaders(config.apiKey)
-    });
-};
+export const addPermissionToUser = async (config: DolibarrConfig, userId: string, rightId: string) =>
+    adminWrite(config, 'POST', `/users/${userId}/rights/${rightId}`);
 
-export const removePermissionFromGroup = async (config: DolibarrConfig, groupId: string, rightId: string) => {
-    const url = `${sanitizeUrl(config.apiUrl)}/users/groups/${groupId}/rights/${rightId}`;
-    return request(url, {
-        method: 'DELETE',
-        headers: getHeaders(config.apiKey)
-    });
-};
+export const removePermissionFromUser = async (config: DolibarrConfig, userId: string, rightId: string) =>
+    adminWrite(config, 'DELETE', `/users/${userId}/rights/${rightId}`);
+
+export const addPermissionToGroup = async (config: DolibarrConfig, groupId: string, rightId: string) =>
+    adminWrite(config, 'POST', `/groups/${groupId}/rights/${rightId}`);
+
+export const removePermissionFromGroup = async (config: DolibarrConfig, groupId: string, rightId: string) =>
+    adminWrite(config, 'DELETE', `/groups/${groupId}/rights/${rightId}`);

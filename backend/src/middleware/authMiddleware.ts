@@ -55,13 +55,21 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
         });
     }
 
-    // PROTÓTIPO (Desenho B): se o userKey é um token de sessão do nosso /login,
-    // troca pela CHAVE DE SERVIÇO (admin/Marciano) SERVER-SIDE. A chave nunca vai
-    // pro navegador; o browser só carrega o token de sessão inofensivo.
+    // Se o userKey é um token de sessão do nosso /login, resolve a DOLAPIKEY real server-side
+    // (nunca vai pro navegador). Enforcement nativo (decisão de produto): encaminha com a chave
+    // do PRÓPRIO usuário (Dolibarr aplica os direitos dele em leitura E escrita) em vez da chave
+    // de serviço (admin), que dava acesso total a qualquer logado. Admin tem chave admin -> nada
+    // muda p/ admins. Flag PROXY_FORWARD_USER_KEY=false faz revert instantâneo p/ a chave de
+    // serviço (sem deploy). Fallback p/ serviço se a sessão não tiver a chave do usuário.
     const protoSession = getProtoSession(userKey);
     if (protoSession) {
-        req.headers['dolapikey'] = config.dolibarrKey;
-        if (req.query) { (req.query as any).DOLAPIKEY = config.dolibarrKey; }
+        const forwardUserKey = process.env.PROXY_FORWARD_USER_KEY !== 'false';
+        const fwdKey = (forwardUserKey && protoSession.dolapikey) ? protoSession.dolapikey : config.dolibarrKey;
+        if (forwardUserKey && !protoSession.dolapikey) {
+            log.warn(`Sessão ${protoSession.login} sem dolapikey — usando chave de serviço (fallback)`);
+        }
+        req.headers['dolapikey'] = fwdKey;
+        if (req.query) { (req.query as any).DOLAPIKEY = fwdKey; }
 
         // Backfill do perfil quando a sessão é antiga/incompleta (criada antes de persistirmos
         // userData, ou getUserByKey falhou no login). Sem isso req.user fica sem 'admin' e quem

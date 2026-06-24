@@ -9,6 +9,7 @@ import { getUserName } from '../utils';
 import { toast } from 'sonner';
 import { useConfirm } from '../../../hooks/useConfirm';
 import { notifyError } from '../../../utils/notifyError';
+import { useDolibarr } from '../../../context/DolibarrContext';
 
 interface ExpenseDetailModalProps {
     expense: ExpenseReport | null;
@@ -38,6 +39,7 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
     const [isLoadingDocs, setIsLoadingDocs] = useState(false);
 
     const confirm = useConfirm();
+    const { canDo } = useDolibarr();
 
     // Load Documents when tab changes
     useEffect(() => {
@@ -151,7 +153,7 @@ export const ExpenseDetailModal: React.FC<ExpenseDetailModalProps> = ({
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
-                        {expense.statut === '0' && (
+                        {expense.statut === '0' && canDo('approve', 'expense_reports') && (
                             <button
                                 onClick={async () => {
                                     if (!(await confirm('Confirma/Submete este relatório de despesas?'))) return;

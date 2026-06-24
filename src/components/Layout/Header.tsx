@@ -22,7 +22,7 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
     const previewRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
 
-    const isAdmin = currentUser?.admin === 1;
+    const isAdmin = currentUser?.admin === 1 || currentUser?.admin === '1' || (currentUser?.admin as unknown) === true;
 
     // Close menus when clicking outside
     useEffect(() => {
@@ -55,17 +55,26 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
     const selectPreviewUser = async (user: { id: string; name: string }) => {
         if (!config) return;
         let groupIds: string[] = [];
+        let rights: any; let admin: any;
         try {
-            const groups = await DolibarrService.getUserGroups(config, user.id);
+            // Busca grupos + direitos REAIS do alvo (p/ o preview refletir o que ele realmente vê).
+            const [groups, full] = await Promise.all([
+                DolibarrService.getUserGroups(config, user.id),
+                DolibarrService.getUserById(config, user.id),
+            ]);
             groupIds = groups.map(g => String(g.id));
+            rights = full?.rights; admin = full?.admin;
         } catch {}
-        const target: PreviewTarget = { type: 'user', id: user.id, name: user.name, groupIds };
+        const target: PreviewTarget = { type: 'user', id: user.id, name: user.name, groupIds, rights, admin };
         setPreviewTarget(target);
         setIsPreviewMenuOpen(false);
     };
 
-    const selectPreviewGroup = (group: { id: string; name: string }) => {
-        const target: PreviewTarget = { type: 'group', id: group.id, name: group.name, groupIds: [group.id] };
+    const selectPreviewGroup = async (group: { id: string; name: string }) => {
+        let rights: any;
+        try { if (config) rights = await DolibarrService.getGroupRights(config, group.id); } catch {}
+        // grupo nunca é admin; rights montados via custom_sync (REST não expõe direitos de grupo).
+        const target: PreviewTarget = { type: 'group', id: group.id, name: group.name, groupIds: [group.id], rights, admin: '0' };
         setPreviewTarget(target);
         setIsPreviewMenuOpen(false);
     };

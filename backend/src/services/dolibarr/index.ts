@@ -101,6 +101,18 @@ export class DolibarrService extends DolibarrServiceBase {
     getUserById = (id: string) => this.hr.getUserById(id);
     updateUser = (id: string, payload: Record<string, any>) => this.hr.updateUser(id, payload);
     setUserPermissionProfile = (id: string, profile: unknown) => this.hr.setUserPermissionProfile(id, profile);
+    setUserGroup = (id: string, groupId: string, entity?: number) => this.hr.setUserGroup(id, groupId, entity);
+    getUserGroupIds = (id: string) => this.hr.getUserGroupIds(id);
+    // Gestão completa de grupos/direitos via custom_groups.php (admin-gated) — sistemav2#820.
+    createGroup = (data: { name: string; note?: string }) => this.hr.createGroup(data);
+    updateGroup = (id: string, data: { name?: string; note?: string }) => this.hr.updateGroup(id, data);
+    deleteGroup = (id: string) => this.hr.deleteGroup(id);
+    addUserToGroup = (groupId: string, userId: string) => this.hr.addUserToGroup(groupId, userId);
+    removeUserFromGroup = (groupId: string, userId: string) => this.hr.removeUserFromGroup(groupId, userId);
+    addGroupRight = (groupId: string, rid: string) => this.hr.addGroupRight(groupId, rid);
+    removeGroupRight = (groupId: string, rid: string) => this.hr.removeGroupRight(groupId, rid);
+    addUserRight = (userId: string, rid: string) => this.hr.addUserRight(userId, rid);
+    removeUserRight = (userId: string, rid: string) => this.hr.removeUserRight(userId, rid);
     listUsers = (search?: string) => this.hr.listUsers(search);
     findUserByLoginOrEmail = (loginOrEmail: string) => this.hr.findUserByLoginOrEmail(loginOrEmail);
     listExpenseReports = (status?: string) => this.hr.listExpenseReports(status);

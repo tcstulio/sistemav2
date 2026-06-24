@@ -20,7 +20,7 @@ vi.mock('sonner', () => ({ toast: toastMock }));
 
 // --- Mock DolibarrContext ---
 vi.mock('../../context/DolibarrContext', () => ({
-    useDolibarr: vi.fn(() => ({ config: { baseUrl: 'http://test', apiKey: 'key' } })),
+    useDolibarr: vi.fn(() => ({ config: { baseUrl: 'http://test', apiKey: 'key' }, canAccess: () => true, canDo: () => true })),
 }));
 
 // --- Mock dolibarr hooks ---

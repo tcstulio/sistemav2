@@ -55,7 +55,7 @@ interface InvoiceListProps {
 }
 
 const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
-    const { config, refreshData } = useDolibarr();
+    const { config, refreshData, canDo } = useDolibarr();
 
     const { data: invoices = [], refetch: refetchInvoices } = useInvoices(config);
     const { data: customers = [] } = useCustomers(config);
@@ -477,9 +477,11 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                 actions={
                     <div className="flex items-center gap-2">
                         <ListToolbar controls={controls} searchPlaceholder="Buscar ref ou cliente..." />
+                        {canDo('create', 'invoices') && (
                         <Button variant="primary" icon={<Plus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                             Novo
                         </Button>
+                        )}
                     </div>
                 }
                 tabs={
@@ -622,6 +624,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                     <div className="flex items-center gap-2">
                         {selectedInvoice.statut === '0' && (
                             <>
+                                {canDo('validate', 'invoices') && (
                                 <Button
                                     variant="primary"
                                     size="sm"
@@ -632,6 +635,8 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 >
                                     Validar
                                 </Button>
+                                )}
+                                {canDo('edit', 'invoices') && (
                                 <Button
                                     variant="secondary"
                                     size="sm"
@@ -641,9 +646,10 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 >
                                     Editar
                                 </Button>
+                                )}
                             </>
                         )}
-                        {selectedInvoice.statut === '0' ? (
+                        {canDo('delete', 'invoices') && (selectedInvoice.statut === '0' ? (
                             <ConfirmDeleteButton
                                 withLabel
                                 onDelete={() => DolibarrService.deleteInvoice(config, selectedInvoice.id)}
@@ -662,9 +668,10 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                             >
                                 Excluir
                             </Button>
-                        )}
+                        ))}
                         {selectedInvoice.statut === '1' && selectedInvoice.type !== '2' && (
                             <>
+                                {canDo('pay', 'invoices') && (
                                 <Button
                                     variant="primary"
                                     size="sm"
@@ -674,6 +681,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 >
                                     Pagar
                                 </Button>
+                                )}
                                 <Button
                                     variant="outline"
                                     size="sm"

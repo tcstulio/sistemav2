@@ -190,7 +190,18 @@ export class DolibarrServiceBase {
                 throw new Error(response.data?.error?.message || `Falha no login (${response.status})`);
             }
         } catch (error: any) {
-            log.error(`Login Exception: ${error.message}`);
+            const status = error.response?.status;
+            const doliMsg = String(error.response?.data?.error?.message || '');
+            log.error(`Login Exception: ${error.message} (status ${status}) ${doliMsg}`);
+            // Caso específico (e comum em usuário zerado): senha certa, mas sem api_key e sem
+            // direito de editar o próprio usuário -> Dolibarr nega. Mensagem acionável.
+            if (/no api token/i.test(doliMsg)) {
+                throw new Error('Usuário sem Chave de API no Dolibarr. Gere a "Chave para API" desse usuário no Dolibarr (ou conceda a ele o direito de editar o próprio usuário) e tente novamente.');
+            }
+            // Mapeia o erro cru do axios ("Request failed with status code 403") p/ mensagem clara.
+            if (status === 401 || status === 403) {
+                throw new Error('Usuário ou senha inválidos');
+            }
             throw new Error(error.message || 'Erro de conexão com Dolibarr');
         }
     }

@@ -550,13 +550,21 @@ const IssuesPage: React.FC = () => {
 
     const loadIssues = useCallback(async () => {
         setIssuesLoading(true);
-        const [i, s] = await Promise.all([
-            GithubService.getIssues({ state: issueFilter, label: labelFilter || undefined, limit: 50 }),
-            GithubService.getStats(),
-        ]);
-        setIssues(i);
-        if (s) setStats(s);
-        setIssuesLoading(false);
+        try {
+            const [i, s] = await Promise.all([
+                GithubService.getIssues({ state: issueFilter, label: labelFilter || undefined, limit: 50 }),
+                GithubService.getStats(),
+            ]);
+            setIssues(i);
+            if (s) setStats(s);
+        } catch (e) {
+            // API GitHub é intermitente (endpoint Azure-BR). Sem este catch, o await rejeitado
+            // deixava issuesLoading=true para sempre → spinner eterno. Zera para o empty-state aparecer.
+            setIssues([]);
+            toast.error('Erro ao carregar issues do GitHub');
+        } finally {
+            setIssuesLoading(false);
+        }
     }, [issueFilter, labelFilter]);
 
     const loadTasks = useCallback(async () => {

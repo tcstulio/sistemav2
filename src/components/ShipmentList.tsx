@@ -31,7 +31,7 @@ interface ShipmentListProps {
 }
 
 const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) => {
-    const { config } = useDolibarr();
+    const { config, canDo } = useDolibarr();
     const { data: shipmentsData, refetch: refetchShipments } = useShipments(config);
     const shipments = shipmentsData || [];
     const { data: customersData } = useCustomers(config);
@@ -198,7 +198,7 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                                 </div>
                                 <div className="flex items-center gap-1">
                                     <StatusBadge status={ship.status} config={shipmentStatuses} size="sm" />
-                                    {ship.status === '0' && (
+                                    {ship.status === '0' && canDo('delete', 'shipments') && (
                                         <ConfirmDeleteButton
                                             onDelete={() => DolibarrService.deleteShipment(config, ship.id)}
                                             onDeleted={() => { if (selectedShipment?.id === ship.id) setSelectedShipment(null); refetchShipments(); }}
@@ -242,7 +242,7 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                 subtitle="Detalhes de Logística"
                 actions={
                     <div className="flex items-center gap-2">
-                        {selectedShipment.status === '0' && (
+                        {selectedShipment.status === '0' && canDo('validate', 'shipments') && (
                             <Button
                                 size="sm"
                                 icon={isProcessing ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
@@ -264,7 +264,7 @@ const ShipmentList: React.FC<ShipmentListProps> = ({ onNavigate, onRefresh }) =>
                         )}
                         <Button variant="ghost" size="sm" icon={<Eye size={16} />} onClick={() => setPreviewShipment({ id: selectedShipment.id, ref: selectedShipment.ref })} title="Visualizar PDF" />
                         <Button variant="ghost" size="sm" icon={<Download size={16} />} onClick={(e) => handleDownloadPdf(e, selectedShipment.id)} title="Baixar PDF" />
-                        {selectedShipment.status === '0' && (
+                        {selectedShipment.status === '0' && canDo('delete', 'shipments') && (
                             <ConfirmDeleteButton
                                 onDelete={() => DolibarrService.deleteShipment(config, selectedShipment.id)}
                                 onDeleted={() => { setSelectedShipment(null); refetchShipments(); }}
