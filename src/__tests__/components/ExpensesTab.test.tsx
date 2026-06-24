@@ -4,6 +4,13 @@ import { ExpensesTab } from '../../components/HR/tabs/ExpensesTab';
 import { ExpenseReport, DolibarrUser } from '../../types';
 import { formatCurrency } from '../../utils/formatUtils';
 
+vi.mock('../../context/DolibarrContext', () => ({
+    useDolibarr: vi.fn(() => ({
+        canAccess: () => true,
+        canDo: () => true,
+    })),
+}));
+
 const user: DolibarrUser = {
     id: '1',
     login: 'jose.silva',

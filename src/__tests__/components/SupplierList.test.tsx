@@ -19,6 +19,8 @@ vi.mock('../../context/DolibarrContext', () => ({
     useDolibarr: vi.fn(() => ({
         config: { apiUrl: 'https://test.dolibarr.com/api', apiKey: 'test-key', themeColor: 'indigo', darkMode: false },
         refreshData: vi.fn(),
+        canAccess: () => true,
+        canDo: () => true,
     })),
 }));
 

@@ -41,6 +41,8 @@ vi.mock('../../context/DolibarrContext', () => ({
     useDolibarr: vi.fn(() => ({
         config: mockConfig,
         refreshData: mockRefreshData,
+        canAccess: () => true,
+        canDo: () => true,
     })),
 }));
 

@@ -21,6 +21,8 @@ vi.mock('../../utils/notifyError', () => ({
 vi.mock('../../context/DolibarrContext', () => ({
     useDolibarr: vi.fn(() => ({
         config: { apiUrl: 'https://test.dolibarr.com/api', apiKey: 'test-key' },
+        canAccess: () => true,
+        canDo: () => true,
     })),
 }));
 

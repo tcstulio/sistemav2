@@ -25,6 +25,13 @@ vi.mock('sonner', () => ({
     },
 }));
 
+vi.mock('../../context/DolibarrContext', () => ({
+    useDolibarr: vi.fn(() => ({
+        canAccess: () => true,
+        canDo: () => true,
+    })),
+}));
+
 const mockConfig: DolibarrConfig = {
     apiUrl: 'https://api.example.com',
     apiKey: 'test-key',

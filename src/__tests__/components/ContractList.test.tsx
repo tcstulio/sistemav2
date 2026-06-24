@@ -30,6 +30,8 @@ vi.mock('../../services/dolibarrService', () => ({
 vi.mock('../../context/DolibarrContext', () => ({
     useDolibarr: vi.fn(() => ({
         config: { baseUrl: 'http://test', apiKey: 'key', currentUser: { id: '1' } },
+        canAccess: () => true,
+        canDo: () => true,
     })),
 }));
 

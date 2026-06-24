@@ -27,7 +27,7 @@ vi.mock('../../utils/notifyError', () => ({
 }));
 
 vi.mock('../../context/DolibarrContext', () => ({
-    useDolibarr: vi.fn(() => ({ config: { apiUrl: 'http://test', apiKey: 'key' } })),
+    useDolibarr: vi.fn(() => ({ config: { apiUrl: 'http://test', apiKey: 'key' }, canAccess: () => true, canDo: () => true })),
 }));
 
 const mockRefetch = vi.fn();

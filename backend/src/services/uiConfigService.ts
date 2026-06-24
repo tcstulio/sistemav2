@@ -11,9 +11,10 @@
 import fs from 'fs';
 import path from 'path';
 import { atomicWriteSync } from '../utils/atomicWrite';
-import { logger } from '../utils/logger';
+import { createLogger } from '../utils/logger';
 
-const log = logger.child('UiConfigService');
+// createLogger (não logger.child) p/ casar com o padrão de mock dos testes (todos mockam createLogger).
+const log = createLogger('UiConfigService');
 
 // Preferência de ordem + visibilidade reutilizada por menu (#110) e dashboard (#111).
 // `hidden` = ids escondidos pelo admin (org-wide); `order` = ordem preferida de ids
