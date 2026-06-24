@@ -101,6 +101,8 @@ export class DolibarrService extends DolibarrServiceBase {
     getUserById = (id: string) => this.hr.getUserById(id);
     updateUser = (id: string, payload: Record<string, any>) => this.hr.updateUser(id, payload);
     setUserPermissionProfile = (id: string, profile: unknown) => this.hr.setUserPermissionProfile(id, profile);
+    setUserGroup = (id: string, groupId: string, entity?: number) => this.hr.setUserGroup(id, groupId, entity);
+    getUserGroupIds = (id: string) => this.hr.getUserGroupIds(id);
     listUsers = (search?: string) => this.hr.listUsers(search);
     findUserByLoginOrEmail = (loginOrEmail: string) => this.hr.findUserByLoginOrEmail(loginOrEmail);
     listExpenseReports = (status?: string) => this.hr.listExpenseReports(status);

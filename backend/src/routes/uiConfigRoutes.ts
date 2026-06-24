@@ -69,6 +69,8 @@ const UpdateSchema = z.object({
         autoDecompose: z.boolean().optional(),
         minMergeScore: z.number().min(1).max(10).optional(),
     }).optional(),
+    // Grupo Dolibarr p/ "Habilitar acesso ao app" (sem isto o Zod descartaria o campo e o save não persistiria).
+    appAccessGroupId: z.string().max(40).optional(),
 });
 
 // Leitura: qualquer usuário logado (p/ renderizar branding/tema da org).

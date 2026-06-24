@@ -10,6 +10,8 @@ import * as HRAdmin from '../../services/api/hrAdmin';
 
 import { PermissionManager } from './PermissionManager';
 import { UserPermissionsEditor } from '../admin/UserPermissionsEditor';
+import { AppAccessRow } from '../admin/AppAccessTab';
+import { useDolibarr } from '../../context/DolibarrContext';
 import { ExpenseDetailModal } from './modals/ExpenseDetailModal';
 import { logger } from '../../utils/logger';
 import { notifyError } from '../../utils/notifyError';
@@ -53,6 +55,8 @@ export const UserDetail: React.FC<UserDetailProps> = ({
 }) => {
     const [detailTab, setDetailTab] = useState<'overview' | 'time' | 'expenses' | 'leaves' | 'team' | 'groups' | 'permissions' | 'agent'>('overview');
     const confirm = useConfirm();
+    const { currentUser } = useDolibarr();
+    const viewerIsAdmin = currentUser?.admin === 1 || (currentUser?.admin as unknown) === '1' || (currentUser?.admin as unknown) === true;
 
     // Hooks for Groups Management
     const { data: allGroups } = useGroups(config);
@@ -189,6 +193,7 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                                 <div className="space-y-3">
                                     <div className="flex justify-between items-center"><span className="text-sm text-slate-600 dark:text-slate-400">Status</span><span className={`px-2 py-1 rounded text-xs ${user.statut === '1' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{user.statut === '1' ? 'Ativo' : 'Inativo'}</span></div>
                                     <div className="flex justify-between items-center"><span className="text-sm text-slate-600 dark:text-slate-400">Login</span><span className="font-mono text-xs text-slate-800 dark:text-white">{user.login}</span></div>
+                                    <AppAccessRow userId={user.id} isAdmin={viewerIsAdmin} themeColor={config.themeColor} />
                                 </div>
                             </div>
                         </div>

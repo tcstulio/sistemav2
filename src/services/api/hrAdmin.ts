@@ -430,6 +430,24 @@ export const listGroups = async (config: DolibarrConfig): Promise<UserGroup[]> =
     }));
 };
 
+// IDs dos usuários que pertencem a um grupo, via custom_sync (group_users: fk_usergroup -> fk_user).
+// Uma única chamada cobre todos os usuários — usado pela aba "Acesso ao App" p/ marcar quem já está
+// no grupo de acesso sem fazer N requisições /users/{id}/groups.
+export const getGroupMemberIds = async (config: DolibarrConfig, groupId: string): Promise<string[]> => {
+    try {
+        const links = await fetchDelta(config, 'group_users', 0);
+        // custom_sync.php (case 'group_users') aliasa as colunas: fk_user -> user_id, fk_usergroup -> group_id.
+        // (group_rights NÃO é aliasado — por isso getGroupRights usa fk_usergroup/fk_id; cuidado com a diferença.)
+        return (Array.isArray(links) ? links : [])
+            .filter((l: any) => String(l.group_id) === String(groupId))
+            .map((l: any) => String(l.user_id))
+            .filter(Boolean);
+    } catch (e) {
+        log.error('getGroupMemberIds failed', e);
+        return [];
+    }
+};
+
 // #112 — grupos de um usuário (GET /users/{id}/groups). Usado para resolver permissões de tela.
 export const getUserGroups = async (config: DolibarrConfig, userId: string): Promise<UserGroup[]> => {
     const data = await fetchList(config, `users/${userId}/groups`);

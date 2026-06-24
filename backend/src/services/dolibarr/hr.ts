@@ -51,6 +51,47 @@ export class DolibarrHRService extends DolibarrServiceBase {
     }
 
     /**
+     * Adiciona um usuário a um grupo (GET /users/{id}/setGroup/{group}).
+     *
+     * Base da automação "Habilitar acesso ao app": o Dolibarr NÃO permite setar direitos
+     * por REST (não há endpoint /rights — confirmado no fonte), mas permite mover o usuário
+     * para um grupo. Ao entrar num grupo que carrega o direito user->self->creer (ID 342),
+     * o usuário passa a gerar a "Chave para API" automaticamente no próximo /login
+     * (api_login.class.php só gera a chave p/ quem pode editar o próprio cadastro). Usa a
+     * chave de SERVIÇO (admin) — setGroup exige user->user->creer ou admin. Re-adicionar a um
+     * grupo que o usuário já tem é inócuo.
+     */
+    async setUserGroup(id: string, groupId: string, entity?: number): Promise<boolean> {
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}users/${encodeURIComponent(id)}/setGroup/${encodeURIComponent(groupId)}`;
+        const response = await axios.get(url, {
+            headers,
+            params: entity ? { entity } : undefined,
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200,
+        });
+        return response.status === 200;
+    }
+
+    /** IDs dos grupos de um usuário (GET /users/{id}/groups). Best-effort: [] em erro. */
+    async getUserGroupIds(id: string): Promise<string[]> {
+        try {
+            const headers = this.getHeaders();
+            const url = `${this.baseUrl}users/${encodeURIComponent(id)}/groups`;
+            const response = await axios.get(url, {
+                headers,
+                httpsAgent: this.httpsAgent,
+                validateStatus: (s) => s === 200,
+            });
+            const list = Array.isArray(response.data) ? response.data : [];
+            return list.map((g: any) => String(g.id)).filter(Boolean);
+        } catch (error) {
+            log.error(`getUserGroupIds Error (id=${id})`, error);
+            return [];
+        }
+    }
+
+    /**
      * Acha um usuário pelo login (ou e-mail) — usado p/ resolver o ID Dolibarr do
      * usuário logado quando o perfil não traz o id explícito. Best-effort: tenta login
      * exato, depois e-mail exato; confirma o match no resultado. (#300)

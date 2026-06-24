@@ -67,3 +67,26 @@ export async function getAuditLog(opts: { limit?: number; action?: string; targe
     const res = await axios.get(`${API}/audit`, { ...authHeaders(), params: opts });
     return res.data?.entries || [];
 }
+
+// === Acesso ao App ("Habilitar acesso") ===
+export interface AppAccessStatus {
+    configured: boolean;  // há um "Grupo de Acesso ao App" configurado?
+    inGroup: boolean;     // o usuário já pertence a esse grupo?
+    groupId: string | null;
+}
+
+/** Status de acesso ao app de um usuário (pertence ao grupo de acesso?). Admin. */
+export async function getAppAccessStatus(userId: string): Promise<AppAccessStatus> {
+    const res = await axios.get(`${API}/users/${userId}/app-access-status`, authHeaders());
+    return res.data as AppAccessStatus;
+}
+
+/**
+ * Habilita o acesso ao app de um usuário (adiciona ao grupo de acesso CONFIGURADO). A Chave de
+ * API dele nasce no próximo login. Admin. O grupo é sempre o de ui_config — o backend não aceita
+ * grupo arbitrário por aqui (evita escalonamento). status pode ser 'enabled' ou 'already-enabled'.
+ */
+export async function enableAppAccess(userId: string): Promise<{ status: string; groupId: string; message: string }> {
+    const res = await axios.post(`${API}/users/${userId}/enable-app-access`, {}, authHeaders());
+    return res.data;
+}

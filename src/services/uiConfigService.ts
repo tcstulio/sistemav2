@@ -32,6 +32,7 @@ export interface UiConfig {
     taskNotificationsExternalEnabled?: boolean;
     taskAutomation?: TaskAutomationConfig;
     version?: number; // concorrência otimista (Central de Permissões)
+    appAccessGroupId?: string; // grupo Dolibarr usado p/ "Habilitar acesso ao app" (carrega o direito 342)
 }
 
 export type ScreenRuleDelta = { hidden: string[]; allowed: string[] };

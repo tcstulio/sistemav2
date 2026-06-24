@@ -96,6 +96,10 @@ export interface UiConfig {
     // Concorrência otimista (#central-permissões): incrementa a cada save. A Central envia
     // o version que leu; o backend rejeita (409) se mudou no meio — evita last-write-wins.
     version: number;
+    // Id do grupo Dolibarr usado pela automação "Habilitar acesso ao app". Deve ser um grupo
+    // que carrega o direito user->self->creer (342) — assim a Chave de API do usuário nasce no
+    // 1º /login. Configurado na Central (aba "Acesso ao App"). undefined = automação desligada.
+    appAccessGroupId?: string;
 }
 
 // Limites expostos p/ a UI mostrar (em vez de truncar em silêncio).
@@ -371,6 +375,10 @@ export class UiConfigService {
         }
         if (partial.taskAutomation !== undefined) {
             next.taskAutomation = sanitizeTaskAutomation(partial.taskAutomation);
+        }
+        if (typeof partial.appAccessGroupId === 'string') {
+            const v = partial.appAccessGroupId.trim().slice(0, 40);
+            next.appAccessGroupId = v || undefined; // string vazia = desligar automação
         }
         next.version = (this.data.version || 0) + 1;
         this.data = next;
