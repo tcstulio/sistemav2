@@ -30,7 +30,7 @@ interface InterventionListProps {
 }
 
 const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefresh }) => {
-    const { config } = useDolibarr();
+    const { config, canDo } = useDolibarr();
     const { id: urlId } = useParams<{ id: string }>();
     const { data: interventionsData, refetch: refetchInterventions } = useInterventions(config);
     const interventions = interventionsData || [];
@@ -282,9 +282,11 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                 actions={
                     <div className="flex items-center gap-2">
                         <ListToolbar controls={controls} searchPlaceholder="Buscar intervenção..." />
+                        {canDo('create', 'interventions') && (
                         <Button icon={<Plus size={16} />} onClick={() => setIsCreateModalOpen(true)}>
                             Nova Intervenção
                         </Button>
+                        )}
                     </div>
                 }
                 tabs={
@@ -317,7 +319,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                 <h4 className="font-bold text-slate-800 dark:text-white text-sm">{int.ref}</h4>
                                 <div className="flex items-center gap-1 shrink-0">
                                     <StatusBadge status={int.statut} config={interventionStatuses} size="sm" />
-                                    {int.statut === '0' && (
+                                    {int.statut === '0' && canDo('delete', 'interventions') && (
                                         <ConfirmDeleteButton
                                             itemLabel={int.ref}
                                             onDelete={() => DolibarrService.deleteIntervention(config, int.id)}
@@ -383,7 +385,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                 subtitle="Relatório de Serviço de Campo"
                 actions={
                     <div className="flex items-center gap-2">
-                        {editSupported ? (
+                        {canDo('edit', 'interventions') && (editSupported ? (
                             <Button variant="secondary" size="sm" icon={<Pencil size={14} />} onClick={() => openEditIntervention(selectedIntervention)}>
                                 Editar
                             </Button>
@@ -391,13 +393,13 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                             <Button variant="secondary" size="sm" icon={<Pencil size={14} />} disabled title="Edição não disponível nesta instalação">
                                 Editar
                             </Button>
-                        )}
-                        {selectedIntervention.statut === '0' && (
+                        ))}
+                        {selectedIntervention.statut === '0' && canDo('validate', 'interventions') && (
                             <Button size="sm" icon={processingId ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} onClick={handleValidate} disabled={!!processingId}>
                                 Validar
                             </Button>
                         )}
-                        {selectedIntervention.statut === '0' && (
+                        {selectedIntervention.statut === '0' && canDo('delete', 'interventions') && (
                             <ConfirmDeleteButton
                                 withLabel
                                 itemLabel={selectedIntervention.ref}
@@ -477,9 +479,11 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                     <span>Duração total: <strong>{formatDuration(totalDuration)}</strong></span>
                                 </div>
                             </div>
+                            {canDo('edit', 'interventions') && (
                             <Button size="sm" icon={<Plus size={14} />} onClick={() => setIsAddLineModalOpen(true)}>
                                 Adicionar item
                             </Button>
+                            )}
                         </div>
                         <div className="space-y-2">
                             {selectedLines.length > 0 ? (
@@ -496,6 +500,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                             <div className="text-right">
                                                 <div className="font-bold text-slate-800 dark:text-white">{formatDuration(line.duration || 0)}</div>
                                             </div>
+                                            {canDo('delete', 'interventions') && (
                                             <button
                                                 className="text-slate-400 hover:text-red-500 transition-colors"
                                                 title="Remover item"
@@ -504,6 +509,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                                             >
                                                 <Trash2 size={14} />
                                             </button>
+                                            )}
                                         </div>
                                     </div>
                                 ))

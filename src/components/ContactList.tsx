@@ -22,7 +22,7 @@ const emptyForm = { firstname: '', lastname: '', email: '', phone_mobile: '', po
 type ContactForm = typeof emptyForm;
 
 const ContactList: React.FC<ContactListProps> = ({ onNavigate, onRefresh, initialItemId }) => {
-    const { config, refreshData } = useDolibarr();
+    const { config, refreshData, canDo } = useDolibarr();
     const { data: contactsData, refetch: refetchContacts } = useContacts(config);
     const contacts = contactsData || [];
     const { data: customersData } = useCustomers(config);
@@ -198,7 +198,9 @@ const ContactList: React.FC<ContactListProps> = ({ onNavigate, onRefresh, initia
                     actions={
                         <div className="flex items-center gap-2">
                             <ListToolbar controls={controls} searchPlaceholder="Buscar contato..." />
+                            {canDo('create', 'contacts') && (
                             <Button icon={<Plus size={18} />} onClick={() => { setCreateForm({ ...emptyForm }); setIsCreateModalOpen(true); }}>Novo</Button>
+                            )}
                         </div>
                     }
                 />
@@ -218,11 +220,13 @@ const ContactList: React.FC<ContactListProps> = ({ onNavigate, onRefresh, initia
                                     <div className="flex items-center gap-2 mb-1">
                                         <UserCircle size={16} className="text-indigo-400 shrink-0" />
                                         <h4 className="font-bold text-slate-800 dark:text-white truncate text-sm flex-1">{c.firstname} {c.lastname}</h4>
+                                        {canDo('delete', 'contacts') && (
                                         <ConfirmDeleteButton
                                             onDelete={() => DolibarrService.deleteContact(config, c.id)}
                                             onDeleted={() => { if (selectedContact?.id === c.id) setSelectedContact(null); refetchContacts(); }}
                                             itemLabel={`${c.firstname} ${c.lastname}`.trim()}
                                         />
+                                        )}
                                     </div>
                                     <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 ml-6 truncate">
                                         <Mail size={12} className="opacity-50" /> {c.email || 'Sem e-mail'}
@@ -244,13 +248,17 @@ const ContactList: React.FC<ContactListProps> = ({ onNavigate, onRefresh, initia
                                 onBack={() => setSelectedContact(null)}
                                 actions={
                                     <>
+                                        {canDo('edit', 'contacts') && (
                                         <Button variant="ghost" size="sm" icon={<Pencil size={18} />} onClick={() => openEdit(selectedContact)} title="Editar" />
+                                        )}
+                                        {canDo('delete', 'contacts') && (
                                         <ConfirmDeleteButton
                                             onDelete={() => DolibarrService.deleteContact(config, selectedContact.id)}
                                             onDeleted={() => { setSelectedContact(null); refetchContacts(); }}
                                             itemLabel={`${selectedContact.firstname} ${selectedContact.lastname}`.trim()}
                                             iconSize={18}
                                         />
+                                        )}
                                     </>
                                 }
                             />

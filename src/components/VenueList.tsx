@@ -168,7 +168,7 @@ const validateForm = (f: VenueFormData): VenueFormErrors => {
 // ---- Main component ----
 
 export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue, initialItemId }) => {
-    const { config } = useDolibarr();
+    const { config, canDo } = useDolibarr();
     const [venues, setVenues] = useState<VenuePartnership[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -659,6 +659,7 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue,
                 subtitle={`${venues.length} espaços cadastrados`}
                 actions={
                     <div className="flex items-center gap-2">
+                        {canDo('create', 'venues') && (
                         <Button
                             size="sm"
                             icon={<Plus size={16} />}
@@ -667,6 +668,7 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue,
                         >
                             Novo espaço
                         </Button>
+                        )}
                         <ListToolbar controls={controls} searchPlaceholder="Buscar espaços..." />
                     </div>
                 }
@@ -739,6 +741,7 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue,
                                 Usar no Simulador
                             </Button>
                         )}
+                        {canDo('edit', 'venues') && (
                         <Button
                             size="sm"
                             variant="outline"
@@ -748,6 +751,8 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue,
                         >
                             Editar
                         </Button>
+                        )}
+                        {canDo('delete', 'venues') && (
                         <Button
                             size="sm"
                             variant="danger"
@@ -757,6 +762,7 @@ export const VenueList: React.FC<VenueListProps> = ({ onNavigate, onSelectVenue,
                         >
                             Excluir
                         </Button>
+                        )}
                     </div>
                 }
                 tabs={

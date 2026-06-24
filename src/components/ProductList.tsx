@@ -129,7 +129,9 @@ const ProductDetail: React.FC<{
     boms: any[];
     suppliers: any[];
     onRestock: (supplierId: string) => void;
-}> = ({ product, onClose, onEdit, onDelete, boms, suppliers, onRestock }) => {
+    canEdit: boolean;
+    canDelete: boolean;
+}> = ({ product, onClose, onEdit, onDelete, boms, suppliers, onRestock, canEdit, canDelete }) => {
     const [activeTab, setActiveTab] = useState('overview');
 
     const productBOMs = boms.filter(b => String(b.product_id) === String(product.id));
@@ -143,7 +145,10 @@ const ProductDetail: React.FC<{
                 onBack={onClose}
                 actions={
                     <div className="flex items-center gap-2">
+                        {canEdit && (
                         <Button variant="ghost" icon={<Pencil size={18} />} onClick={onEdit} />
+                        )}
+                        {canDelete && (
                         <ConfirmDeleteButton
                             onDelete={onDelete}
                             itemLabel={product.label}
@@ -151,6 +156,7 @@ const ProductDetail: React.FC<{
                             className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"
                             stopPropagation={false}
                         />
+                        )}
                     </div>
                 }
                 tabs={
@@ -319,7 +325,7 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
     initialItemId,
     initialFilter
 }) => {
-    const { config } = useDolibarr();
+    const { config, canDo } = useDolibarr();
     const { data: productsData, isLoading } = useProducts(config);
     const products = productsData || [];
     const { data: categoriesData } = useCategories(config);
@@ -554,9 +560,11 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                                 {categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                             </select>
 
+                            {canDo('create', 'products') && (
                             <Button icon={<Plus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                                 Novo
                             </Button>
+                            )}
                         </div>
                     }
                     tabs={
@@ -580,7 +588,7 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                             icon={Package}
                             title="Nenhum produto encontrado"
                             description="Tente ajustar os filtros ou adicione um novo produto."
-                            action={<Button onClick={() => setIsCreateModalOpen(true)}>Adicionar Produto</Button>}
+                            action={canDo('create', 'products') ? <Button onClick={() => setIsCreateModalOpen(true)}>Adicionar Produto</Button> : undefined}
                         />
                     ) : (
                         <AutoSizer>
@@ -607,6 +615,8 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                             boms={boms}
                             suppliers={suppliers}
                             onRestock={openRestockModal}
+                            canEdit={canDo('edit', 'products')}
+                            canDelete={canDo('delete', 'products')}
                         />
                     )
                 }

@@ -38,7 +38,7 @@ interface SupplierInvoiceListProps {
 }
 
 const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate }) => {
-    const { config, refreshData } = useDolibarr();
+    const { config, refreshData, canDo } = useDolibarr();
     const confirm = useConfirm();
 
     // Data Hooks
@@ -396,12 +396,16 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                 actions={
                     <div className="flex items-center gap-2">
                         <ListToolbar controls={controls} searchPlaceholder="Buscar ref ou fornecedor..." />
+                        {canDo('create', 'supplier_invoices') && (
                         <Button icon={<Plus size={16} />} onClick={handleCreateClick}>
                             Nova Fatura
                         </Button>
+                        )}
+                        {canDo('create', 'supplier_invoices') && (
                         <Button variant="secondary" icon={<Receipt size={16} />} onClick={() => setIsScannerOpen(true)}>
                             Digitalizar
                         </Button>
+                        )}
                     </div>
                 }
                 tabs={
@@ -442,7 +446,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                     </div>
                                     <div className="flex items-center gap-2 text-xs text-slate-500">
                                         <span className="flex items-center"><Landmark size={12} className="mr-1" /> Fornecedor</span>
-                                        {inv.statut === '0' && (
+                                        {canDo('delete', 'supplier_invoices') && inv.statut === '0' && (
                                             <span onClick={(e) => e.stopPropagation()}>
                                                 <ConfirmDeleteButton
                                                     onDelete={() => DolibarrService.deleteSupplierInvoice(config, inv.id)}
@@ -502,12 +506,12 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                 }
                 actions={
                     <div className="flex items-center gap-2">
-                        {selectedInvoice.statut === '0' && (
+                        {canDo('edit', 'supplier_invoices') && selectedInvoice.statut === '0' && (
                             <Button variant="secondary" size="sm" icon={<FileEdit size={14} />} onClick={(e) => handleEditClick(e, selectedInvoice)}>
                                 Editar
                             </Button>
                         )}
-                        {selectedInvoice.statut === '0' && (
+                        {canDo('validate', 'supplier_invoices') && selectedInvoice.statut === '0' && (
                             <Button size="sm" icon={<CheckCircle size={14} />} onClick={async () => {
                                 if (!(await confirm('Confirma a validação desta fatura?'))) return;
                                 try {
@@ -547,7 +551,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                         <Button variant="ghost" size="sm" icon={<Eye size={16} />} onClick={() => setPreviewSupplierInvoice({ id: selectedInvoice.id, ref: selectedInvoice.ref })} title="Visualizar PDF" />
                         <Button variant="ghost" size="sm" icon={<Download size={16} />} onClick={async () => { try { await DolibarrService.downloadDocument('supplier_invoice', selectedInvoice.id); } catch { toast.error('Erro ao baixar PDF'); } }} title="Baixar PDF" />
                         <Button variant="ghost" size="sm" icon={<ExternalLink size={16} />} onClick={() => openInDolibarr(selectedInvoice.id)} title="Abrir no Dolibarr" />
-                        {selectedInvoice.statut === '0' && (
+                        {canDo('delete', 'supplier_invoices') && selectedInvoice.statut === '0' && (
                             <ConfirmDeleteButton
                                 onDelete={() => DolibarrService.deleteSupplierInvoice(config, selectedInvoice.id)}
                                 onDeleted={() => { setSelectedInvoice(null); refetchInvoices(); }}

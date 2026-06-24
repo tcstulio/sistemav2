@@ -37,7 +37,7 @@ interface SupplierListProps {
 }
 
 export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefresh }) => {
-    const { config } = useDolibarr();
+    const { config, canDo } = useDolibarr();
     const { data: suppliersData, refetch: refetchSuppliers } = useSuppliers(config);
     const suppliers = suppliersData || [];
     const { data: productsData } = useProducts(config);
@@ -523,9 +523,11 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                         <option key={c.id} value={c.id}>{c.label}</option>
                                     ))}
                             </select>
+                            {canDo('create', 'suppliers') && (
                             <Button icon={<PlusCircle size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                                 Novo Fornecedor
                             </Button>
+                            )}
                         </div>
                     }
                 />
@@ -543,7 +545,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                 icon={Truck}
                                 title="Nenhum fornecedor encontrado"
                                 description="Tente ajustar a busca ou adicione um novo fornecedor."
-                                action={<Button onClick={() => setIsCreateModalOpen(true)}>Novo Fornecedor</Button>}
+                                action={canDo('create', 'suppliers') ? <Button onClick={() => setIsCreateModalOpen(true)}>Novo Fornecedor</Button> : undefined}
                             />
                         ) : (
                             <div className="h-full">
@@ -568,11 +570,13 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                         >
                                                             <div className="flex items-start justify-between gap-2">
                                                                 <h4 className="font-bold text-slate-800 dark:text-white truncate text-sm flex-1">{sup.name}</h4>
+                                                                {canDo('delete', 'suppliers') && (
                                                                 <ConfirmDeleteButton
                                                                     onDelete={() => DolibarrService.deleteThirdParty(config, sup.id)}
                                                                     onDeleted={() => { if (selectedSupplier?.id === sup.id) setSelectedSupplier(null); refetchSuppliers(); }}
                                                                     itemLabel={sup.name}
                                                                 />
+                                                                )}
                                                             </div>
                                                             <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 truncate">{sup.email}</div>
                                                             {sup.phone && <div className="text-xs text-slate-500 mt-1 flex items-center gap-1"><Phone size={12} /> {sup.phone}</div>}
@@ -596,13 +600,17 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                 onBack={() => setSelectedSupplier(null)}
                                 actions={
                                     <div className="flex items-center gap-2">
+                                        {canDo('edit', 'suppliers') && (
                                         <Button variant="ghost" size="sm" icon={<Pencil size={18} />} onClick={handleEditClick} title="Editar" />
+                                        )}
+                                        {canDo('delete', 'suppliers') && (
                                         <ConfirmDeleteButton
                                             onDelete={() => DolibarrService.deleteThirdParty(config, selectedSupplier.id)}
                                             onDeleted={() => { setSelectedSupplier(null); refetchSuppliers(); }}
                                             itemLabel={selectedSupplier.name}
                                             iconSize={18}
                                         />
+                                        )}
                                         <Button variant="ghost" size="sm" icon={<X size={18} />} onClick={() => setSelectedSupplier(null)} className="hidden lg:flex" />
                                     </div>
                                 }
@@ -679,7 +687,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                         </div>
 
                                                         <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-end gap-2">
-                                                            {order.statut === '0' && (
+                                                            {order.statut === '0' && canDo('validate', 'suppliers') && (
                                                                 <Button
                                                                     size="sm"
                                                                     variant="ghost"

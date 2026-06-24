@@ -82,7 +82,7 @@ const CategoryRow: React.FC<{
 // ============================================
 
 const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) => {
-    const { config } = useDolibarr();
+    const { config, canDo } = useDolibarr();
     const { data: categoriesData, isLoading } = useCategories(config);
     const categories = categoriesData || [];
 
@@ -334,9 +334,11 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                     actions={
                         <div className="flex items-center gap-2">
                             <ListToolbar controls={controls} searchPlaceholder="Buscar..." />
+                            {canDo('create', 'categories') && (
                             <Button icon={<Plus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
                                 Nova
                             </Button>
+                            )}
                         </div>
                     }
                     tabs={
@@ -365,7 +367,7 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                             icon={Tag}
                             title="Nenhuma categoria encontrada"
                             description="Tente ajustar a busca ou filtros."
-                            action={<Button onClick={() => setIsCreateModalOpen(true)}>Adicionar Categoria</Button>}
+                            action={canDo('create', 'categories') ? <Button onClick={() => setIsCreateModalOpen(true)}>Adicionar Categoria</Button> : undefined}
                         />
                     ) : (
                         <AutoSizer>
@@ -391,6 +393,7 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                                 onBack={() => setSelectedCategory(null)}
                                 actions={
                                     <>
+                                        {canDo('edit', 'categories') && (
                                         <Button
                                             variant="ghost"
                                             size="sm"
@@ -401,6 +404,8 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                                             }}
                                             title="Editar"
                                         />
+                                        )}
+                                        {canDo('delete', 'categories') && (
                                         <ConfirmDeleteButton
                                             onDelete={() => handleDelete(selectedCategory.id)}
                                             itemLabel={selectedCategory.label}
@@ -409,6 +414,7 @@ const CategoryList: React.FC<CategoryListProps> = ({ onRefresh, onNavigate }) =>
                                             className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"
                                             stopPropagation={false}
                                         />
+                                        )}
                                     </>
                                 }
                             />

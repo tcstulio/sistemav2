@@ -48,7 +48,7 @@ interface ProposalListProps {
 }
 
 const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, initialItemId }) => {
-    const { config } = useDolibarr();
+    const { config, canDo } = useDolibarr();
     const { data: proposalsData, refetch: refetchProposals } = useProposals(config);
     const proposals = proposalsData || [];
     const { data: customersData } = useCustomers(config);
@@ -531,8 +531,11 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                         </div>
                         {/* Actions: always visible on touch/mobile, hover-only on md+ */}
                         <div className="flex items-center md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                            {canDo('edit', 'proposals') && (
                             <Button variant="ghost" size="sm" icon={<Edit size={18} />} onClick={(e) => { e.stopPropagation(); handleOpenEdit(prop); }} />
+                            )}
                             <Button variant="ghost" size="sm" icon={<Copy size={18} />} onClick={(e) => { e.stopPropagation(); handleDuplicate(prop.id); }} title="Duplicar" aria-label="Duplicar" loading={processingId === prop.id} disabled={!!processingId} />
+                            {canDo('delete', 'proposals') && (
                             <ConfirmDeleteButton
                                 onDelete={() => DolibarrService.deleteProposal(config, prop.id)}
                                 onDeleted={() => {
@@ -542,6 +545,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                                 itemLabel={prop.ref}
                                 iconSize={18}
                             />
+                            )}
                         </div>
                         <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
                         <Button variant="ghost" size="sm" icon={<Scale size={18} />} onClick={(e) => handleAudit(e, prop)} className="!text-violet-600" />
@@ -566,9 +570,11 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                     <div className="flex flex-wrap items-center gap-2">
                         <ListToolbar controls={controls} searchPlaceholder="Buscar ref ou cliente..." />
                         <div className="flex items-center gap-2">
+                            {canDo('create', 'proposals') && (
                             <Button variant="primary" icon={<Plus size={18} />} onClick={handleOpenCreate}>
                                 Nova
                             </Button>
+                            )}
                             <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1 shrink-0">
                                 <button
                                     onClick={() => setViewMode('list')}
@@ -649,12 +655,14 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                                             <div className="flex justify-between items-end mt-3">
                                                 <span className="font-bold text-sm">{formatCurrency(prop.total_ttc)}</span>
                                                 <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                                                    {canDo('edit', 'proposals') && (
                                                     <Button
                                                         variant="ghost"
                                                         size="sm"
                                                         icon={<Edit size={14} />}
                                                         onClick={(e) => { e.stopPropagation(); handleOpenEdit(prop); }}
                                                     />
+                                                    )}
                                                 </div>
                                             </div>
                                         </Card>
@@ -684,12 +692,15 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                     <div className="flex items-center gap-2">
                         {(selectedProposal.statut === '0' || selectedProposal.statut === '1') && (
                             <>
+                                {canDo('edit', 'proposals') && (
                                 <Button variant="secondary" size="sm" icon={<Edit size={16} />} onClick={() => handleOpenEdit(selectedProposal)}>
                                     Editar
                                 </Button>
+                                )}
                                 <Button variant="secondary" size="sm" icon={<Copy size={16} />} onClick={() => handleDuplicate(selectedProposal.id)} title="Duplicar" aria-label="Duplicar" loading={processingId === selectedProposal.id} disabled={!!processingId}>
                                     Duplicar
                                 </Button>
+                                {canDo('delete', 'proposals') && (
                                 <ConfirmDeleteButton
                                     withLabel
                                     onDelete={() => DolibarrService.deleteProposal(config, selectedProposal.id)}
@@ -697,6 +708,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                                     itemLabel={selectedProposal.ref}
                                     className="px-2 py-1"
                                 />
+                                )}
                             </>
                         )}
                     </div>
@@ -720,6 +732,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                             >
                                 Recusar
                             </Button>
+                            {canDo('validate', 'proposals') && (
                             <Button
                                 variant="primary"
                                 size="sm"
@@ -731,6 +744,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                             >
                                 Assinar / Aceitar
                             </Button>
+                            )}
                         </div>
                     </div>
                 )}
