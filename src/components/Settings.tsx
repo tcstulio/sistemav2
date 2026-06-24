@@ -327,7 +327,22 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                 {/* Painel configurável (#111) — admin define padrão; usuário personaliza */}
                 {settingsTab === 'profile' && <DashboardConfigEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
-                {/* Permissões de tela por pessoa/grupo (#112) — só admin */}
+                {/* Central Única de Permissões — ponto de entrada destacado (Fase 1) */}
+                {isAdmin && settingsTab === 'admin' && (
+                    <Card className="mb-4">
+                        <div className="flex items-center justify-between gap-4 flex-wrap">
+                            <div>
+                                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-200">Central de Permissões</h3>
+                                <p className="text-sm text-slate-500">Configure o que cada grupo/pessoa vê e faz — matriz por tela, busca e auditoria, num só lugar.</p>
+                            </div>
+                            <Link to="/permissions" className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-${localConfig.themeColor}-600 hover:bg-${localConfig.themeColor}-700 transition-colors whitespace-nowrap`}>
+                                Abrir Central de Permissões
+                            </Link>
+                        </div>
+                    </Card>
+                )}
+
+                {/* Permissões de tela por pessoa/grupo (#112) — editor legado; será aposentado pela Central */}
                 {isAdmin && settingsTab === 'admin' && <ScreenPermissionsEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
                 {/* Notificacoes de tarefas (#348) — so admin */}

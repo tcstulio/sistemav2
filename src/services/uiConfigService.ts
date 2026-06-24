@@ -31,6 +31,13 @@ export interface UiConfig {
     taskNotifications?: TaskNotificationsConfig;
     taskNotificationsExternalEnabled?: boolean;
     taskAutomation?: TaskAutomationConfig;
+    version?: number; // concorrência otimista (Central de Permissões)
+}
+
+export type ScreenRuleDelta = { hidden: string[]; allowed: string[] };
+export interface ScreenPermsDelta {
+    groups?: Record<string, ScreenRuleDelta>;
+    users?: Record<string, ScreenRuleDelta>;
 }
 
 const API_URL = '/api/ui-config';
@@ -55,6 +62,26 @@ export async function getUiConfig(): Promise<UiConfig | null> {
 export async function updateUiConfig(patch: Partial<UiConfig>): Promise<UiConfig> {
     const res = await axios.put(API_URL, patch, getAuthHeaders());
     return res.data as UiConfig;
+}
+
+/**
+ * MERGE por-entidade do screenPermissions (Central de Permissões). Envia só as entidades
+ * alteradas (delta) + a versão lida. Em 409 (alguém salvou no meio), lança um erro com
+ * { conflict:true, config } p/ a UI recarregar e reaplicar.
+ */
+export async function patchScreenPermissions(delta: ScreenPermsDelta, expectedVersion?: number): Promise<UiConfig> {
+    try {
+        const res = await axios.patch(`${API_URL}/screen-permissions`, { delta, expectedVersion }, getAuthHeaders());
+        return res.data as UiConfig;
+    } catch (e: any) {
+        if (e?.response?.status === 409) {
+            const err: any = new Error(e.response.data?.message || 'Configuração desatualizada.');
+            err.conflict = true;
+            err.config = e.response.data?.config;
+            throw err;
+        }
+        throw e;
+    }
 }
 
 export interface UserMissingPhone {

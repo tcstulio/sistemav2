@@ -56,7 +56,9 @@ app.use(helmet({
 const allowedOrigins = [
     'https://app.coolgroove.com.br',
     'https://sistema.coolgroove.com.br',
-    ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000', 'http://localhost:5173'] : [])
+    // :3003 é a porta REAL do frontend dev (vite). Sem ela, PATCH/PUT/login (preflight CORS)
+    // do localhost:3003 eram rejeitados (500). :3000/:5173 mantidos por compatibilidade.
+    ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3003', 'http://localhost:3000', 'http://localhost:5173'] : [])
 ];
 
 app.use(cors({
