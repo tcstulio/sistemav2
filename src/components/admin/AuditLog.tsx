@@ -3,8 +3,9 @@ import { History, RefreshCw, Loader2, AlertTriangle } from 'lucide-react';
 import { getAuditLog, type AdminAuditEntry } from '../../services/adminPermissionsService';
 
 const ACTION_LABELS: Record<string, string> = {
-    'user.permissions.update': 'Permissões de usuário',
+    'user.permissions.update': 'Permissões do agente',
     'ui-config.update': 'Config de UI',
+    'ui-config.screen-permissions': 'Permissões de tela',
 };
 
 function fmtTs(ts: number): string {
