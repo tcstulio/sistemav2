@@ -42,6 +42,9 @@ interface DolibarrContextType {
   isSyncing: boolean;
   currentUser?: DolibarrUser | null;
   canAccess: (module: string) => boolean;
+  // FAZER: pode executar a ação (Novo/Editar/Excluir/Validar) nesta tela? Gateado pelos
+  // direitos de escrita do Dolibarr (preview-aware). Default seguro: não bloqueia se não mapeado.
+  canDo: (action: 'create' | 'edit' | 'delete' | 'validate', screen: string) => boolean;
   logout: () => void;
   isInitialized: boolean;
   previewTarget: PreviewTarget | null;
@@ -213,6 +216,50 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
       perms: orgScreenPerms,
     });
   }, [config, currentUser, userGroupIds, orgScreenPerms, computeBaseAccess, previewTarget]);
+
+  // FAZER (#540) — pode executar a ação na tela? Gateia botões pelos direitos de ESCRITA do
+  // Dolibarr (creer = criar/editar, supprimer = excluir, valider = validar). Preview-aware:
+  // usa o alvo do "ver como". Default SEGURO: tela/ação sem mapeamento NÃO é bloqueada.
+  const canDo = useCallback((action: 'create' | 'edit' | 'delete' | 'validate', screen: string): boolean => {
+    if (!config) return false;
+    const inPreview = !!previewTarget && previewTarget.type === 'user';
+    const ident: any = inPreview ? { admin: previewTarget!.admin, rights: previewTarget!.rights } : currentUser;
+    if (!ident) return false;
+    const isAdminEff = ident.admin === 1 || ident.admin === '1' || ident.admin === true;
+    if (isAdminEff) return true;
+    if (!ident.rights) return true; // rights não carregados: não bloqueia (evita esconder por engano)
+    const WRITE: Record<string, { module: string; create?: string; delete?: string; validate?: string }> = {
+      customers: { module: 'societe', create: 'creer', delete: 'supprimer' },
+      contacts: { module: 'societe', create: 'contact.creer', delete: 'contact.supprimer' },
+      suppliers: { module: 'societe', create: 'creer', delete: 'supprimer' },
+      proposals: { module: 'propal', create: 'creer', delete: 'supprimer', validate: 'valider' },
+      orders: { module: 'commande', create: 'creer', delete: 'supprimer', validate: 'valider' },
+      invoices: { module: 'facture', create: 'creer', delete: 'supprimer', validate: 'valider' },
+      supplier_invoices: { module: 'fournisseur', create: 'facture.creer', delete: 'facture.supprimer' },
+      supplier_orders: { module: 'fournisseur', create: 'commande.creer', delete: 'commande.supprimer' },
+      projects: { module: 'projet', create: 'creer', delete: 'supprimer' },
+      tasks: { module: 'projet', create: 'creer', delete: 'supprimer' },
+      products: { module: 'produit', create: 'creer', delete: 'supprimer' },
+      services: { module: 'produit', create: 'creer', delete: 'supprimer' },
+      tickets: { module: 'ticket', create: 'creer', delete: 'supprimer' },
+      interventions: { module: 'ficheinter', create: 'creer', delete: 'supprimer' },
+      contracts: { module: 'contrat', create: 'creer', delete: 'supprimer' },
+      venues: { module: 'societe', create: 'creer', delete: 'supprimer' },
+      categories: { module: 'categorie', create: 'creer', delete: 'supprimer' },
+    };
+    const map = WRITE[screen];
+    if (!map) return true; // tela não mapeada: não bloqueia
+    const perm = action === 'edit' ? map.create : map[action]; // Dolibarr usa 'creer' p/ criar+editar
+    if (!perm) return true; // ação não suportada nessa tela: não bloqueia
+    const moduleRights: any = ident.rights[map.module];
+    if (!moduleRights) return false;
+    let cur: any = moduleRights; // resolve perm aninhado (ex.: contact.creer, facture.creer)
+    for (const part of perm.split('.')) {
+      if (cur && typeof cur === 'object' && cur[part] !== undefined) cur = cur[part];
+      else return false;
+    }
+    return cur === '1' || cur === 1 || cur === true;
+  }, [config, currentUser, previewTarget]);
 
   // 2. Data Hook (Reduced to Sync & Utility)
   const {
@@ -413,7 +460,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const contextValue = useMemo(() => ({
     config, setConfig,
-    currentUser, canAccess, logout,
+    currentUser, canAccess, canDo, logout,
     isLoading, error, isSyncing, isSyncPaused, toggleSyncPause,
     notifications, setNotifications,
     refreshData,
@@ -421,7 +468,7 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     previewTarget, setPreviewTarget,
     orgScreenPerms, userGroupIds,
   }), [
-    config, setConfig, currentUser, canAccess, logout,
+    config, setConfig, currentUser, canAccess, canDo, logout,
     isLoading, error, isSyncing, isSyncPaused, toggleSyncPause,
     notifications, refreshData, isInitialized,
     previewTarget, orgScreenPerms, userGroupIds,
