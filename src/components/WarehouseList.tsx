@@ -86,7 +86,9 @@ const WarehouseRow: React.FC<{
     onEdit: (e: React.MouseEvent) => void;
     onDelete: (e: React.MouseEvent) => void;
     onEnterChildren: (e: React.MouseEvent) => void;
-}> = ({ warehouse, isSelected, hasChildren, onSelect, onEdit, onDelete, onEnterChildren }) => (
+}> = ({ warehouse, isSelected, hasChildren, onSelect, onEdit, onDelete, onEnterChildren }) => {
+    const { canDo } = useDolibarr();
+    return (
     <div
         role="button"
         tabIndex={0}
@@ -129,22 +131,26 @@ const WarehouseRow: React.FC<{
                 )}
                 <div className="flex items-center gap-2 mt-2">
                     {/* Edit / Delete actions */}
-                    <button
-                        onClick={onEdit}
-                        className="p-1.5 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
-                        data-testid={`edit-btn-${warehouse.id}`}
-                        title="Editar armazém"
-                    >
-                        <Edit2 size={14} />
-                    </button>
-                    <button
-                        onClick={onDelete}
-                        className="p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                        data-testid={`delete-btn-${warehouse.id}`}
-                        title="Excluir armazém"
-                    >
-                        <Trash2 size={14} />
-                    </button>
+                    {canDo('edit', 'warehouses') && (
+                        <button
+                            onClick={onEdit}
+                            className="p-1.5 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+                            data-testid={`edit-btn-${warehouse.id}`}
+                            title="Editar armazém"
+                        >
+                            <Edit2 size={14} />
+                        </button>
+                    )}
+                    {canDo('delete', 'warehouses') && (
+                        <button
+                            onClick={onDelete}
+                            className="p-1.5 text-slate-400 hover:text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                            data-testid={`delete-btn-${warehouse.id}`}
+                            title="Excluir armazém"
+                        >
+                            <Trash2 size={14} />
+                        </button>
+                    )}
                     {/* Navigate into children */}
                     {hasChildren && (
                         <button
@@ -160,7 +166,8 @@ const WarehouseRow: React.FC<{
             </div>
         </div>
     </div>
-);
+    );
+};
 
 // ---------------------------------------------------------------------------
 // Detail panel: items (product + quantity) in the selected warehouse
@@ -342,7 +349,7 @@ const HierarchyBreadcrumb: React.FC<{
 // Main component
 // ---------------------------------------------------------------------------
 const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId }) => {
-    const { config, refreshData } = useDolibarr();
+    const { config, refreshData, canDo } = useDolibarr();
     const { data: warehouses = [], isLoading: isLoadingWarehouses } = useWarehouses(config || null, !!config);
     const { data: products = [] } = useProducts(config || null, !!config);
     const { data: stockMovements = [], isLoading: isLoadingMovements } = useStockMovements(config || null, !!config);
@@ -775,9 +782,11 @@ const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId
                             <button onClick={() => setIsCorrectionModalOpen(true)} className="flex items-center gap-1.5 px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors" data-testid="btn-adjust">
                                 <Sliders size={16} /> Ajustar
                             </button>
-                            <button onClick={() => openWarehouseModal()} className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors" data-testid="btn-new-warehouse">
-                                <Plus size={16} /> Armazém
-                            </button>
+                            {canDo('create', 'warehouses') && (
+                                <button onClick={() => openWarehouseModal()} className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors" data-testid="btn-new-warehouse">
+                                    <Plus size={16} /> Armazém
+                                </button>
+                            )}
                         </>
                     }
                     tabs={

@@ -35,7 +35,7 @@ interface SupplierProposalListProps {
 
 const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate, onRefresh, initialItemId }) => {
     const navigate = useNavigate();
-    const { config } = useDolibarr();
+    const { config, canDo } = useDolibarr();
     const { data: proposalsData, isRefetching: isRefetchingProposals, refetch: refetchProposals } = useSupplierProposals(config);
     const proposals = proposalsData || [];
     const { data: suppliersData } = useSuppliers(config);
@@ -433,9 +433,11 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                         >
                             Assistente IA
                         </Button>
+                        {canDo('create', 'supplier_proposals') && (
                         <Button icon={<Plus size={16} />} onClick={handleOpenCreate}>
                             Nova Solicitação
                         </Button>
+                        )}
                     </div>
                 }
                 tabs={
@@ -473,7 +475,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                             <span className="text-sm font-bold text-slate-900 dark:text-white">
                                 {formatCurrency(proposal.total_ht)}
                             </span>
-                            {(proposal.statut === '0' || proposal.statut === '1') && (
+                            {canDo('delete', 'supplier_proposals') && (proposal.statut === '0' || proposal.statut === '1') && (
                                 <ConfirmDeleteButton
                                     onDelete={() => DolibarrService.deleteSupplierProposal(config, proposal.id)}
                                     onDeleted={() => { if (selectedProposal?.id === proposal.id) setSelectedProposal(null); refetchProposals(); }}
@@ -507,7 +509,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                         icon={FileText}
                         title="Nenhuma solicitação encontrada"
                         description="Tente ajustar os filtros ou crie uma nova solicitação."
-                        action={<Button onClick={handleOpenCreate} icon={<Plus size={16} />}>Nova Solicitação</Button>}
+                        action={canDo('create', 'supplier_proposals') ? <Button onClick={handleOpenCreate} icon={<Plus size={16} />}>Nova Solicitação</Button> : undefined}
                     />
                 </div>
             ) : (
@@ -551,12 +553,15 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                 <div className="flex flex-wrap gap-2 justify-end">
                     {(selectedProposal.statut === '0' || selectedProposal.statut === '1') && (
                         <>
+                            {canDo('edit', 'supplier_proposals') && (
                             <button
                                 onClick={() => handleOpenEdit(selectedProposal)}
                                 className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-600 hover:bg-amber-100 rounded-lg text-sm font-medium transition-colors border border-amber-200"
                             >
                                 <Edit size={16} /> Editar
                             </button>
+                            )}
+                            {canDo('delete', 'supplier_proposals') && (
                             <div className="flex items-center px-3 py-1.5 bg-red-50 hover:bg-red-100 rounded-lg text-red-600 transition-colors border border-red-200">
                                 <ConfirmDeleteButton
                                     onDelete={() => DolibarrService.deleteSupplierProposal(config, selectedProposal.id)}
@@ -566,6 +571,7 @@ const SupplierProposalList: React.FC<SupplierProposalListProps> = ({ onNavigate,
                                     className="!text-red-600"
                                 />
                             </div>
+                            )}
                         </>
                     )}
                 </div>

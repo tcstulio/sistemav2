@@ -70,8 +70,11 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
         setIsPreviewMenuOpen(false);
     };
 
-    const selectPreviewGroup = (group: { id: string; name: string }) => {
-        const target: PreviewTarget = { type: 'group', id: group.id, name: group.name, groupIds: [group.id] };
+    const selectPreviewGroup = async (group: { id: string; name: string }) => {
+        let rights: any;
+        try { if (config) rights = await DolibarrService.getGroupRights(config, group.id); } catch {}
+        // grupo nunca é admin; rights montados via custom_sync (REST não expõe direitos de grupo).
+        const target: PreviewTarget = { type: 'group', id: group.id, name: group.name, groupIds: [group.id], rights, admin: '0' };
         setPreviewTarget(target);
         setIsPreviewMenuOpen(false);
     };

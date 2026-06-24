@@ -700,7 +700,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                                     Validar
                                                                 </Button>
                                                             )}
-                                                            {order.statut === '1' && (
+                                                            {order.statut === '1' && canDo('approve', 'supplier_orders') && (
                                                                 <Button
                                                                     size="sm"
                                                                     variant="ghost"
@@ -713,7 +713,7 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                                                                     Aprovar
                                                                 </Button>
                                                             )}
-                                                            {order.statut === '2' && (
+                                                            {order.statut === '2' && canDo('receive', 'supplier_orders') && (
                                                                 <Button
                                                                     size="sm"
                                                                     variant="ghost"

@@ -1,5 +1,5 @@
 import { DolibarrConfig, BankAccount, Contact, Invoice, SupplierInvoice, BankLine, Candidate, DolibarrUser, ExpenseReport, RecruitmentJobPosition, LeaveRequest, UserGroup } from '../../types';
-import { fetchList, fetchPage, request, getHeaders, sanitizeUrl } from './core';
+import { fetchList, fetchPage, request, getHeaders, sanitizeUrl, fetchDelta } from './core';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('HRAdmin');
@@ -453,6 +453,33 @@ export const getUserById = async (config: DolibarrConfig, userId: string): Promi
         } as DolibarrUser;
     } catch (e) {
         log.error('getUserById failed', e);
+        return null;
+    }
+};
+
+// Direitos REAIS de um GRUPO. O REST não expõe (group.rights vem vazio); então monta a partir
+// do custom_sync.php: group_rights (grupo->right_id) + permissions (rights_def: right_id->module.perm),
+// no MESMO shape de user.rights — p/ o "ver como" grupo refletir o que o grupo realmente VÊ/FAZ.
+export const getGroupRights = async (config: DolibarrConfig, groupId: string): Promise<any> => {
+    try {
+        const [links, defs] = await Promise.all([
+            fetchDelta(config, 'group_rights', 0),
+            fetchDelta(config, 'permissions', 0),
+        ]);
+        const defById = new Map((defs || []).map((d: any) => [String(d.id), d]));
+        const rights: any = {};
+        for (const l of (links || [])) {
+            if (String(l.fk_usergroup) !== String(groupId)) continue;
+            const d: any = defById.get(String(l.fk_id));
+            if (!d || !d.module || !d.perms) continue;
+            const mod = d.module, perm = d.perms, sub = d.subperms;
+            rights[mod] = rights[mod] || {};
+            if (sub) { if (typeof rights[mod][perm] !== 'object') rights[mod][perm] = {}; rights[mod][perm][sub] = 1; }
+            else if (typeof rights[mod][perm] !== 'object') rights[mod][perm] = 1;
+        }
+        return rights;
+    } catch (e) {
+        log.error('getGroupRights failed', e);
         return null;
     }
 };

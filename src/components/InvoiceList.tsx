@@ -671,6 +671,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                         ))}
                         {selectedInvoice.statut === '1' && selectedInvoice.type !== '2' && (
                             <>
+                                {canDo('pay', 'invoices') && (
                                 <Button
                                     variant="primary"
                                     size="sm"
@@ -680,6 +681,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                 >
                                     Pagar
                                 </Button>
+                                )}
                                 <Button
                                     variant="outline"
                                     size="sm"
