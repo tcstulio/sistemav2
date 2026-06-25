@@ -11,9 +11,11 @@ export const useConversations = (sessionId: string = 'default') => {
     const { socket } = useWhatsAppContext();
     const [conversations, setConversations] = useState<WhatsAppConversation[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     const fetchConversations = useCallback(async () => {
         setLoading(true);
+        setError(null);
         try {
             // Support 'all' -> fetch for all connected sessions?
             // For now, let's stick to handling specific session or default.
@@ -39,6 +41,7 @@ export const useConversations = (sessionId: string = 'default') => {
             }
         } catch (error) {
             log.error('Failed to fetch', error);
+            setError('Não foi possível carregar as conversas.');
         } finally {
             setLoading(false);
         }
@@ -111,6 +114,7 @@ export const useConversations = (sessionId: string = 'default') => {
     return {
         conversations,
         loading,
+        error,
         refreshConversations: fetchConversations
     };
 };

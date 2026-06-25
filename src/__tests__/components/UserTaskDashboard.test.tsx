@@ -222,7 +222,41 @@ describe('UserTaskDashboard', () => {
         });
     });
 
-    // ── Empty state ──────────────────────────────────────────────────────
+    // ── Estado de erro (#829) ──────────────────────────────────────────────
+    describe('Estado de erro (#829)', () => {
+        it('exibe ErrorState quando useTasks falha (isError=true)', () => {
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({
+                data: undefined,
+                refetch: mockRefetchTasks,
+                isError: true,
+                error: new Error('Falha de rede ao buscar tarefas'),
+            });
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.getByText('Falha de rede ao buscar tarefas')).toBeInTheDocument();
+            expect(screen.getByText('Ocorreu um erro')).toBeInTheDocument();
+        });
+
+        it('botão "Tentar novamente" dispara refetch do hook', async () => {
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({
+                data: undefined,
+                refetch: mockRefetchTasks,
+                isError: true,
+                error: new Error('Falhou'),
+            });
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            fireEvent.click(screen.getByRole('button', { name: /tentar novamente/i }));
+
+            await waitFor(() => {
+                expect(mockRefetchTasks).toHaveBeenCalled();
+            });
+        });
+    });
+
+    // ── Estado vazio ──────────────────────────────────────────────────────
     describe('Estado vazio', () => {
         it('deve exibir botão Nova Tarefa no header e no empty state', () => {
             render(<UserTaskDashboard onNavigate={mockOnNavigate} />);

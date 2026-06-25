@@ -23,7 +23,9 @@ import {
     Tab,
     EmptyState,
     Card,
-    MasterDetailLayout
+    MasterDetailLayout,
+    Spinner,
+    ErrorState
 } from './ui';
 
 interface AgendaViewProps {
@@ -54,13 +56,23 @@ interface EncapsulatedGroup {
 const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     const { config, refreshData } = useDolibarr();
 
-    const { data: events = [], isLoading: isLoadingEvents } = useEvents(config || null, !!config);
-    const { data: tasks = [], isLoading: isLoadingTasks } = useTasks(config || null, !!config);
-    const { data: interventions = [], isLoading: isLoadingInterventions } = useInterventions(config || null, !!config);
-    const { data: projects = [], isLoading: isLoadingProjects } = useProjects(config || null, !!config);
+    const { data: events = [], isLoading: isLoadingEvents, isError: isErrorEvents, error: errorEvents, refetch: refetchEvents } = useEvents(config || null, !!config);
+    const { data: tasks = [], isLoading: isLoadingTasks, isError: isErrorTasks, error: errorTasks, refetch: refetchTasks } = useTasks(config || null, !!config);
+    const { data: interventions = [], isLoading: isLoadingInterventions, isError: isErrorInterventions, error: errorInterventions, refetch: refetchInterventions } = useInterventions(config || null, !!config);
+    const { data: projects = [], isLoading: isLoadingProjects, isError: isErrorProjects, error: errorProjects, refetch: refetchProjects } = useProjects(config || null, !!config);
     const { data: customers = [] } = useCustomers(config || null, !!config);
 
     const isLoading = isLoadingEvents || isLoadingTasks || isLoadingInterventions || isLoadingProjects;
+    // Erro agregado dos hooks principais de agenda (#829).
+    const hookError = errorEvents || errorTasks || errorInterventions || errorProjects;
+    const isHookError = isErrorEvents || isErrorTasks || isErrorInterventions || isErrorProjects;
+
+    const handleRetryAgenda = () => {
+        refetchEvents();
+        refetchTasks();
+        refetchInterventions();
+        refetchProjects();
+    };
 
     const [filterType, setFilterType] = useState<'all' | 'event' | 'task' | 'deadline'>('all');
     const [showSystemEvents, setShowSystemEvents] = useState(false);
@@ -375,7 +387,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     useEffect(() => {
         if (viewMode === 'list' && groupedList.length > 0 && !hasInitializedScroll && !selectedItemId) {
             // Wait for render
-            setTimeout(() => {
+            const timer = setTimeout(() => {
                 // Find Today element in DOM
                 const today = new Date();
                 today.setHours(0, 0, 0, 0);
@@ -392,6 +404,8 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                     }
                 }
             }, 300);
+            // Limpa o timer ao desmontar/re-executar evitando scroll pendurado (#829).
+            return () => clearTimeout(timer);
         }
     }, [visibleRange, viewMode, groupedList]);
 
@@ -510,6 +524,28 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                 <p>Carregando configurações...</p>
             </div>
         )
+    }
+
+    // Erro em algum hook principal -> card de erro com retry (#829).
+    if (isHookError) {
+        const errorMessage =
+            (hookError instanceof Error ? hookError.message : (hookError ? String(hookError) : '')) ||
+            'Não foi possível carregar a agenda.';
+        return (
+            <div className="flex flex-col h-full items-center justify-center p-8 bg-slate-50 dark:bg-slate-950">
+                <ErrorState message={errorMessage} onRetry={handleRetryAgenda} />
+            </div>
+        );
+    }
+
+    // Primeira carga (sem dados ainda) -> spinner centralizado (#829).
+    if (isLoading && consolidatedItems.length === 0) {
+        return (
+            <div className="flex flex-col h-full items-center justify-center gap-3 bg-slate-50 dark:bg-slate-950 text-slate-400">
+                <Spinner size="lg" />
+                <p className="text-sm font-medium">Carregando agenda...</p>
+            </div>
+        );
     }
 
     // Render the List Content (The 'Left' side of MasterDetail)

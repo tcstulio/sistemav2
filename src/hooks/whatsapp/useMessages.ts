@@ -13,6 +13,7 @@ export const useMessages = (sessionId: string, chatId: string | null) => {
     const { config } = useDolibarr();
     const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const chatIdRef = useRef(chatId);
 
     useEffect(() => { chatIdRef.current = chatId; }, [chatId]);
@@ -20,12 +21,14 @@ export const useMessages = (sessionId: string, chatId: string | null) => {
     const fetchMessages = useCallback(async () => {
         if (!chatId || !sessionId) return;
         setLoading(true);
+        setError(null);
         try {
             const data = await WhatsAppService.getMessages(chatId, sessionId);
             // Deduplication on fetch? Usually not needed if backend returns unique.
             setMessages(data || []);
         } catch (error) {
             log.error('Failed to fetch', error);
+            setError('Não foi possível carregar as mensagens.');
             toast.error('Erro ao carregar mensagens');
         } finally {
             setLoading(false);
@@ -164,6 +167,8 @@ export const useMessages = (sessionId: string, chatId: string | null) => {
     return {
         messages,
         loading,
+        error,
+        refetch: fetchMessages,
         sendMessage
     };
 };

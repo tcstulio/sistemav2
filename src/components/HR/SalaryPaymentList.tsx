@@ -11,7 +11,7 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 import { toast } from 'sonner';
 
 // Design System
-import { PageHeader, Card, EmptyState, MasterDetailLayout, ListToolbar } from '../ui';
+import { PageHeader, Card, EmptyState, MasterDetailLayout, ListToolbar, Spinner, ErrorState } from '../ui';
 
 interface SalaryPaymentListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -22,7 +22,13 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
     const { config } = useDolibarr();
 
     // Data Hooks
-    const { data: salaryPayments = [] } = useSalaryPayments(config);
+    const {
+        data: salaryPayments = [],
+        isLoading,
+        isError,
+        error,
+        refetch,
+    } = useSalaryPayments(config);
     const { data: salaries = [] } = useSalaries(config);
     const { data: users = [] } = useUsers(config);
     const { data: bankAccounts = [] } = useBankAccounts(config);
@@ -59,7 +65,36 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
         toast.success('Copiado para a área de transferência');
     };
 
-    if (!config) return null;
+    if (!config) {
+        return (
+            <div className="flex flex-col h-full items-center justify-center gap-3 p-8 bg-slate-50 dark:bg-slate-950">
+                <Spinner size="lg" />
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Carregando configurações…</p>
+            </div>
+        );
+    }
+
+    // Erro na query -> card de erro amigável + botão de retry (#829).
+    if (isError) {
+        const errorMessage =
+            (error instanceof Error ? error.message : (error ? String(error) : '')) ||
+            'Não foi possível carregar os pagamentos de salário.';
+        return (
+            <div className="flex flex-col h-full items-center justify-center p-8 bg-slate-50 dark:bg-slate-950">
+                <ErrorState message={errorMessage} onRetry={() => refetch()} />
+            </div>
+        );
+    }
+
+    // Primeira carga (sem dados ainda) -> spinner centralizado (#829).
+    if (isLoading && salaryPayments.length === 0) {
+        return (
+            <div className="flex flex-col h-full items-center justify-center gap-3 p-8 bg-slate-50 dark:bg-slate-950">
+                <Spinner size="lg" />
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Carregando pagamentos…</p>
+            </div>
+        );
+    }
 
     // --- Virtual List Row ---
     const Row = ({ index, style }: { index: number, style: React.CSSProperties }) => {

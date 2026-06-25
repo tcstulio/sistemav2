@@ -30,6 +30,7 @@ import TaskDetail from '../TaskDetail';
 import { TaskModal } from '../Projects/modals/TaskModal';
 import { DolibarrService } from '../../services/dolibarrService';
 import { toast } from 'sonner';
+import { ErrorState } from '../ui';
 
 interface UserTaskDashboardProps {
     onNavigate: (view: string, id: string) => void;
@@ -47,7 +48,7 @@ function canLogTimeOnTask(task: Task, userId: string | undefined, taskContacts: 
 
 const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => {
     const { config, currentUser: user } = useDolibarr(); // Get config & currentUser
-    const { data: tasks, refetch: refetchTasks } = useTasks(config); // Fetch Tasks
+    const { data: tasks, refetch: refetchTasks, isError: isTasksError, error: tasksError } = useTasks(config); // Fetch Tasks
     const { data: projects, refetch: refetchProjects } = useProjects(config); // Fetch Projects
     const { data: allUsers } = useUsers(config); // Fetch Users for hierarchy
     const { data: taskContacts, refetch: refetchTaskContacts } = useTaskContacts(config); // Fetch Task Contacts
@@ -780,7 +781,17 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                     {/* Toolbar inside List (optional, or keep generic) */}
                     {/* Moving generic content wrapper here */}
 
-                    {!tasks ? (
+                    {isTasksError ? (
+                        <div className="flex flex-col items-center justify-center h-full p-8">
+                            <ErrorState
+                                message={
+                                    (tasksError instanceof Error ? tasksError.message : '') ||
+                                    'Não foi possível carregar suas tarefas.'
+                                }
+                                onRetry={() => refetchTasks()}
+                            />
+                        </div>
+                    ) : !tasks ? (
                         <div className="flex items-center justify-center h-full">
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
                         </div>

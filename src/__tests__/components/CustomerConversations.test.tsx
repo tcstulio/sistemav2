@@ -98,6 +98,8 @@ describe('CustomerConversations', () => {
         mockUseMessages.mockReturnValue({
             messages: [],
             loading: false,
+            error: null,
+            refetch: vi.fn(),
             sendMessage: vi.fn(),
         });
     });
@@ -211,5 +213,90 @@ describe('CustomerConversations', () => {
         render(<CustomerConversations />);
 
         expect(mockUseConversations).toHaveBeenCalledWith('all');
+    });
+
+    // ── Estados de erro (#829) ─────────────────────────────────────────
+    describe('Estados de erro (#829)', () => {
+        it('exibe ErrorState com retry quando a lista de conversas falha', () => {
+            mockUseConversations.mockReturnValue({
+                conversations: [],
+                loading: false,
+                error: 'Não foi possível carregar as conversas.',
+                refreshConversations: mockRefreshConversations,
+            });
+
+            render(<CustomerConversations />);
+
+            expect(screen.getByText('Não foi possível carregar as conversas.')).toBeTruthy();
+            expect(screen.getByRole('button', { name: /tentar novamente/i })).toBeTruthy();
+        });
+
+        it('botão "Tentar novamente" da lista chama refreshConversations', async () => {
+            const user = userEvent.setup();
+            mockUseConversations.mockReturnValue({
+                conversations: [],
+                loading: false,
+                error: 'Não foi possível carregar as conversas.',
+                refreshConversations: mockRefreshConversations,
+            });
+
+            render(<CustomerConversations />);
+
+            await user.click(screen.getByRole('button', { name: /tentar novamente/i }));
+
+            expect(mockRefreshConversations).toHaveBeenCalled();
+        });
+
+        it('exibe ErrorState no painel de mensagens quando useMessages falha', async () => {
+            const mockRefetchMessages = vi.fn();
+            mockUseConversations.mockReturnValue({
+                conversations: mockConversations,
+                loading: false,
+                refreshConversations: mockRefreshConversations,
+            });
+            mockUseMessages.mockReturnValue({
+                messages: [],
+                loading: false,
+                error: 'Não foi possível carregar as mensagens.',
+                refetch: mockRefetchMessages,
+                sendMessage: vi.fn(),
+            });
+
+            const user = userEvent.setup();
+            render(<CustomerConversations />);
+
+            await user.click(screen.getByText('Maria Silva'));
+
+            await waitFor(() => {
+                expect(screen.getByText('Não foi possível carregar as mensagens.')).toBeTruthy();
+                expect(screen.getByRole('button', { name: /tentar novamente/i })).toBeTruthy();
+            });
+        });
+
+        it('botão "Tentar novamente" do painel chama refetch de mensagens', async () => {
+            const mockRefetchMessages = vi.fn();
+            mockUseConversations.mockReturnValue({
+                conversations: mockConversations,
+                loading: false,
+                refreshConversations: mockRefreshConversations,
+            });
+            mockUseMessages.mockReturnValue({
+                messages: [],
+                loading: false,
+                error: 'Não foi possível carregar as mensagens.',
+                refetch: mockRefetchMessages,
+                sendMessage: vi.fn(),
+            });
+
+            const user = userEvent.setup();
+            render(<CustomerConversations />);
+
+            await user.click(screen.getByText('Maria Silva'));
+
+            const retryBtn = await screen.findByRole('button', { name: /tentar novamente/i });
+            await user.click(retryBtn);
+
+            expect(mockRefetchMessages).toHaveBeenCalled();
+        });
     });
 });

@@ -204,6 +204,91 @@ describe('AgendaView — exibição de projeto/cliente nos itens (#600)', () => 
 });
 
 // ---------------------------------------------------------------------------
+// #829 — Loading e erro states
+// ---------------------------------------------------------------------------
+describe('AgendaView — #829: loading e erro', () => {
+    const mockRefetchEvents = vi.fn();
+    const mockRefetchTasks = vi.fn();
+    const mockRefetchInterventions = vi.fn();
+    const mockRefetchProjects = vi.fn();
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 500 });
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false, isError: false, error: null, refetch: mockRefetchEvents } as any);
+        vi.mocked(useTasks).mockReturnValue({ data: [], isLoading: false, isError: false, error: null, refetch: mockRefetchTasks } as any);
+        vi.mocked(useInterventions).mockReturnValue({ data: [], isLoading: false, isError: false, error: null, refetch: mockRefetchInterventions } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [], isLoading: false, isError: false, error: null, refetch: mockRefetchProjects } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [] } as any);
+    });
+
+    const renderAgendaView = () => render(<AgendaView onNavigate={vi.fn()} />);
+
+    it('exibe spinner de carregamento quando isLoading=true e sem dados', () => {
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: true, isError: false, error: null, refetch: mockRefetchEvents } as any);
+
+        renderAgendaView();
+
+        expect(screen.getByText('Carregando agenda...')).toBeInTheDocument();
+    });
+
+    it('exibe EmptyState quando carregou com sucesso mas não há itens', () => {
+        renderAgendaView();
+
+        expect(screen.getByText('Nenhum item na agenda')).toBeInTheDocument();
+    });
+
+    it('exibe ErrorState com botão "Tentar novamente" quando um hook falha', () => {
+        vi.mocked(useTasks).mockReturnValue({
+            data: [],
+            isLoading: false,
+            isError: true,
+            error: new Error('Falha ao sincronizar tarefas'),
+            refetch: mockRefetchTasks,
+        } as any);
+
+        renderAgendaView();
+
+        expect(screen.getByText('Falha ao sincronizar tarefas')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /tentar novamente/i })).toBeInTheDocument();
+    });
+
+    it('erro tem precedência sobre loading', () => {
+        vi.mocked(useEvents).mockReturnValue({
+            data: [],
+            isLoading: true,
+            isError: true,
+            error: new Error('Erro dominante'),
+            refetch: mockRefetchEvents,
+        } as any);
+
+        renderAgendaView();
+
+        expect(screen.getByText('Erro dominante')).toBeInTheDocument();
+        expect(screen.queryByText('Carregando agenda...')).not.toBeInTheDocument();
+    });
+
+    it('botão "Tentar novamente" dispara refetch dos hooks', () => {
+        vi.mocked(useTasks).mockReturnValue({
+            data: [],
+            isLoading: false,
+            isError: true,
+            error: new Error('Falhou'),
+            refetch: mockRefetchTasks,
+        } as any);
+
+        renderAgendaView();
+
+        fireEvent.click(screen.getByRole('button', { name: /tentar novamente/i }));
+
+        expect(mockRefetchEvents).toHaveBeenCalled();
+        expect(mockRefetchTasks).toHaveBeenCalled();
+        expect(mockRefetchInterventions).toHaveBeenCalled();
+        expect(mockRefetchProjects).toHaveBeenCalled();
+    });
+});
+
+// ---------------------------------------------------------------------------
 // #546 — List mode layout: full-width, no half-screen placeholder
 // ---------------------------------------------------------------------------
 describe('AgendaView — #546: List mode full-width layout', () => {

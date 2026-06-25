@@ -9,7 +9,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, RefreshCw, Bot, User, Loader2, Search, Clock } from 'lucide-react';
-import { PageHeader, EmptyState } from './ui';
+import { PageHeader, EmptyState, ErrorState } from './ui';
 import { useConversations } from '../hooks/whatsapp/useConversations';
 import { useMessages } from '../hooks/whatsapp/useMessages';
 import { WhatsAppConversation } from '../types';
@@ -127,7 +127,7 @@ interface MessagePaneProps {
 
 const MessagePane: React.FC<MessagePaneProps> = ({ conversation }) => {
     const sessionId = conversation.accountId || 'default';
-    const { messages, loading } = useMessages(sessionId, conversation.id);
+    const { messages, loading, error, refetch } = useMessages(sessionId, conversation.id);
     const bottomRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -157,7 +157,14 @@ const MessagePane: React.FC<MessagePaneProps> = ({ conversation }) => {
                     </div>
                 )}
 
-                {!loading && messages.length === 0 && (
+                {!loading && error && (
+                    <ErrorState
+                        message={error}
+                        onRetry={refetch}
+                    />
+                )}
+
+                {!loading && !error && messages.length === 0 && (
                     <EmptyState
                         icon={MessageSquare}
                         title="Sem mensagens"
@@ -166,7 +173,7 @@ const MessagePane: React.FC<MessagePaneProps> = ({ conversation }) => {
                     />
                 )}
 
-                {!loading && messages.map(msg => (
+                {!loading && !error && messages.map(msg => (
                     <MessageBubble
                         key={msg.id}
                         text={msg.text ?? ''}
@@ -191,7 +198,7 @@ const MessagePane: React.FC<MessagePaneProps> = ({ conversation }) => {
 // ---------------------------------------------------------------------------
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const CustomerConversations: React.FC<CustomerConversationsProps> = (_props) => {
-    const { conversations, loading, refreshConversations } = useConversations('all');
+    const { conversations, loading, error, refreshConversations } = useConversations('all');
     const [selectedConversation, setSelectedConversation] = useState<WhatsAppConversation | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
 
@@ -246,7 +253,16 @@ const CustomerConversations: React.FC<CustomerConversationsProps> = (_props) => 
                             </div>
                         )}
 
-                        {!loading && filtered.length === 0 && (
+                        {!loading && error && (
+                            <div className="p-4">
+                                <ErrorState
+                                    message={error}
+                                    onRetry={refreshConversations}
+                                />
+                            </div>
+                        )}
+
+                        {!loading && !error && filtered.length === 0 && (
                             <EmptyState
                                 icon={MessageSquare}
                                 title="Nenhuma conversa"
@@ -259,7 +275,7 @@ const CustomerConversations: React.FC<CustomerConversationsProps> = (_props) => 
                             />
                         )}
 
-                        {!loading && filtered.map(conv => (
+                        {!loading && !error && filtered.map(conv => (
                             <ConversationItem
                                 key={conv.id}
                                 conversation={conv}
@@ -270,7 +286,7 @@ const CustomerConversations: React.FC<CustomerConversationsProps> = (_props) => 
                     </div>
 
                     {/* Footer count */}
-                    {!loading && conversations.length > 0 && (
+                    {!loading && !error && conversations.length > 0 && (
                         <div className="flex-shrink-0 border-t border-slate-100 dark:border-slate-800 px-3 py-2 flex items-center gap-1 text-xs text-slate-400 dark:text-slate-500">
                             <Clock size={12} />
                             <span>{filtered.length} conversa{filtered.length !== 1 ? 's' : ''}</span>
