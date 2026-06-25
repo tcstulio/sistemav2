@@ -1,15 +1,17 @@
 import React from 'react';
-import { Plus, Pencil, Trash2, Sparkles } from 'lucide-react';
+import { Plus, Pencil, Sparkles } from 'lucide-react';
 import { Task } from '../../../types/projects';
 import { AppView } from '../../../types/common';
+import { ConfirmDeleteButton } from '../../ui';
 
 interface ProjectTasksTabProps {
     tasks: Task[];
     onNavigate?: (view: AppView, id: string) => void;
     onCreateTask: () => void;
     onEditTask: (task: Task) => void;
-    onDeleteTask: (taskId: string) => void;
+    onDeleteTask: (taskId: string) => Promise<void>;
     onOpenWizard: () => void;
+    refreshData?: () => void;
 }
 
 export const ProjectTasksTab: React.FC<ProjectTasksTabProps> = ({
@@ -18,7 +20,8 @@ export const ProjectTasksTab: React.FC<ProjectTasksTabProps> = ({
     onCreateTask,
     onEditTask,
     onDeleteTask,
-    onOpenWizard
+    onOpenWizard,
+    refreshData
 }) => {
     return (
         <div className="space-y-3">
@@ -65,12 +68,11 @@ export const ProjectTasksTab: React.FC<ProjectTasksTabProps> = ({
                                 >
                                     <Pencil size={16} />
                                 </button>
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); onDeleteTask(t.id); }}
-                                    className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                                >
-                                    <Trash2 size={16} />
-                                </button>
+                                <ConfirmDeleteButton
+                                    onDelete={() => onDeleteTask(t.id)}
+                                    onDeleted={refreshData}
+                                    itemLabel={t.ref || t.label}
+                                />
                             </div>
                         </div>
                     </div>

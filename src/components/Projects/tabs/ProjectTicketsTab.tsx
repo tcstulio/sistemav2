@@ -1,19 +1,22 @@
 import React from 'react';
-import { Plus, Pencil, Trash2, AlertTriangle } from 'lucide-react';
+import { Plus, Pencil, AlertTriangle } from 'lucide-react';
 import { Ticket } from '../../../types/crm';
+import { ConfirmDeleteButton } from '../../ui';
 
 interface ProjectTicketsTabProps {
     tickets: Ticket[];
     onCreateTicket: () => void;
     onEditTicket: (ticket: Ticket) => void;
-    onDeleteTicket: (ticketId: string) => void;
+    onDeleteTicket: (ticketId: string) => Promise<void>;
+    refreshData?: () => void;
 }
 
 export const ProjectTicketsTab: React.FC<ProjectTicketsTabProps> = ({
     tickets,
     onCreateTicket,
     onEditTicket,
-    onDeleteTicket
+    onDeleteTicket,
+    refreshData
 }) => {
     return (
         <div className="space-y-3">
@@ -56,12 +59,11 @@ export const ProjectTicketsTab: React.FC<ProjectTicketsTabProps> = ({
                                 >
                                     <Pencil size={16} />
                                 </button>
-                                <button
-                                    onClick={() => onDeleteTicket(t.id)}
-                                    className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                                >
-                                    <Trash2 size={16} />
-                                </button>
+                                <ConfirmDeleteButton
+                                    onDelete={() => onDeleteTicket(t.id)}
+                                    onDeleted={refreshData}
+                                    itemLabel={t.ref}
+                                />
                             </div>
                         </div>
                     </div>

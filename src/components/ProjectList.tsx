@@ -88,11 +88,11 @@ const ProjectDetail: React.FC<{
     // Modals Triggers
     onCreateTask: () => void;
     onEditTask: (t: any) => void;
-    onDeleteTask: (id: string) => void;
+    onDeleteTask: (id: string) => Promise<void>;
     onOpenWizard: () => void;
     onCreateTicket: () => void;
     onEditTicket: (t: any) => void;
-    onDeleteTicket: (id: string) => void;
+    onDeleteTicket: (id: string) => Promise<void>;
     refreshData: () => void;
     canDo: (action: 'create' | 'edit' | 'delete' | 'validate', screen: string) => boolean;
 }> = ({
@@ -327,6 +327,7 @@ const ProjectDetail: React.FC<{
                                 onEditTask={onEditTask}
                                 onDeleteTask={onDeleteTask}
                                 onOpenWizard={onOpenWizard}
+                                refreshData={refreshData}
                             />
                         )}
                         {activeTab === 'tickets' && (
@@ -335,6 +336,7 @@ const ProjectDetail: React.FC<{
                                 onCreateTicket={onCreateTicket}
                                 onEditTicket={onEditTicket}
                                 onDeleteTicket={onDeleteTicket}
+                                refreshData={refreshData}
                             />
                         )}
                         {activeTab === 'documents' && (
@@ -759,7 +761,6 @@ const ProjectList: React.FC<{
     const handleDeleteTask = async (taskId: string) => {
         if (!config) return;
         await DolibarrService.deleteTask(config, taskId);
-        if (refreshData) refreshData();
     };
 
     const openTicketModal = (ticket?: any) => {
@@ -810,7 +811,6 @@ const ProjectList: React.FC<{
     const handleDeleteTicket = async (ticketId: string) => {
         if (!config) return;
         await DolibarrService.deleteTicket(config, ticketId);
-        if (refreshData) refreshData();
     };
 
     if (!config) return <div className="p-8 text-center"><Loader2 className="animate-spin mx-auto" /></div>;

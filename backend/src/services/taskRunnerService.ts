@@ -201,6 +201,11 @@ export interface Task {
     judgeScore?: number;
     judgeReview?: string;
     judgeAttempts?: number;
+    judgeApproved?: boolean; // VALOR 2: veto do Juiz (approved=false bloqueia auto-merge; nunca aprova sozinho)
+    // Self-heal de gate: quando um gate DETERMINÍSTICO bloqueia o merge (regressão de testes / veto),
+    // em vez de só estacionar, realimentamos o coder UMA vez com uma correção derivada do próprio gate.
+    gateFixAttempts?: number;     // teto baixo (default 1), SEPARADO de judgeAttempts (não se multiplicam)
+    gateFixInstruction?: string;  // correção PERSISTENTE injetada nos builders (imune ao wipe de feedbackHistory na síntese)
     visualScore?: number;
     visualReview?: string;
     // 'synthesis' (padrão): 3 explorações do zero + 3 sínteses — bom p/ tasks pequenas/criativas.
@@ -1085,7 +1090,23 @@ class TaskRunnerService {
         const gone = await this.sweepOrphanedOpencode('ensureWorktree');
         this.cleanStaleLocks(gone);
         await git(['fetch', 'origin', 'main'], { timeout: 60000 });
-        if (!fs.existsSync(WT_ROOT)) {
+        // Recria o worktree se NÃO existir OU se o diretório existir mas não for um worktree git
+        // VÁLIDO (ex.: .git apagado após reescrita de histórico/limpeza órfã). Sem isto, o `if
+        // existsSync` antigo pulava o `worktree add` e o `reset --hard` abaixo falhava com
+        // "fatal: not a git repository" — travando TODAS as tasks.
+        let needsCreate = !fs.existsSync(WT_ROOT);
+        if (!needsCreate) {
+            try {
+                if (!fs.existsSync(path.join(WT_ROOT, '.git'))) throw new Error('.git ausente');
+                await git(['rev-parse', '--is-inside-work-tree'], { timeout: 15000, cwd: WT_ROOT });
+            } catch {
+                log.warn(`ensureWorktree: ${WT_ROOT} existe mas não é worktree válido — recriando`);
+                try { fs.rmSync(WT_ROOT, { recursive: true, force: true }); } catch (e: any) { log.warn(`rm WT_ROOT falhou: ${e?.message}`); }
+                needsCreate = true;
+            }
+        }
+        if (needsCreate) {
+            await git(['worktree', 'prune'], { timeout: 30000 });
             await git(['worktree', 'add', '--force', WT_ROOT, 'origin/main'], { timeout: 120000 });
         }
         // Limpa restos de execuções anteriores ANTES de trocar de branch. Sem isto, se uma task
@@ -1184,7 +1205,7 @@ class TaskRunnerService {
         if (task.feedbackHistory.length) {
             p += this.wrapUntrusted('feedback / correções a ATENDER', task.feedbackHistory.map(fb => `- ${fb}`).join('\n'));
         }
-        p += `\n## Instruções\nImplemente a especificação acima neste repositório (backend: Express+TypeScript em backend/; frontend: React+Vite em src/). Siga as convenções existentes (TypeScript, testes com vitest). Escreva código de produção e os testes correspondentes. Garanta que \`tsc --noEmit\` passe. NÃO altere o arquivo ${PROMPT_FILE}.`;
+        p += `\n## Instruções\nImplemente a especificação acima neste repositório (backend: Express+TypeScript em backend/; frontend: React+Vite em src/). Siga as convenções existentes (TypeScript, testes com vitest). Escreva código de produção e os testes correspondentes. REGRA DE TESTES: PRESERVE os testes existentes — ADICIONE/ESTENDA suites, mas NUNCA delete, esvazie, use it.skip() nem reescreva uma suite reduzindo casos; se um teste antigo ficou inválido pela mudança, ADAPTE-O mantendo a asserção equivalente. Garanta que \`tsc --noEmit\` passe. NÃO altere o arquivo ${PROMPT_FILE}.`;
         return p;
     }
 
@@ -1230,6 +1251,11 @@ class TaskRunnerService {
         if (task.feedbackHistory.length) {
             p += this.wrapUntrusted('feedback / correções a ATENDER', task.feedbackHistory.map(fb => `- ${fb}`).join('\n'));
         }
+        // Correção de gate (PERSISTENTE): sobrevive ao reset de feedbackHistory que ocorre ao entrar na
+        // síntese (linha ~1538). É instrução NOSSA (não dado da issue), por isso não vai no wrapUntrusted.
+        if (task.gateFixInstruction) {
+            p += `\n## ⚠️ CORREÇÃO OBRIGATÓRIA (o merge foi bloqueado por um gate)\n${task.gateFixInstruction}\n`;
+        }
 
         p += `\n## Instruções de Síntese\n`;
         p += `Você está na FASE DE SÍNTESE. Foram feitas ${exploreAttempts.length} tentativas de exploração.\n`;
@@ -1238,7 +1264,7 @@ class TaskRunnerService {
         p += `2. Passe no typecheck (tsc --noEmit)\n`;
         p += `3. Siga as convenções do projeto (TypeScript, Express+React+Vite)\n`;
         p += `4. Não repita erros de typecheck das tentativas anteriores\n`;
-        p += `5. Inclua testes quando aplicável\n`;
+        p += `5. Inclua testes quando aplicável, PRESERVANDO os existentes (nunca delete, esvazie, use it.skip() nem reduza casos de uma suite; adapte um teste antigo se ficou inválido, mantendo a asserção equivalente)\n`;
         p += `NÃO altere o arquivo ${PROMPT_FILE}.`;
 
         return p;
@@ -1263,7 +1289,11 @@ class TaskRunnerService {
         if (task.feedbackHistory?.length) {
             p += this.wrapUntrusted('correções a ATENDER antes de continuar', task.feedbackHistory.map((f) => `- ${f}`).join('\n'));
         }
-        p += `\n## Instruções\nImplemente a spec acima de forma INCREMENTAL, em rounds. NESTE round: avance o trabalho que ainda FALTA (modifique mais arquivos pendentes conforme a spec). NÃO refaça o que já está pronto. Faça quantos arquivos conseguir — outro round continua de onde você parar. Mantenha o estado acumulado passando em \`tsc --noEmit\`. Quando TODA a spec estiver implementada, NÃO altere mais nada (isso sinaliza conclusão). Backend: Express+TS em backend/; frontend: React+Vite em src/. SEMPRE inclua TESTES junto do código: no backend, testes Vitest; se tocar o frontend (src/), testes de componente com Vitest + React Testing Library que renderizam o componente, simulam interação (\`userEvent.click\`/\`type\`) e verificam o DOM resultante — esses testes rodam na CI e são o PORTÃO de qualidade. NÃO altere o arquivo ${PROMPT_FILE}.`;
+        // Correção de gate (PERSISTENTE) — instrução nossa, fora do wrapUntrusted.
+        if (task.gateFixInstruction) {
+            p += `\n## ⚠️ CORREÇÃO OBRIGATÓRIA (o merge foi bloqueado por um gate)\n${task.gateFixInstruction}\n`;
+        }
+        p += `\n## Instruções\nImplemente a spec acima de forma INCREMENTAL, em rounds. NESTE round: avance o trabalho que ainda FALTA (modifique mais arquivos pendentes conforme a spec). NÃO refaça o que já está pronto. Faça quantos arquivos conseguir — outro round continua de onde você parar. Mantenha o estado acumulado passando em \`tsc --noEmit\`. Quando TODA a spec estiver implementada, NÃO altere mais nada (isso sinaliza conclusão). Backend: Express+TS em backend/; frontend: React+Vite em src/. SEMPRE inclua TESTES junto do código (e PRESERVE os testes existentes: nunca delete, esvazie, use it.skip() nem reescreva uma suite reduzindo casos — adapte um teste se ficou inválido, mantendo a asserção): no backend, testes Vitest; se tocar o frontend (src/), testes de componente com Vitest + React Testing Library que renderizam o componente, simulam interação (\`userEvent.click\`/\`type\`) e verificam o DOM resultante — esses testes rodam na CI e são o PORTÃO de qualidade. NÃO altere o arquivo ${PROMPT_FILE}.`;
         return p;
     }
 
@@ -1753,9 +1783,9 @@ ${diffContent}
 - Não introduz vazamentos de memória, secrets ou XSS?
 
 ### 4. Testes e verificação (0-2 pontos)
-- Testes foram escritos ou atualizados?
-- tsc --noEmit passaria?
-- Lint passaria?
+- Testes foram ADICIONADOS ou ATUALIZADOS **preservando os existentes**?
+- REGRA DURA: se o diff REMOVE, encolhe ou esvazia (it.skip, asserts apagados, suite reescrita com menos casos) testes existentes SEM substituí-los por cobertura equivalente, isto é REGRESSÃO GRAVE — defina "approved": false e score <= 4.
+- tsc --noEmit passaria? Lint passaria?
 
 ### 5. Convenções do projeto (0-1 ponto)
 - Commit message segue padrão "tipo(#issue): descrição"?
@@ -1815,6 +1845,8 @@ Return ONLY a JSON:
                 task.judgeScore = result.score;
                 task.judgeReview = result.review;
                 task.judgeAttempts = (task.judgeAttempts || 0) + 1;
+                // VALOR 2: persiste o veto do Juiz (só quando explicitamente booleano; ausente != reprovado).
+                if (typeof result.approved === 'boolean') task.judgeApproved = result.approved;
 
                 this.recordEvent(task, 'judge_score', `Judge: ${result.score}/10 — ${result.review?.substring(0, 200) || ''}`, {
                     score: result.score,
@@ -2056,10 +2088,117 @@ Return ONLY a JSON:
         }
     }
 
+    /**
+     * VALOR 1 — Gate DETERMINÍSTICO anti-regressão de testes. Fatos quantitativos (casos de teste
+     * removidos, arquivo de teste apagado) NÃO devem depender do Juiz LLM. Compara o diff do PR
+     * (base = main, via `gh pr diff`) e BLOQUEIA o auto-merge se houver net-negativo de casos
+     * it()/test() ou deleção de arquivo de teste. Não descarta o trabalho — manda p/ revisão humana.
+     * Fail-safe: em erro do próprio guard, bloqueia (revisão) em vez de deixar passar cego.
+     */
+    private async checkTestRegression(task: Task): Promise<{ blocked: boolean; message: string; reason: 'ok' | 'regression' | 'infra' }> {
+        if (!task.prNumber) return { blocked: false, message: '', reason: 'ok' };
+        try {
+            const { stdout: diff } = await gh(['pr', 'diff', String(task.prNumber), '--repo', REPO], { timeout: 60000 });
+            if (!diff || !diff.trim()) return { blocked: false, message: '', reason: 'ok' };
+            const isTestPath = (p: string) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(p);
+            let added = 0, removed = 0;
+            const deletedTestFiles: string[] = [];
+            let curFile = '', curDeleted = false;
+            const flush = () => { if (curDeleted && isTestPath(curFile)) deletedTestFiles.push(curFile); };
+            for (const ln of diff.split('\n')) {
+                if (ln.startsWith('diff --git ')) {
+                    flush();
+                    const m = ln.match(/ a\/(.+?) b\//);
+                    curFile = m ? m[1] : '';
+                    curDeleted = false;
+                    continue;
+                }
+                if (ln.startsWith('deleted file mode')) { curDeleted = true; continue; }
+                if (/^\+\s*(it|test)\s*\(/.test(ln)) added++;
+                else if (/^-\s*(it|test)\s*\(/.test(ln)) removed++;
+            }
+            flush();
+            const net = added - removed;
+            if (deletedTestFiles.length > 0 || net < 0) {
+                return {
+                    blocked: true,
+                    reason: 'regression',
+                    message: `regressão de testes (+${added}/-${removed} casos, net ${net}`
+                        + (deletedTestFiles.length ? `; arquivos de teste apagados: ${deletedTestFiles.join(', ')}` : '')
+                        + ') — revisão humana.',
+                };
+            }
+            return { blocked: false, message: `testes OK (+${added}/-${removed})`, reason: 'ok' };
+        } catch (e: any) {
+            // Falha de INFRA (não deu p/ ler o diff): bloqueia por precaução, mas marca reason='infra'
+            // para o chamador NÃO tentar self-heal (não é reversível pelo coder).
+            return { blocked: true, reason: 'infra', message: `guard de testes falhou (${e?.message || e}) — revisão humana por precaução.` };
+        }
+    }
+
+    /**
+     * Self-heal a partir de um bloqueio de gate DETERMINÍSTICO em tryAutoMerge: em vez de só estacionar
+     * o PR em 'reviewing', realimenta o coder UMA vez (teto gateFixAttempts) com uma correção derivada
+     * do próprio gate (ex.: "restaure os testes removidos") e re-submete pela FILA SERIAL. O gate continua
+     * sendo o hard-stop final: na passada seguinte ele re-roda; se ainda bloquear (ou o teto esgotou), aí
+     * sim estaciona p/ humano. NUNCA aprova/mergeia sozinho. Retorna true se disparou o conserto (o
+     * chamador deve `return` sem mergear); false se o chamador deve estacionar.
+     *
+     * Invariantes: (1) usa scheduleExec (fila serial), NÃO executeTask direto — tryAutoMerge roda
+     * detached/fire-and-forget fora do withWorktreeLock, então re-entrar pela fila respeita a invariante
+     * não-reentrante do lock (igual ao addFeedback). (2) a correção vai em gateFixInstruction (campo
+     * PERSISTENTE), não em feedbackHistory — que é zerado na fase de síntese (linha ~1538). (3) NÃO
+     * reseta judgeAttempts (evita reabrir o orçamento inteiro da faixa do Juiz → custo limitado).
+     */
+    private selfHealFromGate(task: Task, kind: 'testRegression' | 'approvedVeto', detail: string): boolean {
+        const GATE_MAX = Number(process.env.TASKRUNNER_GATE_FIX_MAX ?? 1);
+        if (!task.branch) return false;                            // sem branch não há o que re-submeter
+        if ((task.gateFixAttempts || 0) >= GATE_MAX) return false; // teto esgotado → chamador estaciona
+        const instruction = kind === 'testRegression'
+            ? `O merge foi BLOQUEADO por um gate determinístico: você REDUZIU a cobertura de testes (${detail}). `
+              + `RESTAURE os casos de teste removidos — recrie cada it()/test() que sumiu (num bloco describe() separado, se preciso), SEM apagar os testes novos. `
+              + `Se um teste antigo ficou inválido pela mudança de comportamento, ADAPTE-o mantendo a asserção equivalente — NUNCA delete, esvazie nem use it.skip(). NÃO use asserções triviais (ex.: expect(true).toBe(true)).`
+            : `O merge foi BLOQUEADO: o revisor (Juiz) REPROVOU o PR. Motivo apontado: ${detail}. `
+              + `Corrija exatamente o ponto apontado, SEM deletar testes nem reduzir o escopo da issue.`;
+        task.gateFixInstruction = instruction;
+        task.gateFixAttempts = (task.gateFixAttempts || 0) + 1;
+        task.status = 'fixing';
+        this.recordEvent(task, 'task_started',
+            `Self-heal de gate (${kind}, tentativa ${task.gateFixAttempts}/${GATE_MAX}) — realimentando o coder antes de estacionar`,
+            { gateSelfHeal: kind, attempt: task.gateFixAttempts });
+        this.emitLog(task.issueNumber, 'warn', `Gate bloqueou (${kind}). Auto-consertando 1x antes de pedir revisão humana...`);
+        this.save();
+        this.emitStatus(task);
+        this.scheduleExec(task, task.branch, 'fixing');
+        return true;
+    }
+
     private async tryAutoMerge(task: Task): Promise<void> {
         const config = this.getAutomationConfig();
         if (!config.autoMerge) return;
         if ((task.judgeScore || 0) < config.minMergeScore) return;
+        // VALOR 2: veto do Juiz — approved=false BLOQUEIA (só reprova; nunca aprova sozinho, pois o
+        // score acima continua obrigatório). Resolve a cegueira do gate p/ a intenção do Juiz.
+        if (task.judgeApproved === false) {
+            // Antes de estacionar: tenta self-heal 1x SE o Juiz deu um motivo ACIONÁVEL (review concreta).
+            // (heurística length>30; um futuro refino é um campo blockingReason estruturado do Juiz.)
+            if (task.judgeReview && task.judgeReview.trim().length > 30
+                && this.selfHealFromGate(task, 'approvedVeto', task.judgeReview.trim().slice(0, 400))) return;
+            this.recordEvent(task, 'task_failed', 'Auto-merge bloqueado: Juiz reprovou (approved=false). → revisão humana.', { vetoApproved: true });
+            task.status = 'reviewing'; this.save(); this.emitStatus(task); return;
+        }
+        // VALOR 1: gate determinístico anti-regressão de testes (fato quantitativo, não LLM).
+        const testReg = await this.checkTestRegression(task);
+        if (testReg.blocked) {
+            // Regressão REAL (reversível pelo coder) → self-heal 1x antes de estacionar. Falha de INFRA
+            // (não deu p/ ler o diff) NÃO é reversível pelo coder → estaciona direto (sem self-heal).
+            if (testReg.reason === 'regression'
+                && this.selfHealFromGate(task, 'testRegression', testReg.message)) return;
+            this.recordEvent(task, 'task_failed', `Auto-merge bloqueado: ${testReg.message}`, { testRegression: true, reason: testReg.reason });
+            task.status = 'reviewing'; this.save(); this.emitStatus(task); return;
+        }
+        task.gateFixInstruction = undefined; // gate passou → a correção (se houve) cumpriu seu papel
+        this.recordEvent(task, 'task_started', `Guard de testes: ${testReg.message}`);
 
         // Juiz Visual com LLM é ADVISORY (não-determinístico — ver deep-research 2026): NUNCA
         // bloqueia o auto-merge. Gate de frontend = CI (typecheck + testes de componente Vitest;
@@ -2206,6 +2345,8 @@ Return ONLY a JSON:
         task.judgeScore = undefined;
         task.judgeReview = undefined;
         task.judgeAttempts = 0;
+        task.gateFixAttempts = 0;
+        task.gateFixInstruction = undefined;
         task.visualScore = undefined;
         task.visualReview = undefined;
         task.phase = 'exploring';
@@ -2357,6 +2498,17 @@ Return ONLY a JSON:
             const minScore = this.getAutomationConfig().minMergeScore;
             if ((task.judgeScore ?? 0) < minScore) {
                 throw new Error(`Merge bloqueado: judgeScore ${task.judgeScore ?? 'n/a'} < mínimo ${minScore}. Aprovação humana (force) é necessária para sobrepor.`);
+            }
+            // Hard-stop FINAL, independente de quem chama: o veto do Juiz e o gate determinístico
+            // anti-regressão de testes viviam SÓ no tryAutoMerge — então a tool merge_opencode_task do
+            // agente LLM (e o caminho de retomada) podiam mergear um PR score>=8 que esvaziou testes.
+            // Replicar aqui fecha o buraco p/ TODOS os caminhos (e protege contra prompt-injection na tool).
+            if (task.judgeApproved === false) {
+                throw new Error('Merge bloqueado: o Juiz reprovou o PR (approved=false). Aprovação humana (force) é necessária para sobrepor.');
+            }
+            const reg = await this.checkTestRegression(task);
+            if (reg.blocked) {
+                throw new Error(`Merge bloqueado: ${reg.message} Aprovação humana (force) é necessária para sobrepor.`);
             }
         }
 

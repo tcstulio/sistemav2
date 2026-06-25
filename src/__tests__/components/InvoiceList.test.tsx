@@ -586,3 +586,86 @@ describe('InvoiceList — #613 projeto e vencimento nos modais', () => {
         expect(dash).toBeTruthy();
     });
 });
+
+describe('InvoiceList — paginação aplicada (#826)', () => {
+    const pageInvoices = Array.from({ length: 25 }, (_, i) => ({
+        id: `inv${i + 1}`,
+        ref: `FA${String(i + 1).padStart(4, '0')}`,
+        socid: 'cust1',
+        date: 1700000000 + i,
+        total_ttc: 100,
+        statut: '1',
+        type: '0',
+        project_id: null,
+        order_id: null,
+    }));
+
+    const findPaginationButtons = () => {
+        const pageSpan = screen.getByText(/^Pág \d+$/);
+        const root = pageSpan.closest('.border-t') as HTMLElement | null;
+        const buttons = root ? Array.from(root.querySelectorAll('button')) : [];
+        return {
+            prev: buttons[0] as HTMLButtonElement,
+            next: buttons[1] as HTMLButtonElement,
+        };
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useInvoices).mockReturnValue({
+            data: pageInvoices,
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+    });
+
+    it('renderiza apenas a fatia da página atual e um total restrito a essa página', async () => {
+        renderComponent();
+
+        await screen.findByTestId('list-total-bar');
+
+        // Página 1 (ordenado por data desc): FA0025..FA0006 — FA0001 fora da página
+        expect(screen.getByRole('button', { name: 'Abrir fatura FA0025' })).toBeTruthy();
+        expect(screen.queryByRole('button', { name: 'Abrir fatura FA0001' })).toBeNull();
+
+        // Total reflete apenas a página atual (20 faturas x 100)
+        expect(screen.getByTestId('list-total-value').textContent).toBe(formatCurrency(2000));
+
+        const { next } = findPaginationButtons();
+        expect(next.disabled).toBe(false);
+    });
+
+    it('navegar para a próxima página troca as faturas exibidas e o total', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        await screen.findByTestId('list-total-bar');
+        expect(screen.getByText('Pág 1')).toBeTruthy();
+
+        await user.click(findPaginationButtons().next);
+
+        // Página 2: 5 faturas restantes (FA0005..FA0001)
+        await waitFor(() => {
+            expect(screen.getByText('Pág 2')).toBeTruthy();
+            expect(screen.getByRole('button', { name: 'Abrir fatura FA0001' })).toBeTruthy();
+            expect(screen.queryByRole('button', { name: 'Abrir fatura FA0025' })).toBeNull();
+            expect(screen.getByTestId('list-total-value').textContent).toBe(formatCurrency(500));
+        });
+    });
+
+    it('desabilita o botão "próxima" na última página', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        await screen.findByTestId('list-total-bar');
+        expect(findPaginationButtons().next.disabled).toBe(false);
+
+        await user.click(findPaginationButtons().next);
+
+        await waitFor(() => {
+            const { next, prev } = findPaginationButtons();
+            expect(next.disabled).toBe(true);
+            expect(prev.disabled).toBe(false);
+        });
+    });
+});
