@@ -15,6 +15,7 @@ import { useConfirm } from '../hooks/useConfirm';
 import { useProposals, useCustomers, useProducts, useProjects, useProposalLines, useUsers } from '../hooks/dolibarr';
 import { useListControls } from '../hooks/useListControls';
 import { logger } from '../utils/logger';
+import { generateUUID } from '../services/api/core';
 import { notifyError } from '../utils/notifyError';
 import { formatCurrency } from '../utils/formatUtils';
 
@@ -58,7 +59,10 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
     const { data: projectsData } = useProjects(config);
     const projects = projectsData || [];
     const { data: proposalLinesData, refetch: refetchLines } = useProposalLines(config);
-    const proposalLines = proposalLinesData || [];
+    const proposalLines = useMemo(
+        () => (proposalLinesData || []).map(l => (l.id ? l : { ...l, _uid: generateUUID() })),
+        [proposalLinesData]
+    );
     const { data: users = [] } = useUsers(config);
 
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
@@ -146,7 +150,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                     const qty = Number(l.qty) || 1;
                     const price = Number(l.subprice) || 0;
                     const discount = Number(l.remise_percent) || 0;
-                    return { uid: crypto.randomUUID(), productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty, price, discount, total: calculateLineTotal(qty, price, discount) };
+                    return { uid: generateUUID(), productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty, price, discount, total: calculateLineTotal(qty, price, discount) };
                 }),
             });
             setIsFormOpen(true);
@@ -166,7 +170,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                     const qty = Number(l.qty) || 1;
                     const price = Number(l.subprice) || 0;
                     const discount = Number(l.remise_percent) || 0;
-                    return { uid: crypto.randomUUID(), productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty, price, discount, total: calculateLineTotal(qty, price, discount) };
+                    return { uid: generateUUID(), productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty, price, discount, total: calculateLineTotal(qty, price, discount) };
                 })],
             }));
             toast.info('Revise as mudanças e salve a proposta.');
@@ -184,7 +188,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
             note_public: '',
             lines: existingLines.map(l => ({
                 id: l.id,
-                uid: crypto.randomUUID(),
+                uid: generateUUID(),
                 productId: l.product_id || '',
                 desc: l.description || l.label,
                 qty: l.qty,
@@ -199,7 +203,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
     const handleAddLine = () => {
         setFormData(prev => ({
             ...prev,
-            lines: [...prev.lines, { uid: crypto.randomUUID(), productId: '', desc: '', qty: 1, price: 0, discount: 0, total: 0 }]
+            lines: [...prev.lines, { uid: generateUUID(), productId: '', desc: '', qty: 1, price: 0, discount: 0, total: 0 }]
         }));
     };
 
@@ -848,8 +852,8 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                                     </thead>
                                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900/50">
                                         {selectedProposalLines.length > 0 ? (
-                                            selectedProposalLines.map((line: any, idx: number) => (
-                                                <tr key={line.id ?? idx}>
+                                            selectedProposalLines.map((line: any) => (
+                                                <tr key={line.id ?? line._uid}>
                                                     <td className="px-4 py-3 text-slate-700 dark:text-slate-300">
                                                         <div className="font-medium">{line.label}</div>
                                                         <div className="text-xs text-slate-500 mt-0.5" dangerouslySetInnerHTML={{ __html: sanitizeHtml(line.description) }} />

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import ProposalList from '../../components/ProposalList';
 import { DolibarrService } from '../../services/dolibarrService';
-import { useProposals } from '../../hooks/dolibarr';
+import { useProposals, useProposalLines } from '../../hooks/dolibarr';
 import { formatCurrency } from '../../utils/formatUtils';
 
 const { toastMock } = vi.hoisted(() => ({
@@ -449,5 +449,48 @@ describe('ProposalList — chaves estáveis nas linhas (#825)', () => {
         // Duas linhas recém-adicionadas, cada uma com input de quantidade próprio
         // — a chave vem de crypto.randomUUID(), não do índice do array.
         expect(screen.getAllByText('Qtd', { selector: 'span' })).toHaveLength(2);
+    });
+});
+
+// ─────────────────────────────────────────────
+// Chaves estáveis no detalhe somente leitura (#825)
+// ─────────────────────────────────────────────
+describe('ProposalList — chaves estáveis no detalhe somente leitura (#825)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useProposals).mockReturnValue({
+            data: [defaultProposal],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+    });
+
+    it('linhas do backend sem id recebem uid estável e não geram aviso de chave duplicada', async () => {
+        vi.mocked(useProposalLines).mockReturnValue({
+            data: [
+                { parent_id: 'prop1', label: 'Linha Sem Id A', qty: 1, subprice: 10, total_ht: 10 },
+                { parent_id: 'prop1', label: 'Linha Sem Id B', qty: 2, subprice: 20, total_ht: 40 },
+            ],
+            refetch: mockRefetch,
+        } as any);
+
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const user = userEvent.setup();
+        renderComponent();
+
+        await user.click(await screen.findByText('PR2501-0001'));
+
+        // As linhas (sem id do backend) renderizam no detalhe somente leitura (#825)
+        await waitFor(() => {
+            expect(screen.getByText('Linha Sem Id A')).toBeTruthy();
+            expect(screen.getByText('Linha Sem Id B')).toBeTruthy();
+        });
+
+        // Sem aviso de chave duplicada — uid estável gerado no cliente, não índice (#825)
+        const dupKey = spy.mock.calls.find(
+            (c) => typeof c[0] === 'string' && c[0].includes('children with the same key')
+        );
+        expect(dupKey).toBeUndefined();
+        spy.mockRestore();
     });
 });

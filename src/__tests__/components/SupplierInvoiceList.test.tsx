@@ -585,3 +585,66 @@ describe('SupplierInvoiceList — chaves estáveis nos itens de edição (#825)'
         expect(getDiscountInputs()).toHaveLength(2);
     });
 });
+
+// ─────────────────────────────────────────────
+// Chaves estáveis nos documentos somente leitura (#825)
+// ─────────────────────────────────────────────
+describe('SupplierInvoiceList — chaves estáveis nos documentos somente leitura (#825)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useSupplierInvoiceLines).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierPayments).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierPaymentInvoiceLinks).mockReturnValue({ data: [] } as any);
+    });
+
+    const openDocumentsTab = async (user: ReturnType<typeof userEvent.setup>) => {
+        await user.click(await screen.findByText('FA-DRAFT-001'));
+        await user.click(await screen.findByRole('button', { name: /^Documentos$/ }));
+    };
+
+    it('documentos com name recebem uid estável e não geram aviso de chave duplicada', async () => {
+        vi.mocked(DolibarrService.fetchDocuments).mockResolvedValue([
+            { name: 'doc1.pdf', date: 1717000000, size: 1024 },
+            { name: 'doc2.pdf', date: 1717000000, size: 2048 },
+        ] as any);
+
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const user = userEvent.setup();
+        renderWithProvider([mockDraftInvoice]);
+
+        await openDocumentsTab(user);
+
+        await waitFor(() => {
+            expect(screen.getByText('doc1.pdf')).toBeTruthy();
+            expect(screen.getByText('doc2.pdf')).toBeTruthy();
+        });
+
+        const dupKey = spy.mock.calls.find(
+            (c) => typeof c[0] === 'string' && c[0].includes('children with the same key')
+        );
+        expect(dupKey).toBeUndefined();
+        spy.mockRestore();
+    });
+
+    it('documentos sem name/id (edge case) ainda recebem uid estável sem aviso de chave duplicada', async () => {
+        vi.mocked(DolibarrService.fetchDocuments).mockResolvedValue([
+            { size: 512 },
+            { size: 1024 },
+        ] as any);
+
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const user = userEvent.setup();
+        renderWithProvider([mockDraftInvoice]);
+
+        await openDocumentsTab(user);
+
+        // Sem name/id → _uid gerado via generateUUID; sem aviso de chave duplicada (#825)
+        await waitFor(() => {
+            const dupKey = spy.mock.calls.find(
+                (c) => typeof c[0] === 'string' && c[0].includes('children with the same key')
+            );
+            expect(dupKey).toBeUndefined();
+        });
+        spy.mockRestore();
+    });
+});

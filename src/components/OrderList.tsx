@@ -12,6 +12,7 @@ import { PdfPreviewModal } from './common/PdfPreviewModal';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
 import { formatCurrency } from '../utils/formatUtils';
 import { logger } from '../utils/logger';
+import { generateUUID } from '../services/api/core';
 
 const log = logger.child('OrderList');
 
@@ -117,6 +118,13 @@ const OrderDetail: React.FC<{
         const currentOrderInvoices = useMemo(() => {
             return invoices.filter(i => String(i.order_id) === String(order.id));
         }, [order, invoices]);
+
+        // Garante chave estável p/ linhas vindas do backend que eventualmente
+        // venham sem id (view somente leitura) — gera uid estável no cliente. (#825)
+        const orderLines = useMemo(
+            () => (order.lines || []).map(l => (l.id ? l : { ...l, _uid: generateUUID() })),
+            [order]
+        );
 
         return (
             <>
@@ -243,9 +251,9 @@ const OrderDetail: React.FC<{
                                     <div className="pt-6 border-t border-slate-100 dark:border-slate-800">
                                         <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-3">Itens do Pedido</h4>
                                         <div className="space-y-2">
-                                            {order.lines && order.lines.length > 0 ? (
-                                                order.lines.map((line: any, idx: number) => (
-                                                    <div key={line.id ?? idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
+                                            {orderLines.length > 0 ? (
+                                                orderLines.map((line: any) => (
+                                                    <div key={line.id ?? line._uid} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
                                                         <div>
                                                             <div className="font-medium text-slate-800 dark:text-white text-sm">{line.desc || line.label}</div>
                                                             <div className="text-xs text-slate-500">Qtd: {line.qty}</div>
@@ -386,7 +394,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
 
     const closeOrderModal = () => { setIsCreateModalOpen(false); setEditOrderId(undefined); setExistingLines([]); };
 
-    const handleAddOrderItem = () => setNewOrder(prev => ({ ...prev, items: [...prev.items, { uid: crypto.randomUUID(), productId: '', desc: '', qty: 1, price: 0 }] }));
+    const handleAddOrderItem = () => setNewOrder(prev => ({ ...prev, items: [...prev.items, { uid: generateUUID(), productId: '', desc: '', qty: 1, price: 0 }] }));
     const handleUpdateOrderItem = (idx: number, field: 'desc' | 'qty' | 'price', value: string | number) => {
         const items = [...newOrder.items];
         (items[idx] as any)[field] = value;
@@ -480,7 +488,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
         const lines = Array.isArray(ord.lines) ? ord.lines : [];
         const mappedLines = lines.map((l: any) => ({
             id: String(l.id),
-            uid: crypto.randomUUID(),
+            uid: generateUUID(),
             productId: l.fk_product ? String(l.fk_product) : '',
             desc: l.desc || l.label || '',
             qty: Number(l.qty) || 1,
@@ -504,7 +512,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
             setNewOrder({
                 socid: prefill.data.socid || '',
                 date: prefill.data.date || new Date().toISOString().split('T')[0],
-                items: lines.map((l: any) => ({ uid: crypto.randomUUID(), productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0 })),
+                items: lines.map((l: any) => ({ uid: generateUUID(), productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0 })),
             });
             setIsCreateModalOpen(true);
             toast.info('Revise os itens e confirme a criação do pedido.');

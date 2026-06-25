@@ -604,3 +604,49 @@ describe('OrderList — chaves estáveis nos itens (#825)', () => {
         expect(screen.getAllByPlaceholderText('Descrição do item')).toHaveLength(2);
     });
 });
+
+// ─────────────────────────────────────────────
+// 8. Chaves estáveis no detalhe somente leitura (#825)
+// ─────────────────────────────────────────────
+describe('OrderList — chaves estáveis no detalhe somente leitura (#825)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.spyOn(window, 'confirm').mockImplementation(() => false);
+    });
+
+    it('linhas do backend sem id recebem uid estável e não geram aviso de chave duplicada', async () => {
+        const orderWithoutLineIds = {
+            ...defaultOrder,
+            lines: [
+                { desc: 'Item Sem Id A', qty: 1, price: 10 },
+                { desc: 'Item Sem Id B', qty: 2, price: 20 },
+                { desc: 'Item Sem Id C', qty: 3, price: 30 },
+            ],
+        };
+        vi.mocked(useOrders).mockReturnValue({
+            data: [orderWithoutLineIds],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const user = userEvent.setup();
+        renderComponent();
+
+        await user.click(await screen.findByText('CO2501-0001'));
+
+        // As três linhas (sem id do backend) renderizam no detalhe somente leitura (#825)
+        await waitFor(() => {
+            expect(screen.getByText('Item Sem Id A')).toBeTruthy();
+            expect(screen.getByText('Item Sem Id B')).toBeTruthy();
+            expect(screen.getByText('Item Sem Id C')).toBeTruthy();
+        });
+
+        // Sem aviso de chave duplicada — uid estável gerado no cliente, não índice (#825)
+        const dupKey = spy.mock.calls.find(
+            (c) => typeof c[0] === 'string' && c[0].includes('children with the same key')
+        );
+        expect(dupKey).toBeUndefined();
+        spy.mockRestore();
+    });
+});

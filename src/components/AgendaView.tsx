@@ -409,9 +409,11 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
 
         const days: { day: number | null, items: AgendaItem[], dateStr: string }[] = [];
 
-        // Previous month filler
+        // Previous month filler — cada célula recebe uma data real e estável
+        // (dia anterior ao 1º) para que a chave do React seja única, sem usar índice.
         for (let i = 0; i < startingDayOfWeek; i++) {
-            days.push({ day: null, items: [], dateStr: '' });
+            const fillerDate = new Date(year, month, i - startingDayOfWeek + 1);
+            days.push({ day: null, items: [], dateStr: fillerDate.toISOString() });
         }
 
         // Current month days
@@ -839,9 +841,9 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
 
                                 {/* Grid Body */}
                                 <div className="flex-1 grid grid-cols-7 auto-rows-fr">
-                                    {calendarDays.map((cell, idx) => (
+                                    {calendarDays.map((cell) => (
                                         <div
-                                            key={cell.dateStr || `cell-${idx}`}
+                                            key={cell.dateStr}
                                             className={`min-h-[100px] border-b border-r border-slate-100 dark:border-slate-800 p-2 relative ${!cell.day ? 'bg-slate-50/50 dark:bg-slate-950/50' : 'bg-white dark:bg-slate-900'}`}
                                         >
                                             {cell.day && (
