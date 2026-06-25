@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { toast } from 'sonner';
 
 vi.mock('sonner', () => ({
     toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -259,5 +260,86 @@ describe('AiService.getChatSession - userId/usage propagados (#594)', () => {
     it('passa o userId do backend para a view (já coberto via componente)', () => {
         // Satisfeito pelos testes do componente acima que verificam @userId no detalhe.
         expect(true).toBe(true);
+    });
+});
+
+// issue #830: deleteAllSessions precisava de try/catch + loading state + tratar count===0 vs erro.
+describe('ChatSessionsView - excluir todas as sessões (#830)', () => {
+    it('exclui todas as sessões com sucesso, limpa a lista e mostra toast', async () => {
+        const sessions = makeSessions([
+            { id: 's1', title: 'Sessão Alfa' },
+            { id: 's2', title: 'Sessão Beta' },
+        ]);
+        mockAiService.getChatSessions.mockResolvedValue(sessions);
+        mockAiService.deleteAllChatSessions.mockResolvedValue(2);
+
+        render(<ChatSessionsView />);
+
+        await waitFor(() => screen.getByText('Sessão Alfa'));
+
+        await userEvent.click(screen.getByRole('button', { name: 'Apagar todas as sessões' }));
+
+        await waitFor(() => expect(toast.success).toHaveBeenCalledWith('2 sessão(ões) excluída(s)'));
+        // Lista foi limpa → volta ao empty state
+        await waitFor(() => expect(screen.queryByText('Sessão Alfa')).toBeNull());
+        expect(screen.getByText('Nenhuma sessão registrada ainda')).toBeInTheDocument();
+    });
+
+    it('trata count === 0 exibindo toast informativo e preserva a lista', async () => {
+        const sessions = makeSessions([{ id: 's1', title: 'Sessão Gama' }]);
+        mockAiService.getChatSessions.mockResolvedValue(sessions);
+        mockAiService.deleteAllChatSessions.mockResolvedValue(0);
+
+        render(<ChatSessionsView />);
+
+        await waitFor(() => screen.getByText('Sessão Gama'));
+
+        await userEvent.click(screen.getByRole('button', { name: 'Apagar todas as sessões' }));
+
+        await waitFor(() => expect(toast.info).toHaveBeenCalledWith('Nenhuma sessão para excluir'));
+        expect(screen.getByText('Sessão Gama')).toBeInTheDocument();
+    });
+
+    it('em caso de erro mostra toast de erro e não deixa o estado preso', async () => {
+        const sessions = makeSessions([{ id: 's1', title: 'Sessão Delta' }]);
+        mockAiService.getChatSessions.mockResolvedValue(sessions);
+        mockAiService.deleteAllChatSessions.mockRejectedValue(new Error('boom'));
+
+        render(<ChatSessionsView />);
+
+        await waitFor(() => screen.getByText('Sessão Delta'));
+
+        const btn = screen.getByRole('button', { name: 'Apagar todas as sessões' });
+        await userEvent.click(btn);
+
+        await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Erro ao excluir todas as sessões'));
+        // Estado não fica preso: botão reabilitado e lista preservada
+        await waitFor(() => expect(btn).toBeEnabled());
+        expect(screen.getByText('Sessão Delta')).toBeInTheDocument();
+    });
+
+    it('desabilita o botão durante a operação (sem duplo-clique)', async () => {
+        const sessions = makeSessions([{ id: 's1', title: 'Sessão Épsilon' }]);
+        mockAiService.getChatSessions.mockResolvedValue(sessions);
+        let resolveDelete!: (n: number) => void;
+        mockAiService.deleteAllChatSessions.mockReturnValue(
+            new Promise<number>((r) => { resolveDelete = r; })
+        );
+
+        render(<ChatSessionsView />);
+
+        await waitFor(() => screen.getByText('Sessão Épsilon'));
+
+        const btn = screen.getByRole('button', { name: 'Apagar todas as sessões' });
+        await userEvent.click(btn);
+
+        // Durante a operação: botão desabilitado
+        await waitFor(() => expect(btn).toBeDisabled());
+
+        // Conclui a operação (count 0 → preserva lista)
+        resolveDelete(0);
+        await waitFor(() => expect(toast.info).toHaveBeenCalledWith('Nenhuma sessão para excluir'));
+        // Depois: botão reabilitado
+        await waitFor(() => expect(btn).toBeEnabled());
     });
 });
