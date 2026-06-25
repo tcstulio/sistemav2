@@ -4,6 +4,7 @@ import { CLUSTERS } from './constants';
 import { Modal, Button, Input } from '../ui';
 import { Clock, MapPin, Ticket, User, Instagram, Users, Mic2, Plus, Trash2, Search, Edit2, X, AlertTriangle } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatUtils';
+import { useDolibarr } from '../../context/DolibarrContext';
 
 interface EventDetailsModalProps {
   event: VenueEvent | null;
@@ -20,6 +21,7 @@ const DiscIcon = ({ size }: { size: number }) => (
 );
 
 const EventDetailsModal: React.FC<EventDetailsModalProps> = ({ event, onClose, onUpdateEvent, onDeleteEvent, allArtists }) => {
+  const { canDo } = useDolibarr();
   const [localTickets, setLocalTickets] = useState<TicketBatch[]>([]);
   const [isAddingArtist, setIsAddingArtist] = useState(false);
   const [artistSearch, setArtistSearch] = useState('');
@@ -100,7 +102,7 @@ const EventDetailsModal: React.FC<EventDetailsModalProps> = ({ event, onClose, o
               className="text-3xl font-bold text-slate-800 dark:text-white leading-none bg-transparent outline-none border-b border-transparent hover:border-slate-300 dark:hover:border-white/20 focus:border-indigo-500 transition-all w-full placeholder-slate-400 dark:placeholder-white/50" placeholder="Nome do Evento" />
           </div>
           <div className="flex items-center gap-2 mb-1">
-            {onDeleteEvent && (
+            {canDo('delete', 'centrovibe') && onDeleteEvent && (
               <button
                 onClick={() => {
                   if (window.confirm('Excluir este evento da agenda?')) {
@@ -144,9 +146,11 @@ const EventDetailsModal: React.FC<EventDetailsModalProps> = ({ event, onClose, o
           <div>
             <div className="flex justify-between items-center mb-3">
               <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2"><User className="text-indigo-500" size={20} /> Lineup</h3>
+              {canDo('edit', 'centrovibe') && (
               <Button variant="outline" size="sm" icon={isAddingArtist ? <X size={12} /> : <Plus size={12} />} onClick={() => setIsAddingArtist(!isAddingArtist)}>
                 {isAddingArtist ? 'Cancelar' : 'Add Atração'}
               </Button>
+              )}
             </div>
 
             {isAddingArtist && (
@@ -177,10 +181,12 @@ const EventDetailsModal: React.FC<EventDetailsModalProps> = ({ event, onClose, o
                       <p className="font-bold text-slate-800 dark:text-white text-sm truncate">{artist.name}</p>
                       <p className="text-xs text-slate-400 dark:text-slate-500 truncate">{artist.subGenre}</p>
                     </div>
+                    {canDo('delete', 'centrovibe') && (
                     <button onClick={() => handleRemoveFromLineup(artist.id)}
                       className="absolute -top-1 -right-1 bg-red-100 dark:bg-red-900 text-red-600 dark:text-red-200 p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-200 dark:hover:bg-red-700" title="Remover do lineup">
                       <X size={12} />
                     </button>
+                    )}
                     {artist.instagram && <span className="text-slate-400 dark:text-slate-500 hover:text-pink-500 transition-colors"><Instagram size={16} /></span>}
                   </div>
                 ))}
@@ -203,9 +209,11 @@ const EventDetailsModal: React.FC<EventDetailsModalProps> = ({ event, onClose, o
           <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5 sticky top-0">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2"><Ticket className="text-green-500" size={20} /> Ingressos</h3>
+              {canDo('edit', 'centrovibe') && (
               <Button variant="outline" size="sm" icon={<Plus size={12} />} onClick={handleAddTicket}>
                 Add Lote
               </Button>
+              )}
             </div>
 
             <div className="space-y-3">
@@ -225,10 +233,12 @@ const EventDetailsModal: React.FC<EventDetailsModalProps> = ({ event, onClose, o
                         <input type="number" value={ticket.totalCount || 0} onChange={(e) => handleUpdateTicket(ticket.id, 'totalCount', Number(e.target.value))}
                           className="bg-slate-50 dark:bg-slate-800 w-full rounded border border-slate-200 dark:border-slate-700 py-1 pl-8 pr-2 text-xs text-slate-800 dark:text-white focus:border-indigo-500 outline-none" />
                       </div>
+                      {canDo('delete', 'centrovibe') && (
                       <button onClick={() => handleDeleteTicket(ticket.id)}
                         className="p-1.5 text-slate-400 dark:text-slate-600 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded transition-colors" title="Excluir lote">
                         <Trash2 size={14} />
                       </button>
+                      )}
                     </div>
                   </div>
                 </div>
