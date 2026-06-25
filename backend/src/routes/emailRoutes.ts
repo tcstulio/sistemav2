@@ -218,26 +218,31 @@ router.get('/:accountId/messages/:uid/body', async (req, res) => {
 });
 
 router.post('/send', async (req, res) => {
+    const schema = z.object({
+        accountId: z.string(),
+        to: z.string().min(1).email(),
+        subject: z.string(),
+        htmlBody: z.string(),
+        cc: z.string().optional(),
+        bcc: z.string().optional(),
+        inReplyTo: z.string().optional(),
+        references: z.string().optional(),
+        attachments: z.array(z.object({
+            filename: z.string(),
+            content: z.string(),
+            encoding: z.literal('base64').optional().default('base64'),
+            contentType: z.string().optional()
+        })).optional()
+    });
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Dados inválidos' });
+    }
+
+    const { accountId, to, subject, htmlBody, cc, bcc, attachments } = parsed.data;
+
     try {
-        const schema = z.object({
-            accountId: z.string(),
-            to: z.string(),
-            subject: z.string(),
-            htmlBody: z.string(),
-            cc: z.string().optional(),
-            bcc: z.string().optional(),
-            inReplyTo: z.string().optional(),
-            references: z.string().optional(),
-            attachments: z.array(z.object({
-                filename: z.string(),
-                content: z.string(),
-                encoding: z.literal('base64').optional().default('base64'),
-                contentType: z.string().optional()
-            })).optional()
-        });
-
-        const { accountId, to, subject, htmlBody, cc, bcc, attachments } = schema.parse(req.body);
-
         const info = await emailService.sendEmail(accountId, to, subject, htmlBody, attachments, cc, bcc);
         res.json(info);
     } catch (error: any) {

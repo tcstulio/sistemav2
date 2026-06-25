@@ -101,6 +101,7 @@ vi.mock('../../components/whatsapp/ConversationList', () => ({
     ConversationList: (props: any) => {
         capturedCallbacks.onDeleteSession = props.onDeleteSession;
         capturedCallbacks.onSelect = props.onSelect;
+        capturedCallbacks.onSettingsClick = props.onSettingsClick;
         return (
             <div data-testid="conversation-list">
                 <button data-testid="delete-session-btn" onClick={() => props.onDeleteSession?.('sess1')}>
@@ -111,6 +112,9 @@ vi.mock('../../components/whatsapp/ConversationList', () => ({
                     onClick={() => props.onSelect({ id: 'c1', accountId: 'sess1', customerName: 'Test', customerNumber: '123', lastMessage: '', lastMessageTimestamp: Date.now(), unreadCount: 0, status: 'open', isGroup: false })}
                 >
                     Select Conversation
+                </button>
+                <button data-testid="settings-btn" onClick={() => props.onSettingsClick?.()}>
+                    Open Settings
                 </button>
             </div>
         );
@@ -260,6 +264,25 @@ describe('WhatsAppView — no native alert/confirm', () => {
         await user.click(within(dialog).getByText('Cancelar'));
 
         // Ensure dialog is gone (action was cancelled)
+        await waitFor(() => {
+            expect(screen.queryByRole('dialog')).toBeNull();
+        });
+    });
+
+    it('settings modal usa <Modal> reutilizável e fecha com ESC (#832)', async () => {
+        const user = userEvent.setup();
+
+        renderView();
+
+        await user.click(screen.getByTestId('settings-btn'));
+
+        // Modal reutilizável renderiza role="dialog" com o título
+        const dialog = await screen.findByRole('dialog');
+        expect(within(dialog).getByText('Configurações do WhatsApp')).toBeTruthy();
+
+        // ESC fecha (comportamento do <Modal>, antes os modais eram <div> inline sem ESC)
+        await user.keyboard('{Escape}');
+
         await waitFor(() => {
             expect(screen.queryByRole('dialog')).toBeNull();
         });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 // Mock all 11 hooks from hooks.ts
 vi.mock('../../../hooks/dolibarr/hooks', () => ({
@@ -75,6 +76,7 @@ import {
     useTasks,
 } from '../../../hooks/dolibarr/hooks';
 
+import { AiService } from '../../../services/aiService';
 import { MonthlyReport } from '../../../pages/Reports/MonthlyReport';
 
 const emptyHookResult = { data: [], isLoading: false, error: null };
@@ -153,5 +155,22 @@ describe('MonthlyReport', () => {
         // Should have option for CURRENT_YEAR - 1 (dynamic)
         const prevYearOption = screen.queryByRole('option', { name: String(currentYear - 1) });
         expect(prevYearOption).toBeInTheDocument();
+    });
+
+    it('botão "Gerar Análise IA" usa PlayCircle do lucide e dispara analyzeMonthlyReport (#832)', async () => {
+        const user = userEvent.setup();
+        vi.mocked(AiService.analyzeMonthlyReport).mockResolvedValue('# Resumo');
+        setupAllHooks();
+        render(<MonthlyReport />);
+
+        const btn = screen.getByRole('button', { name: /gerar an.lise ia/i });
+        // O ícone PlayCircle agora vem do lucide-react (não é mais definido localmente)
+        expect(btn).toBeInTheDocument();
+
+        await user.click(btn);
+
+        await waitFor(() => {
+            expect(AiService.analyzeMonthlyReport).toHaveBeenCalledTimes(1);
+        });
     });
 });
