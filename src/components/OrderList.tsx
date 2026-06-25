@@ -64,7 +64,8 @@ const OrderDetail: React.FC<{
     onDownloadPdf: (id: string | number) => void;
     onPreviewPdf: (id: string | number, ref: string) => void;
     onOpenDolibarr: (id: string) => void;
-    onDeleteShipment: (id: string) => void;
+    onDeleteShipment: (id: string) => Promise<any>;
+    onShipmentDeleted: () => void;
     onCreateInvoice: (id: string) => void;
     onDeleteOrder: () => Promise<any>;
     onOrderDeleted: () => void;
@@ -86,6 +87,7 @@ const OrderDetail: React.FC<{
     onPreviewPdf,
     onOpenDolibarr,
     onDeleteShipment,
+    onShipmentDeleted,
     onCreateInvoice,
     onDeleteOrder,
     onOrderDeleted
@@ -295,7 +297,11 @@ const OrderDetail: React.FC<{
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 {ship.tracking_number && <span className="text-xs font-mono bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded text-slate-600 dark:text-slate-400">{ship.tracking_number}</span>}
-                                                <button onClick={(e) => { e.stopPropagation(); onDeleteShipment(ship.id); }} className="p-2 text-slate-400 hover:text-red-500 rounded"><Trash2 size={16} /></button>
+                                                <ConfirmDeleteButton
+                                                    onDelete={() => onDeleteShipment(ship.id)}
+                                                    onDeleted={onShipmentDeleted}
+                                                    itemLabel={ship.ref}
+                                                />
                                             </div>
                                         </div>
                                     ))
@@ -656,17 +662,6 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
         if (onRefresh) onRefresh();
     };
 
-    const handleDeleteShipment = async (id: string) => {
-        try {
-            await DolibarrService.deleteShipment(config, id);
-            toast.success("Envio excluído");
-            if (onRefresh) onRefresh();
-        } catch (e) {
-            log.error("Failed to delete shipment", e);
-            toast.error("Falha ao excluir envio");
-        }
-    };
-
     const handleClassifyDelivered = async () => {
         if (!selectedOrder) return;
         setProcessingId(selectedOrder.id);
@@ -888,7 +883,8 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                             onDownloadPdf={handleDownloadPdf}
                             onPreviewPdf={handlePreviewPdf}
                             onOpenDolibarr={openInDolibarr}
-                            onDeleteShipment={handleDeleteShipment}
+                            onDeleteShipment={(id) => DolibarrService.deleteShipment(config, id)}
+                            onShipmentDeleted={() => { if (onRefresh) onRefresh(); }}
                             onCreateInvoice={handleCreateInvoice}
                             onDeleteOrder={() => DolibarrService.deleteOrder(config, selectedOrder.id)}
                             onOrderDeleted={() => handleOrderDeleted(selectedOrder.id)}
