@@ -74,7 +74,11 @@ function makeStoredTask(n: number): Task {
 }
 
 // Drena a fila de micro/macrotasks até que `pred()` seja verdadeiro (com timeout de segurança).
-async function flushUntil(pred: () => boolean, timeoutMs = 4000): Promise<void> {
+// 15s (era 4s): sob carga do CI (vários arquivos de teste concorrentes) o cascade async da fila
+// demora a assentar e estourava o deadline → flaky (1 falha intermitente travava TODOS os PRs).
+// O deadline é só rede de segurança contra hang real; aumentá-lo não mascara bug (ainda falha,
+// só mais devagar), mas elimina o falso-negativo de timing.
+async function flushUntil(pred: () => boolean, timeoutMs = 15000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (!pred()) {
         if (Date.now() > deadline) throw new Error('flushUntil: condição não atingida no tempo');
