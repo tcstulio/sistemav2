@@ -3,11 +3,11 @@ import { logger } from '../utils/logger';
 const log = logger.child('IndexedDB');
 
 export const DB_NAME = 'CoolGrooveDB';
-export const DB_VERSION = 29; // Bumped version to include User Rights
+export const DB_VERSION = 30; // #821: Bumped version to include salaries store
 
 // ... (existing code)
 
-const STORES = [
+export const STORES = [
     'customers', 'suppliers', 'categories', 'contacts', 'invoices',
     'supplierInvoices', 'supplierProposals', 'products', 'proposals', 'orders', 'shipments',
     'projects', 'tasks', 'bankAccounts', 'bankLines', 'events',
@@ -38,6 +38,7 @@ const STORES = [
     'expenseReportPayments', // Added missing store
     'expenseReportPaymentLinks', // Added missing store
     'vatPayments', // Added missing store
+    'salaries', // #821: Added missing salaries store (parent of salary_payments)
     'salaryPayments', // Added missing store
     'socialContributionPayments', // Added missing store
     'loanPayments', // Added missing store
@@ -135,6 +136,13 @@ export const dbService = {
                     if (db.objectStoreNames.contains('taskContacts')) {
                         db.deleteObjectStore('taskContacts');
                     }
+                }
+
+                // v30 - Add missing 'salaries' store (#821). No data to clear;
+                // the store simply did not exist before, so the STORES loop
+                // below creates it on this upgrade.
+                if (oldVersion < 30) {
+                    log.info("Upgrading to v30 - Adding salaries store...");
                 }
 
                 STORES.forEach(storeName => {
