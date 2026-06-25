@@ -1,18 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import ArtistList from '../../components/CentroVibe/ArtistList';
 import NewEventModal from '../../components/CentroVibe/NewEventModal';
 import EventDetailsModal from '../../components/CentroVibe/EventDetailsModal';
+import CentroVibeManager from '../../components/CentroVibe/CentroVibeManager';
 import { INITIAL_ARTISTS, INITIAL_SCHEDULE } from '../../components/CentroVibe/constants';
 import { Artist, VenueEvent } from '../../types/centrovibe';
 import { useDolibarr } from '../../context/DolibarrContext';
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
-// #853 — ArtistList/EventDetailsModal agora consomem canDo do useDolibarr.
+// #853 — ArtistList/EventDetailsModal/CentroVibeManager consomem canDo do useDolibarr.
 // Default seguro (admin): canDo sempre true para preservar os testes existentes.
 vi.mock('../../context/DolibarrContext', () => ({
   useDolibarr: vi.fn(() => ({ canDo: () => true })),
+}));
+
+// #853 — CentroVibeManager carrega dados via CentroVibeService no mount.
+// Mock determinístico: fetchData falha -> cai no catch -> saveData resolve -> loading=false.
+vi.mock('../../services/centrovibeService', () => ({
+  CentroVibeService: {
+    fetchData: vi.fn().mockRejectedValue(new Error('sem backend')),
+    saveData: vi.fn().mockResolvedValue(undefined),
+  },
 }));
 
 const mockArtist: Artist = {
@@ -380,5 +390,40 @@ describe('EventDetailsModal (#853) — gating canDo', () => {
     );
     expect(screen.getByDisplayValue('Show Teste')).toBeTruthy();
     expect(screen.getByDisplayValue('Lote 1')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CentroVibeManager — gating canDo no botão "Novo Evento" (#853)
+// ---------------------------------------------------------------------------
+describe('CentroVibeManager (#853) — gating canDo no botão "Novo Evento"', () => {
+  const setCanDo = (fn: (action: string, screenName: string) => boolean) =>
+    vi.mocked(useDolibarr).mockReturnValue({ canDo: fn } as any);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    setCanDo(() => true);
+  });
+
+  it('admin (canDo("create","centrovibe")) vê o botão "Novo Evento"', async () => {
+    setCanDo(() => true);
+    render(<CentroVibeManager />);
+    await waitFor(() => expect(screen.getByText('Agenda Modelo (Semanal)')).toBeTruthy());
+    expect(screen.getByText('Novo Evento')).toBeTruthy();
+  });
+
+  it('sem canDo("create","centrovibe"): não exibe o botão "Novo Evento"', async () => {
+    setCanDo((action, scrn) => !(action === 'create' && scrn === 'centrovibe'));
+    render(<CentroVibeManager />);
+    await waitFor(() => expect(screen.getByText('Agenda Modelo (Semanal)')).toBeTruthy());
+    expect(screen.queryByText('Novo Evento')).toBeNull();
+  });
+
+  it('sem nenhuma permissão centrovibe: agenda (visualização) continua renderizando', async () => {
+    setCanDo((_action, scrn) => scrn !== 'centrovibe');
+    render(<CentroVibeManager />);
+    await waitFor(() => expect(screen.getByText('Agenda Modelo (Semanal)')).toBeTruthy());
+    expect(screen.queryByText('Novo Evento')).toBeNull();
   });
 });
