@@ -81,6 +81,8 @@ vi.mock('../../hooks/dolibarr', () => ({
 }));
 
 import WarehouseList from '../../components/WarehouseList';
+import { useDolibarr } from '../../context/DolibarrContext';
+import { toast } from 'sonner';
 
 describe('WarehouseList (#564) — hierarquia de sub-estoques', () => {
     beforeEach(() => {
@@ -301,5 +303,102 @@ describe('mapWarehouse — preserva fk_parent (#564)', () => {
         const raw = { id: '1', label: 'Raiz', statut: '1' };
         const result = mapWarehouse(raw as any);
         expect(result.fk_parent).toBeUndefined();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// #852: Gating canDo('edit','warehouses') + validação qty > 0
+// ---------------------------------------------------------------------------
+describe('WarehouseList (#852) — gating canDo e validação de qty', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockSvc.getProductWithStock.mockResolvedValue({ stock_warehouse: {} });
+        // Restaura o comportamento padrão (admin) entre os testes
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: mockConfig,
+            refreshData: mockRefreshData,
+            canAccess: () => true,
+            canDo: () => true,
+        } as any);
+    });
+
+    it('exibe Transferir e Ajustar quando canDo("edit","warehouses") é verdadeiro', () => {
+        render(<WarehouseList />);
+        expect(screen.getByTestId('btn-transfer')).toBeInTheDocument();
+        expect(screen.getByTestId('btn-adjust')).toBeInTheDocument();
+    });
+
+    it('oculta Transferir e Ajustar quando o usuário não tem canDo("edit","warehouses")', () => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: mockConfig,
+            refreshData: mockRefreshData,
+            canAccess: () => true,
+            canDo: (action: string, scrn: string) => !(action === 'edit' && scrn === 'warehouses'),
+        } as any);
+
+        render(<WarehouseList />);
+
+        expect(screen.queryByTestId('btn-transfer')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('btn-adjust')).not.toBeInTheDocument();
+    });
+
+    it('não chama createStockTransfer quando a quantidade é <= 0', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        const form = document.getElementById('transfer-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } }); // produto
+        fireEvent.change(selects[1], { target: { value: '1' } });  // origem
+        fireEvent.change(selects[2], { target: { value: '2' } });  // destino
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '0' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockTransfer).not.toHaveBeenCalled();
+    });
+
+    it('não chama createStockCorrection quando a quantidade é <= 0', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+
+        const form = document.getElementById('correction-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } }); // produto
+        fireEvent.change(selects[1], { target: { value: '1' } });  // armazém
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '0' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalled();
+    });
+
+    it('chama createStockTransfer normalmente quando a quantidade é válida (> 0)', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        const form = document.getElementById('transfer-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        fireEvent.change(selects[2], { target: { value: '2' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '5' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(mockSvc.createStockTransfer).toHaveBeenCalledWith(
+                mockConfig, 'p1', '1', '2', 5
+            );
+        });
     });
 });
