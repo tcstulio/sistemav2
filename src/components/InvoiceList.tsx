@@ -202,6 +202,11 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     });
     const filteredInvoices = controls.result;
 
+    // Fatia paginada aplicada à renderização, total e cálculo de hasNext (#826).
+    const paginatedInvoices = useMemo(() => {
+        return filteredInvoices.slice(page * limit, (page + 1) * limit);
+    }, [filteredInvoices, page, limit]);
+
     // Reset da paginação quando a busca muda.
     useEffect(() => { setPage(0); }, [controls.search]);
 
@@ -498,7 +503,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
 
     const renderListContent = (
         <>
-            {filteredInvoices.length === 0 ? (
+            {paginatedInvoices.length === 0 ? (
                 <EmptyState
                     icon={FileText}
                     title="Nenhuma fatura encontrada"
@@ -506,7 +511,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                 />
             ) : (
                 <div className="grid grid-cols-1 gap-3 p-4">
-                    {filteredInvoices.map((inv) => {
+                    {paginatedInvoices.map((inv) => {
                         const projectName = getProjectName(inv.project_id);
                         const isDraft = inv.statut === '0';
                         const customerName = getCustomerName(inv.socid);
@@ -588,13 +593,13 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                     })}
                 </div>
             )}
-            <ListTotalBar total={filteredInvoices.reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0)} />
+            <ListTotalBar total={paginatedInvoices.reduce((sum, inv) => sum + (inv.total_ttc ?? 0), 0)} />
             <PaginationControls
                 page={page}
                 limit={limit}
                 onPageChange={setPage}
                 onLimitChange={setLimit}
-                hasNext={filteredInvoices.length >= limit}
+                hasNext={filteredInvoices.length > (page + 1) * limit}
                 hasPrev={page > 0}
             />
         </>
