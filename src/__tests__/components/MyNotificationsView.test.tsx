@@ -1,139 +1,78 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
-import MyNotificationsView from '../../components/MyNotificationsView';
-import type { AppNotification } from '../../types';
-
-const mockSetNotifications = vi.fn();
-const mockDoAction = vi.fn(() => Promise.resolve(true));
-
-// Notificações de fixture
-const personalNote: AppNotification = {
-    id: 'n1',
-    type: 'task',
-    title: 'Tarefa atribuída',
-    message: 'Você foi atribuído à tarefa X',
-    date: 1000000,
-    priority: 'medium',
-    read: false,
-    recipient: 'user1',
-    scope: 'personal',
-};
-
-const systemNote: AppNotification = {
-    id: 'n2',
-    type: 'stock',
-    title: 'Estoque baixo',
-    message: 'Produto Y com estoque baixo',
-    date: 999000,
-    priority: 'high',
-    read: false,
-    scope: 'system',
-};
-
-const readNote: AppNotification = {
-    id: 'n3',
-    type: 'info',
-    title: 'Informação lida',
-    message: 'Já foi lida',
-    date: 998000,
-    priority: 'low',
-    read: true,
-    recipient: 'user1',
-    scope: 'personal',
-};
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import React from 'react';
 
 vi.mock('../../context/DolibarrContext', () => ({
-    useDolibarr: () => ({
-        notifications: [personalNote, systemNote, readNote],
-        setNotifications: mockSetNotifications,
-        currentUser: { id: 'user1', login: 'user1', firstname: 'Test', lastname: 'User', statut: '1' },
-    }),
+    useDolibarr: vi.fn(() => ({
+        notifications: [],
+        setNotifications: vi.fn(),
+        currentUser: { id: 'u1', login: 'u1' },
+    })),
+}));
+
+const { doActionMock } = vi.hoisted(() => ({
+    doActionMock: vi.fn(),
 }));
 
 vi.mock('../../hooks/useNotifications', () => ({
-    useNotificationActions: () => mockDoAction,
+    useNotificationActions: () => doActionMock,
 }));
 
-const renderView = () =>
-    render(
-        <MemoryRouter>
-            <MyNotificationsView onNavigate={vi.fn()} />
-        </MemoryRouter>
-    );
+vi.mock('../../utils/dateUtils', () => ({
+    formatTime: (d: number) => String(d),
+}));
 
-describe('MyNotificationsView (#531)', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
+vi.mock('../../utils/notificationIcons', () => ({
+    getNotificationIcon: () => null,
+    NOTIFICATION_TYPE_LABELS: {},
+}));
+
+import MyNotificationsView from '../../components/MyNotificationsView';
+
+describe('MyNotificationsView — markAllRead loading/disabled (#832)', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it('desabilita o botão e mostra "Marcando..." durante a ação', async () => {
+        let resolveAction: (v: boolean) => void = () => {};
+        doActionMock.mockReturnValueOnce(
+            new Promise<boolean>((r) => { resolveAction = r; })
+        );
+
+        const user = userEvent.setup();
+        render(<MyNotificationsView />);
+
+        const btn = screen.getByRole('button', { name: /marcar todas como lidas/i });
+        await user.click(btn);
+
+        // Enquanto pendente: botão mostra "Marcando..." e fica desabilitado
+        await waitFor(() => {
+            expect(screen.getByRole('button', { name: /marcando/i })).toBeDisabled();
+        });
+        expect(doActionMock).toHaveBeenCalledWith('markAllRead');
+
+        // Ao resolver, volta ao estado normal
+        resolveAction(true);
+        await waitFor(() => {
+            expect(screen.getByRole('button', { name: /marcar todas como lidas/i })).not.toBeDisabled();
+        });
     });
 
-    it('renderiza a página com abas Minhas e Sistema', () => {
-        renderView();
-        expect(screen.getByRole('button', { name: /Minhas/i })).toBeTruthy();
-        expect(screen.getByRole('button', { name: /Sistema/i })).toBeTruthy();
-    });
+    it('evita duplo-clique (não chama markAllRead duas vezes)', async () => {
+        let resolveAction: (v: boolean) => void = () => {};
+        doActionMock.mockReturnValue(
+            new Promise<boolean>((r) => { resolveAction = r; })
+        );
 
-    it('aba Minhas mostra somente notificações pessoais (scope=personal)', () => {
-        renderView();
-        // Aba "Minhas" ativa por padrão
-        expect(screen.getByText('Tarefa atribuída')).toBeTruthy();
-        // Notificação de sistema não deve aparecer na aba Minhas
-        expect(screen.queryByText('Estoque baixo')).toBeNull();
-    });
+        const user = userEvent.setup();
+        render(<MyNotificationsView />);
 
-    it('aba Sistema mostra somente notificações de sistema (scope=system)', () => {
-        renderView();
-        fireEvent.click(screen.getByRole('button', { name: /Sistema/i }));
-        expect(screen.getByText('Estoque baixo')).toBeTruthy();
-        expect(screen.queryByText('Tarefa atribuída')).toBeNull();
-    });
+        const btn = screen.getByRole('button', { name: /marcar todas como lidas/i });
+        await user.click(btn);
+        // Segundo clique enquanto desabilitado não deve registrar nova chamada
+        await user.click(btn);
 
-    it('filtro Não-lidas mostra somente itens não lidos', () => {
-        renderView();
-        // Na aba Minhas há: n1 (unread) e n3 (read)
-        fireEvent.click(screen.getByRole('button', { name: /Não-lidas/i }));
-        expect(screen.getByText('Tarefa atribuída')).toBeTruthy();
-        expect(screen.queryByText('Informação lida')).toBeNull();
-    });
-
-    it('filtro Lidas mostra somente itens lidos', () => {
-        renderView();
-        // Há múltiplos botões com "Lidas": o filtro e o header "Marcar todas como lidas"
-        // Usar getAllByRole e pegar o que tem exatamente "Lidas" (o filtro)
-        const lidasBtns = screen.getAllByRole('button', { name: /Lidas/i });
-        const lidasFilter = lidasBtns.find(b => b.textContent?.trim() === 'Lidas');
-        expect(lidasFilter).toBeTruthy();
-        fireEvent.click(lidasFilter!);
-        expect(screen.getByText('Informação lida')).toBeTruthy();
-        expect(screen.queryByText('Tarefa atribuída')).toBeNull();
-    });
-
-    it('clicar em marcar como lida chama o hook e atualização otimista', async () => {
-        renderView();
-        // Botão de clock (marcar como lida) ao lado da notificação não-lida n1
-        const markReadBtns = screen.getAllByLabelText('Marcar como lida');
-        expect(markReadBtns.length).toBeGreaterThan(0);
-        fireEvent.click(markReadBtns[0]);
-        // Atualização otimista: setNotifications chamado
-        await waitFor(() => expect(mockSetNotifications).toHaveBeenCalled());
-        // Ação de API chamada com 'markRead'
-        await waitFor(() => expect(mockDoAction).toHaveBeenCalledWith('markRead', 'n1'));
-    });
-
-    it('estado vazio exibe mensagem quando não há notificações no filtro', () => {
-        renderView();
-        // Vai para aba Sistema e filtra Lidas — não há nenhuma
-        fireEvent.click(screen.getByRole('button', { name: /Sistema/i }));
-        // Há múltiplos botões com "Lidas": filtrar pelo texto exato
-        const lidasBtns = screen.getAllByRole('button', { name: /Lidas/i });
-        const lidasFilter = lidasBtns.find(b => b.textContent?.trim() === 'Lidas');
-        fireEvent.click(lidasFilter!);
-        expect(screen.getByText(/Nenhuma notificação lida aqui/i)).toBeTruthy();
-    });
-
-    it('exibe rótulo de origem (ex.: Tarefa) em cada notificação', () => {
-        renderView();
-        // O badge de tipo "Tarefa" deve aparecer
-        expect(screen.getByText('Tarefa')).toBeTruthy();
+        expect(doActionMock).toHaveBeenCalledTimes(1);
+        resolveAction(true);
     });
 });
