@@ -31,6 +31,7 @@ vi.mock('../../context/DolibarrContext', () => ({
     useDolibarr: vi.fn(() => ({
         config: mockConfig,
         refreshData: mockRefreshData,
+        canDo: () => true,
     })),
 }));
 
@@ -58,6 +59,7 @@ vi.mock('../../hooks/useConfirm', () => ({
 
 import { InventoryView } from '../../components/InventoryView';
 import { useDolibarr } from '../../context/DolibarrContext';
+import { toast } from 'sonner';
 
 describe('InventoryView (#569) — drill-in de armazém', () => {
     beforeEach(() => {
@@ -194,6 +196,7 @@ describe('InventoryView (#634) — cor de tema e modais padronizados', () => {
         vi.mocked(useDolibarr).mockReturnValue({
             config: { ...mockConfig, themeColor: 'emerald' },
             refreshData: mockRefreshData,
+            canDo: () => true,
         } as any);
 
         render(<InventoryView />);
@@ -210,6 +213,7 @@ describe('InventoryView (#634) — cor de tema e modais padronizados', () => {
         vi.mocked(useDolibarr).mockReturnValue({
             config: mockConfig,
             refreshData: mockRefreshData,
+            canDo: () => true,
         } as any);
 
         render(<InventoryView />);
@@ -225,6 +229,7 @@ describe('InventoryView (#634) — cor de tema e modais padronizados', () => {
         vi.mocked(useDolibarr).mockReturnValue({
             config: mockConfig,
             refreshData: mockRefreshData,
+            canDo: () => true,
         } as any);
 
         render(<InventoryView />);
@@ -237,6 +242,7 @@ describe('InventoryView (#634) — cor de tema e modais padronizados', () => {
         vi.mocked(useDolibarr).mockReturnValue({
             config: mockConfig,
             refreshData: mockRefreshData,
+            canDo: () => true,
         } as any);
 
         render(<InventoryView />);
@@ -249,6 +255,7 @@ describe('InventoryView (#634) — cor de tema e modais padronizados', () => {
         vi.mocked(useDolibarr).mockReturnValue({
             config: mockConfig,
             refreshData: mockRefreshData,
+            canDo: () => true,
         } as any);
 
         render(<InventoryView />);
@@ -261,6 +268,7 @@ describe('InventoryView (#634) — cor de tema e modais padronizados', () => {
         vi.mocked(useDolibarr).mockReturnValue({
             config: mockConfig,
             refreshData: mockRefreshData,
+            canDo: () => true,
         } as any);
 
         render(<InventoryView />);
@@ -276,6 +284,99 @@ describe('InventoryView (#634) — cor de tema e modais padronizados', () => {
             expect(mockSvc.createWarehouse).toHaveBeenCalledWith(
                 mockConfig,
                 expect.objectContaining({ label: 'Armazém Teste' })
+            );
+        });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// #852: Gating canDo('edit','warehouses') + validação qty > 0
+// ---------------------------------------------------------------------------
+describe('InventoryView (#852) — gating canDo e validação de qty', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: mockConfig,
+            refreshData: mockRefreshData,
+            canDo: () => true,
+        } as any);
+    });
+
+    it('exibe Transferir e Ajustar quando canDo("edit","warehouses") é verdadeiro', () => {
+        render(<InventoryView />);
+        expect(screen.getByTestId('btn-transfer')).toBeInTheDocument();
+        expect(screen.getByTestId('btn-adjust')).toBeInTheDocument();
+    });
+
+    it('oculta Transferir e Ajustar quando o usuário não tem canDo("edit","warehouses")', () => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: mockConfig,
+            refreshData: mockRefreshData,
+            canDo: (action: string, scrn: string) => !(action === 'edit' && scrn === 'warehouses'),
+        } as any);
+
+        render(<InventoryView />);
+
+        expect(screen.queryByTestId('btn-transfer')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('btn-adjust')).not.toBeInTheDocument();
+    });
+
+    it('não chama createStockTransfer quando a quantidade é <= 0', async () => {
+        render(<InventoryView />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        const form = document.getElementById('transfer-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } }); // produto
+        fireEvent.change(selects[1], { target: { value: '1' } });  // origem
+        fireEvent.change(selects[2], { target: { value: '2' } });  // destino
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '0' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockTransfer).not.toHaveBeenCalled();
+    });
+
+    it('não chama createStockCorrection quando a quantidade é <= 0', async () => {
+        render(<InventoryView />);
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+
+        const form = document.getElementById('correction-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } }); // produto
+        fireEvent.change(selects[1], { target: { value: '1' } });  // armazém
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '0' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalled();
+    });
+
+    it('chama createStockTransfer normalmente quando a quantidade é válida (> 0)', async () => {
+        render(<InventoryView />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        const form = document.getElementById('transfer-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        fireEvent.change(selects[2], { target: { value: '2' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '3' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(mockSvc.createStockTransfer).toHaveBeenCalledWith(
+                mockConfig, 'p1', '1', '2', 3
             );
         });
     });
