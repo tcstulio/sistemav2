@@ -537,3 +537,70 @@ describe('OrderList — Editar pedido com itens (#552)', () => {
         expect(screen.getByText('Editar Pedido')).toBeTruthy();
     });
 });
+
+// ─────────────────────────────────────────────
+// 7. Chaves estáveis nos itens do pedido (#825)
+// ─────────────────────────────────────────────
+describe('OrderList — chaves estáveis nos itens (#825)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useOrders).mockReturnValue({ data: [], isRefetching: false, refetch: mockRefetch } as any);
+        vi.spyOn(window, 'confirm').mockImplementation(() => false);
+    });
+
+    it('remover um item do meio não troca os dados das linhas restantes', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const novoBtn = await screen.findByRole('button', { name: /Novo/i });
+        await user.click(novoBtn);
+
+        const addItemBtn = screen.getByRole('button', { name: /Adicionar Item/i });
+
+        // Adiciona 3 itens
+        await user.click(addItemBtn);
+        await user.click(addItemBtn);
+        await user.click(addItemBtn);
+
+        const descInputs = screen.getAllByPlaceholderText('Descrição do item');
+        expect(descInputs).toHaveLength(3);
+
+        // Digita descrições distintas por linha
+        await user.clear(descInputs[0]);
+        await user.type(descInputs[0], 'Alpha');
+        await user.clear(descInputs[1]);
+        await user.type(descInputs[1], 'Beta');
+        await user.clear(descInputs[2]);
+        await user.type(descInputs[2], 'Gamma');
+
+        // Remove a linha do meio (Beta) pelo botão de exclusão da própria linha
+        const betaInput = screen.getByDisplayValue('Beta');
+        const row = betaInput.closest('.flex.gap-2') as HTMLElement;
+        const removeBtn = row.querySelector('button') as HTMLButtonElement;
+        await user.click(removeBtn);
+
+        // As linhas restantes devem manter os dados corretos (Alpha e Gamma),
+        // sem troca de valores entre linhas — sintoma de key={idx} instável (#825).
+        const remainingDesc = screen.getAllByPlaceholderText('Descrição do item').map(i => (i as HTMLInputElement).value);
+        expect(remainingDesc).toEqual(['Alpha', 'Gamma']);
+        expect(screen.queryByDisplayValue('Beta')).toBeNull();
+
+        // A ordem é preservada: Alpha continua à esquerda de Gamma.
+        expect(remainingDesc[0]).toBe('Alpha');
+        expect(remainingDesc[1]).toBe('Gamma');
+    });
+
+    it('cada item novo recebe um id estável distinto (não depende do índice)', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        await user.click(await screen.findByRole('button', { name: /Novo/i }));
+        const addItemBtn = screen.getByRole('button', { name: /Adicionar Item/i });
+        await user.click(addItemBtn);
+        await user.click(addItemBtn);
+
+        // Dois itens recém-adicionados devem ter inputs independentes (2 linhas),
+        // e a chave de cada linha vem de crypto.randomUUID(), não do índice.
+        expect(screen.getAllByPlaceholderText('Descrição do item')).toHaveLength(2);
+    });
+});

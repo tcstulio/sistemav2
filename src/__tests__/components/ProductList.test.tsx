@@ -492,3 +492,51 @@ describe('ProductList — #566 filtro por categoria e insumos x aluguel', () => 
         });
     });
 });
+
+// ============================================================
+// #825 — chaves estáveis em stock_details (quebra de estoque por armazém)
+// ============================================================
+describe('ProductList — chaves estáveis em stock_details (#825)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useProductsMock).mockReturnValue({
+            data: [
+                {
+                    id: 'stk1',
+                    ref: 'PRD-STK',
+                    label: 'Produto Com Estoque',
+                    type: '0',
+                    price: 10,
+                    stock_reel: 15,
+                    stock_details: [
+                        { warehouse: 'Depósito Central', qty: 5 },
+                        { warehouse: 'Galpão Secundário', qty: 10 },
+                    ],
+                } as Product,
+            ],
+            isLoading: false,
+        } as any);
+        vi.mocked(useCategoriesMock).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSuppliers).mockReturnValue({ data: [] } as any);
+    });
+
+    it('cada armazém aparece em sua própria linha com a quantidade correta (sem troca)', async () => {
+        const user = userEvent.setup();
+        render(<ProductList />);
+
+        await user.click(screen.getByText('Produto Com Estoque'));
+        await user.click(await screen.findByRole('button', { name: 'Estoque' }));
+
+        // Cada armazém (chave estável = detail.warehouse) pareia rótulo↔quantidade
+        const whA = await screen.findByText('Depósito Central');
+        const whB = screen.getByText('Galpão Secundário');
+
+        const rowA = whA.closest('.bg-slate-50') as HTMLElement;
+        const rowB = whB.closest('.bg-slate-50') as HTMLElement;
+
+        expect(rowA.textContent).toContain('5');
+        expect(rowA.textContent).not.toContain('10');
+        expect(rowB.textContent).toContain('10');
+        expect(rowB.textContent).not.toMatch(/(?<!\d)5(?!\d)/);
+    });
+});

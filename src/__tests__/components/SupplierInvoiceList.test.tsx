@@ -524,3 +524,64 @@ describe('SupplierInvoiceList — Alvo de clique não-ambíguo (#690) + moeda BR
         expect(supplierBtn.className).toMatch(/text-indigo-600/);
     });
 });
+
+// ─────────────────────────────────────────────
+// Chaves estáveis nos itens de edição (#825)
+// ─────────────────────────────────────────────
+describe('SupplierInvoiceList — chaves estáveis nos itens de edição (#825)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useSupplierInvoiceLines).mockReturnValue({ data: [] } as any);
+    });
+
+    // O input de desconto (Desc%) começa vazio (value={x || ''}), permitindo
+    // userEvent.type direto, sem clear. Usamos seu placeholder como âncora.
+    const getDiscountInputs = () => screen.getAllByPlaceholderText('Desc%') as HTMLInputElement[];
+
+    const openEditModal = async (user: ReturnType<typeof userEvent.setup>) => {
+        await user.click(await screen.findByText('FA-DRAFT-001'));
+        await user.click(await screen.findByRole('button', { name: /^Editar$/ }));
+        return screen.findByRole('button', { name: /Adicionar Item/i });
+    };
+
+    it('remover um item do meio não troca os dados dos itens restantes', async () => {
+        const user = userEvent.setup();
+        renderWithProvider([mockDraftInvoice]);
+
+        const addBtn = await openEditModal(user);
+        await user.click(addBtn);
+        await user.click(addBtn);
+        await user.click(addBtn);
+
+        expect(getDiscountInputs()).toHaveLength(3);
+
+        // Digita descontos distintos por item
+        await user.type(getDiscountInputs()[0], '11');
+        await user.type(getDiscountInputs()[1], '22');
+        await user.type(getDiscountInputs()[2], '33');
+
+        // Remove o item do meio (Desc% 22) pelo botão de exclusão da própria linha
+        const middleRow = getDiscountInputs()[1].closest('.bg-slate-50') as HTMLElement;
+        const removeBtn = middleRow.querySelector('button[class*="text-red-400"]') as HTMLElement;
+        await user.click(removeBtn);
+
+        // Os itens restantes mantêm seus dados (11 e 33), sem troca entre
+        // linhas — sintoma de key={idx} instável (#825).
+        const remaining = getDiscountInputs().map((i) => i.value);
+        expect(remaining).toEqual(['11', '33']);
+        expect(screen.queryByDisplayValue('22')).toBeNull();
+    });
+
+    it('cada item novo recebe id estável distinto (crypto.randomUUID, não índice)', async () => {
+        const user = userEvent.setup();
+        renderWithProvider([mockDraftInvoice]);
+
+        const addBtn = await openEditModal(user);
+        await user.click(addBtn);
+        await user.click(addBtn);
+
+        // Dois itens recém-adicionados, cada um com input próprio — a chave
+        // vem de crypto.randomUUID(), não do índice do array.
+        expect(getDiscountInputs()).toHaveLength(2);
+    });
+});

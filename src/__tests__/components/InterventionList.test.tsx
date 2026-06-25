@@ -509,3 +509,79 @@ describe('InterventionList — exibição de projeto (#551)', () => {
         expect(semProjetoElements.length).toBeGreaterThanOrEqual(1);
     });
 });
+
+// ---------------------------------------------------------------------------
+// Suite: chaves estáveis nas linhas (#825)
+// ---------------------------------------------------------------------------
+describe('InterventionList — chaves estáveis nas linhas (#825)', () => {
+    const stableLinesMock = [
+        { id: 'la', parent_id: '1', desc: 'Troca de filtro', duration: 3600 },     // 1h
+        { id: 'lb', parent_id: '1', desc: 'Limpeza geral', duration: 7200 },        // 2h
+        { id: 'lc', parent_id: '1', desc: 'Calibração técnica', duration: 9000 },   // 2h 30m
+    ];
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useInterventions).mockReturnValue({
+            data: [{ ...interventionsMock[0], lines: stableLinesMock }],
+            refetch: vi.fn(),
+        } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: customersMock } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [] } as any);
+        vi.mocked(useInterventionLines).mockReturnValue({ data: stableLinesMock, refetch: refetchLinesMock } as any);
+        vi.mocked(DolibarrService.deleteInterventionLine).mockResolvedValue({} as any);
+    });
+
+    const openDetail = async () => {
+        const user = userEvent.setup();
+        renderList();
+        await waitFor(() => screen.getByText('INT-001'));
+        await user.click(screen.getByText('INT-001'));
+        return user;
+    };
+
+    it('mantém cada descrição emparelhada com sua duração correta (sem troca entre linhas)', async () => {
+        await openDetail();
+
+        // Cada linha renderiza um botão de remoção; o container da linha é o ancestral
+        // .flex.justify-between. Verificamos que descrição e duração estão na mesma linha.
+        const removeButtons = await screen.findAllByLabelText('Remover item');
+        expect(removeButtons).toHaveLength(3);
+
+        const pairs: Array<[string, string]> = removeButtons.map((btn) => {
+            const row = btn.closest('.flex.justify-between') as HTMLElement;
+            const desc = within(row).getByText(/Troca de filtro|Limpeza geral|Calibração técnica/).textContent || '';
+            const duration = within(row).getByText(/^\d+h(\s\d+m)?$/).textContent || '';
+            return [desc, duration];
+        });
+
+        expect(pairs).toContainEqual(['Troca de filtro', '1h']);
+        expect(pairs).toContainEqual(['Limpeza geral', '2h']);
+        expect(pairs).toContainEqual(['Calibração técnica', '2h 30m']);
+    });
+
+    it('remover a linha do meio chama deleteInterventionLine com o id correto dela', async () => {
+        const user = await openDetail();
+
+        // Localiza o botão de remoção da linha do meio ("Limpeza geral")
+        const removeButtons = await screen.findAllByLabelText('Remover item');
+        const middleRow = screen.getByText('Limpeza geral').closest('.flex.justify-between') as HTMLElement;
+        const middleRemoveBtn = within(middleRow).getByLabelText('Remover item');
+        expect(middleRemoveBtn).toBe(removeButtons[1]);
+
+        await user.click(middleRemoveBtn);
+
+        // Confirma no diálogo in-app
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByText('Confirmar'));
+
+        await waitFor(() => {
+            expect(DolibarrService.deleteInterventionLine).toHaveBeenCalledTimes(1);
+        });
+
+        const [, intId, lineId] = vi.mocked(DolibarrService.deleteInterventionLine).mock.calls[0];
+        expect(intId).toBe('1');
+        // O id alvo é o da linha do meio (lb), não um índice trocado (#825)
+        expect(lineId).toBe('lb');
+    });
+});

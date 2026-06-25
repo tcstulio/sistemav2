@@ -252,7 +252,7 @@ const ReportsView: React.FC = () => {
                                                 dataKey="value"
                                             >
                                                 {topCustomersData.map((entry, index) => (
-                                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                                    <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
                                                 ))}
                                             </Pie>
                                             <Tooltip
@@ -264,7 +264,7 @@ const ReportsView: React.FC = () => {
                                 </div>
                                 <ul className="flex-1 w-full min-w-0 space-y-2" aria-label="top-clientes-legenda">
                                     {topCustomersData.map((entry, index) => (
-                                        <li key={`legend-${index}`} className="flex items-center gap-2 min-w-0">
+                                        <li key={entry.name} className="flex items-center gap-2 min-w-0">
                                             <span
                                                 className="flex-shrink-0 w-3 h-3 rounded-full"
                                                 style={{ backgroundColor: COLORS[index % COLORS.length] }}

@@ -69,7 +69,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
         ref: string;
         socid: string;
         date: string;
-        items: { id?: string, desc: string, qty: number, price: number, remise_percent: number }[];
+        items: { id?: string, uid: string, desc: string, qty: number, price: number, remise_percent: number }[];
         deletedLineIds: string[];
     } | null>(null);
 
@@ -209,6 +209,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
             date: new Date(invoice.date * 1000).toISOString().split('T')[0],
             items: lines.map(l => ({
                 id: l.id,
+                uid: crypto.randomUUID(),
                 desc: l.description || '',
                 qty: l.qty,
                 price: l.subprice || 0,
@@ -223,7 +224,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
         if (!editingInvoiceData) return;
         setEditingInvoiceData({
             ...editingInvoiceData,
-            items: [...editingInvoiceData.items, { desc: '', qty: 1, price: 0, remise_percent: 0 }]
+            items: [...editingInvoiceData.items, { uid: crypto.randomUUID(), desc: '', qty: 1, price: 0, remise_percent: 0 }]
         });
     };
 
@@ -348,7 +349,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                 ref: '',
                 socid: prefill.data.socid || '',
                 date: prefill.data.date || new Date().toISOString().split('T')[0],
-                items: lines.map((l: any) => ({ desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0, remise_percent: Number(l.remise_percent) || 0 })),
+                items: lines.map((l: any) => ({ uid: crypto.randomUUID(), desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0, remise_percent: Number(l.remise_percent) || 0 })),
                 deletedLineIds: [],
             });
             setIsEditModalOpen(true);
@@ -362,7 +363,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
             setEditingInvoiceData(prev => prev ? {
                 ...prev,
                 date: prefill.data.date || prev.date,
-                items: [...prev.items, ...extra.map((l: any) => ({ desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0, remise_percent: Number(l.remise_percent) || 0 }))],
+                items: [...prev.items, ...extra.map((l: any) => ({ uid: crypto.randomUUID(), desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0, remise_percent: Number(l.remise_percent) || 0 }))],
             } : prev);
             toast.info('Revise as mudanças e salve a fatura de fornecedor.');
         }
@@ -785,7 +786,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     {documents.map((doc, idx) => (
-                                        <div key={idx} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 group hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors">
+                                        <div key={doc.name ?? idx} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 group hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors">
                                             <div className="flex items-center gap-3 overflow-hidden">
                                                 <div className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
                                                     <FileText size={24} className="text-indigo-500" />
@@ -932,7 +933,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                         <div className="space-y-2">
                                             {editingInvoiceData.items.length === 0 && <p className="text-sm text-slate-400 italic text-center py-4">Nenhum item.</p>}
                                             {editingInvoiceData.items.map((item, idx) => (
-                                                <div key={idx} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
+                                                <div key={item.uid} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
                                                     <div className="flex-1">
                                                         <RichTextEditor
                                                             value={item.desc}

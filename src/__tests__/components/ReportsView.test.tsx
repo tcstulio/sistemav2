@@ -204,3 +204,46 @@ describe('ReportsView — Top 5 Clientes responsivo (#562)', () => {
         });
     });
 });
+
+// ============================================================
+// #825 — chaves estáveis na legenda do Pie (Top Clientes)
+// ============================================================
+describe('ReportsView — legenda Top Clientes com chave estável (#825)', () => {
+    const currentYear = new Date().getFullYear();
+    const ts = Math.floor(new Date(currentYear, 5, 1).getTime() / 1000);
+
+    const invoices = [
+        { id: 'inv1', ref: 'FA001', socid: '10', date: ts, total_ttc: 5000, statut: '2', type: '0' },
+        { id: 'inv2', ref: 'FA002', socid: '20', date: ts, total_ttc: 4000, statut: '2', type: '0' },
+        { id: 'inv3', ref: 'FA003', socid: '30', date: ts, total_ttc: 3000, statut: '2', type: '0' },
+    ];
+    const customers = [
+        { id: '10', name: 'Cliente Alpha' },
+        { id: '20', name: 'Cliente Beta' },
+        { id: '30', name: 'Cliente Gama' },
+    ];
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useInvoices).mockReturnValue({ data: invoices, isLoading: false } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: customers, isLoading: false } as any);
+    });
+
+    it('pareia cada cliente ao seu valor correto, em ordem decrescente (chave estável entry.name)', async () => {
+        renderWithRouter(<ReportsView />);
+        const list = await screen.findByRole('list', { name: 'top-clientes-legenda' });
+        const items = list.querySelectorAll('li');
+        expect(items).toHaveLength(3);
+
+        // Ordem decrescente por valor; cada <li> (key=entry.name) mantém nome↔valor
+        expect(items[0].textContent).toContain('Cliente Alpha');
+        expect(items[0].textContent).toContain(formatCurrency(5000));
+        expect(items[0].textContent).not.toContain('Cliente Beta');
+
+        expect(items[1].textContent).toContain('Cliente Beta');
+        expect(items[1].textContent).toContain(formatCurrency(4000));
+
+        expect(items[2].textContent).toContain('Cliente Gama');
+        expect(items[2].textContent).toContain(formatCurrency(3000));
+    });
+});

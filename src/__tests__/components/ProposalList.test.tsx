@@ -376,3 +376,78 @@ describe('ProposalList — Edit date conversion (#626)', () => {
         expect(dateInput.type).toBe('date');
     });
 });
+
+// ─────────────────────────────────────────────
+// Chaves estáveis nas linhas da proposta (#825)
+// ─────────────────────────────────────────────
+describe('ProposalList — chaves estáveis nas linhas (#825)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useProposals).mockReturnValue({
+            data: [defaultProposal],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+    });
+
+    // Cada linha do formulário tem um rótulo "Qtd" (span) seguido do input de
+    // quantidade correspondente. Usamos esse rótulo como âncora estável para
+    // localizar o input de uma linha específica, independentemente da ordem.
+    const getQtyInput = (lineIdx: number): HTMLInputElement => {
+        const labels = screen.getAllByText('Qtd', { selector: 'span' });
+        return labels[lineIdx].parentElement!.querySelector('input') as HTMLInputElement;
+    };
+
+    const getRemoveBtn = (lineIdx: number): HTMLElement => {
+        const row = getQtyInput(lineIdx).closest('.bg-slate-50') as HTMLElement;
+        return row.querySelector('button[class*="text-red-500"]') as HTMLElement;
+    };
+
+    it('remover uma linha do meio não troca os dados das linhas restantes', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        await user.click(await screen.findByRole('button', { name: /^Nova$/ }));
+
+        const addBtn = screen.getByRole('button', { name: /Adicionar Item/i });
+        await user.click(addBtn);
+        await user.click(addBtn);
+        await user.click(addBtn);
+
+        expect(screen.getAllByText('Qtd', { selector: 'span' })).toHaveLength(3);
+
+        // Digita quantidades distintas por linha
+        await user.clear(getQtyInput(0));
+        await user.type(getQtyInput(0), '11');
+        await user.clear(getQtyInput(1));
+        await user.type(getQtyInput(1), '22');
+        await user.clear(getQtyInput(2));
+        await user.type(getQtyInput(2), '33');
+
+        // Remove a linha do meio (Qtd 22) pelo botão de exclusão da própria linha
+        await user.click(getRemoveBtn(1));
+
+        // As linhas restantes mantêm seus dados (11 e 33), sem troca entre
+        // linhas — sintoma de key={idx} instável (#825).
+        const remaining = screen
+            .getAllByText('Qtd', { selector: 'span' })
+            .map((l) => (l.parentElement!.querySelector('input') as HTMLInputElement).value);
+        expect(remaining).toEqual(['11', '33']);
+        expect(screen.queryByDisplayValue('22')).toBeNull();
+    });
+
+    it('cada linha nova recebe id estável distinto (crypto.randomUUID, não índice)', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        await user.click(await screen.findByRole('button', { name: /^Nova$/ }));
+
+        const addBtn = screen.getByRole('button', { name: /Adicionar Item/i });
+        await user.click(addBtn);
+        await user.click(addBtn);
+
+        // Duas linhas recém-adicionadas, cada uma com input de quantidade próprio
+        // — a chave vem de crypto.randomUUID(), não do índice do array.
+        expect(screen.getAllByText('Qtd', { selector: 'span' })).toHaveLength(2);
+    });
+});

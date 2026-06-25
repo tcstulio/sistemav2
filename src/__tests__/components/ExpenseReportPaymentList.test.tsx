@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExpenseReportPaymentList from '../../components/Finance/ExpenseReportPaymentList';
+import { formatCurrency } from '../../utils/formatUtils';
 
 // ------------------------------------------------------------------
 // Mocks
@@ -117,7 +118,7 @@ vi.mock('../../components/HR/modals/ExpenseDetailModal', () => ({
 // ------------------------------------------------------------------
 // Import mocked hooks after mock setup
 // ------------------------------------------------------------------
-import { useExpenseReportPayments } from '../../hooks/dolibarr';
+import { useExpenseReportPayments, useExpenseReports, useExpenseReportPaymentLinks } from '../../hooks/dolibarr';
 
 // ------------------------------------------------------------------
 // Tests
@@ -189,5 +190,68 @@ describe('ExpenseReportPaymentList', () => {
         } as any);
         render(<ExpenseReportPaymentList />);
         expect(screen.getByText(/Erro ao carregar pagamentos/)).toBeInTheDocument();
+    });
+});
+
+// ============================================================
+// #825 — chaves estáveis nos relatórios de despesa vinculados
+// ============================================================
+describe('ExpenseReportPaymentList — chaves estáveis nos relatórios vinculados (#825)', () => {
+    const twoReports = [
+        { id: '10', ref: 'ND-001', fk_user_author: '42', project_id: '3', date_debut: 1700000000, date_fin: 1700086400, total_ttc: 350, statut: '5' },
+        { id: '11', ref: 'ND-002', fk_user_author: '99', project_id: '3', date_debut: 1700000000, date_fin: 1700086400, total_ttc: 200, statut: '5' },
+    ];
+    const twoLinks = [
+        { id: 'lnk-A', fk_payment: '1', fk_expensereport: '10', amount: 300 },
+        { id: 'lnk-B', fk_payment: '1', fk_expensereport: '11', amount: 150 },
+    ];
+    const paymentNoDirect = {
+        id: '1',
+        ref: 'PAY-EXP-001',
+        amount: 450,
+        date_payment: 1700000000,
+        fk_expensereport: '',
+        fk_bank: '2',
+        fk_user_creat: '99',
+        num_paiement: 'TRF-001',
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useExpenseReportPayments).mockReturnValue({
+            data: [paymentNoDirect as any],
+            isLoading: false,
+            error: null,
+        } as any);
+        vi.mocked(useExpenseReports).mockReturnValue({ data: twoReports as any } as any);
+        vi.mocked(useExpenseReportPaymentLinks).mockReturnValue({ data: twoLinks as any } as any);
+    });
+
+    it('cada relatório vinculado aparece com seu ref e valores corretos (sem troca, #825)', async () => {
+        const user = userEvent.setup();
+        render(<ExpenseReportPaymentList />);
+
+        // Abre o detalhe do pagamento
+        const card = screen.getByText('PAY-EXP-001').closest('[class]') as HTMLElement;
+        await user.click(card);
+
+        // Cada relatório em sua própria linha (chave estável = link.id)
+        const refA = await screen.findByText('ND-001');
+        const refB = screen.getByText('ND-002');
+
+        const rowA = refA.closest('div.flex.items-center.justify-between') as HTMLElement;
+        const rowB = refB.closest('div.flex.items-center.justify-between') as HTMLElement;
+
+        // Linha A: relatório ND-001 (total 350) + valor do link (300)
+        expect(rowA.textContent).toContain('ND-001');
+        expect(rowA.textContent).toContain(formatCurrency(350));
+        expect(rowA.textContent).toContain(formatCurrency(300));
+        expect(rowA.textContent).not.toContain('ND-002');
+
+        // Linha B: relatório ND-002 (total 200) + valor do link (150)
+        expect(rowB.textContent).toContain('ND-002');
+        expect(rowB.textContent).toContain(formatCurrency(200));
+        expect(rowB.textContent).toContain(formatCurrency(150));
+        expect(rowB.textContent).not.toContain('ND-001');
     });
 });

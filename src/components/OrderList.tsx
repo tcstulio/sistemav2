@@ -245,7 +245,7 @@ const OrderDetail: React.FC<{
                                         <div className="space-y-2">
                                             {order.lines && order.lines.length > 0 ? (
                                                 order.lines.map((line: any, idx: number) => (
-                                                    <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
+                                                    <div key={line.id ?? idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
                                                         <div>
                                                             <div className="font-medium text-slate-800 dark:text-white text-sm">{line.desc || line.label}</div>
                                                             <div className="text-xs text-slate-500">Qtd: {line.qty}</div>
@@ -381,12 +381,12 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     const [newOrder, setNewOrder] = useState({
         socid: '',
         date: new Date().toISOString().split('T')[0],
-        items: [] as { id?: string, productId: string, desc: string, qty: number, price: number }[],
+        items: [] as { id?: string, uid: string, productId: string, desc: string, qty: number, price: number }[],
     });
 
     const closeOrderModal = () => { setIsCreateModalOpen(false); setEditOrderId(undefined); setExistingLines([]); };
 
-    const handleAddOrderItem = () => setNewOrder(prev => ({ ...prev, items: [...prev.items, { productId: '', desc: '', qty: 1, price: 0 }] }));
+    const handleAddOrderItem = () => setNewOrder(prev => ({ ...prev, items: [...prev.items, { uid: crypto.randomUUID(), productId: '', desc: '', qty: 1, price: 0 }] }));
     const handleUpdateOrderItem = (idx: number, field: 'desc' | 'qty' | 'price', value: string | number) => {
         const items = [...newOrder.items];
         (items[idx] as any)[field] = value;
@@ -480,6 +480,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
         const lines = Array.isArray(ord.lines) ? ord.lines : [];
         const mappedLines = lines.map((l: any) => ({
             id: String(l.id),
+            uid: crypto.randomUUID(),
             productId: l.fk_product ? String(l.fk_product) : '',
             desc: l.desc || l.label || '',
             qty: Number(l.qty) || 1,
@@ -503,7 +504,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
             setNewOrder({
                 socid: prefill.data.socid || '',
                 date: prefill.data.date || new Date().toISOString().split('T')[0],
-                items: lines.map((l: any) => ({ productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0 })),
+                items: lines.map((l: any) => ({ uid: crypto.randomUUID(), productId: l.fk_product ? String(l.fk_product) : '', desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0 })),
             });
             setIsCreateModalOpen(true);
             toast.info('Revise os itens e confirme a criação do pedido.');
@@ -716,7 +717,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                         <div className="space-y-2">
                             {newOrder.items.length === 0 && <p className="text-sm text-slate-400 italic text-center py-4">Nenhum item adicionado.</p>}
                             {newOrder.items.map((item, idx) => (
-                                <div key={item.id ?? idx} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
+                                <div key={item.uid} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
                                     <div className="flex-1">
                                         <input className="w-full p-1 text-sm border rounded dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Descrição do item" value={item.desc} onChange={e => handleUpdateOrderItem(idx, 'desc', e.target.value)} />
                                     </div>
