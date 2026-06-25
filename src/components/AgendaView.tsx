@@ -841,7 +841,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                                 <div className="flex-1 grid grid-cols-7 auto-rows-fr">
                                     {calendarDays.map((cell, idx) => (
                                         <div
-                                            key={idx}
+                                            key={cell.dateStr || `cell-${idx}`}
                                             className={`min-h-[100px] border-b border-r border-slate-100 dark:border-slate-800 p-2 relative ${!cell.day ? 'bg-slate-50/50 dark:bg-slate-950/50' : 'bg-white dark:bg-slate-900'}`}
                                         >
                                             {cell.day && (
