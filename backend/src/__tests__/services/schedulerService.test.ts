@@ -377,6 +377,34 @@ describe('SchedulerService', () => {
         it('returns null updating unknown rule', () => {
             expect(schedulerService.updateRule('unknown', { name: 'X' })).toBeNull();
         });
+
+        it('gera ids únicos mesmo dentro do mesmo milissegundo (#823)', () => {
+            // Fake timers congelam Date.now(); sem o sufixo incremental, os dois ids colidiriam.
+            const r1 = schedulerService.createRule({ name: 'R1', event: 'invoice_created', sessionId: 's1' });
+            const r2 = schedulerService.createRule({ name: 'R2', event: 'invoice_paid', sessionId: 's1' });
+
+            expect(r1.id).toMatch(/^rule_/);
+            expect(r2.id).toMatch(/^rule_/);
+            expect(r1.id).not.toBe(r2.id);
+        });
+
+        it('deduplica regras com id repetido ao carregar do disco (#823)', () => {
+            const dupStore = {
+                automationRules: [
+                    { id: 'rule_1', name: 'A', event: 'invoice_created', sessionId: 's', enabled: true, channel: 'whatsapp', createdAt: 0 },
+                    { id: 'rule_1', name: 'A-colidia', event: 'invoice_paid', sessionId: 's', enabled: true, channel: 'whatsapp', createdAt: 0 },
+                    { id: 'rule_2', name: 'B', event: 'order_created', sessionId: 's', enabled: true, channel: 'whatsapp', createdAt: 0 },
+                ],
+            };
+            vi.mocked(fs.existsSync).mockReturnValue(true);
+            vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(dupStore));
+
+            (schedulerService as any).load();
+
+            const rules = schedulerService.getRules();
+            expect(rules).toHaveLength(2);
+            expect(rules.map(r => r.id)).toEqual(['rule_1', 'rule_2']);
+        });
     });
 
     describe('message logs', () => {
