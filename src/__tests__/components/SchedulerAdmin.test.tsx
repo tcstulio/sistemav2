@@ -386,3 +386,30 @@ describe('SchedulerAdmin', () => {
         });
     });
 });
+
+describe('SchedulerAdmin — #823 regras com id duplicado', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockFetch.mockImplementation(defaultFetchHandler);
+    });
+
+    it('mostra cada regra uma única vez quando a API retorna ids duplicados', async () => {
+        // A mesma regra (id + name) retornada duas vezes simulam o bug real:
+        // `rule_<timestamp>` colidindo no backend e gerando chaves React duplicadas.
+        const dupRule = { ...whatsappRule, id: 'rule_1781739896402', name: 'Regra Espelho' };
+        mockFetch.mockImplementation((url: string, opts?: RequestInit) => {
+            const u = url as string;
+            if (u.includes('/api/webhook/rules') && !u.includes('/test') && !u.includes('/toggle')) {
+                return okJson({ count: 2, data: [dupRule, dupRule] });
+            }
+            return defaultFetchHandler(url, opts);
+        });
+
+        render(<SchedulerAdmin />);
+
+        // A regra "espelho" (duplicada) deve aparecer exatamente uma vez na lista.
+        await waitFor(() => {
+            expect(screen.getAllByText('Regra Espelho')).toHaveLength(1);
+        }, { timeout: 5000 });
+    });
+});

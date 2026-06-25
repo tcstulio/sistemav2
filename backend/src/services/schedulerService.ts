@@ -285,7 +285,7 @@ class SchedulerService {
                     messages: parsed.messages || [],
                     templates: parsed.templates || [],
                     confirmations: parsed.confirmations || {},
-                    automationRules: parsed.automationRules || [],
+                    automationRules: this.dedupRulesById(parsed.automationRules || []),
                     logs: parsed.logs || [],
                     chatFlows: parsed.chatFlows || [],
                     activeFlows: parsed.activeFlows || {}
@@ -802,6 +802,35 @@ class SchedulerService {
 
     // --- Automation Rules ---
 
+    /**
+     * Gera um id de regra único. `Date.now()` sozinho colide quando várias
+     * regras são criadas no mesmo milissegundo (ex.: seed initDefaultRules),
+     * gerando chaves React duplicadas no frontend (#823). Por isso, se o id
+     * base já existir, anexamos um sufixo incremental.
+     */
+    private generateRuleId(): string {
+        const base = `rule_${Date.now()}`;
+        let id = base;
+        let suffix = 1;
+        while (this.data.automationRules.some(r => r.id === id)) {
+            id = `${base}_${suffix++}`;
+        }
+        return id;
+    }
+
+    /** Remove regras com id duplicado mantendo a primeira ocorrência (#823). */
+    private dedupRulesById(rules: AutomationRule[]): AutomationRule[] {
+        const seen = new Set<string>();
+        const out: AutomationRule[] = [];
+        for (const rule of rules) {
+            if (rule && !seen.has(rule.id)) {
+                seen.add(rule.id);
+                out.push(rule);
+            }
+        }
+        return out;
+    }
+
     createRule(params: {
         name: string;
         event: AutomationRule['event'];
@@ -814,7 +843,7 @@ class SchedulerService {
         conditions?: AutomationRule['conditions'];
     }): AutomationRule {
         const rule: AutomationRule = {
-            id: `rule_${Date.now()}`,
+            id: this.generateRuleId(),
             name: params.name,
             event: params.event,
             enabled: true,
