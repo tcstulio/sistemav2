@@ -201,6 +201,7 @@ export interface Task {
     judgeScore?: number;
     judgeReview?: string;
     judgeAttempts?: number;
+    judgeApproved?: boolean; // VALOR 2: veto do Juiz (approved=false bloqueia auto-merge; nunca aprova sozinho)
     visualScore?: number;
     visualReview?: string;
     // 'synthesis' (padrão): 3 explorações do zero + 3 sínteses — bom p/ tasks pequenas/criativas.
@@ -1085,7 +1086,23 @@ class TaskRunnerService {
         const gone = await this.sweepOrphanedOpencode('ensureWorktree');
         this.cleanStaleLocks(gone);
         await git(['fetch', 'origin', 'main'], { timeout: 60000 });
-        if (!fs.existsSync(WT_ROOT)) {
+        // Recria o worktree se NÃO existir OU se o diretório existir mas não for um worktree git
+        // VÁLIDO (ex.: .git apagado após reescrita de histórico/limpeza órfã). Sem isto, o `if
+        // existsSync` antigo pulava o `worktree add` e o `reset --hard` abaixo falhava com
+        // "fatal: not a git repository" — travando TODAS as tasks.
+        let needsCreate = !fs.existsSync(WT_ROOT);
+        if (!needsCreate) {
+            try {
+                if (!fs.existsSync(path.join(WT_ROOT, '.git'))) throw new Error('.git ausente');
+                await git(['rev-parse', '--is-inside-work-tree'], { timeout: 15000, cwd: WT_ROOT });
+            } catch {
+                log.warn(`ensureWorktree: ${WT_ROOT} existe mas não é worktree válido — recriando`);
+                try { fs.rmSync(WT_ROOT, { recursive: true, force: true }); } catch (e: any) { log.warn(`rm WT_ROOT falhou: ${e?.message}`); }
+                needsCreate = true;
+            }
+        }
+        if (needsCreate) {
+            await git(['worktree', 'prune'], { timeout: 30000 });
             await git(['worktree', 'add', '--force', WT_ROOT, 'origin/main'], { timeout: 120000 });
         }
         // Limpa restos de execuções anteriores ANTES de trocar de branch. Sem isto, se uma task
@@ -1184,7 +1201,7 @@ class TaskRunnerService {
         if (task.feedbackHistory.length) {
             p += this.wrapUntrusted('feedback / correções a ATENDER', task.feedbackHistory.map(fb => `- ${fb}`).join('\n'));
         }
-        p += `\n## Instruções\nImplemente a especificação acima neste repositório (backend: Express+TypeScript em backend/; frontend: React+Vite em src/). Siga as convenções existentes (TypeScript, testes com vitest). Escreva código de produção e os testes correspondentes. Garanta que \`tsc --noEmit\` passe. NÃO altere o arquivo ${PROMPT_FILE}.`;
+        p += `\n## Instruções\nImplemente a especificação acima neste repositório (backend: Express+TypeScript em backend/; frontend: React+Vite em src/). Siga as convenções existentes (TypeScript, testes com vitest). Escreva código de produção e os testes correspondentes. REGRA DE TESTES: PRESERVE os testes existentes — ADICIONE/ESTENDA suites, mas NUNCA delete, esvazie, use it.skip() nem reescreva uma suite reduzindo casos; se um teste antigo ficou inválido pela mudança, ADAPTE-O mantendo a asserção equivalente. Garanta que \`tsc --noEmit\` passe. NÃO altere o arquivo ${PROMPT_FILE}.`;
         return p;
     }
 
@@ -1238,7 +1255,7 @@ class TaskRunnerService {
         p += `2. Passe no typecheck (tsc --noEmit)\n`;
         p += `3. Siga as convenções do projeto (TypeScript, Express+React+Vite)\n`;
         p += `4. Não repita erros de typecheck das tentativas anteriores\n`;
-        p += `5. Inclua testes quando aplicável\n`;
+        p += `5. Inclua testes quando aplicável, PRESERVANDO os existentes (nunca delete, esvazie, use it.skip() nem reduza casos de uma suite; adapte um teste antigo se ficou inválido, mantendo a asserção equivalente)\n`;
         p += `NÃO altere o arquivo ${PROMPT_FILE}.`;
 
         return p;
@@ -1263,7 +1280,7 @@ class TaskRunnerService {
         if (task.feedbackHistory?.length) {
             p += this.wrapUntrusted('correções a ATENDER antes de continuar', task.feedbackHistory.map((f) => `- ${f}`).join('\n'));
         }
-        p += `\n## Instruções\nImplemente a spec acima de forma INCREMENTAL, em rounds. NESTE round: avance o trabalho que ainda FALTA (modifique mais arquivos pendentes conforme a spec). NÃO refaça o que já está pronto. Faça quantos arquivos conseguir — outro round continua de onde você parar. Mantenha o estado acumulado passando em \`tsc --noEmit\`. Quando TODA a spec estiver implementada, NÃO altere mais nada (isso sinaliza conclusão). Backend: Express+TS em backend/; frontend: React+Vite em src/. SEMPRE inclua TESTES junto do código: no backend, testes Vitest; se tocar o frontend (src/), testes de componente com Vitest + React Testing Library que renderizam o componente, simulam interação (\`userEvent.click\`/\`type\`) e verificam o DOM resultante — esses testes rodam na CI e são o PORTÃO de qualidade. NÃO altere o arquivo ${PROMPT_FILE}.`;
+        p += `\n## Instruções\nImplemente a spec acima de forma INCREMENTAL, em rounds. NESTE round: avance o trabalho que ainda FALTA (modifique mais arquivos pendentes conforme a spec). NÃO refaça o que já está pronto. Faça quantos arquivos conseguir — outro round continua de onde você parar. Mantenha o estado acumulado passando em \`tsc --noEmit\`. Quando TODA a spec estiver implementada, NÃO altere mais nada (isso sinaliza conclusão). Backend: Express+TS em backend/; frontend: React+Vite em src/. SEMPRE inclua TESTES junto do código (e PRESERVE os testes existentes: nunca delete, esvazie, use it.skip() nem reescreva uma suite reduzindo casos — adapte um teste se ficou inválido, mantendo a asserção): no backend, testes Vitest; se tocar o frontend (src/), testes de componente com Vitest + React Testing Library que renderizam o componente, simulam interação (\`userEvent.click\`/\`type\`) e verificam o DOM resultante — esses testes rodam na CI e são o PORTÃO de qualidade. NÃO altere o arquivo ${PROMPT_FILE}.`;
         return p;
     }
 
@@ -1753,9 +1770,9 @@ ${diffContent}
 - Não introduz vazamentos de memória, secrets ou XSS?
 
 ### 4. Testes e verificação (0-2 pontos)
-- Testes foram escritos ou atualizados?
-- tsc --noEmit passaria?
-- Lint passaria?
+- Testes foram ADICIONADOS ou ATUALIZADOS **preservando os existentes**?
+- REGRA DURA: se o diff REMOVE, encolhe ou esvazia (it.skip, asserts apagados, suite reescrita com menos casos) testes existentes SEM substituí-los por cobertura equivalente, isto é REGRESSÃO GRAVE — defina "approved": false e score <= 4.
+- tsc --noEmit passaria? Lint passaria?
 
 ### 5. Convenções do projeto (0-1 ponto)
 - Commit message segue padrão "tipo(#issue): descrição"?
@@ -1815,6 +1832,8 @@ Return ONLY a JSON:
                 task.judgeScore = result.score;
                 task.judgeReview = result.review;
                 task.judgeAttempts = (task.judgeAttempts || 0) + 1;
+                // VALOR 2: persiste o veto do Juiz (só quando explicitamente booleano; ausente != reprovado).
+                if (typeof result.approved === 'boolean') task.judgeApproved = result.approved;
 
                 this.recordEvent(task, 'judge_score', `Judge: ${result.score}/10 — ${result.review?.substring(0, 200) || ''}`, {
                     score: result.score,
@@ -2056,10 +2075,68 @@ Return ONLY a JSON:
         }
     }
 
+    /**
+     * VALOR 1 — Gate DETERMINÍSTICO anti-regressão de testes. Fatos quantitativos (casos de teste
+     * removidos, arquivo de teste apagado) NÃO devem depender do Juiz LLM. Compara o diff do PR
+     * (base = main, via `gh pr diff`) e BLOQUEIA o auto-merge se houver net-negativo de casos
+     * it()/test() ou deleção de arquivo de teste. Não descarta o trabalho — manda p/ revisão humana.
+     * Fail-safe: em erro do próprio guard, bloqueia (revisão) em vez de deixar passar cego.
+     */
+    private async checkTestRegression(task: Task): Promise<{ blocked: boolean; message: string }> {
+        if (!task.prNumber) return { blocked: false, message: '' };
+        try {
+            const { stdout: diff } = await gh(['pr', 'diff', String(task.prNumber), '--repo', REPO], { timeout: 60000 });
+            if (!diff || !diff.trim()) return { blocked: false, message: '' };
+            const isTestPath = (p: string) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(p);
+            let added = 0, removed = 0;
+            const deletedTestFiles: string[] = [];
+            let curFile = '', curDeleted = false;
+            const flush = () => { if (curDeleted && isTestPath(curFile)) deletedTestFiles.push(curFile); };
+            for (const ln of diff.split('\n')) {
+                if (ln.startsWith('diff --git ')) {
+                    flush();
+                    const m = ln.match(/ a\/(.+?) b\//);
+                    curFile = m ? m[1] : '';
+                    curDeleted = false;
+                    continue;
+                }
+                if (ln.startsWith('deleted file mode')) { curDeleted = true; continue; }
+                if (/^\+\s*(it|test)\s*\(/.test(ln)) added++;
+                else if (/^-\s*(it|test)\s*\(/.test(ln)) removed++;
+            }
+            flush();
+            const net = added - removed;
+            if (deletedTestFiles.length > 0 || net < 0) {
+                return {
+                    blocked: true,
+                    message: `regressão de testes (+${added}/-${removed} casos, net ${net}`
+                        + (deletedTestFiles.length ? `; arquivos de teste apagados: ${deletedTestFiles.join(', ')}` : '')
+                        + ') — revisão humana.',
+                };
+            }
+            return { blocked: false, message: `testes OK (+${added}/-${removed})` };
+        } catch (e: any) {
+            return { blocked: true, message: `guard de testes falhou (${e?.message || e}) — revisão humana por precaução.` };
+        }
+    }
+
     private async tryAutoMerge(task: Task): Promise<void> {
         const config = this.getAutomationConfig();
         if (!config.autoMerge) return;
         if ((task.judgeScore || 0) < config.minMergeScore) return;
+        // VALOR 2: veto do Juiz — approved=false BLOQUEIA (só reprova; nunca aprova sozinho, pois o
+        // score acima continua obrigatório). Resolve a cegueira do gate p/ a intenção do Juiz.
+        if (task.judgeApproved === false) {
+            this.recordEvent(task, 'task_failed', 'Auto-merge bloqueado: Juiz reprovou (approved=false). → revisão humana.', { vetoApproved: true });
+            task.status = 'reviewing'; this.save(); this.emitStatus(task); return;
+        }
+        // VALOR 1: gate determinístico anti-regressão de testes (fato quantitativo, não LLM).
+        const testReg = await this.checkTestRegression(task);
+        if (testReg.blocked) {
+            this.recordEvent(task, 'task_failed', `Auto-merge bloqueado: ${testReg.message}`, { testRegression: true });
+            task.status = 'reviewing'; this.save(); this.emitStatus(task); return;
+        }
+        this.recordEvent(task, 'task_started', `Guard de testes: ${testReg.message}`);
 
         // Juiz Visual com LLM é ADVISORY (não-determinístico — ver deep-research 2026): NUNCA
         // bloqueia o auto-merge. Gate de frontend = CI (typecheck + testes de componente Vitest;

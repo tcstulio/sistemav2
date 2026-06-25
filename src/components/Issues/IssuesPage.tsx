@@ -542,6 +542,7 @@ const IssuesPage: React.FC = () => {
     const [editTitle, setEditTitle] = useState('');
     const [editBody, setEditBody] = useState('');
     const [deleteConfirm, setDeleteConfirm] = useState<Task | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
     const [consoleTask, setConsoleTask] = useState<Task | null>(null);
     const [historyTask, setHistoryTask] = useState<Task | null>(null);
     const [labelingIssue, setLabelingIssue] = useState<number | null>(null);
@@ -689,8 +690,17 @@ const IssuesPage: React.FC = () => {
 
     const confirmDelete = async () => {
         if (!deleteConfirm) return;
-        try { await TaskService.delete(deleteConfirm.issueNumber); toast.success('Deletada'); setDeleteConfirm(null); loadTasks(); }
-        catch (e: any) { toast.error(e.response?.data?.error || e.message); }
+        setIsDeleting(true);
+        try {
+            await TaskService.delete(deleteConfirm.issueNumber);
+            toast.success('Deletada');
+            loadTasks();
+        } catch (e: any) {
+            toast.error(e.response?.data?.error || e.message);
+        } finally {
+            setDeleteConfirm(null);
+            setIsDeleting(false);
+        }
     };
 
     const virarTask = async (e: React.MouseEvent, issue: GitHubIssue) => {
@@ -1046,8 +1056,10 @@ const IssuesPage: React.FC = () => {
                         <h2 className="text-lg font-bold text-slate-800 dark:text-white">Deletar Task #{deleteConfirm.issueNumber}?</h2>
                         <p className="text-sm text-slate-500">A task sai do board e o label <span className="font-mono text-xs">opencode-task</span> é removido da issue.</p>
                         <div className="flex justify-end gap-2">
-                            <Button variant="ghost" size="sm" onClick={() => setDeleteConfirm(null)}>Cancelar</Button>
-                            <Button variant="primary" size="sm" onClick={confirmDelete} className="bg-red-600 hover:bg-red-700">Deletar</Button>
+                            <Button variant="ghost" size="sm" onClick={() => setDeleteConfirm(null)} disabled={isDeleting}>Cancelar</Button>
+                            <Button variant="primary" size="sm" onClick={confirmDelete} disabled={isDeleting} className="bg-red-600 hover:bg-red-700">
+                                {isDeleting ? <><Loader2 size={14} className="animate-spin mr-1" /> Deletando...</> : 'Deletar'}
+                            </Button>
                         </div>
                     </div>
                 </div>

@@ -198,6 +198,7 @@ const ChatSessionsView: React.FC = () => {
     const [sessions, setSessions] = useState<ChatSessionInfo[]>([]);
     const [selectedSession, setSelectedSession] = useState<SessionDetail | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [isDeletingAll, setIsDeletingAll] = useState(false);
     const confirm = useConfirm();
 
     const fetchSessions = useCallback(async () => {
@@ -255,11 +256,21 @@ const ChatSessionsView: React.FC = () => {
 
     const deleteAllSessions = async () => {
         if (!(await confirm(`Excluir todas as ${sessions.length} sessões? Esta ação não pode ser desfeita.`))) return;
-        const count = await AiService.deleteAllChatSessions();
-        if (count > 0) {
-            toast.success(`${count} sessão(ões) excluída(s)`);
-            setSessions([]);
-            setSelectedSession(null);
+        setIsDeletingAll(true);
+        try {
+            const count = await AiService.deleteAllChatSessions();
+            if (count > 0) {
+                toast.success(`${count} sessão(ões) excluída(s)`);
+                setSessions([]);
+                setSelectedSession(null);
+            } else {
+                toast.info('Nenhuma sessão para excluir');
+            }
+        } catch (e: unknown) {
+            log.error('Failed to delete all sessions', e);
+            toast.error('Erro ao excluir todas as sessões');
+        } finally {
+            setIsDeletingAll(false);
         }
     };
 
@@ -310,10 +321,13 @@ const ChatSessionsView: React.FC = () => {
                         {sessions.length > 0 && (
                             <button
                                 onClick={deleteAllSessions}
-                                className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-slate-400 hover:text-red-500 transition-colors"
+                                disabled={isDeletingAll}
+                                className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 title="Apagar todas as sessões"
+                                aria-label="Apagar todas as sessões"
+                                aria-busy={isDeletingAll}
                             >
-                                <Trash2 size={16} />
+                                {isDeletingAll ? <RefreshCw size={16} className="animate-spin" /> : <Trash2 size={16} />}
                             </button>
                         )}
                     </>
