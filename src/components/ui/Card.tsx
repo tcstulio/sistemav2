@@ -27,7 +27,13 @@ const paddingClasses = {
 
 /**
  * Card - Standard card component with consistent styling.
- * 
+ *
+ * Quando clicável (`onClick`), o Card é renderizado como um `<div role="button">`
+ * — e NÃO como um `<button>` real. HTML proíbe `<button>` aninhado em `<button>`,
+ * o que causava erro de hidratação em listas cujo card clicável contém botões de
+ * ação internos (ex.: `ConfirmDeleteButton`). Acessibilidade (foco/teclado) é
+ * preservada via `role`, `tabIndex` e handlers de teclado Enter/Space. (#822)
+ *
  * @example
  * ```tsx
  * <Card header={<h3>Title</h3>} padding="md" hoverable>
@@ -45,11 +51,21 @@ export const Card: React.FC<CardProps> = ({
     selected = false,
     hoverable = false
 }) => {
-    const Component = onClick ? 'button' : 'div';
+    const clickable = !!onClick;
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onClick?.();
+        }
+    };
 
     return (
-        <Component
+        <div
+            role={clickable ? 'button' : undefined}
+            tabIndex={clickable ? 0 : undefined}
             onClick={onClick}
+            onKeyDown={clickable ? handleKeyDown : undefined}
             className={`
                 bg-white dark:bg-slate-900
                 border rounded-xl
@@ -57,8 +73,8 @@ export const Card: React.FC<CardProps> = ({
                     ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
                     : 'border-slate-200 dark:border-slate-800'
                 }
-                ${hoverable || onClick ? 'hover:shadow-md cursor-pointer transition-all' : 'shadow-sm'}
-                ${onClick ? 'w-full text-left' : ''}
+                ${hoverable || clickable ? 'hover:shadow-md cursor-pointer transition-all' : 'shadow-sm'}
+                ${clickable ? 'w-full text-left' : ''}
                 ${className}
             `.trim().replace(/\s+/g, ' ')}
         >
@@ -77,7 +93,7 @@ export const Card: React.FC<CardProps> = ({
                     {footer}
                 </div>
             )}
-        </Component>
+        </div>
     );
 };
 

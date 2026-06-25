@@ -46,9 +46,46 @@ describe('Card', () => {
         expect(container.firstChild).toHaveClass('hover:shadow-md');
     });
 
-    it('renders as button when onClick is provided', () => {
-        render(<Card onClick={() => {}}>Button Card</Card>);
+    // #822: Card clicável NÃO renderiza um <button> real — vira <div role="button">
+    // para permitir botões de ação aninhados sem erro de hidratação.
+    it('#822 expõe role="button" (e é um div, não <button>) quando onClick é fornecido', () => {
+        const { container } = render(<Card onClick={() => {}}>Clickable Card</Card>);
         expect(screen.getByRole('button')).toBeInTheDocument();
+        // Raiz é um <div>, não um <button> → evita button-dentro-de-button.
+        expect(container.firstChild).not.toHaveProperty('tagName', 'BUTTON');
+        expect((container.firstChild as HTMLElement).tagName).toBe('DIV');
+        // Foco/teclado preservados.
+        expect(container.firstChild).toHaveAttribute('tabindex', '0');
+    });
+
+    it('#822 é focável e ativável via teclado (Enter e Space)', () => {
+        const handleClick = vi.fn();
+        render(<Card onClick={handleClick}>Keyboard Card</Card>);
+        const card = screen.getByRole('button');
+        card.focus();
+        expect(card).toHaveFocus();
+
+        fireEvent.keyDown(card, { key: 'Enter' });
+        expect(handleClick).toHaveBeenCalledTimes(1);
+
+        fireEvent.keyDown(card, { key: ' ' });
+        expect(handleClick).toHaveBeenCalledTimes(2);
+    });
+
+    it('#822 permite um <button> aninhado sem gerar button-dentro-de-button', () => {
+        const { container } = render(
+            <Card onClick={() => {}}>
+                <button type="button">Ação</button>
+            </Card>
+        );
+        // O card clicável não é um <button> real, então nenhum <button> é
+        // descendente de outro <button> (causa do erro de hidratação).
+        const nestedButtonButtons = container.querySelectorAll('button button');
+        expect(nestedButtonButtons).toHaveLength(0);
+        // O botão de ação interno (um <button> real) ainda está presente.
+        const innerButton = container.querySelector('button');
+        expect(innerButton).not.toBeNull();
+        expect(innerButton?.textContent).toBe('Ação');
     });
 
     it('renders as div when no onClick', () => {
