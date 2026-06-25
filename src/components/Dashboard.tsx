@@ -112,8 +112,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             return (
                 <div className="bg-slate-800 text-white p-3 rounded-lg shadow-lg border border-slate-700 text-sm">
                     <p className="font-bold mb-2">{label}</p>
-                    {payload.map((entry: any, index: number) => (
-                        <p key={index} className="flex items-center gap-2">
+                    {payload.map((entry: any) => (
+                        <p key={entry.dataKey ?? entry.name} className="flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }}></span>
                             <span className="opacity-70">{entry.name}:</span>
                             <span className="font-mono font-medium">{formatCurrency(entry.value)}</span>
