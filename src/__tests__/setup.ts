@@ -70,11 +70,13 @@ Object.defineProperty(globalThis, 'IntersectionObserver', {
 });
 
 Object.defineProperty(globalThis, 'ResizeObserver', {
-    value: vi.fn(() => ({
-        observe: vi.fn(),
-        unobserve: vi.fn(),
-        disconnect: vi.fn(),
-    })),
+    value: vi.fn(function () {
+        return {
+            observe: vi.fn(),
+            unobserve: vi.fn(),
+            disconnect: vi.fn(),
+        };
+    }),
 });
 
 vi.mock('./services/dbService', () => ({
