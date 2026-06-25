@@ -9,6 +9,13 @@ import { usePrompt } from '../../hooks/usePrompt';
 
 const log = logger.child('EmailComposer');
 
+/** Valida um endereço de e-mail simples (não-vazio e formato mínimo user@domain.tld) */
+export function isValidEmail(value: string): boolean {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+}
+
 interface EmailComposerProps {
     onClose: () => void;
     onSend: (to: string, subject: string, body: string, attachments: EmailAttachment[], cc?: string, bcc?: string) => Promise<void>;
@@ -141,6 +148,10 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
 
         setIsSending(true);
         try {
+            if (!isValidEmail(to)) {
+                toast.error('Informe um destinatário válido em "Para".');
+                return;
+            }
             await onSend(to, subject, body, attachments, cc || undefined, bcc || undefined);
             onClose();
         } catch (error) {
@@ -174,7 +185,7 @@ export const EmailComposer: React.FC<EmailComposerProps> = ({
                                 className="flex-1 px-4 py-3 bg-transparent border-b border-slate-200 dark:border-slate-700 outline-none text-slate-800 dark:text-white placeholder-slate-400 focus:border-blue-500 transition-colors"
                                 value={to}
                                 onChange={e => setTo(e.target.value)}
-                                required
+                                aria-label="Destinatário (Para)"
                             />
                             {!showCcBcc && (
                                 <button
