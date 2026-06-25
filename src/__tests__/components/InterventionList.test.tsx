@@ -584,4 +584,44 @@ describe('InterventionList — chaves estáveis nas linhas (#825)', () => {
         // O id alvo é o da linha do meio (lb), não um índice trocado (#825)
         expect(lineId).toBe('lb');
     });
+
+    it('linhas sem id de backend (id vazio) recebem uid estável: sem troca de dados e sem chaves duplicadas', async () => {
+        // #825: se o backend devolver id="" para múltiplas linhas, `key={line.id ?? idx}`
+        // usaria "" como key para todas (duplicada). Agora cada linha recebe um uid estável
+        // gerado no cliente, mantendo a correspondência descrição↔duração.
+        const noIdLines = [
+            { id: '', parent_id: '1', desc: 'Serviço A', duration: 3600 },   // 1h
+            { id: '', parent_id: '1', desc: 'Serviço B', duration: 7200 },   // 2h
+            { id: 'real-1', parent_id: '1', desc: 'Serviço C', duration: 1800 }, // 30m
+        ];
+        vi.mocked(useInterventions).mockReturnValue({
+            data: [{ ...interventionsMock[0], lines: noIdLines }],
+            refetch: vi.fn(),
+        } as any);
+        vi.mocked(useInterventionLines).mockReturnValue({ data: noIdLines, refetch: refetchLinesMock } as any);
+
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        await openDetail();
+
+        const removeButtons = await screen.findAllByLabelText('Remover item');
+        expect(removeButtons).toHaveLength(3);
+
+        // Cada descrição emparelhada com sua duração correta (sem troca entre linhas)
+        const pairs: Array<[string, string]> = removeButtons.map((btn) => {
+            const row = btn.closest('.flex.justify-between') as HTMLElement;
+            const desc = within(row).getByText(/Serviço [ABC]/).textContent || '';
+            const duration = within(row).getByText(/^\d+h(\s\d+m)?$/).textContent || '';
+            return [desc, duration];
+        });
+        expect(pairs).toContainEqual(['Serviço A', '1h']);
+        expect(pairs).toContainEqual(['Serviço B', '2h']);
+        expect(pairs).toContainEqual(['Serviço C', '0h 30m']);
+
+        // Nenhum warning do React sobre chaves duplicadas (#825)
+        const keyWarnings = errorSpy.mock.calls
+            .map(c => String(c.join(' ')))
+            .filter(msg => /same key|Encountered two children/i.test(msg));
+        expect(keyWarnings).toHaveLength(0);
+        errorSpy.mockRestore();
+    });
 });

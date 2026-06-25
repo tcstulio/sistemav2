@@ -70,6 +70,7 @@ const ReportsView: React.FC = () => {
             .map(([socid, total]) => {
                 const customer = customers.find(c => String(c.id) === String(socid));
                 return {
+                    id: socid,
                     name: customer ? customer.name : `ID: ${socid}`,
                     value: total
                 };
@@ -252,7 +253,7 @@ const ReportsView: React.FC = () => {
                                                 dataKey="value"
                                             >
                                                 {topCustomersData.map((entry, index) => (
-                                                    <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
+                                                    <Cell key={entry.id} fill={COLORS[index % COLORS.length]} />
                                                 ))}
                                             </Pie>
                                             <Tooltip
@@ -264,7 +265,7 @@ const ReportsView: React.FC = () => {
                                 </div>
                                 <ul className="flex-1 w-full min-w-0 space-y-2" aria-label="top-clientes-legenda">
                                     {topCustomersData.map((entry, index) => (
-                                        <li key={entry.name} className="flex items-center gap-2 min-w-0">
+                                        <li key={entry.id} className="flex items-center gap-2 min-w-0">
                                             <span
                                                 className="flex-shrink-0 w-3 h-3 rounded-full"
                                                 style={{ backgroundColor: COLORS[index % COLORS.length] }}

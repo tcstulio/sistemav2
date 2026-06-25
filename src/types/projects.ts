@@ -53,6 +53,7 @@ export interface InterventionLine {
     duration?: number; // seconds
     qty?: number;
     date_modification?: number;
+    uid?: string; // #825: chave React estável (gerada no cliente quando id de backend é vazio/ausente)
 }
 
 export interface Intervention {

@@ -229,13 +229,13 @@ describe('ReportsView — legenda Top Clientes com chave estável (#825)', () =>
         vi.mocked(useCustomers).mockReturnValue({ data: customers, isLoading: false } as any);
     });
 
-    it('pareia cada cliente ao seu valor correto, em ordem decrescente (chave estável entry.name)', async () => {
+    it('pareia cada cliente ao seu valor correto, em ordem decrescente (chave estável entry.id/socid)', async () => {
         renderWithRouter(<ReportsView />);
         const list = await screen.findByRole('list', { name: 'top-clientes-legenda' });
         const items = list.querySelectorAll('li');
         expect(items).toHaveLength(3);
 
-        // Ordem decrescente por valor; cada <li> (key=entry.name) mantém nome↔valor
+        // Ordem decrescente por valor; cada <li> (key=entry.id) mantém nome↔valor
         expect(items[0].textContent).toContain('Cliente Alpha');
         expect(items[0].textContent).toContain(formatCurrency(5000));
         expect(items[0].textContent).not.toContain('Cliente Beta');
@@ -245,5 +245,38 @@ describe('ReportsView — legenda Top Clientes com chave estável (#825)', () =>
 
         expect(items[2].textContent).toContain('Cliente Gama');
         expect(items[2].textContent).toContain(formatCurrency(3000));
+    });
+
+    it('clientes com nomes idênticos não colidem (key=socid único) e cada um mantém seu valor', async () => {
+        // #825: usar entry.name como key causaria chave duplicada quando dois clientes
+        // têm o mesmo nome. A chave agora é entry.id (socid), que é único por construção.
+        const dupInvoices = [
+            { id: 'inv1', ref: 'FA001', socid: '10', date: ts, total_ttc: 5000, statut: '2', type: '0' },
+            { id: 'inv2', ref: 'FA002', socid: '20', date: ts, total_ttc: 3000, statut: '2', type: '0' },
+        ];
+        const dupCustomers = [
+            { id: '10', name: 'Cliente Duplicado Ltda' },
+            { id: '20', name: 'Cliente Duplicado Ltda' },
+        ];
+        vi.mocked(useInvoices).mockReturnValue({ data: dupInvoices, isLoading: false } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: dupCustomers, isLoading: false } as any);
+
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        renderWithRouter(<ReportsView />);
+
+        const list = await screen.findByRole('list', { name: 'top-clientes-legenda' });
+        const items = list.querySelectorAll('li');
+        expect(items).toHaveLength(2);
+
+        // Ordem decrescente: 5000 (socid 10) antes de 3000 (socid 20)
+        expect(items[0].textContent).toContain(formatCurrency(5000));
+        expect(items[1].textContent).toContain(formatCurrency(3000));
+
+        // Nenhum warning do React sobre chaves duplicadas
+        const keyWarnings = errorSpy.mock.calls
+            .map(c => String(c.join(' ')))
+            .filter(msg => /same key|Encountered two children/i.test(msg));
+        expect(keyWarnings).toHaveLength(0);
+        errorSpy.mockRestore();
     });
 });

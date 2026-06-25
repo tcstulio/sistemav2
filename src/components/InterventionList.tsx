@@ -5,6 +5,7 @@ import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { Intervention, InterventionLine, AppView } from '../types';
 import { ClipboardList, Plus, Loader2, CheckCircle2, Calendar, FolderKanban, User, Pencil, Clock, Trash2 } from 'lucide-react';
 import { DolibarrService } from '../services/dolibarrService';
+import { generateUUID } from '../services/api/core';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInterventions, useCustomers, useProjects, useInterventionLines } from '../hooks/dolibarr';
 import { useListControls } from '../hooks/useListControls';
@@ -46,7 +47,12 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
     const [editSupported, setEditSupported] = useState(true);
 
     const handleSelectIntervention = (intervention: Intervention) => {
-        const linkedLines = lines.filter(l => String(l.parent_id) === String(intervention.id));
+        // #825: anexa chave estável (uid) a cada linha — usa o id de backend quando
+        // presente; caso venha vazio/ausente, gera um uid estável no cliente para que
+        // a reconciliação do React não troque dados entre linhas ao reordenar/remover.
+        const linkedLines = lines
+            .filter(l => String(l.parent_id) === String(intervention.id))
+            .map(l => ({ ...l, uid: l.uid || l.id || generateUUID() }));
         setSelectedIntervention({ ...intervention, lines: linkedLines });
     };
 
@@ -488,7 +494,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                         <div className="space-y-2">
                             {selectedLines.length > 0 ? (
                                 selectedLines.map((line, idx) => (
-                                    <div key={line.id ?? idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
+                                    <div key={line.uid || line.id || `line-${idx}`} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
                                         <div className="flex-1 min-w-0">
                                             <div
                                                 className="font-medium text-slate-800 dark:text-white text-sm prose prose-slate prose-sm max-w-none dark:prose-invert [&>p]:m-0"
