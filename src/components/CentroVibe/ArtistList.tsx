@@ -3,6 +3,7 @@ import { Artist, ArtistRole, EventCluster } from '../../types/centrovibe';
 import { CLUSTERS } from './constants';
 import { Card, Button, Input, Modal } from '../ui';
 import { Mic2, Disc, Settings, Users, Plus, Search, Instagram, Edit2, Trash2 } from 'lucide-react';
+import { useDolibarr } from '../../context/DolibarrContext';
 
 interface ArtistListProps {
   artists: Artist[];
@@ -21,6 +22,7 @@ const emptyForm = () => ({
 });
 
 const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist, onUpdateArtist, onDeleteArtist }) => {
+  const { canDo } = useDolibarr();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingArtist, setEditingArtist] = useState<Artist | null>(null);
   const [filterCluster, setFilterCluster] = useState<EventCluster | 'all'>('all');
@@ -87,9 +89,11 @@ const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist, onUpdateA
           </h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm">Gerencie bandas, DJs e produtoras por Cluster.</p>
         </div>
+        {canDo('create', 'centrovibe') && (
         <Button variant="primary" icon={<Plus size={16} />} onClick={openAdd}>
           Novo Talento
         </Button>
+        )}
       </div>
 
       <div className="flex flex-col md:flex-row gap-4 mb-6 bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
@@ -135,6 +139,7 @@ const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist, onUpdateA
                   <span className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider ${cluster.color}`}>
                     {cluster.label.split('/')[0]}
                   </span>
+                  {canDo('edit', 'centrovibe') && (
                   <button
                     onClick={() => openEdit(artist)}
                     className="p-1 text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded transition-colors"
@@ -142,6 +147,8 @@ const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist, onUpdateA
                   >
                     <Edit2 size={13} />
                   </button>
+                  )}
+                  {canDo('delete', 'centrovibe') && (
                   <button
                     onClick={() => handleDelete(artist.id)}
                     className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
@@ -149,6 +156,7 @@ const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist, onUpdateA
                   >
                     <Trash2 size={13} />
                   </button>
+                  )}
                 </div>
               </div>
               <h3 className="font-bold text-lg text-slate-800 dark:text-white mb-1 truncate">{artist.name}</h3>

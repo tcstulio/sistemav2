@@ -15,6 +15,7 @@ import VibeCheck from './VibeCheck';
 import { PageLayout, PageHeader, Tabs, Tab, Button, Card, Spinner } from '../ui';
 import { Sparkles, Users, Calendar, LayoutGrid, CalendarDays, BarChart3, Mic2, Radar, Plus } from 'lucide-react';
 import { toast } from 'sonner';
+import { useDolibarr } from '../../context/DolibarrContext';
 
 interface CentroVibeManagerProps {
   config?: unknown;
@@ -24,6 +25,7 @@ interface CentroVibeManagerProps {
 }
 
 const CentroVibeManager: React.FC<CentroVibeManagerProps> = () => {
+  const { canDo } = useDolibarr();
   const [schedule, setSchedule] = useState<DaySchedule[]>(INITIAL_SCHEDULE);
   const [artists, setArtists] = useState<Artist[]>(INITIAL_ARTISTS);
   const [competitors, setCompetitors] = useState<Competitor[]>(INITIAL_COMPETITORS);
@@ -184,9 +186,11 @@ const CentroVibeManager: React.FC<CentroVibeManagerProps> = () => {
                 <h2 className="text-xl font-bold text-slate-800 dark:text-white">Agenda Modelo (Semanal)</h2>
               </div>
               <div className="flex items-center gap-3">
+              {canDo('create', 'centrovibe') && (
               <Button variant="outline" size="sm" icon={<Plus size={14} />} onClick={() => setIsNewEventOpen(true)}>
                 Novo Evento
               </Button>
+              )}
               <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
                 {[
                   { value: 'all' as const, label: 'Tudo', active: '' },
