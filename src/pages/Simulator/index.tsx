@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCcw, FolderOpen } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
+import { useConfirm } from '../../hooks/useConfirm';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('Simulator');
@@ -17,8 +18,36 @@ import BuffetSimulatorModal from './components/modals/BuffetSimulatorModal';
 import SavedSimulationsModal from './components/modals/SavedSimulationsModal';
 import ExtratoDetalhado from './components/modals/ExtratoDetalhado';
 
+const createDefaultState = (): SimulationState => ({
+    modelName: 'Evento Padrão',
+    eventDate: new Date().toLocaleDateString('en-CA'),
+    publico: 300,
+    ticketMedio: 60,
+    temOpenBar: false,
+    consumoBar: 90,
+
+    custoOpenBarPax: 40,
+    cmvBarPercent: 0.3,
+    impostosBuffet: 16,
+
+    barDetails: { duracao: 5, perfil: 'moderado', mix: DEFAULT_BAR_MIX },
+    temBuffet: false,
+    precoBuffet: 120,
+    custoBuffet: 80,
+    buffetDetails: DEFAULT_BUFFET_SIM,
+    impostosTicket: 10,
+    impostosBar: 16,
+    impostosAluguel: 22,
+    aluguelMode: 'fixo',
+    aluguelFixo: 6000,
+    aluguelPercentual: 0,
+    partners: [{ id: 'p1', name: 'Produtor Externo', splitTicket: 100, splitBar: 0 }],
+    extraCosts: DEFAULT_COSTS
+});
+
 const Simulator = () => {
     const { currentUser: doliUser } = useDolibarr();
+    const confirm = useConfirm();
 
     // Map Dolibarr user to simulator context
     const isAdmin = doliUser?.admin || (doliUser as any)?.superadmin || false;
@@ -43,32 +72,7 @@ const Simulator = () => {
             }
         }
 
-        return {
-            modelName: 'Evento Padrão',
-            eventDate: new Date().toLocaleDateString('en-CA'),
-            publico: 300,
-            ticketMedio: 60,
-            temOpenBar: false,
-            consumoBar: 90,
-
-            custoOpenBarPax: 40,
-            cmvBarPercent: 0.3,
-            impostosBuffet: 16,
-
-            barDetails: { duracao: 5, perfil: 'moderado', mix: DEFAULT_BAR_MIX },
-            temBuffet: false,
-            precoBuffet: 120,
-            custoBuffet: 80,
-            buffetDetails: DEFAULT_BUFFET_SIM,
-            impostosTicket: 10,
-            impostosBar: 16,
-            impostosAluguel: 22,
-            aluguelMode: 'fixo',
-            aluguelFixo: 6000,
-            aluguelPercentual: 0,
-            partners: [{ id: 'p1', name: 'Produtor Externo', splitTicket: 100, splitBar: 0 }],
-            extraCosts: DEFAULT_COSTS
-        };
+        return createDefaultState();
     });
 
     useEffect(() => {
@@ -127,9 +131,18 @@ const Simulator = () => {
         setStep(4);
     };
 
-    const handleReset = () => {
+    const handleReset = async () => {
+        const ok = await confirm({
+            title: 'Novo Cálculo',
+            message: 'Descartar os dados do simulador?',
+            confirmText: 'Descartar',
+            cancelText: 'Cancelar',
+            danger: true,
+        });
+        if (!ok) return;
+        setData(createDefaultState());
+        setStep(1);
         localStorage.removeItem(STORAGE_KEY_DRAFT);
-        window.location.reload();
     };
 
     if (!doliUser) {
