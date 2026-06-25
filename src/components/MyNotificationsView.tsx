@@ -40,6 +40,7 @@ const MyNotificationsView: React.FC<MyNotificationsViewProps> = ({ onNavigate })
 
     const [activeTab, setActiveTab] = useState<ScopeTab>('personal');
     const [readFilter, setReadFilter] = useState<ReadFilter>('all');
+    const [isMarkingAll, setIsMarkingAll] = useState(false);
 
     const personalNotifs = useMemo(
         () => notifications.filter(n => classifyScope(n, userId) === 'personal'),
@@ -79,10 +80,16 @@ const MyNotificationsView: React.FC<MyNotificationsViewProps> = ({ onNavigate })
     };
 
     const handleMarkAllRead = async () => {
-        if (setNotifications) {
-            setNotifications((prev: AppNotification[]) => prev.map(n => ({ ...n, read: true })));
+        if (isMarkingAll) return;
+        setIsMarkingAll(true);
+        try {
+            if (setNotifications) {
+                setNotifications((prev: AppNotification[]) => prev.map(n => ({ ...n, read: true })));
+            }
+            await doAction('markAllRead');
+        } finally {
+            setIsMarkingAll(false);
         }
-        await doAction('markAllRead');
     };
 
     const unreadPersonal = personalNotifs.filter(n => !n.read).length;
@@ -106,9 +113,10 @@ const MyNotificationsView: React.FC<MyNotificationsViewProps> = ({ onNavigate })
                 </div>
                 <button
                     onClick={handleMarkAllRead}
-                    className="text-sm text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium"
+                    disabled={isMarkingAll}
+                    className="text-sm text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                    Marcar todas como lidas
+                    {isMarkingAll ? 'Marcando...' : 'Marcar todas como lidas'}
                 </button>
             </div>
 

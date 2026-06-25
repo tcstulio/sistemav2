@@ -115,7 +115,7 @@ const TaxPaymentDetail: React.FC<TaxPaymentDetailProps> = ({ onNavigate }) => {
                         Pagamento {payment.ref}
                     </h1>
                     <div className="flex items-center gap-2 mt-1">
-                        <span className={`px-2 py-0.5 rounded textxs font-bold uppercase ${isVAT ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300' : 'bg-pink-100 text-pink-700 dark:bg-pink-900 dark:text-pink-300'}`}>
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${isVAT ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300' : 'bg-pink-100 text-pink-700 dark:bg-pink-900 dark:text-pink-300'}`}>
                             {payment.label}
                         </span>
                         <div className="text-sm text-slate-500 flex items-center gap-1">
