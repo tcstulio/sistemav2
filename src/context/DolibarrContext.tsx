@@ -8,6 +8,7 @@ import { runBackgroundSync } from '../services/backgroundSyncService';
 import { logger } from '../utils/logger';
 import { safeStorage } from '../utils/safeStorage';
 import { resolveScreenAccess, ScreenPermissions } from '../utils/screenPermissions';
+import { canDoAction } from '../utils/writePermissions';
 import { getUiConfig } from '../services/uiConfigService';
 
 const log = logger.child('DolibarrContext');
@@ -225,52 +226,12 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
   // FAZER (#540) — pode executar a ação na tela? Gateia botões pelos direitos de ESCRITA do
   // Dolibarr (creer = criar/editar, supprimer = excluir, valider = validar). Preview-aware:
   // usa o alvo do "ver como". Default SEGURO: tela/ação sem mapeamento NÃO é bloqueada.
+  // A resolução do mapa WRITE está em src/utils/writePermissions.ts (pura, testável).
   const canDo = useCallback((action: 'create' | 'edit' | 'delete' | 'validate' | 'pay' | 'approve' | 'receive' | 'close' | 'reopen', screen: string): boolean => {
     if (!config) return false;
     const inPreview = !!previewTarget && !!previewTarget.rights; // usuário OU grupo com rights carregados
     const ident: any = inPreview ? { admin: previewTarget!.admin, rights: previewTarget!.rights } : currentUser;
-    if (!ident) return false;
-    const isAdminEff = ident.admin === 1 || ident.admin === '1' || ident.admin === true;
-    if (isAdminEff) return true;
-    if (!ident.rights) return true; // rights não carregados: não bloqueia (evita esconder por engano)
-    // Mapa de perms de ESCRITA por tela. Só perms confirmados/convenção sólida do Dolibarr
-    // (creer=criar/editar, supprimer=excluir, valider=validar; transições: paiement/cloturer/
-    // approuver/receptionner/approve). Ação/tela sem perm mapeado => NÃO bloqueia (seguro).
-    const WRITE: Record<string, { module: string; create?: string; delete?: string; validate?: string; pay?: string; approve?: string; receive?: string; close?: string; reopen?: string }> = {
-      customers: { module: 'societe', create: 'creer', delete: 'supprimer' },
-      contacts: { module: 'societe', create: 'contact.creer', delete: 'contact.supprimer' },
-      suppliers: { module: 'societe', create: 'creer', delete: 'supprimer' },
-      proposals: { module: 'propal', create: 'creer', delete: 'supprimer', validate: 'valider', close: 'cloturer' },
-      orders: { module: 'commande', create: 'creer', delete: 'supprimer', validate: 'valider', close: 'cloturer' },
-      invoices: { module: 'facture', create: 'creer', delete: 'supprimer', validate: 'valider', pay: 'paiement' },
-      supplier_invoices: { module: 'fournisseur', create: 'facture.creer', delete: 'facture.supprimer' },
-      supplier_orders: { module: 'fournisseur', create: 'commande.creer', delete: 'commande.supprimer', approve: 'commande.approuver', receive: 'commande.receptionner' },
-      supplier_proposals: { module: 'supplier_proposal', create: 'creer', delete: 'supprimer' },
-      projects: { module: 'projet', create: 'creer', delete: 'supprimer' },
-      tasks: { module: 'projet', create: 'creer', delete: 'supprimer' },
-      products: { module: 'produit', create: 'creer', delete: 'supprimer' },
-      services: { module: 'produit', create: 'creer', delete: 'supprimer' },
-      tickets: { module: 'ticket', create: 'creer', delete: 'supprimer' },
-      interventions: { module: 'ficheinter', create: 'creer', delete: 'supprimer' },
-      contracts: { module: 'contrat', create: 'creer', delete: 'supprimer' },
-      venues: { module: 'societe', create: 'creer', delete: 'supprimer' },
-      categories: { module: 'categorie', create: 'creer', delete: 'supprimer' },
-      shipments: { module: 'expedition', create: 'creer', delete: 'supprimer', validate: 'valider' },
-      warehouses: { module: 'stock', create: 'creer', delete: 'supprimer' },
-      expense_reports: { module: 'expensereport', create: 'creer', delete: 'supprimer', approve: 'approve' },
-    };
-    const map = WRITE[screen];
-    if (!map) return true; // tela não mapeada: não bloqueia
-    const perm = action === 'edit' ? map.create : (map as any)[action]; // Dolibarr usa 'creer' p/ criar+editar
-    if (!perm) return true; // ação não suportada nessa tela: não bloqueia
-    const moduleRights: any = ident.rights[map.module];
-    if (!moduleRights) return false;
-    let cur: any = moduleRights; // resolve perm aninhado (ex.: contact.creer, facture.creer)
-    for (const part of perm.split('.')) {
-      if (cur && typeof cur === 'object' && cur[part] !== undefined) cur = cur[part];
-      else return false;
-    }
-    return cur === '1' || cur === 1 || cur === true;
+    return canDoAction(ident, screen, action);
   }, [config, currentUser, previewTarget]);
 
   // 2. Data Hook (Reduced to Sync & Utility)
