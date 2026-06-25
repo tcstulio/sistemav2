@@ -10,7 +10,7 @@ import { getSalesPerformance } from '../../utils/analytics/commercial';
 import { getTeamHealth } from '../../utils/analytics/hr';
 import { getProjectActivity } from '../../utils/analytics/projects';
 import ReactMarkdown from 'react-markdown';
-import { Loader2, TrendingUp, DollarSign, Users, Briefcase, FileText } from 'lucide-react';
+import { Loader2, TrendingUp, DollarSign, Users, Briefcase, FileText, PlayCircle } from 'lucide-react';
 import { logger } from '../../utils/logger';
 import { formatCurrency } from '../../utils/formatUtils';
 import { PageLayout, PageHeader, Skeleton, ErrorState } from '../../components/ui';
@@ -275,7 +275,3 @@ const Card = ({ title, value, subValue, subtitle, color }: any) => {
     );
 };
 
-// Missing Icon Component
-const PlayCircle = ({ className }: { className?: string }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
-);
