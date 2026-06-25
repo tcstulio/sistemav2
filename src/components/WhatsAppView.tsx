@@ -18,6 +18,7 @@ import { CreateSessionModal } from './whatsapp/CreateSessionModal';
 import { NewConversationModal } from './whatsapp/NewConversationModal';
 import { WhatsAppProfileSettings } from './whatsapp/WhatsAppProfileSettings';
 import { ContactPicker } from './whatsapp/ContactPicker';
+import { Modal } from './ui/Modal';
 import { AppView, WhatsAppConversation } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useUsers, useCustomers, useInvoices, useOrders, useTickets, useContacts, useSuppliers, useProjects } from '../hooks/dolibarr';
@@ -440,10 +441,17 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
             />
 
             {/* SETTINGS MODAL */}
-            {isSettingsOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md p-6 border border-slate-200 dark:border-slate-700 max-h-[90vh] overflow-y-auto">
-                        <h2 className="text-xl font-bold mb-4 text-slate-800 dark:text-white">Configurações do WhatsApp</h2>
+            <Modal
+                isOpen={isSettingsOpen}
+                onClose={() => setIsSettingsOpen(false)}
+                title="Configurações do WhatsApp"
+                footer={
+                    <>
+                        <button onClick={() => setIsSettingsOpen(false)} className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400">Cancelar</button>
+                        <button onClick={handleSaveSettings} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Salvar</button>
+                    </>
+                }
+            >
                         <div className="space-y-6">
                             <div className="border-b border-slate-200 dark:border-slate-700 pb-4">
                                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Conta (Sessão)</label>
@@ -523,54 +531,32 @@ const WhatsAppInner: React.FC<WhatsAppViewProps> = ({ onNavigate }) => {
                                 </button>
                             </div>
                         </div>
-
-                        <div className="flex justify-end gap-2 mt-6">
-                            <button onClick={() => setIsSettingsOpen(false)} className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400">Cancelar</button>
-                            <button onClick={handleSaveSettings} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Salvar</button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            </Modal>
 
             {/* PROFILE SETTINGS MODAL */}
-            {isProfileSettingsOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div className="relative w-full max-w-2xl">
-                        <WhatsAppProfileSettings sessionId={settingsSessionId} />
-                        <button
-                            onClick={() => setIsProfileSettingsOpen(false)}
-                            className="absolute -top-10 right-0 text-white hover:text-gray-200"
-                        >
-                            Fechar
-                        </button>
-                    </div>
-                </div>
-            )}
+            <Modal
+                isOpen={isProfileSettingsOpen}
+                onClose={() => setIsProfileSettingsOpen(false)}
+                size="lg"
+            >
+                <WhatsAppProfileSettings sessionId={settingsSessionId} />
+            </Modal>
 
             {/* LINK CUSTOMER MODAL */}
-            {isLinkCustomerOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-md p-6 border border-slate-200 dark:border-slate-700">
-                        <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-lg font-bold text-slate-800 dark:text-white">Vincular Cliente</h2>
-                            <button
-                                onClick={() => setIsLinkCustomerOpen(false)}
-                                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-500"
-                            >
-                                ✕
-                            </button>
-                        </div>
-                        <p className="text-xs text-slate-500 mb-4">Selecione o cliente do Dolibarr para vincular a esta conversa.</p>
-                        <ContactPicker
-                            customers={customers}
-                            contacts={contacts}
-                            suppliers={suppliers}
-                            users={users}
-                            onSelect={handleLinkCustomer}
-                        />
-                    </div>
-                </div>
-            )}
+            <Modal
+                isOpen={isLinkCustomerOpen}
+                onClose={() => setIsLinkCustomerOpen(false)}
+                title="Vincular Cliente"
+            >
+                <p className="text-xs text-slate-500 mb-4">Selecione o cliente do Dolibarr para vincular a esta conversa.</p>
+                <ContactPicker
+                    customers={customers}
+                    contacts={contacts}
+                    suppliers={suppliers}
+                    users={users}
+                    onSelect={handleLinkCustomer}
+                />
+            </Modal>
         </div>
     );
 };

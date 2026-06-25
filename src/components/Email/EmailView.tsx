@@ -5,7 +5,7 @@ import { EmailAccount, EmailMessage, EmailBody } from '../../types/email';
 import { AppView } from '../../types';
 import { EmailAccountList } from './EmailAccountList';
 import { EmailList } from './EmailList';
-import { EmailComposer } from './EmailComposer';
+import { EmailComposer, isValidEmail } from './EmailComposer';
 import { EmailContextPanel } from './EmailContextPanel';
 import { EmailReadingPane } from './EmailReadingPane';
 import { StoreConfigModal } from './StoreConfigModal';
@@ -375,6 +375,7 @@ const EmailView: React.FC = () => {
 
     const handleSendEmail = async (to: string, subject: string, body: string, attachments: any[], cc?: string, bcc?: string) => {
         if (!selectedAccountId) return;
+        if (!isValidEmail(to)) return;
         await EmailService.sendEmail(selectedAccountId, to, subject, body, attachments, cc, bcc);
         toast.success('Email enviado com sucesso!');
         if (selectedFolder === 'Sent' || selectedFolder.toLowerCase().includes('sent')) {
