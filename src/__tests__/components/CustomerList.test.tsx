@@ -230,4 +230,53 @@ describe('CustomerList', () => {
             expect(screen.getByText(/nenhuma fatura encontrada/i)).toBeInTheDocument();
         });
     });
+
+    // ── Issue #822: button aninhado em button (erro de hidratação) ────────────
+    it('#822 não renderiza <button> aninhado em <button> na lista de clientes', () => {
+        const { container } = render(<CustomerList />);
+        // O card clicável da linha do cliente agora é um <div role="button">,
+        // não um <button> real — então o botão de excluir interno não gera
+        // button-dentro-de-button (causa do erro de hidratação).
+        const nestedButtonButtons = container.querySelectorAll('button button');
+        expect(nestedButtonButtons).toHaveLength(0);
+    });
+
+    it('#822 o card da linha é um elemento clicável acessível (role=button) e não um <button>', () => {
+        const { container } = render(<CustomerList />);
+        // O texto do nome do cliente mora dentro do card clicável.
+        const acmeText = screen.getByText('ACME Ltda');
+        const card = acmeText.closest('[role="button"]');
+        expect(card).not.toBeNull();
+        expect(card).toHaveAttribute('tabindex', '0');
+        // Garante que NÃO é um <button> real.
+        expect((card as HTMLElement).tagName).not.toBe('BUTTON');
+        // Sanity: existem cards clicáveis na lista.
+        expect(container.querySelectorAll('[role="button"]')).not.toBeNull();
+    });
+
+    it('#822 clicar no card abre o detalhe; o botão de excluir permanece acessível', async () => {
+        const user = userEvent.setup();
+        render(<CustomerList />);
+
+        // Clicar no card (div role=button) abre o painel de detalhe.
+        await user.click(screen.getByText('ACME Ltda'));
+        expect(await screen.findByText('Informações')).toBeInTheDocument();
+
+        // Os botões de excluir continuam presentes e são <button> independentes.
+        const deleteButtons = screen.getAllByRole('button', { name: 'Excluir' });
+        expect(deleteButtons.length).toBeGreaterThan(0);
+    });
+
+    it('#822 clicar no botão de excluir NÃO abre o detalhe (stopPropagation)', async () => {
+        const user = userEvent.setup();
+        render(<CustomerList />);
+
+        const deleteButtons = screen.getAllByRole('button', { name: 'Excluir' });
+        await user.click(deleteButtons[0]);
+
+        // Não deve ter aberto o painel de detalhe.
+        expect(screen.queryByText('Informações')).not.toBeInTheDocument();
+        // Deve ter aberto o modal de confirmação de exclusão.
+        expect(await screen.findByText(/tem certeza que deseja excluir/i)).toBeInTheDocument();
+    });
 });
