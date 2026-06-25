@@ -194,7 +194,15 @@ router.get('/user-photo', async (req: Request, res: Response) => {
         res.setHeader('Cache-Control', 'private, max-age=300');
         res.send(buffer);
     } catch (error: any) {
-        log.error(`Erro ao obter foto de usuário: ${error.message}`);
+        // "Sem foto" é uma condição esperada (não é falha de servidor): loga em debug para não
+        // poluir o log; o frontend já exibe o avatar de fallback (iniciais) ao receber o 404.
+        // Erros reais (Dolibarr fora do ar, etc.) seguem como error. (#824)
+        const msg = error?.message || String(error);
+        if (/n[ãa]o encontrada/i.test(msg)) {
+            log.debug(`Foto não disponível para userId=${req.query.userId}`);
+        } else {
+            log.error(`Erro ao obter foto de usuário: ${msg}`);
+        }
         res.status(404).json({ success: false, error: 'Foto não disponível' });
     }
 });

@@ -19,8 +19,13 @@ vi.mock('../../services/documentService', () => ({
     documentService: mockDocumentService,
 }));
 
+const mockDolibarrService = vi.hoisted(() => ({
+    getUserPhoto: vi.fn(),
+    getDocumentPDF: vi.fn(),
+}));
+
 vi.mock('../../services/dolibarrService', () => ({
-    dolibarrService: {},
+    dolibarrService: mockDolibarrService,
 }));
 
 vi.mock('../../services/interApiService', () => ({
@@ -171,6 +176,55 @@ describe('documentRoutes', () => {
             const res = await request(app).get('/api/documents/customer/not-found/phone');
 
             expect(res.status).toBe(404);
+        });
+    });
+
+    describe('GET /api/documents/user-photo', () => {
+        it('returns 200 with the image when the photo exists', async () => {
+            mockDolibarrService.getUserPhoto.mockResolvedValue({
+                buffer: Buffer.from('PNG-BYTES'),
+                contentType: 'image/png',
+            });
+
+            const res = await request(app).get('/api/documents/user-photo?userId=35&file=olga.png');
+
+            expect(res.status).toBe(200);
+            expect(res.headers['content-type']).toBe('image/png');
+            expect(res.body).toEqual(Buffer.from('PNG-BYTES'));
+            expect(mockDolibarrService.getUserPhoto).toHaveBeenCalledWith('35', 'olga.png');
+        });
+
+        it('returns 404 when the photo does not exist (expected condition)', async () => {
+            mockDolibarrService.getUserPhoto.mockRejectedValue(new Error('Foto não encontrada para usuário #35'));
+
+            const res = await request(app).get('/api/documents/user-photo?userId=35&file=olga.png');
+
+            expect(res.status).toBe(404);
+            expect(res.body.success).toBe(false);
+        });
+
+        it('returns 400 when userId is not numeric', async () => {
+            const res = await request(app).get('/api/documents/user-photo?userId=abc&file=x.png');
+
+            expect(res.status).toBe(400);
+            expect(mockDolibarrService.getUserPhoto).not.toHaveBeenCalled();
+        });
+
+        it('returns 400 when file is missing', async () => {
+            const res = await request(app).get('/api/documents/user-photo?userId=35');
+
+            expect(res.status).toBe(400);
+        });
+
+        it('strips path traversal from the file name before querying Dolibarr', async () => {
+            mockDolibarrService.getUserPhoto.mockResolvedValue({
+                buffer: Buffer.from('IMG'),
+                contentType: 'image/jpeg',
+            });
+
+            await request(app).get('/api/documents/user-photo?userId=35&file=..%2F..%2Fsecret.png');
+
+            expect(mockDolibarrService.getUserPhoto).toHaveBeenCalledWith('35', 'secret.png');
         });
     });
 });
