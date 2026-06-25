@@ -1085,7 +1085,23 @@ class TaskRunnerService {
         const gone = await this.sweepOrphanedOpencode('ensureWorktree');
         this.cleanStaleLocks(gone);
         await git(['fetch', 'origin', 'main'], { timeout: 60000 });
-        if (!fs.existsSync(WT_ROOT)) {
+        // Recria o worktree se NÃO existir OU se o diretório existir mas não for um worktree git
+        // VÁLIDO (ex.: .git apagado após reescrita de histórico/limpeza órfã). Sem isto, o `if
+        // existsSync` antigo pulava o `worktree add` e o `reset --hard` abaixo falhava com
+        // "fatal: not a git repository" — travando TODAS as tasks.
+        let needsCreate = !fs.existsSync(WT_ROOT);
+        if (!needsCreate) {
+            try {
+                if (!fs.existsSync(path.join(WT_ROOT, '.git'))) throw new Error('.git ausente');
+                await git(['rev-parse', '--is-inside-work-tree'], { timeout: 15000, cwd: WT_ROOT });
+            } catch {
+                log.warn(`ensureWorktree: ${WT_ROOT} existe mas não é worktree válido — recriando`);
+                try { fs.rmSync(WT_ROOT, { recursive: true, force: true }); } catch (e: any) { log.warn(`rm WT_ROOT falhou: ${e?.message}`); }
+                needsCreate = true;
+            }
+        }
+        if (needsCreate) {
+            await git(['worktree', 'prune'], { timeout: 30000 });
             await git(['worktree', 'add', '--force', WT_ROOT, 'origin/main'], { timeout: 120000 });
         }
         // Limpa restos de execuções anteriores ANTES de trocar de branch. Sem isto, se uma task
