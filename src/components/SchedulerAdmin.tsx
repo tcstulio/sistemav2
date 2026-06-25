@@ -103,6 +103,23 @@ const AVAILABLE_EVENTS = [
     { value: 'custom', label: 'Evento Customizado' }
 ];
 
+/**
+ * Remove itens com id duplicado mantendo a primeira ocorrência.
+ * A API de regras pode retornar ids colidentes (`rule_<timestamp>` gerados
+ * no mesmo ms no backend), o que produzia chaves React duplicadas (#823).
+ */
+function dedupRulesById<T extends { id: string }>(rules: T[]): T[] {
+    const seen = new Set<string>();
+    const out: T[] = [];
+    for (const rule of rules) {
+        if (rule && !seen.has(rule.id)) {
+            seen.add(rule.id);
+            out.push(rule);
+        }
+    }
+    return out;
+}
+
 export const SchedulerAdmin: React.FC = () => {
     const [stats, setStats] = useState<Stats | null>(null);
     const [pending, setPending] = useState<ScheduledMessage[]>([]);
@@ -225,7 +242,7 @@ export const SchedulerAdmin: React.FC = () => {
             }
             if (rulesRes.ok) {
                 const data = await rulesRes.json();
-                setRules(data.data || []);
+                setRules(dedupRulesById<AutomationRule>(data.data || []));
             }
             if (logsRes.ok) {
                 const data = await logsRes.json();
@@ -786,8 +803,8 @@ export const SchedulerAdmin: React.FC = () => {
                             )}
 
                             <div style={{ display: 'grid', gap: '15px' }}>
-                                {rules.map(rule => (
-                                    <div key={rule.id} className="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col gap-3">
+                                {rules.map((rule, index) => (
+                                    <div key={`${rule.id}-${index}`} className="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col gap-3">
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
                                             <div>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
