@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import OrderList from '../../components/OrderList';
@@ -636,5 +636,64 @@ describe('OrderList — Excluir envio com confirmação (#855)', () => {
         });
         expect(confirmSpy).not.toHaveBeenCalled();
         confirmSpy.mockRestore();
+    });
+});
+
+// ─────────────────────────────────────────────
+// 8. Chaves estáveis nos itens do pedido (#825)
+// ─────────────────────────────────────────────
+describe('OrderList — chaves estáveis nos itens do pedido (#825)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useOrders).mockReturnValue({ data: [], isRefetching: false, refetch: mockRefetch } as any);
+    });
+
+    it('mostra estado vazio antes de adicionar itens', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const novoBtn = await screen.findByRole('button', { name: /Novo/i });
+        await user.click(novoBtn);
+
+        expect(screen.getByText(/nenhum item adicionado/i)).toBeInTheDocument();
+    });
+
+    it('adiciona vários itens e cada um vira uma linha própria', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const novoBtn = await screen.findByRole('button', { name: /Novo/i });
+        await user.click(novoBtn);
+
+        await user.click(screen.getByRole('button', { name: /Adicionar Item/i }));
+        await user.click(screen.getByRole('button', { name: /Adicionar Item/i }));
+
+        expect(screen.getAllByPlaceholderText('Descrição do item')).toHaveLength(2);
+    });
+
+    it('remover o primeiro item preserva o conteúdo do item restante (sem troca de linhas)', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const novoBtn = await screen.findByRole('button', { name: /Novo/i });
+        await user.click(novoBtn);
+
+        await user.click(screen.getByRole('button', { name: /Adicionar Item/i }));
+        await user.click(screen.getByRole('button', { name: /Adicionar Item/i }));
+
+        const descInputs = screen.getAllByPlaceholderText('Descrição do item');
+        await user.type(descInputs[0], 'Item A');
+        await user.type(descInputs[1], 'Item B');
+
+        // Linha do primeiro item: input -> div.flex-1 -> div.linha; o único <button> é o de remover.
+        const firstRow = descInputs[0].parentElement!.parentElement!;
+        await user.click(within(firstRow).getByRole('button'));
+
+        // Restou exatamente 1 item...
+        const remaining = screen.getAllByPlaceholderText('Descrição do item');
+        expect(remaining).toHaveLength(1);
+        // ...e ele mantém o conteúdo do SEGUNDO item (não houve troca de estado entre linhas).
+        expect(remaining[0]).toHaveValue('Item B');
+        expect(screen.queryByDisplayValue('Item A')).not.toBeInTheDocument();
     });
 });
