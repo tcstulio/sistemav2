@@ -30,15 +30,31 @@ const validBody = (over: Record<string, unknown> = {}) => ({
 describe('emailRoutes /send — validação de destinatário com Zod (#832)', () => {
     beforeEach(() => vi.clearAllMocks());
 
-    it('rejeita envio sem destinatário (400) e não chama sendEmail', async () => {
+    it('rejeita envio sem destinatário (400) com mensagem clara e não chama sendEmail', async () => {
         const res = await request(app).post('/api/email/send').send(validBody({ to: '' }));
         expect(res.status).toBe(400);
+        expect(res.body).toHaveProperty('error');
+        expect(typeof res.body.error).toBe('string');
+        expect(res.body.error.length).toBeGreaterThan(0);
         expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
     });
 
-    it('rejeita envio com email malformado (400) e não chama sendEmail', async () => {
+    it('rejeita envio com email malformado (400) com mensagem clara e não chama sendEmail', async () => {
         const res = await request(app).post('/api/email/send').send(validBody({ to: 'nao-e-email' }));
         expect(res.status).toBe(400);
+        expect(res.body).toHaveProperty('error');
+        expect(typeof res.body.error).toBe('string');
+        expect(res.body.error.length).toBeGreaterThan(0);
+        expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('rejeita envio sem o campo "to" (400) com mensagem clara', async () => {
+        const { to: _to, ...withoutTo } = validBody();
+        const res = await request(app).post('/api/email/send').send(withoutTo);
+        expect(res.status).toBe(400);
+        expect(res.body).toHaveProperty('error');
+        expect(typeof res.body.error).toBe('string');
+        expect(res.body.error.length).toBeGreaterThan(0);
         expect(mockEmailService.sendEmail).not.toHaveBeenCalled();
     });
 
