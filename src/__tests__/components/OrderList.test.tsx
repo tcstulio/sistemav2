@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import OrderList from '../../components/OrderList';
 import { DolibarrService } from '../../services/dolibarrService';
-import { useOrders } from '../../hooks/dolibarr';
+import { useOrders, useShipments } from '../../hooks/dolibarr';
 
 const { toastMock } = vi.hoisted(() => ({
     toastMock: {
@@ -535,5 +535,106 @@ describe('OrderList — Editar pedido com itens (#552)', () => {
         });
         // Modal deve permanecer aberto
         expect(screen.getByText('Editar Pedido')).toBeTruthy();
+    });
+});
+
+// ─────────────────────────────────────────────
+// 7. Excluir envio com confirmação (#855)
+// ─────────────────────────────────────────────
+describe('OrderList — Excluir envio com confirmação (#855)', () => {
+    const shipmentFixture = {
+        id: 'ship1',
+        ref: 'EXP-0001',
+        fk_commande: 'ord1',
+        socid: 'cust1',
+        status: '1',
+        date_creation: 1700000000,
+        tracking_number: undefined as string | undefined,
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        setDefaultOrdersMock();
+        vi.mocked(useShipments).mockReturnValue({ data: [shipmentFixture] } as any);
+        vi.mocked(DolibarrService.deleteShipment).mockResolvedValue({} as any);
+    });
+
+    const openShipmentDelete = async (user: ReturnType<typeof userEvent.setup>) => {
+        const card = await screen.findByText('CO2501-0001');
+        await user.click(card);
+
+        const enviosTab = await screen.findByRole('button', { name: /Envios/ });
+        await user.click(enviosTab);
+
+        // Botão de gatilho (aria-label="Excluir") — único antes de abrir o modal
+        const deleteBtn = await screen.findByRole('button', { name: /Excluir/i });
+        await user.click(deleteBtn);
+    };
+
+    it('abre modal de confirmação do design system ao clicar em excluir envio', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        await openShipmentDelete(user);
+
+        // Modal de confirmação do design system deve aparecer (mensagem inclui o ref do envio)
+        await waitFor(() => {
+            expect(screen.getByText(/Tem certeza que deseja excluir "EXP-0001"/)).toBeInTheDocument();
+        });
+        // A exclusão não deve ocorrer antes da confirmação
+        expect(DolibarrService.deleteShipment).not.toHaveBeenCalled();
+    });
+
+    it('cancelar a confirmação aborta sem excluir o envio', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        await openShipmentDelete(user);
+
+        const cancelBtn = await screen.findByRole('button', { name: /Cancelar/i });
+        await user.click(cancelBtn);
+
+        expect(DolibarrService.deleteShipment).not.toHaveBeenCalled();
+    });
+
+    it('confirmar exclui o envio, mostra toast.success e atualiza a lista de shipments', async () => {
+        const onRefresh = vi.fn();
+        const user = userEvent.setup();
+        renderComponent({ onRefresh });
+
+        await openShipmentDelete(user);
+
+        // Modal aberto: há agora 2 botões "Excluir" (gatilho + confirmar); clicar no último
+        await waitFor(() => {
+            expect(screen.getAllByRole('button', { name: /Excluir/i }).length).toBeGreaterThan(1);
+        });
+        const confirmButtons = screen.getAllByRole('button', { name: /Excluir/i });
+        await user.click(confirmButtons[confirmButtons.length - 1]);
+
+        await waitFor(() => {
+            expect(DolibarrService.deleteShipment).toHaveBeenCalledWith(mockConfig, 'ship1');
+            expect(toastMock.success).toHaveBeenCalledWith(expect.stringContaining('EXP-0001'));
+            expect(onRefresh).toHaveBeenCalled();
+        });
+    });
+
+    it('não utiliza window.confirm no fluxo de exclusão de envio', async () => {
+        const confirmSpy = vi.spyOn(window, 'confirm').mockImplementation(() => false);
+        const user = userEvent.setup();
+        renderComponent();
+
+        await openShipmentDelete(user);
+
+        await waitFor(() => {
+            expect(screen.getAllByRole('button', { name: /Excluir/i }).length).toBeGreaterThan(1);
+        });
+        const confirmButtons = screen.getAllByRole('button', { name: /Excluir/i });
+        await user.click(confirmButtons[confirmButtons.length - 1]);
+
+        await waitFor(() => {
+            expect(DolibarrService.deleteShipment).toHaveBeenCalled();
+        });
+        expect(confirmSpy).not.toHaveBeenCalled();
+        confirmSpy.mockRestore();
     });
 });

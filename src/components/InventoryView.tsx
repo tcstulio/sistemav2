@@ -138,7 +138,7 @@ interface InventoryViewProps {
 }
 
 export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
-    const { config, refreshData } = useDolibarr();
+    const { config, refreshData, canDo } = useDolibarr();
 
     const { data: warehouses = [], isLoading: isLoadingWarehouses } = useWarehouses(config || null, !!config);
     const { data: stockMovements = [], isLoading: isLoadingMovements } = useStockMovements(config || null, !!config);
@@ -289,6 +289,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
             toast.warning("Por favor selecione produto e armazéns");
             return;
         }
+        if (!(transferForm.qty > 0)) {
+            toast.warning("A quantidade deve ser maior que zero");
+            return;
+        }
 
         setIsSubmitting(true);
         try {
@@ -315,6 +319,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
         if (!config) return;
         if (!correctionForm.productId || !correctionForm.warehouseId) {
             toast.warning("Por favor selecione produto e armazém");
+            return;
+        }
+        if (!(correctionForm.qty > 0)) {
+            toast.warning("A quantidade deve ser maior que zero");
             return;
         }
 
@@ -599,12 +607,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onNavigate }) => {
                                 className="pl-10 pr-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white w-48"
                             />
                         </div>
-                        <button onClick={() => setIsTransferModalOpen(true)} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors" data-testid="btn-transfer">
-                            <ArrowRightLeft size={18} /> Transferir
-                        </button>
-                        <button onClick={() => setIsCorrectionModalOpen(true)} className="flex items-center gap-1.5 px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors" data-testid="btn-adjust">
-                            <Sliders size={18} /> Ajustar
-                        </button>
+                        {canDo('edit', 'warehouses') && (
+                            <button onClick={() => setIsTransferModalOpen(true)} className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors" data-testid="btn-transfer">
+                                <ArrowRightLeft size={18} /> Transferir
+                            </button>
+                        )}
+                        {canDo('edit', 'warehouses') && (
+                            <button onClick={() => setIsCorrectionModalOpen(true)} className="flex items-center gap-1.5 px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors" data-testid="btn-adjust">
+                                <Sliders size={18} /> Ajustar
+                            </button>
+                        )}
                         <button onClick={() => openWarehouseModal()} className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors" data-testid="btn-new-warehouse">
                             <Plus size={18} /> Armazém
                         </button>
