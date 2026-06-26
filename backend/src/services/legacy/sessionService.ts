@@ -177,6 +177,7 @@ export class SessionService {
             }).catch(error => {
                 log.error(`Failed to init ${sessionId}`, error);
                 this.setStatus(sessionId, 'STOPPED');
+                client.destroy().catch(() => {});
                 this.clients.delete(sessionId);
             }).finally(() => {
                 this.initializationLocks.delete(sessionId);
@@ -423,6 +424,25 @@ export class SessionService {
         } else {
             await client.sendPresenceUnavailable();
         }
+    }
+
+    async destroy() {
+        log.info('Destroying all WhatsApp sessions...');
+        const promises: Promise<void>[] = [];
+        for (const [sessionId, client] of this.clients.entries()) {
+            log.info(`Destroying session ${sessionId}`);
+            promises.push(
+                client.destroy()
+                    .catch(e => log.error(`Error destroying ${sessionId}`, e))
+                    .then(() => {
+                        this.clients.delete(sessionId);
+                        this.sessionStatus.delete(sessionId);
+                        this.qrCodes.delete(sessionId);
+                    })
+            );
+        }
+        await Promise.all(promises);
+        log.info('All WhatsApp sessions destroyed');
     }
 
 }
