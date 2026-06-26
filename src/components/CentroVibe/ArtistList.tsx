@@ -4,6 +4,7 @@ import { CLUSTERS } from './constants';
 import { Card, Button, Input, Modal } from '../ui';
 import { Mic2, Disc, Settings, Users, Plus, Search, Instagram, Edit2, Trash2 } from 'lucide-react';
 import { useDolibarr } from '../../context/DolibarrContext';
+import { useConfirm } from '../../hooks/useConfirm';
 
 interface ArtistListProps {
   artists: Artist[];
@@ -23,6 +24,7 @@ const emptyForm = () => ({
 
 const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist, onUpdateArtist, onDeleteArtist }) => {
   const { canDo } = useDolibarr();
+  const confirm = useConfirm();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingArtist, setEditingArtist] = useState<Artist | null>(null);
   const [filterCluster, setFilterCluster] = useState<EventCluster | 'all'>('all');
@@ -59,8 +61,8 @@ const ArtistList: React.FC<ArtistListProps> = ({ artists, onAddArtist, onUpdateA
     setIsModalOpen(false);
   };
 
-  const handleDelete = (artistId: string) => {
-    if (!window.confirm('Excluir artista?')) return;
+  const handleDelete = async (artistId: string) => {
+    if (!(await confirm({ message: 'Excluir artista?', confirmText: 'Excluir', danger: true }))) return;
     onDeleteArtist(artistId);
   };
 

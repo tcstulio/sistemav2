@@ -5,6 +5,7 @@ import { Modal, Button, Input } from '../ui';
 import { Clock, MapPin, Ticket, User, Instagram, Users, Mic2, Plus, Trash2, Search, Edit2, X, AlertTriangle } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatUtils';
 import { useDolibarr } from '../../context/DolibarrContext';
+import { useConfirm } from '../../hooks/useConfirm';
 
 interface EventDetailsModalProps {
   event: VenueEvent | null;
@@ -22,6 +23,7 @@ const DiscIcon = ({ size }: { size: number }) => (
 
 const EventDetailsModal: React.FC<EventDetailsModalProps> = ({ event, onClose, onUpdateEvent, onDeleteEvent, allArtists }) => {
   const { canDo } = useDolibarr();
+  const confirm = useConfirm();
   const [localTickets, setLocalTickets] = useState<TicketBatch[]>([]);
   const [isAddingArtist, setIsAddingArtist] = useState(false);
   const [artistSearch, setArtistSearch] = useState('');
@@ -104,11 +106,10 @@ const EventDetailsModal: React.FC<EventDetailsModalProps> = ({ event, onClose, o
           <div className="flex items-center gap-2 mb-1">
             {canDo('delete', 'centrovibe') && onDeleteEvent && (
               <button
-                onClick={() => {
-                  if (window.confirm('Excluir este evento da agenda?')) {
-                    onDeleteEvent(event.id);
-                    onClose();
-                  }
+                onClick={async () => {
+                  if (!(await confirm({ message: 'Excluir este evento da agenda?', confirmText: 'Excluir', danger: true }))) return;
+                  onDeleteEvent(event.id);
+                  onClose();
                 }}
                 className="bg-red-500/20 hover:bg-red-500/40 text-red-600 dark:text-red-300 p-2 rounded-full backdrop-blur-md transition-colors border border-red-400/30 shrink-0"
                 title="Excluir evento"

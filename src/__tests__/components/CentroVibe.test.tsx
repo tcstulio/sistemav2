@@ -16,6 +16,16 @@ vi.mock('../../context/DolibarrContext', () => ({
   useDolibarr: vi.fn(() => ({ canDo: () => true })),
 }));
 
+// #856 — ArtistList/EventDetailsModal trocaram window.confirm por useConfirm (modal do DS).
+// Mock determinístico: confirmState.result controla o retorno do confirm() assíncrono.
+const { mockConfirm, confirmState } = vi.hoisted(() => {
+  const confirmState = { result: true };
+  return { mockConfirm: vi.fn(() => Promise.resolve(confirmState.result)), confirmState };
+});
+vi.mock('../../hooks/useConfirm', () => ({
+  useConfirm: () => mockConfirm,
+}));
+
 // #853 — CentroVibeManager carrega dados via CentroVibeService no mount.
 // Mock determinístico: fetchData falha -> cai no catch -> saveData resolve -> loading=false.
 vi.mock('../../services/centrovibeService', () => ({
@@ -42,7 +52,7 @@ describe('ArtistList', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmState.result = true;
   });
 
   it('renderiza botões de editar e excluir por card', () => {
@@ -58,7 +68,7 @@ describe('ArtistList', () => {
     expect(screen.getByTitle('Excluir artista')).toBeTruthy();
   });
 
-  it('clicar em excluir chama onDeleteArtist com o id correto', () => {
+  it('clicar em excluir chama onDeleteArtist com o id correto', async () => {
     render(
       <ArtistList
         artists={[mockArtist]}
@@ -68,7 +78,8 @@ describe('ArtistList', () => {
       />
     );
     fireEvent.click(screen.getByTitle('Excluir artista'));
-    expect(onDeleteArtist).toHaveBeenCalledWith('test-1');
+    await waitFor(() => expect(onDeleteArtist).toHaveBeenCalledWith('test-1'));
+    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ message: 'Excluir artista?', danger: true }));
   });
 
   it('clicar em editar abre modal com dados pré-preenchidos', () => {
@@ -115,8 +126,8 @@ describe('ArtistList', () => {
     expect(screen.getByDisplayValue('$$ (R$500–2k)')).toBeTruthy();
   });
 
-  it('não excluir se confirm retornar false', () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
+  it('não excluir se confirm retornar false', async () => {
+    confirmState.result = false;
     render(
       <ArtistList
         artists={[mockArtist]}
@@ -126,6 +137,7 @@ describe('ArtistList', () => {
       />
     );
     fireEvent.click(screen.getByTitle('Excluir artista'));
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalled());
     expect(onDeleteArtist).not.toHaveBeenCalled();
   });
 
@@ -237,7 +249,7 @@ describe('ArtistList (#853) — gating canDo', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmState.result = true;
     setCanDo(() => true);
   });
 
@@ -313,7 +325,7 @@ describe('EventDetailsModal', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmState.result = true;
     vi.mocked(useDolibarr).mockReturnValue({ canDo: () => true } as any);
   });
 
@@ -334,6 +346,28 @@ describe('EventDetailsModal', () => {
     expect(screen.getByTitle('Excluir lote')).toBeTruthy();
     expect(screen.getByTitle('Remover do lineup')).toBeTruthy();
   });
+
+  // #856 — excluir evento usa useConfirm (modal do design system), não window.confirm.
+  it('confirmar exclusão de evento chama onDeleteEvent e onClose', async () => {
+    render(
+      <EventDetailsModal event={mockEvent} onClose={onClose} onUpdateEvent={onUpdateEvent} onDeleteEvent={onDeleteEvent} allArtists={[mockArtist]} />
+    );
+    fireEvent.click(screen.getByTitle('Excluir evento'));
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ message: 'Excluir este evento da agenda?', danger: true })));
+    await waitFor(() => expect(onDeleteEvent).toHaveBeenCalledWith('evt-1'));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('cancelar exclusão de evento não chama onDeleteEvent nem onClose', async () => {
+    confirmState.result = false;
+    render(
+      <EventDetailsModal event={mockEvent} onClose={onClose} onUpdateEvent={onUpdateEvent} onDeleteEvent={onDeleteEvent} allArtists={[mockArtist]} />
+    );
+    fireEvent.click(screen.getByTitle('Excluir evento'));
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalled());
+    expect(onDeleteEvent).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });
 
 describe('EventDetailsModal (#853) — gating canDo', () => {
@@ -346,7 +380,7 @@ describe('EventDetailsModal (#853) — gating canDo', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmState.result = true;
     setCanDo(() => true);
   });
 
@@ -402,7 +436,7 @@ describe('CentroVibeManager (#853) — gating canDo no botão "Novo Evento"', ()
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    confirmState.result = true;
     setCanDo(() => true);
   });
 
