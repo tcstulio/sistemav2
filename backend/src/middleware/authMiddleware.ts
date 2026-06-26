@@ -48,7 +48,7 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
         userKey = req.cookies.dolapikey;
     }
 
-    if (!userKey) {
+    if (!userKey || userKey === 'undefined' || userKey === 'null') {
         return res.status(401).json({
             status: 'error',
             message: 'Authentication Required: You must be logged in to Dolibarr.'
@@ -64,10 +64,24 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
     const protoSession = getProtoSession(userKey);
     if (protoSession) {
         const forwardUserKey = process.env.PROXY_FORWARD_USER_KEY !== 'false';
-        const fwdKey = (forwardUserKey && protoSession.dolapikey) ? protoSession.dolapikey : config.dolibarrKey;
-        if (forwardUserKey && !protoSession.dolapikey) {
-            log.warn(`Sessão ${protoSession.login} sem dolapikey — usando chave de serviço (fallback)`);
+        
+        let fwdKey: string;
+
+        if (forwardUserKey) {
+            const isValidUserKey = protoSession.dolapikey && protoSession.dolapikey !== 'undefined' && protoSession.dolapikey !== 'null';
+            
+            if (!isValidUserKey) {
+                log.warn(`Sessão ${protoSession.login} com dolapikey inválida/ausente. Bloqueando requisição (Fail-Closed).`);
+                return res.status(401).json({
+                    status: 'error',
+                    message: 'Authentication Failed: Sua sessão está corrompida (chave ausente). Faça login novamente.'
+                });
+            }
+            fwdKey = protoSession.dolapikey;
+        } else {
+            fwdKey = config.dolibarrKey;
         }
+        
         req.headers['dolapikey'] = fwdKey;
         if (req.query) { (req.query as any).DOLAPIKEY = fwdKey; }
 
@@ -77,9 +91,10 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
         // Roda no MÁXIMO uma vez por sessão: depois do backfill, admin fica definido e cacheado.
         if (!protoSession.userData || protoSession.userData.admin === undefined || protoSession.userData.admin === null) {
             try {
-                const { dolibarrService } = require('../services/dolibarrService');
-                const fresh = await dolibarrService.getUserByKey(protoSession.dolapikey);
-                if (fresh) {
+                if (protoSession.dolapikey && protoSession.dolapikey !== 'undefined' && protoSession.dolapikey !== 'null') {
+                    const { dolibarrService } = require('../services/dolibarrService');
+                    const fresh = await dolibarrService.getUserByKey(protoSession.dolapikey);
+                    if (fresh) {
                     // getUserByKey nem sempre traz 'admin' (users/info|myself). Resolve de forma
                     // autoritativa via verifyAdminStatus (testa acesso real a /setup/company).
                     if (fresh.admin === undefined || fresh.admin === null) {
@@ -87,6 +102,7 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
                         fresh.admin = isAdmin ? '1' : '0';
                     }
                     setProtoSessionUserData(userKey, fresh); // persiste -> cacheia
+                    }
                 }
             } catch (e: any) {
                 log.warn(`Backfill de userData falhou (sessão ${protoSession.login}): ${e?.message || e}`);

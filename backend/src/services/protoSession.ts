@@ -46,6 +46,9 @@ const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
         let loaded = 0;
         for (const [token, s] of Object.entries(raw || {})) {
             if (s && typeof s.createdAt === 'number' && now - s.createdAt <= TTL_MS) {
+                if (!s.dolapikey || s.dolapikey === 'undefined' || s.dolapikey === 'null') {
+                    continue; // Pula sessões corrompidas
+                }
                 sessions.set(token, s);
                 loaded++;
             }
@@ -67,6 +70,9 @@ function persist() {
 }
 
 export function createProtoSession(login: string, dolapikey: string, userData?: any): string {
+    if (!dolapikey || dolapikey === 'undefined' || dolapikey === 'null') {
+        throw new Error('Invalid dolapikey for session');
+    }
     const token = 'sess_' + randomBytes(24).toString('hex');
     sessions.set(token, {
         login,
