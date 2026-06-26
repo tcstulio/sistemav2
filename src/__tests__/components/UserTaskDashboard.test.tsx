@@ -353,4 +353,104 @@ describe('UserTaskDashboard', () => {
             expect(screen.queryByTestId('user-tasks-error')).not.toBeInTheDocument();
         });
     });
+
+    // ── #858 — Mensagem real do erro (desestruturação de `error`) ─────────
+    describe('#858: mensagem de erro derivada do hook (error)', () => {
+        const setErrorWithValue = (
+            hook: ReturnType<typeof vi.fn>,
+            error: unknown,
+        ) => {
+            (hook as ReturnType<typeof vi.fn>).mockReturnValue({
+                data: undefined,
+                isError: true,
+                error,
+                refetch: vi.fn(),
+            });
+        };
+
+        beforeEach(() => {
+            vi.clearAllMocks();
+            // Reset todos os hooks tratados para estado "sem erro / sem dados".
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isError: false, error: undefined, refetch: mockRefetchTasks });
+            (useProjects as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isError: false, error: undefined, refetch: mockRefetchProjects });
+            (useUsers as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isError: false, error: undefined, refetch: vi.fn() });
+            (useTaskContacts as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isError: false, error: undefined, refetch: mockRefetchContacts });
+        });
+
+        it('exibe a message do Error retornado por useTasks no ErrorState', () => {
+            setErrorWithValue(useTasks as ReturnType<typeof vi.fn>, new Error('Falha de rede ao buscar tarefas'));
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.getByTestId('user-tasks-error')).toBeInTheDocument();
+            expect(screen.getByText('Falha de rede ao buscar tarefas')).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /tentar novamente/i })).toBeInTheDocument();
+        });
+
+        it('exibe a message do Error retornado por useProjects no ErrorState', () => {
+            setErrorWithValue(useProjects as ReturnType<typeof vi.fn>, new Error('Projetos indisponíveis'));
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.getByText('Projetos indisponíveis')).toBeInTheDocument();
+        });
+
+        it('exibe a message do Error retornado por useUsers no ErrorState', () => {
+            setErrorWithValue(useUsers as ReturnType<typeof vi.fn>, new Error('Usuários indisponíveis'));
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.getByText('Usuários indisponíveis')).toBeInTheDocument();
+        });
+
+        it('exibe a message do Error retornado por useTaskContacts no ErrorState', () => {
+            setErrorWithValue(useTaskContacts as ReturnType<typeof vi.fn>, new Error('Contatos indisponíveis'));
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.getByText('Contatos indisponíveis')).toBeInTheDocument();
+        });
+
+        it('converte um erro não-Error para string no ErrorState', () => {
+            setErrorWithValue(useTasks as ReturnType<typeof vi.fn>, 'string-error-503');
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.getByText('string-error-503')).toBeInTheDocument();
+        });
+
+        it('usa a mensagem padrão quando isError é true mas error é indefinido', () => {
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({
+                data: undefined,
+                isError: true,
+                error: undefined,
+                refetch: mockRefetchTasks,
+            });
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.getByTestId('user-tasks-error')).toBeInTheDocument();
+            expect(screen.getByText(/não foi possível carregar suas tarefas/i)).toBeInTheDocument();
+        });
+
+        it('prioriza o primeiro erro disponível (tasks antes de projects)', () => {
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({
+                data: undefined,
+                isError: true,
+                error: new Error('ERRO_TAREFAS'),
+                refetch: mockRefetchTasks,
+            });
+            (useProjects as ReturnType<typeof vi.fn>).mockReturnValue({
+                data: [],
+                isError: true,
+                error: new Error('ERRO_PROJETOS'),
+                refetch: mockRefetchProjects,
+            });
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.getByText('ERRO_TAREFAS')).toBeInTheDocument();
+            expect(screen.queryByText('ERRO_PROJETOS')).not.toBeInTheDocument();
+        });
+    });
 });
