@@ -251,9 +251,9 @@ const ExpenseReportPaymentList: React.FC<ExpenseReportPaymentListProps> = ({ onN
                                         }>
                                             {detailData.linkedReports.length > 0 ? (
                                                 <div className="divide-y divide-slate-100 dark:divide-slate-800 -mx-4 -mb-4">
-                                                    {detailData.linkedReports.map(({ link, report }, idx) => (
+                                                    {detailData.linkedReports.map(({ link, report }) => (
                                                         <div
-                                                            key={idx}
+                                                            key={link.id}
                                                             className={`px-4 py-3 flex items-center justify-between transition-colors ${report ? 'hover:bg-purple-50 dark:hover:bg-purple-900/10 cursor-pointer' : ''}`}
                                                             onClick={() => report && setViewingExpenseReport(report)}
                                                         >

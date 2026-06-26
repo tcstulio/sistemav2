@@ -492,3 +492,52 @@ describe('ProductList — #566 filtro por categoria e insumos x aluguel', () => 
         });
     });
 });
+
+// ============================================================
+// #825 — chaves estáveis em stock_details (mesmo armazém duplicado)
+// ============================================================
+describe('ProductList — chaves estáveis em stock_details (#825)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useProductsMock).mockReturnValue({
+            data: [
+                {
+                    id: '1', ref: 'PRD-001', label: 'Produto Estoque', type: '0', price: 100,
+                    stock_reel: 13, tosell: '1', tobuy: '1',
+                    stock_details: [
+                        { warehouse: 'Armazém Central', qty: 5 },
+                        { warehouse: 'Armazém Central', qty: 8 },
+                    ],
+                },
+            ] as Product[],
+            isLoading: false,
+        } as any);
+        vi.mocked(useSuppliers).mockReturnValue({ data: [] } as any);
+    });
+
+    it('renderiza múltiplas entradas do mesmo armazém sem chave duplicada', async () => {
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const user = userEvent.setup();
+        render(<ProductList />);
+
+        await user.click(screen.getByText('Produto Estoque'));
+
+        // Os stock_details ficam na aba "Estoque" do painel de detalhe
+        await user.click(await screen.findByRole('button', { name: 'Estoque' }));
+
+        // Duas entradas com o mesmo nome de armazém renderizam como linhas separadas
+        await waitFor(() => {
+            expect(screen.getAllByText('Armazém Central')).toHaveLength(2);
+        });
+        // Ambas as quantidades distintas aparecem
+        expect(screen.getAllByText('5').length).toBeGreaterThanOrEqual(1);
+        expect(screen.getAllByText('8').length).toBeGreaterThanOrEqual(1);
+
+        // Nenhum warning de chave duplicada do React
+        const dupKey = spy.mock.calls.find(
+            (c) => typeof c[0] === 'string' && c[0].includes('same key'),
+        );
+        expect(dupKey).toBeUndefined();
+        spy.mockRestore();
+    });
+});

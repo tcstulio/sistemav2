@@ -369,7 +369,7 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
         </div>
     );
 
-    const selectedLines = selectedIntervention?.lines || [];
+    const selectedLines = (selectedIntervention?.lines || []).map(l => ({ ...l, uid: String(l.id) }));
     const totalDuration = computeTotalDuration(selectedLines);
 
     const renderDetail = selectedIntervention ? (
@@ -487,8 +487,8 @@ const InterventionList: React.FC<InterventionListProps> = ({ onNavigate, onRefre
                         </div>
                         <div className="space-y-2">
                             {selectedLines.length > 0 ? (
-                                selectedLines.map((line, idx) => (
-                                    <div key={line.id || idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
+                                selectedLines.map((line) => (
+                                    <div key={line.uid} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
                                         <div className="flex-1 min-w-0">
                                             <div
                                                 className="font-medium text-slate-800 dark:text-white text-sm prose prose-slate prose-sm max-w-none dark:prose-invert [&>p]:m-0"

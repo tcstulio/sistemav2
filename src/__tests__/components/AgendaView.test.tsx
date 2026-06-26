@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import AgendaView from '../../components/AgendaView';
 
 // --- Mock sonner ---
@@ -376,5 +376,64 @@ describe('AgendaView — #550: New event modal with Dolibarr types', () => {
                 expect.objectContaining({ fulldayevent: 1 })
             );
         });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// #825 — Chaves estáveis nas células do calendário (key=cell.dateStr)
+// Cada célula do grid é keyada por cell.dateStr (ISO do dia), e os itens da
+// célula por item.id. Garantir chaves estáveis evita que itens apareçam na
+// célula errada após reordenar/filtrar/remover.
+// ---------------------------------------------------------------------------
+describe('AgendaView — #825: chaves estáveis nas células do calendário', () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+
+    const taskDay5 = {
+        id: 'cal-5',
+        ref: 'TSK-CAL-5',
+        label: 'Tarefa Dia Cinco',
+        project_id: '',
+        progress: 0,
+        date_start: new Date(year, month, 5, 9, 0, 0).getTime(),
+    };
+    const taskDay15 = {
+        id: 'cal-15',
+        ref: 'TSK-CAL-15',
+        label: 'Tarefa Dia Quinze',
+        project_id: '',
+        progress: 0,
+        date_start: new Date(year, month, 15, 9, 0, 0).getTime(),
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        // Largura >= 768 faz a view padrão ser 'calendar'
+        Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1024 });
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false } as any);
+        vi.mocked(useTasks).mockReturnValue({ data: [taskDay5, taskDay15], isLoading: false } as any);
+        vi.mocked(useInterventions).mockReturnValue({ data: [], isLoading: false } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [], isLoading: false } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [] } as any);
+    });
+
+    const renderAgendaView = () => render(<AgendaView onNavigate={vi.fn()} />);
+
+    it('renderiza cada tarefa na célula do seu dia (sem troca entre células)', () => {
+        renderAgendaView();
+        // Garante o modo calendário (já é o padrão em innerWidth >= 768)
+        fireEvent.click(screen.getByTitle('Visualização em Calendário'));
+
+        // O <span> com o número do dia é filho direto da célula (via Fragment).
+        const cell5 = screen.getByText('5').parentElement!;
+        const cell15 = screen.getByText('15').parentElement!;
+
+        // Cada título aparece na célula do seu próprio dia...
+        expect(within(cell5).getByText('Tarefa Dia Cinco')).toBeInTheDocument();
+        expect(within(cell15).getByText('Tarefa Dia Quinze')).toBeInTheDocument();
+        // ...e NÃO na célula do outro dia (sem troca de itens entre células).
+        expect(within(cell5).queryByText('Tarefa Dia Quinze')).not.toBeInTheDocument();
+        expect(within(cell15).queryByText('Tarefa Dia Cinco')).not.toBeInTheDocument();
     });
 });

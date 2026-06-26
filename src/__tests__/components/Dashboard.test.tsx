@@ -287,3 +287,39 @@ describe('Dashboard — Minhas Pendências: projeto em tarefas (#539)', () => {
         expect(semProjeto.length).toBeGreaterThan(0);
     });
 });
+
+describe('Dashboard — Forecast: keys estáveis por mês (#825)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useInvoices).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierInvoices).mockReturnValue({ data: [] } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [] } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [] } as any);
+    });
+
+    it('renderiza todos os meses da previsão (chave estável por mês, não por índice)', async () => {
+        mockGetDashboardArtifacts.mockResolvedValue({
+            salesForecast: {
+                value: {
+                    forecast: [
+                        { month: 'Janeiro 2026', predicted_revenue: 10000, confidence: 'alta' },
+                        { month: 'Fevereiro 2026', predicted_revenue: 12000, confidence: 'alta' },
+                        { month: 'Março 2026', predicted_revenue: 15000, confidence: 'media' },
+                    ],
+                    summary: 'Crescimento esperado no trimestre.',
+                    trend: 'up',
+                },
+            },
+        });
+
+        render(<Dashboard />);
+
+        // O 1º mês aparece também no cabeçalho "Receita Projetada (...)"; os demais só no mini-table.
+        // Se a key={index} causasse reconciliação errada após reordenação, os meses trocariam de célula.
+        // Aqui verificamos que os 3 meses distintos renderizam corretamente.
+        expect(await screen.findByText('Fevereiro')).toBeInTheDocument();
+        expect(screen.getByText('Março')).toBeInTheDocument();
+        // O valor do 1º mês também aparece como destaque (R$ 10.000,00) e no mini-table.
+        expect(screen.getAllByText('R$ 10.000,00').length).toBeGreaterThanOrEqual(1);
+    });
+});

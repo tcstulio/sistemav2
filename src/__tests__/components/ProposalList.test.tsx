@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import ProposalList from '../../components/ProposalList';
@@ -98,6 +98,16 @@ vi.mock('../../utils/sanitizeHtml', () => ({
 
 vi.mock('../../components/common/LinkedObjects', () => ({
     LinkedObjects: () => null,
+}));
+
+vi.mock('../../components/common/RichTextEditor', () => ({
+    RichTextEditor: ({ value, onChange, placeholder }: any) => (
+        <textarea
+            value={value}
+            onChange={(e: any) => onChange(e.target.value)}
+            placeholder={placeholder}
+        />
+    ),
 }));
 
 const mockConfig = { apiUrl: 'http://test', apiKey: 'key' };
@@ -374,5 +384,44 @@ describe('ProposalList — Edit date conversion (#626)', () => {
         const dateInput = await screen.findByDisplayValue('2024-06-10') as HTMLInputElement;
         expect(dateInput).toBeTruthy();
         expect(dateInput.type).toBe('date');
+    });
+});
+
+// ─────────────────────────────────────────────
+// Chaves estáveis nas linhas da proposta (#825)
+// ─────────────────────────────────────────────
+describe('ProposalList — chaves estáveis nas linhas da proposta (#825)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useProposals).mockReturnValue({
+            data: [defaultProposal],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+    });
+
+    it('remover a primeira linha preserva o conteúdo da linha restante (sem troca de linhas)', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        await user.click(await screen.findByRole('button', { name: /Nova/i }));
+
+        await user.click(screen.getByRole('button', { name: /Adicionar Item/i }));
+        await user.click(screen.getByRole('button', { name: /Adicionar Item/i }));
+
+        const descInputs = screen.getAllByPlaceholderText('Descrição detalhada...');
+        expect(descInputs).toHaveLength(2);
+        await user.type(descInputs[0], 'Linha A');
+        await user.type(descInputs[1], 'Linha B');
+
+        // textarea -> div.flex-1 -> div da linha; o único <button> da linha é o de remover.
+        const firstRow = descInputs[0].parentElement!.parentElement!;
+        await user.click(within(firstRow).getByRole('button'));
+
+        // Restou 1 linha e ela mantém o conteúdo da SEGUNDA linha (sem troca de estado).
+        const remaining = screen.getAllByPlaceholderText('Descrição detalhada...');
+        expect(remaining).toHaveLength(1);
+        expect(remaining[0]).toHaveValue('Linha B');
+        expect(screen.queryByDisplayValue('Linha A')).not.toBeInTheDocument();
     });
 });

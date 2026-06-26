@@ -509,3 +509,62 @@ describe('InterventionList — exibição de projeto (#551)', () => {
         expect(semProjetoElements.length).toBeGreaterThanOrEqual(1);
     });
 });
+
+// ---------------------------------------------------------------------------
+// #825 — Chaves estáveis nas linhas da intervenção (key=line.uid)
+// As linhas exibidas no detalhe usam key={line.uid} (uid=String(line.id)).
+// Chaves estáveis garantem que remover/reordenar um item não troca o conteúdo
+// entre linhas (desc/duração permanecem associados à linha correta).
+// ---------------------------------------------------------------------------
+describe('InterventionList — #825: chaves estáveis nas linhas da intervenção', () => {
+    // As linhas exibidas no detalhe vêm de useInterventionLines (filtradas por parent_id),
+    // e cada uma vira key={line.uid} onde uid=String(line.id).
+    const interventionWithLines = {
+        id: '50',
+        ref: 'INT-050',
+        socid: '10',
+        project_id: '',
+        date: Math.floor(new Date('2024-06-01').getTime() / 1000),
+        statut: '0',
+        description: 'Manutenção programada',
+        fk_user_author: '1',
+        lines: [],
+    };
+    const linesData = [
+        { id: 'L1', parent_id: '50', desc: 'Reparo de bomba', duration: 3600 },
+        { id: 'L2', parent_id: '50', desc: 'Troca de filtro', duration: 7200 },
+    ];
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useInterventions).mockReturnValue({
+            data: [interventionWithLines],
+            refetch: vi.fn(),
+        } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: customersMock } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [] } as any);
+        vi.mocked(useInterventionLines).mockReturnValue({ data: linesData, refetch: refetchLinesMock } as any);
+    });
+
+    it('renderiza cada linha com seu próprio conteúdo (desc↔duração sem troca)', async () => {
+        const user = userEvent.setup();
+        renderList();
+
+        await user.click(screen.getByText('INT-050'));
+
+        // Duas linhas distintas com chaves estáveis (uid)
+        expect(screen.getByText('Reparo de bomba')).toBeInTheDocument();
+        expect(screen.getByText('Troca de filtro')).toBeInTheDocument();
+        expect(screen.getAllByLabelText('Remover item')).toHaveLength(2);
+
+        // Cada linha (div.flex.justify-between) associa a sua desc à sua duração,
+        // provando que não houve troca de estado entre linhas.
+        const rowA = screen.getByText('Reparo de bomba').closest('div.flex.justify-between') as HTMLElement;
+        expect(within(rowA).getByText('1h')).toBeInTheDocument();
+        expect(within(rowA).queryByText('2h')).not.toBeInTheDocument();
+
+        const rowB = screen.getByText('Troca de filtro').closest('div.flex.justify-between') as HTMLElement;
+        expect(within(rowB).getByText('2h')).toBeInTheDocument();
+        expect(within(rowB).queryByText('1h')).not.toBeInTheDocument();
+    });
+});

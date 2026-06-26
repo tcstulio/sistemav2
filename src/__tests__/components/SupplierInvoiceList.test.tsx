@@ -58,7 +58,13 @@ vi.mock('./../../components/Finance/ReceiptWizard', () => ({
 }));
 
 vi.mock('./../../components/common/RichTextEditor', () => ({
-    RichTextEditor: () => null,
+    RichTextEditor: ({ value, onChange, placeholder }: any) => (
+        <textarea
+            value={value}
+            onChange={(e: any) => onChange(e.target.value)}
+            placeholder={placeholder}
+        />
+    ),
 }));
 
 vi.mock('./../../components/Modals/SupplierPaymentModal', () => ({
@@ -522,5 +528,44 @@ describe('SupplierInvoiceList — Alvo de clique não-ambíguo (#690) + moeda BR
 
         const supplierBtn = screen.getByRole('button', { name: 'Fornecedor Alpha' });
         expect(supplierBtn.className).toMatch(/text-indigo-600/);
+    });
+});
+
+// ─────────────────────────────────────────────
+// Chaves estáveis nos itens da fatura (#825)
+// ─────────────────────────────────────────────
+describe('SupplierInvoiceList — chaves estáveis nos itens da fatura (#825)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useSupplierInvoiceLines).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierPayments).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierPaymentInvoiceLinks).mockReturnValue({ data: [] } as any);
+    });
+
+    it('remover o primeiro item preserva o conteúdo do item restante (sem troca de linhas)', async () => {
+        const user = userEvent.setup();
+        renderWithProvider([mockDraftInvoice]);
+
+        // Seleciona a fatura rascunho e abre o modal de edição
+        await user.click(screen.getByText('FA-DRAFT-001'));
+        await user.click(await screen.findByRole('button', { name: 'Editar' }));
+
+        await user.click(screen.getByRole('button', { name: /Adicionar Item/i }));
+        await user.click(screen.getByRole('button', { name: /Adicionar Item/i }));
+
+        const descInputs = screen.getAllByPlaceholderText('Descrição');
+        expect(descInputs).toHaveLength(2);
+        await user.type(descInputs[0], 'Item A');
+        await user.type(descInputs[1], 'Item B');
+
+        // textarea -> div.flex-1 -> div do item; o único <button> do item é o de remover.
+        const firstRow = descInputs[0].parentElement!.parentElement!;
+        await user.click(within(firstRow).getByRole('button'));
+
+        // Restou 1 item e ele mantém o conteúdo do SEGUNDO item (sem troca de estado).
+        const remaining = screen.getAllByPlaceholderText('Descrição');
+        expect(remaining).toHaveLength(1);
+        expect(remaining[0]).toHaveValue('Item B');
+        expect(screen.queryByDisplayValue('Item A')).not.toBeInTheDocument();
     });
 });

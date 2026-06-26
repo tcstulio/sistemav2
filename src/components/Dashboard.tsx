@@ -577,7 +577,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                         {forecast.forecast.length > 0 && (
                                             <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700 grid grid-cols-3 gap-2">
                                                 {forecast.forecast.map((f, i) => (
-                                                    <div key={i} className={`text-center ${i === 0 ? 'bg-indigo-50 dark:bg-indigo-900/20 rounded py-1 border border-indigo-100 dark:border-indigo-800' : ''}`}>
+                                                    <div key={f.month} className={`text-center ${i === 0 ? 'bg-indigo-50 dark:bg-indigo-900/20 rounded py-1 border border-indigo-100 dark:border-indigo-800' : ''}`}>
                                                         <div className="text-[10px] uppercase text-slate-500">{f.month.split(' ')[0]} {i === 0 ? '(Atual)' : ''}</div>
                                                         <div className={`text-xs font-bold ${i === 0 ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300'}`}>
                                                             {formatCurrency(f.predicted_revenue)}
