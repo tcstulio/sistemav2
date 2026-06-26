@@ -993,7 +993,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                                             onChange={e => handleUpdateEditItem(idx, 'remise_percent', parseFloat(e.target.value))}
                                                         />
                                                     </div>
-                                                    <button type="button" onClick={() => handleRemoveEditItem(idx)} className="p-1 text-red-400 hover:text-red-600">
+                                                    <button type="button" aria-label="Remover item" onClick={() => handleRemoveEditItem(idx)} className="p-1 text-red-400 hover:text-red-600">
                                                         <Trash2 size={16} />
                                                     </button>
                                                 </div>
