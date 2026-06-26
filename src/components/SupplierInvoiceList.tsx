@@ -37,6 +37,29 @@ interface SupplierInvoiceListProps {
     onNavigate?: (view: AppView, id: string) => void;
 }
 
+// Linha editável de fatura de fornecedor no modal de edição/criação.
+// `_rowId` é um identificador estável (client-side) usado como React `key`,
+// evitando troca de dados entre linhas ao adicionar/remover itens (#848).
+export interface SupplierInvoiceEditItem {
+    _rowId: string;
+    id?: string;
+    desc: string;
+    qty: number;
+    price: number;
+    remise_percent: number;
+}
+
+// Cria um item de edição com `_rowId` estável gerado via crypto.randomUUID(),
+// aplicando defaults sensatos. Exportado para permitir testes unitários.
+export const makeEditItem = (data: Partial<Omit<SupplierInvoiceEditItem, '_rowId'>> = {}): SupplierInvoiceEditItem => ({
+    _rowId: crypto.randomUUID(),
+    id: data.id,
+    desc: data.desc ?? '',
+    qty: data.qty ?? 1,
+    price: data.price ?? 0,
+    remise_percent: data.remise_percent ?? 0,
+});
+
 const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate }) => {
     const { config, refreshData, canDo } = useDolibarr();
     const confirm = useConfirm();
@@ -69,7 +92,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
         ref: string;
         socid: string;
         date: string;
-        items: { id?: string, desc: string, qty: number, price: number, remise_percent: number }[];
+        items: SupplierInvoiceEditItem[];
         deletedLineIds: string[];
     } | null>(null);
 
@@ -207,7 +230,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
             ref: invoice.ref,
             socid: invoice.socid,
             date: new Date(invoice.date * 1000).toISOString().split('T')[0],
-            items: lines.map(l => ({
+            items: lines.map(l => makeEditItem({
                 id: l.id,
                 desc: l.description || '',
                 qty: l.qty,
@@ -223,7 +246,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
         if (!editingInvoiceData) return;
         setEditingInvoiceData({
             ...editingInvoiceData,
-            items: [...editingInvoiceData.items, { desc: '', qty: 1, price: 0, remise_percent: 0 }]
+            items: [...editingInvoiceData.items, makeEditItem()]
         });
     };
 
@@ -348,7 +371,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                 ref: '',
                 socid: prefill.data.socid || '',
                 date: prefill.data.date || new Date().toISOString().split('T')[0],
-                items: lines.map((l: any) => ({ desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0, remise_percent: Number(l.remise_percent) || 0 })),
+                items: lines.map((l: any) => makeEditItem({ desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0, remise_percent: Number(l.remise_percent) || 0 })),
                 deletedLineIds: [],
             });
             setIsEditModalOpen(true);
@@ -362,7 +385,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
             setEditingInvoiceData(prev => prev ? {
                 ...prev,
                 date: prefill.data.date || prev.date,
-                items: [...prev.items, ...extra.map((l: any) => ({ desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0, remise_percent: Number(l.remise_percent) || 0 }))],
+                items: [...prev.items, ...extra.map((l: any) => makeEditItem({ desc: l.desc || '', qty: Number(l.qty) || 1, price: Number(l.subprice) || 0, remise_percent: Number(l.remise_percent) || 0 }))],
             } : prev);
             toast.info('Revise as mudanças e salve a fatura de fornecedor.');
         }
@@ -785,7 +808,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     {documents.map((doc, idx) => (
-                                        <div key={idx} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 group hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors">
+                                        <div key={doc.name ?? `doc-${idx}`} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 group hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors">
                                             <div className="flex items-center gap-3 overflow-hidden">
                                                 <div className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
                                                     <FileText size={24} className="text-indigo-500" />
@@ -932,7 +955,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                         <div className="space-y-2">
                                             {editingInvoiceData.items.length === 0 && <p className="text-sm text-slate-400 italic text-center py-4">Nenhum item.</p>}
                                             {editingInvoiceData.items.map((item, idx) => (
-                                                <div key={idx} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
+                                                <div key={item._rowId} className="flex gap-2 items-start bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
                                                     <div className="flex-1">
                                                         <RichTextEditor
                                                             value={item.desc}
@@ -970,7 +993,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                                             onChange={e => handleUpdateEditItem(idx, 'remise_percent', parseFloat(e.target.value))}
                                                         />
                                                     </div>
-                                                    <button type="button" onClick={() => handleRemoveEditItem(idx)} className="p-1 text-red-400 hover:text-red-600">
+                                                    <button type="button" aria-label="Remover item" onClick={() => handleRemoveEditItem(idx)} className="p-1 text-red-400 hover:text-red-600">
                                                         <Trash2 size={16} />
                                                     </button>
                                                 </div>

@@ -524,3 +524,108 @@ describe('SupplierInvoiceList — Alvo de clique não-ambíguo (#690) + moeda BR
         expect(supplierBtn.className).toMatch(/text-indigo-600/);
     });
 });
+
+describe('SupplierInvoiceList — Chaves estáveis (#848)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useSupplierInvoiceLines).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierPayments).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierPaymentInvoiceLinks).mockReturnValue({ data: [] } as any);
+    });
+
+    it('documentos usam chave estável (doc.name) e são listados corretamente', async () => {
+        const user = userEvent.setup();
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        vi.mocked(DolibarrService.fetchDocuments).mockResolvedValue([
+            { name: 'fatura1.pdf', date: 1700000000, size: 1024 },
+            { name: 'fatura2.pdf', date: 1700000001, size: 2048 },
+        ] as any);
+
+        renderWithProvider([mockDraftInvoice]);
+
+        await user.click(screen.getByText('FA-DRAFT-001'));
+        await user.click(screen.getByText('Documentos'));
+
+        await waitFor(() => {
+            expect(screen.getByText('fatura1.pdf')).toBeTruthy();
+            expect(screen.getByText('fatura2.pdf')).toBeTruthy();
+        });
+
+        const keyWarnings = errorSpy.mock.calls.filter(
+            ([msg]) => typeof msg === 'string' && msg.includes('Encountered two children with the same key')
+        );
+        expect(keyWarnings).toHaveLength(0);
+        errorSpy.mockRestore();
+    });
+
+    it('itens do form de edição carregam linhas existentes com valores corretos', async () => {
+        const user = userEvent.setup();
+        vi.mocked(useSupplierInvoiceLines).mockReturnValue({
+            data: [
+                { id: 'line-1', parent_id: 'inv1', description: 'Item A', qty: 2, subprice: 100, remise_percent: 0 },
+                { id: 'line-2', parent_id: 'inv1', description: 'Item B', qty: 5, subprice: 200, remise_percent: 10 },
+            ],
+        } as any);
+
+        renderWithProvider([mockDraftInvoice]);
+
+        await user.click(screen.getByText('FA-DRAFT-001'));
+        await user.click(await screen.findByText('Editar'));
+
+        const qtyInputs = screen.getAllByPlaceholderText('Qtd');
+        expect(qtyInputs).toHaveLength(2);
+        expect((qtyInputs[0] as HTMLInputElement).value).toBe('2');
+        expect((qtyInputs[1] as HTMLInputElement).value).toBe('5');
+    });
+
+    it('adicionar itens via "Adicionar Item" gera _rowId estáveis (sem warning de key)', async () => {
+        const user = userEvent.setup();
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        renderWithProvider([mockDraftInvoice]);
+
+        await user.click(screen.getByText('FA-DRAFT-001'));
+        await user.click(await screen.findByText('Editar'));
+
+        expect(screen.getByText('Nenhum item.')).toBeTruthy();
+
+        await user.click(screen.getByText('Adicionar Item'));
+        await user.click(screen.getByText('Adicionar Item'));
+
+        const qtyInputs = screen.getAllByPlaceholderText('Qtd');
+        expect(qtyInputs).toHaveLength(2);
+
+        const keyWarnings = errorSpy.mock.calls.filter(
+            ([msg]) => typeof msg === 'string' && msg.includes('Encountered two children with the same key')
+        );
+        expect(keyWarnings).toHaveLength(0);
+        errorSpy.mockRestore();
+    });
+
+    it('remover um item preserva os valores do item irmão (chave estável evita troca de dados)', async () => {
+        const user = userEvent.setup();
+        vi.mocked(useSupplierInvoiceLines).mockReturnValue({
+            data: [
+                { id: 'line-1', parent_id: 'inv1', description: 'Item A', qty: 2, subprice: 100, remise_percent: 0 },
+                { id: 'line-2', parent_id: 'inv1', description: 'Item B', qty: 7, subprice: 200, remise_percent: 0 },
+            ],
+        } as any);
+
+        renderWithProvider([mockDraftInvoice]);
+
+        await user.click(screen.getByText('FA-DRAFT-001'));
+        await user.click(await screen.findByText('Editar'));
+
+        let qtyInputs = screen.getAllByPlaceholderText('Qtd');
+        expect(qtyInputs).toHaveLength(2);
+        expect((qtyInputs[1] as HTMLInputElement).value).toBe('7');
+
+        const removeButtons = screen.getAllByLabelText('Remover item');
+        expect(removeButtons).toHaveLength(2);
+        await user.click(removeButtons[0]);
+
+        qtyInputs = screen.getAllByPlaceholderText('Qtd');
+        expect(qtyInputs).toHaveLength(1);
+        expect((qtyInputs[0] as HTMLInputElement).value).toBe('7');
+    });
+});
