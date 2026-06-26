@@ -81,7 +81,7 @@ vi.mock('sonner', () => ({
 
 // ── import after mocks ─────────────────────────────────────────────────────
 import UserTaskDashboard from '../../components/Tasks/UserTaskDashboard';
-import { useTasks } from '../../hooks/dolibarr';
+import { useTasks, useProjects, useUsers, useTaskContacts } from '../../hooks/dolibarr';
 import { toast } from 'sonner';
 
 const mockOnNavigate = vi.fn();
@@ -277,6 +277,80 @@ describe('UserTaskDashboard', () => {
                 // Task detail should be gone (selectedTaskId cleared)
                 expect(screen.queryByTestId('task-detail')).not.toBeInTheDocument();
             });
+        });
+    });
+
+    // ── #829 — Estado de erro ───────────────────────────────────────────
+    describe('#829: Estado de erro (ErrorState)', () => {
+        const setError = (hook: ReturnType<typeof vi.fn>) => {
+            (hook as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isError: true, refetch: vi.fn() });
+        };
+
+        beforeEach(() => {
+            vi.clearAllMocks();
+            // Reset todos os hooks tratados para estado "sem erro / sem dados".
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isError: false, refetch: mockRefetchTasks });
+            (useProjects as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isError: false, refetch: mockRefetchProjects });
+            (useUsers as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isError: false, refetch: vi.fn() });
+            (useTaskContacts as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isError: false, refetch: mockRefetchContacts });
+        });
+
+        it('exibe ErrorState quando useTasks falha', () => {
+            setError(useTasks as ReturnType<typeof vi.fn>);
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.getByTestId('user-tasks-error')).toBeInTheDocument();
+            expect(screen.getByRole('button', { name: /tentar novamente/i })).toBeInTheDocument();
+        });
+
+        it('exibe ErrorState quando useProjects falha', () => {
+            setError(useProjects as ReturnType<typeof vi.fn>);
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.getByTestId('user-tasks-error')).toBeInTheDocument();
+        });
+
+        it('exibe ErrorState quando useUsers falha', () => {
+            setError(useUsers as ReturnType<typeof vi.fn>);
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.getByTestId('user-tasks-error')).toBeInTheDocument();
+        });
+
+        it('exibe ErrorState quando useTaskContacts falha', () => {
+            setError(useTaskContacts as ReturnType<typeof vi.fn>);
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.getByTestId('user-tasks-error')).toBeInTheDocument();
+        });
+
+        it('o retry dispara refetch de useTasks, useProjects, useUsers e useTaskContacts', async () => {
+            const refetchUsers = vi.fn().mockResolvedValue(undefined);
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isError: true, refetch: mockRefetchTasks });
+            (useProjects as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isError: false, refetch: mockRefetchProjects });
+            (useUsers as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isError: false, refetch: refetchUsers });
+            (useTaskContacts as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isError: false, refetch: mockRefetchContacts });
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            fireEvent.click(screen.getByRole('button', { name: /tentar novamente/i }));
+
+            await waitFor(() => {
+                expect(mockRefetchTasks).toHaveBeenCalled();
+                expect(mockRefetchProjects).toHaveBeenCalled();
+                expect(refetchUsers).toHaveBeenCalled();
+                expect(mockRefetchContacts).toHaveBeenCalled();
+            });
+        });
+
+        it('sem erro e sem dados → mantém estado vazio legítimo (não ErrorState)', () => {
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.queryByTestId('user-tasks-error')).not.toBeInTheDocument();
         });
     });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import SalaryPaymentList from '../../components/HR/SalaryPaymentList';
 import { SalaryPayment } from '../../types';
 import { formatCurrency } from '../../utils/formatUtils';
@@ -36,16 +36,20 @@ const { mockData } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../hooks/dolibarr', () => ({
-    useSalaryPayments: () => ({ data: mockData.payments }),
-    useSalaries: () => ({ data: mockData.salaries }),
-    useUsers: () => ({
+    // vi.fn com factory que lê mockData ao vivo (preserva o comportamento dos testes existentes)
+    useSalaryPayments: vi.fn(() => ({ data: mockData.payments })),
+    useSalaries: vi.fn(() => ({ data: mockData.salaries })),
+    useUsers: vi.fn(() => ({
         data: [
             { id: '1', login: 'u1', firstname: 'José', lastname: 'Silva', email: 'jose@t.com', job: 'Desenvolvedor', statut: '1' },
             { id: '2', login: 'u2', firstname: 'Maria', lastname: 'Santos', email: 'maria@t.com', job: 'Designer', statut: '1' },
         ],
-    }),
-    useBankAccounts: () => ({ data: [] }),
+    })),
+    useBankAccounts: vi.fn(() => ({ data: [] })),
 }));
+
+// Re-importa hooks mockados para sobrescrever retornos por teste (#829)
+const { useSalaryPayments, useSalaries, useUsers, useBankAccounts } = await import('../../hooks/dolibarr');
 
 describe('SalaryPaymentList — Currency standardization (#642 / #625)', () => {
     beforeEach(() => {
@@ -157,5 +161,72 @@ describe('SalaryPaymentList — Resolver colaborador (#568)', () => {
         // Não deve expor "ID: " vazio
         expect(screen.queryByText(/ID:\s*$/)).not.toBeInTheDocument();
         expect(screen.queryByText(/Colaborador não encontrado/)).not.toBeInTheDocument();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// #829 — Estados de loading/erro ausentes
+// ---------------------------------------------------------------------------
+describe('SalaryPaymentList — #829: estados de loading e erro', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockData.payments = [
+            { id: 'sp1', ref: 'SAL001', fk_user: '1', date_payment: 1700000000, amount: 2000, salary: 2500, fk_bank: 'b1' } as SalaryPayment,
+        ];
+        mockData.salaries = [];
+        // Happy default: dados carregados, sem loading/erro.
+        vi.mocked(useSalaryPayments).mockReturnValue({ data: mockData.payments, isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useSalaries).mockReturnValue({ data: mockData.salaries, isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useUsers).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useBankAccounts).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+    });
+
+    it('exibe spinner de carregamento quando isLoading é true', () => {
+        vi.mocked(useSalaryPayments).mockReturnValue({ data: [], isLoading: true, isError: false, refetch: vi.fn() } as any);
+
+        render(<SalaryPaymentList />);
+
+        expect(screen.getByTestId('salary-loading')).toBeInTheDocument();
+        // Não mostra a lista durante o loading
+        expect(screen.queryByText('SAL001')).not.toBeInTheDocument();
+    });
+
+    it('exibe ErrorState com "Tentar novamente" quando um hook falha', () => {
+        vi.mocked(useSalaryPayments).mockReturnValue({ data: [], isLoading: false, isError: true, refetch: vi.fn() } as any);
+
+        render(<SalaryPaymentList />);
+
+        expect(screen.getByTestId('salary-error')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /tentar novamente/i })).toBeInTheDocument();
+    });
+
+    it('o retry dispara refetch de todos os hooks (payments, salaries, users, bankAccounts)', async () => {
+        const refetchPayments = vi.fn().mockResolvedValue(undefined);
+        const refetchSalaries = vi.fn().mockResolvedValue(undefined);
+        const refetchUsers = vi.fn().mockResolvedValue(undefined);
+        const refetchBanks = vi.fn().mockResolvedValue(undefined);
+        vi.mocked(useSalaryPayments).mockReturnValue({ data: [], isLoading: false, isError: true, refetch: refetchPayments } as any);
+        vi.mocked(useSalaries).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: refetchSalaries } as any);
+        vi.mocked(useUsers).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: refetchUsers } as any);
+        vi.mocked(useBankAccounts).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: refetchBanks } as any);
+
+        render(<SalaryPaymentList />);
+
+        fireEvent.click(screen.getByRole('button', { name: /tentar novamente/i }));
+
+        await waitFor(() => {
+            expect(refetchPayments).toHaveBeenCalled();
+            expect(refetchSalaries).toHaveBeenCalled();
+            expect(refetchUsers).toHaveBeenCalled();
+            expect(refetchBanks).toHaveBeenCalled();
+        });
+    });
+
+    it('sem erro e com dados → mostra a lista (não loading nem erro)', () => {
+        render(<SalaryPaymentList />);
+
+        expect(screen.queryByTestId('salary-loading')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('salary-error')).not.toBeInTheDocument();
+        expect(screen.getByText('SAL001')).toBeInTheDocument();
     });
 });

@@ -22,6 +22,7 @@ import {
     Tabs,
     Tab,
     EmptyState,
+    ErrorState,
     Card,
     MasterDetailLayout
 } from './ui';
@@ -54,13 +55,24 @@ interface EncapsulatedGroup {
 const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     const { config, refreshData } = useDolibarr();
 
-    const { data: events = [], isLoading: isLoadingEvents } = useEvents(config || null, !!config);
-    const { data: tasks = [], isLoading: isLoadingTasks } = useTasks(config || null, !!config);
-    const { data: interventions = [], isLoading: isLoadingInterventions } = useInterventions(config || null, !!config);
-    const { data: projects = [], isLoading: isLoadingProjects } = useProjects(config || null, !!config);
-    const { data: customers = [] } = useCustomers(config || null, !!config);
+    const { data: events = [], isLoading: isLoadingEvents, isError: isErrorEvents, refetch: refetchEvents } = useEvents(config || null, !!config);
+    const { data: tasks = [], isLoading: isLoadingTasks, isError: isErrorTasks, refetch: refetchTasks } = useTasks(config || null, !!config);
+    const { data: interventions = [], isLoading: isLoadingInterventions, isError: isErrorInterventions, refetch: refetchInterventions } = useInterventions(config || null, !!config);
+    const { data: projects = [], isLoading: isLoadingProjects, isError: isErrorProjects, refetch: refetchProjects } = useProjects(config || null, !!config);
+    const { data: customers = [], isLoading: isLoadingCustomers, isError: isErrorCustomers, refetch: refetchCustomers } = useCustomers(config || null, !!config);
 
-    const isLoading = isLoadingEvents || isLoadingTasks || isLoadingInterventions || isLoadingProjects;
+    const isLoading = isLoadingEvents || isLoadingTasks || isLoadingInterventions || isLoadingProjects || isLoadingCustomers;
+    const isError = isErrorEvents || isErrorTasks || isErrorInterventions || isErrorProjects || isErrorCustomers;
+
+    const handleRetry = React.useCallback(() => {
+        Promise.all([
+            refetchEvents(),
+            refetchTasks(),
+            refetchInterventions(),
+            refetchProjects(),
+            refetchCustomers(),
+        ]);
+    }, [refetchEvents, refetchTasks, refetchInterventions, refetchProjects, refetchCustomers]);
 
     const [filterType, setFilterType] = useState<'all' | 'event' | 'task' | 'deadline'>('all');
     const [showSystemEvents, setShowSystemEvents] = useState(false);
@@ -375,7 +387,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     useEffect(() => {
         if (viewMode === 'list' && groupedList.length > 0 && !hasInitializedScroll && !selectedItemId) {
             // Wait for render
-            setTimeout(() => {
+            const scrollTimer = setTimeout(() => {
                 // Find Today element in DOM
                 const today = new Date();
                 today.setHours(0, 0, 0, 0);
@@ -392,6 +404,9 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                     }
                 }
             }, 300);
+            // Cleanup: evita timer órfão se deps mudarem ou o componente desmontar,
+            // o que deixaria o scroll inicial preso (#829).
+            return () => clearTimeout(scrollTimer);
         }
     }, [visibleRange, viewMode, groupedList]);
 
@@ -510,6 +525,26 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                 <p>Carregando configurações...</p>
             </div>
         )
+    }
+
+    if (isLoading) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-slate-400 p-20" data-testid="agenda-loading">
+                <Loader2 size={48} className="animate-spin mb-4 text-indigo-500" />
+                <p>Carregando agenda…</p>
+            </div>
+        );
+    }
+
+    if (isError) {
+        return (
+            <div className="flex flex-col h-full items-center justify-center p-8 bg-slate-50 dark:bg-slate-950" data-testid="agenda-error">
+                <ErrorState
+                    message="Não foi possível carregar a agenda. Verifique a conexão e tente novamente."
+                    onRetry={handleRetry}
+                />
+            </div>
+        );
     }
 
     // Render the List Content (The 'Left' side of MasterDetail)

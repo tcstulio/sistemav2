@@ -9,7 +9,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, RefreshCw, Bot, User, Loader2, Search, Clock } from 'lucide-react';
-import { PageHeader, EmptyState } from './ui';
+import { PageHeader, EmptyState, ErrorState } from './ui';
 import { useConversations } from '../hooks/whatsapp/useConversations';
 import { useMessages } from '../hooks/whatsapp/useMessages';
 import { WhatsAppConversation } from '../types';
@@ -127,7 +127,7 @@ interface MessagePaneProps {
 
 const MessagePane: React.FC<MessagePaneProps> = ({ conversation }) => {
     const sessionId = conversation.accountId || 'default';
-    const { messages, loading } = useMessages(sessionId, conversation.id);
+    const { messages, loading, error, refetch } = useMessages(sessionId, conversation.id);
     const bottomRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -151,29 +151,35 @@ const MessagePane: React.FC<MessagePaneProps> = ({ conversation }) => {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 bg-[#efeae2] dark:bg-[#0b141a]">
-                {loading && (
+                {/* #829: estado de erro visível (wrapper p-4 padronizado com a lista) */}
+                {error && !loading ? (
+                    <div className="p-4">
+                        <ErrorState
+                            message="Erro ao carregar mensagens. Tente novamente."
+                            onRetry={refetch}
+                        />
+                    </div>
+                ) : loading ? (
                     <div className="flex items-center justify-center py-12">
                         <Loader2 size={28} className="animate-spin text-slate-400" />
                     </div>
-                )}
-
-                {!loading && messages.length === 0 && (
+                ) : messages.length === 0 ? (
                     <EmptyState
                         icon={MessageSquare}
                         title="Sem mensagens"
                         description="Esta conversa ainda não tem mensagens registradas."
                         size="sm"
                     />
+                ) : (
+                    messages.map(msg => (
+                        <MessageBubble
+                            key={msg.id}
+                            text={msg.text ?? ''}
+                            sender={msg.sender}
+                            timestamp={msg.timestamp}
+                        />
+                    ))
                 )}
-
-                {!loading && messages.map(msg => (
-                    <MessageBubble
-                        key={msg.id}
-                        text={msg.text ?? ''}
-                        sender={msg.sender}
-                        timestamp={msg.timestamp}
-                    />
-                ))}
                 <div ref={bottomRef} />
             </div>
 
@@ -191,7 +197,7 @@ const MessagePane: React.FC<MessagePaneProps> = ({ conversation }) => {
 // ---------------------------------------------------------------------------
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const CustomerConversations: React.FC<CustomerConversationsProps> = (_props) => {
-    const { conversations, loading, refreshConversations } = useConversations('all');
+    const { conversations, loading, error, refreshConversations } = useConversations('all');
     const [selectedConversation, setSelectedConversation] = useState<WhatsAppConversation | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
 
@@ -240,13 +246,19 @@ const CustomerConversations: React.FC<CustomerConversationsProps> = (_props) => 
 
                     {/* List */}
                     <div className="flex-1 overflow-y-auto">
-                        {loading && (
+                        {/* #829: erro visível (wrapper p-4 padronizado com o painel de mensagens) */}
+                        {error && !loading ? (
+                            <div className="p-4">
+                                <ErrorState
+                                    message="Erro ao carregar conversas. Tente novamente."
+                                    onRetry={refreshConversations}
+                                />
+                            </div>
+                        ) : loading ? (
                             <div className="flex items-center justify-center py-16">
                                 <Loader2 size={28} className="animate-spin text-slate-400" />
                             </div>
-                        )}
-
-                        {!loading && filtered.length === 0 && (
+                        ) : filtered.length === 0 ? (
                             <EmptyState
                                 icon={MessageSquare}
                                 title="Nenhuma conversa"
@@ -257,16 +269,16 @@ const CustomerConversations: React.FC<CustomerConversationsProps> = (_props) => 
                                 }
                                 size="sm"
                             />
+                        ) : (
+                            filtered.map(conv => (
+                                <ConversationItem
+                                    key={conv.id}
+                                    conversation={conv}
+                                    isSelected={selectedConversation?.id === conv.id}
+                                    onSelect={setSelectedConversation}
+                                />
+                            ))
                         )}
-
-                        {!loading && filtered.map(conv => (
-                            <ConversationItem
-                                key={conv.id}
-                                conversation={conv}
-                                isSelected={selectedConversation?.id === conv.id}
-                                onSelect={setSelectedConversation}
-                            />
-                        ))}
                     </div>
 
                     {/* Footer count */}

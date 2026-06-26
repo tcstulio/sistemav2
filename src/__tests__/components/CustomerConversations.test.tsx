@@ -212,4 +212,109 @@ describe('CustomerConversations', () => {
 
         expect(mockUseConversations).toHaveBeenCalledWith('all');
     });
+
+    // -----------------------------------------------------------------------
+    // #829 — Estados de erro
+    // -----------------------------------------------------------------------
+    describe('#829: estados de erro', () => {
+        it('exibe ErrorState (com retry) na lista quando useConversations falha', () => {
+            mockUseConversations.mockReturnValue({
+                conversations: [],
+                loading: false,
+                error: new Error('boom'),
+                refreshConversations: mockRefreshConversations,
+            });
+
+            render(<CustomerConversations />);
+
+            expect(screen.getByText('Erro ao carregar conversas. Tente novamente.')).toBeTruthy();
+            const retryBtn = screen.getByRole('button', { name: /tentar novamente/i });
+            expect(retryBtn).toBeTruthy();
+        });
+
+        it('o retry da lista chama refreshConversations', async () => {
+            mockUseConversations.mockReturnValue({
+                conversations: [],
+                loading: false,
+                error: new Error('boom'),
+                refreshConversations: mockRefreshConversations,
+            });
+
+            const user = userEvent.setup();
+            render(<CustomerConversations />);
+
+            await user.click(screen.getByRole('button', { name: /tentar novamente/i }));
+
+            expect(mockRefreshConversations).toHaveBeenCalled();
+        });
+
+        it('exibe ErrorState no painel de mensagens quando useMessages falha', async () => {
+            const mockRefetchMessages = vi.fn();
+            mockUseConversations.mockReturnValue({
+                conversations: mockConversations,
+                loading: false,
+                refreshConversations: mockRefreshConversations,
+            });
+            mockUseMessages.mockReturnValue({
+                messages: [],
+                loading: false,
+                error: new Error('messages boom'),
+                refetch: mockRefetchMessages,
+                sendMessage: vi.fn(),
+            });
+
+            const user = userEvent.setup();
+            render(<CustomerConversations />);
+
+            await user.click(screen.getByText('Maria Silva'));
+
+            await waitFor(() => {
+                expect(screen.getByText('Erro ao carregar mensagens. Tente novamente.')).toBeTruthy();
+            });
+        });
+
+        it('o retry do painel de mensagens chama refetch do useMessages', async () => {
+            const mockRefetchMessages = vi.fn();
+            mockUseConversations.mockReturnValue({
+                conversations: mockConversations,
+                loading: false,
+                refreshConversations: mockRefreshConversations,
+            });
+            mockUseMessages.mockReturnValue({
+                messages: [],
+                loading: false,
+                error: new Error('messages boom'),
+                refetch: mockRefetchMessages,
+                sendMessage: vi.fn(),
+            });
+
+            const user = userEvent.setup();
+            render(<CustomerConversations />);
+
+            await user.click(screen.getByText('Maria Silva'));
+
+            await waitFor(() => screen.getByText('Erro ao carregar mensagens. Tente novamente.'));
+            await user.click(screen.getByRole('button', { name: /tentar novamente/i }));
+
+            expect(mockRefetchMessages).toHaveBeenCalled();
+        });
+
+        it('erro de conversas não mostra spinner nem empty state simultaneamente', () => {
+            mockUseConversations.mockReturnValue({
+                conversations: [],
+                loading: false,
+                error: new Error('boom'),
+                refreshConversations: mockRefreshConversations,
+            });
+
+            const { container } = render(<CustomerConversations />);
+
+            // ErrorState presente
+            expect(screen.getByText('Erro ao carregar conversas. Tente novamente.')).toBeTruthy();
+            // Empty state de lista vazia não deve aparecer
+            expect(screen.queryByText('Nenhuma conversa')).not.toBeTruthy();
+            // Nenhum spinner (animate-spin) na lista
+            expect(container.querySelector('.animate-spin')).toBeFalsy();
+        });
+    });
 });

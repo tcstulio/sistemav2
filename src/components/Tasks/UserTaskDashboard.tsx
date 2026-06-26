@@ -30,6 +30,7 @@ import TaskDetail from '../TaskDetail';
 import { TaskModal } from '../Projects/modals/TaskModal';
 import { DolibarrService } from '../../services/dolibarrService';
 import { toast } from 'sonner';
+import { ErrorState } from '../ui';
 
 interface UserTaskDashboardProps {
     onNavigate: (view: string, id: string) => void;
@@ -47,12 +48,15 @@ function canLogTimeOnTask(task: Task, userId: string | undefined, taskContacts: 
 
 const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => {
     const { config, currentUser: user } = useDolibarr(); // Get config & currentUser
-    const { data: tasks, refetch: refetchTasks } = useTasks(config); // Fetch Tasks
-    const { data: projects, refetch: refetchProjects } = useProjects(config); // Fetch Projects
-    const { data: allUsers } = useUsers(config); // Fetch Users for hierarchy
-    const { data: taskContacts, refetch: refetchTaskContacts } = useTaskContacts(config); // Fetch Task Contacts
+    const { data: tasks, isError: isTasksError, refetch: refetchTasks } = useTasks(config); // Fetch Tasks
+    const { data: projects, isError: isProjectsError, refetch: refetchProjects } = useProjects(config); // Fetch Projects
+    const { data: allUsers, isError: isUsersError, refetch: refetchUsers } = useUsers(config); // Fetch Users for hierarchy
+    const { data: taskContacts, isError: isTaskContactsError, refetch: refetchTaskContacts } = useTaskContacts(config); // Fetch Task Contacts
     const { data: projectContacts, refetch: refetchProjectContacts } = useProjectContacts(config); // Fetch Project Contacts
     const { data: timeLogs, refetch: refetchTimeLogs } = useTaskTimeLogs(config); // Fetch Time Logs
+
+    // #829: Erro de qualquer hook de dados essencial → ErrorState com retry (não spinner infinito).
+    const hasError = isTasksError || isProjectsError || isUsersError || isTaskContactsError;
 
     const [filterStatus, setFilterStatus] = useState<'all' | 'open'>('open');
     const [viewMode, setViewMode] = useState<'me' | 'team' | 'analytics'>('me');
@@ -91,6 +95,7 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
             await Promise.all([
                 refetchTasks(),
                 refetchProjects(),
+                refetchUsers(),
                 refetchTaskContacts(),
                 refetchProjectContacts(),
                 refetchTimeLogs(),
@@ -780,7 +785,14 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                     {/* Toolbar inside List (optional, or keep generic) */}
                     {/* Moving generic content wrapper here */}
 
-                    {!tasks ? (
+                    {hasError ? (
+                        <div className="flex items-center justify-center h-full p-8" data-testid="user-tasks-error">
+                            <ErrorState
+                                message="Não foi possível carregar suas tarefas. Verifique a conexão e tente novamente."
+                                onRetry={handleRefresh}
+                            />
+                        </div>
+                    ) : !tasks ? (
                         <div className="flex items-center justify-center h-full">
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
                         </div>

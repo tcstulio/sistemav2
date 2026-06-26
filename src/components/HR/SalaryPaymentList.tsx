@@ -11,7 +11,7 @@ import AutoSizer from 'react-virtualized-auto-sizer';
 import { toast } from 'sonner';
 
 // Design System
-import { PageHeader, Card, EmptyState, MasterDetailLayout, ListToolbar } from '../ui';
+import { PageHeader, Card, EmptyState, MasterDetailLayout, ListToolbar, Spinner, ErrorState } from '../ui';
 
 interface SalaryPaymentListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -22,10 +22,23 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
     const { config } = useDolibarr();
 
     // Data Hooks
-    const { data: salaryPayments = [] } = useSalaryPayments(config);
-    const { data: salaries = [] } = useSalaries(config);
-    const { data: users = [] } = useUsers(config);
-    const { data: bankAccounts = [] } = useBankAccounts(config);
+    const { data: salaryPayments = [], isLoading: isLoadingPayments, isError: isErrorPayments, refetch: refetchPayments } = useSalaryPayments(config);
+    const { data: salaries = [], isLoading: isLoadingSalaries, isError: isErrorSalaries, refetch: refetchSalaries } = useSalaries(config);
+    const { data: users = [], isLoading: isLoadingUsers, isError: isErrorUsers, refetch: refetchUsers } = useUsers(config);
+    const { data: bankAccounts = [], isLoading: isLoadingBanks, isError: isErrorBanks, refetch: refetchBanks } = useBankAccounts(config);
+
+    // #829: estados de loading/erro agregados para feedback ao usuário.
+    const isLoading = isLoadingPayments || isLoadingSalaries || isLoadingUsers || isLoadingBanks;
+    const isError = isErrorPayments || isErrorSalaries || isErrorUsers || isErrorBanks;
+
+    const handleRetry = React.useCallback(() => {
+        Promise.all([
+            refetchPayments(),
+            refetchSalaries(),
+            refetchUsers(),
+            refetchBanks(),
+        ]);
+    }, [refetchPayments, refetchSalaries, refetchUsers, refetchBanks]);
 
     const [selectedPayment, setSelectedPayment] = useState<SalaryPayment | null>(null);
 
@@ -60,6 +73,28 @@ const SalaryPaymentList: React.FC<SalaryPaymentListProps> = ({ onNavigate, initi
     };
 
     if (!config) return null;
+
+    // #829: loading inicial → spinner centralizado.
+    if (isLoading) {
+        return (
+            <div className="flex flex-col h-full items-center justify-center gap-3 p-8 bg-slate-50 dark:bg-slate-950" data-testid="salary-loading">
+                <Spinner size="lg" />
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Carregando pagamentos…</p>
+            </div>
+        );
+    }
+
+    // #829: erro na query → card de erro amigável + botão de retry.
+    if (isError) {
+        return (
+            <div className="flex flex-col h-full items-center justify-center p-8 bg-slate-50 dark:bg-slate-950" data-testid="salary-error">
+                <ErrorState
+                    message="Não foi possível carregar os pagamentos de salário. Verifique a conexão e tente novamente."
+                    onRetry={handleRetry}
+                />
+            </div>
+        );
+    }
 
     // --- Virtual List Row ---
     const Row = ({ index, style }: { index: number, style: React.CSSProperties }) => {
