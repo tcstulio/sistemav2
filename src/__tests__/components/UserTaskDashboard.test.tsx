@@ -452,5 +452,27 @@ describe('UserTaskDashboard', () => {
             expect(screen.getByText('ERRO_TAREFAS')).toBeInTheDocument();
             expect(screen.queryByText('ERRO_PROJETOS')).not.toBeInTheDocument();
         });
+
+        it('mostra spinner de carregamento quando tarefas ainda não chegaram (sem erro)', () => {
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({
+                data: undefined,
+                isError: false,
+                error: undefined,
+                refetch: mockRefetchTasks,
+            });
+
+            const { container } = render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.queryByTestId('user-tasks-error')).not.toBeInTheDocument();
+            expect(container.querySelector('.animate-spin')).toBeTruthy();
+        });
+
+        it('lista vazia legítima renderiza EmptyState (sem spinner/ErrorState)', () => {
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            expect(screen.queryByTestId('user-tasks-error')).not.toBeInTheDocument();
+            expect(screen.getByText('Nenhuma tarefa encontrada')).toBeInTheDocument();
+            expect(screen.getByText(/tente ajustar os filtros/i)).toBeInTheDocument();
+        });
     });
 });
