@@ -127,7 +127,7 @@ interface MessagePaneProps {
 
 const MessagePane: React.FC<MessagePaneProps> = ({ conversation }) => {
     const sessionId = conversation.accountId || 'default';
-    const { messages, loading, error, refetch } = useMessages(sessionId, conversation.id);
+    const { messages, loading, isError, refetch } = useMessages(sessionId, conversation.id);
     const bottomRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -151,8 +151,8 @@ const MessagePane: React.FC<MessagePaneProps> = ({ conversation }) => {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 bg-[#efeae2] dark:bg-[#0b141a]">
-                {/* #829: estado de erro visível (wrapper p-4 padronizado com a lista) */}
-                {error && !loading ? (
+                {/* #859: estado de erro visível (wrapper p-4 padronizado com a lista) */}
+                {isError && !loading ? (
                     <div className="p-4">
                         <ErrorState
                             message="Erro ao carregar mensagens. Tente novamente."

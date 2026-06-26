@@ -259,6 +259,7 @@ describe('CustomerConversations', () => {
                 messages: [],
                 loading: false,
                 error: new Error('messages boom'),
+                isError: true,
                 refetch: mockRefetchMessages,
                 sendMessage: vi.fn(),
             });
@@ -284,6 +285,7 @@ describe('CustomerConversations', () => {
                 messages: [],
                 loading: false,
                 error: new Error('messages boom'),
+                isError: true,
                 refetch: mockRefetchMessages,
                 sendMessage: vi.fn(),
             });

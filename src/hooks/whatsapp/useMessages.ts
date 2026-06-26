@@ -170,6 +170,7 @@ export const useMessages = (sessionId: string, chatId: string | null) => {
         messages,
         loading,
         error,
+        isError: error !== null,
         refetch: fetchMessages,
         sendMessage
     };
