@@ -47,6 +47,8 @@ describe('useMessages — #829 exposição de erro', () => {
 
         expect(result.current.error?.message).toBe('network down');
         expect(result.current.loading).toBe(false);
+        // #859: isError reflete o estado de erro.
+        expect(result.current.isError).toBe(true);
         // #829: toast.error removido — a UI mostra ErrorState.
         expect(mockToast.error).not.toHaveBeenCalled();
     });
@@ -61,6 +63,8 @@ describe('useMessages — #829 exposição de erro', () => {
         });
 
         expect(result.current.error).toBeNull();
+        // #859: sem erro -> isError false.
+        expect(result.current.isError).toBe(false);
         expect(mockToast.error).not.toHaveBeenCalled();
     });
 
@@ -77,5 +81,24 @@ describe('useMessages — #829 exposição de erro', () => {
         await waitFor(() => {
             expect(result.current.messages.length).toBe(1);
         });
+    });
+
+    it('#859: isError vira false após refetch bem-sucedido (recuperação)', async () => {
+        mockGetMessages.mockRejectedValueOnce(new Error('falhou'));
+        mockGetMessages.mockResolvedValueOnce([{ id: 'm-rec' }]);
+
+        const { result } = renderHook(() => useMessages('sess1', 'chat-1'));
+
+        await waitFor(() => {
+            expect(result.current.isError).toBe(true);
+        });
+
+        await result.current.refetch();
+
+        await waitFor(() => {
+            expect(result.current.isError).toBe(false);
+        });
+        expect(result.current.error).toBeNull();
+        expect(result.current.messages.length).toBe(1);
     });
 });
