@@ -197,6 +197,7 @@ export interface Task {
     status: TaskStatus;
     branch?: string;
     prNumber?: number;
+    prHistory?: number[]; // ADDED: histórico de PRs (para reconciliação)
     prUrl?: string;
     judgeScore?: number;
     judgeReview?: string;
@@ -350,9 +351,22 @@ class TaskRunnerService {
             const queued = this.getQueuedTasks();
             if (queued.length === 0) { this.stuckSince = null; return; }
             const active: TaskStatus[] = ['running', 'fixing', 'cancelling'];
-            const activeCount = Object.values(this.store.tasks).filter((t) => active.includes(t.status)).length;
-            // "Stuck" = slot da cadeia ocupado mas nenhuma task ativa o representando (ghost).
-            const isStuck = this.pendingExecs > 0 && activeCount === 0;
+            const activeTasks = Object.values(this.store.tasks).filter((t) => active.includes(t.status));
+            const activeCount = activeTasks.length;
+            
+            const { isAlive } = require('../utils/processTree');
+            const hasGhostActive = activeTasks.some(t => {
+                if (t.childPid && !isAlive(t.childPid)) return true;
+                if (!t.childPid && t.startedAt) {
+                    const elapsed = Date.now() - new Date(t.startedAt).getTime();
+                    return elapsed > 15 * 60_000;
+                }
+                return false;
+            });
+            
+            // "Stuck" = slot da cadeia ocupado mas nenhuma task ativa o representando (ghost)
+            // OU possui task ativa cujo processo (PID) já morreu/travou.
+            const isStuck = this.pendingExecs > 0 && (activeCount === 0 || hasGhostActive);
             if (!isStuck) { this.stuckSince = null; return; }
             if (this.stuckSince === null) this.stuckSince = Date.now();
             if (Date.now() - this.stuckSince < QUEUE_RECOVERY_MIN_MS) return;
@@ -646,7 +660,12 @@ class TaskRunnerService {
 
             for (const [numStr, task] of Object.entries(this.store.tasks)) {
                 const num = Number(numStr);
-                if (this.isTerminalStatus(task.status)) continue;
+                const isTerminal = this.isTerminalStatus(task.status);
+                if (isTerminal) {
+                    if (task.status === 'merged' || task.status === 'cancelled' || task.status === 'approved') continue;
+                    if (!task.prNumber && (!task.prHistory || task.prHistory.length === 0)) continue;
+                    // É failed/rejected e possui histórico de PR. Vamos verificar.
+                }
 
                 // Não reconciliar uma task em EXECUÇÃO ATIVA: o run vivo é a fonte da verdade do estado.
                 // Reconciliar com o GitHub aqui (ex.: derivar status terminal de um PR fechado) chegava a
@@ -671,10 +690,11 @@ class TaskRunnerService {
                 }
 
                 const state = stateByNum.get(num);
-                if (state === undefined) continue; // issue fora da lista (alem do limite) — tenta depois
+                // Issue fora da lista: se não for terminal, tenta depois
+                if (state === undefined && !isTerminal) continue;
 
-                // Issue ainda aberta: garante coerencia local
-                if (state !== 'CLOSED') {
+                // Issue ainda aberta e task não terminal: garante coerencia local
+                if (state !== 'CLOSED' && !isTerminal) {
                     if (task.status === 'pending' && task.startedAt) {
                         task.startedAt = undefined;
                         reconciled.push(num);
@@ -682,21 +702,40 @@ class TaskRunnerService {
                     continue;
                 }
 
-                // Issue fechada: deriva status terminal pelo PR (unica chamada extra, so p/ task com PR)
-                if (task.prNumber) {
-                    try {
-                        const { stdout: prOut } = await gh(['pr', 'view', String(task.prNumber), '--repo', REPO, '--json', 'state,merged'], { timeout: 10000 });
-                        const pr = JSON.parse(prOut);
-                        task.status = pr.merged ? 'merged' : 'rejected';
-                    } catch {
-                        task.status = 'failed';
+                // Checagem de status via histórico de PRs
+                const prsToCheck = [task.prNumber, ...(task.prHistory || [])].filter(Boolean);
+                if (prsToCheck.length > 0) {
+                    let anyMerged = false;
+                    for (const pr of prsToCheck) {
+                        try {
+                            const { stdout: prOut } = await gh(['pr', 'view', String(pr), '--repo', REPO, '--json', 'state,merged'], { timeout: 10000 });
+                            const prData = JSON.parse(prOut);
+                            if (prData.merged) {
+                                anyMerged = true;
+                                break;
+                            }
+                        } catch {
+                            // Ignora erros (PR pode não existir mais, etc)
+                        }
                     }
-                } else {
+
+                    const newStatus = anyMerged ? 'merged' : (state === 'CLOSED' ? 'rejected' : task.status);
+                    
+                    if (task.status !== newStatus) {
+                        if (newStatus === 'merged') {
+                            this.recordEvent(task, 'pr_merged', `Reconciliado: PR mergeado (status anterior: ${task.status})`);
+                        }
+                        task.status = newStatus;
+                        task.completedAt = task.completedAt || new Date().toISOString();
+                        task.updatedAt = new Date().toISOString();
+                        reconciled.push(num);
+                    }
+                } else if (state === 'CLOSED' && task.status !== 'failed') {
                     task.status = 'failed';
+                    task.completedAt = task.completedAt || new Date().toISOString();
+                    task.updatedAt = new Date().toISOString();
+                    reconciled.push(num);
                 }
-                task.completedAt = task.completedAt || new Date().toISOString();
-                task.updatedAt = new Date().toISOString();
-                reconciled.push(num);
             }
             if (reconciled.length) {
                 this.save();
@@ -754,7 +793,21 @@ class TaskRunnerService {
         const prev = this.worktreeLock;
         let release!: () => void;
         this.worktreeLock = new Promise<void>((r) => { release = r; });
-        await prev;
+        
+        await Promise.race([
+            prev,
+            new Promise<void>((_, reject) => setTimeout(() => {
+                this.sweepOrphanedOpencode(`lock-timeout-in-${label}`).catch(() => {});
+                this.cleanStaleLocks(true);
+                const stuckTask = Object.values(this.store.tasks).find(t => t.status === 'running' || t.status === 'fixing');
+                if (stuckTask) {
+                    stuckTask.status = 'failed';
+                    stuckTask.error = 'Timeout no worktree lock (>10min sem liberar)';
+                    this.save();
+                }
+                reject(new Error(`worktreeLock timeout: holder anterior não liberou em 10min. Lock abortado para ${label}`));
+            }, 10 * 60_000))
+        ]);
         try {
             return await fn();
         } finally {
@@ -1325,6 +1378,8 @@ class TaskRunnerService {
         let verify = { ok: false, output: 'não verificado' };
         let lastDiffHash = '';
         let anyChange = false;
+        let consecutiveEmpty = 0;
+        const MAX_EMPTY_RETRIES = 2;
 
         for (let round = 1; round <= MAX_ROUNDS; round++) {
             if (this.isCancelSignal(task)) {
@@ -1380,7 +1435,8 @@ class TaskRunnerService {
             if (changes.length > 0) anyChange = true;
 
             // CONVERGÊNCIA: o diff acumulado não mudou vs o round anterior → opencode não tem mais o que fazer.
-            if (round > 1 && diffHash === lastDiffHash) {
+            // Exige `anyChange` para não confundir 2 rounds completamente vazios no início com "convergência".
+            if (round > 1 && diffHash === lastDiffHash && anyChange) {
                 this.recordEvent(task, 'exploration_completed', `Convergiu no round ${round} (sem mudanças novas)`, { rounds: round, converged: true });
                 if (anyChange) verify = await this.verify(); // só revalida se há algo a entregar
                 break;
@@ -1388,12 +1444,22 @@ class TaskRunnerService {
             lastDiffHash = diffHash;
 
             if (changes.length === 0) {
+                consecutiveEmpty++;
+                if (consecutiveEmpty > MAX_EMPTY_RETRIES) {
+                    this.recordEvent(task, 'attempt_no_changes', `Round ${round}: opencode não produziu mudanças após ${MAX_EMPTY_RETRIES} retries. Desistindo.`, { attempt: round });
+                    break;
+                }
+                
                 // Round improdutivo (ex.: throttling severo do provedor): NÃO roda verify (tsc+build
-                // ~9min) à toa; pede implementação e segue. 2 rounds vazios seguidos → convergência → falha limpa.
-                this.recordEvent(task, 'attempt_no_changes', `Round ${round}: opencode não produziu mudanças`, { attempt: round });
-                task.feedbackHistory = ['O round anterior não gerou nenhuma mudança. Comece/continue implementando os arquivos da spec AGORA.'];
+                // ~9min) à toa; pede implementação e segue.
+                this.recordEvent(task, 'attempt_no_changes', `Round ${round}: opencode não produziu mudanças (retry ${consecutiveEmpty}/${MAX_EMPTY_RETRIES})`, { attempt: round });
+                // Delay artificial para "breathing room" do modelo
+                await new Promise(r => setTimeout(r, 5000));
+                task.feedbackHistory = [`ATENÇÃO: ${consecutiveEmpty} round(s) consecutivos sem mudança. Você DEVE implementar os itens da spec AGORA. Comece pelos arquivos listados na issue.`];
                 this.save();
                 continue;
+            } else {
+                consecutiveEmpty = 0;
             }
 
             this.recordEvent(task, 'typecheck_started', `Typecheck round ${round} (${changes.length} arquivos acumulados)...`);
@@ -2337,6 +2403,8 @@ Return ONLY a JSON:
                 await gh(['pr', 'close', String(task.prNumber), '--repo', REPO, '--comment', 'Redoing task'], { timeout: 15000 });
                 this.recordEvent(task, 'pr_closed', `PR #${task.prNumber} fechado para redo`, { prNumber: task.prNumber, reason: 'redo' });
             } catch { /* PR might not exist */ }
+            task.prHistory = task.prHistory || [];
+            task.prHistory.push(task.prNumber);
         }
 
         if (instruction) task.feedbackHistory.push(`Redo: ${instruction}`);
