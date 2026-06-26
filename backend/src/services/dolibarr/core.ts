@@ -22,7 +22,7 @@ export type CloseProposalModel = components['schemas']['proposalsCloseModel'];
 export type AddTimeSpentModel = components['schemas']['tasksAddTimeSpentModel'];
 
 // API Key validation regex - only alphanumeric, hyphens, and underscores
-const API_KEY_PATTERN = /^[a-zA-Z0-9\-_]{20,}$/;
+const API_KEY_PATTERN = /^[a-zA-Z0-9\-_]{10,}$/;
 
 function isValidApiKey(key: string): boolean {
     return API_KEY_PATTERN.test(key);
