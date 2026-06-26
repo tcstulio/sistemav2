@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import AgendaView from '../../components/AgendaView';
+import AgendaView, { AGENDA_LOADING_TIMEOUT_MS } from '../../components/AgendaView';
 
 // --- Mock sonner ---
 const mockToast = vi.hoisted(() => ({
@@ -447,6 +447,47 @@ describe('AgendaView — #829: estados de loading e erro', () => {
         expect(screen.queryByTestId('agenda-loading')).not.toBeInTheDocument();
         expect(screen.getByText('Nenhum item na agenda')).toBeInTheDocument();
     });
+
+    // -------------------------------------------------------------------------
+    // #857 — Spinner do Design System + fallback do scroll
+    // -------------------------------------------------------------------------
+
+    it('usa Spinner do Design System (svg.animate-spin) no estado de carregamento (#857)', () => {
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: true, isError: false, refetch: vi.fn() } as any);
+
+        renderAgendaView();
+
+        const loadingContainer = screen.getByTestId('agenda-loading');
+        // O Spinner do ui renderiza um Loader2 (svg) com a classe animate-spin
+        expect(loadingContainer.querySelector('svg.animate-spin')).toBeTruthy();
+    });
+
+    it('scroll de inicialização conclui com fallback mesmo sem elemento alvo (#857)', () => {
+        vi.useFakeTimers();
+
+        // Itens com datas no passado: firstFutureGroup não será encontrado na janela
+        // visível, exercitando o fallback que marca hasInitializedScroll = true.
+        const PAST_TS = Date.now() - 86_400_000 * 30; // ~30 dias atrás
+        vi.mocked(useTasks).mockReturnValue({
+            data: [{ id: 't1', ref: 'TASK-001', label: 'Tarefa antiga', date_start: PAST_TS, progress: 0 }],
+            isLoading: false, isError: false, refetch: vi.fn(),
+        } as any);
+
+        renderAgendaView();
+
+        // Antes do timeout: a lista já é renderizada
+        expect(screen.getByText('Tarefa antiga')).toBeInTheDocument();
+
+        // Dispara o timeout de 300ms do scroll
+        act(() => { vi.advanceTimersByTime(350); });
+
+        // Após o timeout: o componente permanece estável — não fica preso
+        expect(screen.queryByTestId('agenda-loading')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('agenda-error')).not.toBeInTheDocument();
+        expect(screen.getByText('Tarefa antiga')).toBeInTheDocument();
+
+        vi.useRealTimers();
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -542,5 +583,100 @@ describe('AgendaView — #857: cleanup do setTimeout do scroll', () => {
 
         clearTimeoutSpy.mockRestore();
         vi.useRealTimers();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// #857 — Fallback de loading travado (spinner não fica preso indefinidamente)
+// ---------------------------------------------------------------------------
+describe('AgendaView — #857: fallback de loading travado', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useFakeTimers();
+        Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 500 });
+        // isLoading true em UM hook é suficiente para acionar o spinner inicial.
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: true, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useTasks).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useInterventions).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    const renderAgendaView = () => render(<AgendaView onNavigate={vi.fn()} />);
+
+    it('mostra o spinner inicial enquanto carrega (antes do timeout)', () => {
+        renderAgendaView();
+
+        expect(screen.getByTestId('agenda-loading')).toBeInTheDocument();
+        expect(screen.queryByTestId('agenda-load-stuck')).not.toBeInTheDocument();
+    });
+
+    it('após o timeout, substitui o spinner por ErrorState com "Tentar novamente"', () => {
+        renderAgendaView();
+
+        act(() => {
+            vi.advanceTimersByTime(AGENDA_LOADING_TIMEOUT_MS);
+        });
+
+        expect(screen.queryByTestId('agenda-loading')).not.toBeInTheDocument();
+        expect(screen.getByTestId('agenda-load-stuck')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /tentar novamente/i })).toBeInTheDocument();
+    });
+
+    it('o retry reinicia o ciclo (volta ao spinner) e dispara refetch de TODOS os hooks', () => {
+        const refetchEvents = vi.fn().mockResolvedValue(undefined);
+        const refetchTasks = vi.fn().mockResolvedValue(undefined);
+        const refetchInterventions = vi.fn().mockResolvedValue(undefined);
+        const refetchProjects = vi.fn().mockResolvedValue(undefined);
+        const refetchCustomers = vi.fn().mockResolvedValue(undefined);
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: true, isError: false, refetch: refetchEvents } as any);
+        vi.mocked(useTasks).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: refetchTasks } as any);
+        vi.mocked(useInterventions).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: refetchInterventions } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: refetchProjects } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: refetchCustomers } as any);
+
+        renderAgendaView();
+
+        act(() => {
+            vi.advanceTimersByTime(AGENDA_LOADING_TIMEOUT_MS);
+        });
+        expect(screen.getByTestId('agenda-load-stuck')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: /tentar novamente/i }));
+
+        // Reset do fallback: volta a exibir o spinner inicial.
+        expect(screen.queryByTestId('agenda-load-stuck')).not.toBeInTheDocument();
+        expect(screen.getByTestId('agenda-loading')).toBeInTheDocument();
+
+        // E após novo timeout, o fallback reaparece (ciclo recomeçou).
+        act(() => {
+            vi.advanceTimersByTime(AGENDA_LOADING_TIMEOUT_MS);
+        });
+        expect(screen.getByTestId('agenda-load-stuck')).toBeInTheDocument();
+
+        expect(refetchEvents).toHaveBeenCalled();
+        expect(refetchTasks).toHaveBeenCalled();
+        expect(refetchInterventions).toHaveBeenCalled();
+        expect(refetchProjects).toHaveBeenCalled();
+        expect(refetchCustomers).toHaveBeenCalled();
+    });
+
+    it('quando o loading resolve antes do timeout, nunca exibe o fallback', () => {
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+
+        renderAgendaView();
+
+        expect(screen.queryByTestId('agenda-loading')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('agenda-load-stuck')).not.toBeInTheDocument();
+
+        act(() => {
+            vi.advanceTimersByTime(AGENDA_LOADING_TIMEOUT_MS);
+        });
+
+        expect(screen.queryByTestId('agenda-load-stuck')).not.toBeInTheDocument();
     });
 });

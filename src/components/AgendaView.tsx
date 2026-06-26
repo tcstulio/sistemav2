@@ -24,7 +24,8 @@ import {
     EmptyState,
     ErrorState,
     Card,
-    MasterDetailLayout
+    MasterDetailLayout,
+    Spinner
 } from './ui';
 
 interface AgendaViewProps {
@@ -52,6 +53,11 @@ interface EncapsulatedGroup {
     items: AgendaItem[];
 }
 
+// #857: o spinner inicial ("Carregando agenda…") não pode ficar preso para
+// sempre. Após este tempo sem o loading resolver, exibimos um fallback de erro
+// com retry, evitando que a tela trave caso algum hook de dados nunca resolva.
+export const AGENDA_LOADING_TIMEOUT_MS = 15_000;
+
 const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     const { config, refreshData } = useDolibarr();
 
@@ -64,7 +70,12 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     const isLoading = isLoadingEvents || isLoadingTasks || isLoadingInterventions || isLoadingProjects || isLoadingCustomers;
     const isError = isErrorEvents || isErrorTasks || isErrorInterventions || isErrorProjects || isErrorCustomers;
 
+    // #857: garante que o fallback de loading travado reinicie a cada retry.
+    const [retryCount, setRetryCount] = useState(0);
+    const [isLoadStuck, setIsLoadStuck] = useState(false);
+
     const handleRetry = React.useCallback(() => {
+        setRetryCount(c => c + 1);
         Promise.all([
             refetchEvents(),
             refetchTasks(),
@@ -73,6 +84,18 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
             refetchCustomers(),
         ]);
     }, [refetchEvents, refetchTasks, refetchInterventions, refetchProjects, refetchCustomers]);
+
+    // #857: após AGENDA_LOADING_TIMEOUT_MS com isLoading true, o spinner inicial é
+    // substituído por um ErrorState — a tela não fica presa indefinidamente.
+    useEffect(() => {
+        if (!isLoading) {
+            setIsLoadStuck(false);
+            return;
+        }
+        setIsLoadStuck(false);
+        const timer = setTimeout(() => setIsLoadStuck(true), AGENDA_LOADING_TIMEOUT_MS);
+        return () => clearTimeout(timer);
+    }, [isLoading, retryCount]);
 
     const [filterType, setFilterType] = useState<'all' | 'event' | 'task' | 'deadline'>('all');
     const [showSystemEvents, setShowSystemEvents] = useState(false);
@@ -400,9 +423,12 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
                     const el = itemRefs.current[firstFutureGroup.dateStr];
                     if (el) {
                         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        setHasInitializedScroll(true);
                     }
                 }
+                // #857: fallback — marca o scroll como inicializado mesmo quando o
+                // elemento alvo não é encontrado, evitando retentativas a cada mudança
+                // de deps e mantendo a UI num estado normal.
+                setHasInitializedScroll(true);
             }, 300);
             // Cleanup: evita timer órfão se deps mudarem ou o componente desmontar,
             // o que deixaria o scroll inicial preso (#829).
@@ -528,10 +554,21 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
     }
 
     if (isLoading) {
+        if (isLoadStuck) {
+            // #857: loading travado por tempo demais → fallback de erro com retry.
+            return (
+                <div className="flex flex-col h-full items-center justify-center p-8 bg-slate-50 dark:bg-slate-950" data-testid="agenda-load-stuck">
+                    <ErrorState
+                        message="O carregamento está demorando mais que o normal. Verifique a conexão e tente novamente."
+                        onRetry={handleRetry}
+                    />
+                </div>
+            );
+        }
         return (
-            <div className="flex flex-col items-center justify-center h-full text-slate-400 p-20" data-testid="agenda-loading">
-                <Loader2 size={48} className="animate-spin mb-4 text-indigo-500" />
-                <p>Carregando agenda…</p>
+            <div className="flex flex-col h-full items-center justify-center gap-3 p-8 bg-slate-50 dark:bg-slate-950" data-testid="agenda-loading">
+                <Spinner size="lg" />
+                <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Carregando agenda…</p>
             </div>
         );
     }
