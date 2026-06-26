@@ -13,6 +13,8 @@ export const useMessages = (sessionId: string, chatId: string | null) => {
     const { config } = useDolibarr();
     const [messages, setMessages] = useState<WhatsAppMessage[]>([]);
     const [loading, setLoading] = useState(false);
+    // #829: expor o erro para a UI exibir ErrorState (em vez de toast duplicado).
+    const [error, setError] = useState<Error | null>(null);
     const chatIdRef = useRef(chatId);
 
     useEffect(() => { chatIdRef.current = chatId; }, [chatId]);
@@ -20,13 +22,15 @@ export const useMessages = (sessionId: string, chatId: string | null) => {
     const fetchMessages = useCallback(async () => {
         if (!chatId || !sessionId) return;
         setLoading(true);
+        setError(null);
         try {
             const data = await WhatsAppService.getMessages(chatId, sessionId);
             // Deduplication on fetch? Usually not needed if backend returns unique.
             setMessages(data || []);
-        } catch (error) {
-            log.error('Failed to fetch', error);
-            toast.error('Erro ao carregar mensagens');
+        } catch (err) {
+            log.error('Failed to fetch', err);
+            // #829: o toast.error é redundante — a UI já mostra um ErrorState visível.
+            setError(err instanceof Error ? err : new Error(String(err)));
         } finally {
             setLoading(false);
         }
@@ -37,6 +41,7 @@ export const useMessages = (sessionId: string, chatId: string | null) => {
             fetchMessages();
         } else {
             setMessages([]);
+            setError(null);
         }
     }, [chatId, fetchMessages]);
 
@@ -164,6 +169,8 @@ export const useMessages = (sessionId: string, chatId: string | null) => {
     return {
         messages,
         loading,
+        error,
+        refetch: fetchMessages,
         sendMessage
     };
 };

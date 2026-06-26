@@ -378,3 +378,73 @@ describe('AgendaView — #550: New event modal with Dolibarr types', () => {
         });
     });
 });
+
+// ---------------------------------------------------------------------------
+// #829 — Estados de loading/erro ausentes
+// ---------------------------------------------------------------------------
+describe('AgendaView — #829: estados de loading e erro', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 500 });
+        // Default: dados vazios, sem loading/erro.
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useTasks).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useInterventions).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+    });
+
+    const renderAgendaView = () => render(<AgendaView onNavigate={vi.fn()} />);
+
+    it('exibe spinner de carregamento (e não a tela vazia) quando isLoading é true', () => {
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: true, isError: false, refetch: vi.fn() } as any);
+
+        renderAgendaView();
+
+        expect(screen.getByTestId('agenda-loading')).toBeInTheDocument();
+        // Tela vazia (EmptyState) não deve aparecer durante o loading
+        expect(screen.queryByText('Nenhum item na agenda')).not.toBeInTheDocument();
+    });
+
+    it('exibe ErrorState com botão "Tentar novamente" quando um hook falha', () => {
+        vi.mocked(useTasks).mockReturnValue({ data: [], isLoading: false, isError: true, refetch: vi.fn() } as any);
+
+        renderAgendaView();
+
+        expect(screen.getByTestId('agenda-error')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /tentar novamente/i })).toBeInTheDocument();
+    });
+
+    it('o retry dispara refetch de TODOS os hooks (incluindo useCustomers)', async () => {
+        const refetchEvents = vi.fn().mockResolvedValue(undefined);
+        const refetchTasks = vi.fn().mockResolvedValue(undefined);
+        const refetchInterventions = vi.fn().mockResolvedValue(undefined);
+        const refetchProjects = vi.fn().mockResolvedValue(undefined);
+        const refetchCustomers = vi.fn().mockResolvedValue(undefined);
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: refetchEvents } as any);
+        vi.mocked(useTasks).mockReturnValue({ data: [], isLoading: false, isError: true, refetch: refetchTasks } as any);
+        vi.mocked(useInterventions).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: refetchInterventions } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: refetchProjects } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: refetchCustomers } as any);
+
+        renderAgendaView();
+
+        fireEvent.click(screen.getByRole('button', { name: /tentar novamente/i }));
+
+        await waitFor(() => {
+            expect(refetchEvents).toHaveBeenCalled();
+            expect(refetchTasks).toHaveBeenCalled();
+            expect(refetchInterventions).toHaveBeenCalled();
+            expect(refetchProjects).toHaveBeenCalled();
+            expect(refetchCustomers).toHaveBeenCalled();
+        });
+    });
+
+    it('estado vazio legítimo (sem erro) continua mostrando EmptyState', () => {
+        renderAgendaView();
+
+        expect(screen.queryByTestId('agenda-error')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('agenda-loading')).not.toBeInTheDocument();
+        expect(screen.getByText('Nenhum item na agenda')).toBeInTheDocument();
+    });
+});
