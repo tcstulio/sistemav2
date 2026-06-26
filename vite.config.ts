@@ -33,19 +33,19 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3003,
       host: '0.0.0.0',
-      allowedHosts: ['.trycloudflare.com', '.coolgroove.com.br', 'localhost'],
+      allowedHosts: true, // Permitir acessos pela rede local (celular, etc)
       hmr: false,
       watch: {
         ignored: ['**/.wwebjs_auth/**', '**/.wwebjs_cache/**', '**/backend/**']
       },
       proxy: {
         '/api': {
-          target: 'http://localhost:3004',
+          target: 'http://127.0.0.1:3004', // Evita problema de IPv6 (::1) no Node 17+ vs 0.0.0.0 do backend
           changeOrigin: true,
           secure: false,
         },
         '/socket.io': {
-          target: 'http://localhost:3004',
+          target: 'http://127.0.0.1:3004',
           changeOrigin: true,
           secure: false,
           ws: true
