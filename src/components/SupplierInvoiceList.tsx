@@ -548,7 +548,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                 Validar
                             </Button>
                         )}
-                        {selectedInvoice.statut === '1' && (
+                        {canDo('pay', 'supplier_invoices') && selectedInvoice.statut === '1' && (
                             <Button variant="secondary" size="sm" icon={<CreditCard size={14} />} onClick={() => {
                                 setPaymentInvoice(selectedInvoice);
                                 setIsPaymentModalOpen(true);
@@ -556,7 +556,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                 Pagar
                             </Button>
                         )}
-                        {(selectedInvoice.statut === '1' || selectedInvoice.statut === '2') && (
+                        {canDo('reopen', 'supplier_invoices') && (selectedInvoice.statut === '1' || selectedInvoice.statut === '2') && (
                             <Button variant="ghost" size="sm" onClick={async () => {
                                 if (!(await confirm('Reabrir fatura de fornecedor (voltar para rascunho)?'))) return;
                                 try {

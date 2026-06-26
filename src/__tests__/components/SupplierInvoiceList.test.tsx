@@ -4,7 +4,10 @@ import userEvent from '@testing-library/user-event';
 import SupplierInvoiceList from '../../components/SupplierInvoiceList';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import { DolibarrService } from '../../services/dolibarrService';
+import { useDolibarr } from '../../context/DolibarrContext';
 import { useSupplierInvoices, useSuppliers, useSupplierInvoiceLines, useSupplierPayments, useSupplierPaymentInvoiceLinks } from '../../hooks/dolibarr';
+import { canDoAction } from '../../utils/writePermissions';
+import type { WriteAction, WriteIdentity } from '../../utils/writePermissions';
 import type { SupplierInvoice } from '../../types';
 import { formatCurrency } from '../../utils/formatUtils';
 
@@ -627,5 +630,118 @@ describe('SupplierInvoiceList — Chaves estáveis (#848)', () => {
         qtyInputs = screen.getAllByPlaceholderText('Qtd');
         expect(qtyInputs).toHaveLength(1);
         expect((qtyInputs[0] as HTMLInputElement).value).toBe('7');
+    });
+});
+
+describe('SupplierInvoiceList — Gating canDo nos botões de mutação (#851)', () => {
+    // Wrapper: canDo resolvido via canDoAction (writePermissions) p/ espelhar o comportamento
+    // real do DolibarrContext. Assim o teste valida a integração component + mapa de permissões.
+    const canDoFor = (ident: WriteIdentity) => (action: WriteAction, screen: string) =>
+        canDoAction(ident, screen, action);
+
+    const renderWith = (ident: any, invoices: SupplierInvoice[]) => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: { apiUrl: 'http://test', apiKey: 'key', themeColor: 'indigo', darkMode: false },
+            refreshData: vi.fn(),
+            canAccess: () => true,
+            canDo: canDoFor(ident),
+        } as any);
+        vi.mocked(useSupplierInvoices).mockReturnValue({ data: invoices, refetch: vi.fn() } as any);
+        vi.mocked(useSuppliers).mockReturnValue({
+            data: [{ id: 'sup1', name: 'Fornecedor Alpha' }],
+        } as any);
+        vi.mocked(useSupplierInvoiceLines).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierPayments).mockReturnValue({ data: [] } as any);
+        vi.mocked(useSupplierPaymentInvoiceLinks).mockReturnValue({ data: [] } as any);
+
+        return render(
+            <ConfirmProvider>
+                <SupplierInvoiceList />
+            </ConfirmProvider>
+        );
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('usuário sem permissão NÃO vê os botões de Validar, Pagar e Reabrir', async () => {
+        const user = userEvent.setup();
+        const semPerm = { admin: 0, rights: { fournisseur: { facture: {} } } };
+        renderWith(semPerm, [mockDraftInvoice, mockUnpaidInvoice]);
+
+        // Draft → Validar oculto
+        await user.click(screen.getByText('FA-DRAFT-001'));
+        await waitFor(() => expect(screen.getByText('Valor Total')).toBeTruthy());
+        expect(screen.queryByText('Validar')).toBeNull();
+
+        // Unpaid → Pagar e Reabrir ocultos
+        await user.click(screen.getByText('FA-UNPAID-001'));
+        await waitFor(() => expect(screen.getByText('Valor Total')).toBeTruthy());
+        expect(screen.queryByText('Pagar')).toBeNull();
+        expect(screen.queryByText('Reabrir')).toBeNull();
+    });
+
+    it('admin vê e pode executar Validar, Pagar e Reabrir', async () => {
+        const user = userEvent.setup();
+        renderWith({ admin: 1 }, [mockDraftInvoice, mockUnpaidInvoice]);
+
+        // Draft → Validar visível
+        await user.click(screen.getByText('FA-DRAFT-001'));
+        await waitFor(() => expect(screen.getByText('Validar')).toBeTruthy());
+
+        // Unpaid → Pagar e Reabrir visíveis
+        await user.click(screen.getByText('FA-UNPAID-001'));
+        await waitFor(() => expect(screen.getByText('Valor Total')).toBeTruthy());
+        expect(screen.getByText('Pagar')).toBeTruthy();
+        expect(screen.getByText('Reabrir')).toBeTruthy();
+    });
+
+    it('usuário com apenas facture.paiement vê apenas Pagar (Validar/Reabrir ocultos)', async () => {
+        const user = userEvent.setup();
+        const payOnly = { admin: 0, rights: { fournisseur: { facture: { paiement: 1 } } } };
+        renderWith(payOnly, [mockDraftInvoice, mockUnpaidInvoice]);
+
+        // Draft → Validar oculto (sem facture.valider)
+        await user.click(screen.getByText('FA-DRAFT-001'));
+        await waitFor(() => expect(screen.getByText('Valor Total')).toBeTruthy());
+        expect(screen.queryByText('Validar')).toBeNull();
+
+        // Unpaid → Pagar visível, Reabrir oculto (reopen usa facture.valider)
+        await user.click(screen.getByText('FA-UNPAID-001'));
+        await waitFor(() => expect(screen.getByText('Valor Total')).toBeTruthy());
+        expect(screen.getByText('Pagar')).toBeTruthy();
+        expect(screen.queryByText('Reabrir')).toBeNull();
+    });
+
+    // Critério 2 (execução): admin não só vê como EXECUTA Validar e Reabrir.
+    it('admin valida a fatura ao confirmar o diálogo (executa validateSupplierInvoice)', async () => {
+        const user = userEvent.setup();
+        renderWith({ admin: 1 }, [mockDraftInvoice]);
+
+        await user.click(screen.getByText('FA-DRAFT-001'));
+        await user.click(await screen.findByRole('button', { name: 'Validar' }));
+
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByText('Confirmar'));
+
+        await waitFor(() => {
+            expect(DolibarrService.validateSupplierInvoice).toHaveBeenCalledWith(expect.anything(), 'inv1');
+        });
+    });
+
+    it('admin reabre uma fatura paga (statut 2) ao confirmar (executa setSupplierInvoiceToDraft)', async () => {
+        const user = userEvent.setup();
+        renderWith({ admin: 1 }, [mockPaidInvoice]);
+
+        await user.click(screen.getByText('FA-PAID-001'));
+        await user.click(await screen.findByRole('button', { name: 'Reabrir' }));
+
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByText('Confirmar'));
+
+        await waitFor(() => {
+            expect(DolibarrService.setSupplierInvoiceToDraft).toHaveBeenCalledWith(expect.anything(), 'inv3');
+        });
     });
 });
