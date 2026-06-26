@@ -55,4 +55,41 @@ describe('Modal', () => {
         const { container } = render(<Modal {...defaultProps} isOpen={false}><p>Content</p></Modal>);
         expect(container).toBeEmptyDOMElement();
     });
+
+    it('calls onClose when Escape key is pressed', () => {
+        const handleClose = vi.fn();
+        render(<Modal isOpen onClose={handleClose}><p>Content</p></Modal>);
+        fireEvent.keyDown(document, { key: 'Escape' });
+        expect(handleClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not close on Escape when closeOnEscape is false', () => {
+        const handleClose = vi.fn();
+        render(<Modal isOpen onClose={handleClose} closeOnEscape={false}><p>Content</p></Modal>);
+        fireEvent.keyDown(document, { key: 'Escape' });
+        expect(handleClose).not.toHaveBeenCalled();
+    });
+
+    it('calls onClose when overlay/backdrop is clicked', () => {
+        const handleClose = vi.fn();
+        render(<Modal isOpen onClose={handleClose}><p>Content</p></Modal>);
+        const overlay = document.querySelector('[aria-hidden="true"]') as HTMLElement;
+        fireEvent.click(overlay);
+        expect(handleClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not close on overlay click when closeOnOverlay is false', () => {
+        const handleClose = vi.fn();
+        render(<Modal isOpen onClose={handleClose} closeOnOverlay={false}><p>Content</p></Modal>);
+        const overlay = document.querySelector('[aria-hidden="true"]') as HTMLElement;
+        fireEvent.click(overlay);
+        expect(handleClose).not.toHaveBeenCalled();
+    });
+
+    it('does not close when clicking inside modal content', () => {
+        const handleClose = vi.fn();
+        render(<Modal isOpen onClose={handleClose}><p>Inner Content</p></Modal>);
+        fireEvent.click(screen.getByText('Inner Content'));
+        expect(handleClose).not.toHaveBeenCalled();
+    });
 });

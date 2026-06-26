@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import WhatsAppView from '../../components/WhatsAppView';
 import { ConfirmProvider } from '../../hooks/useConfirm';
@@ -142,7 +142,16 @@ vi.mock('../../components/whatsapp/MessageInput', () => ({
 }));
 
 vi.mock('../../components/whatsapp/ContextPanel', () => ({
-    ContextPanel: () => <div data-testid="context-panel" />,
+    ContextPanel: (props: any) => {
+        capturedCallbacks.onLinkCustomer = props.onLinkCustomer;
+        return (
+            <div data-testid="context-panel">
+                <button data-testid="link-customer-btn" onClick={() => props.onLinkCustomer?.()}>
+                    Link Customer
+                </button>
+            </div>
+        );
+    },
 }));
 
 vi.mock('../../components/whatsapp/ConnectModal', () => ({
@@ -282,6 +291,129 @@ describe('WhatsAppView — no native alert/confirm', () => {
 
         // ESC fecha (comportamento do <Modal>, antes os modais eram <div> inline sem ESC)
         await user.keyboard('{Escape}');
+
+        await waitFor(() => {
+            expect(screen.queryByRole('dialog')).toBeNull();
+        });
+    });
+});
+
+describe('WhatsAppView — modais reutilizáveis (#835): ESC e backdrop em todos os modais', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        capturedCallbacks = {};
+        vi.mocked(WhatsAppService.getChatSettings).mockResolvedValue({ autoReplyEnabled: undefined } as any);
+        vi.mocked(WhatsAppService.getSessionSettings).mockResolvedValue({} as any);
+        vi.mocked(WhatsAppService.getUserSettings).mockResolvedValue({ signatureName: '' } as any);
+    });
+
+    // O <Modal> renderiza o overlay/backdrop como um <div aria-hidden="true">.
+    // Clicar nele dispara onClose (comportamento nativo do componente reutilizável).
+    const clickBackdrop = (dialog: HTMLElement) => {
+        const overlay = dialog.querySelector('[aria-hidden="true"]') as HTMLElement | null;
+        expect(overlay).toBeTruthy();
+        fireEvent.click(overlay as HTMLElement);
+    };
+
+    it('Settings modal: preserva conteúdo interno e ações do footer', async () => {
+        const user = userEvent.setup();
+
+        renderView();
+
+        await user.click(screen.getByTestId('settings-btn'));
+
+        const dialog = await screen.findByRole('dialog');
+
+        // Conteúdo interno preservado
+        expect(within(dialog).getByText('Conta (Sessão)')).toBeTruthy();
+        expect(within(dialog).getByText('Contexto da IA (Prompt)')).toBeTruthy();
+        // Ações do footer preservadas (renderizadas via <Modal>)
+        expect(within(dialog).getByRole('button', { name: 'Salvar' })).toBeTruthy();
+        expect(within(dialog).getByRole('button', { name: 'Cancelar' })).toBeTruthy();
+    });
+
+    it('Settings modal: fecha ao clicar no backdrop', async () => {
+        const user = userEvent.setup();
+
+        renderView();
+
+        await user.click(screen.getByTestId('settings-btn'));
+
+        const dialog = await screen.findByRole('dialog');
+        expect(within(dialog).getByText('Configurações do WhatsApp')).toBeTruthy();
+
+        clickBackdrop(dialog);
+
+        await waitFor(() => {
+            expect(screen.queryByRole('dialog')).toBeNull();
+        });
+    });
+
+    it('Profile modal: abre a partir de Settings e fecha com ESC', async () => {
+        const user = userEvent.setup();
+
+        renderView();
+
+        await user.click(screen.getByTestId('settings-btn'));
+        await screen.findByRole('dialog');
+
+        // O modal de perfil é aberto a partir das configurações
+        await user.click(screen.getByRole('button', { name: /Editar Perfil e Presença/ }));
+
+        const dialog = await screen.findByRole('dialog');
+        expect(within(dialog).getByTestId('profile-settings')).toBeTruthy();
+
+        await user.keyboard('{Escape}');
+
+        await waitFor(() => {
+            expect(screen.queryByRole('dialog')).toBeNull();
+        });
+    });
+
+    it('Profile modal: fecha ao clicar no backdrop', async () => {
+        const user = userEvent.setup();
+
+        renderView();
+
+        await user.click(screen.getByTestId('settings-btn'));
+        await screen.findByRole('dialog');
+        await user.click(screen.getByRole('button', { name: /Editar Perfil e Presença/ }));
+
+        const dialog = await screen.findByRole('dialog');
+        clickBackdrop(dialog);
+
+        await waitFor(() => {
+            expect(screen.queryByRole('dialog')).toBeNull();
+        });
+    });
+
+    it('Link Customer modal: abre com conteúdo e fecha com ESC', async () => {
+        const user = userEvent.setup();
+
+        renderView();
+
+        await user.click(screen.getByTestId('link-customer-btn'));
+
+        const dialog = await screen.findByRole('dialog');
+        expect(within(dialog).getByText('Vincular Cliente')).toBeTruthy();
+        expect(within(dialog).getByText(/Selecione o cliente do Dolibarr/)).toBeTruthy();
+
+        await user.keyboard('{Escape}');
+
+        await waitFor(() => {
+            expect(screen.queryByRole('dialog')).toBeNull();
+        });
+    });
+
+    it('Link Customer modal: fecha ao clicar no backdrop', async () => {
+        const user = userEvent.setup();
+
+        renderView();
+
+        await user.click(screen.getByTestId('link-customer-btn'));
+
+        const dialog = await screen.findByRole('dialog');
+        clickBackdrop(dialog);
 
         await waitFor(() => {
             expect(screen.queryByRole('dialog')).toBeNull();
