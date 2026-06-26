@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExpenseReportPaymentList from '../../components/Finance/ExpenseReportPaymentList';
 
@@ -117,7 +117,7 @@ vi.mock('../../components/HR/modals/ExpenseDetailModal', () => ({
 // ------------------------------------------------------------------
 // Import mocked hooks after mock setup
 // ------------------------------------------------------------------
-import { useExpenseReportPayments } from '../../hooks/dolibarr';
+import { useExpenseReportPayments, useExpenseReports, useExpenseReportPaymentLinks } from '../../hooks/dolibarr';
 
 // ------------------------------------------------------------------
 // Tests
@@ -189,5 +189,52 @@ describe('ExpenseReportPaymentList', () => {
         } as any);
         render(<ExpenseReportPaymentList />);
         expect(screen.getByText(/Erro ao carregar pagamentos/)).toBeInTheDocument();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// #825 — Chaves estáveis nos relatórios vinculados (key=link.id)
+// Cada relatório vinculado no detalhe do pagamento usa key={link.id}. Chaves
+// estáveis/únicas garantem que cada linha exibe o seu próprio ref e valor de
+// vínculo, sem troca entre linhas ao reordenar/filtrar.
+// ---------------------------------------------------------------------------
+describe('ExpenseReportPaymentList — #825: chaves estáveis nos relatórios vinculados', () => {
+    const linksMock = [
+        { id: 'L1', fk_payment: '1', fk_expensereport: '10', amount: 200 },
+        { id: 'L2', fk_payment: '1', fk_expensereport: '20', amount: 150 },
+    ];
+    const reportsMock = [
+        { id: '10', ref: 'ND-001', fk_user_author: '42', project_id: '', date_debut: 0, date_fin: 0, total_ttc: 350, statut: '5' },
+        { id: '20', ref: 'ND-002', fk_user_author: '42', project_id: '', date_debut: 0, date_fin: 0, total_ttc: 500, statut: '5' },
+    ];
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useExpenseReportPayments).mockReturnValue({
+            data: mockPayments,
+            isLoading: false,
+            error: null,
+        } as any);
+        vi.mocked(useExpenseReports).mockReturnValue({ data: reportsMock } as any);
+        vi.mocked(useExpenseReportPaymentLinks).mockReturnValue({ data: linksMock } as any);
+    });
+
+    it('renderiza cada relatório vinculado com seu próprio valor (sem troca entre linhas)', async () => {
+        const user = userEvent.setup();
+        render(<ExpenseReportPaymentList />);
+
+        const paymentCard = screen.getByText('PAY-EXP-001').closest('[class]')!;
+        await user.click(paymentCard);
+
+        // Dois relatórios distintos, cada um na sua linha (key=link.id)
+        const row1 = await screen.findByText('ND-001');
+        const row1Container = row1.closest('div.flex.justify-between') as HTMLElement;
+        const row2 = screen.getByText('ND-002').closest('div.flex.justify-between') as HTMLElement;
+
+        // O valor do vínculo (link.amount) aparece na linha correta, sem troca.
+        expect(within(row1Container).getByText('R$ 200,00')).toBeInTheDocument();
+        expect(within(row2).getByText('R$ 150,00')).toBeInTheDocument();
+        expect(within(row1Container).queryByText('R$ 150,00')).not.toBeInTheDocument();
+        expect(within(row2).queryByText('R$ 200,00')).not.toBeInTheDocument();
     });
 });

@@ -204,3 +204,49 @@ describe('ReportsView — Top 5 Clientes responsivo (#562)', () => {
         });
     });
 });
+
+// ============================================================
+// #825 — chaves estáveis na legenda de clientes (nomes duplicados)
+// ============================================================
+describe('ReportsView — chaves estáveis na legenda de clientes (#825)', () => {
+    const currentYear = new Date().getFullYear();
+    const ts = Math.floor(new Date(currentYear, 5, 1).getTime() / 1000);
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('renderiza dois clientes com o MESMO nome sem warning de chave duplicada', () => {
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        vi.mocked(useInvoices).mockReturnValue({
+            data: [
+                { id: 'inv1', ref: 'FA001', socid: '100', date: ts, total_ttc: 5000, statut: '2', type: '0' },
+                { id: 'inv2', ref: 'FA002', socid: '200', date: ts, total_ttc: 3000, statut: '2', type: '0' },
+            ],
+            isLoading: false,
+        } as any);
+        vi.mocked(useCustomers).mockReturnValue({
+            data: [
+                { id: '100', name: 'Cliente Homônimo' },
+                { id: '200', name: 'Cliente Homônimo' },
+            ],
+            isLoading: false,
+        } as any);
+
+        renderWithRouter(<ReportsView />);
+
+        const list = screen.getByRole('list', { name: 'top-clientes-legenda' });
+        // Dois itens distintos (chaveados por socid, não por nome)
+        expect(list.querySelectorAll('li').length).toBe(2);
+        // Ambos os valores aparecem (não mesclados/dropados por chave duplicada)
+        expect(list.textContent).toContain(formatCurrency(5000));
+        expect(list.textContent).toContain(formatCurrency(3000));
+
+        // Nenhum warning de chave duplicada do React
+        const dupKey = spy.mock.calls.find(
+            (c) => typeof c[0] === 'string' && c[0].includes('same key'),
+        );
+        expect(dupKey).toBeUndefined();
+        spy.mockRestore();
+    });
+});

@@ -10,6 +10,7 @@ import { LinkedObjects } from './common/LinkedObjects';
 import { PdfPreviewModal } from './common/PdfPreviewModal';
 import { PaginationControls } from './common/PaginationControls';
 import { useListControls } from '../hooks/useListControls';
+import { stableUniqueKeys } from '../utils/uniqueKey';
 
 // Design System
 import { PageHeader, MasterDetailLayout, Card, Button, Tabs, Tab, EmptyState, StatusBadge, ListToolbar, ListTotalBar, ConfirmDeleteButton } from './ui';
@@ -785,8 +786,10 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {documents.map((doc) => (
-                                        <div key={doc.name} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 group hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors">
+                                    {(() => {
+                                        const docKeys = stableUniqueKeys(documents, d => d.name);
+                                        return documents.map((doc, i) => (
+                                        <div key={docKeys[i]} className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 group hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors">
                                             <div className="flex items-center gap-3 overflow-hidden">
                                                 <div className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-sm">
                                                     <FileText size={24} className="text-indigo-500" />
@@ -816,7 +819,8 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                                 </button>
                                             </div>
                                         </div>
-                                    ))}
+                                        ));
+                                    })()}
                                 </div>
                             )}
                         </div>
