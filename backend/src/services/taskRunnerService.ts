@@ -354,7 +354,7 @@ class TaskRunnerService {
             const activeTasks = Object.values(this.store.tasks).filter((t) => active.includes(t.status));
             const activeCount = activeTasks.length;
             
-            const { isAlive } = require('../utils/processTree');
+            
             const hasGhostActive = activeTasks.some(t => {
                 if (t.childPid && !isAlive(t.childPid)) return true;
                 if (!t.childPid && t.startedAt) {
