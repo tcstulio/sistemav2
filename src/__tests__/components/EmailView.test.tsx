@@ -5,6 +5,19 @@ import { MemoryRouter } from 'react-router-dom';
 import EmailView from '../../components/Email/EmailView';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import { EmailService } from '../../services/emailService';
+import { toast } from 'sonner';
+
+vi.mock('sonner', () => ({
+    toast: {
+        success: vi.fn(),
+        error: vi.fn(),
+        info: vi.fn(),
+    },
+}));
+
+vi.mock('../../services/aiService', () => ({
+    AiService: { analyzeSystem: vi.fn() },
+}));
 
 vi.mock('../../services/emailService', () => ({
     EmailService: {
@@ -21,6 +34,8 @@ vi.mock('../../services/emailService', () => ({
         getMessageBody: vi.fn(),
         getThreadSettings: vi.fn(),
         getAssignment: vi.fn(),
+        getTemplates: vi.fn(() => Promise.resolve([])),
+        sendEmail: vi.fn(),
     },
 }));
 
@@ -83,6 +98,7 @@ const setupEmailServiceMocks = () => {
     vi.mocked(EmailService.getMessageBody).mockResolvedValue({} as any);
     vi.mocked(EmailService.getThreadSettings).mockResolvedValue({} as any);
     vi.mocked(EmailService.getAssignment).mockResolvedValue(null);
+    vi.mocked(EmailService.sendEmail).mockResolvedValue({ messageId: '1' });
 };
 
 const renderWithProvider = () =>
@@ -150,5 +166,56 @@ describe('EmailView', () => {
         await waitFor(() => {
             expect(EmailService.deleteMessages).not.toHaveBeenCalled();
         });
+    });
+
+    it('bloqueia envio sem destinatário a partir do EmailView e mostra toast (#834)', async () => {
+        const user = userEvent.setup();
+        renderWithProvider();
+
+        await waitFor(() => {
+            expect(screen.getByText('Subject One')).toBeTruthy();
+        });
+
+        await user.click(screen.getByTitle('Nova Mensagem'));
+
+        await user.type(screen.getByPlaceholderText('Assunto'), 'Teste');
+        await user.type(screen.getByPlaceholderText('Escreva sua mensagem aqui...'), 'Corpo');
+
+        await user.click(screen.getByRole('button', { name: 'Enviar' }));
+
+        await waitFor(() => {
+            expect(toast.error).toHaveBeenCalled();
+        });
+        expect(EmailService.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('envia e-mail válido a partir do EmailView e chama sendEmail (#834)', async () => {
+        const user = userEvent.setup();
+        renderWithProvider();
+
+        await waitFor(() => {
+            expect(screen.getByText('Subject One')).toBeTruthy();
+        });
+
+        await user.click(screen.getByTitle('Nova Mensagem'));
+
+        await user.type(screen.getByPlaceholderText('Para'), 'cliente@exemplo.com');
+        await user.type(screen.getByPlaceholderText('Assunto'), 'Teste');
+        await user.type(screen.getByPlaceholderText('Escreva sua mensagem aqui...'), 'Corpo');
+
+        await user.click(screen.getByRole('button', { name: 'Enviar' }));
+
+        await waitFor(() => {
+            expect(EmailService.sendEmail).toHaveBeenCalledWith(
+                'acc1',
+                'cliente@exemplo.com',
+                'Teste',
+                'Corpo',
+                [],
+                undefined,
+                undefined
+            );
+        });
+        expect(toast.success).toHaveBeenCalledWith('Email enviado com sucesso!');
     });
 });

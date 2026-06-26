@@ -375,7 +375,10 @@ const EmailView: React.FC = () => {
 
     const handleSendEmail = async (to: string, subject: string, body: string, attachments: any[], cc?: string, bcc?: string) => {
         if (!selectedAccountId) return;
-        if (!isValidEmail(to)) return;
+        if (!isValidEmail(to)) {
+            toast.error('Informe ao menos um destinatário.');
+            return;
+        }
         await EmailService.sendEmail(selectedAccountId, to, subject, body, attachments, cc, bcc);
         toast.success('Email enviado com sucesso!');
         if (selectedFolder === 'Sent' || selectedFolder.toLowerCase().includes('sent')) {
