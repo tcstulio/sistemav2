@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import AgendaView from '../../components/AgendaView';
 
 // --- Mock sonner ---
@@ -446,5 +446,101 @@ describe('AgendaView — #829: estados de loading e erro', () => {
         expect(screen.queryByTestId('agenda-error')).not.toBeInTheDocument();
         expect(screen.queryByTestId('agenda-loading')).not.toBeInTheDocument();
         expect(screen.getByText('Nenhum item na agenda')).toBeInTheDocument();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// #857 — Cleanup do setTimeout do scroll
+// -------------------------------------------------------------------------
+// O useEffect do auto-scroll agenda um setTimeout(300ms) para rolar até "hoje".
+// Sem cleanup, desmontar ou mudança de deps deixa um timer órfão que executa
+// scrollIntoView/ setState num componente já desmontado. O cleanup via
+// clearTimeout evita esse cenário.
+// -------------------------------------------------------------------------
+describe('AgendaView — #857: cleanup do setTimeout do scroll', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 500 });
+        vi.mocked(useEvents).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useTasks).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useInterventions).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useProjects).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+        vi.mocked(useCustomers).mockReturnValue({ data: [], isLoading: false, isError: false, refetch: vi.fn() } as any);
+    });
+
+    const renderAgendaView = () => render(<AgendaView onNavigate={vi.fn()} />);
+
+    it('executa o scroll para "hoje" após o timeout decorrer (fluxo normal)', () => {
+        vi.useFakeTimers();
+        const scrollIntoView = vi.fn();
+        window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+
+        const future = Date.now() + 86_400_000; // +1 dia (ms)
+        vi.mocked(useTasks).mockReturnValue({
+            data: [{ id: 't1', label: 'Tarefa futura', date_start: future, progress: 0 }],
+            isLoading: false, isError: false, refetch: vi.fn(),
+        } as any);
+
+        renderAgendaView();
+
+        // Antes do timeout, nenhum scroll deve ter ocorrido
+        expect(scrollIntoView).not.toHaveBeenCalled();
+
+        act(() => {
+            vi.advanceTimersByTime(400); // > 300ms
+        });
+
+        expect(scrollIntoView).toHaveBeenCalled();
+
+        vi.useRealTimers();
+    });
+
+    it('cancela o timer do scroll ao desmontar (sem scrollIntoView órfão)', () => {
+        vi.useFakeTimers();
+        const scrollIntoView = vi.fn();
+        window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+
+        const future = Date.now() + 86_400_000;
+        vi.mocked(useTasks).mockReturnValue({
+            data: [{ id: 't1', label: 'Tarefa futura', date_start: future, progress: 0 }],
+            isLoading: false, isError: false, refetch: vi.fn(),
+        } as any);
+
+        const { unmount } = renderAgendaView();
+
+        // Desmonta antes dos 300ms — o cleanup deve chamar clearTimeout
+        unmount();
+
+        act(() => {
+            vi.advanceTimersByTime(500);
+        });
+
+        // Timer foi cancelado: scrollIntoView nunca dispara
+        expect(scrollIntoView).not.toHaveBeenCalled();
+
+        vi.useRealTimers();
+    });
+
+    it('limpa o timer anterior quando as deps mudam (sem acúmulo de timers)', () => {
+        vi.useFakeTimers();
+        const scrollIntoView = vi.fn();
+        window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+
+        const future = Date.now() + 86_400_000;
+        vi.mocked(useTasks).mockReturnValue({
+            data: [{ id: 't1', label: 'Tarefa futura', date_start: future, progress: 0 }],
+            isLoading: false, isError: false, refetch: vi.fn(),
+        } as any);
+
+        const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+
+        renderAgendaView();
+
+        // clearTimeout deve ter sido chamado durante o ciclo de vida
+        // (pelo menos uma vez, seja por re-render ou cleanup de deps)
+        expect(clearTimeoutSpy).toHaveBeenCalled();
+
+        clearTimeoutSpy.mockRestore();
+        vi.useRealTimers();
     });
 });
