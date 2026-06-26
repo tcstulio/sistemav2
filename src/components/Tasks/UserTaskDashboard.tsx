@@ -30,7 +30,7 @@ import TaskDetail from '../TaskDetail';
 import { TaskModal } from '../Projects/modals/TaskModal';
 import { DolibarrService } from '../../services/dolibarrService';
 import { toast } from 'sonner';
-import { ErrorState } from '../ui';
+import { ErrorState, EmptyState } from '../ui';
 
 interface UserTaskDashboardProps {
     onNavigate: (view: string, id: string) => void;
@@ -48,15 +48,20 @@ function canLogTimeOnTask(task: Task, userId: string | undefined, taskContacts: 
 
 const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => {
     const { config, currentUser: user } = useDolibarr(); // Get config & currentUser
-    const { data: tasks, isError: isTasksError, refetch: refetchTasks } = useTasks(config); // Fetch Tasks
-    const { data: projects, isError: isProjectsError, refetch: refetchProjects } = useProjects(config); // Fetch Projects
-    const { data: allUsers, isError: isUsersError, refetch: refetchUsers } = useUsers(config); // Fetch Users for hierarchy
-    const { data: taskContacts, isError: isTaskContactsError, refetch: refetchTaskContacts } = useTaskContacts(config); // Fetch Task Contacts
+    const { data: tasks, isError: isTasksError, error: tasksError, refetch: refetchTasks } = useTasks(config); // Fetch Tasks
+    const { data: projects, isError: isProjectsError, error: projectsError, refetch: refetchProjects } = useProjects(config); // Fetch Projects
+    const { data: allUsers, isError: isUsersError, error: usersError, refetch: refetchUsers } = useUsers(config); // Fetch Users for hierarchy
+    const { data: taskContacts, isError: isTaskContactsError, error: taskContactsError, refetch: refetchTaskContacts } = useTaskContacts(config); // Fetch Task Contacts
     const { data: projectContacts, refetch: refetchProjectContacts } = useProjectContacts(config); // Fetch Project Contacts
     const { data: timeLogs, refetch: refetchTimeLogs } = useTaskTimeLogs(config); // Fetch Time Logs
 
     // #829: Erro de qualquer hook de dados essencial → ErrorState com retry (não spinner infinito).
     const hasError = isTasksError || isProjectsError || isUsersError || isTaskContactsError;
+    // #858: Superfície a mensagem real do primeiro erro (padrão PaymentList) no ErrorState.
+    const firstDataError = tasksError || projectsError || usersError || taskContactsError;
+    const errorMessage = firstDataError
+        ? (firstDataError instanceof Error ? firstDataError.message : String(firstDataError))
+        : null;
 
     const [filterStatus, setFilterStatus] = useState<'all' | 'open'>('open');
     const [viewMode, setViewMode] = useState<'me' | 'team' | 'analytics'>('me');
@@ -788,7 +793,7 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                     {hasError ? (
                         <div className="flex items-center justify-center h-full p-8" data-testid="user-tasks-error">
                             <ErrorState
-                                message="Não foi possível carregar suas tarefas. Verifique a conexão e tente novamente."
+                                message={errorMessage || 'Não foi possível carregar suas tarefas. Verifique a conexão e tente novamente.'}
                                 onRetry={handleRefresh}
                             />
                         </div>
@@ -810,19 +815,21 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                         viewType === 'list' ? (
                             <div className="h-full p-2 sm:p-4 md:p-6">
                                 {Object.keys(groupedTasks).length === 0 ? (
-                                    <div className="flex flex-col items-center justify-center h-64 text-slate-400">
-                                        <div className="bg-slate-100 dark:bg-slate-800 p-4 rounded-full mb-4">
-                                            <List className="h-8 w-8 text-slate-400" />
-                                        </div>
-                                        <p className="text-lg font-medium">Nenhuma tarefa encontrada</p>
-                                        <p className="text-sm mb-4">Tente ajustar os filtros ou criar uma nova tarefa</p>
-                                        <button
-                                            onClick={() => setIsCreateModalOpen(true)}
-                                            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors"
-                                        >
-                                            <Plus className="w-4 h-4" />
-                                            Nova Tarefa
-                                        </button>
+                                    <div className="flex items-center justify-center h-64">
+                                        <EmptyState
+                                            icon={List}
+                                            title="Nenhuma tarefa encontrada"
+                                            description="Tente ajustar os filtros ou criar uma nova tarefa"
+                                            action={
+                                                <button
+                                                    onClick={() => setIsCreateModalOpen(true)}
+                                                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition-colors"
+                                                >
+                                                    <Plus className="w-4 h-4" />
+                                                    Nova Tarefa
+                                                </button>
+                                            }
+                                        />
                                     </div>
                                 ) : (
                                     <div className="space-y-8 pb-10">
