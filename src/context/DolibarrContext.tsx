@@ -334,7 +334,9 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
                   log.warn('Background sync errors', result.errors);
                 }
                 // Process notifications (now handled by backend NotificationService)
-                refreshDataRef.current?.();
+                if (result.synced > 0) {
+                  refreshDataRef.current?.();
+                }
               }).catch(err => {
                 log.error('Background sync failed', err);
               });
@@ -384,8 +386,10 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
           log.debug('AutoSync triggering background sync...');
         }
         // Call global background sync to ensure DB is updated
-        runBackgroundSync(currentConfig).then(() => {
-          refreshDataRef.current?.();
+        runBackgroundSync(currentConfig).then((result) => {
+          if (result.synced > 0) {
+            refreshDataRef.current?.();
+          }
         }).catch((err) => {
           log.error('AutoSync background sync failed', err);
         });

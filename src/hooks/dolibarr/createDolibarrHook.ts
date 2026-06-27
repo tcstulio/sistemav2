@@ -143,11 +143,14 @@ export function createDolibarrHook<TRaw, TEntity extends { date_modification?: n
                     // Step 1: Get watermark (last modification date)
                     const lastModified = await dbService.getLastModified(storeName, dateField);
 
+                    // Convert to Unix seconds since PHP/SQL expects seconds for tms
+                    const watermarkUnix = lastModified > 0 ? Math.floor((lastModified + 1000) / 1000) : 0;
+
                     // Step 2: Load current local data
                     const localData = await dbService.getAll<TEntity>(storeName);
 
                     // Step 3: Fetch delta from Dolibarr
-                    const delta = await DolibarrService.fetchDelta(dolibarrConfig, endpoint, lastModified);
+                    const delta = await DolibarrService.fetchDelta(dolibarrConfig, endpoint, watermarkUnix);
 
                     if (delta.length > 0) {
                         log.debug(`Found ${delta.length} new/updated items for ${queryKey}`);
