@@ -382,7 +382,8 @@ describe('aiRoutes', () => {
         it('returns 200 with sales forecast', async () => {
             const res = await request(app)
                 .post('/api/analyze/sales-forecast')
-                .send({ invoices: [] });
+                .set('Authorization', 'Bearer dummy-token')
+                .send({ timeSeries: [] });
 
             expect(res.status).toBe(200);
             expect(res.body.result).toBeDefined();

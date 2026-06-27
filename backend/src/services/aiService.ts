@@ -119,7 +119,7 @@ interface AIProvider {
     getModels?(): Promise<string[]>;
     // New methods
     draftCollectionEmail?(customer: any, amount: number, module?: string): Promise<string>;
-    generateSalesForecast?(invoices: any[], context?: any, module?: string): Promise<string>;
+    generateSalesForecast?(timeSeries: any[], context?: any, module?: string): Promise<string>;
     analyzeCustomerSentiment?(customer: any, invoices: any[], module?: string): Promise<string>;
     auditProposal?(proposal: any, module?: string): Promise<string>;
     auditProject?(project: any, tasks?: any[], projectInvoices?: any[], module?: string): Promise<string>;
@@ -277,7 +277,14 @@ class GoogleProvider implements AIProvider {
         try {
             const response = await this.ai.models.generateContent({ model: config.geminiModel, contents: prompt });
             const raw = response.text || "{}";
-            const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0] || "{}";
+            let jsonStr = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+            if (!jsonStr.startsWith('{')) {
+                jsonStr = jsonStr.substring(jsonStr.indexOf('{'));
+            }
+            if (!jsonStr.endsWith('}')) {
+                jsonStr = jsonStr.substring(0, jsonStr.lastIndexOf('}') + 1);
+            }
+            if (!jsonStr || jsonStr === '') return "{}";
             return jsonStr;
         } catch (e) {
             log.error("draftCollectionEmail Error", e);
@@ -285,23 +292,14 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async generateSalesForecast(invoices: any[], context?: any, _module?: string): Promise<string> {
+    async generateSalesForecast(timeSeries: any[], context?: any, _module?: string): Promise<string> {
         if (!this.ai) return JSON.stringify({ forecast: [], summary: "IA não configurada" });
-
-        // Group invoices by Month/Year for clearer token usage if needed, 
-        // but raw list is fine if not too huge. The frontend already filters relevant ones.
-
-        const invoicesSummary = invoices.map(i => ({
-            d: i.date || i.datec,
-            v: i.total_ttc,
-            s: i.status
-        }));
 
         log.debug("Received Context", context);
         log.debug(`Computed Ref Date String: ${new Date(context?.referenceDate).toLocaleDateString('pt-BR')}`);
-        log.debug(`Invoice Count: ${invoicesSummary.length}`);
-        if (invoicesSummary.length > 0) {
-            log.debug(`Last Invoice Date: ${invoicesSummary[invoicesSummary.length - 1].d}`);
+        log.debug(`Time Series Count: ${timeSeries.length}`);
+        if (timeSeries.length > 0) {
+            log.debug(`Last Period: ${timeSeries[timeSeries.length - 1].periodo}`);
         }
 
         const refDate = context?.referenceDate ? new Date(context.referenceDate).toLocaleDateString('pt-BR') : 'Data Atual';
@@ -320,8 +318,8 @@ class GoogleProvider implements AIProvider {
             2. PRÓXIMOS MESES (SAZONALIDADE): Utilize os meses seguintes dos anos anteriores para estimar os meses futuros (padrão de comportamento).
             3. TENDÊNCIA (AJUSTE): Utilize os dados recentes (últimos 6 meses) para ajustar a escala volumétrica geral.
 
-            DADOS (Faturas Selecionadas - Recentes + Sazonalidade Histórica):
-            ${JSON.stringify(invoicesSummary)}
+            DADOS (Série Temporal de Faturamento Agregado):
+            ${JSON.stringify(timeSeries)}
 
             INSTRUÇÕES:
             - Identifique o padrão de vendas (picos/quedas) nos meses alvo em anos anteriores.
@@ -340,7 +338,13 @@ class GoogleProvider implements AIProvider {
         try {
             const response = await this.ai.models.generateContent({ model: config.geminiModel, contents: prompt });
             const raw = response.text || "{}";
-            const jsonStr = raw.match(/\{[\s\S]*\}/)?.[0] || "{}";
+            let jsonStr = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+            if (!jsonStr.startsWith('{')) {
+                jsonStr = jsonStr.substring(jsonStr.indexOf('{'));
+            }
+            if (!jsonStr.endsWith('}')) {
+                jsonStr = jsonStr.substring(0, jsonStr.lastIndexOf('}') + 1);
+            }
             return jsonStr;
         } catch (e) {
             log.error("generateSalesForecast Error", e);
@@ -1319,17 +1323,24 @@ export class LocalProvider implements AIProvider {
         }
     }
 
-    async generateSalesForecast(invoices: any[], context?: any, _module?: string): Promise<string> {
-        const invoicesSummary = (invoices || []).map((i) => ({ d: i.date || i.datec, v: i.total_ttc, s: i.status }));
+    async generateSalesForecast(timeSeries: any[], context?: any, _module?: string): Promise<string> {
         const refDate = context?.referenceDate ? new Date(context.referenceDate).toLocaleDateString('pt-BR') : 'Data Atual';
         const prompt = `Atue como analista financeiro sênior (sazonalidade e previsão de vendas).
 DATA DE REFERÊNCIA (HOJE): ${refDate} (o mês atual está incompleto: faça o "landing" = realizado + projeção dos dias restantes).
 METODOLOGIA: 1) mês atual = realizado + tendência; 2) próximos meses por sazonalidade (anos anteriores); 3) ajuste pela média dos últimos 6 meses.
-DADOS (faturas): ${JSON.stringify(invoicesSummary)}
+DADOS (Série Temporal - Mensal): ${JSON.stringify(timeSeries)}
 Retorne APENAS JSON: { "forecast": [ { "month": "Nome Mês Ano", "predicted_revenue": 0.00, "confidence": "high|medium|low" } ], "summary": "lógica usada", "trend": "up|down|stable" } (3 meses)`;
         try {
             const raw = await this.complete(prompt, 'Output only JSON.', 0.3);
-            return raw.match(/\{[\s\S]*\}/)?.[0] || JSON.stringify({ forecast: [], summary: 'Sem dados suficientes.' });
+            let jsonStr = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+            if (!jsonStr.startsWith('{')) {
+                jsonStr = jsonStr.substring(jsonStr.indexOf('{'));
+            }
+            if (!jsonStr.endsWith('}')) {
+                jsonStr = jsonStr.substring(0, jsonStr.lastIndexOf('}') + 1);
+            }
+            if (!jsonStr || jsonStr === '') return JSON.stringify({ forecast: [], summary: 'Sem dados suficientes.' });
+            return jsonStr;
         } catch (e: any) {
             log.error('LocalProvider generateSalesForecast Error', e?.message || e);
             throw e;
@@ -1714,18 +1725,18 @@ export const aiService = {
         throw new Error('draftCollectionEmail não disponível neste provider');
     },
 
-    generateSalesForecast: async (invoices: any[], context?: any, module: string = 'banking') => {
+    generateSalesForecast: async (timeSeries: any[], context?: any, module: string = 'banking') => {
         const configService = _configService;
         if (configService.isRunWithChainEnabled()) {
             return runWithChain(module, (p) => {
                 const pr = getProvider(p);
                 if (!('generateSalesForecast' in pr && pr.generateSalesForecast)) throw new Error('generateSalesForecast indisponível');
-                return pr.generateSalesForecast!(invoices, context, module);
+                return pr.generateSalesForecast!(timeSeries, context, module);
             });
         }
         const provider = getProvider();
         if ('generateSalesForecast' in provider && provider.generateSalesForecast) {
-            return provider.generateSalesForecast(invoices, context, module);
+            return provider.generateSalesForecast(timeSeries, context, module);
         }
         throw new Error('generateSalesForecast não disponível neste provider');
     },

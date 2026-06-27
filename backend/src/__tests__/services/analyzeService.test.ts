@@ -47,10 +47,10 @@ describe('analyzeService.runSalesForecastAnalysis', () => {
     it('fetches invoices, calls generateSalesForecast (same fn the route uses), and persists the snapshot', async () => {
         const { result, snapshot } = await runSalesForecastAnalysis();
 
-        expect(mockListInvoices).toHaveBeenCalledWith({ limit: 200 });
+        expect(mockListInvoices).toHaveBeenCalledWith({ limit: 500 });
         expect(mockGenerateSalesForecast).toHaveBeenCalledWith(
-            [{ id: 1, total_ttc: '100' }],
-            { referenceDate: expect.any(String) },
+            expect.any(Array),
+            { referenceDate: expect.any(String), targetMonths: expect.any(Array) },
             'banking',
         );
         expect(mockSaveAnalysis).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));

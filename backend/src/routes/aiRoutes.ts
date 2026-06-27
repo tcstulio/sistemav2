@@ -415,16 +415,15 @@ router.post('/draft/collection-email', async (req, res) => {
 
 // Sales Forecast
 const SalesForecastSchema = z.object({
-    invoices: z.array(z.any()),
+    timeSeries: z.array(z.any()),
     context: z.any().optional()
 });
 
 router.post('/analyze/sales-forecast', async (req, res) => {
     try {
-        const { invoices, context } = SalesForecastSchema.parse(req.body);
-        // We pass context if the service supports it, or just invoices.
-        // For now, service logic infers from dates, but we keep the route flexible.
-        const result = await aiService.generateSalesForecast(invoices, context, 'banking');
+        const { timeSeries, context } = SalesForecastSchema.parse(req.body);
+        // We pass timeSeries directly
+        const result = await aiService.generateSalesForecast(timeSeries, context, 'banking');
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {

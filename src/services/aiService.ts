@@ -244,20 +244,37 @@ export const AiService = {
                 return false;
             });
 
-            // Sort by date asc
-            relevantInvoices.sort((a, b) => {
-                const dA = typeof a.date === 'string' ? new Date(a.date).getTime() : a.date;
-                const dB = typeof b.date === 'string' ? new Date(b.date).getTime() : b.date;
-                return dA - dB;
+            // 3. Aggregate Invoices by Month/Year (Valid invoices only: statut 1 or 2)
+            const aggregatedData: Record<string, number> = {};
+            
+            relevantInvoices.forEach(inv => {
+                // statut 1: Validated (unpaid), statut 2: Paid
+                // Depending on Dolibarr configuration, these are the ones that count towards revenue.
+                if (String(inv.statut) !== '1' && String(inv.statut) !== '2') return;
+
+                const dateVal = inv.date || (inv as any).datec || 0;
+                const timestamp = typeof dateVal === 'string' ? new Date(dateVal).getTime() : (dateVal < 10000000000 ? dateVal * 1000 : dateVal);
+                const invDate = new Date(timestamp);
+                
+                const monthYear = `${String(invDate.getMonth() + 1).padStart(2, '0')}/${invDate.getFullYear()}`;
+                
+                if (!aggregatedData[monthYear]) {
+                    aggregatedData[monthYear] = 0;
+                }
+                aggregatedData[monthYear] += Number(inv.total_ttc) || 0;
             });
 
+            const timeSeries = Object.entries(aggregatedData)
+                .map(([periodo, faturamento]) => ({ periodo, faturamento_realizado: Number(faturamento.toFixed(2)) }))
+                .sort((a, b) => {
+                    const [mA, yA] = a.periodo.split('/');
+                    const [mB, yB] = b.periodo.split('/');
+                    if (yA !== yB) return Number(yA) - Number(yB);
+                    return Number(mA) - Number(mB);
+                });
+
             const response = await axios.post(`${API_URL}/analyze/sales-forecast`, {
-                invoices: relevantInvoices.map(i => ({
-                    ref: i.ref,
-                    total_ttc: i.total_ttc,
-                    status: i.statut,
-                    date: i.date
-                })),
+                timeSeries,
                 context: {
                     referenceDate: now.toISOString(),
                     targetMonths: targetMonths // Inform backend which months we are targeting
