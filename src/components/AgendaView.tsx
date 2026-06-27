@@ -821,7 +821,12 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
             {viewMode === 'list' ? (
                 selectedItemId ? (
                     // VIEW: LIST with MasterDetail (item selected → split view)
-                    <div className="flex-1 overflow-hidden">
+                    // O wrapper PRECISA ser `flex` (#909): sem ele, o MasterDetailLayout
+                    // (flex-1) não resolve altura porque o pai era display:block. No mobile
+                    // a lista fica `hidden` e o detalhe é `absolute inset-0`; sem altura
+                    // resolvida o container colapsa para 0 e o detalhe ficava invisível
+                    // ("clicar no item não faz nada").
+                    <div className="flex flex-1 overflow-hidden" data-testid="agenda-master-detail">
                         <MasterDetailLayout
                             showDetail={true}
                             onCloseDetail={() => { setSelectedItemId(null); setEditEventPrefill(undefined); }}
