@@ -43,10 +43,24 @@ class Logger {
     }
 
     private enrich(message: string, data?: unknown): { msg: string; context?: string; data?: unknown } {
+        let safeData = data;
+        if (data && typeof data === 'object') {
+            const err = data as any;
+            if (err.isAxiosError && err.response) {
+                safeData = {
+                    status: err.response.status,
+                    data: err.response.data,
+                    url: err.config?.url,
+                    method: err.config?.method
+                };
+            } else if (err instanceof Error) {
+                safeData = { message: err.message, stack: err.stack };
+            }
+        }
         return {
             msg: this.context ? `[${this.context}] ${message}` : message,
             ...(this.context ? { context: this.context } : {}),
-            ...(data !== undefined ? { data } : {}),
+            ...(safeData !== undefined ? { data: safeData } : {}),
         };
     }
 
