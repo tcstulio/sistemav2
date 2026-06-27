@@ -101,17 +101,11 @@ export const useNotifications = (
 
         const handleWhatsAppMessage = (msg: any) => {
             if (msg.fromMe) return;
-            const note: AppNotification = {
-                id: 'wa_' + msg.id,
-                type: 'whatsapp',
-                title: msg.senderName || msg.pushName || 'WhatsApp',
-                message: msg.body || (msg.hasMedia ? '📎 Mídia' : 'Nova mensagem'),
-                date: (msg.timestamp || Date.now() / 1000) * 1000,
-                priority: 'medium',
-                read: false,
-                linkTo: { view: 'whatsapp', id: '' },
-            };
-            setNotifications(prev => [note, ...prev]);
+            // Para prevenir falsificação de painel (phishing/spoofing) e estados fantasmas
+            // que somem ao recarregar a página, mensagens diretas de WhatsApp não entram mais
+            // na store global de notificações do sistema, mas podem ser roteadas para um Toast 
+            // ou componente exclusivo no futuro.
+            log.debug('Mensagem recebida via WhatsApp:', msg);
         };
 
         socket.on('notification', handleNotification);

@@ -3,7 +3,7 @@ import { socketService } from './socketService';
 import { channelRouter } from './channelRouter';
 import * as fs from 'fs';
 import * as path from 'path';
-import { atomicWriteSync } from '../utils/atomicWrite';
+import * as crypto from 'crypto';
 
 const log = createLogger('Notification');
 
@@ -37,6 +37,8 @@ export interface Notification {
     entityId?: string;
     linkTo?: string;
     read: boolean;
+    readBy?: string[];
+    deletedBy?: string[];
     createdAt: number;
     deliveredTo: NotificationChannel[];
     failedChannels: string[];
@@ -99,14 +101,31 @@ class NotificationService {
         }
     }
 
-    private save() {
+    private saveTimeout: NodeJS.Timeout | null = null;
+    
+    private async performSave() {
         try {
             const dir = path.dirname(STORE_PATH);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-            atomicWriteSync(STORE_PATH, this.data); // escrita atômica: evita arquivo truncado em crash
+            
+            // Expurgo por tempo (30 dias) em vez de limite estrito de quantidade
+            const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+            this.data.notifications = this.data.notifications.filter(n => n.createdAt > thirtyDaysAgo);
+
+            // Escrita atômica assíncrona
+            const tmpPath = STORE_PATH + '.tmp';
+            await fs.promises.writeFile(tmpPath, JSON.stringify(this.data, null, 2), 'utf-8');
+            await fs.promises.rename(tmpPath, STORE_PATH);
         } catch (e) {
             log.error('Save error', e);
         }
+    }
+
+    private save() {
+        if (this.saveTimeout) clearTimeout(this.saveTimeout);
+        this.saveTimeout = setTimeout(() => {
+            this.performSave().catch(e => log.error('performSave async error', e));
+        }, 1000); // 1s debounce
     }
 
     async create(params: {
@@ -127,7 +146,7 @@ class NotificationService {
     }): Promise<Notification> {
         const channels = params.channels || ['in-app'];
         const notification: Notification = {
-            id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+            id: `notif_${crypto.randomUUID()}`,
             event: params.event,
             title: params.title,
             message: params.message,
@@ -149,9 +168,6 @@ class NotificationService {
         };
 
         this.data.notifications.unshift(notification);
-        if (this.data.notifications.length > MAX_NOTIFICATIONS) {
-            this.data.notifications = this.data.notifications.slice(0, MAX_NOTIFICATIONS);
-        }
         this.save();
 
         for (const channel of channels) {
@@ -251,6 +267,7 @@ class NotificationService {
     /** A notificação é visível para este usuário? (regra única reusada na listagem e no isolamento) */
     private isVisibleTo(n: Notification, userId?: string): boolean {
         if (!userId) return true;
+        if (n.deletedBy && n.deletedBy.includes(userId)) return false;
         return (
             !n.recipient ||
             n.recipient === userId ||
@@ -266,7 +283,12 @@ class NotificationService {
         const result = this.data.notifications.filter(n => this.isVisibleTo(n, userId));
         const start = offset || 0;
         const end = start + (limit || 50);
-        return result.slice(start, end);
+        
+        // Retorna com a flag `read` computada para o usuário logado
+        return result.slice(start, end).map(n => ({
+            ...n,
+            read: n.recipient === userId ? n.read : (n.readBy ? n.readBy.includes(userId) : n.read)
+        }));
     }
 
     /** TODAS as notificações (admin) — sem filtro de visibilidade. Usado pela Central de Eventos. (#519) */
@@ -284,7 +306,12 @@ class NotificationService {
     markAsRead(id: string, userId?: string): boolean {
         const notif = this.data.notifications.find(n => n.id === id);
         if (notif && this.isVisibleTo(notif, userId)) {
-            notif.read = true;
+            if (notif.recipient === userId || !userId) {
+                notif.read = true;
+            } else {
+                if (!notif.readBy) notif.readBy = [];
+                if (!notif.readBy.includes(userId)) notif.readBy.push(userId);
+            }
             this.save();
             return true;
         }
@@ -295,12 +322,18 @@ class NotificationService {
     markAllAsRead(userId?: string): number {
         let count = 0;
         for (const n of this.data.notifications) {
-            if (!n.read && this.isVisibleTo(n, userId)) {
-                n.read = true;
-                count++;
+            if (this.isVisibleTo(n, userId)) {
+                if (n.recipient === userId && !n.read) {
+                    n.read = true;
+                    count++;
+                } else if (userId && (!n.readBy || !n.readBy.includes(userId))) {
+                    if (!n.readBy) n.readBy = [];
+                    n.readBy.push(userId);
+                    count++;
+                }
             }
         }
-        this.save();
+        if (count > 0) this.save();
         return count;
     }
 
@@ -308,7 +341,13 @@ class NotificationService {
     delete(id: string, userId?: string): boolean {
         const idx = this.data.notifications.findIndex(n => n.id === id);
         if (idx >= 0 && this.isVisibleTo(this.data.notifications[idx], userId)) {
-            this.data.notifications.splice(idx, 1);
+            const notif = this.data.notifications[idx];
+            if (notif.recipient === userId || !userId) {
+                this.data.notifications.splice(idx, 1);
+            } else {
+                if (!notif.deletedBy) notif.deletedBy = [];
+                if (!notif.deletedBy.includes(userId)) notif.deletedBy.push(userId);
+            }
             this.save();
             return true;
         }
@@ -316,19 +355,35 @@ class NotificationService {
     }
 
     /**
-     * Apaga as notificações PESSOAIS do usuário (recipient === userId). Não remove as
-     * compartilhadas (broadcast/team/all) — limpar não pode sumir alerta de sistema de todos.
+     * Apaga as notificações pessoais e marca as compartilhadas como deletadas pelo usuário.
      */
     deleteAllForUser(userId: string): number {
-        const before = this.data.notifications.length;
-        this.data.notifications = this.data.notifications.filter(n => n.recipient !== userId);
-        const removed = before - this.data.notifications.length;
+        let removed = 0;
+        this.data.notifications = this.data.notifications.filter(n => {
+            if (!this.isVisibleTo(n, userId)) return true;
+            if (n.recipient === userId) {
+                removed++;
+                return false;
+            } else {
+                if (!n.deletedBy) n.deletedBy = [];
+                if (!n.deletedBy.includes(userId)) {
+                    n.deletedBy.push(userId);
+                    removed++;
+                }
+                return true;
+            }
+        });
         if (removed > 0) this.save();
         return removed;
     }
 
     getUnreadCount(userId?: string): number {
-        return this.data.notifications.filter(n => !n.read && this.isVisibleTo(n, userId)).length;
+        return this.data.notifications.filter(n => {
+            if (!this.isVisibleTo(n, userId)) return false;
+            if (n.recipient === userId) return !n.read;
+            if (userId && n.readBy) return !n.readBy.includes(userId);
+            return !n.read;
+        }).length;
     }
 
     getStats() {
