@@ -295,6 +295,16 @@ export class SessionService {
             log.info(`[${sessionId}] Authenticated`);
         });
 
+        client.on('change_state', (state) => {
+            log.info(`[${sessionId}] State changed: ${state}`);
+            if (state === 'CONNECTED') {
+                if (this.getStatus(sessionId) !== 'WORKING') {
+                    log.info(`[${sessionId}] Forcing WORKING status due to CONNECTED state`);
+                    this.setStatus(sessionId, 'WORKING');
+                }
+            }
+        });
+
         client.on('disconnected', (reason) => {
             log.info(`[${sessionId}] Disconnected: ${reason}`);
             this.setStatus(sessionId, 'STOPPED');

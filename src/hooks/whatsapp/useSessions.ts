@@ -25,7 +25,26 @@ export const useSessions = () => {
         setLoading(true);
         try {
             const data = await WhatsAppService.getAccounts();
-            setSessions(data || []);
+            const mappedData = data ? data.map((s: any) => ({
+                ...s,
+                status: s.status === 'SCAN_QR_CODE' ? 'qr_code' : s.status
+            })) : [];
+            setSessions(mappedData);
+
+            // Fetch QR Code images for sessions that are already waiting for scan
+            for (const s of mappedData) {
+                if (s.status === 'qr_code') {
+                    try {
+                        const blob = await WhatsAppService.getQrCode(s.id);
+                        if (blob) {
+                            const url = URL.createObjectURL(blob);
+                            setQrCodes(prev => ({ ...prev, [s.id]: url }));
+                        }
+                    } catch (e) {
+                        log.error(`Failed to load QR image for ${s.id}`, e);
+                    }
+                }
+            }
         } catch (error) {
             log.error('Failed to fetch sessions', error);
         } finally {

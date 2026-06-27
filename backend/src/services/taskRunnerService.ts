@@ -49,6 +49,45 @@ const MAX_TASK_WALL_MS = (Number(process.env.TASKRUNNER_MAX_TASK_WALL_MIN) || 18
 const QUEUE_RECOVERY_MIN_MS = (Number(process.env.TASKRUNNER_QUEUE_RECOVERY_MIN) || 5) * 60 * 1000;
 const QUEUE_CHECK_INTERVAL_MS = 60 * 1000;
 
+class RateLimiter {
+    private tokens: number;
+    private maxTokens: number;
+    private refillRateMs: number;
+    private lastRefill: number;
+
+    constructor(maxTokens: number, refillRateMs: number) {
+        this.tokens = maxTokens;
+        this.maxTokens = maxTokens;
+        this.refillRateMs = refillRateMs;
+        this.lastRefill = Date.now();
+    }
+
+    private refill() {
+        const now = Date.now();
+        const elapsed = now - this.lastRefill;
+        const newTokens = Math.floor(elapsed / this.refillRateMs);
+        if (newTokens > 0) {
+            this.tokens = Math.min(this.maxTokens, this.tokens + newTokens);
+            this.lastRefill += newTokens * this.refillRateMs;
+        }
+    }
+
+    async acquire(): Promise<void> {
+        while (true) {
+            this.refill();
+            if (this.tokens > 0) {
+                this.tokens--;
+                return;
+            }
+            const now = Date.now();
+            const timeToNext = this.refillRateMs - ((now - this.lastRefill) % this.refillRateMs);
+            await new Promise(resolve => setTimeout(resolve, timeToNext));
+        }
+    }
+}
+
+const llmRateLimiter = new RateLimiter(3, 20_000); // Max burst 3, 1 token per 20s (3 RPM)
+
 function git(args: string[], opts?: { timeout?: number; cwd?: string }) {
     return execFileAsync('git', args, { cwd: opts?.cwd || REPO_ROOT, timeout: opts?.timeout, maxBuffer: BIG });
 }
@@ -392,6 +431,7 @@ class TaskRunnerService {
             const st = quotaStatus();
             log.warn(`Sonda de cota: LLM esgotado (${st.reason || 'sem detalhe'}) — testando se voltou...`);
             try {
+                await llmRateLimiter.acquire();
                 await aiService.generateReply([{ role: 'user', parts: 'ping' } as any], '', undefined, 'chat');
             } catch { /* o estado de cota é atualizado DENTRO da chamada (mark/clear) */ }
             if (isQuotaExhausted()) {
@@ -1244,7 +1284,8 @@ class TaskRunnerService {
 
     /** Envolve conteúdo de terceiros em marcadores explícitos de dado não-confiável. */
     private wrapUntrusted(label: string, content: string): string {
-        return `\n<<<DADOS NÃO-CONFIÁVEIS: ${label}>>>\n${content}\n<<<FIM DADOS: ${label}>>>\n`;
+        const sanitized = content.replace(/<<<FIM DADOS/gi, '[SANITIZADO - TENTATIVA DE EVASÃO]');
+        return `\n<<<DADOS NÃO-CONFIÁVEIS: ${label}>>>\n${sanitized}\n<<<FIM DADOS: ${label}>>>\n`;
     }
 
     private buildPrompt(task: Task, issueData: any): string {
@@ -1876,7 +1917,10 @@ Return ONLY a JSON:
             let result: any = null;
             for (let parseTry = 1; parseTry <= 3 && !(result && typeof result.score === 'number'); parseTry++) {
                 const judgeResult = await aiJobService.runAndWait(
-                    () => aiService.generateReply(history, '', undefined, 'chat'),
+                    async () => {
+                        await llmRateLimiter.acquire();
+                        return aiService.generateReply(history, '', undefined, 'chat');
+                    },
                     `judge-pr-${task.prNumber}${parseTry > 1 ? `-retry${parseTry}` : ''}`,
                 );
                 // Métricas de Judge (#305): registra tokens e custo USD por task.
@@ -2813,6 +2857,7 @@ The first element should be the task to execute first.`;
             { role: 'user' as const, parts: prompt },
         ];
 
+        await llmRateLimiter.acquire();
         const result = await aiService.generateReply(history, '', undefined, 'chat');
         const reply = result.text;
         const jsonMatch = reply.match(/\[[\s\S]*\]/);
