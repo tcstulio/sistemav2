@@ -99,6 +99,13 @@ export async function runBackgroundSync(config: DolibarrConfig, signal?: AbortSi
         try {
             // 1. Get watermark for this store
             const lastModified = await dbService.getLastModified(module.store, 'date_modification');
+
+            const itemCount = await dbService.count(module.store);
+            if (lastModified === 0 && itemCount > 0) {
+                log.debug(`Skipping ${module.type} (has ${itemCount} items but no tms tracking)`);
+                continue;
+            }
+
             // Add 1s when watermark exists to skip the boundary record
             // Convert to Unix seconds since PHP/SQL expects seconds for tms
             const watermarkMs = lastModified > 0 ? lastModified + 1000 : 0;

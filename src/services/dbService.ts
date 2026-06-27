@@ -409,6 +409,23 @@ export const dbService = {
         }
     },
 
+    // NEW: Count items in a store (O(1) fast operation)
+    count: async (storeName: string): Promise<number> => {
+        try {
+            const db = await dbService.open();
+            const transaction = db.transaction(storeName, 'readonly');
+            const store = transaction.objectStore(storeName);
+            const req = store.count();
+            return new Promise((resolve, reject) => {
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        } catch (e) {
+            log.error(`Failed to count ${storeName}`, e);
+            return 0;
+        }
+    },
+
     // NEW: Get the latest modification timestamp from a store
     getLastModified: async (storeName: string, dateField: string = 'date_modification'): Promise<number> => {
         try {
