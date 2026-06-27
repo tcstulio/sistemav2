@@ -375,7 +375,10 @@ router.get('/conversations', async (req, res) => {
 
         res.json(enrichedChats);
     } catch (error: any) {
-        res.status(500).json({ error: 'Failed to fetch conversations' });
+        // Conversations is read-only; return empty list on any error
+        // (session not found, not ready, or wwebjs internal store not loaded yet)
+        log.warn('Conversations unavailable', { sessionId, reason: error.message?.slice(0, 100) });
+        return res.json([]);
     }
 });
 
