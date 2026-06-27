@@ -5,7 +5,8 @@ import { logger } from '../../utils/logger';
 const log = logger.child('Commercial');
 
 export const fetchContracts = async (config: DolibarrConfig): Promise<Contract[]> => {
-    const data = await fetchList(config, 'contracts', '&sortfield=t.date_contrat&sortorder=DESC');
+    // Some Dolibarr versions return 500 when using t.date_contrat or t.datec in sortfield due to SQL alias issues
+    const data = await fetchList(config, 'contracts', '&sortorder=DESC');
     return data.map((d: Record<string, any>) => ({
         id: String(d.id),
         ref: d.ref,

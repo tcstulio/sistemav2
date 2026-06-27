@@ -172,7 +172,7 @@ export class SessionService {
             client.initialize().then(() => {
                 log.info(`[${sessionId}] client.initialize() resolved.`);
                 if (this.getStatus(sessionId) !== 'WORKING') {
-                    this.setStatus(sessionId, 'STARTING');
+                    this.setStatus(sessionId, 'WORKING');
                 }
             }).catch(error => {
                 log.error(`Failed to init ${sessionId}`, error);
@@ -293,6 +293,13 @@ export class SessionService {
 
         client.on('authenticated', () => {
             log.info(`[${sessionId}] Authenticated`);
+            // Fallback: If ready doesn't fire in 10 seconds, force WORKING
+            setTimeout(() => {
+                if (this.getStatus(sessionId) !== 'WORKING' && this.getStatus(sessionId) !== 'STOPPED') {
+                    log.info(`[${sessionId}] Forcing WORKING status after 10s of authenticated (ready event missing)`);
+                    this.setStatus(sessionId, 'WORKING');
+                }
+            }, 10000);
         });
 
         client.on('disconnected', (reason) => {
