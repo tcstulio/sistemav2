@@ -90,6 +90,7 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
         // lê req.user.admin (ex.: o chat em aiRoutes) trata um admin real como não-admin.
         // Roda no MÁXIMO uma vez por sessão: depois do backfill, admin fica definido e cacheado.
         if (!protoSession.userData || protoSession.userData.admin === undefined || protoSession.userData.admin === null) {
+            console.log(`[authMiddleware] Backfill needed for ${protoSession.login}`);
             try {
                 if (protoSession.dolapikey && protoSession.dolapikey !== 'undefined' && protoSession.dolapikey !== 'null') {
                     const { dolibarrService } = require('../services/dolibarrService');
@@ -107,12 +108,15 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
             } catch (e: any) {
                 log.warn(`Backfill de userData falhou (sessão ${protoSession.login}): ${e?.message || e}`);
             }
+        } else {
+            console.log(`[authMiddleware] Backfill SKIP for ${protoSession.login}, admin=${protoSession.userData.admin}`);
         }
 
         (req as any).user = {
             login: protoSession.login,
             ...(protoSession.userData || {}),
         };
+        console.log(`[authMiddleware] Success for ${protoSession.login}, proceeding to next()`);
         return next();
     }
 
