@@ -277,8 +277,9 @@ class AlertCronService {
             const stale = tickets.filter((t: any) => {
                 const created = t.datec || t.date_creation;
                 if (!created) return false;
-                const status = t.fk_statut || t.status;
-                if (status === '6' || status === '8') return false;
+                const status = String(t.fk_statut || t.status);
+                // Considera apenas tickets não vistos (status 0) como pendentes para alerta
+                if (status !== '0') return false;
                 return (now - created) > staleHours * 3600;
             });
 

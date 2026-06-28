@@ -11,7 +11,7 @@ router.use(requireDolibarrLogin);
 router.get('/', (req, res) => {
     try {
         const userId = (req as any).user?.id || (req as any).user?.login;
-        const limit = Number(req.query.limit) || 50;
+        const limit = Math.min(Number(req.query.limit) || 50, 100);
         const offset = Number(req.query.offset) || 0;
         const notifications = notificationService.getForUser(userId, limit, offset);
         const unreadCount = notificationService.getUnreadCount(userId);
@@ -89,10 +89,13 @@ router.post('/send', async (req, res) => {
 
         if (!title || !message) return res.status(400).json({ error: 'title and message required' });
 
+        const safeTitle = String(title).slice(0, 255);
+        const safeMessage = String(message).slice(0, 1000);
+
         const notification = await notificationService.create({
             event: event || 'custom',
-            title,
-            message,
+            title: safeTitle,
+            message: safeMessage,
             channels: channels || ['in-app'],
             priority: priority || 'medium',
             recipientName,
@@ -112,3 +115,9 @@ router.post('/send', async (req, res) => {
 });
 
 export default router;
+
+// Trigger backend reload
+
+// Trigger backend reload 2
+
+// Trigger backend reload 3

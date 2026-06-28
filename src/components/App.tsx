@@ -25,6 +25,7 @@ const SmartQuotationWizard = React.lazy(() => import('./SmartQuotationWizard').t
 const OrderList = React.lazy(() => import('./OrderList'));
 const ProjectList = React.lazy(() => import('./ProjectList'));
 const CustomerConversations = React.lazy(() => import('./CustomerConversations'));
+const TicketList = React.lazy(() => import('./TicketList'));
 const BankAccountList = React.lazy(() => import('./BankAccountList'));
 const SupplierList = React.lazy(() => import('./SupplierList').then(m => ({ default: m.SupplierList })));
 const VenueList = React.lazy(() => import('./VenueList').then(m => ({ default: m.VenueList })));
@@ -206,9 +207,14 @@ const App: React.FC = () => {
                         <Route path="/tasks/new" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
                         <Route path="/tasks/:id" element={<ViewWrapper Component={TaskDetail} viewId="projects" />} />
                         <Route path="/tasks/:id/edit" element={<ViewWrapper Component={ProjectList} viewId="projects" />} />
+                        <Route path="/tickets" element={<ViewWrapper Component={TicketList} viewId="tickets" />} />
+                        <Route path="/tickets/new" element={<ViewWrapper Component={TicketList} viewId="tickets" />} />
+                        <Route path="/tickets/:id" element={<ViewWrapper Component={TicketList} viewId="tickets" />} />
+                        <Route path="/tickets/:id/edit" element={<ViewWrapper Component={TicketList} viewId="tickets" />} />
+                        <Route path="/ticket/:id" element={<Navigate to="/tickets/:id" replace />} />
+                        <Route path="/ticket" element={<Navigate to="/tickets" replace />} />
 
-                        <Route path="/tickets" element={<ViewWrapper Component={CustomerConversations} viewId="tickets" />} />
-
+                        <Route path="/ai-conversations" element={<ViewWrapper Component={CustomerConversations} viewId="tickets" />} />
                         <Route path="/bank_accounts" element={<ViewWrapper Component={BankAccountList} viewId="bank_accounts" />} />
 
                         <Route path="/products" element={<ViewWrapper Component={ProductList} viewId="products" passProps={{ initialFilter: 'product' }} />} />

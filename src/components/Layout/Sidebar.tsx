@@ -59,6 +59,7 @@ const MENU_ICONS: Record<string, React.ElementType> = {
     contracts: PenTool,
     interventions: ClipboardList,
     tickets: LifeBuoy,
+    ai_conversations: Bot,
     invoices: FileText,
     payments: TrendingUp,
     tax_payments: Landmark,
