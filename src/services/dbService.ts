@@ -269,6 +269,22 @@ export const dbService = {
         }
     },
 
+    // Helper to delete single item
+    delete: async (storeName: string, id: string | number) => {
+        try {
+            const db = await dbService.open();
+            const transaction = db.transaction(storeName, 'readwrite');
+            const store = transaction.objectStore(storeName);
+            store.delete(id);
+            return new Promise<void>((resolve, reject) => {
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+            });
+        } catch (e) {
+            log.error(`Error deleting from ${storeName}`, e);
+        }
+    },
+
     /** Limpa SOMENTE as stores indicadas (ex.: logs), sem apagar o resto do cache offline. (#26) */
     clearStores: async (storeNames: string[]) => {
         try {
