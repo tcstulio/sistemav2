@@ -36,7 +36,7 @@ export const MainLayout: React.FC = () => {
     if (!config) return null;
 
     return (
-        <div className={`flex h-screen bg-slate-50 dark:bg-slate-950 transition-colors ${config.themeColor}`}>
+        <div className={`flex h-[100dvh] bg-slate-50 dark:bg-slate-950 transition-colors ${config.themeColor}`}>
             <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
 
             <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative">

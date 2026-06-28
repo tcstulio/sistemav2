@@ -195,11 +195,28 @@ export class SessionService {
     async stopSession(sessionId: string) {
         const client = this.clients.get(sessionId);
         if (client) {
+            let pidToKill: number | undefined;
             try {
+                // Tenta pegar o PID do chrome atrelado à sessão antes do destroy
+                if (client.puppeteer && client.puppeteer.process) {
+                    pidToKill = client.puppeteer.process()?.pid;
+                }
                 await client.destroy();
             } catch (e) {
                 log.error(`Error destroying ${sessionId}`, e);
             }
+            
+            // Força matar o processo órfão no Windows caso o destroy() trave ou falhe
+            if (pidToKill) {
+                try {
+                    if (process.platform === 'win32') {
+                        require('child_process').exec(`taskkill /pid ${pidToKill} /T /F`, () => {});
+                    } else {
+                        process.kill(pidToKill, 'SIGKILL');
+                    }
+                } catch (killErr) {}
+            }
+
             this.clients.delete(sessionId);
             this.sessionStatus.delete(sessionId);
             this.qrCodes.delete(sessionId);
