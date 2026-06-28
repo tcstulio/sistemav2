@@ -1,34 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Bot, Users, Bell, CalendarClock, CheckCircle, Cpu, ShieldCheck, Clock, ChevronRight, Inbox, RefreshCw, Filter } from 'lucide-react';
+import { Clock, ChevronRight, Inbox, RefreshCw, Filter } from 'lucide-react';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useWhatsAppContext } from '../contexts/WhatsAppContext';
 import { useSystemLogs, useUsers } from '../hooks/dolibarr';
 import { AppView, SystemLog } from '../types';
 import { formatRelativeTime } from '../utils/dateUtils';
-import { getEntityLink } from '../utils/navigationUtils';
+import { DELEG_TO_ROLE, SOURCE_META, resolveActorName, resolveEventTarget, resolveToName } from '../utils/systemEventUtils';
 import { getSystemEvents, getSystemEventSources, SystemEvent, SystemEventSource } from '../services/systemEventsService';
 import { PageHeader, Button, Input, Card, EmptyState, PageLayout } from './ui';
+import SystemEventDetailsModal from './SystemEventDetailsModal';
 
 interface SystemEventsViewProps {
     onNavigate?: (view: AppView, id: string) => void;
 }
-
-const SOURCE_META: Record<SystemEventSource, { label: string; icon: React.ComponentType<{ size?: number; className?: string }>; dot: string }> = {
-    audit: { label: 'Auditoria', icon: ShieldCheck, dot: 'bg-rose-500' },
-    agent: { label: 'Agente', icon: Bot, dot: 'bg-purple-500' },
-    delegation: { label: 'Delegação', icon: Users, dot: 'bg-blue-500' },
-    notification: { label: 'Notificações', icon: Bell, dot: 'bg-amber-500' },
-    scheduler: { label: 'Agendador', icon: CalendarClock, dot: 'bg-cyan-500' },
-    approval: { label: 'Aprovações', icon: CheckCircle, dot: 'bg-emerald-500' },
-    task: { label: 'Tasks', icon: Cpu, dot: 'bg-indigo-500' },
-    dolibarr: { label: 'Agenda (Dolibarr)', icon: Activity, dot: 'bg-slate-500' },
-};
-
-// Papel do destinatário (to) de um evento de delegação, conforme o tipo. (#526 + card)
-const DELEG_TO_ROLE: Record<string, string> = {
-    requested: 'Responsável', cobranca: 'Responsável', reminder: 'Responsável',
-    escalated: 'Solicitante', completed: 'Solicitante',
-};
 
 const sevColor = (s: SystemEvent['severity']) =>
     s === 'error' ? 'text-red-600 bg-red-50 dark:bg-red-900/20 dark:text-red-400'
@@ -52,6 +36,7 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
     const [filterActor, setFilterActor] = useState('all');
     const [dateRange, setDateRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
     const [visibleItems, setVisibleItems] = useState(ITEMS_PER_PAGE);
+    const [selectedEvent, setSelectedEvent] = useState<SystemEvent | null>(null);
 
     const userMap = useMemo(() => {
         const map: Record<string, string> = {};
@@ -147,21 +132,10 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
     };
 
     /** Resolves the navigation target for an event, or returns null if non-navigable. */
-    const resolveTarget = (e: SystemEvent): { view: AppView; id: string } | null => {
-        if (e.linkTo && e.linkTo.includes('/')) {
-            const [view, id] = e.linkTo.split('/');
-            if (view) return { view: view as AppView, id: id || '' };
-        }
-        if (e.entityType && e.entityId) {
-            return getEntityLink(e.entityType, e.entityId);
-        }
-        return null;
-    };
+    const resolveTarget = (e: SystemEvent): { view: AppView; id: string } | null => resolveEventTarget(e);
 
     const handleClick = (e: SystemEvent) => {
-        if (!onNavigate) return;
-        const target = resolveTarget(e);
-        if (target) onNavigate(target.view, target.id);
+        setSelectedEvent(e);
     };
 
     return (
@@ -236,7 +210,7 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
                                         const Icon = meta.icon;
                                         const navigable = !!resolveTarget(ev);
                                         return (
-                                            <div key={ev.id} onClick={() => handleClick(ev)} className={`p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${navigable ? 'cursor-pointer group' : 'cursor-default'}`}>
+                                            <div key={ev.id} onClick={() => handleClick(ev)} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group">
                                                 <div className="flex items-start gap-3">
                                                     <div className={`p-2 rounded-lg ${sevColor(ev.severity)} shrink-0`}><Icon size={14} /></div>
                                                     <div className="flex-1 min-w-0">
@@ -277,6 +251,13 @@ const SystemEventsView: React.FC<SystemEventsViewProps> = ({ onNavigate }) => {
                     </Card>
                 </div>
             </div>
+
+            <SystemEventDetailsModal
+                event={selectedEvent}
+                userMap={userMap}
+                onClose={() => setSelectedEvent(null)}
+                onNavigate={onNavigate}
+            />
         </PageLayout>
     );
 };
