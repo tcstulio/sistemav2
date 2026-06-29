@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import SystemEventsView from '../../components/SystemEventsView';
 
 vi.mock('../../context/DolibarrContext', () => ({ useDolibarr: () => ({ config: { apiUrl: 'x' } }) }));
@@ -52,11 +53,15 @@ describe('SystemEventsView (#519)', () => {
         expect(screen.getByRole('button', { name: /Agenda \(Dolibarr\)/i })).toBeTruthy();
     });
 
-    it('navega via linkTo ao clicar num evento', async () => {
+    it('(#921) ao clicar abre detalhes e navega via botão "Abrir registro" (linkTo)', async () => {
+        const user = userEvent.setup();
         const onNav = vi.fn();
         mockEvents.mockResolvedValue({ events: [ev({ linkTo: 'tasks/50', description: 'cobrança' })], total: 1, sources: [] });
         render(<SystemEventsView onNavigate={onNav} />);
-        fireEvent.click(await screen.findByText('cobrança'));
+        await user.click(await screen.findByText('cobrança'));
+        const dialog = await screen.findByRole('dialog');
+        expect(onNav).not.toHaveBeenCalled();
+        await user.click(within(dialog).getByRole('button', { name: /Abrir registro/i }));
         expect(onNav).toHaveBeenCalledWith('tasks', '50');
     });
 
@@ -128,42 +133,121 @@ describe('SystemEventsView (#587) — cliques e navegação', () => {
         mockSources.mockResolvedValue(['audit', 'agent', 'delegation', 'notification', 'scheduler', 'approval', 'task']);
     });
 
-    it('evento agent com entityType=invoice e entityId=42 → onNavigate("invoices","42")', async () => {
+    it('(#921) detalhes de evento agent com entityType=invoice e entityId=42 → "Abrir registro" navega ("invoices","42")', async () => {
+        const user = userEvent.setup();
         const onNav = vi.fn();
         mockEvents.mockResolvedValue({
             events: [ev({ entityType: 'invoice', entityId: '42', description: 'criou fatura' })],
             total: 1, sources: [],
         });
         render(<SystemEventsView onNavigate={onNav} />);
-        fireEvent.click(await screen.findByText('criou fatura'));
+        await user.click(await screen.findByText('criou fatura'));
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByRole('button', { name: /Abrir registro/i }));
         expect(onNav).toHaveBeenCalledWith('invoices', '42');
     });
 
-    it('evento scheduler sem linkTo/entidade → clique NÃO chama onNavigate e card sem cursor-pointer', async () => {
+    it('(#921) evento scheduler sem linkTo/entidade abre detalhes, mas SEM botão "Abrir registro"', async () => {
+        const user = userEvent.setup();
         const onNav = vi.fn();
         mockEvents.mockResolvedValue({
             events: [ev({ source: 'scheduler', description: 'job executado', entityType: undefined, entityId: undefined, linkTo: undefined })],
             total: 1, sources: [],
         });
         render(<SystemEventsView onNavigate={onNav} />);
-        const text = await screen.findByText('job executado');
-        // Sobe ao container do card (div com p-4)
-        const card = text.closest('[class*="p-4"]');
-        expect(card).toBeTruthy();
-        fireEvent.click(card!);
+        await user.click(await screen.findByText('job executado'));
+        const dialog = await screen.findByRole('dialog');
+        // não-navegável: o botão de abrir registro não existe, e nada é despachado
+        expect(within(dialog).queryByRole('button', { name: /Abrir registro/i })).toBeNull();
         expect(onNav).not.toHaveBeenCalled();
-        expect(card!.className).toContain('cursor-default');
-        expect(card!.className).not.toContain('cursor-pointer');
     });
 
-    it('evento com linkTo válido continua navegando (regressão zero)', async () => {
+    it('(#921) evento com linkTo válido abre detalhes e navega via botão (regressão zero)', async () => {
+        const user = userEvent.setup();
         const onNav = vi.fn();
         mockEvents.mockResolvedValue({
             events: [ev({ linkTo: 'tasks/99', description: 'delegação criada' })],
             total: 1, sources: [],
         });
         render(<SystemEventsView onNavigate={onNav} />);
-        fireEvent.click(await screen.findByText('delegação criada'));
+        await user.click(await screen.findByText('delegação criada'));
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByRole('button', { name: /Abrir registro/i }));
         expect(onNav).toHaveBeenCalledWith('tasks', '99');
+    });
+});
+
+describe('SystemEventsView (#921) — ver mais detalhes ao clicar', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUsers.mockReturnValue({ data: [] });
+        mockSources.mockResolvedValue(['audit', 'agent', 'delegation', 'notification', 'scheduler', 'approval', 'task']);
+    });
+
+    it('ao clicar num evento abre o modal de detalhes com descrição, ator, tipo e badge de severidade', async () => {
+        const user = userEvent.setup();
+        mockEvents.mockResolvedValue({
+            events: [ev({ description: 'faturou a venda', type: 'invoice_created', severity: 'warn', actor: { id: '7', name: 'Maria Lima' } })],
+            total: 1, sources: [],
+        });
+        render(<SystemEventsView onNavigate={vi.fn()} />);
+        await user.click(await screen.findByText('faturou a venda'));
+        const dialog = await screen.findByRole('dialog');
+        expect(within(dialog).getByText('faturou a venda')).toBeTruthy();
+        expect(within(dialog).getByText('Maria Lima')).toBeTruthy();
+        expect(within(dialog).getByText('invoice_created')).toBeTruthy();
+        expect(within(dialog).getByText('Atenção')).toBeTruthy(); // label da severidade 'warn'
+        expect(within(dialog).getByText('Ator')).toBeTruthy();
+    });
+
+    it('mostra o campo "Objetivo" no detalhe quando metadata.objetivo existe', async () => {
+        const user = userEvent.setup();
+        mockEvents.mockResolvedValue({
+            events: [ev({ description: 'cobrança registrada', metadata: { objetivo: 'Receber em até 30 dias' } })],
+            total: 1, sources: [],
+        });
+        render(<SystemEventsView onNavigate={vi.fn()} />);
+        await user.click(await screen.findByText('cobrança registrada'));
+        const dialog = await screen.findByRole('dialog');
+        expect(within(dialog).getByText('Objetivo')).toBeTruthy();
+        expect(within(dialog).getByText('Receber em até 30 dias')).toBeTruthy();
+    });
+
+    it('mostra "Destinatário" resolvido pelo userMap quando metadata.to aponta para um usuário', async () => {
+        const user = userEvent.setup();
+        mockUsers.mockReturnValue({ data: [{ id: '9', firstname: 'Carlos', lastname: 'Souza', login: 'csouza' }] });
+        mockEvents.mockResolvedValue({
+            events: [ev({ description: 'delegou a cobrança', type: 'requested', metadata: { to: '9' } })],
+            total: 1, sources: [],
+        });
+        render(<SystemEventsView onNavigate={vi.fn()} />);
+        await user.click(await screen.findByText('delegou a cobrança'));
+        const dialog = await screen.findByRole('dialog');
+        expect(within(dialog).getByText('Destinatário')).toBeTruthy();
+        expect(within(dialog).getByText(/Carlos Souza/)).toBeTruthy();
+    });
+
+    it('mostra "Detalhes" extras como JSON quando há metadados adicionais', async () => {
+        const user = userEvent.setup();
+        mockEvents.mockResolvedValue({
+            events: [ev({ description: 'execução do job', metadata: { host: 'srv-1', duration: 42 } })],
+            total: 1, sources: [],
+        });
+        render(<SystemEventsView onNavigate={vi.fn()} />);
+        await user.click(await screen.findByText('execução do job'));
+        const dialog = await screen.findByRole('dialog');
+        expect(within(dialog).getByText('Detalhes')).toBeTruthy();
+        expect(within(dialog).getByText(/"host"/)).toBeTruthy();
+        expect(within(dialog).getByText(/"srv-1"/)).toBeTruthy();
+    });
+
+    it('o botão "Fechar" fecha o modal de detalhes', async () => {
+        const user = userEvent.setup();
+        mockEvents.mockResolvedValue({ events: [ev({ description: 'evento de auditoria' })], total: 1, sources: [] });
+        render(<SystemEventsView onNavigate={vi.fn()} />);
+        await user.click(await screen.findByText('evento de auditoria'));
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByRole('button', { name: /^Fechar$/ }));
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     });
 });
