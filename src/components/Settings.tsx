@@ -46,7 +46,12 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
         office_phone: '',
         email: '',
         phone: '',
-        password: ''
+        password: '',
+        address: '',
+        zip: '',
+        town: '',
+        note_public: '',
+        array_options: {} as Record<string, any>
     });
 
     // --- Identidade da empresa (org-wide, só admin) ---
@@ -116,7 +121,12 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
             office_phone: (localConfig.currentUser?.office_phone as string) || '',
             email: localConfig.currentUser?.email || '',
             phone: (localConfig.currentUser?.phone_mobile || '') as string,
-            password: ''
+            password: '',
+            address: localConfig.currentUser?.address || '',
+            zip: localConfig.currentUser?.zip || '',
+            town: localConfig.currentUser?.town || '',
+            note_public: localConfig.currentUser?.note_public || '',
+            array_options: localConfig.currentUser?.array_options ? { ...localConfig.currentUser.array_options } : {}
         });
         setIsEditModalOpen(true);
     };
@@ -127,13 +137,19 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
             if (!localConfig.currentUser) return;
 
             const updates: any = {};
-            if (editForm.firstname) updates.firstname = editForm.firstname;
-            if (editForm.lastname) updates.lastname = editForm.lastname;
-            if (editForm.job) updates.job = editForm.job;
-            if (editForm.office_phone) updates.office_phone = editForm.office_phone;
-            if (editForm.email) updates.email = editForm.email;
-            if (editForm.phone) updates.phone_mobile = editForm.phone;
+            if (editForm.firstname !== undefined) updates.firstname = editForm.firstname;
+            if (editForm.lastname !== undefined) updates.lastname = editForm.lastname;
+            if (editForm.job !== undefined) updates.job = editForm.job;
+            if (editForm.office_phone !== undefined) updates.office_phone = editForm.office_phone;
+            if (editForm.email !== undefined) updates.email = editForm.email;
+            if (editForm.phone !== undefined) updates.user_mobile = editForm.phone;
             if (editForm.password) updates.password = editForm.password;
+            
+            if (editForm.address !== undefined) updates.address = editForm.address;
+            if (editForm.zip !== undefined) updates.zip = editForm.zip;
+            if (editForm.town !== undefined) updates.town = editForm.town;
+            if (editForm.note_public !== undefined) updates.note_public = editForm.note_public;
+            if (Object.keys(editForm.array_options).length > 0) updates.array_options = editForm.array_options;
 
             if (Object.keys(updates).length > 0) {
                 await DolibarrService.updateUser(localConfig, localConfig.currentUser.id, updates);
@@ -143,7 +159,7 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                     ...localConfig.currentUser,
                     ...updates
                 };
-                if (updates.phone_mobile) updatedUser.phone_mobile = updates.phone_mobile;
+                if (updates.user_mobile !== undefined) updatedUser.phone_mobile = updates.user_mobile;
 
                 const updatedConfig = { ...localConfig, currentUser: updatedUser };
                 setLocalConfig(updatedConfig);
@@ -255,6 +271,41 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                         </div>
                     </div>
                 </div>
+                )}
+
+                {/* Informações Complementares */}
+                {settingsTab === 'profile' && (
+                    <Card header={<h3 className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider"><User size={16} /> Informações Complementares</h3>}>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-4">
+                                <h4 className="font-semibold text-sm text-slate-700 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 pb-2">Dados Adicionais</h4>
+                                <div className="space-y-2">
+                                    <p className="text-sm"><span className="text-slate-500 font-medium">Endereço:</span> {localConfig.currentUser?.address || 'Não informado'}</p>
+                                    <p className="text-sm"><span className="text-slate-500 font-medium">CEP:</span> {localConfig.currentUser?.zip || 'Não informado'}</p>
+                                    <p className="text-sm"><span className="text-slate-500 font-medium">Cidade:</span> {localConfig.currentUser?.town || 'Não informado'}</p>
+                                    {localConfig.currentUser?.note_public && (
+                                        <div className="mt-2 text-sm">
+                                            <span className="text-slate-500 font-medium">Notas Públicas:</span>
+                                            <div className="p-2 mt-1 bg-slate-50 dark:bg-slate-900 rounded border border-slate-100 dark:border-slate-800" dangerouslySetInnerHTML={{ __html: localConfig.currentUser.note_public }} />
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            
+                            {localConfig.currentUser?.array_options && Object.keys(localConfig.currentUser.array_options).length > 0 && (
+                                <div className="space-y-4">
+                                    <h4 className="font-semibold text-sm text-slate-700 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 pb-2">Campos Personalizados (Extrafields)</h4>
+                                    <div className="space-y-2">
+                                        {Object.entries(localConfig.currentUser.array_options).map(([key, value]) => (
+                                            <p key={key} className="text-sm break-all">
+                                                <span className="text-slate-500 font-medium capitalize">{key.replace('options_', '').replace(/_/g, ' ')}:</span> {value === null ? '' : String(value)}
+                                            </p>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </Card>
                 )}
 
                 {/* Customization Section */}
@@ -488,6 +539,54 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                         placeholder="Deixe em branco para manter a senha atual"
                         hint="Mínimo de 6 caracteres recomendados"
                     />
+
+                    {/* Dados Complementares - Collapse ou Divisor */}
+                    <div className="pt-4 border-t border-slate-100 dark:border-slate-800 mt-2">
+                        <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Dados Complementares</h4>
+                        <div className="space-y-3">
+                            <Input
+                                label="Endereço"
+                                type="text"
+                                value={editForm.address}
+                                onChange={e => setEditForm({ ...editForm, address: e.target.value })}
+                            />
+                            <div className="grid grid-cols-2 gap-3">
+                                <Input
+                                    label="CEP"
+                                    type="text"
+                                    value={editForm.zip}
+                                    onChange={e => setEditForm({ ...editForm, zip: e.target.value })}
+                                />
+                                <Input
+                                    label="Cidade"
+                                    type="text"
+                                    value={editForm.town}
+                                    onChange={e => setEditForm({ ...editForm, town: e.target.value })}
+                                />
+                            </div>
+                            
+                            {/* Extrafields Dinâmicos */}
+                            {Object.keys(editForm.array_options).length > 0 && (
+                                <div className="pt-4 mt-2">
+                                    <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Campos Personalizados</h4>
+                                    <div className="space-y-3">
+                                        {Object.entries(editForm.array_options).map(([key, value]) => (
+                                            <Input
+                                                key={key}
+                                                label={key.replace('options_', '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                                type="text"
+                                                value={value === null ? '' : String(value)}
+                                                onChange={e => setEditForm({
+                                                    ...editForm,
+                                                    array_options: { ...editForm.array_options, [key]: e.target.value }
+                                                })}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 </div>
             </Modal>
         </PageLayout>

@@ -3,6 +3,7 @@ import { useDolibarr, PreviewTarget } from '../../context/DolibarrContext';
 import { DolibarrService } from '../../services/dolibarrService';
 import { Menu, Settings, Bell, RefreshCw, User, LogOut, ChevronDown, Eye, EyeOff, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { UserAvatar } from '../HR/UserAvatar';
 
 interface HeaderProps {
     setIsSidebarOpen: (open: boolean) => void;
@@ -80,16 +81,6 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
     };
 
     if (!config) return null;
-
-    const getInitials = () => {
-        if (currentUser) {
-            const first = currentUser.firstname ? currentUser.firstname[0] : '';
-            const last = currentUser.lastname ? currentUser.lastname[0] : '';
-            if (first || last) return (first + last).toUpperCase();
-            return currentUser.login ? currentUser.login.substring(0, 2).toUpperCase() : 'AD';
-        }
-        return 'AD';
-    };
 
     const handleLogout = () => {
         logout();
@@ -215,9 +206,13 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
                             onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
                             className="flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full p-1 pl-1 pr-2 transition-colors"
                         >
-                            <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-xs border-2 border-slate-100 dark:border-slate-700">
-                                {getInitials()}
-                            </div>
+                            {currentUser ? (
+                                <UserAvatar user={currentUser} config={config} size="sm" />
+                            ) : (
+                                <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-xs border-2 border-slate-100 dark:border-slate-700">
+                                    AD
+                                </div>
+                            )}
                             <ChevronDown size={14} className={`text-slate-400 transition-transform ${isUserMenuOpen ? 'rotate-180' : ''}`} />
                         </button>
 
@@ -228,6 +223,7 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
                                         {currentUser ? `${currentUser.firstname || ''} ${currentUser.lastname || ''}`.trim() || currentUser.login : 'Admin'}
                                     </p>
                                     <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                                        {currentUser?.job ? `${currentUser.job} • ` : ''} 
                                         {currentUser?.email || currentUser?.login || 'Usuário'}
                                     </p>
                                 </div>

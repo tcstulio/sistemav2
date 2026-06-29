@@ -51,7 +51,7 @@ export async function dispatchTaskNotification(
                 channels: channels as NotificationChannel[],
                 recipient: userId,
                 recipientName: name,
-                recipientPhone: user?.phone_mobile || user?.user_mobile || undefined,
+                recipientPhone: user?.phone_mobile || user?.user_mobile || user?.office_phone || undefined,
                 recipientEmail: user?.email || undefined,
                 priority: (event === 'overdue' || event === 'stalled') ? 'high' : 'medium',
                 entityType: 'task',
