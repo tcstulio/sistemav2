@@ -197,9 +197,11 @@ export class SessionService {
         if (client) {
             let pidToKill: number | undefined;
             try {
-                // Tenta pegar o PID do chrome atrelado à sessão antes do destroy
-                if (client.puppeteer && client.puppeteer.process) {
-                    pidToKill = client.puppeteer.process()?.pid;
+                // Tenta pegar o PID do chrome atrelado à sessão antes do destroy.
+                // O type `Client` do whatsapp-web.js não expõe `.puppeteer`, mas existe em runtime.
+                const pup = (client as any).puppeteer;
+                if (pup && pup.process) {
+                    pidToKill = pup.process()?.pid;
                 }
                 await client.destroy();
             } catch (e) {

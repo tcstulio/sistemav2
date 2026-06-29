@@ -98,7 +98,9 @@ describe('API Core', () => {
             };
             mockFetch.mockResolvedValue(mockResponse);
 
-            await expect(core.request('/test')).rejects.toThrow('Not found');
+            // request() filtra de propósito textos crus de proxy ("not found"/"unauthorized"/
+            // "forbidden") e mantém a mensagem estruturada por status — ver core.ts ~L100.
+            await expect(core.request('/test')).rejects.toThrow('Erro Proxy HTTP 404');
         });
 
         it('logs error to dbService on failure', async () => {
