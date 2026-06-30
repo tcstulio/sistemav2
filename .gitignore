@@ -130,3 +130,8 @@ backend/src/trigger.ts
 
 # Scratch de triagem de issues na raiz
 /issue_*.md
+
+# Scripts de diagnóstico pontual/pessoal (audit-screens.ts é versionado; estes não)
+scripts/diagnostic-browser.ts
+scripts/test-api.ts
+scripts/visual-analysis.ts
