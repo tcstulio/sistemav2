@@ -821,7 +821,7 @@ const AgendaView: React.FC<AgendaViewProps> = ({ onNavigate }) => {
             {viewMode === 'list' ? (
                 selectedItemId ? (
                     // VIEW: LIST with MasterDetail (item selected → split view)
-                    <div className="flex-1 overflow-hidden">
+                    <div className="flex-1 overflow-hidden flex flex-col min-h-0">
                         <MasterDetailLayout
                             showDetail={true}
                             onCloseDetail={() => { setSelectedItemId(null); setEditEventPrefill(undefined); }}
