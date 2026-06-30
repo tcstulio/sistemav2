@@ -248,7 +248,7 @@ const ProductDetail: React.FC<{
                             ) : product.stock_details && product.stock_details.length > 0 ? (
                                 <div className="space-y-2">
                                     {product.stock_details.map((detail, idx) => (
-                                        <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800 rounded-lg">
+                                        <div key={detail.warehouse ?? `wh-${idx}`} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800 rounded-lg">
                                             <span className="text-sm text-slate-700 dark:text-slate-300">{detail.warehouse}</span>
                                             <span className="font-bold text-slate-900 dark:text-white">{detail.qty}</span>
                                         </div>
