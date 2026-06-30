@@ -47,7 +47,8 @@ export const PageLayout: React.FC<PageLayoutProps> = ({
             role="main"
             aria-label={title}
             className={`
-                h-full 
+                flex-1 
+                min-h-0
                 overflow-y-auto 
                 bg-slate-50 dark:bg-slate-950
                 transition-colors

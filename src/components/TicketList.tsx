@@ -22,9 +22,13 @@ import type { StatusConfig } from './ui/StatusBadge';
 
 // Status Config
 const ticketStatuses: Record<string, StatusConfig> = {
-    '1': { label: 'Novo', variant: 'blue', icon: <AlertCircle size={12} /> },
-    '5': { label: 'Em Progresso', variant: 'orange', icon: <Clock size={12} /> },
+    '0': { label: 'Novo', variant: 'blue', icon: <AlertCircle size={12} /> },
+    '1': { label: 'Novo', variant: 'blue', icon: <AlertCircle size={12} /> }, // Mantendo legacy
+    '2': { label: 'Aguardando Cliente', variant: 'purple', icon: <Clock size={12} /> },
+    '3': { label: 'Em Atendimento', variant: 'orange', icon: <MessageSquare size={12} /> },
+    '5': { label: 'Em Progresso', variant: 'orange', icon: <Clock size={12} /> }, // Mantendo legacy
     '8': { label: 'Fechado', variant: 'emerald', icon: <CheckCircle2 size={12} /> },
+    '9': { label: 'Cancelado', variant: 'slate', icon: <XCircle size={12} /> },
     'CLOSED': { label: 'Fechado', variant: 'emerald', icon: <CheckCircle2 size={12} /> },
     'RESOLVED': { label: 'Fechado', variant: 'emerald', icon: <CheckCircle2 size={12} /> },
 };

@@ -122,3 +122,11 @@ backend/coverage/
 ai_fail*.txt
 bot_fail.txt
 bot_output.txt
+
+# Scripts ad-hoc de teste/diagnóstico no backend (scratch)
+backend/test_*.js
+backend/test_*.ts
+backend/src/trigger.ts
+
+# Scratch de triagem de issues na raiz
+/issue_*.md

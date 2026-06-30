@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { DolibarrService } from '../services/dolibarrService';
+import { dbService } from '../services/dbService';
 import { DolibarrConfig, ThirdParty } from '../types';
 
 export const useCustomerMutations = (config: DolibarrConfig | null) => {
@@ -63,6 +64,7 @@ export const useCustomerMutations = (config: DolibarrConfig | null) => {
         mutationFn: async (id: string) => {
             if (!config) throw new Error("No Configuration");
             await DolibarrService.deleteThirdParty(config, id);
+            await dbService.delete('customers', id);
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['customers'] });
@@ -106,6 +108,7 @@ export const useSupplierMutations = (config: DolibarrConfig | null) => {
         mutationFn: async (id: string) => {
             if (!config) throw new Error("No Configuration");
             await DolibarrService.deleteThirdParty(config, id);
+            await dbService.delete('suppliers', id);
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['suppliers'] });

@@ -21,6 +21,14 @@ export interface DolibarrUser {
     };
     array_options?: Record<string, any>;
     supervisor_id?: string;
+    address?: string;
+    zip?: string;
+    town?: string;
+    state_id?: string;
+    country_id?: string;
+    note_public?: string;
+    note_private?: string;
+    color?: string;
     date_modification?: number;
 }
 

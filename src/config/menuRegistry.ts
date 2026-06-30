@@ -36,6 +36,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
         items: [
             { id: 'whatsapp', path: '/whatsapp', label: 'WhatsApp Omni' },
             { id: 'chat', path: '/chat', label: 'Chat Interno' },
+            { id: 'ai_conversations', path: '/ai-conversations', label: 'Conversas IA' },
             { id: 'email', path: '/email', label: 'Emails' },
             { id: 'automation', path: '/automation', label: 'Automação' },
             { id: 'venues', path: '/venues', label: 'Espaços' },
@@ -53,7 +54,7 @@ export const MENU_REGISTRY: MenuRegistryGroup[] = [
             { id: 'shipments', path: '/shipments', label: 'Envios' },
             { id: 'contracts', path: '/contracts', label: 'Contratos' },
             { id: 'interventions', path: '/interventions', label: 'Intervenções' },
-            { id: 'tickets', path: '/tickets', label: 'Conversas com clientes' },
+            { id: 'tickets', path: '/tickets', label: 'Chamados (Tickets)' },
         ],
     },
     {

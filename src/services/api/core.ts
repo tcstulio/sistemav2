@@ -1,4 +1,4 @@
-﻿import { DolibarrConfig, DolibarrDictionary, DolibarrUser, Category } from '../../types';
+import { DolibarrConfig, DolibarrDictionary, DolibarrUser, Category } from '../../types';
 import { dbService } from '../dbService';
 import { config as AppConfig } from '../../config';
 import { logger } from '../../utils/logger';
@@ -91,13 +91,19 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
             if (!response.ok) {
                 let errorMsg = `Erro Proxy HTTP ${response.status}`;
                 try {
-                    const errorData = await response.json();
-                    errorMsg = typeof errorData === 'object' ? JSON.stringify(errorData) : errorData;
-                } catch (e) {
                     const text = await response.text();
-                    if (text && text.trim() && !text.trim().toLowerCase().includes('not found') && !text.trim().toLowerCase().includes('unauthorized') && !text.trim().toLowerCase().includes('forbidden')) {
-                        errorMsg = text;
+                    if (text && text.trim()) {
+                        try {
+                            const errorData = JSON.parse(text);
+                            errorMsg = typeof errorData === 'object' ? JSON.stringify(errorData) : errorData;
+                        } catch (parseErr) {
+                            if (!text.trim().toLowerCase().includes('not found') && !text.trim().toLowerCase().includes('unauthorized') && !text.trim().toLowerCase().includes('forbidden')) {
+                                errorMsg = text;
+                            }
+                        }
                     }
+                } catch (e) {
+                    // Ignora erro de leitura
                 }
 
                 log.error(`Proxy error: ${errorMsg}`);

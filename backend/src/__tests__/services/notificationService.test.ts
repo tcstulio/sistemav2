@@ -46,11 +46,11 @@ describe('notificationService — isolamento por usuário (#519)', () => {
         expect(b.read).toBe(false); // a de u2 segue não-lida
     });
 
-    it('deleteAllForUser remove só as PESSOAIS do usuário (mantém broadcasts e de outros)', () => {
+    it('deleteAllForUser limpa a visão do usuário: hard-delete das pessoais + oculta broadcasts via deletedBy (preserva de outros)', () => {
         const removed = notificationService.deleteAllForUser('u1');
-        expect(removed).toBe(1); // só 'a'
+        expect(removed).toBe(3); // 'a' (pessoal, removida do store) + 'c','d' (broadcasts ocultados p/ u1 via deletedBy)
         const ids = (notificationService as any).data.notifications.map((n: any) => n.id);
-        expect(ids.sort()).toEqual(['b', 'c', 'd']); // broadcasts e a de u2 preservadas
+        expect(ids.sort()).toEqual(['b', 'c', 'd']); // 'b' (de u2) intacta; broadcasts seguem no store p/ outros usuários
     });
 
     it('sem userId, getForUser/getUnreadCount não filtram (compat)', () => {
