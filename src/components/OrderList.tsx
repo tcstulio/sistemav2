@@ -247,7 +247,7 @@ const OrderDetail: React.FC<{
                                         <div className="space-y-2">
                                             {order.lines && order.lines.length > 0 ? (
                                                 order.lines.map((line: any, idx: number) => (
-                                                    <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
+                                                    <div key={line.id ?? `ol-${idx}`} className="flex justify-between items-center p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
                                                         <div>
                                                             <div className="font-medium text-slate-800 dark:text-white text-sm">{line.desc || line.label}</div>
                                                             <div className="text-xs text-slate-500">Qtd: {line.qty}</div>
