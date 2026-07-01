@@ -2,6 +2,7 @@ import { createLogger } from '../utils/logger';
 import { dolibarrService } from './dolibarr';
 import { aiService } from './aiService';
 import { financialAnalysisStore, FinancialAnalysisSnapshot } from './financialAnalysisStore';
+import { dashboardArtifactsService } from './dashboardArtifactsService';
 
 const log = createLogger('Analyze');
 
@@ -31,9 +32,19 @@ export async function runSalesForecastAnalysis(): Promise<SalesForecastAnalysisR
     const invoices = await dolibarrService.listInvoices({ limit: 200 });
     const referenceDate = new Date().toISOString();
     const result = await aiService.generateSalesForecast(invoices, { referenceDate }, 'banking');
+    const parsed = safeJsonParse(result);
+
+    // #931: alimenta o store que o widget "Previsão de Vendas" REALMENTE lê (dashboardArtifacts),
+    // deixando a previsão pré-computada em background — o usuário vê na hora, sem esperar a geração.
+    // Só grava forecast VÁLIDO (não sobrescreve o cache do widget com resultado vazio/ruim).
+    const fc = parsed as { forecast?: unknown[] } | null;
+    if (fc && typeof fc === 'object' && Array.isArray(fc.forecast) && fc.forecast.length > 0) {
+        dashboardArtifactsService.setSalesForecast(parsed, 'Automação');
+        log.info('Sales forecast pré-computado salvo no dashboardArtifacts (widget)');
+    }
 
     const snapshot = financialAnalysisStore.saveAnalysis({
-        data: safeJsonParse(result),
+        data: parsed,
         status: 'success',
         lastRunAt: new Date().toISOString(),
     });
