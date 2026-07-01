@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockListInvoices = vi.hoisted(() => vi.fn());
 const mockGenerateSalesForecast = vi.hoisted(() => vi.fn());
 const mockSaveAnalysis = vi.hoisted(() => vi.fn());
+const mockSetSalesForecast = vi.hoisted(() => vi.fn());
 
 vi.mock('../../services/dolibarr', () => ({
     dolibarrService: { listInvoices: mockListInvoices },
@@ -14,6 +15,10 @@ vi.mock('../../services/aiService', () => ({
 
 vi.mock('../../services/financialAnalysisStore', () => ({
     financialAnalysisStore: { saveAnalysis: mockSaveAnalysis },
+}));
+
+vi.mock('../../services/dashboardArtifactsService', () => ({
+    dashboardArtifactsService: { setSalesForecast: mockSetSalesForecast },
 }));
 
 vi.mock('../../utils/logger', () => ({
@@ -80,5 +85,20 @@ describe('analyzeService.runSalesForecastAnalysis', () => {
         await runSalesForecastAnalysis();
         const ctx = mockGenerateSalesForecast.mock.calls[0][1];
         expect(new Date(ctx.referenceDate).getTime()).not.toBeNaN();
+    });
+
+    it('#931: alimenta o widget (dashboardArtifacts) quando o forecast é válido', async () => {
+        const fc = { forecast: [{ month: 'Jul 2026', predicted_revenue: 1000, confidence: 'medium' }], summary: 'ok', trend: 'up' };
+        mockGenerateSalesForecast.mockResolvedValue(JSON.stringify(fc));
+
+        await runSalesForecastAnalysis();
+
+        expect(mockSetSalesForecast).toHaveBeenCalledWith(fc, 'Automação');
+    });
+
+    it('#931: NÃO sobrescreve o widget quando o forecast vem vazio', async () => {
+        // default do beforeEach: forecast: [] → não deve gravar no store do widget
+        await runSalesForecastAnalysis();
+        expect(mockSetSalesForecast).not.toHaveBeenCalled();
     });
 });
