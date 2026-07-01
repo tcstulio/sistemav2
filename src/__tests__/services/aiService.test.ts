@@ -199,32 +199,48 @@ describe('AiService', () => {
         // Data relativa evita fragilidade de fronteira de mês (cf. bug do TimeAnalysisDashboard).
         const recentInvoice = { id: '1', ref: 'INV-001', total_ttc: 1000, statut: '1', date: new Date().toISOString() };
 
-        it('generates sales forecast from invoices', async () => {
-            const forecast = { nextMonth: 50000, trend: 'up' };
-            mockAxios.post.mockResolvedValue({ data: { result: forecast } });
+        it('gera o forecast pelo fluxo assíncrono (enfileira + polling até done)', async () => {
+            vi.useFakeTimers();
+            try {
+                const forecastStr = JSON.stringify({ forecast: [{ month: 'Julho 2026', predicted_revenue: 1000 }], trend: 'up' });
+                mockAxios.post.mockResolvedValue({ data: { jobId: 'fj-1', status: 'queued' } });
+                mockAxios.get.mockResolvedValue({ data: { status: 'done', result: forecastStr } });
 
-            const result = await AiService.generateSalesForecast([recentInvoice] as unknown as Invoice[]);
+                const promise = AiService.generateSalesForecast([recentInvoice] as unknown as Invoice[]);
+                await vi.advanceTimersByTimeAsync(2500); // pula o primeiro intervalo de polling
+                const result = await promise;
 
-            expect(result).toEqual(forecast);
+                expect(result).toBe(forecastStr);
+            } finally {
+                vi.useRealTimers();
+            }
         });
 
-        it('#915: envia série mensal agregada em context.timeSeries (não faturas cruas)', async () => {
-            mockAxios.post.mockResolvedValue({ data: { result: {} } });
+        it('#915: enfileira em /sales-forecast-async com série mensal agregada (não faturas cruas)', async () => {
+            vi.useFakeTimers();
+            try {
+                mockAxios.post.mockResolvedValue({ data: { jobId: 'fj-2' } });
+                mockAxios.get.mockResolvedValue({ data: { status: 'done', result: '{}' } });
 
-            await AiService.generateSalesForecast([recentInvoice] as unknown as Invoice[]);
+                const promise = AiService.generateSalesForecast([recentInvoice] as unknown as Invoice[]);
+                await vi.advanceTimersByTimeAsync(2500);
+                await promise;
 
-            expect(mockAxios.post).toHaveBeenCalledWith(
-                expect.stringContaining('/analyze/sales-forecast'),
-                expect.objectContaining({
-                    invoices: [],
-                    context: expect.objectContaining({
-                        timeSeries: expect.arrayContaining([
-                            expect.objectContaining({ period: expect.any(String), revenue: expect.any(Number), count: expect.any(Number) })
-                        ])
-                    })
-                }),
-                expect.any(Object)
-            );
+                expect(mockAxios.post).toHaveBeenCalledWith(
+                    expect.stringContaining('/analyze/sales-forecast-async'),
+                    expect.objectContaining({
+                        invoices: [],
+                        context: expect.objectContaining({
+                            timeSeries: expect.arrayContaining([
+                                expect.objectContaining({ period: expect.any(String), revenue: expect.any(Number), count: expect.any(Number) })
+                            ])
+                        })
+                    }),
+                    expect.any(Object)
+                );
+            } finally {
+                vi.useRealTimers();
+            }
         });
 
         it('curto-circuita sem chamar o LLM quando o filtro zera as faturas', async () => {

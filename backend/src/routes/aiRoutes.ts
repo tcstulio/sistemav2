@@ -434,6 +434,26 @@ router.post('/analyze/sales-forecast', async (req, res) => {
     }
 });
 
+// #908/#915: forecast ASSÍNCRONO (job + polling), mesmo padrão do chat. A geração do GLM é lenta
+// e com variância alta (60-90s típico, cauda >120s); segurar a conexão síncrona estourava o
+// timeout de cliente/túnel. Aqui enfileiramos e respondemos na hora com jobId; o cliente faz
+// polling de GET /jobs/:id. O resultado vem em job.result (a string JSON do forecast).
+router.post('/analyze/sales-forecast-async', (req, res) => {
+    try {
+        const { invoices, context } = SalesForecastSchema.parse(req.body);
+        const jobId = aiJobService.enqueue(
+            async () => ({ result: await aiService.generateSalesForecast(invoices, context, 'banking') }),
+            'forecast'
+        );
+        res.status(202).json({ jobId, status: 'queued' });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Financial Analysis (issue #490) — persisted snapshot + automation config
 const AutomationConfigSchema = z.object({
     enabled: z.boolean().optional(),

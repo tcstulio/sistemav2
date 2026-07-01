@@ -397,6 +397,26 @@ describe('aiRoutes', () => {
         });
     });
 
+    describe('POST /api/analyze/sales-forecast-async', () => {
+        it('enfileira e retorna 202 com jobId', async () => {
+            const res = await request(app)
+                .post('/api/analyze/sales-forecast-async')
+                .send({ invoices: [] });
+
+            expect(res.status).toBe(202);
+            expect(res.body.jobId).toBeDefined();
+            expect(res.body.status).toBe('queued');
+        });
+
+        it('retorna 400 quando invoices está ausente', async () => {
+            const res = await request(app)
+                .post('/api/analyze/sales-forecast-async')
+                .send({});
+
+            expect(res.status).toBe(400);
+        });
+    });
+
     describe('POST /api/analyze/customer-sentiment', () => {
         it('returns 200 with sentiment analysis', async () => {
             const res = await request(app)
