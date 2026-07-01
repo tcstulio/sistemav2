@@ -279,19 +279,39 @@ export const AiService = {
 
             log.info('Sales forecast: série mensal enviada à IA', { relevant: relevantInvoices.length, months: timeSeries.length });
 
-            // #908/#915: timeout de cliente ALINHADO ao backend (180s). A agregação já reduz a
-            // latência típica (medido: ~60-90s vs 116-166s sem agregar), mas a variância do GLM
-            // (rate-limit/fallback) pode passar de 120s. Alinhar ao teto do backend (180s) garante
-            // que, se o backend termina, o cliente recebe o resultado em vez de abortar por engano.
-            const response = await axios.post(`${API_URL}/analyze/sales-forecast`, {
-                invoices: [], // payload agora vai agregado em context.timeSeries
+            // #908: forecast ASSÍNCRONO (job + polling), como o chat. Enfileira e faz polling — não
+            // segura a conexão, então a variância do GLM (60-90s típico, cauda >120s) NUNCA estoura
+            // timeout de cliente/túnel (524). O job roda em background até concluir.
+            const start = await axios.post(`${API_URL}/analyze/sales-forecast-async`, {
+                invoices: [], // payload agregado em context.timeSeries
                 context: {
                     referenceDate: now.toISOString(),
                     targetMonths: targetMonths,
                     timeSeries
                 }
-            }, { ...getAuthHeaders(), timeout: 180000 });
-            return response.data.result;
+            }, { ...getAuthHeaders(), timeout: 30000 });
+
+            const jobId = start.data?.jobId;
+            if (!jobId) throw new Error('Falha ao enfileirar a previsão de vendas.');
+
+            const POLL_MS = 2500;
+            const MAX_WAIT_MS = 5 * 60 * 1000; // generoso; o job conclui em background
+            const startedAt = Date.now();
+            while (Date.now() - startedAt < MAX_WAIT_MS) {
+                await new Promise((r) => setTimeout(r, POLL_MS));
+                let job: any;
+                try {
+                    const st = await axios.get(`${API_URL}/jobs/${jobId}`, { ...getAuthHeaders(), timeout: 30000 });
+                    job = st.data;
+                } catch (pollErr: any) {
+                    if (pollErr?.response?.status === 404) throw new Error('O processamento da previsão expirou. Tente novamente.');
+                    throw pollErr;
+                }
+                if (job.status === 'done') return job.result; // string JSON do forecast
+                if (job.status === 'error') throw new Error(job.error || 'Falha ao gerar a previsão.');
+                // queued/running → segue o polling
+            }
+            throw new Error('Forecast timeout'); // >5min: o catch marca isTimeout p/ o Dashboard
         } catch (error: any) {
             handleAiError('Previsão de vendas', error);
             // #908: propaga o timeout de forma distinta p/ o Dashboard dar mensagem específica.
