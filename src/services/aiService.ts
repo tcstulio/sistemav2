@@ -251,23 +251,46 @@ export const AiService = {
                 return dA - dB;
             });
 
-            // #908: observabilidade — permite diagnosticar "não gera" causado por lista vazia.
-            log.info('Sales forecast: enviando faturas à IA', { total: invoices.length, relevant: relevantInvoices.length });
+            // #915: agrega as faturas relevantes em série mensal {period,revenue,count} ANTES de
+            // enviar. Conta real: 303 faturas cruas = 116-166s (estoura o timeout de 120s); a série
+            // (~13 pontos) traz a geração de volta pra ~28s. Reduz payload E o prompt do LLM.
+            const monthMap = new Map<string, { revenue: number; count: number }>();
+            for (const inv of relevantInvoices) {
+                const dv = inv.date || (inv as any).datec || 0;
+                const ts = typeof dv === 'string' ? new Date(dv).getTime() : (dv < 10000000000 ? dv * 1000 : dv);
+                const d = new Date(ts);
+                if (isNaN(d.getTime())) continue;
+                const period = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+                const cur = monthMap.get(period) || { revenue: 0, count: 0 };
+                cur.revenue += Number(inv.total_ttc) || 0;
+                cur.count += 1;
+                monthMap.set(period, cur);
+            }
+            const timeSeries = Array.from(monthMap.entries())
+                .map(([period, v]) => ({ period, revenue: Math.round(v.revenue * 100) / 100, count: v.count }))
+                .sort((a, b) => a.period.localeCompare(b.period));
 
-            // #908: timeout de cliente. A geração é síncrona e lenta (28-63s medidos); sem timeout
-            // o spinner fica infinito quando uma camada intermediária (proxy/túnel) segura a conexão.
+            // Furo do guard (#908): o guard do Dashboard só vê invoices.length; se o FILTRO de janela
+            // (últimos 6m + sazonalidade) zerou tudo (conta só com faturas antigas), curto-circuita
+            // aqui com mensagem clara — sem bater no LLM.
+            if (timeSeries.length === 0) {
+                return JSON.stringify({ forecast: [], summary: 'Não há faturas nos últimos 6 meses (nem sazonais em anos anteriores) para gerar a previsão.' });
+            }
+
+            log.info('Sales forecast: série mensal enviada à IA', { relevant: relevantInvoices.length, months: timeSeries.length });
+
+            // #908/#915: timeout de cliente ALINHADO ao backend (180s). A agregação já reduz a
+            // latência típica (medido: ~60-90s vs 116-166s sem agregar), mas a variância do GLM
+            // (rate-limit/fallback) pode passar de 120s. Alinhar ao teto do backend (180s) garante
+            // que, se o backend termina, o cliente recebe o resultado em vez de abortar por engano.
             const response = await axios.post(`${API_URL}/analyze/sales-forecast`, {
-                invoices: relevantInvoices.map(i => ({
-                    ref: i.ref,
-                    total_ttc: i.total_ttc,
-                    status: i.statut,
-                    date: i.date
-                })),
+                invoices: [], // payload agora vai agregado em context.timeSeries
                 context: {
                     referenceDate: now.toISOString(),
-                    targetMonths: targetMonths // Inform backend which months we are targeting
+                    targetMonths: targetMonths,
+                    timeSeries
                 }
-            }, { ...getAuthHeaders(), timeout: 120000 });
+            }, { ...getAuthHeaders(), timeout: 180000 });
             return response.data.result;
         } catch (error: any) {
             handleAiError('Previsão de vendas', error);

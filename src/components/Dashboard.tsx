@@ -557,6 +557,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                                 </div>
                             ) : (
                                 <div className="space-y-4 relative z-10 animate-in fade-in slide-in-from-bottom-2">
+                                    {/* #908: se a geração fresca falhou mas há previsão em cache, sinaliza
+                                        que o valor pode estar desatualizado — antes o erro ficava invisível. */}
+                                    {forecastError && (
+                                        <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+                                            Falha ao atualizar — exibindo a última previsão gerada. {forecastError}
+                                        </p>
+                                    )}
                                     <div className="flex items-center justify-between">
                                         <span className="text-sm text-slate-500 dark:text-slate-400">Receita Projetada ({forecast.forecast[0]?.month})</span>
                                         <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${forecast.trend === 'up' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
