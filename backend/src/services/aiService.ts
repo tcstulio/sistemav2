@@ -127,6 +127,30 @@ interface AIProvider {
     analyzeMonthlyReport?(data: any, module?: string): Promise<string>;
 }
 
+// #915: agrega faturas em série mensal {period, revenue, count} ANTES de montar o prompt do
+// LLM. Sem isso o forecast embute N faturas cruas no texto (conta real: 303 → 116-166s, estoura
+// o timeout de cliente). Agregado vira ~12-24 pontos → geração volta pra ~28s, baixa variância.
+export interface MonthlyRevenuePoint { period: string; revenue: number; count: number; }
+export function aggregateInvoicesToMonthlySeries(invoices: any[]): MonthlyRevenuePoint[] {
+    const map = new Map<string, { revenue: number; count: number }>();
+    for (const inv of invoices || []) {
+        const dateVal = inv?.date ?? inv?.datec ?? inv?.d ?? 0;
+        const ts = typeof dateVal === 'string'
+            ? new Date(dateVal).getTime()
+            : (Number(dateVal) < 10000000000 ? Number(dateVal) * 1000 : Number(dateVal)); // s→ms
+        const d = new Date(ts);
+        if (isNaN(d.getTime())) continue;
+        const period = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+        const cur = map.get(period) || { revenue: 0, count: 0 };
+        cur.revenue += Number(inv?.total_ttc ?? inv?.v) || 0;
+        cur.count += 1;
+        map.set(period, cur);
+    }
+    return Array.from(map.entries())
+        .map(([period, v]) => ({ period, revenue: Math.round(v.revenue * 100) / 100, count: v.count }))
+        .sort((a, b) => a.period.localeCompare(b.period));
+}
+
 // --- Google GenAI Provider ---
 
 class GoogleProvider implements AIProvider {
@@ -291,18 +315,15 @@ class GoogleProvider implements AIProvider {
         // Group invoices by Month/Year for clearer token usage if needed, 
         // but raw list is fine if not too huge. The frontend already filters relevant ones.
 
-        const invoicesSummary = invoices.map(i => ({
-            d: i.date || i.datec,
-            v: i.total_ttc,
-            s: i.status
-        }));
+        // #915: usa a série mensal agregada (do frontend via context.timeSeries, ou agrega as
+        // faturas cruas aqui — caminho da automação/cron). Prompt enxuto = geração rápida.
+        const series: MonthlyRevenuePoint[] = Array.isArray(context?.timeSeries) && context.timeSeries.length
+            ? context.timeSeries
+            : aggregateInvoicesToMonthlySeries(invoices);
 
         log.debug("Received Context", context);
         log.debug(`Computed Ref Date String: ${new Date(context?.referenceDate).toLocaleDateString('pt-BR')}`);
-        log.debug(`Invoice Count: ${invoicesSummary.length}`);
-        if (invoicesSummary.length > 0) {
-            log.debug(`Last Invoice Date: ${invoicesSummary[invoicesSummary.length - 1].d}`);
-        }
+        log.debug(`Forecast monthly points: ${series.length}`);
 
         const refDate = context?.referenceDate ? new Date(context.referenceDate).toLocaleDateString('pt-BR') : 'Data Atual';
 
@@ -320,8 +341,8 @@ class GoogleProvider implements AIProvider {
             2. PRÓXIMOS MESES (SAZONALIDADE): Utilize os meses seguintes dos anos anteriores para estimar os meses futuros (padrão de comportamento).
             3. TENDÊNCIA (AJUSTE): Utilize os dados recentes (últimos 6 meses) para ajustar a escala volumétrica geral.
 
-            DADOS (Faturas Selecionadas - Recentes + Sazonalidade Histórica):
-            ${JSON.stringify(invoicesSummary)}
+            DADOS (Série Mensal de Receita — já agregada por mês: { "period": "AAAA-MM", "revenue": total faturado, "count": nº de faturas }):
+            ${JSON.stringify(series)}
 
             INSTRUÇÕES:
             - Identifique o padrão de vendas (picos/quedas) nos meses alvo em anos anteriores.
@@ -1320,12 +1341,15 @@ export class LocalProvider implements AIProvider {
     }
 
     async generateSalesForecast(invoices: any[], context?: any, _module?: string): Promise<string> {
-        const invoicesSummary = (invoices || []).map((i) => ({ d: i.date || i.datec, v: i.total_ttc, s: i.status }));
+        // #915: série mensal agregada (context.timeSeries do frontend, ou agrega cru — cron).
+        const series: MonthlyRevenuePoint[] = Array.isArray(context?.timeSeries) && context.timeSeries.length
+            ? context.timeSeries
+            : aggregateInvoicesToMonthlySeries(invoices);
         const refDate = context?.referenceDate ? new Date(context.referenceDate).toLocaleDateString('pt-BR') : 'Data Atual';
         const prompt = `Atue como analista financeiro sênior (sazonalidade e previsão de vendas).
 DATA DE REFERÊNCIA (HOJE): ${refDate} (o mês atual está incompleto: faça o "landing" = realizado + projeção dos dias restantes).
 METODOLOGIA: 1) mês atual = realizado + tendência; 2) próximos meses por sazonalidade (anos anteriores); 3) ajuste pela média dos últimos 6 meses.
-DADOS (faturas): ${JSON.stringify(invoicesSummary)}
+DADOS (série mensal agregada, [{period:"AAAA-MM",revenue,count}]): ${JSON.stringify(series)}
 Retorne APENAS JSON: { "forecast": [ { "month": "Nome Mês Ano", "predicted_revenue": 0.00, "confidence": "high|medium|low" } ], "summary": "lógica usada", "trend": "up|down|stable" } (3 meses)`;
         try {
             const raw = await this.complete(prompt, 'Output only JSON.', 0.3);

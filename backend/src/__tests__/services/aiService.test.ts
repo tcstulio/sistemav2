@@ -102,7 +102,7 @@ vi.mock('../../services/scraperService', () => ({
     },
 }));
 
-import { aiService, LocalProvider } from '../../services/aiService';
+import { aiService, LocalProvider, aggregateInvoicesToMonthlySeries } from '../../services/aiService';
 import { GoogleGenAI } from '@google/genai';
 import { dolibarrService } from '../../services/dolibarrService';
 import { ScraperService } from '../../services/scraperService';
@@ -766,5 +766,43 @@ describe('AiService', () => {
             expect(result.usage).toBeDefined();
             expect(typeof result.fellBack).toBe('boolean');
         });
+    });
+});
+
+describe('aggregateInvoicesToMonthlySeries (#915)', () => {
+    it('agrega por mês somando revenue e contando faturas', () => {
+        const series = aggregateInvoicesToMonthlySeries([
+            { date: '2026-01-10', total_ttc: 100 },
+            { date: '2026-01-20', total_ttc: 50.5 },
+            { date: '2026-02-05', total_ttc: 200 },
+        ]);
+        expect(series).toEqual([
+            { period: '2026-01', revenue: 150.5, count: 2 },
+            { period: '2026-02', revenue: 200, count: 1 },
+        ]);
+    });
+
+    it('aceita timestamp em segundos e em ms', () => {
+        const secs = Math.floor(Date.UTC(2025, 4, 15) / 1000); // maio/2025 em segundos
+        const ms = Date.UTC(2025, 4, 20); // maio/2025 em ms
+        const series = aggregateInvoicesToMonthlySeries([
+            { date: secs, total_ttc: 10 },
+            { date: ms, total_ttc: 20 },
+        ]);
+        expect(series).toEqual([{ period: '2025-05', revenue: 30, count: 2 }]);
+    });
+
+    it('ordena por período e ignora datas inválidas', () => {
+        const series = aggregateInvoicesToMonthlySeries([
+            { date: '2026-03-01', total_ttc: 5 },
+            { date: 'lixo', total_ttc: 999 },
+            { date: '2026-01-01', total_ttc: 5 },
+        ]);
+        expect(series.map(s => s.period)).toEqual(['2026-01', '2026-03']);
+    });
+
+    it('retorna [] para lista vazia/nula', () => {
+        expect(aggregateInvoicesToMonthlySeries([])).toEqual([]);
+        expect(aggregateInvoicesToMonthlySeries(null as any)).toEqual([]);
     });
 });

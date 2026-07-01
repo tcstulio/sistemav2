@@ -195,34 +195,53 @@ describe('AiService', () => {
     });
 
     describe('generateSalesForecast', () => {
+        // Fatura recente (relativa a "hoje") p/ sobreviver ao filtro de janela (últimos 6 meses).
+        // Data relativa evita fragilidade de fronteira de mês (cf. bug do TimeAnalysisDashboard).
+        const recentInvoice = { id: '1', ref: 'INV-001', total_ttc: 1000, statut: '1', date: new Date().toISOString() };
+
         it('generates sales forecast from invoices', async () => {
             const forecast = { nextMonth: 50000, trend: 'up' };
-            const response = { data: { result: forecast } };
-            mockAxios.post.mockResolvedValue(response);
+            mockAxios.post.mockResolvedValue({ data: { result: forecast } });
 
-            const invoices = [
-                { id: '1', ref: 'INV-001', total_ttc: 1000, status: 'paid', date: '2024-01-15' }
-            ];
-            const result = await AiService.generateSalesForecast(invoices as unknown as Invoice[]);
+            const result = await AiService.generateSalesForecast([recentInvoice] as unknown as Invoice[]);
 
             expect(result).toEqual(forecast);
         });
 
-        it('filters invoices for forecast', async () => {
-            const response = { data: { result: {} } };
-            mockAxios.post.mockResolvedValue(response);
+        it('#915: envia série mensal agregada em context.timeSeries (não faturas cruas)', async () => {
+            mockAxios.post.mockResolvedValue({ data: { result: {} } });
 
-            await AiService.generateSalesForecast([]);
+            await AiService.generateSalesForecast([recentInvoice] as unknown as Invoice[]);
 
-            expect(mockAxios.post).toHaveBeenCalledWith(expect.stringContaining('/analyze/sales-forecast'), expect.objectContaining({
-                invoices: expect.any(Array)
-            }), expect.any(Object));
+            expect(mockAxios.post).toHaveBeenCalledWith(
+                expect.stringContaining('/analyze/sales-forecast'),
+                expect.objectContaining({
+                    invoices: [],
+                    context: expect.objectContaining({
+                        timeSeries: expect.arrayContaining([
+                            expect.objectContaining({ period: expect.any(String), revenue: expect.any(Number), count: expect.any(Number) })
+                        ])
+                    })
+                }),
+                expect.any(Object)
+            );
+        });
+
+        it('curto-circuita sem chamar o LLM quando o filtro zera as faturas', async () => {
+            mockAxios.post.mockResolvedValue({ data: { result: {} } });
+
+            const result = await AiService.generateSalesForecast([]);
+
+            expect(mockAxios.post).not.toHaveBeenCalled();
+            const parsed = JSON.parse(result as string);
+            expect(parsed.forecast).toEqual([]);
+            expect(parsed.summary).toMatch(/não há faturas/i);
         });
 
         it('returns null on error', async () => {
             mockAxios.post.mockRejectedValue(new Error('Forecast failed'));
 
-            const result = await AiService.generateSalesForecast([]);
+            const result = await AiService.generateSalesForecast([recentInvoice] as unknown as Invoice[]);
 
             expect(result).toBeNull();
         });
