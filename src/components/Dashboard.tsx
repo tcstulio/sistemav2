@@ -273,6 +273,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     }, []);
 
     const handleGenerateForecast = async () => {
+        // #908: sem faturas carregadas (ex.: login novo antes do sync do IndexedDB no mobile)
+        // → não chamamos a IA; damos feedback claro em vez do genérico "dados insuficientes".
+        if (!invoices || invoices.length === 0) {
+            log.warn('Forecast abortado: nenhuma fatura carregada', { invoices: invoices?.length ?? 0 });
+            setForecastError('Sem faturas carregadas ainda. Aguarde a sincronização e tente novamente.');
+            return;
+        }
         setLoadingForecast(true);
         setForecastError(null);
         try {
@@ -281,7 +288,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 const parsed = JSON.parse(result);
                 // Empty forecast array means IA not configured or no data
                 if (!parsed.forecast || parsed.forecast.length === 0) {
-                    setForecastError(parsed.summary || 'IA não configurada ou dados insuficientes para gerar previsão.');
+                    setForecastError(parsed.summary || 'Não há faturas suficientes no período para gerar a previsão.');
                 } else {
                     setForecast(parsed);
                     void saveSalesForecast(parsed); // persiste pra todos (org-wide)
@@ -289,9 +296,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             } else {
                 setForecastError('Não foi possível gerar a previsão. Verifique se a IA está configurada.');
             }
-        } catch (e) {
+        } catch (e: any) {
             log.error("Failed to generate forecast", e);
-            setForecastError('Erro ao gerar previsão de vendas. Tente novamente.');
+            // #908: distingue timeout (geração lenta / conexão instável) de erro genérico.
+            setForecastError(e?.isTimeout
+                ? 'A previsão demorou mais que o normal. Tente novamente em uma conexão mais estável.'
+                : 'Erro ao gerar previsão de vendas. Tente novamente.');
         } finally {
             setLoadingForecast(false);
         }

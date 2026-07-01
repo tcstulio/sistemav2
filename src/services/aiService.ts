@@ -251,6 +251,11 @@ export const AiService = {
                 return dA - dB;
             });
 
+            // #908: observabilidade — permite diagnosticar "não gera" causado por lista vazia.
+            log.info('Sales forecast: enviando faturas à IA', { total: invoices.length, relevant: relevantInvoices.length });
+
+            // #908: timeout de cliente. A geração é síncrona e lenta (28-63s medidos); sem timeout
+            // o spinner fica infinito quando uma camada intermediária (proxy/túnel) segura a conexão.
             const response = await axios.post(`${API_URL}/analyze/sales-forecast`, {
                 invoices: relevantInvoices.map(i => ({
                     ref: i.ref,
@@ -262,10 +267,16 @@ export const AiService = {
                     referenceDate: now.toISOString(),
                     targetMonths: targetMonths // Inform backend which months we are targeting
                 }
-            }, getAuthHeaders());
+            }, { ...getAuthHeaders(), timeout: 120000 });
             return response.data.result;
         } catch (error: any) {
             handleAiError('Previsão de vendas', error);
+            // #908: propaga o timeout de forma distinta p/ o Dashboard dar mensagem específica.
+            if (error?.code === 'ECONNABORTED' || /timeout/i.test(String(error?.message))) {
+                const timeoutErr: any = new Error('Forecast timeout');
+                timeoutErr.isTimeout = true;
+                throw timeoutErr;
+            }
             return null;
         }
     },
