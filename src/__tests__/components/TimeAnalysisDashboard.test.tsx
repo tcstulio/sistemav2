@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { TimeAnalysisDashboard } from '../../components/Tasks/TimeAnalysisDashboard';
 import { TaskTimeLog, Project, Task, DolibarrUser } from '../../types';
@@ -102,6 +102,16 @@ const defaultProps = {
 describe('TimeAnalysisDashboard — card "Por Projeto"', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        // As fixtures usam datas de 2026-06; o componente filtra pelo MÊS ATUAL
+        // (startOfMonth/endOfMonth de `new Date()`). Fixamos "hoje" em junho para o teste
+        // não quebrar na virada de mês — o CI rodando em 1º de julho encontrava lista vazia
+        // (logs de junho fora do range) e a legenda "project-legend" não renderizava.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-06-15T12:00:00'));
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     it('renderiza o card "Por Projeto"', () => {
