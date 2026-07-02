@@ -1,7 +1,7 @@
 import { createLogger } from '../utils/logger';
 import { dolibarrService } from './dolibarr';
 import { aiService } from './aiService';
-import { financialAnalysisStore, FinancialAnalysisSnapshot } from './financialAnalysisStore';
+import { FinancialAnalysisSnapshot } from './financialAnalysisStore';
 import { dashboardArtifactsService } from './dashboardArtifactsService';
 
 const log = createLogger('Analyze');
@@ -34,8 +34,10 @@ export async function runSalesForecastAnalysis(): Promise<SalesForecastAnalysisR
     const result = await aiService.generateSalesForecast(invoices, { referenceDate }, 'banking');
     const parsed = safeJsonParse(result);
 
-    // #931: alimenta o store que o widget "Previsão de Vendas" REALMENTE lê (dashboardArtifacts),
-    // deixando a previsão pré-computada em background — o usuário vê na hora, sem esperar a geração.
+    // #931: a previsão vai APENAS para o store do widget de forecast (dashboardArtifacts),
+    // deixando-a pré-computada em background — o usuário vê na hora, sem esperar a geração.
+    // NÃO grava no financialAnalysisStore: esse é da Análise Financeira (texto, lida pelo
+    // FinancialHealthWidget); o forecast (objeto) ali poluía aquele widget (mostrado como JSON).
     // Só grava forecast VÁLIDO (não sobrescreve o cache do widget com resultado vazio/ruim).
     const fc = parsed as { forecast?: unknown[] } | null;
     if (fc && typeof fc === 'object' && Array.isArray(fc.forecast) && fc.forecast.length > 0) {
@@ -43,12 +45,8 @@ export async function runSalesForecastAnalysis(): Promise<SalesForecastAnalysisR
         log.info('Sales forecast pré-computado salvo no dashboardArtifacts (widget)');
     }
 
-    const snapshot = financialAnalysisStore.saveAnalysis({
-        data: parsed,
-        status: 'success',
-        lastRunAt: new Date().toISOString(),
-    });
-
-    log.info(`Sales forecast analysis persisted (status=${snapshot.status})`);
+    // Snapshot só p/ o retorno / rastreio da automação (não persistido em store de análise).
+    const snapshot: FinancialAnalysisSnapshot = { data: parsed, status: 'success', lastRunAt: referenceDate };
+    log.info('Sales forecast analysis done (status=success)');
     return { result, snapshot };
 }
