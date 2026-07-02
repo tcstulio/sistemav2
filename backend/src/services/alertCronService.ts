@@ -82,20 +82,17 @@ class AlertCronService {
                 lastRunAt: snapshot.lastRunAt,
                 lastRunStatus: snapshot.status,
             });
-            log.info(`[alertCronService] Financial analysis automation ran (status=${snapshot.status})`);
+            log.info(`[alertCronService] Previsão automática rodou (status=${snapshot.status})`);
             return { ran: true, status: snapshot.status };
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
-            const errSnap = financialAnalysisStore.saveAnalysis({
-                data: null,
-                status: 'error',
-                error: message,
-            });
+            // #931: a automação roda o FORECAST — em erro, só marca o status da automação.
+            // NÃO grava no financialAnalysisStore (é da Análise Financeira; não deve ser zerado).
             financialAnalysisStore.saveAutomationConfig({
-                lastRunAt: errSnap.lastRunAt,
+                lastRunAt: new Date().toISOString(),
                 lastRunStatus: 'error',
             });
-            log.error('[alertCronService] Financial analysis automation failed', e);
+            log.error('[alertCronService] Previsão automática falhou', e);
             return { ran: true, status: 'error', reason: message };
         }
     }

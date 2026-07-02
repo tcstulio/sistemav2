@@ -58,22 +58,20 @@ describe('analyzeService.runSalesForecastAnalysis', () => {
             { referenceDate: expect.any(String) },
             'banking',
         );
-        expect(mockSaveAnalysis).toHaveBeenCalledWith(expect.objectContaining({ status: 'success' }));
+        expect(mockSaveAnalysis).not.toHaveBeenCalled(); // #931: não grava no store da Análise Financeira
         expect(snapshot.status).toBe('success');
         expect(result).toBe(JSON.stringify({ forecast: [], summary: 'ok', trend: 'up' }));
     });
 
-    it('stores the forecast parsed as a structured object', async () => {
-        await runSalesForecastAnalysis();
-        const saved = mockSaveAnalysis.mock.calls[0][0];
-        expect(saved.data).toEqual({ forecast: [], summary: 'ok', trend: 'up' });
+    it('retorna o forecast parseado como objeto estruturado no snapshot', async () => {
+        const { snapshot } = await runSalesForecastAnalysis();
+        expect(snapshot.data).toEqual({ forecast: [], summary: 'ok', trend: 'up' });
     });
 
-    it('falls back to raw string when the forecast is not valid JSON', async () => {
+    it('mantém string crua no snapshot quando o forecast não é JSON válido', async () => {
         mockGenerateSalesForecast.mockResolvedValue('not-json');
-        await runSalesForecastAnalysis();
-        const saved = mockSaveAnalysis.mock.calls[0][0];
-        expect(saved.data).toBe('not-json');
+        const { snapshot } = await runSalesForecastAnalysis();
+        expect(snapshot.data).toBe('not-json');
     });
 
     it('propagates errors from the AI provider', async () => {

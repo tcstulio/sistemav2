@@ -167,10 +167,10 @@ export const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config }
                             <div className="min-w-0">
                                 <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
                                     <Sparkles size={18} className="text-indigo-500" />
-                                    Análise Financeira IA
+                                    Previsão de Vendas
                                 </div>
                                 <p className="text-xs text-slate-400 mt-1">
-                                    Gera automaticamente a análise financeira da organização no dia/horário agendado.
+                                    Gera automaticamente a previsão de vendas no dia/horário agendado, deixando-a pré-computada no Dashboard (aparece na hora, sem espera).
                                 </p>
                             </div>
 
@@ -186,7 +186,7 @@ export const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config }
                                         onChange={handleToggle}
                                         disabled={toggling}
                                         className="sr-only peer"
-                                        aria-label="Ativar/desativar Análise Financeira IA"
+                                        aria-label="Ativar/desativar Previsão de Vendas automática"
                                     />
                                     <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                                 </label>

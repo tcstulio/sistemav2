@@ -159,22 +159,20 @@ describe('alertCronService — financial analysis automation (issue #491)', () =
             expect(mockRunSalesForecastAnalysis).toHaveBeenCalledTimes(1);
         });
 
-        it('persists an error snapshot and sets lastRunStatus=error when the analysis throws', async () => {
+        it('em erro NÃO toca o store de análise; só marca lastRunStatus=error na config', async () => {
             mockFinancialAnalysisStore.getAutomationConfig.mockReturnValue({
                 enabled: true,
                 schedule: dueSchedule,
             });
             mockRunSalesForecastAnalysis.mockRejectedValue(new Error('forecast failed'));
-            const errSnap = { data: null, lastRunAt: '2025-06-15T18:00:00.000Z', status: 'error', error: 'forecast failed' };
-            mockFinancialAnalysisStore.saveAnalysis.mockReturnValue(errSnap);
 
             const res = await alertCronService.checkFinancialAnalysisAutomation(due);
 
-            expect(mockFinancialAnalysisStore.saveAnalysis).toHaveBeenCalledWith(
-                expect.objectContaining({ status: 'error', error: 'forecast failed' }),
-            );
+            // #931: a automação roda o FORECAST — em erro não deve zerar o financialAnalysisStore
+            // (que é da Análise Financeira, lida pelo FinancialHealthWidget).
+            expect(mockFinancialAnalysisStore.saveAnalysis).not.toHaveBeenCalled();
             expect(mockFinancialAnalysisStore.saveAutomationConfig).toHaveBeenCalledWith({
-                lastRunAt: errSnap.lastRunAt,
+                lastRunAt: expect.any(String),
                 lastRunStatus: 'error',
             });
             expect(res).toEqual({ ran: true, status: 'error', reason: 'forecast failed' });

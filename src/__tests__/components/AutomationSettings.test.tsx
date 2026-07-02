@@ -57,7 +57,7 @@ describe('AutomationSettings (#497)', () => {
         vi.clearAllMocks();
     });
 
-    it('lists the "Análise Financeira IA" automation and loads its config', async () => {
+    it('lists the "Previsão de Vendas" automation and loads its config', async () => {
         getConfig.mockResolvedValue({
             enabled: false,
             schedule: { dayOfWeek: 3, hour: 14, minute: 30 },
@@ -67,7 +67,7 @@ describe('AutomationSettings (#497)', () => {
 
         renderView();
 
-        expect(await screen.findByText('Análise Financeira IA')).toBeTruthy();
+        expect(await screen.findByText('Previsão de Vendas')).toBeTruthy();
         expect(getConfig).toHaveBeenCalledTimes(1);
         // Status da última execução exibido (data local formatada contém "2025")
         expect(screen.getByText(/2025/)).toBeTruthy();
@@ -90,7 +90,7 @@ describe('AutomationSettings (#497)', () => {
         }));
 
         renderView();
-        const toggle = await screen.findByLabelText('Ativar/desativar Análise Financeira IA');
+        const toggle = await screen.findByLabelText('Ativar/desativar Previsão de Vendas automática');
 
         await user.click(toggle);
 
@@ -142,7 +142,7 @@ describe('AutomationSettings (#497)', () => {
 
         renderView();
         // wait for load
-        await screen.findByText('Análise Financeira IA');
+        await screen.findByText('Previsão de Vendas');
 
         const select = screen.getByRole('combobox');
         await user.selectOptions(select, '0');
@@ -181,7 +181,7 @@ describe('AutomationSettings (#497)', () => {
         renderView(nonAdminConfig);
 
         expect(await screen.findByText('Acesso Restrito')).toBeTruthy();
-        expect(screen.queryByText('Análise Financeira IA')).toBeNull();
+        expect(screen.queryByText('Previsão de Vendas')).toBeNull();
         expect(getConfig).not.toHaveBeenCalled();
     });
 
@@ -209,7 +209,7 @@ describe('AutomationSettings (#497)', () => {
             updateConfig.mockResolvedValue({ ...baseConfig, enabled: true });
 
             renderView();
-            const toggle = await screen.findByLabelText('Ativar/desativar Análise Financeira IA') as HTMLInputElement;
+            const toggle = await screen.findByLabelText('Ativar/desativar Previsão de Vendas automática') as HTMLInputElement;
 
             await user.click(toggle);
 
@@ -226,7 +226,7 @@ describe('AutomationSettings (#497)', () => {
             updateConfig.mockResolvedValue(null);
 
             renderView();
-            const toggle = await screen.findByLabelText('Ativar/desativar Análise Financeira IA') as HTMLInputElement;
+            const toggle = await screen.findByLabelText('Ativar/desativar Previsão de Vendas automática') as HTMLInputElement;
 
             await user.click(toggle);
 
@@ -254,7 +254,7 @@ describe('AutomationSettings (#497)', () => {
             }));
 
             renderView();
-            await screen.findByText('Análise Financeira IA');
+            await screen.findByText('Previsão de Vendas');
 
             await user.selectOptions(screen.getByRole('combobox'), '0');
             await user.click(screen.getByText('Salvar horário'));
@@ -276,7 +276,7 @@ describe('AutomationSettings (#497)', () => {
             updateConfig.mockResolvedValue(null);
 
             renderView();
-            await screen.findByText('Análise Financeira IA');
+            await screen.findByText('Previsão de Vendas');
 
             await user.selectOptions(screen.getByRole('combobox'), '0');
             await user.click(screen.getByText('Salvar horário'));
@@ -293,7 +293,7 @@ describe('AutomationSettings (#497)', () => {
             updateConfig.mockResolvedValue({ ...baseConfig, enabled: true });
 
             renderView();
-            const toggle = await screen.findByLabelText('Ativar/desativar Análise Financeira IA');
+            const toggle = await screen.findByLabelText('Ativar/desativar Previsão de Vendas automática');
 
             await user.click(toggle);
 
