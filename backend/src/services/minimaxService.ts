@@ -14,7 +14,10 @@ function base(): string {
 }
 
 function authHeaders(): Record<string, string> {
-    return { 'Content-Type': 'application/json', Authorization: `Bearer ${config.minimaxApiKey}` };
+    // Mídia usa a Subscription Key da assinatura quando configurada (créditos do plano);
+    // fallback para a API key pay-as-you-go. Mesmos endpoints, mesma auth Bearer.
+    const key = config.minimaxMediaKey || config.minimaxApiKey;
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` };
 }
 
 // Algumas regiões/endpoints da MiniMax exigem GroupId. Anexa só se configurado,
@@ -36,7 +39,7 @@ function assertOk(data: any, label: string): void {
 export const minimaxService = {
     /** TTS — gera áudio do texto e devolve a URL hospedada (mp3, ~24h). */
     async generateSpeech(text: string, opts?: { voiceId?: string; model?: string; speed?: number; format?: string }): Promise<{ url: string }> {
-        if (!config.minimaxApiKey) throw new Error('MINIMAX_API_KEY ausente.');
+        if (!config.minimaxMediaKey && !config.minimaxApiKey) throw new Error('MINIMAX_API_KEY/MINIMAX_MEDIA_KEY ausente.');
         const clean = (text || '').trim();
         if (!clean) throw new Error('Texto vazio.');
 
@@ -66,7 +69,7 @@ export const minimaxService = {
      * Retorna só as portuguesas por padrão (73 vozes Portuguese_*), p/ o seletor da UI.
      */
     async listVoices(onlyPortuguese = true): Promise<{ voiceId: string; name: string }[]> {
-        if (!config.minimaxApiKey) throw new Error('MINIMAX_API_KEY ausente.');
+        if (!config.minimaxMediaKey && !config.minimaxApiKey) throw new Error('MINIMAX_API_KEY/MINIMAX_MEDIA_KEY ausente.');
         const resp = await axios.post(withGroup(`${base()}/get_voice`), { voice_type: 'system' }, { headers: authHeaders(), timeout: 60000 });
         assertOk(resp.data, 'get_voice');
         const all: any[] = resp.data?.system_voice || [];
@@ -84,7 +87,7 @@ export const minimaxService = {
 
     /** Imagem — text-to-image; devolve as URLs hospedadas (~24h). */
     async generateImage(prompt: string, opts?: { aspectRatio?: string; n?: number; model?: string }): Promise<{ urls: string[] }> {
-        if (!config.minimaxApiKey) throw new Error('MINIMAX_API_KEY ausente.');
+        if (!config.minimaxMediaKey && !config.minimaxApiKey) throw new Error('MINIMAX_API_KEY/MINIMAX_MEDIA_KEY ausente.');
         const clean = (prompt || '').trim();
         if (!clean) throw new Error('Prompt vazio.');
 
@@ -110,7 +113,7 @@ export const minimaxService = {
 
     /** Vídeo (assíncrono) — submete a tarefa e devolve o task_id. */
     async submitVideo(prompt: string, opts?: { model?: string; duration?: number; resolution?: string }): Promise<{ taskId: string }> {
-        if (!config.minimaxApiKey) throw new Error('MINIMAX_API_KEY ausente.');
+        if (!config.minimaxMediaKey && !config.minimaxApiKey) throw new Error('MINIMAX_API_KEY/MINIMAX_MEDIA_KEY ausente.');
         const clean = (prompt || '').trim();
         if (!clean) throw new Error('Prompt vazio.');
 
@@ -131,7 +134,7 @@ export const minimaxService = {
      * via /files/retrieve. Caso contrário devolve só o status (Queueing/Processing/Fail/…).
      */
     async getVideoStatus(taskId: string): Promise<{ status: string; url?: string }> {
-        if (!config.minimaxApiKey) throw new Error('MINIMAX_API_KEY ausente.');
+        if (!config.minimaxMediaKey && !config.minimaxApiKey) throw new Error('MINIMAX_API_KEY/MINIMAX_MEDIA_KEY ausente.');
         if (!taskId) throw new Error('task_id ausente.');
 
         const q = await axios.get(withGroup(`${base()}/query/video_generation?task_id=${encodeURIComponent(taskId)}`), { headers: authHeaders(), timeout: 60000 });
