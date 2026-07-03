@@ -27,6 +27,8 @@ export interface ChatMessage {
     role: 'user' | 'model' | 'system';
     text: string;
     isError?: boolean;
+    /** Preview (dataURL) da imagem anexada — só em memória, p/ exibir no bubble (#947). */
+    image?: string;
     usage?: {
         promptTokens: number;
         completionTokens: number;

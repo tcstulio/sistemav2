@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User, Trash2, History, Plus, Zap, Volume2, Square } from 'lucide-react';
 import { AiService, ChatMessage } from '../services/aiService';
+import { toast } from 'sonner';
 import { ThirdParty, Invoice, Project, Ticket } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
 import { safeStorage } from '../utils/safeStorage';
@@ -121,7 +122,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const [isListening, setIsListening] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [attachedImage, setAttachedImage] = useState<{ data: string, mimeType: string } | null>(null);
+  const [attachedImage, setAttachedImage] = useState<{ data: string, mimeType: string, preview?: string } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState<Array<{ id: string; title: string; updatedAt: number; messageCount: number }>>([]);
   const [attachedPdf, setAttachedPdf] = useState<{ name: string; data: string } | null>(null);
@@ -253,20 +254,41 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     }
   };
 
+  // #947: comprime a imagem NO NAVEGADOR antes de enviar (max 1600px, jpeg q0.85).
+  // Foto de celular (8-12MB) estourava o limite de 10MB do servidor -> HTTP 413 ->
+  // "Erro de conexão". Comprimida (~300-500KB) passa sempre, sobe rápido e a visão lê igual.
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64String = reader.result as string;
-      const base64Data = base64String.split(',')[1];
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const MAX = 1600;
+      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       setAttachedImage({
-        data: base64Data,
-        mimeType: file.type
+        data: dataUrl.split(',')[1],
+        mimeType: 'image/jpeg',
+        preview: dataUrl,
       });
     };
-    reader.readAsDataURL(file);
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      // formato que o <img> não decodifica: envia cru mesmo (comportamento antigo)
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        setAttachedImage({ data: base64String.split(',')[1], mimeType: file.type, preview: base64String });
+      };
+      reader.readAsDataURL(file);
+    };
+    img.src = objectUrl;
   };
 
   const handlePdfSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -339,7 +361,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
       ...prev,
       {
         role: 'user',
-        text: userMsg + (userImage ? ' [Imagem Anexada]' : '') + (userPdf ? ` [PDF: ${userPdf.name}]` : '')
+        text: userMsg + (userImage && !userImage.preview ? ' [Imagem Anexada]' : '') + (userPdf ? ` [PDF: ${userPdf.name}]` : ''),
+        image: userImage?.preview, // #947: mostra a imagem enviada no bubble
       }
     ]);
 
@@ -407,6 +430,12 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      // #947: antes o Enter era engolido em silêncio enquanto o agente respondia
+      // (ex.: durante o resumo automático de abertura) — parecia que o chat ignorou.
+      if (isLoading && (input.trim() || attachedImage || attachedPdf)) {
+        toast.info('Aguarde o assistente concluir a resposta atual…');
+        return;
+      }
       handleSend();
     }
   };
@@ -565,6 +594,9 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
                     ? 'bg-indigo-600 text-white rounded-br-none'
                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-none'
                     }`}>
+                    {msg.image && (
+                      <img src={msg.image} alt="Imagem enviada" className="rounded-lg max-w-full max-h-48 mb-2 border border-white/20" />
+                    )}
                     {msg.role === 'model' ? renderMessageContent(msg.text, navigate) : msg.text}
                     {msg.role === 'model' && !msg.isError && msg.text && (
                       <div className="flex items-center gap-2 mt-1 pt-1 border-t border-slate-100 dark:border-slate-700/50 flex-wrap">
@@ -617,10 +649,23 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
           {/* Image Preview */}
           {attachedImage && (
             <div className="p-2 bg-slate-100 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center gap-2">
-              <div className="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 px-2 py-1 rounded flex items-center gap-1">
-                <ImageIcon size={12} /> Imagem Anexada
-                <button onClick={() => setAttachedImage(null)} className="ml-1 hover:text-red-500"><X size={12} /></button>
-              </div>
+              {attachedImage.preview ? (
+                <div className="relative">
+                  <img src={attachedImage.preview} alt="Anexo" className="h-16 w-16 object-cover rounded-lg border border-slate-300 dark:border-slate-600" />
+                  <button
+                    onClick={() => setAttachedImage(null)}
+                    className="absolute -top-1.5 -right-1.5 bg-slate-700 text-white rounded-full p-0.5 hover:bg-red-600 shadow"
+                    title="Remover imagem"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ) : (
+                <div className="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 px-2 py-1 rounded flex items-center gap-1">
+                  <ImageIcon size={12} /> Imagem Anexada
+                  <button onClick={() => setAttachedImage(null)} className="ml-1 hover:text-red-500"><X size={12} /></button>
+                </div>
+              )}
             </div>
           )}
 
