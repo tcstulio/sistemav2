@@ -1498,14 +1498,18 @@ const glmVisionConfig = (apiKey?: string) => apiKey
     : undefined;
 
 // Fallback de texto p/ o GLM: MiniMax M3 (quando há chave configurada). Acionado em 429/timeout/5xx.
-const minimaxFallbackConfig = () => (config.minimaxApiKey && config.minimaxBaseUrl)
-    ? { baseUrl: config.minimaxBaseUrl, model: config.minimaxModel, apiKey: config.minimaxApiKey }
+// Prefere a Subscription Key do plano (créditos da assinatura) — a API key pay-as-you-go
+// estava zerada e deixava o fallback GLM→M3 silenciosamente quebrado (mesma confusão de
+// carteiras do TTS/#942). Fallback pra API key se a do plano não estiver configurada.
+const minimaxKey = () => config.minimaxMediaKey || config.minimaxApiKey;
+const minimaxFallbackConfig = () => (minimaxKey() && config.minimaxBaseUrl)
+    ? { baseUrl: config.minimaxBaseUrl, model: config.minimaxModel, apiKey: minimaxKey() }
     : undefined;
 
 function createProvider(name: string, url?: string, key?: string, modelName?: string): AIProvider {
     if (name === 'google') return new GoogleProvider(key || config.googleApiKey, modelName);
     if (name === 'glm') return new LocalProvider(url || config.zaiBaseUrl, modelName || config.zaiModel, key || config.zaiApiKey, glmVisionConfig(key || config.zaiApiKey), minimaxFallbackConfig());
-    if (name === 'minimax') return new LocalProvider(url || config.minimaxBaseUrl, modelName || config.minimaxModel, key || config.minimaxApiKey);
+    if (name === 'minimax') return new LocalProvider(url || config.minimaxBaseUrl, modelName || config.minimaxModel, key || minimaxKey());
     return new LocalProvider(url || config.localLlmUrl, modelName || config.localModelName);
 }
 
