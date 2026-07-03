@@ -538,8 +538,18 @@ export const AiService = {
 
     analyzeSystemLogs: async (logs: any[]) => {
         try {
+            // #951: defesa no consumidor — logs ANTIGOS (pré-fix) podem ter base64 no
+            // request_body/output. Corta qualquer string longa antes de mandar à LLM,
+            // pra não explodir o contexto (a fonte já é sanitizada em core.ts).
+            const capStr = (v: any) => (typeof v === 'string' && v.length > 1000) ? `[omitido: ${v.length} chars]` : v;
+            const safeLogs = logs.slice(0, 50).map((l) => {
+                if (!l || typeof l !== 'object') return l;
+                const o: Record<string, any> = {};
+                for (const k in l) o[k] = capStr(l[k]);
+                return o;
+            });
             const response = await axios.post(`${API_URL}/analyze/logs`, {
-                logs: logs.slice(0, 50)
+                logs: safeLogs
             }, getAuthHeaders());
             return response.data.result;
         } catch (error: any) {

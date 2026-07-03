@@ -143,6 +143,19 @@ describe('API Core', () => {
                 status: 'success'
             }));
         });
+
+        it('#951: redige base64 (imagem/áudio) no request_body do api_logs', async () => {
+            mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ ok: true }) });
+            const bigBase64 = 'A'.repeat(50000); // simula uma imagem base64
+            await core.request('/chat', { method: 'POST', body: JSON.stringify({ msg: 'oi', images: [bigBase64] }) });
+
+            const call = (dbService.add as any).mock.calls.find((c: any[]) => c[0] === 'api_logs');
+            const logged = String(call[1].request_body);
+            expect(logged).not.toContain(bigBase64);      // o base64 NÃO foi salvo
+            expect(logged).toContain('omitido');           // virou placeholder
+            expect(logged).toContain('oi');                // campos pequenos preservados
+            expect(logged.length).toBeLessThan(5000);      // e limitado
+        });
     });
 
     describe('fetchPage', () => {
