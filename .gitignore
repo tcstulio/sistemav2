@@ -135,3 +135,6 @@ backend/src/trigger.ts
 scripts/diagnostic-browser.ts
 scripts/test-api.ts
 scripts/visual-analysis.ts
+
+# Whisper local (binário + modelos — baixados no setup, não versionados)
+backend/tools/
