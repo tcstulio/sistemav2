@@ -5,6 +5,7 @@
 import axios from 'axios';
 import { config } from '../config/env';
 import { logger } from '../utils/logger';
+import { voiceConfigStore } from './voiceConfigStore';
 
 const log = logger.child('MinimaxService');
 
@@ -45,7 +46,7 @@ export const minimaxService = {
             stream: false,
             output_format: 'url', // pede URL em vez de hex
             language_boost: 'auto',
-            voice_setting: { voice_id: opts?.voiceId || config.minimaxVoiceId, speed: opts?.speed ?? 1.0, vol: 1.0, pitch: 0 },
+            voice_setting: { voice_id: opts?.voiceId || voiceConfigStore.get().voiceId || config.minimaxVoiceId, speed: opts?.speed ?? voiceConfigStore.get().speed ?? 1.0, vol: 1.0, pitch: 0 },
             audio_setting: { sample_rate: 32000, format: opts?.format || 'mp3', bitrate: 128000, channel: 1 },
         };
 
@@ -58,6 +59,27 @@ export const minimaxService = {
         }
         log.info('TTS gerado', { chars: clean.length, model: body.model });
         return { url };
+    },
+
+    /**
+     * Lista as vozes de sistema disponíveis (funciona mesmo sem saldo de TTS).
+     * Retorna só as portuguesas por padrão (73 vozes Portuguese_*), p/ o seletor da UI.
+     */
+    async listVoices(onlyPortuguese = true): Promise<{ voiceId: string; name: string }[]> {
+        if (!config.minimaxApiKey) throw new Error('MINIMAX_API_KEY ausente.');
+        const resp = await axios.post(withGroup(`${base()}/get_voice`), { voice_type: 'system' }, { headers: authHeaders(), timeout: 60000 });
+        assertOk(resp.data, 'get_voice');
+        const all: any[] = resp.data?.system_voice || [];
+        const list = all
+            .filter((v) => !onlyPortuguese || /portuguese/i.test(String(v?.voice_id || '')))
+            .map((v) => ({
+                voiceId: String(v.voice_id),
+                // 'Portuguese_ConfidentWoman' -> 'Confident Woman' (rótulo amigável p/ a UI)
+                name: String(v.voice_name || v.voice_id).replace(/^Portuguese_/i, '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[-_]/g, ' '),
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+        log.info(`listVoices: ${list.length} vozes${onlyPortuguese ? ' pt' : ''}`);
+        return list;
     },
 
     /** Imagem — text-to-image; devolve as URLs hospedadas (~24h). */

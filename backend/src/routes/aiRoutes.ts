@@ -9,6 +9,8 @@ import { agentActivityService } from '../services/agentActivityService';
 import { agentBootstrapConfigStore } from '../services/agentBootstrapConfigStore';
 import { aiJobService } from '../services/aiJobService';
 import { financialAnalysisStore } from '../services/financialAnalysisStore';
+import { voiceConfigStore } from '../services/voiceConfigStore';
+import { minimaxService } from '../services/minimaxService';
 import { createLogger } from '../utils/logger';
 import { verifyDeeplink } from '../utils/deeplinkToken';
 
@@ -729,6 +731,68 @@ router.put('/agent/bootstrap-config', requireDolibarrAdmin, (req, res) => {
             return res.status(400).json({ error: 'Config inválida', details: error.issues });
         }
         res.status(500).json({ error: error.message });
+    }
+});
+
+// ===========================================
+// VOZ do agente (TTS MiniMax) — #938
+// ===========================================
+
+// Config org-wide da voz (voiceId/speed), editável pelo admin na tela de Automações.
+router.get('/voice/config', requireDolibarrLogin, (_req, res) => {
+    res.json(voiceConfigStore.get());
+});
+
+const VoiceConfigSchema = z.object({
+    voiceId: z.string().min(1).max(120).optional(),
+    speed: z.number().min(0.5).max(2).optional(),
+});
+
+router.put('/voice/config', requireDolibarrAdmin, (req, res) => {
+    try {
+        const patch = VoiceConfigSchema.parse(req.body);
+        res.json(voiceConfigStore.update(patch));
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Config inválida', details: error.issues });
+        }
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Lista as vozes pt disponíveis (get_voice funciona mesmo sem saldo de TTS). Cache 1h.
+let voicesCache: { at: number; list: { voiceId: string; name: string }[] } | null = null;
+router.get('/voice/voices', requireDolibarrLogin, async (_req, res) => {
+    try {
+        if (!voicesCache || Date.now() - voicesCache.at > 3600_000) {
+            const list = await minimaxService.listVoices(true);
+            voicesCache = { at: Date.now(), list };
+        }
+        res.json({ voices: voicesCache.list });
+    } catch (error: any) {
+        res.status(502).json({ error: error.message });
+    }
+});
+
+// TTS: texto -> URL de áudio (mp3 hospedado ~24h). Voz do body ou a configurada.
+const TtsSchema = z.object({
+    text: z.string().min(1).max(10000),
+    voiceId: z.string().min(1).max(120).optional(),
+});
+
+router.post('/voice/tts', requireDolibarrLogin, async (req, res) => {
+    try {
+        const { text, voiceId } = TtsSchema.parse(req.body);
+        const { url } = await minimaxService.generateSpeech(text, voiceId ? { voiceId } : undefined);
+        res.json({ url });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ error: 'Payload inválido', details: error.issues });
+        }
+        // saldo insuficiente (1008) e afins viram 402 p/ o front cair no fallback do navegador
+        const msg = String(error?.message || '');
+        const status = /insufficient balance|1008/i.test(msg) ? 402 : 502;
+        res.status(status).json({ error: msg });
     }
 });
 

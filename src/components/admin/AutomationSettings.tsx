@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Sparkles, Clock, Save, CheckCircle2, XCircle, CalendarClock } from 'lucide-react';
+import { Sparkles, Clock, Save, CheckCircle2, XCircle, CalendarClock, Volume2, Loader2 } from 'lucide-react';
 import { Card, Button, Spinner } from '../ui';
 import { RestrictedAccess } from '../RestrictedAccess';
 import {
@@ -201,6 +201,7 @@ export const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config }
                                 <div>
                                     <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1">Dia da semana</label>
                                     <select
+                                        aria-label="Dia da semana"
                                         value={draft.dayOfWeek}
                                         onChange={(e) => setDraft({ ...draft, dayOfWeek: Number(e.target.value) })}
                                         className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -264,7 +265,111 @@ export const AutomationSettings: React.FC<AutomationSettingsProps> = ({ config }
                     </div>
                 )}
             </Card>
+
+            <VoiceSettingsCard />
         </div>
+    );
+};
+
+/**
+ * Voz do agente (#938): seleção da voz TTS (MiniMax, 73 vozes pt) usada quando o
+ * usuário toca "ouvir" nas respostas do chat e pela tool generate_speech.
+ * A lista de vozes carrega mesmo sem saldo; a amostra exige saldo MiniMax.
+ */
+const VoiceSettingsCard: React.FC = () => {
+    const [voices, setVoices] = useState<{ voiceId: string; name: string }[]>([]);
+    const [voiceId, setVoiceId] = useState('');
+    const [speed, setSpeed] = useState(1.0);
+    const [savedCfg, setSavedCfg] = useState<{ voiceId: string; speed: number } | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [sampling, setSampling] = useState(false);
+
+    useEffect(() => {
+        let alive = true;
+        (async () => {
+            const [list, cfg] = await Promise.all([AiService.listVoices(), AiService.getVoiceConfig()]);
+            if (!alive) return;
+            setVoices(list);
+            if (cfg) { setVoiceId(cfg.voiceId); setSpeed(cfg.speed); setSavedCfg(cfg); }
+            setLoading(false);
+        })();
+        return () => { alive = false; };
+    }, []);
+
+    const dirty = !!savedCfg && (voiceId !== savedCfg.voiceId || speed !== savedCfg.speed);
+
+    const handleSave = async () => {
+        setSaving(true);
+        try {
+            const updated = await AiService.updateVoiceConfig({ voiceId, speed });
+            if (updated) { setSavedCfg(updated); toast.success('Voz do agente salva!'); }
+            else toast.error('Falha ao salvar a voz.');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleSample = async () => {
+        setSampling(true);
+        try {
+            const url = await AiService.tts('Olá! Eu sou o Marciano, o agente do CoolGroove. Esta é a minha voz.', voiceId || undefined);
+            await new Audio(url).play();
+        } catch (e: any) {
+            if (e?.response?.status === 402) toast.error('Sem saldo na MiniMax para gerar a amostra (a voz salva funcionará quando houver saldo).');
+            else toast.error('Falha ao gerar a amostra de voz.');
+        } finally {
+            setSampling(false);
+        }
+    };
+
+    return (
+        <Card header={
+            <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-slate-200 uppercase tracking-wider">
+                <Volume2 size={16} /> Voz do Agente
+            </h3>
+        }>
+            <p className="text-sm text-slate-500 mb-4">
+                Voz usada quando você toca "ouvir" nas respostas do chat e nos áudios gerados pelo agente (TTS MiniMax). Sem saldo MiniMax, o chat usa a voz do navegador como reserva.
+            </p>
+            {loading ? (
+                <div className="flex justify-center py-6"><Spinner /></div>
+            ) : voices.length === 0 ? (
+                <p className="text-sm text-amber-600 dark:text-amber-400">Não foi possível carregar as vozes (verifique a chave MiniMax).</p>
+            ) : (
+                <div className="flex flex-wrap items-end gap-3">
+                    <div className="min-w-[240px]">
+                        <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1">Voz (português)</label>
+                        <select
+                            value={voiceId}
+                            onChange={(e) => setVoiceId(e.target.value)}
+                            className="w-full p-2 text-sm border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                        >
+                            {voices.map(v => <option key={v.voiceId} value={v.voiceId}>{v.name}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1">Velocidade</label>
+                        <select
+                            value={String(speed)}
+                            onChange={(e) => setSpeed(Number(e.target.value))}
+                            className="p-2 text-sm border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                        >
+                            <option value="0.75">0.75x</option>
+                            <option value="1">1x</option>
+                            <option value="1.25">1.25x</option>
+                            <option value="1.5">1.5x</option>
+                        </select>
+                    </div>
+                    <Button variant="secondary" size="sm" onClick={handleSample} disabled={sampling} icon={sampling ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}>
+                        Ouvir amostra
+                    </Button>
+                    <Button size="sm" onClick={handleSave} disabled={!dirty || saving} loading={saving} icon={<Save size={14} />}>
+                        Salvar voz
+                    </Button>
+                </div>
+            )}
+        </Card>
     );
 };
 
