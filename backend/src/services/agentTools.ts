@@ -1862,7 +1862,10 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             }
             recent = recent.slice(-logLines);
             if (recent.length === 0) return 'Nenhum log encontrado ainda (o servidor acabou de iniciar ou não há entradas).';
-            return `Últimas ${recent.length} linhas do log${level ? ` (filtrado por ${level})` : ''}:\n\n${recent.join('\n')}`;
+            // #951: corta linhas gigantes (ex.: um base64 que tenha vazado p/ o log) para não
+            // explodir o contexto do agente ao ler os logs.
+            const capped = recent.map(l => l.length > 2000 ? `${l.slice(0, 2000)}…[+${l.length - 2000} chars]` : l);
+            return `Últimas ${capped.length} linhas do log${level ? ` (filtrado por ${level})` : ''}:\n\n${capped.join('\n')}`;
         }
 
         case 'git_recent': {

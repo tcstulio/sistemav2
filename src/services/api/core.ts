@@ -7,6 +7,27 @@ import { toast } from 'sonner';
 
 const log = logger.child('ApiCore');
 
+// #951: prepara o corpo p/ o api_logs — redige mídia base64 e limita o tamanho.
+// Motivo: o OptimizeTab envia os api_logs à LLM; um base64 de foto/áudio (MBs) explodia
+// o contexto e inflava o IndexedDB. Qualquer string > 512 chars vira placeholder (pega
+// image/images/audio/pdf independente do nome do campo); o resto é limitado a 4KB.
+function sanitizeBodyForLog(body: BodyInit | null | undefined): string | undefined {
+    if (!body) return undefined;
+    let s = String(body);
+    if (s.length > 2000) {
+        try {
+            const redact = (v: any): any => {
+                if (typeof v === 'string') return v.length > 512 ? `[omitido: ${v.length} chars]` : v;
+                if (Array.isArray(v)) return v.map(redact);
+                if (v && typeof v === 'object') { const o: Record<string, any> = {}; for (const k in v) o[k] = redact(v[k]); return o; }
+                return v;
+            };
+            s = JSON.stringify(redact(JSON.parse(s)));
+        } catch { /* não é JSON — só limita abaixo */ }
+    }
+    return s.length > 4000 ? `${s.slice(0, 4000)}…[+${s.length - 4000} chars]` : s;
+}
+
 // Surface de sessão expirada: o 401 era invisível (catches silenciosos) e dava a impressão
 // de "botão que não faz nada". Mostra um aviso, com debounce p/ não repetir em rajada.
 let lastSessionToast = 0;
@@ -83,7 +104,10 @@ export const request = async (endpointUrl: string, options: RequestInit = {}) =>
     log.debug(`Requesting: ${proxyUrl} (Original: ${endpointUrl})`);
 
     const method = options.method || 'GET';
-    const requestBody = options.body ? String(options.body) : undefined;
+    // #951: NÃO gravar base64 (imagem/áudio) no api_logs — o OptimizeTab manda esses logs
+    // p/ a LLM analisar, e um base64 de foto (MBs) explodia o contexto. Redige campos de
+    // mídia e limita o tamanho. api_logs é p/ diagnóstico, não p/ guardar o payload cru.
+    const requestBody = sanitizeBodyForLog(options.body);
 
     try {
         const response = await fetch(proxyUrl, options);
