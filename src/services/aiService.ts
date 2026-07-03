@@ -377,6 +377,44 @@ export const AiService = {
         }
     },
 
+    // --- Voz do agente (TTS MiniMax) — #938 ---
+
+    /** Texto → URL de áudio (mp3). Lança com status 402 quando sem saldo (front usa fallback do navegador). */
+    tts: async (text: string, voiceId?: string): Promise<string> => {
+        const response = await axios.post(`${API_URL}/voice/tts`, { text, ...(voiceId ? { voiceId } : {}) }, { ...getAuthHeaders(), timeout: 120000 });
+        return response.data.url;
+    },
+
+    listVoices: async (): Promise<{ voiceId: string; name: string }[]> => {
+        try {
+            const response = await axios.get(`${API_URL}/voice/voices`, getAuthHeaders());
+            return response.data.voices || [];
+        } catch (error: any) {
+            log.error('listVoices', error);
+            return [];
+        }
+    },
+
+    getVoiceConfig: async (): Promise<{ voiceId: string; speed: number } | null> => {
+        try {
+            const response = await axios.get(`${API_URL}/voice/config`, getAuthHeaders());
+            return response.data;
+        } catch (error: any) {
+            log.error('getVoiceConfig', error);
+            return null;
+        }
+    },
+
+    updateVoiceConfig: async (patch: { voiceId?: string; speed?: number }): Promise<{ voiceId: string; speed: number } | null> => {
+        try {
+            const response = await axios.put(`${API_URL}/voice/config`, patch, getAuthHeaders());
+            return response.data;
+        } catch (error: any) {
+            log.error('updateVoiceConfig', error);
+            return null;
+        }
+    },
+
     chatWithData: async (msg: string, history: ChatMessage[], userImage?: string, sessionId?: string, pageContext?: string) => {
         try {
             const now = new Date();

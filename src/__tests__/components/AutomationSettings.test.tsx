@@ -22,6 +22,11 @@ vi.mock('../../services/aiService', () => ({
     AiService: {
         getFinancialAnalysisAutomationConfig: (...args: unknown[]) => getConfig(...(args as [])),
         updateFinancialAnalysisAutomationConfig: (...args: unknown[]) => updateConfig(...(args as [unknown])),
+        // VoiceSettingsCard (#938)
+        listVoices: () => Promise.resolve([{ voiceId: 'Portuguese_ConfidentWoman', name: 'Confident Woman' }]),
+        getVoiceConfig: () => Promise.resolve({ voiceId: 'Portuguese_ConfidentWoman', speed: 1 }),
+        updateVoiceConfig: (p: unknown) => Promise.resolve(p),
+        tts: () => Promise.resolve('http://audio.test/sample.mp3'),
     },
 }));
 
@@ -144,7 +149,7 @@ describe('AutomationSettings (#497)', () => {
         // wait for load
         await screen.findByText('Previsão de Vendas');
 
-        const select = screen.getByRole('combobox');
+        const select = screen.getByRole('combobox', { name: 'Dia da semana' });
         await user.selectOptions(select, '0');
 
         const saveBtn = screen.getByText('Salvar horário');
@@ -256,7 +261,7 @@ describe('AutomationSettings (#497)', () => {
             renderView();
             await screen.findByText('Previsão de Vendas');
 
-            await user.selectOptions(screen.getByRole('combobox'), '0');
+            await user.selectOptions(screen.getByRole('combobox', { name: 'Dia da semana' }), '0');
             await user.click(screen.getByText('Salvar horário'));
 
             await waitFor(() => {
@@ -278,7 +283,7 @@ describe('AutomationSettings (#497)', () => {
             renderView();
             await screen.findByText('Previsão de Vendas');
 
-            await user.selectOptions(screen.getByRole('combobox'), '0');
+            await user.selectOptions(screen.getByRole('combobox', { name: 'Dia da semana' }), '0');
             await user.click(screen.getByText('Salvar horário'));
 
             await waitFor(() => {

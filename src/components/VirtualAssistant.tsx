@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User, Trash2, History, Plus, Zap } from 'lucide-react';
+import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User, Trash2, History, Plus, Zap, Volume2, Square } from 'lucide-react';
 import { AiService, ChatMessage } from '../services/aiService';
 import { ThirdParty, Invoice, Project, Ticket } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -124,6 +124,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const [sessions, setSessions] = useState<Array<{ id: string; title: string; updatedAt: number; messageCount: number }>>([]);
   const [attachedPdf, setAttachedPdf] = useState<{ name: string; data: string } | null>(null);
   const [contextWindow, setContextWindow] = useState<number>(200000);
+  const [speakingIdx, setSpeakingIdx] = useState<number | null>(null);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const bootstrapAttemptedRef = useRef(false);
@@ -203,6 +205,50 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     safeStorage.removeItem(VA_HISTORY_KEY);
     safeStorage.removeItem(VA_SESSION_ID_KEY);
     setCurrentSessionId(null);
+  };
+
+  // #938: fala a resposta do agente. Tenta a voz premium (TTS MiniMax, voz configurada
+  // pelo admin); sem saldo/erro cai na voz do navegador (speechSynthesis, offline).
+  const stopSpeaking = () => {
+    if (ttsAudioRef.current) { ttsAudioRef.current.pause(); ttsAudioRef.current = null; }
+    try { window.speechSynthesis?.cancel(); } catch { /* noop */ }
+    setSpeakingIdx(null);
+  };
+
+  const speakMessage = async (idx: number, rawText: string) => {
+    if (speakingIdx === idx) { stopSpeaking(); return; }
+    stopSpeaking();
+    // limpa markdown/links p/ soar natural
+    const text = rawText
+      .replace(/```[\s\S]*?```/g, ' código omitido. ')
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/[#*_`>|]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 4000);
+    if (!text) return;
+    setSpeakingIdx(idx);
+    try {
+      const url = await AiService.tts(text);
+      const audio = new Audio(url);
+      ttsAudioRef.current = audio;
+      audio.onended = () => setSpeakingIdx((cur) => (cur === idx ? null : cur));
+      audio.onerror = () => setSpeakingIdx((cur) => (cur === idx ? null : cur));
+      await audio.play();
+    } catch {
+      // fallback: voz do navegador (grátis/offline) — cobre saldo MiniMax esgotado
+      try {
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang = 'pt-BR';
+        const ptVoice = window.speechSynthesis.getVoices().find(v => v.lang?.toLowerCase().startsWith('pt'));
+        if (ptVoice) utter.voice = ptVoice;
+        utter.onend = () => setSpeakingIdx((cur) => (cur === idx ? null : cur));
+        utter.onerror = () => setSpeakingIdx((cur) => (cur === idx ? null : cur));
+        window.speechSynthesis.speak(utter);
+      } catch {
+        setSpeakingIdx(null);
+      }
+    }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -514,8 +560,16 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-none'
                     }`}>
                     {msg.role === 'model' ? renderMessageContent(msg.text, navigate) : msg.text}
-                    {msg.role === 'model' && (msg.usage || msg.model) && (
+                    {msg.role === 'model' && !msg.isError && msg.text && (
                       <div className="flex items-center gap-2 mt-1 pt-1 border-t border-slate-100 dark:border-slate-700/50 flex-wrap">
+                        <button
+                          onClick={() => speakMessage(idx, msg.text)}
+                          className={`p-1 rounded transition-colors ${speakingIdx === idx ? 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30' : 'text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400'}`}
+                          title={speakingIdx === idx ? 'Parar' : 'Ouvir resposta'}
+                          aria-label={speakingIdx === idx ? 'Parar leitura' : 'Ouvir resposta'}
+                        >
+                          {speakingIdx === idx ? <Square size={12} /> : <Volume2 size={13} />}
+                        </button>
                         {msg.usage && (
                           <span className="text-[10px] text-slate-400 dark:text-slate-500" title="Tokens enviados / recebidos / total">
                             ↑{msg.usage.promptTokens?.toLocaleString()} ↓{msg.usage.completionTokens?.toLocaleString()} · {msg.usage.totalTokens?.toLocaleString()} tokens
