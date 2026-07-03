@@ -13,6 +13,7 @@ import { isPeakUtcHour } from '../utils/peakWindow';
 import { socketService } from './socketService';
 import { killTree, isAlive, killOpencodeOrphans } from '../utils/processTree';
 import { runOpencode, resolveBash } from '../utils/runOpencode';
+import { claudeCliService } from './claudeCliService';
 import { previewPortsFor } from '../utils/previewPorts';
 import { screenshotService } from './screenshotService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
@@ -1639,7 +1640,7 @@ class TaskRunnerService {
                 if (isQuotaError(e?.message)) markQuotaExhausted(`opencode síntese ${synthAttempt}: ${String(e?.message).slice(0, 80)}`);
             }
 
-            const changes = await this.worktreeChanges();
+            let changes = await this.worktreeChanges();
             if (changes.length === 0) {
                 if (synthAttempt < MAX_SYNTH) {
                     this.recordEvent(task, 'attempt_no_changes', `Síntese ${synthAttempt}: nenhuma mudança`, { synthAttempt });
@@ -1656,14 +1657,21 @@ class TaskRunnerService {
                     this.emitStatus(task);
                     return;
                 }
-                task.status = 'failed';
-                task.error = 'Síntese não produziu mudanças após 3 tentativas.';
-                task.updatedAt = new Date().toISOString();
-                this.recordEvent(task, 'task_failed', 'Síntese sem mudanças — abortando.');
-                this.finalizeTaskMetrics(task);
-                this.save();
-                this.emitStatus(task);
-                return;
+                // #963 Tier RESGATE: antes de desistir, o Claude Code assume o worktree parcial.
+                // Se produzir mudanças, cai no caminho de sucesso (typecheck + PR) logo abaixo.
+                if (await this.tryClaudeRescue(task, issueData)) {
+                    changes = await this.worktreeChanges();
+                }
+                if (changes.length === 0) {
+                    task.status = 'failed';
+                    task.error = 'Síntese não produziu mudanças após 3 tentativas (nem o resgate Claude).';
+                    task.updatedAt = new Date().toISOString();
+                    this.recordEvent(task, 'task_failed', 'Síntese sem mudanças — abortando (resgate Claude também vazio).');
+                    this.finalizeTaskMetrics(task);
+                    this.save();
+                    this.emitStatus(task);
+                    return;
+                }
             }
 
             // Typecheck gate
@@ -2216,6 +2224,34 @@ Return ONLY a JSON:
      * PERSISTENTE), não em feedbackHistory — que é zerado na fase de síntese (linha ~1538). (3) NÃO
      * reseta judgeAttempts (evita reabrir o orçamento inteiro da faixa do Juiz → custo limitado).
      */
+    /**
+     * #963 Tier RESGATE: quando o coder barato (opencode/GLM/MiniMax) vem VAZIO após todas as
+     * tentativas, o Claude Code assume o worktree parcial e tenta TERMINAR (não do zero) — ataca a
+     * maior fonte de falha do robô ("sem mudanças", 61 casos). Fallback obrigatório: se o Claude CLI
+     * estiver indisponível ou falhar, retorna false e o chamador aborta como antes (nunca trava por Claude).
+     */
+    private async tryClaudeRescue(task: Task, issueData: any): Promise<boolean> {
+        try {
+            if (!(await claudeCliService.available())) {
+                this.emitLog(task.issueNumber, 'warn', 'Resgate Claude indisponível (CLI ausente) — abortando como antes.');
+                return false;
+            }
+            this.recordEvent(task, 'synthesis_started', '🛟 Resgate: opencode veio vazio — Claude Code assume o worktree parcial.', { rescue: 'claude' });
+            this.emitLog(task.issueNumber, 'info', '🛟 Resgate Claude Code: assumindo o worktree para terminar a tarefa...');
+            const base = this.buildSynthesisPrompt(task, issueData);
+            const prompt = `[RESGATE] O coder automatizado anterior (opencode) NÃO gerou nenhuma mudança de código após várias tentativas. Você é o Claude Code, no worktree isolado do repositório. ASSUMA e IMPLEMENTE a tarefa editando os arquivos AGORA, sem pedir confirmação. Ao terminar, garanta que o typecheck do projeto passa.\n\n${base}`;
+            const r = await claudeCliService.runCode(prompt, WT_ROOT, { timeoutMs: OPENCODE_TIMEOUT_MS });
+            const changed = (await this.worktreeChanges()).length > 0;
+            this.recordEvent(task, changed ? 'synthesis_completed' : 'attempt_no_changes',
+                changed ? `🛟 Resgate Claude produziu mudanças (${r.numTurns} turns, $${r.costUsd?.toFixed(3)})` : 'Resgate Claude também não produziu mudanças',
+                { rescue: 'claude', cost: r.costUsd, changed, isError: r.isError });
+            return changed;
+        } catch (e: any) {
+            this.emitLog(task.issueNumber, 'warn', `Resgate Claude falhou: ${String(e?.message || e).slice(0, 200)} — abortando como antes.`);
+            return false;
+        }
+    }
+
     private selfHealFromGate(task: Task, kind: 'testRegression' | 'approvedVeto', detail: string): boolean {
         const GATE_MAX = Number(process.env.TASKRUNNER_GATE_FIX_MAX ?? 3); // #963 Fase A: N retentativas (era 1)
         if (!task.branch) return false;                            // sem branch não há o que re-submeter
