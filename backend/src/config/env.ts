@@ -29,6 +29,10 @@ export const config = {
     zaiAsrBaseUrl: process.env.ZAI_ASR_BASE_URL || 'https://api.z.ai/api/paas/v4',
     zaiAsrModel: process.env.ZAI_ASR_MODEL || 'glm-asr-2512',
     minimaxApiKey: process.env.MINIMAX_API_KEY || '',
+    // Chave da ASSINATURA MiniMax (Subscription Key do Token Plan) — separada da API key
+    // pay-as-you-go. Usada pelos endpoints de MÍDIA (TTS/voz/imagem/vídeo) quando presente;
+    // o texto (fallback M3) continua na MINIMAX_API_KEY. Mesmos endpoints, mesma auth Bearer.
+    minimaxMediaKey: process.env.MINIMAX_MEDIA_KEY || process.env.MINIMAX_SUBSCRIPTION_KEY || '',
     minimaxBaseUrl: process.env.MINIMAX_BASE_URL || 'https://api.minimax.io/v1/',
     minimaxModel: process.env.MINIMAX_MODEL || 'MiniMax-M3',
     // GroupId é exigido por algumas regiões/endpoints da MiniMax (mídia). Opcional: se vazio, não é enviado.
