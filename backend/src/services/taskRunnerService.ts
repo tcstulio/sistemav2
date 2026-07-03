@@ -205,7 +205,7 @@ export interface Task {
     judgeApproved?: boolean; // VALOR 2: veto do Juiz (approved=false bloqueia auto-merge; nunca aprova sozinho)
     // Self-heal de gate: quando um gate DETERMINÍSTICO bloqueia o merge (regressão de testes / veto),
     // em vez de só estacionar, realimentamos o coder UMA vez com uma correção derivada do próprio gate.
-    gateFixAttempts?: number;     // teto baixo (default 1), SEPARADO de judgeAttempts (não se multiplicam)
+    gateFixAttempts?: number;     // teto (default 3, #963 Fase A), SEPARADO de judgeAttempts (não se multiplicam)
     gateFixInstruction?: string;  // correção PERSISTENTE injetada nos builders (imune ao wipe de feedbackHistory na síntese)
     visualScore?: number;
     visualReview?: string;
@@ -2217,9 +2217,11 @@ Return ONLY a JSON:
      * reseta judgeAttempts (evita reabrir o orçamento inteiro da faixa do Juiz → custo limitado).
      */
     private selfHealFromGate(task: Task, kind: 'testRegression' | 'approvedVeto', detail: string): boolean {
-        const GATE_MAX = Number(process.env.TASKRUNNER_GATE_FIX_MAX ?? 1);
+        const GATE_MAX = Number(process.env.TASKRUNNER_GATE_FIX_MAX ?? 3); // #963 Fase A: N retentativas (era 1)
         if (!task.branch) return false;                            // sem branch não há o que re-submeter
         if ((task.gateFixAttempts || 0) >= GATE_MAX) return false; // teto esgotado → chamador estaciona
+        // #963 (follow-up): parada por SEM-PROGRESSO via sinal em memória (diff da última tentativa),
+        // NÃO via rede (evita git ls-remote em teste). Enquanto isso, o teto GATE_MAX já limita o custo.
         const instruction = kind === 'testRegression'
             ? `O merge foi BLOQUEADO por um gate determinístico: você REDUZIU a cobertura de testes (${detail}). `
               + `RESTAURE os casos de teste removidos — recrie cada it()/test() que sumiu (num bloco describe() separado, se preciso), SEM apagar os testes novos. `
@@ -2230,9 +2232,9 @@ Return ONLY a JSON:
         task.gateFixAttempts = (task.gateFixAttempts || 0) + 1;
         task.status = 'fixing';
         this.recordEvent(task, 'task_started',
-            `Self-heal de gate (${kind}, tentativa ${task.gateFixAttempts}/${GATE_MAX}) — realimentando o coder antes de estacionar`,
+            `Self-heal de gate (${kind}, tentativa ${task.gateFixAttempts}/${GATE_MAX}) — realimentando o coder com a crítica do judge`,
             { gateSelfHeal: kind, attempt: task.gateFixAttempts });
-        this.emitLog(task.issueNumber, 'warn', `Gate bloqueou (${kind}). Auto-consertando 1x antes de pedir revisão humana...`);
+        this.emitLog(task.issueNumber, 'warn', `Gate bloqueou (${kind}). Auto-consertando (${task.gateFixAttempts}/${GATE_MAX}) com a crítica do judge antes de pedir revisão humana...`);
         this.save();
         this.emitStatus(task);
         this.scheduleExec(task, task.branch, 'fixing');

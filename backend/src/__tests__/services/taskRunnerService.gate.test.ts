@@ -53,6 +53,7 @@ describe('taskRunnerService — gate determinístico + self-heal', () => {
     let svc: any;
 
     beforeEach(() => {
+        process.env.TASKRUNNER_GATE_FIX_MAX = '1'; // #963: testa o MECANISMO do teto num valor fixo (default real = 3)
         svc = taskRunnerService as any;
         svc.pendingExecs = 0;
         svc.execChain = Promise.resolve();
@@ -82,7 +83,7 @@ describe('taskRunnerService — gate determinístico + self-heal', () => {
         });
     });
 
-    afterEach(() => { vi.restoreAllMocks(); });
+    afterEach(() => { delete process.env.TASKRUNNER_GATE_FIX_MAX; vi.restoreAllMocks(); });
 
     // --- checkTestRegression: classifica reason corretamente ---
     it('checkTestRegression: net negativo → blocked reason=regression', async () => {
