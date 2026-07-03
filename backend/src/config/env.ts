@@ -24,6 +24,10 @@ export const config = {
     // separado (erro 1113 sem recarga). Permite OCR sem depender do Gemini nem de recarga.
     zaiVisionBaseUrl: process.env.ZAI_VISION_BASE_URL || 'https://api.z.ai/api/coding/paas/v4',
     zaiVisionModel: process.env.ZAI_VISION_MODEL || 'glm-4.6v',
+    // ASR (transcrição de voz) via GLM-ASR-2512 (~US$0,0024/min). NÃO está no plano Coding —
+    // é cobrado do saldo PaaS (pay-as-you-go). Áudio ≤30s e ≤25MB por chamada (doc oficial).
+    zaiAsrBaseUrl: process.env.ZAI_ASR_BASE_URL || 'https://api.z.ai/api/paas/v4',
+    zaiAsrModel: process.env.ZAI_ASR_MODEL || 'glm-asr-2512',
     minimaxApiKey: process.env.MINIMAX_API_KEY || '',
     minimaxBaseUrl: process.env.MINIMAX_BASE_URL || 'https://api.minimax.io/v1/',
     minimaxModel: process.env.MINIMAX_MODEL || 'MiniMax-M3',
