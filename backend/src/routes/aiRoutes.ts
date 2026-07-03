@@ -50,7 +50,8 @@ const GenerateReplySchema = z.object({
         parts: z.string()
     })).optional(),
     context: z.string().optional(),
-    image: z.string().optional(), // Base64 image for multimodal chat
+    image: z.string().optional(), // Base64 image for multimodal chat (1ª imagem; compat)
+    images: z.array(z.string()).max(6).optional(), // #947: múltiplas imagens
     module: z.string().default('chat'),
     sessionId: z.string().optional()
 });
@@ -62,7 +63,9 @@ const AnalyzeSystemSchema = z.object({
 // Núcleo do chat: enriquece o contexto, roda o agente (com tool-calls) e salva a sessão.
 // Usado pela rota síncrona E pela assíncrona (job em background). Lança em erro; quem chama trata.
 async function runChatReply(body: any, user: any): Promise<{ reply: string; sessionId?: string; usage?: any; contextWindow?: any; model?: string; fellBack?: boolean }> {
-        const { history, context, image, module, sessionId } = GenerateReplySchema.parse(body);
+        const { history, context, image, images, module, sessionId } = GenerateReplySchema.parse(body);
+        // #947: normaliza p/ array (aceita `images` novo OU `image` antigo).
+        const allImages = (images && images.length) ? images : (image ? [image] : []);
 
         let enrichedContext = context || '';
         let permissionProfile: import('../services/userPermissionsService').UserPermissionProfile | null = null;
@@ -132,7 +135,7 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
             isAdmin,
             permissionProfile,
         }, async () => {
-            return aiService.generateReply(history as any || [], enrichedContext, image, module);
+            return aiService.generateReply(history as any || [], enrichedContext, allImages.length ? allImages : undefined, module);
         });
 
         if (sessionId && module === 'chat') {
@@ -142,7 +145,7 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
                     chatSessionService.addMessage(sessionId, {
                         role: 'user',
                         content: lastUserMsg.parts,
-                        metadata: { hasImage: !!image }
+                        metadata: { hasImage: allImages.length > 0 }
                     });
                 }
                 chatSessionService.addMessage(sessionId, {

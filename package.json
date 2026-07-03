@@ -43,6 +43,7 @@
     "axios": "^1.13.2",
     "date-fns": "^4.1.0",
     "dompurify": "^3.4.8",
+    "heic2any": "^0.0.4",
     "html2canvas-pro": "^2.0.4",
     "lucide-react": "^0.555.0",
     "pdf-parse": "^2.4.5",

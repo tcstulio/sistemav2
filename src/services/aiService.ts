@@ -27,8 +27,8 @@ export interface ChatMessage {
     role: 'user' | 'model' | 'system';
     text: string;
     isError?: boolean;
-    /** Preview (dataURL) da imagem anexada — só em memória, p/ exibir no bubble (#947). */
-    image?: string;
+    /** Previews (dataURL) das imagens anexadas — só em memória, p/ exibir no bubble (#947). */
+    images?: string[];
     usage?: {
         promptTokens: number;
         completionTokens: number;
@@ -417,7 +417,8 @@ export const AiService = {
         }
     },
 
-    chatWithData: async (msg: string, history: ChatMessage[], userImage?: string, sessionId?: string, pageContext?: string) => {
+    // #947: userImages aceita 1+ imagens (base64 puro, sem prefixo data URL).
+    chatWithData: async (msg: string, history: ChatMessage[], userImages?: string | string[], sessionId?: string, pageContext?: string) => {
         try {
             const now = new Date();
             const dateStr = now.toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -438,10 +439,12 @@ export const AiService = {
             // Assíncrono: enfileira o job e faz POLLING do resultado. Não segura a conexão,
             // então jobs longos não caem no timeout de borda (524) do túnel. O agente roda
             // em background até concluir, demore o que demorar.
+            const images = Array.isArray(userImages) ? userImages : (userImages ? [userImages] : []);
             const start = await axios.post(`${API_URL}/generate-reply-async`, {
                 history: backendHistory,
                 context: dataContext,
-                image: userImage,
+                image: images[0],          // compat: 1ª imagem no campo antigo
+                images: images.length ? images : undefined,
                 module: 'chat',
                 sessionId
             }, getAuthHeaders());
