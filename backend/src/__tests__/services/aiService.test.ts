@@ -506,29 +506,21 @@ describe('AiService', () => {
             await expect(aiService.generateCode('/api/test', 'GET')).rejects.toThrow('fail');
         });
 
-        it('transcribeAudio roteia para Google quando provider de texto é local', async () => {
-            // #57 Peça 3: LocalProvider não transcreve áudio -> roteia para o Google.
-            (GoogleGenAI as any).mockImplementation(function (this: any) {
-                this.models = {
-                    generateContent: vi.fn().mockResolvedValue({ text: 'Roteado para Google' }),
-                    list: vi.fn(),
-                };
-            });
-            const result = await aiService.transcribeAudio('base64audio');
-            expect(result).toBe('Roteado para Google');
+        it('transcribeAudio transcreve via GLM-ASR no próprio LocalProvider (#936, sem Google)', async () => {
+            aiService.setConfig('glm', 'https://api.z.ai/api/coding/paas/v4', 'zkey', 'glm-5.1');
+            (axios.post as any).mockResolvedValue({ data: { text: 'olá, teste de voz' } });
+            const result = await aiService.transcribeAudio('base64audio', 'audio/webm;codecs=opus');
+            expect(result).toBe('olá, teste de voz');
+            // chamou o endpoint de ASR da Z.AI (multipart), não o SDK Google
+            const url = (axios.post as any).mock.calls.at(-1)[0];
+            expect(url).toContain('/audio/transcriptions');
         });
 
-        it('transcribeAudio cai para mensagem indisponível sem provider multimodal', async () => {
-            // Sem googleApiKey não há fallback multimodal -> mantém o LocalProvider (degradação graciosa).
-            const { config } = await import('../../config/env');
-            const original = (config as any).googleApiKey;
-            (config as any).googleApiKey = '';
-            try {
-                const result = await aiService.transcribeAudio('base64audio');
-                expect(result).toContain('dispon');
-            } finally {
-                (config as any).googleApiKey = original;
-            }
+        it('transcribeAudio devolve mensagem clara quando a PaaS está sem saldo (1113)', async () => {
+            aiService.setConfig('glm', 'https://api.z.ai/api/coding/paas/v4', 'zkey', 'glm-5.1');
+            (axios.post as any).mockRejectedValue({ response: { data: { error: { code: '1113', message: 'Insufficient balance' } } } });
+            const result = await aiService.transcribeAudio('base64audio');
+            expect(result).toContain('saldo');
         });
 
         // #123: o LocalProvider (GLM/local) AGORA implementa esses métodos (antes caía no fallback).

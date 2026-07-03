@@ -1352,10 +1352,34 @@ export class LocalProvider implements AIProvider {
     }
 
     async transcribeAudio(audioBase64: string, mimeType: string = 'audio/ogg', _module?: string): Promise<string> {
-        // LocalProvider doesn't support audio transcription natively
-        // You could integrate with local Whisper API here if available
-        log.warn("LocalProvider: Audio transcription not supported. Consider using Google provider.");
-        return "[Transcrição não disponível - LLM local não suporta áudio]";
+        // #936: transcrição via GLM-ASR-2512 (Z.AI). Multipart /audio/transcriptions.
+        // Cobrado do saldo PaaS (não é do plano Coding); áudio ≤30s/≤25MB por chamada.
+        if (!this.apiKey) return "[Transcrição indisponível: chave da IA ausente]";
+        try {
+            const clean = audioBase64.replace(/^data:audio\/[^;]+;base64,/, "");
+            const buffer = Buffer.from(clean, 'base64');
+            const ext = (mimeType.split('/')[1] || 'ogg').split(';')[0]; // 'audio/webm;codecs=opus' → 'webm'
+            const form = new FormData();
+            form.append('model', config.zaiAsrModel);
+            form.append('stream', 'false');
+            form.append('file', new Blob([buffer], { type: mimeType.split(';')[0] }), `audio.${ext}`);
+
+            const resp = await axios.post(`${config.zaiAsrBaseUrl}/audio/transcriptions`, form, {
+                headers: { 'Authorization': `Bearer ${this.apiKey}` },
+                timeout: 120000,
+            });
+            const text = resp.data?.text ?? resp.data?.data?.text ?? '';
+            if (typeof text === 'string' && text.trim()) return text.trim();
+            log.warn('ASR sem texto na resposta', { keys: Object.keys(resp.data || {}) });
+            return "[Áudio não reconhecido]";
+        } catch (error: any) {
+            const detail = error?.response?.data ? JSON.stringify(error.response.data).slice(0, 200) : error?.message;
+            log.error(`transcribeAudio (glm-asr) falhou: ${detail}`);
+            if (/1113|insufficient/i.test(String(detail))) {
+                return "[Transcrição indisponível: sem saldo PaaS na Z.AI — recarregue para ativar a voz]";
+            }
+            return "[Erro na transcrição do áudio]";
+        }
     }
 
     // Helper: uma completion de chat (texto). Reusado pelos métodos de análise abaixo.
@@ -1502,7 +1526,8 @@ const getProvider = (specificProviderName?: string): AIProvider => {
 // provider de texto configurado não tem, roteamos APENAS essa chamada para um
 // provider multimodal (Google), mantendo o GLM/local para texto.
 const providerSupportsVision = (p: AIProvider): boolean => p instanceof GoogleProvider;
-const providerSupportsAudio = (p: AIProvider): boolean => p instanceof GoogleProvider;
+// #936: LocalProvider agora transcreve via GLM-ASR-2512 (Z.AI) — não precisa mais do Google.
+const providerSupportsAudio = (p: AIProvider): boolean => p instanceof GoogleProvider || p instanceof LocalProvider;
 
 // Provider multimodal de fallback (hoje só o Google). null se não houver chave.
 const getMultimodalProvider = (): AIProvider | null => {

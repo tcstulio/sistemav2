@@ -9,6 +9,7 @@ import { isValidExternalUrl } from '../utils/urlValidation';
 import { logger } from '../utils/logger';
 import { signDeeplink } from '../utils/deeplinkToken';
 import { minimaxService } from './minimaxService';
+import { zaiSearchService } from './zaiSearchService';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs';
@@ -176,6 +177,9 @@ export const TOOLS_PROMPT = `
         82. generate_image(prompt, aspect_ratio?) - Gera uma IMAGEM a partir da descrição e devolve o link. aspect_ratio ex.: '1:1', '16:9', '9:16'.
         83. generate_video(prompt, duration?, resolution?) - Inicia a geração de um VÍDEO (assíncrono) e devolve um task_id. duration: 6 ou 10 (seg); resolution: '768P' ou '1080P'. O vídeo NÃO fica pronto na hora.
         84. check_video(task_id) - Verifica o status do vídeo iniciado por generate_video. Quando pronto, devolve o link. Senão, informa que ainda está processando.
+
+        FERRAMENTA DE PESQUISA NA WEB:
+        86. web_search(query) - Pesquisa na INTERNET e devolve os principais resultados (título, link e trecho). Use para informações externas ao sistema: cotações de moedas, notícias, dados de empresas/CNPJ, endereços, preços de mercado, fatos atuais. NÃO use para dados internos (clientes, faturas, tarefas — para esses use as ferramentas do sistema). Cite os links relevantes na resposta.
 
         REGRA PARA MÍDIA (generate_*): devolvem um LINK pronto. Inclua o link na resposta para o usuário ouvir/ver.
         REGRA PARA VÍDEO: generate_video devolve um task_id e demora minutos; avise o usuário e use check_video(task_id) depois (ex.: quando ele pedir o resultado) para obter o link.
@@ -723,7 +727,9 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
     const ctx = getToolContext();
     // Contexto somente-leitura (ex.: bot WhatsApp com entrada externa): bloqueia escrita/efeito
     // externo antes de qualquer checagem de profile — vale inclusive sem profile e para admin.
-    if (ctx.readOnly && isMutatingTool(resolvedTool)) {
+    // web_search também: entrada não-confiável não deve disparar requisições à internet
+    // (risco de exfiltração via prompt injection de contato externo).
+    if (ctx.readOnly && (isMutatingTool(resolvedTool) || resolvedTool === 'web_search')) {
         log.warn(`Read-only context blocked mutating tool: ${resolvedTool}`);
         return `A ferramenta "${resolvedTool}" não está disponível neste contexto (somente leitura).`;
     }
@@ -866,6 +872,22 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
 
             if (parts.length === 0) return `Nenhum resultado encontrado para "${q}".`;
             return `Resultados para "<strong>${q}</strong>":<br/><br/>${parts.join('<br/>')}`;
+        }
+        case 'web_search': {
+            if (!args?.query || String(args.query).trim() === '') {
+                return 'Especifique o que pesquisar na web (query não pode ser vazio).';
+            }
+            try {
+                const results = await zaiSearchService.search(String(args.query), 5);
+                if (results.length === 0) return `Nenhum resultado na web para "${args.query}".`;
+                return `<h3>🌐 Resultados da web para "${args.query}"</h3>\n` +
+                    results.map((r, i) =>
+                        `${i + 1}. **${r.title}**\n   ${r.content}\n   Fonte: ${r.link}`
+                    ).join('\n\n');
+            } catch (e: any) {
+                log.error('web_search falhou', e?.message || e);
+                return `A pesquisa na web falhou: ${e?.message || 'erro desconhecido'}. Responda com o que souber e avise o usuário.`;
+            }
         }
         case 'search_customer': {
             if (!args?.query || String(args.query).trim() === '') {
