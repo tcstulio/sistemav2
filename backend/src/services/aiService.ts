@@ -61,6 +61,33 @@ export function extractToolCall(text: string): { tool: string; args: any } | nul
     return null;
 }
 
+// #955: extrai TODAS as tool-calls de um texto (o MiniMax M3 emite várias de uma vez).
+// Varre todos os objetos {"tool":...} / {"name":...} de nível superior e parseia cada um.
+export function extractToolCalls(text: string, max = 16): { tool: string; args: any }[] {
+    const calls: { tool: string; args: any }[] = [];
+    if (!text) return calls;
+    const re = /\{\s*"(?:tool|name)"\s*:/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) && calls.length < max) {
+        const start = m.index;
+        let depth = 0;
+        for (let i = start; i < text.length; i++) {
+            if (text[i] === '{') depth++;
+            else if (text[i] === '}') depth--;
+            if (depth === 0) {
+                try {
+                    const parsed = JSON.parse(text.slice(start, i + 1));
+                    const tool = parsed.tool || parsed.name;
+                    if (tool) calls.push({ tool, args: parsed.args || parsed.arguments || {} });
+                } catch { /* ignora bloco inválido */ }
+                re.lastIndex = i + 1;
+                break;
+            }
+        }
+    }
+    return calls;
+}
+
 // --- Interfaces ---
 
 export interface ChatMessage {
@@ -979,8 +1006,15 @@ export class LocalProvider implements AIProvider {
         let currentHistory = [...conversationHistory];
         let currentContext = context;
         let iterations = 0;
-        const MAX_ITERATIONS = 5;
+        const MAX_ITERATIONS = 10; // #956 (down-payment): teto maior; a execução multi-call (#955) alivia a pressão. Orçamento de tokens completo fica p/ #956.
         const seenToolCalls = new Set<string>();
+        let nudgedNarration = false; // #954: já cutucamos o modelo por "anunciar e parar"?
+        // #959: modelos de raciocínio (MiniMax M3, GLM) vazam <think>...</think>/<reasoning> no
+        // content. Remove esses blocos SÓ para exibição/narração — a extração de tool-call usa o cru.
+        const stripReasoning = (t?: string) => (t || '')
+            .replace(/<think>[\s\S]*?<\/think>/gi, '')
+            .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
+            .trim();
         const accUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
         // Track which model actually responded and whether fallback was used.
         let lastModelUsed: string = options?.model || this.modelName;
@@ -1034,35 +1068,68 @@ export class LocalProvider implements AIProvider {
 
                 accumulate(data.usage);
 
-                const reply = data.choices[0].message.content;
+                const message = data.choices[0].message;
+                const rawContent = message.content || '';
+                const reply = stripReasoning(rawContent);
+                // #955: modelos como o MiniMax M3 emitem VÁRIAS tool-calls de uma vez. Executa
+                // todas na mesma iteração (honra o estilo do modelo e alivia o teto). Fallback:
+                // single (cobre <tool_call:...> do GLM) e reasoning_content (GLM põe a chamada lá).
+                let toolCalls = extractToolCalls(rawContent);
+                if (!toolCalls.length) {
+                    const single = extractToolCall(rawContent) || extractToolCall(message.reasoning_content || '');
+                    if (single) toolCalls = [single];
+                }
 
-                const toolCall = extractToolCall(reply);
-
-                if (toolCall) {
-                    try {
-                        log.info(`Local LLM Tool Call: ${toolCall.tool}`, toolCall.args);
-
-                        const callSig = `${toolCall.tool}:${JSON.stringify(toolCall.args || {})}`;
-                        if (seenToolCalls.has(callSig)) break;
+                if (toolCalls.length) {
+                    let ranAny = false;
+                    for (const tc of toolCalls) {
+                        const callSig = `${tc.tool}:${JSON.stringify(tc.args || {})}`;
+                        if (seenToolCalls.has(callSig)) continue; // #957: pula duplicata (não aborta o turno)
                         seenToolCalls.add(callSig);
-
-                        const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
-
-                        if (String(toolCall.tool).startsWith('prepare_')) {
-                            return { text: toolResult, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
+                        log.info(`Local LLM Tool Call: ${tc.tool}`, tc.args);
+                        try {
+                            const toolResult = await executeTool(tc.tool, tc.args || {});
+                            // prepare_* (HITL) devolve deeplink e encerra o turno p/ o usuário confirmar.
+                            if (String(tc.tool).startsWith('prepare_')) {
+                                return { text: toolResult, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
+                            }
+                            currentContext += `\n\n[TOOL RESULT ${tc.tool}]: ${toolResult}`;
+                            ranAny = true;
+                        } catch (e: any) {
+                            if (e.name === 'AskUserInterrupt') {
+                                return { text: e.question, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
+                            }
+                            // #954: erro de tool não aborta o turno — injeta e segue.
+                            const detail = e?.message || String(e);
+                            log.warn(`Local LLM Tool Error (injeta e continua): ${detail}`);
+                            currentContext += `\n\n[ERRO NA FERRAMENTA ${tc.tool}]: ${detail}. Corrija os parâmetros ou responda ao usuário com o que já tem.`;
+                            ranAny = true;
                         }
-
-                        currentContext += `\n\n[TOOL RESULT]: ${toolResult}`;
+                    }
+                    if (ranAny) {
                         iterations++;
                         continue;
-
-                    } catch (e: any) {
-                        if (e.name === 'AskUserInterrupt') {
-                            return { text: e.question, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
-                        }
-                        log.error("Local LLM Tool Error", e);
-                        return { text: reply, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                     }
+                    // #957: todas as chamadas eram duplicatas → sem progresso novo; sintetiza avisando.
+                    currentContext += `\n\n[SISTEMA] Você repetiu chamadas de ferramenta já feitas. Responda ao usuário com os dados já coletados.`;
+                    break;
+                }
+
+                // #954: "anunciar e parar" — o modelo diz que vai usar uma ferramenta ("vou
+                // verificar os logs: ...") e encerra o turno SEM emitir o JSON. Antes isso virava
+                // a resposta final e a tarefa nunca acontecia. Detecta a intenção sem tool-call e
+                // cutuca UMA vez para o modelo realmente chamar a ferramenta (ou responder direto).
+                const trimmedReply = reply.trim();
+                const narrationVerb = /\b(vou|deixa eu|irei|preciso|let me|i'?ll|i will)\b[\s\S]{0,80}\b(verificar|checar|consultar|buscar|analisar|olhar|ler|conferir|investigar|procurar|examinar|iniciar|começar|start|check|look|search|read|fetch|analy|investigat)/i.test(trimmedReply);
+                // reticências no fim de uma resposta curta = "vou continuar…" (o ':' sozinho é
+                // ruidoso — respostas legítimas terminam com ':' antes de uma lista).
+                const trailingEllipsis = trimmedReply.length < 500 && /(\.\.\.|…)\s*$/.test(trimmedReply);
+                const narrationCue = narrationVerb || trailingEllipsis;
+                if (!nudgedNarration && narrationCue && iterations < MAX_ITERATIONS - 1) {
+                    nudgedNarration = true;
+                    currentContext += `\n\n[SISTEMA] Sua resposta anterior ANUNCIOU uma ação ("${reply.slice(0, 160).replace(/\s+/g, ' ')}") mas NÃO emitiu a chamada da ferramenta. Se precisa de dados, emita AGORA o JSON no formato {"tool":"nome","args":{...}} — nada de texto antes. Se já tem o suficiente, responda direto ao usuário, sem anunciar.`;
+                    iterations++;
+                    continue;
                 }
 
                 return { text: reply, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
@@ -1094,7 +1161,10 @@ export class LocalProvider implements AIProvider {
             }
             const { data: finalData, modelUsed: finalModel, fellBack: finalFellBack } = await this.postChatCompletion(finalMessages, 0.3, options);
             accumulate(finalData?.usage);
-            const finalText = finalData?.choices?.[0]?.message?.content;
+            let finalText = stripReasoning(finalData?.choices?.[0]?.message?.content || '');
+            // #955: se a síntese vier como tool-calls cruas (o M3 às vezes ignora o "sem
+            // ferramentas"), não despeja JSON no usuário → cai na mensagem de fallback abaixo.
+            if (finalText && extractToolCalls(finalText).length) finalText = '';
             if (finalText) return { text: finalText, usage: accUsage, contextWindow: ctxWindow, model: finalModel, fellBack: finalFellBack };
         } catch (e: any) {
             log.error('Local LLM final-answer fallback error', e?.message || e);
