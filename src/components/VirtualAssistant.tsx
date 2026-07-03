@@ -102,6 +102,43 @@ interface VirtualAssistantProps {
   // No props needed
 }
 
+// #947: normaliza QUALQUER imagem para um JPEG pequeno e exibível.
+// - HEIC/HEIF (padrão do iPhone): o navegador não decodifica no <img>/canvas (exceto Safari)
+//   -> converte via heic2any (import dinâmico, só quando necessário).
+// - Redimensiona p/ máx 1600px e comprime (jpeg q0.85): foto de 8-12MB -> ~300-800KB,
+//   evitando o HTTP 413 do servidor; a visão (glm-4.6v) lê igual.
+// Retorna null se o formato não puder ser lido (o chamador avisa o usuário).
+async function processImageFile(file: File): Promise<{ data: string; mimeType: string; preview: string } | null> {
+  let blob: Blob = file;
+  const isHeic = /heic|heif/i.test(file.type) || /\.hei[cf]$/i.test(file.name);
+  if (isHeic) {
+    try {
+      const heic2any = (await import('heic2any')).default as (o: any) => Promise<Blob | Blob[]>;
+      const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 });
+      blob = Array.isArray(out) ? out[0] : out;
+    } catch {
+      // segue; o Safari decodifica HEIC nativamente no <img> abaixo
+    }
+  }
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX = 1600;
+      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      resolve({ data: dataUrl.split(',')[1], mimeType: 'image/jpeg', preview: dataUrl });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
 const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const { config } = useDolibarr();
   const navigate = useNavigate();
@@ -122,7 +159,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const [isListening, setIsListening] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [attachedImage, setAttachedImage] = useState<{ data: string, mimeType: string, preview?: string } | null>(null);
+  const [attachedImages, setAttachedImages] = useState<{ data: string; mimeType: string; preview: string }[]>([]);
+  const [imageProcessing, setImageProcessing] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState<Array<{ id: string; title: string; updatedAt: number; messageCount: number }>>([]);
   const [attachedPdf, setAttachedPdf] = useState<{ name: string; data: string } | null>(null);
@@ -254,41 +292,28 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     }
   };
 
-  // #947: comprime a imagem NO NAVEGADOR antes de enviar (max 1600px, jpeg q0.85).
-  // Foto de celular (8-12MB) estourava o limite de 10MB do servidor -> HTTP 413 ->
-  // "Erro de conexão". Comprimida (~300-500KB) passa sempre, sobe rápido e a visão lê igual.
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // #947: aceita 1+ imagens (input multiple), converte/comprime cada uma (HEIC incluso).
+  const MAX_IMAGES = 6;
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ''; // permite re-selecionar o mesmo arquivo depois
+    if (!files.length) return;
 
-    const objectUrl = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      const MAX = 1600;
-      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(img.width * scale);
-      canvas.height = Math.round(img.height * scale);
-      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      setAttachedImage({
-        data: dataUrl.split(',')[1],
-        mimeType: 'image/jpeg',
-        preview: dataUrl,
-      });
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      // formato que o <img> não decodifica: envia cru mesmo (comportamento antigo)
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = reader.result as string;
-        setAttachedImage({ data: base64String.split(',')[1], mimeType: file.type, preview: base64String });
-      };
-      reader.readAsDataURL(file);
-    };
-    img.src = objectUrl;
+    const room = MAX_IMAGES - attachedImages.length;
+    if (room <= 0) { toast.info(`Máximo de ${MAX_IMAGES} imagens por mensagem.`); return; }
+    const toProcess = files.slice(0, room);
+
+    setImageProcessing(true);
+    try {
+      const results = await Promise.all(toProcess.map(processImageFile));
+      const ok = results.filter((r): r is { data: string; mimeType: string; preview: string } => !!r);
+      if (ok.length) setAttachedImages(prev => [...prev, ...ok]);
+      const failed = results.length - ok.length;
+      if (failed) toast.error(`${failed} imagem(ns) não pôde(ram) ser lida(s) — formato não suportado.`);
+      if (files.length > room) toast.info(`Adicionei ${room} imagem(ns) (limite de ${MAX_IMAGES}).`);
+    } finally {
+      setImageProcessing(false);
+    }
   };
 
   const handlePdfSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -347,13 +372,13 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   // sem passar pelo campo de texto (#945: antes a transcrição nunca chegava à LLM).
   const handleSend = async (textOverride?: string) => {
     const userMsg = textOverride ?? input;
-    if ((!userMsg.trim() && !attachedImage && !attachedPdf) || isLoading) return;
+    if ((!userMsg.trim() && !attachedImages.length && !attachedPdf) || isLoading) return;
 
-    const userImage = attachedImage;
+    const userImages = attachedImages;
     const userPdf = attachedPdf;
 
     setInput('');
-    setAttachedImage(null);
+    setAttachedImages([]);
     setAttachedPdf(null);
     if (textareaRef.current) textareaRef.current.style.height = 'auto'; // volta a 1 linha
 
@@ -361,8 +386,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
       ...prev,
       {
         role: 'user',
-        text: userMsg + (userImage && !userImage.preview ? ' [Imagem Anexada]' : '') + (userPdf ? ` [PDF: ${userPdf.name}]` : ''),
-        image: userImage?.preview, // #947: mostra a imagem enviada no bubble
+        text: userMsg + (userPdf ? ` [PDF: ${userPdf.name}]` : ''),
+        images: userImages.length ? userImages.map(im => im.preview) : undefined, // #947: mostra no bubble
       }
     ]);
 
@@ -394,7 +419,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
 
       const pageContext = `${formatViewContext(location.pathname, location.search || undefined)}\n${formatErrorsForAgent()}${pdfContext}`;
 
-      const result = await AiService.chatWithData(userMsg, relevantHistory, userImage?.data, sid || undefined, pageContext);
+      const result = await AiService.chatWithData(userMsg, relevantHistory, userImages.map(im => im.data), sid || undefined, pageContext);
       const responseText = result.reply;
       if ((result as any).contextWindow) setContextWindow((result as any).contextWindow);
       if (result.sessionId && !sid) {
@@ -432,7 +457,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
       e.preventDefault();
       // #947: antes o Enter era engolido em silêncio enquanto o agente respondia
       // (ex.: durante o resumo automático de abertura) — parecia que o chat ignorou.
-      if (isLoading && (input.trim() || attachedImage || attachedPdf)) {
+      if (isLoading && (input.trim() || attachedImages.length || attachedPdf)) {
         toast.info('Aguarde o assistente concluir a resposta atual…');
         return;
       }
@@ -594,8 +619,17 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
                     ? 'bg-indigo-600 text-white rounded-br-none'
                     : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-bl-none'
                     }`}>
-                    {msg.image && (
-                      <img src={msg.image} alt="Imagem enviada" className="rounded-lg max-w-full max-h-48 mb-2 border border-white/20" />
+                    {msg.images && msg.images.length > 0 && (
+                      <div className={`flex flex-wrap gap-1 mb-2 ${msg.images.length === 1 ? '' : 'max-w-[240px]'}`}>
+                        {msg.images.map((src, i) => (
+                          <img
+                            key={i}
+                            src={src}
+                            alt={`Imagem ${i + 1}`}
+                            className={`rounded-lg border border-white/20 object-cover ${msg.images!.length === 1 ? 'max-w-full max-h-48' : 'h-24 w-24'}`}
+                          />
+                        ))}
+                      </div>
                     )}
                     {msg.role === 'model' ? renderMessageContent(msg.text, navigate) : msg.text}
                     {msg.role === 'model' && !msg.isError && msg.text && (
@@ -646,24 +680,24 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
             )}
           </div>
 
-          {/* Image Preview */}
-          {attachedImage && (
-            <div className="p-2 bg-slate-100 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center gap-2">
-              {attachedImage.preview ? (
-                <div className="relative">
-                  <img src={attachedImage.preview} alt="Anexo" className="h-16 w-16 object-cover rounded-lg border border-slate-300 dark:border-slate-600" />
+          {/* Image Preview(s) — #947: miniaturas de todas as imagens anexadas */}
+          {(attachedImages.length > 0 || imageProcessing) && (
+            <div className="p-2 bg-slate-100 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex items-center gap-2 flex-wrap">
+              {attachedImages.map((im, i) => (
+                <div key={i} className="relative">
+                  <img src={im.preview} alt={`Anexo ${i + 1}`} className="h-16 w-16 object-cover rounded-lg border border-slate-300 dark:border-slate-600" />
                   <button
-                    onClick={() => setAttachedImage(null)}
+                    onClick={() => setAttachedImages(prev => prev.filter((_, j) => j !== i))}
                     className="absolute -top-1.5 -right-1.5 bg-slate-700 text-white rounded-full p-0.5 hover:bg-red-600 shadow"
                     title="Remover imagem"
                   >
                     <X size={12} />
                   </button>
                 </div>
-              ) : (
-                <div className="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 px-2 py-1 rounded flex items-center gap-1">
-                  <ImageIcon size={12} /> Imagem Anexada
-                  <button onClick={() => setAttachedImage(null)} className="ml-1 hover:text-red-500"><X size={12} /></button>
+              ))}
+              {imageProcessing && (
+                <div className="h-16 w-16 flex items-center justify-center rounded-lg border border-dashed border-slate-300 dark:border-slate-600">
+                  <Loader2 size={18} className="animate-spin text-indigo-500" />
                 </div>
               )}
             </div>
@@ -693,8 +727,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
                 </button>
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className={`p-2 rounded-full transition-all hover:bg-slate-100 dark:hover:bg-slate-800 ${attachedImage ? 'text-indigo-600' : 'text-slate-400'}`}
-                  title="Anexar Imagem"
+                  className={`p-2 rounded-full transition-all hover:bg-slate-100 dark:hover:bg-slate-800 ${attachedImages.length ? 'text-indigo-600' : 'text-slate-400'}`}
+                  title="Anexar imagem(ns)"
                 >
                   <Paperclip size={20} />
                 </button>
@@ -709,7 +743,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
                   type="file"
                   ref={fileInputRef}
                   className="hidden"
-                  accept="image/*"
+                  accept="image/*,.heic,.heif"
+                  multiple
                   onChange={handleFileSelect}
                 />
                 <input
@@ -743,7 +778,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
 
               <button
                 onClick={() => handleSend()}
-                disabled={isLoading || (!input.trim() && !attachedImage && !attachedPdf)}
+                disabled={isLoading || imageProcessing || (!input.trim() && !attachedImages.length && !attachedPdf)}
                 title={isLoading ? 'Aguardando a resposta…' : 'Enviar'}
                 className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
               >

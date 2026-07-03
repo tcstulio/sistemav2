@@ -108,7 +108,7 @@ function getContextWindow(model?: string): number {
 }
 
 interface AIProvider {
-    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult>;
+    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult>;
     analyzeSystem(query: string, fileContext: string, module?: string): Promise<string>;
     analyzeSentiment(text: string, module?: string): Promise<{ score: number; label: string }>;
     extractCustomerInfo(text: string, module?: string): Promise<any>;
@@ -169,7 +169,7 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult> {
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult> {
         if (!this.ai) {
             log.error('Google AI not configured.');
             throw new Error("Google AI not configured.");
@@ -212,19 +212,15 @@ class GoogleProvider implements AIProvider {
                 IMPORTANTE: NÃO ASSINE A MENSAGEM.
             `;
 
-            // Build content
+            // Build content — suporta 1+ imagens (#947): cada uma vira um inlineData part.
+            const imgArr = Array.isArray(imageBase64) ? imageBase64 : (imageBase64 ? [imageBase64] : []);
             let contents: any;
-            if (imageBase64 && iterations === 0) {
-                const cleanBase64 = imageBase64.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, "");
-                contents = [
-                    {
-                        role: 'user',
-                        parts: [
-                            { text: prompt },
-                            { inlineData: { data: cleanBase64, mimeType: "image/jpeg" } }
-                        ]
-                    }
-                ];
+            if (imgArr.length && iterations === 0) {
+                const parts: any[] = [{ text: prompt }];
+                for (const b64 of imgArr) {
+                    parts.push({ inlineData: { data: b64.replace(/^data:image\/[^;]+;base64,/, ""), mimeType: "image/jpeg" } });
+                }
+                contents = [{ role: 'user', parts }];
             } else {
                 contents = prompt;
             }
@@ -976,7 +972,7 @@ export class LocalProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string, options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult> {
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult> {
         const toolsPrompt = TOOLS_PROMPT;
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
@@ -997,16 +993,24 @@ export class LocalProvider implements AIProvider {
             accUsage.totalTokens += usage.total_tokens || 0;
         };
 
-        // #934: o modelo de texto (glm-5.x) não é multimodal — antes a imagem anexada era
-        // silenciosamente IGNORADA aqui. Agora: descreve/OCR via modelo de visão (glm-4.6v)
-        // e injeta no contexto, para o loop de tools agir sobre o conteúdo real da imagem
-        // (ex.: foto de nota → update_stock). Falha da visão vira aviso explícito (sem alucinar).
-        if (imageBase64) {
+        // #934/#947: o modelo de texto (glm-5.x) não é multimodal — a imagem era IGNORADA.
+        // Agora descreve/OCR via modelo de visão (glm-4.6v) e injeta no contexto, para o loop
+        // de tools agir sobre o conteúdo real (ex.: foto de nota → update_stock). Suporta
+        // MÚLTIPLAS imagens (descreve cada uma). Falha da visão vira aviso (sem alucinar).
+        const imgs = Array.isArray(imageBase64) ? imageBase64 : (imageBase64 ? [imageBase64] : []);
+        if (imgs.length) {
             const lastUserMsg = [...currentHistory].reverse().find(m => m.role === 'user')?.parts;
-            const description = await this.describeImage(imageBase64, typeof lastUserMsg === 'string' ? lastUserMsg : undefined);
-            currentContext += description
-                ? `\n\n[IMAGEM ANEXADA — conteúdo extraído pela visão (${this.visionConfig?.model}), trate como o que o usuário enviou]:\n${description}`
-                : `\n\n[IMAGEM ANEXADA]: não foi possível analisá-la (visão indisponível). AVISE o usuário que a imagem não pôde ser lida; NÃO invente o conteúdo.`;
+            const hint = typeof lastUserMsg === 'string' ? lastUserMsg : undefined;
+            const descriptions = await Promise.all(imgs.map((b64) => this.describeImage(b64, hint)));
+            const label = imgs.length === 1 ? 'IMAGEM ANEXADA' : `${imgs.length} IMAGENS ANEXADAS`;
+            const body = descriptions.map((d, i) => {
+                const tag = imgs.length === 1 ? '' : `IMAGEM ${i + 1}: `;
+                return d ? `${tag}${d}` : `${tag}[não foi possível analisar esta imagem]`;
+            }).join('\n\n');
+            const anyOk = descriptions.some(Boolean);
+            currentContext += anyOk
+                ? `\n\n[${label} — conteúdo extraído pela visão (${this.visionConfig?.model}), trate como o que o usuário enviou]:\n${body}`
+                : `\n\n[${label}]: não foi possível analisá-la(s) (visão indisponível). AVISE o usuário; NÃO invente o conteúdo.`;
         }
 
         while (iterations < MAX_ITERATIONS) {
@@ -1683,7 +1687,7 @@ export const aiService = {
         return [];
     },
 
-    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string, moduleName: string = 'chat') => {
+    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], moduleName: string = 'chat') => {
         // Injeta o endereço público (cloudflared) no contexto -> o agente sabe responder "qual o endereço de acesso?".
         try {
             const tunnelUrl = require('./tunnelService').tunnelService.getUrl();
