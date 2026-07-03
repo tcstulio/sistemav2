@@ -119,6 +119,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [attachedImage, setAttachedImage] = useState<{ data: string, mimeType: string } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState<Array<{ id: string; title: string; updatedAt: number; messageCount: number }>>([]);
@@ -319,16 +321,19 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  const handleSend = async () => {
-    if ((!input.trim() && !attachedImage && !attachedPdf) || isLoading) return;
+  // textOverride: usado pela entrada de voz — a transcrição é ENVIADA direto (voice note),
+  // sem passar pelo campo de texto (#945: antes a transcrição nunca chegava à LLM).
+  const handleSend = async (textOverride?: string) => {
+    const userMsg = textOverride ?? input;
+    if ((!userMsg.trim() && !attachedImage && !attachedPdf) || isLoading) return;
 
-    const userMsg = input;
     const userImage = attachedImage;
     const userPdf = attachedPdf;
 
     setInput('');
     setAttachedImage(null);
     setAttachedPdf(null);
+    if (textareaRef.current) textareaRef.current.style.height = 'auto'; // volta a 1 linha
 
     setMessages(prev => [
       ...prev,
@@ -426,27 +431,28 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
         const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        if (blob.size < 1000) return; // gravação vazia/acidental (< ~0,1s): ignora em silêncio
         const reader = new FileReader();
         reader.onloadend = async () => {
           const base64 = (reader.result as string).split(',')[1];
-          setIsLoading(true);
-          setMessages(prev => [...prev, { role: 'user', text: '🎤 Mensagem de voz...' }]);
+          // #945: transcreve e ENVIA direto (voice note). Antes a transcrição ia pro
+          // histórico + campo mas nunca era enviada — a LLM não respondia nada.
+          setIsTranscribing(true);
           try {
             const transcription = await AiService.transcribeAudio(base64, 'audio/webm');
-            setMessages(prev => {
-              const updated = [...prev];
-              updated[updated.length - 1] = { role: 'user', text: transcription };
-              return updated;
-            });
-            setInput(transcription);
+            // O backend sinaliza erro de ASR como texto "[...]" (indisponível/sem saldo/etc.)
+            // — não é fala do usuário; avisa em vez de mandar pro agente.
+            const isAsrError = !transcription || /^\[.*\]$/.test(transcription.trim());
+            if (isAsrError) {
+              setMessages(prev => [...prev, { role: 'model', text: `🎤 Não consegui transcrever o áudio. ${transcription || ''}`.trim(), isError: true }]);
+              return;
+            }
+            setIsTranscribing(false);
+            await handleSend(transcription);
           } catch {
-            setMessages(prev => {
-              const updated = [...prev];
-              updated[updated.length - 1] = { role: 'user', text: '🎤 [Erro na transcrição]', isError: true };
-              return updated;
-            });
+            setMessages(prev => [...prev, { role: 'model', text: '🎤 Erro na transcrição do áudio. Tente novamente.', isError: true }]);
           } finally {
-            setIsLoading(false);
+            setIsTranscribing(false);
           }
         };
         reader.readAsDataURL(blob);
@@ -634,10 +640,11 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
               <div className="flex gap-1">
                 <button
                   onClick={toggleVoice}
-                  className={`p-2 rounded-full transition-all ${isListening ? 'bg-red-100 text-red-600 animate-pulse' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400'}`}
-                  title="Entrada de Voz"
+                  disabled={isTranscribing || isLoading}
+                  className={`p-2 rounded-full transition-all disabled:opacity-50 ${isListening ? 'bg-red-500 text-white animate-pulse ring-2 ring-red-300' : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400'}`}
+                  title={isTranscribing ? 'Transcrevendo…' : isListening ? 'Gravando — toque para enviar' : 'Mensagem de voz (fala vira texto e é enviada)'}
                 >
-                  <Mic size={20} />
+                  {isTranscribing ? <Loader2 size={20} className="animate-spin text-indigo-500" /> : <Mic size={20} />}
                 </button>
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -671,22 +678,31 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
 
               <div className="flex-1 bg-slate-100 dark:bg-slate-800 rounded-xl p-2 focus-within:ring-2 focus-within:ring-indigo-500/50 transition-all border border-transparent focus-within:border-indigo-500">
                 <textarea
+                  ref={textareaRef}
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    // auto-resize: cresce com o conteúdo até ~5 linhas (o max-h-28 limita)
+                    const el = e.target;
+                    el.style.height = 'auto';
+                    el.style.height = `${Math.min(el.scrollHeight, 112)}px`;
+                  }}
                   onKeyDown={handleKeyPress}
-                  placeholder="Pergunte ao Assistente..."
+                  placeholder={isTranscribing ? 'Transcrevendo o áudio…' : isListening ? 'Gravando… toque no microfone para enviar' : 'Pergunte ao Assistente…'}
+                  disabled={isTranscribing}
                   rows={1}
-                  className="w-full bg-transparent border-none outline-none text-sm resize-none max-h-24 text-slate-800 dark:text-slate-200 placeholder:text-slate-400"
+                  className="w-full bg-transparent border-none outline-none text-sm resize-none max-h-28 text-slate-800 dark:text-slate-200 placeholder:text-slate-400 disabled:opacity-60"
                   style={{ minHeight: '24px' }}
                 />
               </div>
 
               <button
-                onClick={handleSend}
-                disabled={!input.trim() && !attachedImage && !attachedPdf}
+                onClick={() => handleSend()}
+                disabled={isLoading || (!input.trim() && !attachedImage && !attachedPdf)}
+                title={isLoading ? 'Aguardando a resposta…' : 'Enviar'}
                 className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
               >
-                <Send size={20} />
+                {isLoading ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
               </button>
             </div>
           </div>
