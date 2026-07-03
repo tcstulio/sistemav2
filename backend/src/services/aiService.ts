@@ -997,6 +997,18 @@ export class LocalProvider implements AIProvider {
             accUsage.totalTokens += usage.total_tokens || 0;
         };
 
+        // #934: o modelo de texto (glm-5.x) não é multimodal — antes a imagem anexada era
+        // silenciosamente IGNORADA aqui. Agora: descreve/OCR via modelo de visão (glm-4.6v)
+        // e injeta no contexto, para o loop de tools agir sobre o conteúdo real da imagem
+        // (ex.: foto de nota → update_stock). Falha da visão vira aviso explícito (sem alucinar).
+        if (imageBase64) {
+            const lastUserMsg = [...currentHistory].reverse().find(m => m.role === 'user')?.parts;
+            const description = await this.describeImage(imageBase64, typeof lastUserMsg === 'string' ? lastUserMsg : undefined);
+            currentContext += description
+                ? `\n\n[IMAGEM ANEXADA — conteúdo extraído pela visão (${this.visionConfig?.model}), trate como o que o usuário enviou]:\n${description}`
+                : `\n\n[IMAGEM ANEXADA]: não foi possível analisá-la (visão indisponível). AVISE o usuário que a imagem não pôde ser lida; NÃO invente o conteúdo.`;
+        }
+
         while (iterations < MAX_ITERATIONS) {
             const agentPrompt = agentConfigService.getSystemPrompt();
             let messages = [
@@ -1168,6 +1180,39 @@ export class LocalProvider implements AIProvider {
         } catch (error: any) {
             log.error(`Local LLM Error [extractCustomerInfo]: ${error.message}`);
             throw error;
+        }
+    }
+
+    /**
+     * Descreve/faz OCR de uma imagem via modelo de visão (glm-4.6v) e retorna TEXTO.
+     * Usado pelo generateReply p/ injetar o conteúdo da imagem no loop de tools — o modelo
+     * de texto (glm-5.x) não é multimodal, então a imagem era silenciosamente ignorada (#934).
+     */
+    async describeImage(imageBase64: string, userHint?: string): Promise<string | null> {
+        if (!this.visionConfig || !this.apiKey) return null;
+        try {
+            const clean = imageBase64.replace(/^data:image\/[^;]+;base64,/, "");
+            const dataUrl = `data:image/jpeg;base64,${clean}`;
+            const prompt = `Analise esta imagem em detalhes, em português.
+- Se contiver documento/nota/recibo/etiqueta/tela: extraia TODOS os textos legíveis (OCR), incluindo códigos, referências, quantidades, valores e datas.
+- Se contiver produtos/objetos: identifique-os e conte as quantidades visíveis.
+- Seja factual; não invente o que não estiver visível.${userHint ? `\nContexto do usuário: ${userHint}` : ''}`;
+            const response = await axios.post(`${this.visionConfig.baseUrl}/chat/completions`, {
+                model: this.visionConfig.model,
+                messages: [{
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: prompt },
+                        { type: 'image_url', image_url: { url: dataUrl } },
+                    ],
+                }],
+                temperature: 0.1,
+            }, { headers: this.getHeaders(), timeout: 180000 });
+            return response.data?.choices?.[0]?.message?.content || null;
+        } catch (error: any) {
+            const detail = error?.response?.data ? JSON.stringify(error.response.data).slice(0, 300) : error?.message;
+            log.error(`describeImage falhou: ${detail}`);
+            return null;
         }
     }
 
