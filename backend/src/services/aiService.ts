@@ -1352,7 +1352,18 @@ export class LocalProvider implements AIProvider {
     }
 
     async transcribeAudio(audioBase64: string, mimeType: string = 'audio/ogg', _module?: string): Promise<string> {
-        // #936: transcrição via GLM-ASR-2512 (Z.AI). Multipart /audio/transcriptions.
+        // #936: ASR LOCAL primeiro (whisper.cpp — sem custo/nuvem; infra escolhida pelo usuário).
+        // Se o Whisper não estiver instalado ou falhar, cai para o GLM-ASR-2512 (nuvem).
+        try {
+            const { whisperService } = require('./whisperService');
+            if (whisperService.isAvailable()) {
+                return await whisperService.transcribe(audioBase64, mimeType);
+            }
+        } catch (e: any) {
+            log.warn(`Whisper local falhou (${e?.message}); tentando GLM-ASR na nuvem.`);
+        }
+
+        // Fallback nuvem: GLM-ASR-2512 (Z.AI). Multipart /audio/transcriptions.
         // Cobrado do saldo PaaS (não é do plano Coding); áudio ≤30s/≤25MB por chamada.
         if (!this.apiKey) return "[Transcrição indisponível: chave da IA ausente]";
         try {
