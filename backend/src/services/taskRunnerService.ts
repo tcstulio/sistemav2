@@ -1490,13 +1490,21 @@ class TaskRunnerService {
                 this.save(); this.emitStatus(task);
                 return { verify, aborted: true };
             }
-            task.status = 'failed';
-            task.error = 'Modo cumulativo: nenhuma mudança produzida.';
-            task.updatedAt = new Date().toISOString();
-            this.finalizeTaskMetrics(task);
-            this.recordEvent(task, 'task_failed', 'Cumulativo sem mudanças — abortando (sem PR).');
-            this.save(); this.emitStatus(task);
-            return { verify, aborted: true };
+            // #963 Tier RESGATE: o Claude Code assume o worktree antes de desistir. Se produzir
+            // mudanças, revalida e segue pro caminho de sucesso (PR) em vez de abortar.
+            if (await this.tryClaudeRescue(task, issueData) && (await this.worktreeChanges()).length > 0) {
+                verify = await this.verify();
+                anyChange = true;
+            }
+            if (!anyChange) {
+                task.status = 'failed';
+                task.error = 'Modo cumulativo: nenhuma mudança produzida (nem o resgate Claude).';
+                task.updatedAt = new Date().toISOString();
+                this.finalizeTaskMetrics(task);
+                this.recordEvent(task, 'task_failed', 'Cumulativo sem mudanças — abortando (resgate Claude também vazio).');
+                this.save(); this.emitStatus(task);
+                return { verify, aborted: true };
+            }
         }
         return { verify, aborted: false };
     }
