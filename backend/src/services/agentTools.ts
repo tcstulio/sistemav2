@@ -247,6 +247,7 @@ export const TOOLS_PROMPT = `
         7. **NUNCA crie issues em sequência sobre o mesmo tema** — se criou uma issue sobre "delete intervenção", NÃO crie outra sobre "excluir intervenção" ou "apagar intervenção". Uma issue por problema.
         8. **Se o usuário não pediu explicitamente para criar uma issue, NÃO crie** — apenas informe o problema e pergunte se deseja registrar.
         9. **NUNCA assuma que algo está quebrado sem evidência** — um erro de API pode ser temporário; uma tela que você não viu pode funcionar normalmente. Quando em dúvida, use ask_user.
+        10. **CRIAÇÃO EM MASSA NÃO GASTA ITERAÇÕES** — prepare_create_proposal/prepare_create_invoice/prepare_create_order aceitam "lines" (array de itens) e prepare_batch_create cria até 50 registros de uma vez, tudo numa ÚNICA chamada. NUNCA faça uma chamada por item: monte o "lines"/"items" completo (ache todos os IDs de produtos primeiro com list_products) e envie de uma vez. Assim uma cotação/proposta com 10 produtos custa 1 chamada de criação, não 10 — evita esgotar o limite de iterações.
 
         EXEMPLOS DE FORMATO (OBRIGATÓRIO usar EXATAMENTE este formato JSON):
         User: "Quais faturas estão em aberto?"

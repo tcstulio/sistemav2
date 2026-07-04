@@ -134,6 +134,49 @@ function getContextWindow(model?: string): number {
     return 128000;
 }
 
+// #956: estimativa barata de tokens (~4 chars/token para PT-BR/JSON misto). Usada para PODAR
+// o contexto ANTES de enviá-lo; o valor real chega em usage.prompt_tokens (guarda de orçamento).
+export function estimateTokens(text: string): number {
+    return Math.ceil((text || '').length / 4);
+}
+
+// #956: poda de contexto — blocos [TOOL RESULT ...]/[ERRO NA FERRAMENTA ...] antigos são
+// truncados a um sumário curto, preservando os `keepRecent` mais recentes inteiros. Impede
+// que o currentContext infle indefinidamente (evidência: 6 list tools → 135K tokens) e estoure
+// a janela do modelo. Retorna o contexto, possivelmente podado. Função PURA (testável).
+export function pruneContext(context: string, budgetChars: number, keepRecent = 2): string {
+    if (!context || context.length <= budgetChars) return context;
+    // Corta apenas nos blocos de DADOS (results/erros); o contexto base e os nudges [SISTEMA]
+    // (pequenos) seguem junto do "head" e não são tocados.
+    const markerRe = /\n\n\[(?:TOOL RESULT|ERRO NA FERRAMENTA)[^\]]*\]/g;
+    const cuts: number[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = markerRe.exec(context))) cuts.push(m.index);
+    if (!cuts.length) return context; // sem blocos podáveis -> devolve intacto
+    const head = context.slice(0, cuts[0]);
+    const blocks: string[] = [];
+    for (let i = 0; i < cuts.length; i++) {
+        blocks.push(context.slice(cuts[i], i + 1 < cuts.length ? cuts[i + 1] : context.length));
+    }
+    const protectedCount = Math.max(0, Math.min(keepRecent, blocks.length));
+    const oldBlocks = blocks.slice(0, blocks.length - protectedCount);
+    const recentBlocks = blocks.slice(blocks.length - protectedCount);
+
+    const summarize = (block: string, maxChars: number): string => {
+        const flat = block.replace(/\s+/g, ' ').trim();
+        if (flat.length <= maxChars) return block;
+        return flat.slice(0, maxChars) + ` … [poda de contexto: bloco de ${block.length} caracteres resumido]\n`;
+    };
+
+    // 1º passo: sumariza SÓ os antigos (preserva os recentes p/ a tarefa em andamento).
+    const summarizedOld = oldBlocks.map(b => summarize(b, 400));
+    let result = head + summarizedOld.join('') + recentBlocks.join('');
+    if (result.length <= budgetChars) return result;
+    // 2º passo: ainda estourando -> sumariza também os recentes (com folga maior).
+    const summarizedRecent = recentBlocks.map(b => summarize(b, 800));
+    return head + summarizedOld.join('') + summarizedRecent.join('');
+}
+
 interface AIProvider {
     generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult>;
     analyzeSystem(query: string, fileContext: string, module?: string): Promise<string>;
@@ -1006,7 +1049,18 @@ export class LocalProvider implements AIProvider {
         let currentHistory = [...conversationHistory];
         let currentContext = context;
         let iterations = 0;
-        const MAX_ITERATIONS = 10; // #956 (down-payment): teto maior; a execução multi-call (#955) alivia a pressão. Orçamento de tokens completo fica p/ #956.
+        // #956: teto de iterações (25-40; default 30) — NÃO infinito (risco de loop). Junto
+        // com o orçamento de tokens abaixo, garante que tarefas multi-lookup (cotação = achar
+        // cliente + buscar N produtos + montar proposta) completem sem cair na síntese que
+        // proíbe ferramentas. Criação em massa (prepare_create_proposal(lines)/prepare_batch_create)
+        // colapsa N escritas em 1 call — reforçado no prompt — então 30 cobre cenários pesados.
+        const MAX_ITERATIONS = Math.min(Math.max(config.agentMaxIterations ?? 30, 1), 40);
+        // Orçamento de contexto (#956): PARAR ANTES de estourar a janela do modelo, não num nº
+        // mágico de passos. budget = fração da janela; o resto cobre a resposta final + margem.
+        const contextBudgetTokens = Math.floor(ctxWindow * (config.agentContextBudgetPct ?? 0.72));
+        // currentContext (a parte que mais cresce — TOOL RESULTs) fica limitada a ~metade do
+        // orçamento em caracteres; system prompt (tools) + histórico usam o resto.
+        const contextCharBudget = Math.floor(contextBudgetTokens * 0.5 * 4);
         const seenToolCalls = new Set<string>();
         let nudgedNarration = false; // #954: já cutucamos o modelo por "anunciar e parar"?
         // #959: modelos de raciocínio (MiniMax M3, GLM) vazam <think>...</think>/<reasoning> no
@@ -1019,12 +1073,17 @@ export class LocalProvider implements AIProvider {
         // Track which model actually responded and whether fallback was used.
         let lastModelUsed: string = options?.model || this.modelName;
         let lastFellBack = false;
+        // #956: tamanho real (em tokens) do último prompt enviado — sinal de ground truth p/ o
+        // guarda de orçamento. budgetExhausted marca se saímos do loop por orçamento (síntese).
+        let lastPromptTokens = 0;
+        let budgetExhausted = false;
 
         const accumulate = (usage: any) => {
             if (!usage) return;
             accUsage.promptTokens += usage.prompt_tokens || 0;
             accUsage.completionTokens += usage.completion_tokens || 0;
             accUsage.totalTokens += usage.total_tokens || 0;
+            if (usage.prompt_tokens) lastPromptTokens = usage.prompt_tokens;
         };
 
         // #934/#947: o modelo de texto (glm-5.x) não é multimodal — a imagem era IGNORADA.
@@ -1048,6 +1107,14 @@ export class LocalProvider implements AIProvider {
         }
 
         while (iterations < MAX_ITERATIONS) {
+            // #956: guarda de orçamento — se a última chamada já esgotou o orçamento de tokens,
+            // outra iteração arrisca estourar a janela do modelo. Interrompe e sintetiza com o
+            // que já coletamos (o currentContext é podado a cada passo, então cabe na síntese).
+            if (lastPromptTokens && lastPromptTokens >= contextBudgetTokens) {
+                budgetExhausted = true;
+                log.warn(`Agente: orçamento de contexto atingido (${lastPromptTokens} >= ${contextBudgetTokens} tokens) — sintetizando com os dados coletados.`);
+                break;
+            }
             const agentPrompt = agentConfigService.getSystemPrompt();
             let messages = [
                 { role: 'system', content: `Você é o Marciano — agente IA do CoolGroove (ERP Dolibarr). Use Português. ${agentPrompt ? '\n' + agentPrompt : ''}\n\nCONTEXTO: ${currentContext}\n\n${toolsPrompt}` },
@@ -1094,6 +1161,9 @@ export class LocalProvider implements AIProvider {
                                 return { text: toolResult, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                             }
                             currentContext += `\n\n[TOOL RESULT ${tc.tool}]: ${toolResult}`;
+                            // #956: poda de contexto — mantém o currentContext dentro do orçamento
+                            // (TOOL RESULTs antigos viram sumário; os recentes ficam inteiros).
+                            currentContext = pruneContext(currentContext, contextCharBudget, 2);
                             ranAny = true;
                         } catch (e: any) {
                             if (e.name === 'AskUserInterrupt') {
@@ -1103,6 +1173,7 @@ export class LocalProvider implements AIProvider {
                             const detail = e?.message || String(e);
                             log.warn(`Local LLM Tool Error (injeta e continua): ${detail}`);
                             currentContext += `\n\n[ERRO NA FERRAMENTA ${tc.tool}]: ${detail}. Corrija os parâmetros ou responda ao usuário com o que já tem.`;
+                            currentContext = pruneContext(currentContext, contextCharBudget, 2);
                             ranAny = true;
                         }
                     }
@@ -1149,7 +1220,7 @@ export class LocalProvider implements AIProvider {
             const finalMessages = [
                 {
                     role: 'system',
-                    content: `Você é um assistente ERP. Responda em Português ao usuário usando SOMENTE os dados coletados abaixo. NÃO chame ferramentas e NÃO retorne JSON. Se os dados não respondem ao pedido, diga isso de forma clara e objetiva e sugira o que falta (ex.: especificar um projeto, cliente ou período).\n\nDADOS COLETADOS:\n${currentContext}`,
+                    content: `Você é um assistente ERP. Responda em Português ao usuário usando SOMENTE os dados coletados abaixo. NÃO chame ferramentas e NÃO retorne JSON. Se os dados não respondem ao pedido, diga isso de forma clara e objetiva e sugira o que falta (ex.: especificar um projeto, cliente ou período).${budgetExhausted ? '\n\n[O orçamento de contexto foi atingido; use SOMENTE os dados abaixo. Se não bastarem para completar o pedido, diga o que faltou coletar.]' : ''}\n\nDADOS COLETADOS:\n${currentContext}`,
                 },
                 ...currentHistory.map(msg => ({
                     role: msg.role === 'model' ? 'assistant' : msg.role,

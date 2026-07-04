@@ -102,7 +102,7 @@ vi.mock('../../services/scraperService', () => ({
     },
 }));
 
-import { aiService, LocalProvider, aggregateInvoicesToMonthlySeries } from '../../services/aiService';
+import { aiService, LocalProvider, aggregateInvoicesToMonthlySeries, estimateTokens, pruneContext } from '../../services/aiService';
 import { GoogleGenAI } from '@google/genai';
 import { dolibarrService } from '../../services/dolibarrService';
 import { ScraperService } from '../../services/scraperService';
@@ -620,6 +620,77 @@ describe('AiService', () => {
             expect(result.model).toBe('MiniMax-M3');
             expect(result.fellBack).toBe(true);
         });
+
+        // ── #956: orçamento de contexto + poda de TOOL RESULTs ──────────────────────────────
+
+        it('generateReply (#956): poda TOOL RESULTs antigos e mantém os recentes inteiros', async () => {
+            // list_products formata o array em HTML (~5K chars p/ 40 itens). 3 buscas -> 3 blocos
+            // (~15K) excedem o orçamento do llama3 (11796 chars); 2 recentes (~10K) cabem inteiros.
+            let prodCall = 0;
+            (dolibarrService.listProducts as any).mockImplementation(async () => {
+                prodCall++;
+                const n = prodCall;
+                return Array.from({ length: 40 }, (_, i) => ({
+                    id: i, ref: `PROD${n}-${i}`, label: 'X'.repeat(30), price: 10,
+                }));
+            });
+
+            let call = 0;
+            const terms = ['p1', 'p2', 'p3'];
+            (axios.post as any).mockImplementation(async () => {
+                call++;
+                if (call <= 3) {
+                    // 3 buscas DISTINTAS (args diferentes) -> 3 execuções (não dedupado).
+                    return { data: { choices: [{ message: { content: `{"tool":"list_products","args":{"search":"${terms[call - 1]}"}}` } }] } };
+                }
+                return { data: { choices: [{ message: { content: 'Proposta montada com os produtos.' } }] } };
+            });
+
+            const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+            const result = await provider.generateReply([{ role: 'user', parts: 'cotacao com varios produtos' } as any], 'ctx');
+            expect(result.text).toBe('Proposta montada com os produtos.');
+
+            // A última chamada (que devolveu a resposta final) usou o currentContext PODADO.
+            const lastMessages = (axios.post as any).mock.calls.at(-1)[1].messages;
+            const sys = lastMessages[0].content;
+            // bloco antigo (PROD1) foi resumido -> último item (PROD1-39) sumiu e há marcador de poda.
+            expect(sys).toContain('poda de contexto');
+            expect(sys).not.toContain('PROD1-39');
+            // blocos recentes (PROD2/PROD3) seguem inteiros -> último item ainda presente.
+            expect(sys).toContain('PROD2-39');
+            expect(sys).toContain('PROD3-39');
+        });
+
+        it('generateReply (#956): interrompe por ORÇAMENTO de contexto e sintetiza (não estoura a janela)', async () => {
+            // llama3: ctxWindow 8192 -> contextBudgetTokens = floor(8192*0.72) = 5898.
+            // call 1 devolve prompt_tokens=6000 (>5898) + tool call -> na 2ª iteração o guarda dispara.
+            (dolibarrService.listUsers as any).mockResolvedValue([]);
+
+            let call = 0;
+            (axios.post as any).mockImplementation(async () => {
+                call++;
+                if (call === 1) {
+                    return {
+                        data: {
+                            choices: [{ message: { content: '{"tool":"list_users","args":{"search":"x"}}' } }],
+                            usage: { prompt_tokens: 6000, completion_tokens: 5, total_tokens: 6005 },
+                        },
+                    };
+                }
+                // síntese final (proíbe ferramentas)
+                return { data: { choices: [{ message: { content: 'Resumo parcial com o que coletei.' } }] } };
+            });
+
+            const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+            const result = await provider.generateReply([{ role: 'user', parts: 'alguma coisa' } as any], 'ctx');
+            expect(result.text).toBe('Resumo parcial com o que coletei.');
+
+            // Só 2 chamadas ao LLM: 1 (tool) + 1 (síntese). Não houve loop nem estouro.
+            expect((axios.post as any).mock.calls.length).toBe(2);
+            // A síntese foi avisada do orçamento esgotado (path budgetExhausted).
+            const synthMessages = (axios.post as any).mock.calls.at(-1)[1].messages;
+            expect(synthMessages[0].content).toContain('orçamento de contexto foi atingido');
+        });
     });
 
     // ── #719/#727: postChatCompletion — fallback, backoff, não-recuperável, deadline ──────────────
@@ -796,5 +867,61 @@ describe('aggregateInvoicesToMonthlySeries (#915)', () => {
     it('retorna [] para lista vazia/nula', () => {
         expect(aggregateInvoicesToMonthlySeries([])).toEqual([]);
         expect(aggregateInvoicesToMonthlySeries(null as any)).toEqual([]);
+    });
+});
+
+// ── #956: helpers de orçamento de contexto (pura) ────────────────────────────────────
+describe('estimateTokens (#956)', () => {
+    it('estima ~4 chars/token', () => {
+        expect(estimateTokens('')).toBe(0);
+        expect(estimateTokens('abcd')).toBe(1);
+        expect(estimateTokens('abcdefgh')).toBe(2); // 8 chars / 4
+    });
+
+    it('tolera null/undefined sem quebrar', () => {
+        expect(estimateTokens(undefined as any)).toBe(0);
+    });
+});
+
+describe('pruneContext (#956)', () => {
+    it('devolve intacto quando abaixo do orçamento', () => {
+        const ctx = 'contexto pequeno\n\n[TOOL RESULT x]: ok';
+        expect(pruneContext(ctx, 1000)).toBe(ctx);
+    });
+
+    it('devolve intacto quando acima do orçamento mas sem blocos podáveis', () => {
+        const big = 'x'.repeat(2000); // > orçamento, mas nenhum [TOOL RESULT]
+        expect(pruneContext(big, 500)).toBe(big);
+    });
+
+    it('trunca blocos antigos e preserva os recentes inteiros', () => {
+        const head = 'BASE';
+        const b1 = `\n\n[TOOL RESULT list_products]: ${'A'.repeat(5000)}`;
+        const b2 = `\n\n[TOOL RESULT list_invoices]: ${'B'.repeat(5000)}`;
+        const b3 = `\n\n[TOOL RESULT list_orders]: ${'C'.repeat(5000)}`;
+        const ctx = head + b1 + b2 + b3; // ~15K chars > budget 11796
+        const out = pruneContext(ctx, 11796, 2);
+
+        expect(out).toContain('poda de contexto');          // b1 (antigo) foi resumido
+        expect(out).not.toContain('A'.repeat(5000));        // b1 perdeu a run cheia
+        expect(out).toContain('B'.repeat(5000));            // b2 (recente) intacto
+        expect(out).toContain('C'.repeat(5000));            // b3 (recente) intacto
+        expect(out.length).toBeLessThan(ctx.length);        // encolheu
+    });
+
+    it('sumariza o único bloco quando ele sozinho excede o orçamento', () => {
+        const ctx = `H\n\n[TOOL RESULT x]: ${'Z'.repeat(2000)}`;
+        const out = pruneContext(ctx, 500, 2);
+        expect(out).toContain('poda de contexto');
+        expect(out).not.toContain('Z'.repeat(2000));
+    });
+
+    it('também poda blocos [ERRO NA FERRAMENTA ...]', () => {
+        const ctx = `H\n\n[ERRO NA FERRAMENTA x]: ${'E'.repeat(5000)}\n\n[TOOL RESULT y]: ${'T'.repeat(5000)}`;
+        // budget 6000: cabe o bloco recente (TOOL RESULT) inteiro, mas não os dois -> o ERRO é podado.
+        const out = pruneContext(ctx, 6000, 1);
+        expect(out).toContain('poda de contexto');          // o erro (antigo) foi resumido
+        expect(out).not.toContain('E'.repeat(5000));        // erro truncado
+        expect(out).toContain('T'.repeat(5000));            // último bloco (recente) intacto
     });
 });
