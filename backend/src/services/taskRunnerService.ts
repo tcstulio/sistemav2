@@ -13,6 +13,8 @@ import { isPeakUtcHour } from '../utils/peakWindow';
 import { socketService } from './socketService';
 import { killTree, isAlive, killOpencodeOrphans } from '../utils/processTree';
 import { runOpencode, resolveBash } from '../utils/runOpencode';
+import { claudeCliService } from './claudeCliService';
+import { parseTscErrors, parseGlobalTscErrors, serializeErrors, deserializeErrors, computeBlocking, splitTouchedByProject } from './gateDelta';
 import { previewPortsFor } from '../utils/previewPorts';
 import { screenshotService } from './screenshotService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
@@ -41,6 +43,15 @@ const OPENCODE_TIMEOUT_MS = (Number(process.env.TASKRUNNER_OPENCODE_TIMEOUT_MIN)
 // até 6; cumulativo: até MAX_ROUNDS). Configurável via env (default 3h) — suba junto com o timeout
 // por round, senão o watchdog mata antes de a task longa terminar.
 const MAX_TASK_WALL_MS = (Number(process.env.TASKRUNNER_MAX_TASK_WALL_MIN) || 180) * 60 * 1000;
+
+// Gate por DELTA (Fase 0 item 2-3): ON por padrão; TASKRUNNER_DELTA_GATE=0 volta ao gate estrito antigo.
+// Só reprova por erro de tsc NOVO em arquivo que a task TOCOU (+ global novo). Ver gateDelta.ts.
+const DELTA_GATE = process.env.TASKRUNNER_DELTA_GATE !== '0';
+const BASELINE_CACHE_DIR = path.join(__dirname, '../../data/baseline-cache');
+// Gate de TESTE (Fase 4/B11): roda `vitest related` dos arquivos tocados no verify() — pega regressão
+// de lógica que passa no tsc. Como o main é mantido verde pela CI, falha aqui = regressão da task.
+// TASKRUNNER_TEST_GATE=0 desliga (ex.: se testes flaky causarem falso-bloqueio recorrente).
+const TEST_GATE = process.env.TASKRUNNER_TEST_GATE !== '0';
 
 // Auto-recuperação da fila (#644 criterion opcional): se um ghost/hung promise deixar a
 // cadeia com pendingExecs>0 mas SEM nenhuma task ativa (running/fixing/cancelling) por mais
@@ -205,7 +216,7 @@ export interface Task {
     judgeApproved?: boolean; // VALOR 2: veto do Juiz (approved=false bloqueia auto-merge; nunca aprova sozinho)
     // Self-heal de gate: quando um gate DETERMINÍSTICO bloqueia o merge (regressão de testes / veto),
     // em vez de só estacionar, realimentamos o coder UMA vez com uma correção derivada do próprio gate.
-    gateFixAttempts?: number;     // teto baixo (default 1), SEPARADO de judgeAttempts (não se multiplicam)
+    gateFixAttempts?: number;     // teto (default 3, #963 Fase A), SEPARADO de judgeAttempts (não se multiplicam)
     gateFixInstruction?: string;  // correção PERSISTENTE injetada nos builders (imune ao wipe de feedbackHistory na síntese)
     visualScore?: number;
     visualReview?: string;
@@ -237,6 +248,11 @@ export interface Task {
     // cpuMemSamples guarda o RAW das amostras; metrics é a versão agregada.
     cpuMemSamples?: CpuMemSample[];
     metrics?: TaskMetrics;
+    // Gate por DELTA (Fase 0): erros de tsc PRÉ-EXISTENTES no origin/main (posicionais "count\tarquivo|code|msg"
+    // e globais). Best-effort — se faltar, o filtro por arquivo-tocado ainda protege. baselineSha = SHA que originou.
+    baselineErrors?: string[];
+    baselineGlobals?: string[];
+    baselineSha?: string;
 }
 
 interface TaskStore {
@@ -254,6 +270,9 @@ class TaskRunnerService {
     private notifiedTasks = new Set<number>();
     private deletedIssueNumbers = new Map<number, number>();
     private syncGitHubInFlight = false;
+    // Fase 0 item 5 (CI retomável): tasks cujo auto-merge está em andamento — o resumePendingMerges
+    // não re-dispara enquanto um attempt (que espera a CI até 15min) ainda roda. Idempotência do resume.
+    private mergeInFlight = new Set<number>();
     // Auto-recuperação da fila (#644): timer periódico + timestamp de quando a cadeia ficou
     // "presa" (pendingExecs>0 sem task ativa). Ver checkQueueHealth.
     private recoveryTimer: NodeJS.Timeout | null = null;
@@ -276,6 +295,11 @@ class TaskRunnerService {
             this.syncWithGitHub().catch((e) => {
                 log.warn(`syncWithGitHub no boot falhou: ${e?.message || e}`);
             });
+        });
+        // Fase 0 item 5 (CI retomável): retoma merges que um restart interrompeu (task 'approved' com
+        // o poll de CI morto — foi o caso da #986). Sem isto a task ficava presa em 'approved' p/ sempre.
+        setImmediate(() => {
+            this.resumePendingMerges().catch((e) => log.warn(`resumePendingMerges no boot falhou: ${e?.message || e}`));
         });
         // Auto-recuperação da fila (#644): checa periodicamente se a cadeia ficou presa e,
         // se sim após QUEUE_RECOVERY_MIN_MS, reseta e retoma. unref p/ não segurar o processo.
@@ -415,6 +439,8 @@ class TaskRunnerService {
         }
         const before = new Set(Object.keys(this.store.tasks).map(Number));
         await this.syncWithGitHub();
+        // Fase 0 item 5: retoma auto-merges pendentes (CI passou depois do timeout, ou attempt anterior morreu).
+        this.resumePendingMerges().catch((e) => log.warn(`resumePendingMerges (poll) falhou: ${e?.message || e}`));
         const tasks = await this.syncTasks();
         const newTaskNumbers = tasks
             .filter((t) => !before.has(t.issueNumber) && !this.notifiedTasks.has(t.issueNumber))
@@ -802,11 +828,14 @@ class TaskRunnerService {
                 const stuckTask = Object.values(this.store.tasks).find(t => t.status === 'running' || t.status === 'fixing');
                 if (stuckTask) {
                     stuckTask.status = 'failed';
-                    stuckTask.error = 'Timeout no worktree lock (>10min sem liberar)';
+                    stuckTask.error = 'Timeout no worktree lock (holder anterior não liberou dentro do watchdog total)';
                     this.save();
                 }
-                reject(new Error(`worktreeLock timeout: holder anterior não liberou em 10min. Lock abortado para ${label}`));
-            }, 10 * 60_000))
+                reject(new Error(`worktreeLock timeout: holder anterior não liberou a tempo. Lock abortado para ${label}`));
+            // #963 (aprendizado da task #986, 2026-07-04): era 10min — MENOR que UM run do opencode
+            // (30min) e que o watchdog total (3h), então matava tasks longas LEGÍTIMAS por aquisição
+            // concorrente do lock. Alinha ao watchdog total (o backstop correto): só dispara em deadlock real.
+            }, MAX_TASK_WALL_MS + 5 * 60_000))
         ]);
         try {
             return await fn();
@@ -1184,13 +1213,27 @@ class TaskRunnerService {
         }
         await git(['checkout', '-B', branch, base], { timeout: 30000, cwd: WT_ROOT });
         await git(['clean', '-fd'], { timeout: 30000, cwd: WT_ROOT }); // preserva node_modules (ignorado)
-        // dependências (uma vez; o worktree persiste entre tasks)
-        if (!fs.existsSync(path.join(WT_ROOT, 'node_modules'))) {
-            await sh('npm ci', WT_ROOT, 600000);
-        }
-        if (!fs.existsSync(path.join(WT_ROOT, 'backend', 'node_modules'))) {
-            await sh('npm ci', path.join(WT_ROOT, 'backend'), 600000);
-        }
+        // #963 (Fase 0): re-sincroniza deps quando o package-lock MUDA (não só quando node_modules
+        // falta). Antes o worktree instalava "uma vez" e ficava com deps STALE — o heic2any (add
+        // depois) sumia e o tsc/vite build do worktree falhavam em TODA task (falso-negativo total).
+        // Marker por mtime: reinstala se o lock for mais novo que a última instalação (ou se faltar).
+        const ensureDeps = async (dir: string) => {
+            const nm = path.join(dir, 'node_modules');
+            const lock = path.join(dir, 'package-lock.json');
+            const marker = path.join(nm, '.tr-installed');
+            let stale = true;
+            try {
+                stale = !fs.existsSync(nm) || !fs.existsSync(marker) || !fs.existsSync(lock)
+                    || fs.statSync(lock).mtimeMs > fs.statSync(marker).mtimeMs;
+            } catch { stale = true; }
+            if (stale) {
+                log.info(`ensureWorktree: deps desatualizadas em ${dir} — rodando npm ci`);
+                await sh('npm ci', dir, 600000);
+                try { fs.writeFileSync(marker, new Date().toISOString()); } catch { /* ignore */ }
+            }
+        };
+        await ensureDeps(WT_ROOT);
+        await ensureDeps(path.join(WT_ROOT, 'backend'));
     }
 
     /** Mudanças de CÓDIGO no worktree (ignora node_modules / lock / o arquivo de prompt). */
@@ -1212,21 +1255,126 @@ class TaskRunnerService {
             .filter((l) => l && !l.includes('node_modules') && !l.includes('package-lock') && !l.includes(PROMPT_FILE));
     }
 
-    /** Gate de verificação: typecheck backend + frontend + vite build no worktree. */
-    private async verify(): Promise<{ ok: boolean; output: string }> {
-        try {
-            await sh('npx tsc --noEmit -p backend/tsconfig.json', WT_ROOT, 240000);
-            await sh('npx tsc --noEmit -p tsconfig.json', WT_ROOT, 240000);
-            await sh('npx vite build', WT_ROOT, 300000);
-            return { ok: true, output: 'typecheck OK + build OK (backend + frontend)' };
-        } catch (e: any) {
-            const raw = ((e.stdout || '') + '\n' + (e.stderr || e.message || ''));
-            const output = raw.substring(0, 4000);
-            if (raw.includes('vite build') || raw.includes('vite v')) {
-                return { ok: false, output: 'typecheck OK, mas vite build FALHOU:\n' + output };
+    /** Roda os 2 tsc; devolve erros POSICIONAIS (multiset) + GLOBAIS + flag de timeout. */
+    private async collectTscErrors(): Promise<{ pos: Map<string, number>; globals: string[]; timedOut: boolean }> {
+        let raw = '', timedOut = false;
+        for (const proj of ['backend/tsconfig.json', 'tsconfig.json']) {
+            try {
+                await sh(`npx tsc --noEmit -p ${proj}`, WT_ROOT, 240000);
+            } catch (e: any) {
+                if (e?.killed || /timed?\s*out|ETIMEDOUT/i.test(String(e?.signal || '') + String(e?.message || ''))) timedOut = true;
+                raw += (e.stdout || '') + '\n' + (e.stderr || e.message || '') + '\n';
             }
-            return { ok: false, output };
         }
+        return { pos: parseTscErrors(raw), globals: parseGlobalTscErrors(raw), timedOut };
+    }
+
+    /** Arquivos que a task tocou: diff da branch vs origin/main (committed) + mudanças não-commitadas.
+     *  Robusto (não parseia status de porcelain). No auto-merge (árvore limpa pós-rebase) o `git status`
+     *  daria vazio — por isso o diff vs origin/main é a fonte primária ali. */
+    private async touchedFiles(): Promise<string[]> {
+        const files = new Set<string>();
+        try {
+            const { stdout } = await git(['diff', '--name-only', 'origin/main...HEAD'], { timeout: 30000, cwd: WT_ROOT });
+            stdout.split('\n').map((l) => l.trim()).filter(Boolean).forEach((f) => files.add(f));
+        } catch { /* branch nova/sem merge-base — cai nas não-commitadas */ }
+        try {
+            (await this.worktreeChanges()).forEach((l) =>
+                files.add(l.replace(/^[A-Z?! ]{1,3}\s*/, '').replace(/^.*-> /, '').replace(/^"|"$/g, '')));
+        } catch { /* ignore */ }
+        return [...files];
+    }
+
+    /** Captura baseline de erros do origin/main (best-effort, cache atômico por SHA em backend/data). Sem vite. */
+    private async captureBaseline(task: Task): Promise<void> {
+        try {
+            const { stdout: shaOut } = await git(['rev-parse', 'origin/main'], { timeout: 15000, cwd: WT_ROOT });
+            const sha = shaOut.trim().slice(0, 12);
+            const cacheFile = path.join(BASELINE_CACHE_DIR, `${sha}.json`);
+            try {
+                const c = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+                task.baselineErrors = c.errors || []; task.baselineGlobals = c.globals || []; task.baselineSha = sha;
+                log.info(`captureBaseline #${task.issueNumber}: cache do main ${sha} (${task.baselineErrors!.length} pos, ${task.baselineGlobals!.length} glob)`);
+                return;
+            } catch { /* sem cache ou corrompido → recomputa (não cai em estrito) */ }
+            const { pos, globals, timedOut } = await this.collectTscErrors();
+            if (timedOut) { // NÃO persistir baseline PARCIAL (senão erros reais viram "novos" no verify)
+                this.recordEvent(task, 'error', 'captureBaseline: tsc estourou timeout — baseline pulado (gate usa só o filtro por arquivo-tocado)');
+                return;
+            }
+            task.baselineErrors = serializeErrors(pos); task.baselineGlobals = globals; task.baselineSha = sha;
+            try { fs.mkdirSync(BASELINE_CACHE_DIR, { recursive: true }); atomicWriteSync(cacheFile, JSON.stringify({ errors: task.baselineErrors, globals })); } catch { /* ignore */ }
+            log.info(`captureBaseline #${task.issueNumber}: ${task.baselineErrors.length} pos + ${globals.length} glob no main ${sha} (cacheado)`);
+        } catch (e: any) {
+            this.recordEvent(task, 'error', `captureBaseline falhou (${String(e?.message).slice(0, 120)}) — gate usa só o filtro por arquivo-tocado`);
+        }
+    }
+
+    /**
+     * Gate de verificação. Com DELTA_GATE (padrão): só reprova por erro de tsc NOVO em arquivo que a
+     * task TOCOU (+ global novo), e por vite build quando o diff toca o frontend. Sem DELTA_GATE ou sem
+     * task: comportamento ESTRITO antigo (fail-fast no repo inteiro). O portão FINAL é a CI full-repo.
+     */
+    private async verify(task?: Task): Promise<{ ok: boolean; output: string }> {
+        if (!DELTA_GATE || !task) {
+            try {
+                await sh('npx tsc --noEmit -p backend/tsconfig.json', WT_ROOT, 240000);
+                await sh('npx tsc --noEmit -p tsconfig.json', WT_ROOT, 240000);
+                await sh('npx vite build', WT_ROOT, 300000);
+                return { ok: true, output: 'typecheck OK + build OK (estrito)' };
+            } catch (e: any) {
+                return { ok: false, output: ((e.stdout || '') + '\n' + (e.stderr || e.message || '')).substring(0, 4000) };
+            }
+        }
+        const { pos, globals } = await this.collectTscErrors();
+        const touched = await this.touchedFiles();
+        const blocking = computeBlocking(pos, deserializeErrors(task.baselineErrors), globals, task.baselineGlobals || [], touched);
+
+        let viteFail = '';
+        if (touched.some((f) => f.replace(/\\/g, '/').startsWith('src/'))) {
+            try { await sh('npx vite build', WT_ROOT, 300000); }
+            catch (e: any) { viteFail = ((e.stdout || '') + '\n' + (e.stderr || e.message || '')).substring(0, 2000); }
+        }
+        if (blocking.length || viteFail) {
+            let out = '';
+            if (blocking.length) out += `${blocking.length} erro(s) de tsc introduzido(s) pela task:\n` + blocking.slice(0, 40).map((k) => ' - ' + k.replace(/\|/g, '  ')).join('\n');
+            if (viteFail) out += `\n\nvite build FALHOU (frontend tocado):\n` + viteFail;
+            return { ok: false, output: out.substring(0, 4000) };
+        }
+        // Gate de TESTE (Fase 4/B11): roda os testes AFETADOS pelos arquivos tocados. Só chega aqui se
+        // tsc+vite passaram (código compila). Como o main é verde (CI), falha = regressão da task.
+        if (TEST_GATE && touched.length) {
+            const t = await this.runTouchedTests(touched);
+            if (!t.ok) return t;
+        }
+        return { ok: true, output: `gate OK (0 erros novos + testes afetados verdes; ${touched.length} arquivo(s) tocado(s))` };
+    }
+
+    /**
+     * Gate de TESTE (Fase 4): roda `vitest related` dos arquivos tocados — em cada projeto (backend/
+     * frontend) roda os testes que (transitivamente) importam os arquivos mudados, + os próprios test
+     * files tocados. `--passWithNoTests` (arquivo sem teste passa), `--retry=2` (amortece flaky).
+     * Timeout = advisory (não bloqueia); falha real = bloqueia. Roda no worktree (deps via ensureDeps).
+     */
+    private async runTouchedTests(touched: string[]): Promise<{ ok: boolean; output: string }> {
+        const { backend, frontend } = splitTouchedByProject(touched);
+        const runs: Array<{ label: string; cwd: string; files: string[] }> = [];
+        if (backend.length) runs.push({ label: 'backend', cwd: path.join(WT_ROOT, 'backend'), files: backend });
+        if (frontend.length) runs.push({ label: 'frontend', cwd: WT_ROOT, files: frontend });
+        for (const r of runs) {
+            const arglist = r.files.map((f) => JSON.stringify(f)).join(' ');
+            try {
+                await sh(`npx vitest related --run --passWithNoTests --retry=2 ${arglist}`, r.cwd, 300000);
+            } catch (e: any) {
+                if (e?.killed || /timed?\s*out|ETIMEDOUT/i.test(String(e?.signal || '') + String(e?.message || ''))) {
+                    log.warn(`runTouchedTests(${r.label}): timeout — advisory (não bloqueia)`);
+                    continue;
+                }
+                const raw = ((e.stdout || '') + '\n' + (e.stderr || e.message || ''));
+                return { ok: false, output: `testes afetados (${r.label}) FALHARAM (regressão):\n` + raw.substring(0, 3000) };
+            }
+        }
+        return { ok: true, output: '' };
     }
 
     /**
@@ -1389,7 +1537,7 @@ class TaskRunnerService {
             }
             if (Date.now() - watchdogZero > CUMULATIVE_BUDGET_MS) {
                 this.recordEvent(task, 'exploration_completed', `Budget de tempo atingido no round ${round} — finalizando com o progresso atual`, { rounds: round - 1, budgetReached: true });
-                verify = await this.verify();
+                verify = await this.verify(task);
                 break;
             }
 
@@ -1438,7 +1586,7 @@ class TaskRunnerService {
             // Exige `anyChange` para não confundir 2 rounds completamente vazios no início com "convergência".
             if (round > 1 && diffHash === lastDiffHash && anyChange) {
                 this.recordEvent(task, 'exploration_completed', `Convergiu no round ${round} (sem mudanças novas)`, { rounds: round, converged: true });
-                if (anyChange) verify = await this.verify(); // só revalida se há algo a entregar
+                if (anyChange) verify = await this.verify(task); // só revalida se há algo a entregar
                 break;
             }
             lastDiffHash = diffHash;
@@ -1463,7 +1611,7 @@ class TaskRunnerService {
             }
 
             this.recordEvent(task, 'typecheck_started', `Typecheck round ${round} (${changes.length} arquivos acumulados)...`);
-            verify = await this.verify();
+            verify = await this.verify(task);
             task.attempts.push({
                 index: task.attempts.length + 1, phase: 'exploring',
                 diff: diff.substring(0, 30000), typecheckOk: verify.ok,
@@ -1489,13 +1637,21 @@ class TaskRunnerService {
                 this.save(); this.emitStatus(task);
                 return { verify, aborted: true };
             }
-            task.status = 'failed';
-            task.error = 'Modo cumulativo: nenhuma mudança produzida.';
-            task.updatedAt = new Date().toISOString();
-            this.finalizeTaskMetrics(task);
-            this.recordEvent(task, 'task_failed', 'Cumulativo sem mudanças — abortando (sem PR).');
-            this.save(); this.emitStatus(task);
-            return { verify, aborted: true };
+            // #963 Tier RESGATE: o Claude Code assume o worktree antes de desistir. Se produzir
+            // mudanças, revalida e segue pro caminho de sucesso (PR) em vez de abortar.
+            if (await this.tryClaudeRescue(task, issueData) && (await this.worktreeChanges()).length > 0) {
+                verify = await this.verify(task);
+                anyChange = true;
+            }
+            if (!anyChange) {
+                task.status = 'failed';
+                task.error = 'Modo cumulativo: nenhuma mudança produzida (nem o resgate Claude).';
+                task.updatedAt = new Date().toISOString();
+                this.finalizeTaskMetrics(task);
+                this.recordEvent(task, 'task_failed', 'Cumulativo sem mudanças — abortando (resgate Claude também vazio).');
+                this.save(); this.emitStatus(task);
+                return { verify, aborted: true };
+            }
         }
         return { verify, aborted: false };
     }
@@ -1514,6 +1670,11 @@ class TaskRunnerService {
             : 'Preparando worktree a partir de origin/main...');
         await this.ensureWorktree(branch, { preserveBranch });
         this.recordEvent(task, 'worktree_setup_completed', 'Worktree pronto', { path: WT_ROOT });
+
+        // Gate por DELTA (Fase 0): captura baseline do main (best-effort, idempotente por SHA). Condição
+        // é "não tenho baseline" — NÃO "run fresco" — p/ cobrir self-heal/preserve/Retry-com-PR (a análise
+        // adversarial mostrou que preserve pulava a captura e caía em estrito, reprovando erro pré-existente).
+        if (DELTA_GATE && task.baselineErrors === undefined) await this.captureBaseline(task);
 
         // 2) Lê a issue
         this.emitLog(issueNumber, 'info', 'Lendo issue do GitHub...');
@@ -1579,7 +1740,7 @@ class TaskRunnerService {
 
             // Captura diff e typecheck desta tentativa
             this.recordEvent(task, 'typecheck_started', `Typecheck exploração ${attempt}...`);
-            verify = await this.verify();
+            verify = await this.verify(task);
             const { stdout: diffOut } = await git(['diff'], { timeout: 30000, cwd: WT_ROOT });
 
             const attemptResult: AttemptResult = {
@@ -1639,7 +1800,7 @@ class TaskRunnerService {
                 if (isQuotaError(e?.message)) markQuotaExhausted(`opencode síntese ${synthAttempt}: ${String(e?.message).slice(0, 80)}`);
             }
 
-            const changes = await this.worktreeChanges();
+            let changes = await this.worktreeChanges();
             if (changes.length === 0) {
                 if (synthAttempt < MAX_SYNTH) {
                     this.recordEvent(task, 'attempt_no_changes', `Síntese ${synthAttempt}: nenhuma mudança`, { synthAttempt });
@@ -1656,19 +1817,26 @@ class TaskRunnerService {
                     this.emitStatus(task);
                     return;
                 }
-                task.status = 'failed';
-                task.error = 'Síntese não produziu mudanças após 3 tentativas.';
-                task.updatedAt = new Date().toISOString();
-                this.recordEvent(task, 'task_failed', 'Síntese sem mudanças — abortando.');
-                this.finalizeTaskMetrics(task);
-                this.save();
-                this.emitStatus(task);
-                return;
+                // #963 Tier RESGATE: antes de desistir, o Claude Code assume o worktree parcial.
+                // Se produzir mudanças, cai no caminho de sucesso (typecheck + PR) logo abaixo.
+                if (await this.tryClaudeRescue(task, issueData)) {
+                    changes = await this.worktreeChanges();
+                }
+                if (changes.length === 0) {
+                    task.status = 'failed';
+                    task.error = 'Síntese não produziu mudanças após 3 tentativas (nem o resgate Claude).';
+                    task.updatedAt = new Date().toISOString();
+                    this.recordEvent(task, 'task_failed', 'Síntese sem mudanças — abortando (resgate Claude também vazio).');
+                    this.finalizeTaskMetrics(task);
+                    this.save();
+                    this.emitStatus(task);
+                    return;
+                }
             }
 
             // Typecheck gate
             this.recordEvent(task, 'typecheck_started', `Typecheck síntese ${synthAttempt}...`);
-            verify = await this.verify();
+            verify = await this.verify(task);
             const { stdout: synthDiff } = await git(['diff'], { timeout: 30000, cwd: WT_ROOT });
 
             const synthResult: AttemptResult = {
@@ -2216,10 +2384,40 @@ Return ONLY a JSON:
      * PERSISTENTE), não em feedbackHistory — que é zerado na fase de síntese (linha ~1538). (3) NÃO
      * reseta judgeAttempts (evita reabrir o orçamento inteiro da faixa do Juiz → custo limitado).
      */
+    /**
+     * #963 Tier RESGATE: quando o coder barato (opencode/GLM/MiniMax) vem VAZIO após todas as
+     * tentativas, o Claude Code assume o worktree parcial e tenta TERMINAR (não do zero) — ataca a
+     * maior fonte de falha do robô ("sem mudanças", 61 casos). Fallback obrigatório: se o Claude CLI
+     * estiver indisponível ou falhar, retorna false e o chamador aborta como antes (nunca trava por Claude).
+     */
+    private async tryClaudeRescue(task: Task, issueData: any): Promise<boolean> {
+        try {
+            if (!(await claudeCliService.available())) {
+                this.emitLog(task.issueNumber, 'warn', 'Resgate Claude indisponível (CLI ausente) — abortando como antes.');
+                return false;
+            }
+            this.recordEvent(task, 'synthesis_started', '🛟 Resgate: opencode veio vazio — Claude Code assume o worktree parcial.', { rescue: 'claude' });
+            this.emitLog(task.issueNumber, 'info', '🛟 Resgate Claude Code: assumindo o worktree para terminar a tarefa...');
+            const base = this.buildSynthesisPrompt(task, issueData);
+            const prompt = `[RESGATE] O coder automatizado anterior (opencode) NÃO gerou nenhuma mudança de código após várias tentativas. Você é o Claude Code, no worktree isolado do repositório. ASSUMA e IMPLEMENTE a tarefa editando os arquivos AGORA, sem pedir confirmação. Ao terminar, garanta que o typecheck do projeto passa.\n\n${base}`;
+            const r = await claudeCliService.runCode(prompt, WT_ROOT, { timeoutMs: OPENCODE_TIMEOUT_MS });
+            const changed = (await this.worktreeChanges()).length > 0;
+            this.recordEvent(task, changed ? 'synthesis_completed' : 'attempt_no_changes',
+                changed ? `🛟 Resgate Claude produziu mudanças (${r.numTurns} turns, $${r.costUsd?.toFixed(3)})` : 'Resgate Claude também não produziu mudanças',
+                { rescue: 'claude', cost: r.costUsd, changed, isError: r.isError });
+            return changed;
+        } catch (e: any) {
+            this.emitLog(task.issueNumber, 'warn', `Resgate Claude falhou: ${String(e?.message || e).slice(0, 200)} — abortando como antes.`);
+            return false;
+        }
+    }
+
     private selfHealFromGate(task: Task, kind: 'testRegression' | 'approvedVeto', detail: string): boolean {
-        const GATE_MAX = Number(process.env.TASKRUNNER_GATE_FIX_MAX ?? 1);
+        const GATE_MAX = Number(process.env.TASKRUNNER_GATE_FIX_MAX ?? 3); // #963 Fase A: N retentativas (era 1)
         if (!task.branch) return false;                            // sem branch não há o que re-submeter
         if ((task.gateFixAttempts || 0) >= GATE_MAX) return false; // teto esgotado → chamador estaciona
+        // #963 (follow-up): parada por SEM-PROGRESSO via sinal em memória (diff da última tentativa),
+        // NÃO via rede (evita git ls-remote em teste). Enquanto isso, o teto GATE_MAX já limita o custo.
         const instruction = kind === 'testRegression'
             ? `O merge foi BLOQUEADO por um gate determinístico: você REDUZIU a cobertura de testes (${detail}). `
               + `RESTAURE os casos de teste removidos — recrie cada it()/test() que sumiu (num bloco describe() separado, se preciso), SEM apagar os testes novos. `
@@ -2230,16 +2428,40 @@ Return ONLY a JSON:
         task.gateFixAttempts = (task.gateFixAttempts || 0) + 1;
         task.status = 'fixing';
         this.recordEvent(task, 'task_started',
-            `Self-heal de gate (${kind}, tentativa ${task.gateFixAttempts}/${GATE_MAX}) — realimentando o coder antes de estacionar`,
+            `Self-heal de gate (${kind}, tentativa ${task.gateFixAttempts}/${GATE_MAX}) — realimentando o coder com a crítica do judge`,
             { gateSelfHeal: kind, attempt: task.gateFixAttempts });
-        this.emitLog(task.issueNumber, 'warn', `Gate bloqueou (${kind}). Auto-consertando 1x antes de pedir revisão humana...`);
+        this.emitLog(task.issueNumber, 'warn', `Gate bloqueou (${kind}). Auto-consertando (${task.gateFixAttempts}/${GATE_MAX}) com a crítica do judge antes de pedir revisão humana...`);
         this.save();
         this.emitStatus(task);
         this.scheduleExec(task, task.branch, 'fixing');
         return true;
     }
 
+    /**
+     * Fase 0 item 5 (CI RETOMÁVEL): re-dispara o auto-merge de tasks 'approved' com PR aberto que
+     * ficaram paradas — restart matou o poll de CI, ou a CI passou depois do timeout. Idempotente
+     * (mergeInFlight). Chamado no boot e a cada pollSync. tryAutoMerge já respeita o flag autoMerge.
+     */
+    private async resumePendingMerges(): Promise<void> {
+        if (!this.getAutomationConfig().autoMerge) return;
+        for (const task of Object.values(this.store.tasks)) {
+            if (task.status !== 'approved' || !task.prNumber) continue;
+            if (this.mergeInFlight.has(task.issueNumber)) continue;
+            this.recordEvent(task, 'task_started', 'Retomando auto-merge pendente (CI retomável)...');
+            this.tryAutoMerge(task).catch((e: any) => log.warn(`resume auto-merge #${task.issueNumber}: ${e?.message || e}`));
+        }
+    }
+
+    /** Wrapper com guarda de concorrência (Fase 0 item 5): evita 2 auto-merges simultâneos da mesma
+     *  task (o resumePendingMerges pode re-disparar enquanto um attempt de 15min ainda espera a CI). */
     private async tryAutoMerge(task: Task): Promise<void> {
+        if (this.mergeInFlight.has(task.issueNumber)) return;
+        this.mergeInFlight.add(task.issueNumber);
+        try { await this.tryAutoMergeInner(task); }
+        finally { this.mergeInFlight.delete(task.issueNumber); }
+    }
+
+    private async tryAutoMergeInner(task: Task): Promise<void> {
         const config = this.getAutomationConfig();
         if (!config.autoMerge) return;
         if ((task.judgeScore || 0) < config.minMergeScore) return;
@@ -2312,7 +2534,7 @@ Return ONLY a JSON:
                 }
 
                 this.recordEvent(task, 'task_started', 'Auto-merge: rodando typecheck...');
-                verify = await this.verify();
+                verify = await this.verify(task);
             });
             if (!verify.ok) {
                 this.recordEvent(task, 'task_failed', `Auto-merge abortado: typecheck/build falhou apos rebase. ${verify.output.slice(-500)}`);
@@ -2330,8 +2552,16 @@ Return ONLY a JSON:
                 this.recordEvent(task, 'task_started', 'Auto-merge: aguardando CI (required checks) ficar verde...');
                 const checks = await this.waitForPrMergeable(task.prNumber, CHECKS_TIMEOUT_MS);
                 if (!checks.ok) {
-                    this.recordEvent(task, 'task_failed', `Auto-merge adiado: CI não ficou verde a tempo (mergeStateStatus=${checks.state}). PR pronto p/ merge assim que a CI passar.`);
-                    task.status = 'reviewing';
+                    // Fase 0 item 5: conflito REAL (DIRTY/CONFLICTING) → humano. CI só LENTA (timeout) →
+                    // mantém 'approved' p/ o resumePendingMerges re-tentar quando a CI fechar (sobrevive a
+                    // restart). Antes virava 'reviewing' e o trabalho (judge alto) ficava preso esperando humano.
+                    if (/DIRTY|CONFLICTING/i.test(checks.state)) {
+                        this.recordEvent(task, 'task_failed', `Auto-merge bloqueado: conflito real (mergeStateStatus=${checks.state}). → revisão humana.`);
+                        task.status = 'reviewing';
+                    } else {
+                        this.recordEvent(task, 'task_started', `Auto-merge adiado: CI ainda não verde (${checks.state}) — mantido 'approved', re-tenta quando a CI fechar.`);
+                        // task.status permanece 'approved' (resumível pelo resumePendingMerges)
+                    }
                     this.save();
                     this.emitStatus(task);
                     return;
