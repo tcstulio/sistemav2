@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1
+# Sandbox E2E: Dolibarr do NOSSO FORK (v21.0.1) — NÃO a imagem baunilha.
+#
+# Reusa a maquinária de auto-install da imagem oficial (entrypoint + DOLI_* envs), mas com o NOSSO
+# código: o fork (../dolibarr) tem 5 módulos custom (carnaval, vistoria, ocultarcampos, ...), 6
+# endpoints custom na raiz (custom_sync/custom_groups/custom_attendees/custom_chat_systemauto/
+# custom_delegation/diagnostic_sync_complete) e patches de core (ex.: PUT /interventions) que o app
+# depende. A imagem baunilha NÃO tem nada disso → o app quebraria = falsa confiança.
+#
+# Build context = ../dolibarr (o htdocs do fork está na RAIZ do repo; auto-contido: install/ + includes/
+# bundled, sem composer). Ver docker-compose.e2e.yml (build.context / build.dockerfile).
+#
+# ⚠️ SHAKEOUT (1ª execução, precisa Docker ligado):
+#   1. Confirmar o path do htdocs da imagem oficial (assumido /var/www/html) — ajustar o COPY se preciso.
+#   2. ATIVAR os módulos custom (carnaval/vistoria/...): DOLI_ENABLE_MODULES cobre os PADRÃO; os custom
+#      podem precisar ser habilitados via admin no 1º boot OU por seed de llx_const (MAIN_MODULE_*).
+#   3. O build envia o fork como context (inclui .git) → 1º build lento; considere um .dockerignore no fork.
+FROM dolibarr/dolibarr:21
+
+# Substitui o htdocs baunilha pelo fork inteiro (v21 = v21 → o auto-install da imagem casa).
+COPY --chown=www-data:www-data . /var/www/html/

@@ -14,17 +14,21 @@ nuvem. Então:
 
 ## Passo a passo
 
-### 1. Suba um Dolibarr local
+### 1. Suba um Dolibarr local (BUILD do nosso fork)
 ```sh
-docker compose -f docker-compose.e2e.yml up -d
-# 1ª vez: o auto-install cria o schema (pode levar 1-2 min). Acompanhe:
+docker compose -f docker-compose.e2e.yml up -d --build
+# 1ª vez: builda a imagem a partir do fork (../dolibarr) + o auto-install cria o schema (alguns min).
 docker compose -f docker-compose.e2e.yml logs -f e2e-dolibarr
 ```
-Dolibarr fica em `http://localhost:8088` (admin / e2eadmin). O compose monta o `custom_sync.php` do
-nosso fork (`../dolibarr`); descomente o mount de `custom` se houver módulos custom.
+Dolibarr fica em `http://localhost:8088` (admin / e2eadmin). A imagem é **buildada do nosso fork**
+(`Dockerfile.e2e`: `FROM dolibarr/dolibarr:21` + COPY do htdocs do fork) — **não** a baunilha, porque o
+app depende dos módulos custom (carnaval, vistoria, …), dos 6 endpoints custom da raiz (custom_sync,
+custom_groups, …) e de patches de core que a imagem oficial não tem.
 
-> **Shakeout de 1ª vez:** o auto-install da imagem oficial pode precisar de ajuste de módulos/versão
-> para casar 100% com o nosso fork. Rode, veja os logs, e a gente itera os mounts/módulos.
+> **Shakeout de 1ª vez (precisa Docker ligado):** confirmar o path do htdocs da imagem oficial e a
+> ATIVAÇÃO dos módulos custom: `DOLI_ENABLE_MODULES` cobre os PADRÃO; os custom podem precisar ser
+> habilitados via admin no 1º boot ou por seed de `llx_const`. Rode, veja os logs, itere. O build envia
+> o fork como context (inclui `.git`) → 1º build lento; considere um `.dockerignore` no fork.
 
 ### 2. (Opcional) Carregue o "último estado" — SANITIZADO
 Para testar com dados realistas, carregue um dump **sanitizado** da produção (remova PII):
@@ -66,7 +70,12 @@ docker compose -f docker-compose.e2e.yml down -v     # apaga o DB também
 
 ## Status / pendências
 
-- ✅ Runner, compose e docs criados; CI saneada (smoke).
-- ⏳ **Validação de 1ª execução** do Dolibarr em Docker (ajuste de módulos/versão p/ o nosso fork) —
-  fazer no primeiro `up` e iterar.
-- ⏳ Evolução opcional: Modo A (E2E como gate na CI com **seed sintético**, sem PII).
+- ✅ Runner, compose e docs criados; CI saneada (smoke + **render determinístico** — ver `tests/render`).
+- ✅ **Build-from-fork**: `Dockerfile.e2e` + compose buildando do fork (não baunilha); fixes de env
+  verificados (`DOLI_ENABLE_MODULES` no lugar de `DOLI_MODULES` + `DOLI_COMPANY_*`; demo desligado
+  por causa do Dolibarr #32146).
+- ⏳ **Shakeout de 1ª execução** (precisa Docker ligado): 1º `up -d --build`, confirmar htdocs path +
+  ativar os módulos custom + gerar a API key. Iterar.
+- ⏳ Evolução opcional: Modo A (E2E como gate na CI com **seed sintético**, sem PII) + "testar fazendo"
+  do agente com **fixtures marcadas** (só é seguro com o sandbox — nunca em produção; ver a análise
+  adversarial na memória `sandbox-dolibarr-e2e`).
