@@ -1728,14 +1728,22 @@ class TaskRunnerService {
                     task.feedbackHistory.push('A tentativa anterior não gerou mudanças. Implemente os arquivos pedidos agora.');
                     continue;
                 }
-                task.status = 'failed';
-                task.error = 'O agente não produziu nenhuma mudança após as tentativas.';
-                task.updatedAt = new Date().toISOString();
-                this.recordEvent(task, 'task_failed', 'Nenhuma mudança após exploração — abortando (sem PR).');
-                this.finalizeTaskMetrics(task);
-                this.save();
-                this.emitStatus(task);
-                return;
+                // Última exploração vazia: se JÁ há exploração(ões) COM mudanças (guardadas em
+                // task.attempts, typecheck-adas), NÃO desiste — segue pra síntese, que combina os diffs.
+                // Antes o robô DESCARTAVA explorações boas só porque a última veio vazia (visto ao vivo
+                // na #1002/#1005: 2 explorações typecheck-OK jogadas fora). Só falha se NENHUMA produziu nada.
+                if (task.attempts.length === 0) {
+                    task.status = 'failed';
+                    task.error = 'O agente não produziu nenhuma mudança após as tentativas.';
+                    task.updatedAt = new Date().toISOString();
+                    this.recordEvent(task, 'task_failed', 'Nenhuma mudança após exploração — abortando (sem PR).');
+                    this.finalizeTaskMetrics(task);
+                    this.save();
+                    this.emitStatus(task);
+                    return;
+                }
+                this.recordEvent(task, 'attempt_no_changes', `Exploração ${attempt} vazia, mas ${task.attempts.length} exploração(ões) com mudanças — seguindo p/ síntese.`);
+                continue; // é a última exploração → o for termina → Fase 2 (síntese) usa task.attempts
             }
 
             // Captura diff e typecheck desta tentativa
