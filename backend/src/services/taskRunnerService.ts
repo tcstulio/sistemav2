@@ -803,11 +803,14 @@ class TaskRunnerService {
                 const stuckTask = Object.values(this.store.tasks).find(t => t.status === 'running' || t.status === 'fixing');
                 if (stuckTask) {
                     stuckTask.status = 'failed';
-                    stuckTask.error = 'Timeout no worktree lock (>10min sem liberar)';
+                    stuckTask.error = 'Timeout no worktree lock (holder anterior não liberou dentro do watchdog total)';
                     this.save();
                 }
-                reject(new Error(`worktreeLock timeout: holder anterior não liberou em 10min. Lock abortado para ${label}`));
-            }, 10 * 60_000))
+                reject(new Error(`worktreeLock timeout: holder anterior não liberou a tempo. Lock abortado para ${label}`));
+            // #963 (aprendizado da task #986, 2026-07-04): era 10min — MENOR que UM run do opencode
+            // (30min) e que o watchdog total (3h), então matava tasks longas LEGÍTIMAS por aquisição
+            // concorrente do lock. Alinha ao watchdog total (o backstop correto): só dispara em deadlock real.
+            }, MAX_TASK_WALL_MS + 5 * 60_000))
         ]);
         try {
             return await fn();
