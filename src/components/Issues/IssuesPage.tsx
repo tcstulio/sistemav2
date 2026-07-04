@@ -79,6 +79,46 @@ const LABEL_ICONS: Record<string, React.ReactNode> = {
     opencode_task: <Wrench size={12} />,
 };
 
+// Filtro de período (#983): a página de issues/tasks acumulava milhares de itens
+// já concluídos. O período escopa o que é "concluído" por data — o trabalho ativo
+// (issues abertas / tasks em andamento) continua sempre visível. Padrão = "Hoje".
+// Os mesmos valores são enviados para o backend (filtro server-side de issues) e
+// usados client-side para escopar tasks terminais.
+type Period = 'today' | '5' | '7' | '30' | 'all';
+
+const PERIOD_OPTIONS: { value: Period; label: string }[] = [
+    { value: 'today', label: 'Hoje' },
+    { value: '5', label: '5 dias' },
+    { value: '7', label: '7 dias' },
+    { value: '30', label: '30 dias' },
+    { value: 'all', label: 'Tudo' },
+];
+
+const PERIOD_DAYS: Record<Period, number | null> = {
+    today: null, // null = "hoje" (dia de calendário, desde a meia-noite)
+    '5': 5,
+    '7': 7,
+    '30': 30,
+    all: null,
+};
+
+/** Verdadeiro quando dateStr cai dentro do período selecionado (ou período = "Tudo"). */
+const withinPeriod = (dateStr: string | null | undefined, period: Period): boolean => {
+    if (period === 'all') return true;
+    if (!dateStr) return false;
+    const ts = new Date(dateStr).getTime();
+    if (Number.isNaN(ts)) return false;
+    if (period === 'today') {
+        const midnight = new Date();
+        midnight.setHours(0, 0, 0, 0);
+        return ts >= midnight.getTime();
+    }
+    const days = PERIOD_DAYS[period];
+    if (days === null) return true;
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    return ts >= cutoff;
+};
+
 /** Modal com histórico completo de eventos de uma task do TaskRunner. */
 const TaskHistoryModal: React.FC<{
     task: Task;
@@ -564,6 +604,9 @@ const IssuesPage: React.FC = () => {
     const [issueFilter, setIssueFilter] = useState<'all' | 'open' | 'closed'>('all');
     const [labelFilter, setLabelFilter] = useState<string>('');
     const [searchQuery, setSearchQuery] = useState('');
+    // #983: filtro de período — padrão "Hoje" para mostrar o que foi realizado no dia
+    // e evitar o acúmulo de milhares de issues/tasks concluídas na lista.
+    const [period, setPeriod] = useState<Period>('today');
     const [issues, setIssues] = useState<GitHubIssue[]>([]);
     const [stats, setStats] = useState<IssueStats | null>(null);
     const [issuesLoading, setIssuesLoading] = useState(true);
@@ -599,7 +642,7 @@ const IssuesPage: React.FC = () => {
         setIssuesLoading(true);
         try {
             const [i, s] = await Promise.all([
-                GithubService.getIssues({ state: issueFilter, label: labelFilter || undefined, limit: 50 }),
+                GithubService.getIssues({ state: issueFilter, label: labelFilter || undefined, limit: 50, period }),
                 GithubService.getStats(),
             ]);
             setIssues(i);
@@ -612,7 +655,7 @@ const IssuesPage: React.FC = () => {
         } finally {
             setIssuesLoading(false);
         }
-    }, [issueFilter, labelFilter]);
+    }, [issueFilter, labelFilter, period]);
 
     const loadTasks = useCallback(async () => {
         try {
@@ -642,11 +685,17 @@ const IssuesPage: React.FC = () => {
         ? issues.filter(i => i.title.toLowerCase().includes(searchQuery.toLowerCase()) || String(i.number).includes(searchQuery))
         : issues;
 
+    // Tasks ativas (não-terminais) são sempre exibidas; apenas as concluídas são escopadas
+    // pelo período (#983) para não acumular milhares de tasks antigas na tela.
+    const periodFilteredTasks = useMemo(() => (
+        tasks.filter(t => TERMINAL_STATUSES.includes(t.status) ? withinPeriod(t.completedAt || t.updatedAt, period) : true)
+    ), [tasks, period]);
+
     const queueOrder = useMemo(() => {
-        return tasks
+        return periodFilteredTasks
             .filter(t => t.status === 'pending')
             .sort((a, b) => (a.queuePriority ?? 999) - (b.queuePriority ?? 999));
-    }, [tasks]);
+    }, [periodFilteredTasks]);
 
     const getQueuePosition = (task: Task): number | undefined => {
         if (task.status !== 'pending') return undefined;
@@ -655,7 +704,7 @@ const IssuesPage: React.FC = () => {
     };
 
     const filteredTasks = useMemo(() => {
-        let result = tasks;
+        let result = periodFilteredTasks;
         if (taskTab === 'active') result = result.filter(t => !TERMINAL_STATUSES.includes(t.status));
         else if (taskTab === 'done') result = result.filter(t => TERMINAL_STATUSES.includes(t.status));
         if (statusFilter !== 'all') result = result.filter(t => t.status === statusFilter);
@@ -664,24 +713,24 @@ const IssuesPage: React.FC = () => {
             result = result.filter(t => t.title.toLowerCase().includes(q) || t.body.toLowerCase().includes(q) || String(t.issueNumber).includes(q));
         }
         return result;
-    }, [tasks, taskTab, statusFilter, taskSearch]);
+    }, [periodFilteredTasks, taskTab, statusFilter, taskSearch]);
 
     const statusCounts = useMemo(() => {
         const c: Record<string, number> = {};
-        for (const t of tasks) c[t.status] = (c[t.status] || 0) + 1;
+        for (const t of periodFilteredTasks) c[t.status] = (c[t.status] || 0) + 1;
         return c;
-    }, [tasks]);
+    }, [periodFilteredTasks]);
 
-    const hasActiveTask = tasks.some(t => ['running', 'fixing', 'cancelling'].includes(t.status));
+    const hasActiveTask = periodFilteredTasks.some(t => ['running', 'fixing', 'cancelling'].includes(t.status));
 
     const metrics = useMemo(() => {
-        const completed = tasks.filter(t => t.status === 'merged' && t.startedAt && t.completedAt);
+        const completed = periodFilteredTasks.filter(t => t.status === 'merged' && t.startedAt && t.completedAt);
         const totalMs = completed.reduce((s, t) => s + (new Date(t.completedAt!).getTime() - new Date(t.startedAt!).getTime()), 0);
         const avgMin = completed.length ? Math.round(totalMs / completed.length / 60000) : 0;
-        const totalRan = tasks.filter(t => TERMINAL_STATUSES.includes(t.status)).length;
+        const totalRan = periodFilteredTasks.filter(t => TERMINAL_STATUSES.includes(t.status)).length;
         const successRate = totalRan ? Math.round((completed.length / totalRan) * 100) : 0;
-        return { total: tasks.length, avgMin, successRate, pending: tasks.filter(t => t.status === 'pending').length, active: tasks.filter(t => ['running', 'fixing'].includes(t.status)).length };
-    }, [tasks]);
+        return { total: periodFilteredTasks.length, avgMin, successRate, pending: periodFilteredTasks.filter(t => t.status === 'pending').length, active: periodFilteredTasks.filter(t => ['running', 'fixing'].includes(t.status)).length };
+    }, [periodFilteredTasks]);
 
     const openReview = async (task: Task) => {
         setReviewTask(task); setDiffLoading(true);
@@ -803,11 +852,29 @@ const IssuesPage: React.FC = () => {
     const openCount = filteredIssues.filter(i => i.state === 'OPEN').length;
     const closedCount = filteredIssues.length - openCount;
 
+    // #983: botões de período visíveis em todas as abas (exceto Estatísticas).
+    // Afeta issues (filtro server-side) e tasks terminais (filtro client-side).
+    const periodFilter = (
+        <div data-testid="period-filter" role="group" aria-label="Filtro de período" className="flex items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+            <span className="hidden sm:inline text-[10px] uppercase font-bold text-slate-400 px-1.5">Período</span>
+            {PERIOD_OPTIONS.map(opt => (
+                <button key={opt.value} type="button" onClick={() => setPeriod(opt.value)} title={`Mostrar concluídas: ${opt.label}`}
+                    aria-pressed={period === opt.value}
+                    className={`px-2.5 py-1 text-xs rounded-md transition-colors ${period === opt.value ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm font-semibold' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
+                    {opt.label}
+                </button>
+            ))}
+        </div>
+    );
+
+    const activePeriodLabel = PERIOD_OPTIONS.find(o => o.value === period)?.label;
+
     return (
         <PageLayout title="Issues & Tasks">
             <PageHeader
                 title="Issues & Tasks"
                 subtitle="GitHub issues, tasks automáticas e estatísticas do projeto"
+                actions={tab !== 'stats' ? periodFilter : undefined}
                 tabs={
                     <Tabs value={tab} onChange={v => setTab(v as any)}>
                         <Tab value="issues">Issues ({issues.length})</Tab>
@@ -841,6 +908,13 @@ const IssuesPage: React.FC = () => {
                             <option value="infra">Infra</option>
                         </select>
                     </div>
+
+                    {period !== 'all' && (
+                        <p className="text-[11px] text-slate-400 flex items-center gap-1 px-1" data-testid="period-hint-issues">
+                            <Clock size={11} />
+                            Mostrando o que foi realizado ({activePeriodLabel}). Issues abertas sempre aparecem.
+                        </p>
+                    )}
 
                     {issuesLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
                         <div className="space-y-1">
@@ -929,6 +1003,13 @@ const IssuesPage: React.FC = () => {
                         </div>
                         <Button variant="ghost" size="sm" icon={<RefreshCw size={14} />} onClick={loadTasks} />
                     </div>
+
+                    {period !== 'all' && (
+                        <p className="text-[11px] text-slate-400 flex items-center gap-1 px-1" data-testid="period-hint-tasks">
+                            <Clock size={11} />
+                            Mostrando concluídas ({activePeriodLabel}). Tasks em andamento sempre aparecem.
+                        </p>
+                    )}
 
                     {!isAdmin && (
                         <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-300">
