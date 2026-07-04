@@ -21,6 +21,7 @@
     "test:debug": "playwright test --debug",
     "test:visual": "playwright test -c playwright.visual.config.ts",
     "test:visual:update": "playwright test -c playwright.visual.config.ts --update-snapshots",
+    "test:render": "playwright test tests/render --project=chromium --project=\"Mobile Chrome\"",
     "test:e2e:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-local.ps1",
     "playwright:codegen": "playwright codegen",
     "scrape": "npx tsx scripts/web-scraper.ts",
