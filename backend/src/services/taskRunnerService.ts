@@ -1188,13 +1188,27 @@ class TaskRunnerService {
         }
         await git(['checkout', '-B', branch, base], { timeout: 30000, cwd: WT_ROOT });
         await git(['clean', '-fd'], { timeout: 30000, cwd: WT_ROOT }); // preserva node_modules (ignorado)
-        // dependências (uma vez; o worktree persiste entre tasks)
-        if (!fs.existsSync(path.join(WT_ROOT, 'node_modules'))) {
-            await sh('npm ci', WT_ROOT, 600000);
-        }
-        if (!fs.existsSync(path.join(WT_ROOT, 'backend', 'node_modules'))) {
-            await sh('npm ci', path.join(WT_ROOT, 'backend'), 600000);
-        }
+        // #963 (Fase 0): re-sincroniza deps quando o package-lock MUDA (não só quando node_modules
+        // falta). Antes o worktree instalava "uma vez" e ficava com deps STALE — o heic2any (add
+        // depois) sumia e o tsc/vite build do worktree falhavam em TODA task (falso-negativo total).
+        // Marker por mtime: reinstala se o lock for mais novo que a última instalação (ou se faltar).
+        const ensureDeps = async (dir: string) => {
+            const nm = path.join(dir, 'node_modules');
+            const lock = path.join(dir, 'package-lock.json');
+            const marker = path.join(nm, '.tr-installed');
+            let stale = true;
+            try {
+                stale = !fs.existsSync(nm) || !fs.existsSync(marker) || !fs.existsSync(lock)
+                    || fs.statSync(lock).mtimeMs > fs.statSync(marker).mtimeMs;
+            } catch { stale = true; }
+            if (stale) {
+                log.info(`ensureWorktree: deps desatualizadas em ${dir} — rodando npm ci`);
+                await sh('npm ci', dir, 600000);
+                try { fs.writeFileSync(marker, new Date().toISOString()); } catch { /* ignore */ }
+            }
+        };
+        await ensureDeps(WT_ROOT);
+        await ensureDeps(path.join(WT_ROOT, 'backend'));
     }
 
     /** Mudanças de CÓDIGO no worktree (ignora node_modules / lock / o arquivo de prompt). */
