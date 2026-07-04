@@ -1901,6 +1901,20 @@ export const aiService = {
         return provider.extractReceiptData(imageBase64, module);
     },
 
+    // Descrição livre de imagem (OCR + o que a imagem mostra), via provider com visão (GLM-4.6V).
+    // Usado pelo TaskRunner p/ o coder entender um alvo indicado por imagem na issue. null se sem visão.
+    describeImage: async (imageBase64: string, userHint?: string): Promise<string | null> => {
+        let provider: any = getProvider();
+        const canVision = providerSupportsVision(provider)
+            || (typeof provider.supportsVision === 'function' && provider.supportsVision());
+        if (!canVision) {
+            const mm = getMultimodalProvider();
+            if (mm) provider = mm;
+        }
+        if (typeof provider.describeImage !== 'function') return null;
+        return provider.describeImage(imageBase64, userHint);
+    },
+
     extractCustomerInfo: async (text: string, module: string = 'chat') => {
         const configService = _configService;
         if (configService.isRunWithChainEnabled()) {
