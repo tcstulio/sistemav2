@@ -90,9 +90,9 @@ Classificação das 31 falhas reais (300 tasks, 211 merged = 71%):
 
 ### FASE 4 — Endurecimento do gate (B11)
 
-- `it.skip`/`test.skip` add = **regressão** no `checkTestRegression`; estender regex (`describe`, `it.each`, `.only`).
-- Rodar `vitest run` dos arquivos tocados no `verify()` (gate de teste local real).
-- Sinalizar quando o diff do Judge trunca em 50KB.
+- ✅ **FEITO** — **Rodar os testes afetados no `verify()`** (gate de teste local real): `runTouchedTests` roda `vitest related --run --passWithNoTests --retry=2` dos arquivos tocados, em cada projeto (backend/frontend). Pega regressão de lógica que passa no tsc — o MAIOR falso-negativo do robô (a análise adversarial destacou). Como o main é verde (CI), falha = regressão da task. Timeout = advisory; flag `TASKRUNNER_TEST_GATE=0` desliga. `splitTouchedByProject` puro+testado. De-riscado ao vivo (related acha testes por grafo de módulos, incl. test-files tocados; --passWithNoTests p/ arquivo sem teste).
+- ⏳ `it.skip`/`test.skip` add = **regressão** no `checkTestRegression`; estender regex (`describe`, `it.each`, `.only`). (o gate de teste acima já cobre o caso do teste ESVAZIADO — o teste real roda e falha; falta o caso do `it.skip` que "some" silenciosamente.)
+- ⏳ Sinalizar quando o diff do Judge trunca em 50KB.
 
 ---
 

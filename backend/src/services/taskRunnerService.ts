@@ -14,7 +14,7 @@ import { socketService } from './socketService';
 import { killTree, isAlive, killOpencodeOrphans } from '../utils/processTree';
 import { runOpencode, resolveBash } from '../utils/runOpencode';
 import { claudeCliService } from './claudeCliService';
-import { parseTscErrors, parseGlobalTscErrors, serializeErrors, deserializeErrors, computeBlocking } from './gateDelta';
+import { parseTscErrors, parseGlobalTscErrors, serializeErrors, deserializeErrors, computeBlocking, splitTouchedByProject } from './gateDelta';
 import { previewPortsFor } from '../utils/previewPorts';
 import { screenshotService } from './screenshotService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
@@ -48,6 +48,10 @@ const MAX_TASK_WALL_MS = (Number(process.env.TASKRUNNER_MAX_TASK_WALL_MIN) || 18
 // Só reprova por erro de tsc NOVO em arquivo que a task TOCOU (+ global novo). Ver gateDelta.ts.
 const DELTA_GATE = process.env.TASKRUNNER_DELTA_GATE !== '0';
 const BASELINE_CACHE_DIR = path.join(__dirname, '../../data/baseline-cache');
+// Gate de TESTE (Fase 4/B11): roda `vitest related` dos arquivos tocados no verify() — pega regressão
+// de lógica que passa no tsc. Como o main é mantido verde pela CI, falha aqui = regressão da task.
+// TASKRUNNER_TEST_GATE=0 desliga (ex.: se testes flaky causarem falso-bloqueio recorrente).
+const TEST_GATE = process.env.TASKRUNNER_TEST_GATE !== '0';
 
 // Auto-recuperação da fila (#644 criterion opcional): se um ghost/hung promise deixar a
 // cadeia com pendingExecs>0 mas SEM nenhuma task ativa (running/fixing/cancelling) por mais
@@ -1321,13 +1325,46 @@ class TaskRunnerService {
             try { await sh('npx vite build', WT_ROOT, 300000); }
             catch (e: any) { viteFail = ((e.stdout || '') + '\n' + (e.stderr || e.message || '')).substring(0, 2000); }
         }
-        if (blocking.length === 0 && !viteFail) {
-            return { ok: true, output: `gate OK (0 erros novos em ${touched.length} arquivo(s) tocado(s))` };
+        if (blocking.length || viteFail) {
+            let out = '';
+            if (blocking.length) out += `${blocking.length} erro(s) de tsc introduzido(s) pela task:\n` + blocking.slice(0, 40).map((k) => ' - ' + k.replace(/\|/g, '  ')).join('\n');
+            if (viteFail) out += `\n\nvite build FALHOU (frontend tocado):\n` + viteFail;
+            return { ok: false, output: out.substring(0, 4000) };
         }
-        let out = '';
-        if (blocking.length) out += `${blocking.length} erro(s) de tsc introduzido(s) pela task:\n` + blocking.slice(0, 40).map((k) => ' - ' + k.replace(/\|/g, '  ')).join('\n');
-        if (viteFail) out += `\n\nvite build FALHOU (frontend tocado):\n` + viteFail;
-        return { ok: false, output: out.substring(0, 4000) };
+        // Gate de TESTE (Fase 4/B11): roda os testes AFETADOS pelos arquivos tocados. Só chega aqui se
+        // tsc+vite passaram (código compila). Como o main é verde (CI), falha = regressão da task.
+        if (TEST_GATE && touched.length) {
+            const t = await this.runTouchedTests(touched);
+            if (!t.ok) return t;
+        }
+        return { ok: true, output: `gate OK (0 erros novos + testes afetados verdes; ${touched.length} arquivo(s) tocado(s))` };
+    }
+
+    /**
+     * Gate de TESTE (Fase 4): roda `vitest related` dos arquivos tocados — em cada projeto (backend/
+     * frontend) roda os testes que (transitivamente) importam os arquivos mudados, + os próprios test
+     * files tocados. `--passWithNoTests` (arquivo sem teste passa), `--retry=2` (amortece flaky).
+     * Timeout = advisory (não bloqueia); falha real = bloqueia. Roda no worktree (deps via ensureDeps).
+     */
+    private async runTouchedTests(touched: string[]): Promise<{ ok: boolean; output: string }> {
+        const { backend, frontend } = splitTouchedByProject(touched);
+        const runs: Array<{ label: string; cwd: string; files: string[] }> = [];
+        if (backend.length) runs.push({ label: 'backend', cwd: path.join(WT_ROOT, 'backend'), files: backend });
+        if (frontend.length) runs.push({ label: 'frontend', cwd: WT_ROOT, files: frontend });
+        for (const r of runs) {
+            const arglist = r.files.map((f) => JSON.stringify(f)).join(' ');
+            try {
+                await sh(`npx vitest related --run --passWithNoTests --retry=2 ${arglist}`, r.cwd, 300000);
+            } catch (e: any) {
+                if (e?.killed || /timed?\s*out|ETIMEDOUT/i.test(String(e?.signal || '') + String(e?.message || ''))) {
+                    log.warn(`runTouchedTests(${r.label}): timeout — advisory (não bloqueia)`);
+                    continue;
+                }
+                const raw = ((e.stdout || '') + '\n' + (e.stderr || e.message || ''));
+                return { ok: false, output: `testes afetados (${r.label}) FALHARAM (regressão):\n` + raw.substring(0, 3000) };
+            }
+        }
+        return { ok: true, output: '' };
     }
 
     /**

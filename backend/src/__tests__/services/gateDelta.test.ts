@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     parseTscErrors, parseGlobalTscErrors, serializeErrors, deserializeErrors,
-    newErrors, isTouched, computeBlocking,
+    newErrors, isTouched, computeBlocking, splitTouchedByProject,
 } from '../../services/gateDelta';
 
 // Amostra REAL do formato do tsc (inclui o caso heic2any que reprovava TODA task antes do item-1).
@@ -102,5 +102,23 @@ describe('gateDelta — computeBlocking (v2: filtro por arquivo tocado)', () => 
     it('path do tsc relativo ao tsconfig casa com git diff por sufixo', () => {
         expect(computeBlocking(parseTscErrors('src/services/foo.ts(1,1): error TS1: x'), new Map(), [], [], ['backend/src/services/foo.ts']))
             .toEqual(['src/services/foo.ts|TS1|x']);
+    });
+});
+
+describe('gateDelta — splitTouchedByProject (gate de teste Fase 4)', () => {
+    it('separa backend (strip do prefixo) de frontend (src/) e ignora o resto', () => {
+        const r = splitTouchedByProject([
+            'backend/src/services/foo.ts',
+            'backend/src/__tests__/services/foo.test.ts',
+            'src/components/Bar.tsx',
+            'docs/PLANO.md',
+            'package.json',
+        ]);
+        expect(r.backend).toEqual(['src/services/foo.ts', 'src/__tests__/services/foo.test.ts']);
+        expect(r.frontend).toEqual(['src/components/Bar.tsx']);
+    });
+    it('normaliza backslash do Windows', () => {
+        expect(splitTouchedByProject(['backend\\src\\a.ts', 'src\\b.tsx']))
+            .toEqual({ backend: ['src/a.ts'], frontend: ['src/b.tsx'] });
     });
 });

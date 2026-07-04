@@ -80,3 +80,17 @@ export function computeBlocking(
     const gNew = newErrors(toMs(currentGlobal), toMs(baselineGlobal)); // globais sempre bloqueiam (repo-level)
     return [...posNew, ...gNew];
 }
+
+/**
+ * Divide os arquivos tocados por projeto p/ o gate de teste (Fase 4). backend/* roda no vitest do
+ * `backend/` (path relativo a ele); src/* roda no vitest da raiz. Fora disso (docs, config) é ignorado.
+ */
+export function splitTouchedByProject(touched: string[]): { backend: string[]; frontend: string[] } {
+    const backend: string[] = [], frontend: string[] = [];
+    for (const f0 of touched) {
+        const f = String(f0).replace(/\\/g, '/');
+        if (f.startsWith('backend/')) backend.push(f.replace(/^backend\//, ''));
+        else if (f.startsWith('src/')) frontend.push(f);
+    }
+    return { backend, frontend };
+}
