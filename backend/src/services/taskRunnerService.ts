@@ -6,6 +6,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { logger } from '../utils/logger';
+import axios from 'axios';
 import { aiService } from './aiService';
 import { aiJobService } from './aiJobService';
 import { isQuotaError, isQuotaExhausted, markQuotaExhausted, clearQuotaExhausted, quotaStatus } from './llmQuotaState';
@@ -1395,8 +1396,53 @@ class TaskRunnerService {
         return `\n<<<DADOS NÃO-CONFIÁVEIS: ${label}>>>\n${content}\n<<<FIM DADOS: ${label}>>>\n`;
     }
 
+    /** Baixa uma imagem (attachment do GitHub costuma exigir o token gh) e devolve base64. null se falhar. */
+    private async downloadImageBase64(url: string): Promise<string | null> {
+        const get = (headers: any) => axios.get(url, { responseType: 'arraybuffer', timeout: 30000, maxContentLength: 15 * 1024 * 1024, headers });
+        try {
+            let token = '';
+            try { token = (await gh(['auth', 'token'], { timeout: 10000 })).stdout.trim(); } catch { /* sem token — tenta público */ }
+            const resp = await get(token ? { Authorization: `token ${token}` } : {});
+            return Buffer.from(resp.data).toString('base64');
+        } catch {
+            try { return Buffer.from((await get({})).data).toString('base64'); } catch { return null; }
+        }
+    }
+
+    /**
+     * Alvo indicado por IMAGEM (Fase 3 do plano visual): extrai imagens anexadas na issue (markdown/HTML),
+     * baixa e as DESCREVE via visão (GLM-4.6V) para o coder. Antes a URL entrava como texto e a imagem era
+     * IGNORADA (o robô "fingia" que lia). Best-effort — nunca lança; '' se não houver imagem / visão off.
+     */
+    private async describeIssueImages(issueData: any): Promise<string> {
+        try {
+            const text = `${issueData.body || ''}\n${(issueData.comments || []).map((c: any) => c?.body || '').join('\n')}`;
+            const urls = new Set<string>();
+            let m: RegExpExecArray | null;
+            const mdRe = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g;
+            while ((m = mdRe.exec(text))) urls.add(m[1]);
+            const htmlRe = /<img[^>]+src=["'](https?:\/\/[^"']+)["']/gi;
+            while ((m = htmlRe.exec(text))) urls.add(m[1]);
+            const imgUrls = [...urls].filter((u) => /user-attachments|githubusercontent|\.(png|jpe?g|gif|webp)(\?|$)/i.test(u)).slice(0, 4);
+            if (!imgUrls.length) return '';
+            const parts: string[] = [];
+            for (const url of imgUrls) {
+                const b64 = await this.downloadImageBase64(url);
+                if (!b64) continue;
+                const desc = await aiService.describeImage(b64, 'O usuário anexou esta imagem à issue para INDICAR o alvo/problema (ex.: aponta na tela o que mudar). Descreva o que a imagem mostra e quaisquer marcações/anotações (setas, círculos, destaques, texto).');
+                if (desc) parts.push(`- ${desc.trim()}`);
+            }
+            if (!parts.length) return '';
+            log.info(`describeIssueImages: ${parts.length} imagem(ns) da issue descrita(s) p/ o coder`);
+            return `\n## Alvo indicado por imagem (visão sobre os anexos da issue)\n${parts.join('\n')}\n`;
+        } catch (e: any) {
+            log.warn(`describeIssueImages falhou: ${e?.message}`);
+            return '';
+        }
+    }
+
     private buildPrompt(task: Task, issueData: any): string {
-        let spec = `Título: ${issueData.title}\n\n${issueData.body || ''}\n`;
+        let spec = `Título: ${issueData.title}\n\n${issueData.body || ''}\n${issueData._imageContext || ''}`;
         if (issueData.comments?.length) {
             spec += '\n## Comentários\n';
             for (const c of issueData.comments) spec += `- **${c.author?.login || 'user'}**: ${c.body}\n`;
@@ -1411,7 +1457,7 @@ class TaskRunnerService {
     }
 
     private buildSynthesisPrompt(task: Task, issueData: any): string {
-        let spec = `Título: ${issueData.title}\n\n${issueData.body || ''}\n`;
+        let spec = `Título: ${issueData.title}\n\n${issueData.body || ''}\n${issueData._imageContext || ''}`;
         if (issueData.comments?.length) {
             spec += '\n## Comentários\n';
             for (const c of issueData.comments) spec += `- **${c.author?.login || 'user'}**: ${c.body}\n`;
@@ -1475,7 +1521,7 @@ class TaskRunnerService {
     private buildCumulativePrompt(task: Task, issueData: any, changedSoFar: string[]): string {
         // Guard ANTES do conteúdo + TODO o spec (título+corpo+comentários) envolto como dado
         // não-confiável — mesmo padrão de buildPrompt/buildSynthesisPrompt (anti prompt-injection).
-        let spec = `Título: ${issueData.title}\n\n${issueData.body || ''}\n`;
+        let spec = `Título: ${issueData.title}\n\n${issueData.body || ''}\n${issueData._imageContext || ''}`;
         if (issueData.comments?.length) {
             spec += '\n## Comentários\n' + issueData.comments.map((c: any) => c.body).join('\n---\n');
         }
@@ -1680,6 +1726,8 @@ class TaskRunnerService {
         this.emitLog(issueNumber, 'info', 'Lendo issue do GitHub...');
         const { stdout: issueBody } = await gh(['issue', 'view', String(issueNumber), '--repo', REPO, '--json', 'title,body,labels,comments'], { timeout: 15000 });
         const issueData = JSON.parse(issueBody);
+        // Alvo indicado por imagem (C): descreve os anexos da issue via visão p/ o coder (antes ignorados).
+        issueData._imageContext = await this.describeIssueImages(issueData);
 
         // 3) Multi-Attempt Synthesis: Fase 1 (exploração 3x) + Fase 2 (síntese 3x)
         const promptPath = path.join(WT_ROOT, PROMPT_FILE);

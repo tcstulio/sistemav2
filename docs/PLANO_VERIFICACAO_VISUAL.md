@@ -59,8 +59,15 @@ Ao clicar "Revisar" numa task de frontend, o admin vê **before/after + score + 
 **Corte se apertar:** só "after" + resumo (metade do valor, 1/3 do esforço — dispensa a URL `:3003`).
 **Fora do MVP:** diff PNG do Playwright embutido, telas-tocadas automáticas, comentário no PR (screenshots são privados → não linká-los no PR público), GIF de fluxo (`gif_creator` NÃO existe no ambiente do robô — é tool do claude-in-chrome só desta sessão), dark mode (4 imagens).
 
+### ⚠️ Refino de escopo (verificado no código — o MVP de "1 dia" é otimista)
+Dois blocos de engenharia real, não "acender a lâmpada":
+- **(a) Screenshots autenticam?** NÃO. `capturePage` (`screenshotService.ts:31`) faz `page.goto` cru — sem sessão. Pra qualquer tela interna, captura o **login**. Autenticar exige semear `localStorage['coolgroove_config']` = `{apiKey, url, currentUser:{login,admin,rights}}` (shape em `DolibarrContext.tsx:282-321`) + cookie `dolapikey` ANTES do goto (via Playwright `addInitScript`/`addCookies`), E um Dolibarr alcançável pelo browser (o app faz `fetchCurrentUser` + carrega dados). É a receita [[e2e-sessao-logada-recipe]] — funciona, mas tem pegadinhas.
+- **(b) Preview usa o worktree COMPARTILHADO.** `startPreview` (`:3230`) dá `checkout` da branch no `WT_ROOT` sob o `worktreeLock` + sobe `nodemon+vite`. Logo **subir um preview SERIALIZA com/BLOQUEIA a execução de tasks** (o worktree só fica numa branch por vez). Pra prova autônoma confiável, o ideal é um preview em worktree ISOLADO (como o gate por task), não o compartilhado.
+
+**Conclusão:** prova visual DE VERDADE = (a) + (b). Cada um é um passo próprio. O "corte" (só resumo do judge, sem before/after) é o único pedaço que dispensa (a)+(b) — mas aí não é "prova visual", é "resumo textual".
+
 ### Riscos
-1. **Preview não sobe no fluxo autônomo** (o maior) — sem o judge subir o preview sozinho, o "after" é 404 e a prova fica vazia.
+1. **Preview não sobe no fluxo autônomo** (o maior) — sem o judge subir o preview sozinho (e no worktree compartilhado, sem serializar), o "after" é 404 e a prova fica vazia.
 2. **Auth do `<img>`** — detalhe pequeno mas bloqueia a imagem aparecer.
 3. **Custo/latência** do judge (~120s, opencode+2 MCPs) sob `worktreeLock` — advisory+fire-and-forget + só `hasFrontendChanges`.
 4. **Porta de preview** `5174+n%10` (10 slots) colide entre tasks com mesmo último dígito.
@@ -69,7 +76,9 @@ Ao clicar "Revisar" numa task de frontend, o admin vê **before/after + score + 
 
 ---
 
-## PARTE 3 — Imagem como INPUT (usuário aponta o alvo) — PERTO
+## PARTE 3 — Imagem como INPUT (usuário aponta o alvo) — ✅ FEITO (2026-07-04)
+
+**IMPLEMENTADO:** `describeIssueImages(issueData)` + `downloadImageBase64(url)` no taskRunnerService — extrai imagens do markdown/HTML da issue (regex), baixa (token gh, fallback público), descreve via `aiService.describeImage` (GLM-4.6V, exposto no facade), e injeta no `spec` dos 3 builders (dentro dos marcadores de dado não-confiável) como "## Alvo indicado por imagem". Best-effort (nunca lança). Validado: regex extrai 2/2 + ignora não-imagem, download OK, tsc 0, 114/114. E2e real roda quando o robô pega issue com imagem. Detalhes abaixo ↓
 
 Capacidade já existe: `describeImage()`→GLM-4.6V, e o runner já invoca visão no `runVisualJudge`. **Gap = plumbing**: hoje `gh issue view --json body` traz `![](url)` como TEXTO; a URL entra no prompt e a imagem é **ignorada** (o robô *finge* que leu). Anotação ("muda ISSO", seta vermelha) se perde.
 
@@ -90,7 +99,7 @@ Hoje: memória boa DENTRO da issue (`feedbackHistory`, `/fix`, `redoTask`, `prHi
 1. **[MVP ~1d] Relatório de prova visual + ligar o judge** (Parte 2) — máximo "me prova que funciona", des-morta o stack de visão, e de brinde expõe o modo-de-falha nº1. **COMEÇAR AQUI.**
 2. **Rodar `ui-crawler.spec.ts` na CI** (Parte 1, gap E2E) — já escrito, só `skip`; detecção de erro em 35 telas. Precisa backend/fixtures de teste.
 3. **Baselines autenticadas das ~10-15 telas reais** (Parte 1, gap crítico #1) — 0,8%→real; usa a receita [[e2e-sessao-logada-recipe]] + Dolibarr de fixtures. Maior.
-4. **Imagem como input (Parte 3)** — plumbing, track separado, perto.
+4. ✅ **FEITO (2026-07-04)** — **Imagem como input (Parte 3)** — o robô agora LÊ as imagens anexadas na issue (antes ignorava).
 5. **Loop de aprendizado (Parte 4 / Fase 3)** — o item grande, depois.
 
 ## Arquivos-chave
