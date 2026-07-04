@@ -49,4 +49,23 @@ describe('agentTools — notify_person (#1004)', () => {
         expect(out).toMatch(/message/i);
         expect(mockNotifyPerson).not.toHaveBeenCalled();
     });
+
+    it('canal in-app sem destinatário resolvível não vira broadcast (#1004)', async () => {
+        // Sem contexto (runWithToolContext) e sem args.recipient: notify_person não sabe para
+        // quem é a notificação in-app. Em vez de cair num broadcast implícito (recipient undefined
+        // → visível a todos), devolve um pedido de destinatário e NÃO persiste nada.
+        const out = await executeTool('notify_person', { name: 'Fulano', message: 'oi', channels: ['in-app'] });
+        expect(out).toMatch(/destinat/i);
+        expect(mockNotifyPerson).not.toHaveBeenCalled();
+    });
+
+    it('canais externos (whatsapp) dispensam destinatário in-app', async () => {
+        // Sem contexto/recipient, mas com canal só whatsapp + telefone: não há destinatário in-app
+        // para resolver, então o guarda não deve disparar.
+        const out = await runWithToolContext({}, () =>
+            executeTool('notify_person', { name: 'Cliente', message: 'olá', channels: ['whatsapp'], phone: '5511999999999' })
+        );
+        expect(out).toMatch(/Notificação enviada/i);
+        expect(mockNotifyPerson).toHaveBeenCalledWith(expect.objectContaining({ recipientPhone: '5511999999999' }));
+    });
 });
