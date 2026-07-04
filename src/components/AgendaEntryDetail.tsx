@@ -18,6 +18,10 @@ interface AgendaEntryDetailProps {
     editPrefill?: Record<string, string>; // deeplink HITL: mudanças sugeridas p/ edit_event (#57/#78)
 }
 
+// #997: a issue sugeria tipar `data` como `AgendaEvent | null`, mas esta tela renderiza
+// 4 entidades distintas da agenda (evento, tarefa, projeto e intervenção). Tipar como só
+// `AgendaEvent` forçaria casts incorretos nos demais renderers, então usamos a union real —
+// reutilizando as interfaces já existentes do módulo de agenda em vez de recriá-las.
 type AgendaDetailItem = AgendaEvent | Task | Project | Intervention;
 type AgendaTaskDetail = Task & { fk_projet?: string };
 type AgendaInterventionDetail = Intervention & { fk_projet?: string };
