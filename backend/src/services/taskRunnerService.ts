@@ -14,6 +14,7 @@ import { socketService } from './socketService';
 import { killTree, isAlive, killOpencodeOrphans } from '../utils/processTree';
 import { runOpencode, resolveBash } from '../utils/runOpencode';
 import { claudeCliService } from './claudeCliService';
+import { parseTscErrors, parseGlobalTscErrors, serializeErrors, deserializeErrors, computeBlocking } from './gateDelta';
 import { previewPortsFor } from '../utils/previewPorts';
 import { screenshotService } from './screenshotService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
@@ -42,6 +43,11 @@ const OPENCODE_TIMEOUT_MS = (Number(process.env.TASKRUNNER_OPENCODE_TIMEOUT_MIN)
 // até 6; cumulativo: até MAX_ROUNDS). Configurável via env (default 3h) — suba junto com o timeout
 // por round, senão o watchdog mata antes de a task longa terminar.
 const MAX_TASK_WALL_MS = (Number(process.env.TASKRUNNER_MAX_TASK_WALL_MIN) || 180) * 60 * 1000;
+
+// Gate por DELTA (Fase 0 item 2-3): ON por padrão; TASKRUNNER_DELTA_GATE=0 volta ao gate estrito antigo.
+// Só reprova por erro de tsc NOVO em arquivo que a task TOCOU (+ global novo). Ver gateDelta.ts.
+const DELTA_GATE = process.env.TASKRUNNER_DELTA_GATE !== '0';
+const BASELINE_CACHE_DIR = path.join(__dirname, '../../data/baseline-cache');
 
 // Auto-recuperação da fila (#644 criterion opcional): se um ghost/hung promise deixar a
 // cadeia com pendingExecs>0 mas SEM nenhuma task ativa (running/fixing/cancelling) por mais
@@ -238,6 +244,11 @@ export interface Task {
     // cpuMemSamples guarda o RAW das amostras; metrics é a versão agregada.
     cpuMemSamples?: CpuMemSample[];
     metrics?: TaskMetrics;
+    // Gate por DELTA (Fase 0): erros de tsc PRÉ-EXISTENTES no origin/main (posicionais "count\tarquivo|code|msg"
+    // e globais). Best-effort — se faltar, o filtro por arquivo-tocado ainda protege. baselineSha = SHA que originou.
+    baselineErrors?: string[];
+    baselineGlobals?: string[];
+    baselineSha?: string;
 }
 
 interface TaskStore {
@@ -1230,21 +1241,93 @@ class TaskRunnerService {
             .filter((l) => l && !l.includes('node_modules') && !l.includes('package-lock') && !l.includes(PROMPT_FILE));
     }
 
-    /** Gate de verificação: typecheck backend + frontend + vite build no worktree. */
-    private async verify(): Promise<{ ok: boolean; output: string }> {
-        try {
-            await sh('npx tsc --noEmit -p backend/tsconfig.json', WT_ROOT, 240000);
-            await sh('npx tsc --noEmit -p tsconfig.json', WT_ROOT, 240000);
-            await sh('npx vite build', WT_ROOT, 300000);
-            return { ok: true, output: 'typecheck OK + build OK (backend + frontend)' };
-        } catch (e: any) {
-            const raw = ((e.stdout || '') + '\n' + (e.stderr || e.message || ''));
-            const output = raw.substring(0, 4000);
-            if (raw.includes('vite build') || raw.includes('vite v')) {
-                return { ok: false, output: 'typecheck OK, mas vite build FALHOU:\n' + output };
+    /** Roda os 2 tsc; devolve erros POSICIONAIS (multiset) + GLOBAIS + flag de timeout. */
+    private async collectTscErrors(): Promise<{ pos: Map<string, number>; globals: string[]; timedOut: boolean }> {
+        let raw = '', timedOut = false;
+        for (const proj of ['backend/tsconfig.json', 'tsconfig.json']) {
+            try {
+                await sh(`npx tsc --noEmit -p ${proj}`, WT_ROOT, 240000);
+            } catch (e: any) {
+                if (e?.killed || /timed?\s*out|ETIMEDOUT/i.test(String(e?.signal || '') + String(e?.message || ''))) timedOut = true;
+                raw += (e.stdout || '') + '\n' + (e.stderr || e.message || '') + '\n';
             }
-            return { ok: false, output };
         }
+        return { pos: parseTscErrors(raw), globals: parseGlobalTscErrors(raw), timedOut };
+    }
+
+    /** Arquivos que a task tocou: diff da branch vs origin/main (committed) + mudanças não-commitadas.
+     *  Robusto (não parseia status de porcelain). No auto-merge (árvore limpa pós-rebase) o `git status`
+     *  daria vazio — por isso o diff vs origin/main é a fonte primária ali. */
+    private async touchedFiles(): Promise<string[]> {
+        const files = new Set<string>();
+        try {
+            const { stdout } = await git(['diff', '--name-only', 'origin/main...HEAD'], { timeout: 30000, cwd: WT_ROOT });
+            stdout.split('\n').map((l) => l.trim()).filter(Boolean).forEach((f) => files.add(f));
+        } catch { /* branch nova/sem merge-base — cai nas não-commitadas */ }
+        try {
+            (await this.worktreeChanges()).forEach((l) =>
+                files.add(l.replace(/^[A-Z?! ]{1,3}\s*/, '').replace(/^.*-> /, '').replace(/^"|"$/g, '')));
+        } catch { /* ignore */ }
+        return [...files];
+    }
+
+    /** Captura baseline de erros do origin/main (best-effort, cache atômico por SHA em backend/data). Sem vite. */
+    private async captureBaseline(task: Task): Promise<void> {
+        try {
+            const { stdout: shaOut } = await git(['rev-parse', 'origin/main'], { timeout: 15000, cwd: WT_ROOT });
+            const sha = shaOut.trim().slice(0, 12);
+            const cacheFile = path.join(BASELINE_CACHE_DIR, `${sha}.json`);
+            try {
+                const c = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+                task.baselineErrors = c.errors || []; task.baselineGlobals = c.globals || []; task.baselineSha = sha;
+                log.info(`captureBaseline #${task.issueNumber}: cache do main ${sha} (${task.baselineErrors!.length} pos, ${task.baselineGlobals!.length} glob)`);
+                return;
+            } catch { /* sem cache ou corrompido → recomputa (não cai em estrito) */ }
+            const { pos, globals, timedOut } = await this.collectTscErrors();
+            if (timedOut) { // NÃO persistir baseline PARCIAL (senão erros reais viram "novos" no verify)
+                this.recordEvent(task, 'error', 'captureBaseline: tsc estourou timeout — baseline pulado (gate usa só o filtro por arquivo-tocado)');
+                return;
+            }
+            task.baselineErrors = serializeErrors(pos); task.baselineGlobals = globals; task.baselineSha = sha;
+            try { fs.mkdirSync(BASELINE_CACHE_DIR, { recursive: true }); atomicWriteSync(cacheFile, JSON.stringify({ errors: task.baselineErrors, globals })); } catch { /* ignore */ }
+            log.info(`captureBaseline #${task.issueNumber}: ${task.baselineErrors.length} pos + ${globals.length} glob no main ${sha} (cacheado)`);
+        } catch (e: any) {
+            this.recordEvent(task, 'error', `captureBaseline falhou (${String(e?.message).slice(0, 120)}) — gate usa só o filtro por arquivo-tocado`);
+        }
+    }
+
+    /**
+     * Gate de verificação. Com DELTA_GATE (padrão): só reprova por erro de tsc NOVO em arquivo que a
+     * task TOCOU (+ global novo), e por vite build quando o diff toca o frontend. Sem DELTA_GATE ou sem
+     * task: comportamento ESTRITO antigo (fail-fast no repo inteiro). O portão FINAL é a CI full-repo.
+     */
+    private async verify(task?: Task): Promise<{ ok: boolean; output: string }> {
+        if (!DELTA_GATE || !task) {
+            try {
+                await sh('npx tsc --noEmit -p backend/tsconfig.json', WT_ROOT, 240000);
+                await sh('npx tsc --noEmit -p tsconfig.json', WT_ROOT, 240000);
+                await sh('npx vite build', WT_ROOT, 300000);
+                return { ok: true, output: 'typecheck OK + build OK (estrito)' };
+            } catch (e: any) {
+                return { ok: false, output: ((e.stdout || '') + '\n' + (e.stderr || e.message || '')).substring(0, 4000) };
+            }
+        }
+        const { pos, globals } = await this.collectTscErrors();
+        const touched = await this.touchedFiles();
+        const blocking = computeBlocking(pos, deserializeErrors(task.baselineErrors), globals, task.baselineGlobals || [], touched);
+
+        let viteFail = '';
+        if (touched.some((f) => f.replace(/\\/g, '/').startsWith('src/'))) {
+            try { await sh('npx vite build', WT_ROOT, 300000); }
+            catch (e: any) { viteFail = ((e.stdout || '') + '\n' + (e.stderr || e.message || '')).substring(0, 2000); }
+        }
+        if (blocking.length === 0 && !viteFail) {
+            return { ok: true, output: `gate OK (0 erros novos em ${touched.length} arquivo(s) tocado(s))` };
+        }
+        let out = '';
+        if (blocking.length) out += `${blocking.length} erro(s) de tsc introduzido(s) pela task:\n` + blocking.slice(0, 40).map((k) => ' - ' + k.replace(/\|/g, '  ')).join('\n');
+        if (viteFail) out += `\n\nvite build FALHOU (frontend tocado):\n` + viteFail;
+        return { ok: false, output: out.substring(0, 4000) };
     }
 
     /**
@@ -1407,7 +1490,7 @@ class TaskRunnerService {
             }
             if (Date.now() - watchdogZero > CUMULATIVE_BUDGET_MS) {
                 this.recordEvent(task, 'exploration_completed', `Budget de tempo atingido no round ${round} — finalizando com o progresso atual`, { rounds: round - 1, budgetReached: true });
-                verify = await this.verify();
+                verify = await this.verify(task);
                 break;
             }
 
@@ -1456,7 +1539,7 @@ class TaskRunnerService {
             // Exige `anyChange` para não confundir 2 rounds completamente vazios no início com "convergência".
             if (round > 1 && diffHash === lastDiffHash && anyChange) {
                 this.recordEvent(task, 'exploration_completed', `Convergiu no round ${round} (sem mudanças novas)`, { rounds: round, converged: true });
-                if (anyChange) verify = await this.verify(); // só revalida se há algo a entregar
+                if (anyChange) verify = await this.verify(task); // só revalida se há algo a entregar
                 break;
             }
             lastDiffHash = diffHash;
@@ -1481,7 +1564,7 @@ class TaskRunnerService {
             }
 
             this.recordEvent(task, 'typecheck_started', `Typecheck round ${round} (${changes.length} arquivos acumulados)...`);
-            verify = await this.verify();
+            verify = await this.verify(task);
             task.attempts.push({
                 index: task.attempts.length + 1, phase: 'exploring',
                 diff: diff.substring(0, 30000), typecheckOk: verify.ok,
@@ -1510,7 +1593,7 @@ class TaskRunnerService {
             // #963 Tier RESGATE: o Claude Code assume o worktree antes de desistir. Se produzir
             // mudanças, revalida e segue pro caminho de sucesso (PR) em vez de abortar.
             if (await this.tryClaudeRescue(task, issueData) && (await this.worktreeChanges()).length > 0) {
-                verify = await this.verify();
+                verify = await this.verify(task);
                 anyChange = true;
             }
             if (!anyChange) {
@@ -1540,6 +1623,11 @@ class TaskRunnerService {
             : 'Preparando worktree a partir de origin/main...');
         await this.ensureWorktree(branch, { preserveBranch });
         this.recordEvent(task, 'worktree_setup_completed', 'Worktree pronto', { path: WT_ROOT });
+
+        // Gate por DELTA (Fase 0): captura baseline do main (best-effort, idempotente por SHA). Condição
+        // é "não tenho baseline" — NÃO "run fresco" — p/ cobrir self-heal/preserve/Retry-com-PR (a análise
+        // adversarial mostrou que preserve pulava a captura e caía em estrito, reprovando erro pré-existente).
+        if (DELTA_GATE && task.baselineErrors === undefined) await this.captureBaseline(task);
 
         // 2) Lê a issue
         this.emitLog(issueNumber, 'info', 'Lendo issue do GitHub...');
@@ -1605,7 +1693,7 @@ class TaskRunnerService {
 
             // Captura diff e typecheck desta tentativa
             this.recordEvent(task, 'typecheck_started', `Typecheck exploração ${attempt}...`);
-            verify = await this.verify();
+            verify = await this.verify(task);
             const { stdout: diffOut } = await git(['diff'], { timeout: 30000, cwd: WT_ROOT });
 
             const attemptResult: AttemptResult = {
@@ -1701,7 +1789,7 @@ class TaskRunnerService {
 
             // Typecheck gate
             this.recordEvent(task, 'typecheck_started', `Typecheck síntese ${synthAttempt}...`);
-            verify = await this.verify();
+            verify = await this.verify(task);
             const { stdout: synthDiff } = await git(['diff'], { timeout: 30000, cwd: WT_ROOT });
 
             const synthResult: AttemptResult = {
@@ -2375,7 +2463,7 @@ Return ONLY a JSON:
                 }
 
                 this.recordEvent(task, 'task_started', 'Auto-merge: rodando typecheck...');
-                verify = await this.verify();
+                verify = await this.verify(task);
             });
             if (!verify.ok) {
                 this.recordEvent(task, 'task_failed', `Auto-merge abortado: typecheck/build falhou apos rebase. ${verify.output.slice(-500)}`);

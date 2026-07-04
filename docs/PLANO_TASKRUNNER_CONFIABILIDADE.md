@@ -56,10 +56,12 @@ Classificação das 31 falhas reais (300 tasks, 211 merged = 71%):
 
 ### FASE 0 — Ambiente (destrava ~84% das falhas, custo ~zero de Claude) ⬅️ COMEÇAR AQUI
 
-1. **Consertar o drift de deps** (`ensureWorktree` `:1192`): rodar `npm ci` (raiz + backend) quando o **stamp instalado** divergir do `package-lock.json` (comparar `node_modules/.package-lock.json`, ou hash próprio `.tr-lockhash`). **Sozinho já elimina o heic2any e a classe inteira "dep nova".**
-2. **Pré-checar o baseline** (em `executeTask`, antes da 1ª tentativa): rodar `verify()` no worktree limpo. Se já vermelho → é ambiental, não do coder → `npm ci` forçado + retry; nunca culpar o modelo.
-3. **Gate por DELTA de tsc**: capturar `baselineErrors` (Map `file:code:msg`→contagem, sem nº de linha) após checkout de `origin/main`; no `verify()` pós-task, `ok = (atual − baseline) vazio`. Persistir no Task. `vite build` só quando o diff toca `src/**` (senão advisory).
-4. **Separar task-quality de repo-health**: baseline quebrado → alerta/issue própria, **não** reprova as outras tasks.
+1. ✅ **FEITO+VALIDADO** — **Consertar o drift de deps** (`ensureWorktree`): `ensureDeps` roda `npm ci` (raiz + backend) quando o `package-lock` é mais novo que o marker `.tr-installed`. Validado ao vivo (#986 passou typecheck em explorações, antes 0/3; criou PR #1001).
+2. ✅ **COBERTO pelo item 3** — o gate por delta já roda `collectTscErrors` no worktree; baseline quebrado não é mais problema (filtro por arquivo-tocado).
+3. ✅ **FEITO (v2, endurecido por 3 agentes adversariais)** — **Gate por DELTA**: `gateDelta.ts` (puro, testado 18/18) + `verify(task)`. **Só reprova por erro de tsc NOVO em arquivo que a task TOCOU** (`computeBlocking`) + global novo; `vite build` só quando toca `src/**`. Baseline best-effort cacheado por SHA (atômico, em `backend/data/baseline-cache/`). A análise adversarial pegou 3 bloqueantes que o design v1 tinha (baseline stale no auto-merge, self-heal→estrito, vite não-roda pós-rebase) — o filtro por arquivo-tocado neutraliza todos. `touchedFiles` via `git diff origin/main...HEAD` ∪ não-commitadas. Flag `TASKRUNNER_DELTA_GATE=0` volta ao estrito. **Reframe chave:** o delta NÃO é o portão final — a CI full-repo + branch protection é; logo falsos-negativos são contidos, e o alvo real é o falso-positivo (task boa reprovada).
+   - ⏳ **Follow-up [ALTO, Fase 4/B11]**: rodar `vitest` dos arquivos tocados no `verify()` — o MAIOR falso-negativo do robô (pré-existente ao delta; o gate nunca rodou testes).
+   - ⏳ **Follow-up**: medir custo real do `captureBaseline` (cache amortiza fraco sob auto-merge) antes de remover o flag; varrer caches de SHA velhos.
+4. **Separar task-quality de repo-health**: baseline quebrado → alerta/issue própria, **não** reprova as outras tasks. (Parcial: o filtro por arquivo-tocado já isola; falta o alerta dedicado.)
 5. **CI retomável** (`:2378`): "CI não ficou verde" vira estado que re-tenta o merge quando a CI fecha, não `rejected`. Subir `CHECKS_TIMEOUT`.
 6. **Passar `getFileContextFromMain` ao prompt do coder** (ataca os "vazios" de segurança).
 7. **Corrigir a msg stale do lock** (`:809`) + não carimbar `failed` em task que só passou pelo Planner.
