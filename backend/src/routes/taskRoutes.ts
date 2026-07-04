@@ -317,4 +317,17 @@ router.delete('/:issueNumber/preview', requireDolibarrAdmin, async (req, res) =>
     }
 });
 
+// PROVA VISUAL sob demanda: sobe preview efêmero, captura before/after autenticados e roda o Judge
+// Visual advisory. Admin-only (spawna processo + opencode). Best-effort — o service nunca deixa a
+// exceção "vazar" de forma a travar; devolve o motivo em visualReview quando a captura falha.
+router.post('/:issueNumber/visual-proof', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const result = await taskRunnerService.generateVisualProof(Number(req.params.issueNumber));
+        res.json(result);
+    } catch (error: any) {
+        log.error('Visual proof error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
 export default router;

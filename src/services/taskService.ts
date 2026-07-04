@@ -235,4 +235,18 @@ export const TaskService = {
         const response = await axios.post(`${API_URL}/${issueNumber}/approve-decomposition`, {}, getAuthHeaders());
         return response.data;
     },
+
+    // Gera a PROVA VISUAL sob demanda (sobe preview efêmero + captura autenticada + judge advisory).
+    // Timeout longo: preview + captura + judge podem levar 1-2 min.
+    generateVisualProof: async (issueNumber: number): Promise<{ visualScore?: number; visualReview?: string; hasScreenshots: boolean }> => {
+        const response = await axios.post(`${API_URL}/${issueNumber}/visual-proof`, {}, { ...getAuthHeaders(), timeout: 240000 });
+        return response.data;
+    },
+
+    // Busca o PNG autenticado e devolve um object URL (blob) — evita pôr a apiKey na querystring do
+    // <img src>. O chamador deve revogar o object URL (URL.revokeObjectURL) ao trocar/desmontar.
+    getScreenshotBlobUrl: async (issueNumber: number, type: 'before' | 'after'): Promise<string> => {
+        const response = await axios.get(`${API_URL}/${issueNumber}/screenshots/${type}`, { ...getAuthHeaders(), responseType: 'blob' });
+        return URL.createObjectURL(response.data);
+    },
 };
