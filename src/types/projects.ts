@@ -18,6 +18,46 @@ export interface Project {
     budget_amount?: number;
 }
 
+/**
+ * Veredito do pre-check automático de uma task (issue #972).
+ * - `ok` → task normal, sem badge.
+ * - `duplicate` → task suspeita de ser duplicata.
+ * - `already_resolved` → task possivelmente já resolvida por commits/PRs.
+ * - `false_report` → nenhum erro correspondente encontrado nos logs.
+ * - `low_evidence` → pouca evidência para confirmar/negar.
+ */
+export type PrecheckVerdict =
+    | 'ok'
+    | 'duplicate'
+    | 'already_resolved'
+    | 'false_report'
+    | 'low_evidence';
+
+/** Uma evidência individual levantada pelo pre-check. */
+export interface PrecheckEvidence {
+    /** Tipo da evidência (ex.: 'similar_issue', 'commit', 'pr', 'log'). */
+    type: string;
+    /** Referência (nº do issue, sha do commit, nº do PR, etc.). */
+    reference?: string;
+    /** Trecho/citação que fundamenta a evidência. */
+    snippet?: string;
+    /** Link clicável para a evidência, quando aplicável. */
+    url?: string;
+}
+
+/** Relatório de pre-check anexado a uma task. */
+export interface PrecheckReport {
+    verdict: PrecheckVerdict;
+    /** Explicação curta do veredito. */
+    reason?: string;
+    /** Lista de evidências que fundamentam o veredito. */
+    evidence?: PrecheckEvidence[];
+    /** Referência (id/ref) do item original para duplicatas/já resolvidas. */
+    original_ref?: string;
+    /** Link para o item original (issue/PR/task). */
+    original_url?: string;
+}
+
 export interface Task {
     id: string;
     ref: string;
@@ -29,7 +69,7 @@ export interface Task {
     progress: number;
     priority?: number;
     status?: number; // fk_statut as integer
-    statut?: string; // mapped status label if needed
+    statut?: string; // mapped status label if needed (ex.: 'rejected_precheck')
     planned_workload?: number; // seconds
     duration_effective?: number; // seconds
     fk_user_assign?: string;
@@ -43,6 +83,8 @@ export interface Task {
     tms?: number; // Timestamp last modified (alias)
     project_ref?: string;
     project_title?: string;
+    /** Relatório do pre-check (issue #972). Ausente ou verdict 'ok' = task normal. */
+    precheck_report?: PrecheckReport;
 }
 
 export interface InterventionLine {

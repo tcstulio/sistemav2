@@ -28,6 +28,7 @@ import { TaskAssistantModal } from './TaskAssistantModal';
 import { Sparkles, RefreshCw } from 'lucide-react';
 import TaskDetail from '../TaskDetail';
 import { TaskModal } from '../Projects/modals/TaskModal';
+import { TaskPrecheckBadge, TaskPrecheckAnalysis, TaskRejectedBanner } from '../TaskCard';
 import { DolibarrService } from '../../services/dolibarrService';
 import { toast } from 'sonner';
 import { ErrorState, EmptyState } from '../ui';
@@ -390,12 +391,17 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                         )}
                     </div>
 
-                    <h3
-                        onClick={() => setSelectedTaskId(task.id)}
-                        className={`font-semibold text-slate-900 dark:text-slate-100 mb-1 cursor-pointer hover:text-indigo-600 line-clamp-2 ${selectedTaskId === task.id ? 'text-indigo-600 dark:text-indigo-400' : ''}`}
-                    >
-                        {task.label}
-                    </h3>
+                    <TaskRejectedBanner task={task} />
+
+                    <div className="flex items-start gap-2 mb-1">
+                        <h3
+                            onClick={() => setSelectedTaskId(task.id)}
+                            className={`flex-1 font-semibold text-slate-900 dark:text-slate-100 cursor-pointer hover:text-indigo-600 line-clamp-2 ${selectedTaskId === task.id ? 'text-indigo-600 dark:text-indigo-400' : ''}`}
+                        >
+                            {task.label}
+                        </h3>
+                        <TaskPrecheckBadge report={task.precheck_report} />
+                    </div>
 
                     <div className="min-h-[20px] mb-3">
                         {project ? (
@@ -426,6 +432,8 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                             <div className="h-4"></div> // Spacer
                         )}
                     </div>
+
+                    <TaskPrecheckAnalysis report={task.precheck_report} />
 
                     {/* Assignee Info (if viewing team) */}
                     {viewMode === 'team' && task.fk_user_assign !== user?.id && (
@@ -910,9 +918,15 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                                                                     </span>
                                                                 )}
                                                             </div>
-                                                            <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200 line-clamp-2 mb-2 group-hover:text-indigo-600 transition-colors">
+                                                            <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200 line-clamp-2 mb-1 group-hover:text-indigo-600 transition-colors">
                                                                 {task.label}
                                                             </h4>
+
+                                                            {task.precheck_report && task.precheck_report.verdict !== 'ok' && (
+                                                                <div className="mb-2">
+                                                                    <TaskPrecheckBadge report={task.precheck_report} />
+                                                                </div>
+                                                            )}
 
                                                             {project && (
                                                                 <div className="text-xs text-slate-500 mb-2 flex items-center gap-1 truncate">
