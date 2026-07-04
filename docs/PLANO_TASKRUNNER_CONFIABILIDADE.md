@@ -62,7 +62,7 @@ Classificação das 31 falhas reais (300 tasks, 211 merged = 71%):
    - ⏳ **Follow-up [ALTO, Fase 4/B11]**: rodar `vitest` dos arquivos tocados no `verify()` — o MAIOR falso-negativo do robô (pré-existente ao delta; o gate nunca rodou testes).
    - ⏳ **Follow-up**: medir custo real do `captureBaseline` (cache amortiza fraco sob auto-merge) antes de remover o flag; varrer caches de SHA velhos.
 4. **Separar task-quality de repo-health**: baseline quebrado → alerta/issue própria, **não** reprova as outras tasks. (Parcial: o filtro por arquivo-tocado já isola; falta o alerta dedicado.)
-5. **CI retomável** (`:2378`): "CI não ficou verde" vira estado que re-tenta o merge quando a CI fecha, não `rejected`. Subir `CHECKS_TIMEOUT`.
+5. ✅ **FEITO** — **CI retomável**: `resumePendingMerges()` re-dispara o auto-merge de tasks `approved` com PR aberto (idempotente via `mergeInFlight`), no boot E a cada `pollSync`. O timeout de CI agora MANTÉM `approved` (resumível) quando a CI só está lenta — só vira `reviewing` em conflito real (DIRTY/CONFLICTING). Mata os 2 furos: (a) restart matava o poll → task presa em `approved` p/ sempre (foi a #986, destravei na mão); (b) CI > timeout virava `rejected`/`reviewing` e perdia trabalho de judge alto. `tryAutoMerge` virou wrapper com guard + `tryAutoMergeInner`. Testado (resumePendingMerges: só approved+PR, pula in-flight, respeita autoMerge off). NÃO precisou subir CHECKS_TIMEOUT (o resume cobre a cauda).
 6. **Passar `getFileContextFromMain` ao prompt do coder** (ataca os "vazios" de segurança).
 7. **Corrigir a msg stale do lock** (`:809`) + não carimbar `failed` em task que só passou pelo Planner.
 

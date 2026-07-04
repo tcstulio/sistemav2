@@ -270,6 +270,9 @@ class TaskRunnerService {
     private notifiedTasks = new Set<number>();
     private deletedIssueNumbers = new Map<number, number>();
     private syncGitHubInFlight = false;
+    // Fase 0 item 5 (CI retomável): tasks cujo auto-merge está em andamento — o resumePendingMerges
+    // não re-dispara enquanto um attempt (que espera a CI até 15min) ainda roda. Idempotência do resume.
+    private mergeInFlight = new Set<number>();
     // Auto-recuperação da fila (#644): timer periódico + timestamp de quando a cadeia ficou
     // "presa" (pendingExecs>0 sem task ativa). Ver checkQueueHealth.
     private recoveryTimer: NodeJS.Timeout | null = null;
@@ -292,6 +295,11 @@ class TaskRunnerService {
             this.syncWithGitHub().catch((e) => {
                 log.warn(`syncWithGitHub no boot falhou: ${e?.message || e}`);
             });
+        });
+        // Fase 0 item 5 (CI retomável): retoma merges que um restart interrompeu (task 'approved' com
+        // o poll de CI morto — foi o caso da #986). Sem isto a task ficava presa em 'approved' p/ sempre.
+        setImmediate(() => {
+            this.resumePendingMerges().catch((e) => log.warn(`resumePendingMerges no boot falhou: ${e?.message || e}`));
         });
         // Auto-recuperação da fila (#644): checa periodicamente se a cadeia ficou presa e,
         // se sim após QUEUE_RECOVERY_MIN_MS, reseta e retoma. unref p/ não segurar o processo.
@@ -431,6 +439,8 @@ class TaskRunnerService {
         }
         const before = new Set(Object.keys(this.store.tasks).map(Number));
         await this.syncWithGitHub();
+        // Fase 0 item 5: retoma auto-merges pendentes (CI passou depois do timeout, ou attempt anterior morreu).
+        this.resumePendingMerges().catch((e) => log.warn(`resumePendingMerges (poll) falhou: ${e?.message || e}`));
         const tasks = await this.syncTasks();
         const newTaskNumbers = tasks
             .filter((t) => !before.has(t.issueNumber) && !this.notifiedTasks.has(t.issueNumber))
@@ -2427,7 +2437,31 @@ Return ONLY a JSON:
         return true;
     }
 
+    /**
+     * Fase 0 item 5 (CI RETOMÁVEL): re-dispara o auto-merge de tasks 'approved' com PR aberto que
+     * ficaram paradas — restart matou o poll de CI, ou a CI passou depois do timeout. Idempotente
+     * (mergeInFlight). Chamado no boot e a cada pollSync. tryAutoMerge já respeita o flag autoMerge.
+     */
+    private async resumePendingMerges(): Promise<void> {
+        if (!this.getAutomationConfig().autoMerge) return;
+        for (const task of Object.values(this.store.tasks)) {
+            if (task.status !== 'approved' || !task.prNumber) continue;
+            if (this.mergeInFlight.has(task.issueNumber)) continue;
+            this.recordEvent(task, 'task_started', 'Retomando auto-merge pendente (CI retomável)...');
+            this.tryAutoMerge(task).catch((e: any) => log.warn(`resume auto-merge #${task.issueNumber}: ${e?.message || e}`));
+        }
+    }
+
+    /** Wrapper com guarda de concorrência (Fase 0 item 5): evita 2 auto-merges simultâneos da mesma
+     *  task (o resumePendingMerges pode re-disparar enquanto um attempt de 15min ainda espera a CI). */
     private async tryAutoMerge(task: Task): Promise<void> {
+        if (this.mergeInFlight.has(task.issueNumber)) return;
+        this.mergeInFlight.add(task.issueNumber);
+        try { await this.tryAutoMergeInner(task); }
+        finally { this.mergeInFlight.delete(task.issueNumber); }
+    }
+
+    private async tryAutoMergeInner(task: Task): Promise<void> {
         const config = this.getAutomationConfig();
         if (!config.autoMerge) return;
         if ((task.judgeScore || 0) < config.minMergeScore) return;
@@ -2518,8 +2552,16 @@ Return ONLY a JSON:
                 this.recordEvent(task, 'task_started', 'Auto-merge: aguardando CI (required checks) ficar verde...');
                 const checks = await this.waitForPrMergeable(task.prNumber, CHECKS_TIMEOUT_MS);
                 if (!checks.ok) {
-                    this.recordEvent(task, 'task_failed', `Auto-merge adiado: CI não ficou verde a tempo (mergeStateStatus=${checks.state}). PR pronto p/ merge assim que a CI passar.`);
-                    task.status = 'reviewing';
+                    // Fase 0 item 5: conflito REAL (DIRTY/CONFLICTING) → humano. CI só LENTA (timeout) →
+                    // mantém 'approved' p/ o resumePendingMerges re-tentar quando a CI fechar (sobrevive a
+                    // restart). Antes virava 'reviewing' e o trabalho (judge alto) ficava preso esperando humano.
+                    if (/DIRTY|CONFLICTING/i.test(checks.state)) {
+                        this.recordEvent(task, 'task_failed', `Auto-merge bloqueado: conflito real (mergeStateStatus=${checks.state}). → revisão humana.`);
+                        task.status = 'reviewing';
+                    } else {
+                        this.recordEvent(task, 'task_started', `Auto-merge adiado: CI ainda não verde (${checks.state}) — mantido 'approved', re-tenta quando a CI fechar.`);
+                        // task.status permanece 'approved' (resumível pelo resumePendingMerges)
+                    }
                     this.save();
                     this.emitStatus(task);
                     return;
