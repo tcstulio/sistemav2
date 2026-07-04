@@ -14,6 +14,8 @@
  * and (c) mocked-component render tests for the CRUD assertions.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // ── Shared mocks ───────────────────────────────────────────────────────────────
 vi.mock('sonner', () => ({
@@ -355,5 +357,63 @@ describe('#615 — updateTicket inclui Cliente, Projeto, Responsável, Tipo', ()
                 type_code: 'REQUEST',
             })
         );
+    });
+});
+
+// ── #993: substituir alert/confirm por toasts sonner e Dialog de confirmação ──────
+// Nota: o render completo do TicketList trava no jsdom (issue pré-existente, ver topo
+// do arquivo). Aqui validamos os critérios #993 via inspeção estática da fonte + contratos,
+// sem reescrever/diminuir as suites existentes.
+describe('#993 — TicketList usa sonner + Dialog em vez de alert/confirm nativos', () => {
+    const source = fs.readFileSync(
+        path.resolve(__dirname, '../../components/TicketList.tsx'),
+        'utf-8'
+    );
+
+    it('não contém nenhuma chamada nativa de alert() ou confirm()', () => {
+        expect(source).not.toMatch(/window\.confirm/);
+        expect(source).not.toMatch(/window\.alert/);
+        // TicketList não usa o hook useConfirm, então qualquer alert(/confirm( seria nativo.
+        expect(source).not.toMatch(/alert\(/);
+        expect(source).not.toMatch(/confirm\(/);
+    });
+
+    it('dá feedback ao usuário via toast do sonner', () => {
+        expect(source).toMatch(/from 'sonner'/);
+        expect(source).toMatch(/toast\.(success|error|info)/);
+    });
+
+    it('ações destrutivas/de confirmação usam componentes de Dialog do Design System', () => {
+        // Exclusão usa ConfirmDeleteButton (modal); escalação usa Modal.
+        expect(source).toMatch(/ConfirmDeleteButton/);
+        expect(source).toMatch(/<Modal/);
+    });
+
+    it('fluxo de fechar/reabrir chamado preservado com feedback via toast', () => {
+        // handleCloseTicket / handleReopenTicket mantêm o fluxo e dão feedback por toast.
+        expect(source).toMatch(/handleCloseTicket/);
+        expect(source).toMatch(/handleReopenTicket/);
+        expect(source).toMatch(/Chamado marcado como resolvido\./);
+        expect(source).toMatch(/Chamado reaberto\./);
+        expect(source).toMatch(/Falha ao resolver o chamado\./);
+        expect(source).toMatch(/Falha ao reabrir o chamado\./);
+        // Resolve/reabre chama o serviço (statut 8 / 1) e faz refetch.
+        expect(source).toMatch(/closeTicket/);
+        expect(source).toMatch(/reopenTicket/);
+        expect(source).toMatch(/refetchTickets/);
+    });
+
+    it('contrato: closeTicket→statut 8 e reopenTicket→statut 1 continuam corretos', async () => {
+        const mockUpdateObject = vi.fn().mockResolvedValue({});
+        const closeTicket = async (config: any, id: string) =>
+            mockUpdateObject(config, 'tickets', id, { statut: '8' });
+        const reopenTicket = async (config: any, id: string) =>
+            mockUpdateObject(config, 'tickets', id, { statut: '1' });
+
+        await closeTicket({}, '10');
+        await reopenTicket({}, '11');
+
+        expect(mockUpdateObject).toHaveBeenNthCalledWith(1, {}, 'tickets', '10', { statut: '8' });
+        expect(mockUpdateObject).toHaveBeenNthCalledWith(2, {}, 'tickets', '11', { statut: '1' });
     });
 });
