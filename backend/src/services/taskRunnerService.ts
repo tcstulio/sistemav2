@@ -2266,36 +2266,47 @@ Return ONLY a JSON:
         return { ok: false, state: `timeout(${state})` };
     }
 
-    private async runVisualJudge(task: Task): Promise<void> {
+    /**
+     * Judge Visual ADVISORY (não-bloqueante). Produz a PROVA visual — score + resumo pt — a partir
+     * de screenshots antes/depois. NUNCA muda task.status nem dispara auto-merge (o gate de merge
+     * continua sendo a CI + branch protection, determinístico). Se `opts` traz paths já capturados
+     * (fluxo da Prova Visual manual), usa eles; senão auto-captura (assume um preview vivo na porta
+     * da task) — sempre AUTENTICADO, senão fotografaria só o login.
+     */
+    private async runVisualJudge(task: Task, opts?: { beforePath?: string; afterPath?: string }): Promise<void> {
         const issueNumber = task.issueNumber;
         log.info(`Visual Judge: starting for task #${issueNumber}`);
-        this.recordEvent(task, 'judge_started', 'Judge Visual: capturando screenshots...');
-        this.emitLog(issueNumber, 'info', 'Judge Visual: capturando screenshots antes/depois...');
+        this.recordEvent(task, 'judge_started', 'Judge Visual: analisando telas antes/depois...');
+        this.emitLog(issueNumber, 'info', 'Judge Visual: analisando telas antes/depois...');
 
         try {
-            const { frontendPort } = previewPortsFor(issueNumber);
-            const afterUrl = `http://localhost:${frontendPort}`;
-
-            const beforeUrl = 'http://localhost:3003';
-
             let beforePath: string;
             let afterPath: string;
-            try {
-                const result = await screenshotService.captureForTask(issueNumber, beforeUrl, afterUrl);
-                beforePath = result.beforePath;
-                afterPath = result.afterPath;
-                this.recordEvent(task, 'judge_started', 'Screenshots capturados. Executando Judge Visual via opencode + MCPs...');
-                this.emitLog(issueNumber, 'info', 'Screenshots OK. Enviando para analise visual (zai-vision + minimax)...');
-            } catch (e: any) {
-                this.recordEvent(task, 'judge_error', `Screenshot falhou: ${e.message} — pulando Judge Visual (não bloqueia auto-merge)`, { error: e.message });
-                this.emitLog(issueNumber, 'warn', `Screenshot falhou (${e.message}). Pulando Judge Visual — task pode seguir para merge.`);
-                task.visualReview = `Screenshot failed (skipped): ${e.message}`;
-                if (task.status === 'approved') {
-                    this.tryAutoMerge(task).catch((e2: any) => {
-                        log.warn(`Auto-merge após skip visual falhou para #${issueNumber}: ${e2?.message || e2}`);
-                    });
+            if (opts?.beforePath && opts?.afterPath) {
+                beforePath = opts.beforePath;
+                afterPath = opts.afterPath;
+            } else {
+                const { frontendPort } = previewPortsFor(issueNumber);
+                const afterUrl = `http://localhost:${frontendPort}`;
+                const beforeUrl = 'http://localhost:3003';
+                try {
+                    const result = await screenshotService.captureForTask(issueNumber, beforeUrl, afterUrl, { auth: true });
+                    beforePath = result.beforePath;
+                    afterPath = result.afterPath;
+                    this.recordEvent(task, 'judge_started', 'Screenshots capturados. Executando Judge Visual via opencode + MCPs...');
+                    this.emitLog(issueNumber, 'info', 'Screenshots OK. Enviando para analise visual (zai-vision + minimax)...');
+                } catch (e: any) {
+                    // ADVISORY: falha de captura NUNCA muda status nem dispara merge — só registra o
+                    // motivo (vira diagnóstico no painel "Prova visual": expõe o modo-de-falha nº1,
+                    // preview que não sobe).
+                    this.recordEvent(task, 'judge_error', `Screenshot falhou: ${e.message} (prova visual indisponível)`, { error: e.message });
+                    this.emitLog(issueNumber, 'warn', `Screenshot falhou (${e.message}). Prova visual indisponível.`);
+                    task.visualReview = `Screenshot failed: ${e.message}`;
+                    task.updatedAt = new Date().toISOString();
+                    this.save();
+                    this.emitStatus(task);
+                    return;
                 }
-                return;
             }
 
             const prompt = [
@@ -2349,33 +2360,117 @@ Return ONLY a JSON:
                     issues: result.issues || [],
                 });
                 this.emitLog(issueNumber, 'success', `Judge Visual: ${result.visual_score}/10 — ${(result.summary || '').substring(0, 150)}`);
-
-                if ((task.visualScore || 0) >= 8 && (task.judgeScore || 0) >= 8) {
-                    task.status = 'approved';
-                } else {
-                    task.status = 'reviewing';
-                }
             } else {
-                task.visualReview = 'Judge Visual failed to evaluate (no JSON in output)';
-                task.status = 'reviewing';
+                task.visualReview = 'Judge Visual não retornou score (sem JSON na saída)';
                 this.recordEvent(task, 'judge_error', 'Judge Visual: failed to parse response');
             }
         } catch (e: any) {
             log.error(`Visual Judge error for #${issueNumber}`, e);
             task.visualReview = `Visual Judge error: ${e.message}`;
-            task.status = 'reviewing';
             this.recordEvent(task, 'judge_error', `Visual Judge error: ${e.message}`, { error: e.message });
         }
 
+        // ADVISORY: o Judge Visual NUNCA muda task.status nem dispara auto-merge. Ele só produz a
+        // PROVA (screenshots + score + resumo), consumida sob demanda pelo painel "Prova visual".
         task.updatedAt = new Date().toISOString();
         this.save();
         this.emitStatus(task);
+    }
 
-        if (task.status === 'approved') {
-            this.tryAutoMerge(task).catch((e: any) => {
-                log.warn(`Auto-merge falhou para #${task.issueNumber}: ${e?.message || e}`);
-            });
+    /**
+     * PROVA VISUAL (manual/sob-demanda pelo painel do DiffViewer). Captura before/after
+     * AUTENTICADOS da branch da task e roda o Judge Visual advisory (grava visualScore/visualReview).
+     * NÃO altera status nem o caminho de merge. Best-effort: erros viram evento + visualReview e
+     * retornam `hasScreenshots:false` (a rota traduz o resultado; a UI mostra o motivo).
+     */
+    async generateVisualProof(issueNumber: number): Promise<{ visualScore?: number; visualReview?: string; hasScreenshots: boolean }> {
+        const task = this.store.tasks[issueNumber];
+        if (!task) throw new Error(`Task #${issueNumber} não encontrada`);
+        if (!task.branch) throw new Error('Task não tem branch — execute a task primeiro.');
+
+        this.recordEvent(task, 'judge_started', 'Prova visual solicitada — subindo preview e capturando telas autenticadas...');
+        this.emitStatus(task);
+
+        // 1) Captura before/after AUTENTICADOS via preview EFÊMERO sob o lock (livre-de-corrida).
+        let paths: { beforePath: string; afterPath: string };
+        try {
+            paths = await this.captureVisualProofPngs(task);
+        } catch (e: any) {
+            this.recordEvent(task, 'judge_error', `Prova visual: captura falhou — ${e.message}`, { error: e.message });
+            this.emitLog(issueNumber, 'warn', `Prova visual: captura falhou (${e.message}).`);
+            task.visualReview = `Captura de tela falhou: ${e.message}`;
+            task.updatedAt = new Date().toISOString();
+            this.save();
+            this.emitStatus(task);
+            return { visualReview: task.visualReview, hasScreenshots: false };
         }
+
+        // 2) Score ADVISORY do Judge Visual (best-effort; MiniMax pode estar sem saldo → zai-vision
+        // sozinho ainda dá score+resumo; se tudo falhar, as IMAGENS continuam sendo a prova).
+        try {
+            await this.runVisualJudge(task, paths);
+        } catch (e: any) {
+            log.warn(`Prova visual: judge advisory falhou para #${issueNumber}: ${e?.message || e}`);
+        }
+
+        return {
+            visualScore: task.visualScore,
+            visualReview: task.visualReview,
+            hasScreenshots: screenshotService.screenshotsExist(issueNumber),
+        };
+    }
+
+    /**
+     * Sobe um preview EFÊMERO (vite-only) da branch, captura before(:3003)/after(:previewPort)
+     * AUTENTICADOS e MATA o vite — TUDO sob o worktreeLock. Segurar o lock durante toda a captura
+     * torna o "depois" livre-de-corrida (nenhum checkout de task concorrente troca os arquivos sob
+     * o vite) SEM precisar de um worktree isolado dedicado (isso fica p/ a fase autônoma). O vite
+     * faz proxy de /api -> :3004 (backend principal), então não sobe backend por-preview.
+     */
+    private async captureVisualProofPngs(task: Task): Promise<{ beforePath: string; afterPath: string }> {
+        const issueNumber = task.issueNumber;
+        const { frontendPort } = previewPortsFor(issueNumber);
+        return this.withWorktreeLock(`visual-proof #${issueNumber}`, async () => {
+            // derruba um preview persistente na mesma porta (evita conflito de porta com o efêmero)
+            await this.stopPreview(issueNumber).catch(() => {});
+            await this.ensureWorktree(task.branch!);
+            await git(['checkout', task.branch!], { timeout: 15000, cwd: WT_ROOT });
+
+            const child = spawn(GIT_BASH, ['-lc', `npx vite --port ${frontendPort} --host`], {
+                cwd: WT_ROOT,
+                detached: false,
+                stdio: ['ignore', 'pipe', 'pipe'],
+                windowsHide: true,
+            });
+            try {
+                await this.waitForPort(frontendPort, 60_000);
+                await new Promise((r) => setTimeout(r, 2500)); // respiro p/ o vite servir o 1º bundle
+                this.emitLog(issueNumber, 'info', `Preview efêmero pronto (:${frontendPort}). Capturando telas autenticadas...`);
+                return await screenshotService.captureForTask(
+                    issueNumber, 'http://localhost:3003', `http://localhost:${frontendPort}`, { auth: true },
+                );
+            } finally {
+                if (child.pid) await killTree(child.pid).catch(() => {});
+            }
+        });
+    }
+
+    /** Espera uma porta TCP local aceitar conexão (preview de pé) até o timeout. */
+    private async waitForPort(port: number, timeoutMs: number): Promise<void> {
+        const net = await import('net');
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            const ok = await new Promise<boolean>((resolve) => {
+                const sock = net.connect(port, '127.0.0.1');
+                const done = (v: boolean) => { try { sock.destroy(); } catch { /* noop */ } resolve(v); };
+                sock.once('connect', () => done(true));
+                sock.once('error', () => done(false));
+                sock.setTimeout(2000, () => done(false));
+            });
+            if (ok) return;
+            await new Promise((r) => setTimeout(r, 1500));
+        }
+        throw new Error(`Porta ${port} não respondeu em ${timeoutMs}ms (preview não subiu)`);
     }
 
     /**

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from '../ui';
-import { X, FileText, Plus, Minus, ChevronDown, ChevronRight, ExternalLink, RotateCcw, GitMerge, XCircle } from 'lucide-react';
+import { X, FileText, Plus, Minus, ChevronDown, ChevronRight, ExternalLink, RotateCcw, GitMerge, XCircle, Image as ImageIcon, Camera, Loader2 } from 'lucide-react';
+import { TaskService } from '../../services/taskService';
 
 interface DiffFile {
     path: string;
@@ -115,10 +116,95 @@ const DiffFileBlock: React.FC<{ file: DiffFile }> = ({ file }) => {
     );
 };
 
+// Painel "Prova visual": mostra before/after AUTENTICADOS + score/resumo do Judge Visual (advisory),
+// e permite gerar/regerar sob demanda. As imagens são buscadas por fetch autenticado (blob) — a
+// apiKey nunca vai na querystring do <img src>.
+const VisualProofPanel: React.FC<{ issueNumber: number; initialScore?: number; initialReview?: string }> = ({ issueNumber, initialScore, initialReview }) => {
+    const [beforeSrc, setBeforeSrc] = useState<string | null>(null);
+    const [afterSrc, setAfterSrc] = useState<string | null>(null);
+    const [score, setScore] = useState<number | undefined>(initialScore);
+    const [review, setReview] = useState<string | undefined>(initialReview);
+    const [loading, setLoading] = useState(false);
+    const [loadedShots, setLoadedShots] = useState(false);
+    const [err, setErr] = useState<string | null>(null);
+
+    const loadShots = useCallback(async () => {
+        const b = await TaskService.getScreenshotBlobUrl(issueNumber, 'before').catch(() => null);
+        const a = await TaskService.getScreenshotBlobUrl(issueNumber, 'after').catch(() => null);
+        setBeforeSrc(prev => { if (prev && prev !== b) URL.revokeObjectURL(prev); return b; });
+        setAfterSrc(prev => { if (prev && prev !== a) URL.revokeObjectURL(prev); return a; });
+        setLoadedShots(true);
+    }, [issueNumber]);
+
+    useEffect(() => { loadShots(); }, [loadShots]);
+
+    const generate = async () => {
+        setLoading(true); setErr(null);
+        try {
+            const r = await TaskService.generateVisualProof(issueNumber);
+            setScore(r.visualScore);
+            setReview(r.visualReview);
+            if (!r.hasScreenshots) setErr(r.visualReview || 'Não foi possível capturar as telas (o preview não subiu?).');
+            await loadShots();
+        } catch (e: any) {
+            setErr(e?.response?.data?.error || e?.message || 'Falha ao gerar a prova visual');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const hasProof = !!(beforeSrc || afterSrc);
+    const scoreColor = score === undefined ? '' : score >= 8
+        ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
+        : score >= 5 ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
+        : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300';
+
+    return (
+        <div className="mx-6 mt-4 p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/30">
+            <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                    <ImageIcon size={15} className="text-indigo-500" />
+                    <span className="text-sm font-bold text-slate-700 dark:text-slate-200">Prova visual</span>
+                    {score !== undefined && <span className={`text-xs font-mono px-2 py-0.5 rounded-full ${scoreColor}`}>{score}/10</span>}
+                </div>
+                <Button variant="ghost" size="sm" icon={loading ? <Loader2 size={13} className="animate-spin" /> : <Camera size={13} />} onClick={generate} disabled={loading}>
+                    {loading ? 'Gerando…' : hasProof ? 'Regerar' : 'Gerar prova visual'}
+                </Button>
+            </div>
+
+            {review && <p className="text-xs text-slate-600 dark:text-slate-300 whitespace-pre-wrap mb-3">{review}</p>}
+
+            {hasProof ? (
+                <div className="grid grid-cols-2 gap-3">
+                    <figure className="space-y-1 m-0">
+                        <figcaption className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">Antes (main)</figcaption>
+                        {beforeSrc ? <img src={beforeSrc} alt="Antes" className="rounded-lg border border-slate-200 dark:border-slate-700 w-full" /> : <div className="text-xs text-slate-400 py-8 text-center">—</div>}
+                    </figure>
+                    <figure className="space-y-1 m-0">
+                        <figcaption className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold">Depois (esta branch)</figcaption>
+                        {afterSrc ? <img src={afterSrc} alt="Depois" className="rounded-lg border border-slate-200 dark:border-slate-700 w-full" /> : <div className="text-xs text-slate-400 py-8 text-center">—</div>}
+                    </figure>
+                </div>
+            ) : loading ? (
+                <div className="text-xs text-slate-400 py-6 text-center">Subindo o preview e fotografando as telas autenticadas… (pode levar ~1-2 min)</div>
+            ) : (
+                <div className="text-xs text-slate-400 py-4 text-center">
+                    {loadedShots ? 'Sem prova visual ainda — clique em "Gerar prova visual" para fotografar a tela autenticada antes/depois.' : 'Carregando…'}
+                </div>
+            )}
+
+            {err && <p className="text-xs text-red-500 mt-2 whitespace-pre-wrap">{err}</p>}
+        </div>
+    );
+};
+
 interface DiffViewerProps {
     diff: string;
+    issueNumber?: number;
     judgeScore?: number;
     judgeReview?: string;
+    visualScore?: number;
+    visualReview?: string;
     prUrl?: string;
     onClose: () => void;
     onMerge: () => void;
@@ -126,7 +212,7 @@ interface DiffViewerProps {
     onReject: () => void;
 }
 
-const DiffViewer: React.FC<DiffViewerProps> = ({ diff, judgeScore, judgeReview, prUrl, onClose, onMerge, onFix, onReject }) => {
+const DiffViewer: React.FC<DiffViewerProps> = ({ diff, issueNumber, judgeScore, judgeReview, visualScore, visualReview, prUrl, onClose, onMerge, onFix, onReject }) => {
     const files = parseDiff(diff);
     const totalAdd = files.reduce((s, f) => s + f.additions, 0);
     const totalDel = files.reduce((s, f) => s + f.deletions, 0);
@@ -173,6 +259,11 @@ const DiffViewer: React.FC<DiffViewerProps> = ({ diff, judgeScore, judgeReview, 
                         </div>
                         <p className="text-xs text-slate-600 dark:text-slate-300 whitespace-pre-wrap">{judgeReview}</p>
                     </div>
+                )}
+
+                {/* Prova visual (advisory) — só quando temos a task */}
+                {issueNumber !== undefined && (
+                    <VisualProofPanel issueNumber={issueNumber} initialScore={visualScore} initialReview={visualReview} />
                 )}
 
                 {/* Diff Content */}
