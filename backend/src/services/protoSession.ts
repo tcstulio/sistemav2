@@ -31,6 +31,10 @@ interface ProtoSession {
         employee?: number;
         socid?: number;
         photo?: string;
+        phone_mobile?: string;
+        user_mobile?: string;
+        fax?: string;
+        office_phone?: string;
     };
 }
 
@@ -89,6 +93,10 @@ export function createProtoSession(login: string, dolapikey: string, userData?: 
             employee: userData.employee,
             socid: userData.socid,
             photo: userData.photo,
+            phone_mobile: userData.phone_mobile,
+            user_mobile: userData.user_mobile,
+            fax: userData.fax,
+            office_phone: userData.office_phone,
         } : undefined,
     });
     persist();
@@ -112,6 +120,10 @@ export function setProtoSessionUserData(token: string, userData: any): void {
         employee: userData.employee,
         socid: userData.socid,
         photo: userData.photo,
+        phone_mobile: userData.phone_mobile,
+        user_mobile: userData.user_mobile,
+        fax: userData.fax,
+        office_phone: userData.office_phone,
     };
     persist();
 }

@@ -319,6 +319,49 @@ describe('API Core', () => {
             expect(result).toEqual({ id: '1', login: 'test', permissions: [] });
         });
 
+        it('#1003: mapeia user_mobile (Dolibarr) para phone_mobile no usuário logado', async () => {
+            const mockUsersResponse = {
+                ok: true,
+                json: () => Promise.resolve([{ id: '17', login: 'tulio.silva' }])
+            };
+            const mockUserResponse = {
+                ok: true,
+                json: () => Promise.resolve({
+                    id: '17', login: 'tulio.silva',
+                    user_mobile: '+55 11 99999-0000',
+                    rights: { test: { read: '1' } },
+                })
+            };
+            mockFetch
+                .mockResolvedValueOnce(mockUsersResponse)
+                .mockResolvedValueOnce(mockUserResponse);
+
+            const result = await core.fetchCurrentUser({ apiUrl: '', apiKey: 'test' } as any, 'tulio.silva');
+
+            expect(result).not.toBeNull();
+            expect(result!.phone_mobile).toBe('+55 11 99999-0000');
+            expect(result!.user_mobile).toBe('+55 11 99999-0000');
+        });
+
+        it('#1003: não sobrescreve phone_mobile quando já vem preenchido', async () => {
+            const mockUsersResponse = {
+                ok: true,
+                json: () => Promise.resolve([{ id: '1', login: 'a' }])
+            };
+            const mockUserResponse = {
+                ok: true,
+                json: () => Promise.resolve({ id: '1', login: 'a', phone_mobile: '+55 11 1111-1111', user_mobile: '+55 11 2222-2222' })
+            };
+            mockFetch
+                .mockResolvedValueOnce(mockUsersResponse)
+                .mockResolvedValueOnce(mockUserResponse);
+
+            const result = await core.fetchCurrentUser({ apiUrl: '', apiKey: 'test' } as any, 'a');
+
+            expect(result).not.toBeNull();
+            expect(result!.phone_mobile).toBe('+55 11 1111-1111');
+        });
+
         it('returns null when no users found', async () => {
             const mockResponse = {
                 ok: true,

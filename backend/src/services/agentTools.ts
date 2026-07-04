@@ -1008,9 +1008,11 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             const users = await dolibarrService.listUsers(args?.search);
             if (users.length === 0) return 'Nenhum usuário encontrado.';
             return '<h3>👥 Usuários</h3><ul>' +
-                users.map((u: any) =>
-                    `<li><a href="/hr/${u.id}" class="text-blue-600 underline font-semibold">${u.lastname} ${u.firstname}</a> — ${u.email || ''} ${u.job ? '(' + u.job + ')' : ''}</li>`
-                ).join('') + '</ul>';
+                users.map((u: any) => {
+                    const mobile = u.phone_mobile || u.user_mobile;
+                    const parts = [u.email || '', u.job ? '(' + u.job + ')' : '', mobile ? `📱 ${mobile}` : '', u.fax ? `📠 ${u.fax}` : ''].filter(Boolean);
+                    return `<li><a href="/hr/${u.id}" class="text-blue-600 underline font-semibold">${u.lastname} ${u.firstname}</a> — ${parts.join(' ')}</li>`;
+                }).join('') + '</ul>';
         }
         case 'list_warehouses': {
             const warehouses = await dolibarrService.listWarehouses();

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useDolibarr, PreviewTarget } from '../../context/DolibarrContext';
 import { DolibarrService } from '../../services/dolibarrService';
-import { Menu, Settings, Bell, RefreshCw, User, LogOut, ChevronDown, Eye, EyeOff, Search } from 'lucide-react';
+import { Menu, Settings, Bell, RefreshCw, User, LogOut, ChevronDown, Eye, EyeOff, Search, Phone } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { UserAvatar } from '../HR/UserAvatar';
 
@@ -226,6 +226,11 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
                                         {currentUser?.job ? `${currentUser.job} • ` : ''} 
                                         {currentUser?.email || currentUser?.login || 'Usuário'}
                                     </p>
+                                    {currentUser?.phone_mobile && (
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate flex items-center gap-1 mt-1">
+                                            <Phone size={11} /> {currentUser.phone_mobile}
+                                        </p>
+                                    )}
                                 </div>
 
                                 <button

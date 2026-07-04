@@ -214,6 +214,9 @@ app.use('/api/integration', integrationRoutes);
 import uiConfigRoutes from './routes/uiConfigRoutes';
 app.use('/api/ui-config', uiConfigRoutes);
 
+import userRoutes from './routes/userRoutes';
+app.use('/api/users', userRoutes);
+
 import dashboardRoutes from './routes/dashboardRoutes';
 app.use('/api/dashboard', dashboardRoutes);
 

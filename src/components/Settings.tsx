@@ -280,6 +280,8 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                             <div className="space-y-4">
                                 <h4 className="font-semibold text-sm text-slate-700 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 pb-2">Dados Adicionais</h4>
                                 <div className="space-y-2">
+                                    <p className="text-sm"><span className="text-slate-500 font-medium">Celular:</span> {localConfig.currentUser?.phone_mobile || 'Não informado'}</p>
+                                    <p className="text-sm"><span className="text-slate-500 font-medium">Telefone:</span> {localConfig.currentUser?.office_phone || 'Não informado'}</p>
                                     <p className="text-sm"><span className="text-slate-500 font-medium">Endereço:</span> {localConfig.currentUser?.address || 'Não informado'}</p>
                                     <p className="text-sm"><span className="text-slate-500 font-medium">CEP:</span> {localConfig.currentUser?.zip || 'Não informado'}</p>
                                     <p className="text-sm"><span className="text-slate-500 font-medium">Cidade:</span> {localConfig.currentUser?.town || 'Não informado'}</p>

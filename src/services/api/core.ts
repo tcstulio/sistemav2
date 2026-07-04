@@ -450,6 +450,14 @@ export const fetchCurrentUser = async (config: DolibarrConfig, loginHint?: strin
                 headers: getHeaders(config.apiKey)
             });
 
+            // Normaliza o celular (#1003): o Dolibarr expõe o mobile do usuário como
+            // `user_mobile` em alguns endpoints (users/info, users/{id}); o tipo/app usam
+            // `phone_mobile`. Sem isto, o currentUser ficava sem celular mesmo quando
+            // cadastrado no Dolibarr.
+            if (fullUser && !fullUser.phone_mobile && fullUser.user_mobile) {
+                fullUser.phone_mobile = fullUser.user_mobile;
+            }
+
             return fullUser;
         }
     } catch (e) {
