@@ -10,6 +10,68 @@ import { createLogger } from '../../utils/logger';
 
 const log = createLogger('DolibarrHR');
 
+/**
+ * Solicitação de férias/licença (módulo "holiday" do Dolibarr).
+ * Contém APENAS campos de leave — nunca campos de ExpenseReport (#986).
+ * statut: 1=Draft, 2=Validated(à aprovar), 3=Approved, 4=Canceled, 5=Refused.
+ */
+export interface LeaveRequest {
+    id: string;
+    ref: string;
+    fk_user: string;
+    date_debut: number;
+    date_fin: number;
+    halfday?: string;
+    type?: string;
+    statut: string;
+    description?: string;
+    fk_validator?: string;
+    date_valid?: number;
+    fk_user_valid?: string;
+    date_refuse?: number;
+    fk_user_refuse?: string;
+    detail_refuse?: string;
+    detail_cancel?: string;
+    date_create?: number;
+    duration?: number;
+}
+
+/** Normaliza um objeto cru de /holidays para LeaveRequest (pick de campos, sem vazamento). */
+function mapLeaveRequest(d: Record<string, any>): LeaveRequest {
+    return {
+        id: String(d.id ?? d.rowid ?? ''),
+        ref: String(d.ref ?? ''),
+        fk_user: String(d.fk_user ?? ''),
+        date_debut: parseInt(d.date_debut, 10) || 0,
+        date_fin: parseInt(d.date_fin, 10) || 0,
+        halfday: d.halfday != null ? String(d.halfday) : undefined,
+        type: d.fk_type != null ? String(d.fk_type) : (d.type != null ? String(d.type) : undefined),
+        statut: String(d.statut ?? d.statut_code ?? ''),
+        description: d.description,
+        fk_validator: d.fk_validator != null ? String(d.fk_validator) : undefined,
+        date_valid: d.date_valid ? parseInt(d.date_valid, 10) : undefined,
+        fk_user_valid: d.fk_user_valid != null ? String(d.fk_user_valid) : undefined,
+        date_refuse: d.date_refuse ? parseInt(d.date_refuse, 10) : undefined,
+        fk_user_refuse: d.fk_user_refuse != null ? String(d.fk_user_refuse) : undefined,
+        detail_refuse: d.detail_refuse,
+        detail_cancel: d.detail_cancel,
+        date_create: d.date_create ? parseInt(d.date_create, 10) : undefined,
+        duration: d.duration != null ? parseFloat(d.duration) : undefined,
+    };
+}
+
+/**
+ * Filtros de sqlfilters por status para /holidays (coluna `statut` da tabela
+ * llx_holiday: 1=Draft, 2=Validated, 3=Approved, 4=Canceled, 5=Refused). (#986)
+ */
+const LEAVE_STATUS_FILTERS: Record<string, string> = {
+    draft: "(t.statut:=:'1')",
+    pending: "(t.statut:=:'2')",
+    approved: "(t.statut:=:'3')",
+    canceled: "(t.statut:=:'4')",
+    refused: "(t.statut:=:'5')",
+};
+
 export class DolibarrHRService extends DolibarrServiceBase {
 
     async getUserById(id: string): Promise<any | null> {
@@ -217,20 +279,21 @@ export class DolibarrHRService extends DolibarrServiceBase {
         }
     }
 
-    async listLeaveRequests(status?: string): Promise<any[]> {
+    async listLeaveRequests(status?: string): Promise<LeaveRequest[]> {
         try {
             const headers = this.getHeaders();
             const url = `${this.baseUrl}holidays`;
             const params: any = { limit: 10 };
-            if (status === 'approved') params.sqlfilters = "(t.status:=:'3')";
-            if (status === 'pending') params.sqlfilters = "(t.status:=:'2')";
+            const filter = status ? LEAVE_STATUS_FILTERS[status] : undefined;
+            if (filter) params.sqlfilters = filter;
             const response = await axios.get(url, {
                 headers,
                 params,
                 httpsAgent: this.httpsAgent,
                 validateStatus: (s) => s === 200
             });
-            return Array.isArray(response.data) ? response.data : [];
+            const raw = Array.isArray(response.data) ? response.data : [];
+            return raw.map(mapLeaveRequest);
         } catch (error) {
             log.error('listLeaveRequests Error', error);
             return [];

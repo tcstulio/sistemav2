@@ -162,7 +162,7 @@ export { DolibarrCommercialService } from './commercial';
 export { DolibarrPaymentsService } from './payments';
 export { DolibarrProductsService } from './products';
 export { DolibarrOperationsService } from './operations';
-export { DolibarrHRService } from './hr';
+export { DolibarrHRService, LeaveRequest } from './hr';
 export { DolibarrManufacturingService } from './manufacturing';
 export { DolibarrSuppliersService } from './suppliers';
 export { DolibarrPartnershipsService, VenuePartnership } from './partnerships';

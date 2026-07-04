@@ -1115,9 +1115,11 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             const leaves = await dolibarrService.listLeaveRequests(args?.status);
             if (leaves.length === 0) return 'Nenhuma solicitação de férias encontrada.';
             return '<h3>🏖️ Solicitações de Férias</h3><ul>' +
-                leaves.map((l: any) =>
-                    `<li><a href="/hr/leaves" class="text-blue-600 underline font-semibold">${l.ref}</a> — ${l.date_debut || ''}</li>`
-                ).join('') + '</ul>';
+                leaves.map((l: any) => {
+                    const ts = l.date_debut;
+                    const debut = ts ? new Date(ts < 1e12 ? ts * 1000 : ts).toLocaleDateString('pt-BR') : '';
+                    return `<li><a href="/hr/leaves" class="text-blue-600 underline font-semibold">${l.ref}</a> — ${debut}</li>`;
+                }).join('') + '</ul>';
         }
         case 'list_boms': {
             const boms = await dolibarrService.listBOMs(args?.search);
