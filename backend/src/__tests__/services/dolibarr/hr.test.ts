@@ -219,7 +219,7 @@ describe('DolibarrHRService', () => {
             expect(params.sqlfilters).toBeUndefined();
         });
 
-        it('maps raw holiday into LeaveRequest shape', async () => {
+        it('maps raw holiday into LeaveRequest shape (timestamps normalized to ms epoch)', async () => {
             const raw = {
                 id: 42, ref: 'LV2024', fk_user: 7, date_debut: '1609459200',
                 date_fin: '1609545600', fk_type: '2', statut: '3',
@@ -229,14 +229,36 @@ describe('DolibarrHRService', () => {
             const result = await service.listLeaveRequests();
             expect(result[0]).toEqual({
                 id: '42', ref: 'LV2024', fk_user: '7',
-                date_debut: 1609459200, date_fin: 1609545600,
+                date_debut: 1609459200000, date_fin: 1609545600000,
                 halfday: undefined, type: '2', statut: '3',
                 description: 'Ferias', fk_validator: '9',
                 date_valid: undefined, fk_user_valid: undefined,
                 date_refuse: undefined, fk_user_refuse: undefined,
                 detail_refuse: undefined, detail_cancel: undefined,
-                date_create: 1609200000, duration: undefined,
+                date_create: 1609200000000, date_modification: undefined, duration: undefined,
             });
+        });
+
+        it('normalizes date strings and maps tms to date_modification', async () => {
+            // Dolibarr pode retornar datas como string 'YYYY-MM-DD' (não apenas timestamps).
+            // parseInt('2024-01-10') = 2024 (errado); toLeaveTimestamp resolve corretamente. (#986)
+            const raw = {
+                id: 1, fk_user: 2, statut: '3',
+                date_debut: '2024-01-10',
+                date_fin: '2024-01-15',
+                tms: '1700000000',
+            };
+            mockAxios.get.mockResolvedValue({ status: 200, data: [raw] });
+            const [row] = await service.listLeaveRequests();
+            expect(row.date_debut).toBe(new Date('2024-01-10').getTime());
+            expect(row.date_fin).toBe(new Date('2024-01-15').getTime());
+            expect(row.date_modification).toBe(1700000000000);
+        });
+
+        it('treats the `status` alias as `statut`', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: [{ id: 1, fk_user: 2, status: 3 }] });
+            const [row] = await service.listLeaveRequests();
+            expect(row.statut).toBe('3');
         });
 
         it('does not leak ExpenseReport fields into the result', async () => {
