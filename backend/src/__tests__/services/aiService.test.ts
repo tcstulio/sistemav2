@@ -102,7 +102,7 @@ vi.mock('../../services/scraperService', () => ({
     },
 }));
 
-import { aiService, LocalProvider, aggregateInvoicesToMonthlySeries, estimateTokens, pruneContext } from '../../services/aiService';
+import { aiService, LocalProvider, aggregateInvoicesToMonthlySeries, estimateTokens, pruneContext, toolCallSignature, stableStringify, evaluateConclusionGate, looksLikeUnfinishedAnnouncement, MAX_CONCLUSION_NUDGES } from '../../services/aiService';
 import { GoogleGenAI } from '@google/genai';
 import { dolibarrService } from '../../services/dolibarrService';
 import { ScraperService } from '../../services/scraperService';
@@ -923,5 +923,204 @@ describe('pruneContext (#956)', () => {
         expect(out).toContain('poda de contexto');          // o erro (antigo) foi resumido
         expect(out).not.toContain('E'.repeat(5000));        // erro truncado
         expect(out).toContain('T'.repeat(5000));            // último bloco (recente) intacto
+    });
+});
+
+// ── #957: assinatura canônica de tool-call (normaliza ordem das chaves) ───────────────
+describe('toolCallSignature / stableStringify (#957)', () => {
+    it('gera assinatura tool:args', () => {
+        expect(toolCallSignature('list_users', { search: 'marcus' })).toBe('list_users:{"search":"marcus"}');
+    });
+
+    it('ordem de chaves DIFERENTE produz a MESMA assinatura (normalização)', () => {
+        const a = toolCallSignature('list_products', { search: 'x', limit: 10 });
+        const b = toolCallSignature('list_products', { limit: 10, search: 'x' });
+        expect(a).toBe(b);
+    });
+
+    it('normaliza recursivamente objetos aninhados', () => {
+        const a = toolCallSignature('t', { filter: { b: 2, a: 1 } });
+        const b = toolCallSignature('t', { filter: { a: 1, b: 2 } });
+        expect(a).toBe(b);
+    });
+
+    it('PRESERVA a ordem de arrays (faz parte da semântica do args)', () => {
+        expect(toolCallSignature('t', { ids: [1, 2] })).not.toBe(toolCallSignature('t', { ids: [2, 1] }));
+    });
+
+    it('args distintos geram assinaturas distintas', () => {
+        expect(toolCallSignature('t', { a: 1 })).not.toBe(toolCallSignature('t', { a: 2 }));
+    });
+
+    it('tolera null/undefined nos args', () => {
+        expect(toolCallSignature('t', null)).toBe(toolCallSignature('t', undefined));
+        expect(typeof toolCallSignature('t', undefined)).toBe('string');
+    });
+
+    it('stableStringify é determinístico e ordena chaves de nível superior', () => {
+        expect(stableStringify({ b: 2, a: 1, c: { z: 9, y: 8 } })).toBe('{"a":1,"b":2,"c":{"y":8,"z":9}}');
+    });
+});
+
+// ── #957/#955: detector estrutural "anuncia e para" (substitui regex lexical #954) ────
+describe('looksLikeUnfinishedAnnouncement (#957/#955)', () => {
+    it('detecta anúncio com verbo + reticências', () => {
+        expect(looksLikeUnfinishedAnnouncement('Vou verificar os logs...')).toBe(true);
+    });
+
+    it('detecta o caso que a regex #954 PERDIA: "Vou disparar as 6 ferramentas…:"', () => {
+        expect(looksLikeUnfinishedAnnouncement('Vou disparar as 6 ferramentas…:')).toBe(true);
+    });
+
+    it('detecta intenção em inglês terminando com ":"', () => {
+        expect(looksLikeUnfinishedAnnouncement('Let me check the logs:')).toBe(true);
+    });
+
+    it('detecta somente o sinal de continuação (":") em texto curto', () => {
+        expect(looksLikeUnfinishedAnnouncement('Os resultados foram:')).toBe(true);
+    });
+
+    it('NÃO marca resposta com substância (valores) como anúncio', () => {
+        expect(looksLikeUnfinishedAnnouncement('O cliente tem R$ 1.500,00 em aberto.')).toBe(false);
+    });
+
+    it('NÃO marca resposta com pergunta ao usuário como anúncio', () => {
+        expect(looksLikeUnfinishedAnnouncement('Qual projeto você quer consultar?')).toBe(false);
+    });
+
+    it('NÃO marca resposta longa e detalhada como anúncio', () => {
+        expect(looksLikeUnfinishedAnnouncement('Resposta detalhada. ' + 'x'.repeat(700))).toBe(false);
+    });
+
+    it('string vazia não é anúncio', () => {
+        expect(looksLikeUnfinishedAnnouncement('')).toBe(false);
+    });
+});
+
+// ── #957/#955: gate de conclusão estruturado ─────────────────────────────────────────
+describe('evaluateConclusionGate (#957/#955)', () => {
+    const base = { nudgedCount: 0, iteration: 0, maxIterations: 30 };
+
+    it('resposta substantiva -> conclude', () => {
+        expect(evaluateConclusionGate({ ...base, reply: 'O saldo do cliente é R$ 2.000,00.' }).action).toBe('conclude');
+    });
+
+    it('anúncio com orçamento de nudge -> nudge', () => {
+        expect(evaluateConclusionGate({ ...base, reply: 'Vou verificar os logs...' }).action).toBe('nudge');
+    });
+
+    it('anúncio após esgotar o teto de nudges -> synthesize (não devolve cru)', () => {
+        const r = evaluateConclusionGate({ ...base, reply: 'Vou verificar...', nudgedCount: MAX_CONCLUSION_NUDGES });
+        expect(r.action).toBe('synthesize');
+    });
+
+    it('anúncio na última iteração útil -> synthesize', () => {
+        const r = evaluateConclusionGate({ ...base, reply: 'Deixa eu checar:', nudgedCount: 0, iteration: 29, maxIterations: 30 });
+        expect(r.action).toBe('synthesize');
+    });
+
+    it('pode cutucar mais de 1 vez (não tem o limite de 1x do #954)', () => {
+        // 1º nudge consumiu 1; ainda há orçamento para um 2º.
+        expect(evaluateConclusionGate({ ...base, reply: 'Vou verificar...', nudgedCount: 1 }).action).toBe('nudge');
+    });
+
+    it('resposta vazia -> conclude', () => {
+        expect(evaluateConclusionGate({ reply: '', nudgedCount: 0, iteration: 0, maxIterations: 30 }).action).toBe('conclude');
+    });
+});
+
+// ── #957: integração no loop do LocalProvider (agente Marciano) ──────────────────────
+describe('LocalProvider.generateReply (#957) — seenToolCalls + gate de conclusão', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        aiService.setConfig('local', 'http://localhost:11434/v1', undefined, 'llama3');
+    });
+
+    it('re-chamada legítima (mesma tool+args) NÃO encerra o turno silenciosamente: avisa e continua', async () => {
+        (dolibarrService.listUsers as any).mockResolvedValue([]);
+
+        let call = 0;
+        (axios.post as any).mockImplementation(async () => {
+            call++;
+            if (call === 1) return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"search":"marcus"}}' } }] } };
+            if (call === 2) {
+                // modelo repete a MESMA chamada (args idênticos) -> duplicata.
+                return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"search":"marcus"}}' } }] } };
+            }
+            if (call === 3) {
+                // modelo atende ao aviso e VARIA os parâmetros -> executa de novo (progresso).
+                return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"search":"marcus oliveira"}}' } }] } };
+            }
+            return { data: { choices: [{ message: { content: 'Marcus Oliveira encontrado.' } }] } };
+        });
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'ache o marcus' } as any], 'ctx');
+
+        // Concluiu com a resposta final (não caiu em síntese prematura nem em "Max iterations").
+        expect(result.text).toBe('Marcus Oliveira encontrado.');
+
+        // O aviso de duplicata foi injetado e aproveitado na chamada seguinte (prova continue, não break).
+        const promptCall3 = (axios.post as any).mock.calls[2][1].messages[0].content;
+        expect(promptCall3).toContain('já chamou list_users');
+    });
+
+    it('seenToolCalls normaliza ordem de chaves: args equivalentes contam como duplicata', async () => {
+        (dolibarrService.listUsers as any).mockResolvedValue([]);
+        let call = 0;
+        (axios.post as any).mockImplementation(async () => {
+            call++;
+            if (call === 1) return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"search":"x","limit":5}}' } }] } };
+            if (call === 2) {
+                // MESMA semântica, ordem de chaves diferente -> antes NÃO era dedupado (#957 corrige).
+                return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"limit":5,"search":"x"}}' } }] } };
+            }
+            return { data: { choices: [{ message: { content: 'Concluído com os dados.' } }] } };
+        });
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'busca x' } as any], 'ctx');
+
+        expect(result.text).toBe('Concluído com os dados.');
+        // list_users foi executado SÓ na 1ª chamada (a 2ª foi reconhecida como duplicata normalizada).
+        expect((dolibarrService.listUsers as any).mock.calls.length).toBe(1);
+        const promptCall3 = (axios.post as any).mock.calls[2][1].messages[0].content;
+        expect(promptCall3).toContain('já chamou list_users');
+    });
+
+    it('gate de conclusão cutuca o caso "Vou disparar as 6 ferramentas…:" que a regex #954 perdia', async () => {
+        (dolibarrService.listUsers as any).mockResolvedValue([]);
+        let call = 0;
+        (axios.post as any).mockImplementation(async () => {
+            call++;
+            if (call === 1) return { data: { choices: [{ message: { content: 'Vou disparar as 6 ferramentas…:' } }] } };
+            if (call === 2) return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"search":"x"}}' } }] } };
+            return { data: { choices: [{ message: { content: 'Pronto, concluí o levantamento.' } }] } };
+        });
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'levanta tudo' } as any], 'ctx');
+
+        expect(result.text).toBe('Pronto, concluí o levantamento.');
+        // O gate injetou o nudge estruturado (não a regex #954) — visível no prompt da 2ª chamada.
+        const promptCall2 = (axios.post as any).mock.calls[1][1].messages[0].content;
+        expect(promptCall2).toContain('ANUNCIOU uma ação');
+    });
+
+    it('gate esgota o orçamento de nudges -> força síntese (não devolve o anúncio cru)', async () => {
+        (dolibarrService.listUsers as any).mockResolvedValue([]);
+        let call = 0;
+        (axios.post as any).mockImplementation(async () => {
+            call++;
+            if (call <= 3) return { data: { choices: [{ message: { content: 'Vou verificar de novo…' } }] } }; // insiste no anúncio
+            return { data: { choices: [{ message: { content: 'Resumo sintético do que foi coletado.' } }] } };    // síntese
+        });
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'qualquer coisa' } as any], 'ctx');
+
+        // Não devolveu o anúncio cru; foi para a síntese.
+        expect(result.text).toBe('Resumo sintético do que foi coletado.');
+        expect(result.text).not.toContain('Vou verificar');
     });
 });

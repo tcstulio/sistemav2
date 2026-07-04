@@ -177,6 +177,75 @@ export function pruneContext(context: string, budgetChars: number, keepRecent = 
     return head + summarizedOld.join('') + summarizedRecent.join('');
 }
 
+// #957: stringificação DETERMINÍSTICA de um valor (ordena as chaves dos objetos, recursivo).
+// O JSON.stringify padrão depende da ordem de inserção -> args {b:2,a:1} e {a:1,b:2} viravam
+// assinaturas diferentes e quebravam o dedup. Arrays preservam a ordem (faz parte da semântica).
+export function stableStringify(value: any): string {
+    return JSON.stringify(value, (_k, v) => {
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+            return Object.keys(v).sort().reduce((acc: any, k) => { acc[k] = v[k]; return acc; }, {});
+        }
+        return v;
+    });
+}
+
+// #957: assinatura canônica de uma tool-call para dedup no loop do agente. Normaliza a ordem
+// das chaves dos args via stableStringify. Função PURA (testável).
+export function toolCallSignature(tool: string, args: any): string {
+    return `${tool}:${stableStringify(args ?? {})}`;
+}
+
+// #957/#955: teto de quantas vezes o gate de conclusão cutuca um "anuncia e para" antes de
+// desistir e forçar síntese. Substitui o "dispara no máximo 1x" do nudge lexical #954.
+export const MAX_CONCLUSION_NUDGES = 2;
+
+// #957/#955: detector ESTRUTURAL de "anuncia e para" — substitui a regex lexical estreita do
+// nudge #954. Um turno SEM tool-call é um anúncio NÃO-finalizado quando é curto, dominado por
+// uma intenção de ação futura em 1ª pessoa OU termina com sinal de "continua" (":", reticências,
+// seta), e NÃO entrega substância de resposta (pergunta ao usuário, valores, texto longo).
+// Robusto aos modos reais de falha que a regex #954 perdia (ex.: "Vou disparar as 6 ferramentas…:").
+export function looksLikeUnfinishedAnnouncement(text: string): boolean {
+    const t = (text || '').trim();
+    if (!t) return false;
+    const lower = t.toLowerCase();
+    const short = t.length < 280;
+    const trailingCue = /(:|\.\.\.|…|->)$/.test(t);
+    const intentionCue = /\b(vou|vamos|deixa eu|deixa-me|me deixe|permita-me|irei|pretendo|preciso|estou a|estou indo|estou verificando|agora vou|depois vou|logo vou|em seguida|let me|i'?ll|i will|i'?m going to|we'?ll|we will|gonna)\b/.test(lower);
+    const hasQuestion = /\?/.test(t);
+    const hasSubstance = t.length > 600 || /\d{2,}/.test(t) || /(r\$|usd|\beur\b|\brs\b)/.test(lower);
+    if (hasQuestion || hasSubstance) return false;
+    if (intentionCue && short) return true;
+    if (trailingCue && short) return true;
+    return false;
+}
+
+// #957/#955: gate de conclusão estruturado — decide o destino de um turno que NÃO emitiu
+// tool-call. Substitui o nudge lexical #954: em vez de casar verbo+reticências, avalia se a
+// resposta é uma entrega real (conclui) ou um anúncio não-finalizado (cutuca; sem orçamento,
+// força síntese em vez de devolver o anúncio cru). Função PURA (testável).
+export interface ConclusionGateInput {
+    reply: string;
+    nudgedCount: number; // quantas vezes o gate já cutucou neste turno
+    iteration: number;   // iteração atual (0-based)
+    maxIterations: number;
+}
+export type ConclusionGateAction = 'conclude' | 'nudge' | 'synthesize';
+export interface ConclusionGateResult { action: ConclusionGateAction; reason: string; }
+
+export function evaluateConclusionGate(inp: ConclusionGateInput): ConclusionGateResult {
+    const { reply, nudgedCount, iteration, maxIterations } = inp;
+    const text = (reply || '').trim();
+    if (!looksLikeUnfinishedAnnouncement(text)) {
+        return { action: 'conclude', reason: 'substantive-answer' };
+    }
+    // Anúncio não-finalizado: cutuca se ainda há orçamento de nudge E uma próxima iteração útil
+    // (na iteração final o nudge não teria vez -> vai direto à síntese). O teto MAX_ITERATIONS
+    // (#956) continua sendo o guarda de terminação.
+    const canNudge = nudgedCount < MAX_CONCLUSION_NUDGES && iteration < maxIterations - 1;
+    if (canNudge) return { action: 'nudge', reason: 'announce-without-action' };
+    return { action: 'synthesize', reason: 'announce-no-nudge-budget' };
+}
+
 interface AIProvider {
     generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult>;
     analyzeSystem(query: string, fileContext: string, module?: string): Promise<string>;
@@ -315,10 +384,14 @@ class GoogleProvider implements AIProvider {
                 try {
                     log.info(`Tool Call: ${toolCall.tool}`, toolCall.args);
 
-                    const callSig = `${toolCall.tool}:${JSON.stringify(toolCall.args || {})}`;
+                    const callSig = toolCallSignature(toolCall.tool, toolCall.args || {});
                     if (seenToolCalls.has(callSig)) {
-                        log.warn(`GoogleProvider: tool call duplicada bloqueada: ${callSig}`);
-                        break;
+                        // #957: duplicata não aborta o turno — avisa o modelo e segue (deixa
+                        // variar os parâmetros ou concluir). O teto MAX_ITERATIONS garante término.
+                        log.warn(`GoogleProvider: tool call duplicada ignorada (turno continua): ${callSig}`);
+                        currentContext += `\n\n[SISTEMA] Você já chamou ${toolCall.tool} com esses mesmos argumentos. Varie os parâmetros ou responda ao usuário com o que já tem.`;
+                        iterations++;
+                        continue;
                     }
                     seenToolCalls.add(callSig);
 
@@ -1062,7 +1135,7 @@ export class LocalProvider implements AIProvider {
         // orçamento em caracteres; system prompt (tools) + histórico usam o resto.
         const contextCharBudget = Math.floor(contextBudgetTokens * 0.5 * 4);
         const seenToolCalls = new Set<string>();
-        let nudgedNarration = false; // #954: já cutucamos o modelo por "anunciar e parar"?
+        let nudgedCount = 0; // #957/#955: gate de conclusão conta quantos nudges já aplicou.
         // #959: modelos de raciocínio (MiniMax M3, GLM) vazam <think>...</think>/<reasoning> no
         // content. Remove esses blocos SÓ para exibição/narração — a extração de tool-call usa o cru.
         const stripReasoning = (t?: string) => (t || '')
@@ -1149,9 +1222,13 @@ export class LocalProvider implements AIProvider {
 
                 if (toolCalls.length) {
                     let ranAny = false;
+                    const duplicates: string[] = [];
                     for (const tc of toolCalls) {
-                        const callSig = `${tc.tool}:${JSON.stringify(tc.args || {})}`;
-                        if (seenToolCalls.has(callSig)) continue; // #957: pula duplicata (não aborta o turno)
+                        const callSig = toolCallSignature(tc.tool, tc.args || {});
+                        if (seenToolCalls.has(callSig)) {
+                            duplicates.push(tc.tool);
+                            continue; // #957: pula a duplicata (não aborta o turno)
+                        }
                         seenToolCalls.add(callSig);
                         log.info(`Local LLM Tool Call: ${tc.tool}`, tc.args);
                         try {
@@ -1169,7 +1246,7 @@ export class LocalProvider implements AIProvider {
                             if (e.name === 'AskUserInterrupt') {
                                 return { text: e.question, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                             }
-                            // #954: erro de tool não aborta o turno — injeta e segue.
+                            // erro de tool não aborta o turno — injeta e segue.
                             const detail = e?.message || String(e);
                             log.warn(`Local LLM Tool Error (injeta e continua): ${detail}`);
                             currentContext += `\n\n[ERRO NA FERRAMENTA ${tc.tool}]: ${detail}. Corrija os parâmetros ou responda ao usuário com o que já tem.`;
@@ -1181,26 +1258,36 @@ export class LocalProvider implements AIProvider {
                         iterations++;
                         continue;
                     }
-                    // #957: todas as chamadas eram duplicatas → sem progresso novo; sintetiza avisando.
-                    currentContext += `\n\n[SISTEMA] Você repetiu chamadas de ferramenta já feitas. Responda ao usuário com os dados já coletados.`;
-                    break;
-                }
-
-                // #954: "anunciar e parar" — o modelo diz que vai usar uma ferramenta ("vou
-                // verificar os logs: ...") e encerra o turno SEM emitir o JSON. Antes isso virava
-                // a resposta final e a tarefa nunca acontecia. Detecta a intenção sem tool-call e
-                // cutuca UMA vez para o modelo realmente chamar a ferramenta (ou responder direto).
-                const trimmedReply = reply.trim();
-                const narrationVerb = /\b(vou|deixa eu|irei|preciso|let me|i'?ll|i will)\b[\s\S]{0,80}\b(verificar|checar|consultar|buscar|analisar|olhar|ler|conferir|investigar|procurar|examinar|iniciar|começar|start|check|look|search|read|fetch|analy|investigat)/i.test(trimmedReply);
-                // reticências no fim de uma resposta curta = "vou continuar…" (o ':' sozinho é
-                // ruidoso — respostas legítimas terminam com ':' antes de uma lista).
-                const trailingEllipsis = trimmedReply.length < 500 && /(\.\.\.|…)\s*$/.test(trimmedReply);
-                const narrationCue = narrationVerb || trailingEllipsis;
-                if (!nudgedNarration && narrationCue && iterations < MAX_ITERATIONS - 1) {
-                    nudgedNarration = true;
-                    currentContext += `\n\n[SISTEMA] Sua resposta anterior ANUNCIOU uma ação ("${reply.slice(0, 160).replace(/\s+/g, ' ')}") mas NÃO emitiu a chamada da ferramenta. Se precisa de dados, emita AGORA o JSON no formato {"tool":"nome","args":{...}} — nada de texto antes. Se já tem o suficiente, responda direto ao usuário, sem anunciar.`;
+                    // #957: TODAS as chamadas eram duplicatas -> sem progresso novo. Em vez de
+                    // encerrar o turno (break -> síntese prematura), injeta um AVISO nomeando a
+                    // ferramenta repetida e dá ao modelo outra chance de variar os parâmetros ou
+                    // concluir. O teto MAX_ITERATIONS (#956) garante a terminação do loop.
+                    const dupList = Array.from(new Set(duplicates)).join(', ') || 'a ferramenta';
+                    currentContext += `\n\n[SISTEMA] Você já chamou ${dupList} com esses mesmos argumentos. Varie os parâmetros (ex.: outro termo de busca, outro filtro) ou, se já tem dados suficientes, responda ao usuário com o que já coletou.`;
                     iterations++;
                     continue;
+                }
+
+                // #957/#955: gate de conclusão ESTRUTURADO substitui o nudge lexical #954 (que só
+                // casava verbo+reticências, disparava 1x e nunca na última iteração). O gate decide
+                // o destino de um turno sem tool-call: entregar a resposta (conclude), cutucar para
+                // o modelo agir/responder (nudge), ou forçar síntese quando não há mais orçamento.
+                const gate = evaluateConclusionGate({
+                    reply,
+                    nudgedCount,
+                    iteration: iterations,
+                    maxIterations: MAX_ITERATIONS,
+                });
+                if (gate.action === 'nudge') {
+                    nudgedCount++;
+                    currentContext += `\n\n[SISTEMA] Sua resposta anterior apenas ANUNCIOU uma ação ("${reply.slice(0, 160).replace(/\s+/g, ' ')}") mas NÃO executou ferramenta nem entregou uma resposta final. Decida AGORA: (a) se precisa de dados, emita o JSON {"tool":"nome","args":{...}} — nada de texto antes; (b) se já tem o suficiente, responda DIRETAMENTE ao usuário, sem apenas anunciar.`;
+                    iterations++;
+                    continue;
+                }
+                if (gate.action === 'synthesize') {
+                    // Anúncio sem orçamento de nudge: não devolve o cru -> força síntese a partir
+                    // dos dados coletados (bloco após o while).
+                    break;
                 }
 
                 return { text: reply, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
