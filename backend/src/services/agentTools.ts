@@ -262,6 +262,12 @@ export const TOOLS_PROMPT = `
 
         IMPORTANTE: Use SEMPRE o formato {"tool": "nome_exato", "args": {...}}. NÃO use <tool_call:> ou outros formatos.
 
+        REGRA CRÍTICA — NUNCA "anuncie e pare": se você VAI usar uma ferramenta, emita o JSON dela
+        AGORA, na MESMA resposta (só o JSON, sem texto antes). É PROIBIDO dizer coisas como "vou
+        verificar os logs:", "deixa eu investigar...", "vou começar checando o código..." e encerrar
+        sem o JSON — isso trava a tarefa, pois o sistema NÃO continua sozinho após uma resposta em
+        texto. Ou você chama a ferramenta imediatamente (JSON), ou já responde direto ao usuário.
+
         SOBRE VOCÊ:
         - Você é o assistente virtual do CoolGroove (sistemav2), um ERP baseado em Dolibarr.
         - O contexto da conversa inclui a IDENTIDADE DO USUÁRIO (login, nome, email, cargo, admin). Use isso para personalizar respostas.
@@ -782,6 +788,9 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
         }
     }
 
+    // #954: executeToolInner LANÇA em params inválidos/HTTP 5xx. Não engolimos aqui (mantém o
+    // contrato testado); quem trata é o loop do agente (catch por-chamada injeta o erro e CONTINUA
+    // em vez de abortar o turno — ver LocalProvider.generateReply e GoogleProvider).
     const t0 = Date.now();
     const result = await executeToolInner(resolvedTool, args);
     const listener = ctx.listener || DEFAULT_TOOL_CONTEXT.listener;
@@ -1106,9 +1115,11 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             const leaves = await dolibarrService.listLeaveRequests(args?.status);
             if (leaves.length === 0) return 'Nenhuma solicitação de férias encontrada.';
             return '<h3>🏖️ Solicitações de Férias</h3><ul>' +
-                leaves.map((l: any) =>
-                    `<li><a href="/hr/leaves" class="text-blue-600 underline font-semibold">${l.ref}</a> — ${l.date_debut || ''}</li>`
-                ).join('') + '</ul>';
+                leaves.map((l: any) => {
+                    const ts = l.date_debut;
+                    const debut = ts ? new Date(ts < 1e12 ? ts * 1000 : ts).toLocaleDateString('pt-BR') : '';
+                    return `<li><a href="/hr/leaves" class="text-blue-600 underline font-semibold">${l.ref}</a> — ${debut}</li>`;
+                }).join('') + '</ul>';
         }
         case 'list_boms': {
             const boms = await dolibarrService.listBOMs(args?.search);
