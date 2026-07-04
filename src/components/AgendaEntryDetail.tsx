@@ -515,7 +515,7 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
 
     // 3. PROJECT RENDERER
     if (type === 'project') {
-        const project = data as any;
+        const project = data as Project;
         return (
             <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto">
                 {/* Similar Header for Project context */}
@@ -551,7 +551,7 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
 
     // 4. INTERVENTION RENDERER
     if (type === 'intervention') {
-        const intervention = data as any;
+        const intervention = data as AgendaInterventionDetail;
         return (
             <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto">
                 <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 p-4 md:p-6 sticky top-0 z-10">
