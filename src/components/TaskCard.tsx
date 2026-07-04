@@ -1,15 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ExternalLink } from 'lucide-react';
-import type { Task, PrecheckReport, PrecheckVerdict } from '../types';
+import type { PrecheckReport, PrecheckVerdict } from '../services/taskService';
 
 /**
- * TaskCard — superfície visual do pre-check de tasks (issue #972 / #1017).
+ * TaskCard — superfície visual do pre-check de tasks do TaskRunner (issue #972 / #1017).
  *
- * Expõe subcomponentes focados em apresentação para que possam ser reutilizados
- * tanto na lista de tasks quanto no kanban:
- *  - {@link TaskPrecheckBadge}: badge ao lado do título (veredito != 'ok').
- *  - {@link TaskPrecheckAnalysis}: seção expansível "Análise prévia" com evidence[].
- *  - {@link TaskRejectedBanner}: banner destacado para status `rejected_precheck`.
+ * Expõe subcomponentes focados em apresentação para reutilização tanto na lista de
+ * tasks quanto no kanban (IssuesPage):
+ *  - {@link PrecheckBadge}: badge ao lado do título (veredito != 'ok').
+ *  - {@link PrecheckAnalysis}: seção expansível "Análise prévia" com evidence[].
+ *  - {@link RejectedPrecheckBanner}: banner destacado para status `rejected_precheck`.
  */
 
 interface VerdictBadgeConfig {
@@ -51,13 +51,10 @@ export const VERDICT_CONFIG: Record<Exclude<PrecheckVerdict, 'ok'>, VerdictBadge
     },
 };
 
-/** Indica se a task foi rejeitada automaticamente pelo pre-check. */
-export const isRejectedPrecheck = (task: Task): boolean => {
-    return String(task.status ?? task.statut ?? '') === 'rejected_precheck';
-};
-
-interface TaskPrecheckBadgeProps {
+interface PrecheckBadgeProps {
     report?: PrecheckReport | null;
+    /** Variante compacta para mini-cards (kanban). */
+    compact?: boolean;
     /** Callback disparado ao clicar em "Ver originais" (veredito duplicate). */
     onOpenOriginal?: (report: PrecheckReport) => void;
 }
@@ -68,7 +65,7 @@ interface TaskPrecheckBadgeProps {
  *
  * Retorna `null` quando não há relatório ou o veredito é 'ok' (sem regressão).
  */
-export const TaskPrecheckBadge: React.FC<TaskPrecheckBadgeProps> = ({ report, onOpenOriginal }) => {
+export const PrecheckBadge: React.FC<PrecheckBadgeProps> = ({ report, compact = false, onOpenOriginal }) => {
     const [open, setOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
 
@@ -95,7 +92,7 @@ export const TaskPrecheckBadge: React.FC<TaskPrecheckBadgeProps> = ({ report, on
     if (!config) return null;
 
     const evidence = report.evidence ?? [];
-    const badgeText = `${config.icon} ${config.label}`;
+    const sizeCls = compact ? 'text-[9px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5';
 
     return (
         <div className="relative inline-block shrink-0" ref={containerRef}>
@@ -104,9 +101,9 @@ export const TaskPrecheckBadge: React.FC<TaskPrecheckBadgeProps> = ({ report, on
                 onClick={() => setOpen((prev) => !prev)}
                 aria-expanded={open}
                 aria-haspopup="dialog"
-                aria-label={badgeText}
+                aria-label={`${config.icon} ${config.label}`}
                 title={config.description}
-                className={`inline-flex items-center gap-1 text-[11px] leading-none font-semibold px-2 py-0.5 rounded-full border cursor-pointer transition-colors hover:opacity-90 ${config.classes}`}
+                className={`inline-flex items-center gap-1 leading-none font-semibold rounded-full border cursor-pointer transition-colors hover:opacity-90 ${sizeCls} ${config.classes}`}
             >
                 <span aria-hidden="true">{config.icon}</span>
                 <span>{config.label}</span>
@@ -127,7 +124,7 @@ export const TaskPrecheckBadge: React.FC<TaskPrecheckBadgeProps> = ({ report, on
                     </p>
 
                     {evidence.length > 0 && (
-                        <ul className="space-y-1.5 max-h-44 overflow-y-auto custom-scrollbar pr-1">
+                        <ul className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
                             {evidence.map((ev, idx) => (
                                 <li
                                     key={`${ev.type}-${idx}`}
@@ -137,9 +134,9 @@ export const TaskPrecheckBadge: React.FC<TaskPrecheckBadgeProps> = ({ report, on
                                         {ev.type}
                                         {ev.reference ? <span className="text-slate-400"> · {ev.reference}</span> : null}
                                     </p>
-                                    {ev.snippet && (
+                                    {ev.excerpt && (
                                         <blockquote className="mt-0.5 italic text-slate-500 dark:text-slate-400 line-clamp-3">
-                                            “{ev.snippet}”
+                                            “{ev.excerpt}”
                                         </blockquote>
                                     )}
                                     {ev.url && (
@@ -167,9 +164,9 @@ export const TaskPrecheckBadge: React.FC<TaskPrecheckBadgeProps> = ({ report, on
                         </button>
                     )}
 
-                    {report.verdict === 'already_resolved' && report.original_url && (
+                    {report.verdict === 'already_resolved' && report.originalUrl && (
                         <a
-                            href={report.original_url}
+                            href={report.originalUrl}
                             target="_blank"
                             rel="noreferrer"
                             className="mt-1 inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 hover:underline"
@@ -183,9 +180,9 @@ export const TaskPrecheckBadge: React.FC<TaskPrecheckBadgeProps> = ({ report, on
     );
 };
 
-interface TaskPrecheckAnalysisProps {
+interface PrecheckAnalysisProps {
     report?: PrecheckReport | null;
-    /** Controla o estado aberto/fechado externamente (opcional). */
+    /** Controla o estado aberto inicial (opcional). */
     defaultOpen?: boolean;
 }
 
@@ -193,7 +190,7 @@ interface TaskPrecheckAnalysisProps {
  * Seção expansível "Análise prévia" listando as evidências (tipo/referência/trecho)
  * que fundamentaram o veredito do pre-check.
  */
-export const TaskPrecheckAnalysis: React.FC<TaskPrecheckAnalysisProps> = ({ report, defaultOpen = false }) => {
+export const PrecheckAnalysis: React.FC<PrecheckAnalysisProps> = ({ report, defaultOpen = false }) => {
     const [expanded, setExpanded] = useState(defaultOpen);
 
     if (!report || report.verdict === 'ok') return null;
@@ -226,9 +223,9 @@ export const TaskPrecheckAnalysis: React.FC<TaskPrecheckAnalysisProps> = ({ repo
                                     <span className="text-slate-400"> · {ev.reference}</span>
                                 ) : null}
                             </p>
-                            {ev.snippet && (
+                            {ev.excerpt && (
                                 <p className="mt-0.5 text-[11px] italic text-slate-500 dark:text-slate-400 line-clamp-3">
-                                    {ev.snippet}
+                                    {ev.excerpt}
                                 </p>
                             )}
                             {ev.url && (
@@ -249,20 +246,18 @@ export const TaskPrecheckAnalysis: React.FC<TaskPrecheckAnalysisProps> = ({ repo
     );
 };
 
-interface TaskRejectedBannerProps {
-    task: Task;
+interface RejectedPrecheckBannerProps {
+    report?: PrecheckReport | null;
     /** Callback para abrir o item original (opcional). */
     onOpenOriginal?: () => void;
 }
 
 /**
  * Banner destacado exibido quando a task foi rejeitada automaticamente
- * pelo pre-check (status `rejected_precheck`).
+ * pelo pre-check (status `rejected_precheck`). Deve ser renderizado apenas
+ * nesse caso (o pai decide com base em task.status).
  */
-export const TaskRejectedBanner: React.FC<TaskRejectedBannerProps> = ({ task, onOpenOriginal }) => {
-    if (!isRejectedPrecheck(task)) return null;
-
-    const report = task.precheck_report;
+export const RejectedPrecheckBanner: React.FC<RejectedPrecheckBannerProps> = ({ report, onOpenOriginal }) => {
     const reason =
         report?.verdict === 'duplicate'
             ? 'duplicado'
@@ -274,14 +269,14 @@ export const TaskRejectedBanner: React.FC<TaskRejectedBannerProps> = ({ task, on
         <div
             role="alert"
             data-testid="precheck-rejected-banner"
-            className="mb-2 flex flex-wrap items-center gap-x-1 gap-y-0.5 rounded-md border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 text-[11px] text-amber-800 dark:text-amber-200"
+            className="mt-1 flex flex-wrap items-center gap-x-1 gap-y-0.5 rounded-md border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 text-[11px] text-amber-800 dark:text-amber-200"
         >
             <span>
                 Esta task foi rejeitada automaticamente pelo pre-check por ser {reason}.
             </span>
-            {(report?.original_url || onOpenOriginal) && (
+            {(report?.originalUrl || onOpenOriginal) && (
                 <a
-                    href={report?.original_url}
+                    href={report?.originalUrl}
                     target="_blank"
                     rel="noreferrer"
                     onClick={onOpenOriginal}
@@ -294,4 +289,4 @@ export const TaskRejectedBanner: React.FC<TaskRejectedBannerProps> = ({ task, on
     );
 };
 
-export default TaskPrecheckBadge;
+export default PrecheckBadge;

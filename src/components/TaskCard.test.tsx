@@ -1,32 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import {
-    TaskPrecheckBadge,
-    TaskPrecheckAnalysis,
-    TaskRejectedBanner,
+    PrecheckBadge,
+    PrecheckAnalysis,
+    RejectedPrecheckBanner,
     VERDICT_CONFIG,
-    isRejectedPrecheck,
 } from './TaskCard';
-import type { PrecheckReport, Task } from '../types';
+import type { PrecheckReport } from '../services/taskService';
 
-const baseTask = (overrides: Partial<Task> = {}): Task => ({
-    id: '1',
-    ref: 'TASK001',
-    label: 'Corrigir bug no login',
-    project_id: 'p1',
-    progress: 0,
-    ...overrides,
-});
-
-describe('TaskPrecheckBadge — vereditos', () => {
+describe('PrecheckBadge — vereditos', () => {
     it('NÃO renderiza badge quando não há precheck_report (regression)', () => {
-        const { container } = render(<TaskPrecheckBadge report={null} />);
+        const { container } = render(<PrecheckBadge report={null} />);
         expect(container).toBeEmptyDOMElement();
     });
 
     it('NÃO renderiza badge quando o veredito é "ok" (regression)', () => {
         const report: PrecheckReport = { verdict: 'ok' };
-        const { container } = render(<TaskPrecheckBadge report={report} />);
+        const { container } = render(<PrecheckBadge report={report} />);
         expect(container).toBeEmptyDOMElement();
     });
 
@@ -34,9 +24,9 @@ describe('TaskPrecheckBadge — vereditos', () => {
         const report: PrecheckReport = {
             verdict: 'duplicate',
             reason: 'Similar ao #990',
-            evidence: [{ type: 'similar_issue', reference: '#990', snippet: 'mesmo stack trace' }],
+            evidence: [{ type: 'similar_issue', reference: '#990', excerpt: 'mesmo stack trace' }],
         };
-        render(<TaskPrecheckBadge report={report} />);
+        render(<PrecheckBadge report={report} />);
         const badge = screen.getByRole('button', { name: '🔁 Duplicado' });
         expect(badge).toBeInTheDocument();
         expect(badge.className).toContain('amber');
@@ -46,9 +36,9 @@ describe('TaskPrecheckBadge — vereditos', () => {
         const report: PrecheckReport = {
             verdict: 'already_resolved',
             evidence: [{ type: 'commit', reference: 'abc123', url: 'https://vcs/commit/abc123' }],
-            original_url: 'https://vcs/pr/42',
+            originalUrl: 'https://vcs/pr/42',
         };
-        render(<TaskPrecheckBadge report={report} />);
+        render(<PrecheckBadge report={report} />);
         const badge = screen.getByRole('button', { name: '✅ Já resolvido' });
         expect(badge).toBeInTheDocument();
         expect(badge.className).toContain('emerald');
@@ -56,7 +46,7 @@ describe('TaskPrecheckBadge — vereditos', () => {
 
     it('renderiza badge vermelho "⚠️ Sem evidência" para verdict false_report', () => {
         const report: PrecheckReport = { verdict: 'false_report' };
-        render(<TaskPrecheckBadge report={report} />);
+        render(<PrecheckBadge report={report} />);
         const badge = screen.getByRole('button', { name: '⚠️ Sem evidência' });
         expect(badge).toBeInTheDocument();
         expect(badge.className).toContain('red');
@@ -64,7 +54,7 @@ describe('TaskPrecheckBadge — vereditos', () => {
 
     it('renderiza badge cinza "🤔 Baixa evidência" para verdict low_evidence', () => {
         const report: PrecheckReport = { verdict: 'low_evidence' };
-        render(<TaskPrecheckBadge report={report} />);
+        render(<PrecheckBadge report={report} />);
         const badge = screen.getByRole('button', { name: '🤔 Baixa evidência' });
         expect(badge).toBeInTheDocument();
         expect(badge.className).toContain('slate');
@@ -81,18 +71,17 @@ describe('TaskPrecheckBadge — vereditos', () => {
     });
 });
 
-describe('TaskPrecheckBadge — popover', () => {
+describe('PrecheckBadge — popover', () => {
     it('abre o popover ao clicar e exibe evidências + botão "Ver originais" (duplicate)', () => {
         const onOpenOriginal = vi.fn();
         const report: PrecheckReport = {
             verdict: 'duplicate',
             reason: 'Parecida com #990',
             evidence: [
-                { type: 'similar_issue', reference: '#990', snippet: 'stack trace igual', url: 'https://t/990' },
+                { type: 'similar_issue', reference: '#990', excerpt: 'stack trace igual', url: 'https://t/990' },
             ],
-            original_ref: '#990',
         };
-        render(<TaskPrecheckBadge report={report} onOpenOriginal={onOpenOriginal} />);
+        render(<PrecheckBadge report={report} onOpenOriginal={onOpenOriginal} />);
 
         expect(screen.queryByTestId('precheck-popover')).not.toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: '🔁 Duplicado' }));
@@ -110,23 +99,23 @@ describe('TaskPrecheckBadge — popover', () => {
         const report: PrecheckReport = {
             verdict: 'already_resolved',
             evidence: [{ type: 'pr', reference: '#42' }],
-            original_url: 'https://vcs/pr/42',
+            originalUrl: 'https://vcs/pr/42',
         };
-        render(<TaskPrecheckBadge report={report} />);
+        render(<PrecheckBadge report={report} />);
         fireEvent.click(screen.getByRole('button', { name: '✅ Já resolvido' }));
         const link = screen.getByRole('link', { name: /ver resolução/i });
         expect(link).toHaveAttribute('href', 'https://vcs/pr/42');
     });
 });
 
-describe('TaskPrecheckAnalysis', () => {
+describe('PrecheckAnalysis', () => {
     it('não renderiza quando veredito é ok', () => {
-        const { container } = render(<TaskPrecheckAnalysis report={{ verdict: 'ok' }} />);
+        const { container } = render(<PrecheckAnalysis report={{ verdict: 'ok' }} />);
         expect(container).toBeEmptyDOMElement();
     });
 
     it('não renderiza quando não há evidências', () => {
-        const { container } = render(<TaskPrecheckAnalysis report={{ verdict: 'duplicate' }} />);
+        const { container } = render(<PrecheckAnalysis report={{ verdict: 'duplicate' }} />);
         expect(container).toBeEmptyDOMElement();
     });
 
@@ -134,11 +123,11 @@ describe('TaskPrecheckAnalysis', () => {
         const report: PrecheckReport = {
             verdict: 'duplicate',
             evidence: [
-                { type: 'similar_issue', reference: '#990', snippet: 'mesmo erro' },
-                { type: 'commit', reference: 'abc123', snippet: 'fix aplicado' },
+                { type: 'similar_issue', reference: '#990', excerpt: 'mesmo erro' },
+                { type: 'commit', reference: 'abc123', excerpt: 'fix aplicado' },
             ],
         };
-        render(<TaskPrecheckAnalysis report={report} />);
+        render(<PrecheckAnalysis report={report} />);
         const toggle = screen.getByRole('button', { name: /análise prévia/i });
         expect(screen.queryAllByTestId('precheck-evidence')).toHaveLength(0);
 
@@ -151,19 +140,10 @@ describe('TaskPrecheckAnalysis', () => {
     });
 });
 
-describe('TaskRejectedBanner / isRejectedPrecheck', () => {
-    it('isRejectedPrecheck detecta status rejected_precheck (string e statut)', () => {
-        expect(isRejectedPrecheck(baseTask({ statut: 'rejected_precheck' }))).toBe(true);
-        expect(isRejectedPrecheck(baseTask({ status: 1 }))).toBe(false);
-        expect(isRejectedPrecheck(baseTask())).toBe(false);
-    });
-
-    it('exibe banner destacado quando a task foi rejeitada pelo pre-check', () => {
-        const task = baseTask({
-            statut: 'rejected_precheck',
-            precheck_report: { verdict: 'duplicate', original_url: 'https://t/990' },
-        });
-        render(<TaskRejectedBanner task={task} />);
+describe('RejectedPrecheckBanner', () => {
+    it('exibe banner destacado quando a task foi rejeitada por duplicado', () => {
+        const report: PrecheckReport = { verdict: 'duplicate', originalUrl: 'https://t/990' };
+        render(<RejectedPrecheckBanner report={report} />);
         const banner = screen.getByTestId('precheck-rejected-banner');
         expect(banner).toBeInTheDocument();
         expect(banner).toHaveTextContent(/rejeitada automaticamente pelo pre-check/i);
@@ -171,8 +151,16 @@ describe('TaskRejectedBanner / isRejectedPrecheck', () => {
         expect(screen.getByRole('link', { name: 'Abrir original' })).toHaveAttribute('href', 'https://t/990');
     });
 
-    it('não renderiza banner quando a task não foi rejeitada', () => {
-        const { container } = render(<TaskRejectedBanner task={baseTask()} />);
-        expect(container).toBeEmptyDOMElement();
+    it('exibe motivo "já resolvido" quando o veredito é already_resolved', () => {
+        render(<RejectedPrecheckBanner report={{ verdict: 'already_resolved' }} />);
+        const banner = screen.getByTestId('precheck-rejected-banner');
+        expect(banner).toHaveTextContent('já resolvido');
+    });
+
+    it('não renderiza link "Abrir original" quando não há originalUrl', () => {
+        render(<RejectedPrecheckBanner report={{ verdict: 'false_report' }} />);
+        const banner = screen.getByTestId('precheck-rejected-banner');
+        expect(banner).toHaveTextContent('rejeitada pelo pre-check');
+        expect(screen.queryByRole('link', { name: 'Abrir original' })).not.toBeInTheDocument();
     });
 });

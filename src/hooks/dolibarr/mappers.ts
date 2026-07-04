@@ -18,8 +18,6 @@ import {
     SupplierOrder,
     Project,
     Task,
-    PrecheckReport,
-    PrecheckVerdict,
     Proposal,
     Ticket,
     Payment,
@@ -279,80 +277,29 @@ export const mapProject = (raw: RawDolibarrRecord): Project => ({
 });
 
 /**
- * Map a raw precheck report (issue #972) into a typed PrecheckReport.
- * Aceita tanto o objeto canônico quanto campos achatados no array_options.
- */
-interface RawPrecheckEvidence {
-    type?: unknown;
-    reference?: unknown;
-    snippet?: unknown;
-    url?: unknown;
-}
-interface RawPrecheckReport {
-    verdict?: unknown;
-    reason?: unknown;
-    evidence?: unknown;
-    original_ref?: unknown;
-    original_url?: unknown;
-}
-export const mapPrecheckReport = (raw: RawPrecheckReport | undefined): PrecheckReport | undefined => {
-    if (!raw || typeof raw !== 'object') return undefined;
-    const verdict = String(raw.verdict || '').toLowerCase();
-    if (!verdict) return undefined;
-
-    const evidenceRaw: RawPrecheckEvidence[] = Array.isArray(raw.evidence) ? raw.evidence : [];
-    const evidence = evidenceRaw
-        .map((ev) => ({
-            type: ev && typeof ev === 'object' ? String(ev.type || '') : '',
-            reference: ev?.reference ? String(ev.reference) : undefined,
-            snippet: ev?.snippet ? String(ev.snippet) : undefined,
-            url: ev?.url ? String(ev.url) : undefined,
-        }))
-        .filter((ev: { type: string }) => ev.type);
-
-    return {
-        verdict: verdict as PrecheckVerdict,
-        reason: raw.reason ? String(raw.reason) : undefined,
-        evidence: evidence.length > 0 ? evidence : undefined,
-        original_ref: raw.original_ref ? String(raw.original_ref) : undefined,
-        original_url: raw.original_url ? String(raw.original_url) : undefined,
-    };
-};
-
-/**
  * Map raw task data to Task entity
  */
-export const mapTask = (raw: RawDolibarrRecord): Task => {
-    // Status pode vir como inteiro (fk_statut) ou como label string
-    // (ex.: 'rejected_precheck' quando rejeitada pelo pre-check #972).
-    const rawStatus = raw.status ?? raw.fk_statut;
-    const numericStatus = toNumber(rawStatus);
-    const stringStatus = typeof rawStatus === 'string' && isNaN(numericStatus) ? rawStatus : undefined;
-
-    return {
-        id: toString(raw.id),
-        ref: raw.ref || '',
-        label: raw.label || '',
-        description: raw.description,
-        project_id: raw.project_id ? toString(raw.project_id) : '',
-        date_start: raw.date_start ? toTimestamp(raw.date_start) : 0,
-        date_end: toTimestamp(raw.date_end || raw.datee),
-        progress: toNumber(raw.progress),
-        priority: toNumber(raw.priority),
-        status: numericStatus, // or fk_statut from generic response if easier
-        statut: stringStatus ?? (raw.statut ? toString(raw.statut) : undefined),
-        planned_workload: toNumber(raw.planned_workload),
-        duration_effective: toNumber(raw.duration_effective),
-        fk_user_assign: raw.fk_user_assign ? toString(raw.fk_user_assign) : undefined,
-        fk_user_creat: raw.fk_user_creat ? toString(raw.fk_user_creat) : undefined,
-        fk_parent: (raw.fk_parent ?? raw.fk_task_parent) ? toString(raw.fk_parent ?? raw.fk_task_parent) : undefined,
-        date_creation: toTimestamp(raw.datec),
-        date_modification: toTimestamp(raw.tms),
-        project_ref: raw.project_ref || undefined,
-        project_title: raw.project_title || undefined,
-        precheck_report: mapPrecheckReport(raw.precheck_report),
-    };
-};
+export const mapTask = (raw: RawDolibarrRecord): Task => ({
+    id: toString(raw.id),
+    ref: raw.ref || '',
+    label: raw.label || '',
+    description: raw.description,
+    project_id: raw.project_id ? toString(raw.project_id) : '',
+    date_start: raw.date_start ? toTimestamp(raw.date_start) : 0,
+    date_end: toTimestamp(raw.date_end || raw.datee),
+    progress: toNumber(raw.progress),
+    priority: toNumber(raw.priority),
+    status: toNumber(raw.status), // or fk_statut from generic response if easier
+    planned_workload: toNumber(raw.planned_workload),
+    duration_effective: toNumber(raw.duration_effective),
+    fk_user_assign: raw.fk_user_assign ? toString(raw.fk_user_assign) : undefined,
+    fk_user_creat: raw.fk_user_creat ? toString(raw.fk_user_creat) : undefined,
+    fk_parent: (raw.fk_parent ?? raw.fk_task_parent) ? toString(raw.fk_parent ?? raw.fk_task_parent) : undefined,
+    date_creation: toTimestamp(raw.datec),
+    date_modification: toTimestamp(raw.tms),
+    project_ref: raw.project_ref || undefined,
+    project_title: raw.project_title || undefined,
+});
 
 /**
  * Map raw proposal data to Proposal entity

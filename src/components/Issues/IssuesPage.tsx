@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { GithubService, GitHubIssue, IssueStats } from '../../services/githubService';
 import { TaskService, Task } from '../../services/taskService';
+import { PrecheckBadge, PrecheckAnalysis, RejectedPrecheckBanner } from '../TaskCard';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
 import { AlertCircle, Bug, Sparkles, Shield, Wrench, TestTube, GitMerge, Loader2, Eye, CheckCircle, XCircle, RotateCcw, MessageSquare, Trash2, Pencil, Terminal, ExternalLink, Search, Tag, CircleDot, Clock, ThumbsUp, Star, Play, RefreshCw, ShieldOff, Plus, Filter, LayoutGrid, List, GripVertical } from 'lucide-react';
 import { toast } from 'sonner';
@@ -14,12 +15,12 @@ import { CSS } from '@dnd-kit/utilities';
 
 /** Formata o timestamp de desfecho de uma task para exibição compacta. */
 const formatOutcomeTime = (status: string, task: { completedAt?: string; updatedAt: string }): string | null => {
-    const OUTCOME_STATUSES = ['merged', 'rejected', 'cancelled', 'failed'];
+    const OUTCOME_STATUSES = ['merged', 'rejected', 'rejected_precheck', 'cancelled', 'failed'];
     if (!OUTCOME_STATUSES.includes(status)) return null;
     const raw = task.completedAt || task.updatedAt;
     if (!raw) return null;
     const d = new Date(raw);
-    const label: Record<string, string> = { merged: 'Merge', rejected: 'Rejeitada', cancelled: 'Cancelada', failed: 'Falhou' };
+    const label: Record<string, string> = { merged: 'Merge', rejected: 'Rejeitada', rejected_precheck: 'Rejeitada', cancelled: 'Cancelada', failed: 'Falhou' };
     const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     return `${label[status] ?? status} ${time}`;
 };
@@ -32,18 +33,19 @@ const STATUS_CONFIG: Record<string, { color: string; bg: string; icon: React.Rea
     approved: { color: 'text-green-600', bg: 'bg-green-50 dark:bg-green-900/20', icon: <ThumbsUp size={14} />, label: 'Aprovado' },
     merged: { color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', icon: <GitMerge size={14} />, label: 'Merged' },
     rejected: { color: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', icon: <XCircle size={14} />, label: 'Rejeitado' },
+    rejected_precheck: { color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-900/20', icon: <ShieldOff size={14} />, label: 'Rejeitado (pre-check)' },
     failed: { color: 'text-red-600', bg: 'bg-red-50 dark:bg-red-900/20', icon: <AlertCircle size={14} />, label: 'Falhou' },
     cancelling: { color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-900/20', icon: <Loader2 size={14} className="animate-spin" />, label: 'Cancelando...' },
     cancelled: { color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-900/20', icon: <XCircle size={14} />, label: 'Cancelada' },
 };
 
-const TERMINAL_STATUSES = ['merged', 'rejected', 'cancelled', 'failed'];
+const TERMINAL_STATUSES = ['merged', 'rejected', 'rejected_precheck', 'cancelled', 'failed'];
 
 const PIPELINE_COLUMNS = [
     { key: 'queue', label: 'Fila', statuses: ['pending'] },
     { key: 'active', label: 'Em Execução', statuses: ['running', 'fixing', 'cancelling'] },
     { key: 'review', label: 'Revisão', statuses: ['reviewing', 'approved'] },
-    { key: 'done', label: 'Concluído', statuses: ['merged', 'rejected'] },
+    { key: 'done', label: 'Concluído', statuses: ['merged', 'rejected', 'rejected_precheck'] },
     { key: 'failed', label: 'Falhadas', statuses: ['failed'] },
     { key: 'cancelled', label: 'Canceladas', statuses: ['cancelled'] },
 ] as const;
@@ -235,6 +237,7 @@ const SortableMiniCard: React.FC<{
                         <Star size={8} className="inline" /> {task.judgeScore}/10
                     </span>
                 )}
+                <PrecheckBadge report={task.precheckReport} compact />
             </div>
             <h4 className="text-xs font-medium text-slate-800 dark:text-white leading-tight mb-1 line-clamp-2">{task.title}</h4>
             {task.planReason && (
@@ -367,7 +370,11 @@ const TaskListCard: React.FC<{
                             <span key={l} className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">{l}</span>
                         ))}
                     </div>
-                    <h3 className="font-semibold text-sm text-slate-800 dark:text-white truncate">{task.title}</h3>
+                    <h3 className="font-semibold text-sm text-slate-800 dark:text-white truncate flex items-center gap-1.5">
+                        <span className="truncate">{task.title}</span>
+                        <PrecheckBadge report={task.precheckReport} />
+                    </h3>
+                    {task.status === 'rejected_precheck' && <RejectedPrecheckBanner report={task.precheckReport} />}
                     {task.planReason && (
                         <p className="text-[10px] text-indigo-500 dark:text-indigo-400 mt-0.5 line-clamp-1">{task.planReason}</p>
                     )}
@@ -393,6 +400,8 @@ const TaskListCard: React.FC<{
                     {task.error}
                 </div>
             )}
+
+            <PrecheckAnalysis report={task.precheckReport} />
 
             <div className="flex items-center gap-2 mt-3 flex-wrap" onClick={e => e.stopPropagation()}>
                 {isAdmin && task.status === 'pending' && (

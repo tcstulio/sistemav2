@@ -82,7 +82,7 @@ function bash(command: string, cwd: string, timeout: number) {
     return execFileAsync(GIT_BASH, ['-lc', command], { cwd, timeout, maxBuffer: BIG, windowsHide: true });
 }
 
-export type TaskStatus = 'pending' | 'running' | 'reviewing' | 'approved' | 'fixing' | 'cancelling' | 'cancelled' | 'merged' | 'rejected' | 'failed';
+export type TaskStatus = 'pending' | 'running' | 'reviewing' | 'approved' | 'fixing' | 'cancelling' | 'cancelled' | 'merged' | 'rejected' | 'rejected_precheck' | 'failed';
 
 export type TaskEventType =
     | 'task_created'
@@ -201,6 +201,26 @@ export interface TaskMetrics {
     attempts: number;
 }
 
+// Pré-análise (pre-check) de uma task antes de entrar na fila de execução (#972 / #1017).
+// verdict 'ok' = task normal; demais verdicts indicam suspeitas (duplicado, já resolvido,
+// falso relato, baixa evidência) e alimentam badges na UI.
+export type PrecheckVerdict = 'ok' | 'duplicate' | 'already_resolved' | 'false_report' | 'low_evidence';
+
+export interface PrecheckEvidence {
+    type: 'similar_issue' | 'commit' | 'pr' | 'log' | string;
+    reference?: string;
+    excerpt?: string;
+    url?: string;
+}
+
+export interface PrecheckReport {
+    verdict: PrecheckVerdict;
+    reason?: string;
+    evidence?: PrecheckEvidence[];
+    originalIssueNumber?: number;
+    originalUrl?: string;
+}
+
 export interface Task {
     issueNumber: number;
     title: string;
@@ -245,6 +265,8 @@ export interface Task {
     subTasks?: number[];
     decompositionPlan?: DecompositionPlan;
     parentEpic?: number;
+    // Pré-análise (#1017): verdict/evidence do pre-check que roda antes da execução.
+    precheckReport?: PrecheckReport;
     // Métricas (#305): preencho em background após task finalizar.
     // cpuMemSamples guarda o RAW das amostras; metrics é a versão agregada.
     cpuMemSamples?: CpuMemSample[];
