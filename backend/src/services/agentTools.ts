@@ -17,6 +17,7 @@ import * as path from 'path';
 import { getRecentLogs } from '../utils/logger';
 import { agentConfigService } from './agentConfigService';
 import { channelRouter } from './channelRouter';
+import { notificationService } from './notificationService';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
@@ -1453,7 +1454,6 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             const msg = String(args?.message || '').trim();
             if (!msg) return 'Informe a mensagem (parâmetro "message").';
             try {
-                const { notificationService } = require('./notificationService');
                 await notificationService.notifyTeam({
                     event: 'agent.action',
                     title: 'Mensagem do Marciano',
@@ -1479,16 +1479,23 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             if (pChannels.includes('whatsapp') && !pPhone) return 'Para WhatsApp, informe o telefone (parâmetro "phone").';
             if (pChannels.includes('email') && !pEmail) return 'Para email, informe o email (parâmetro "email").';
 
+            // #1004: resolve o destinatário in-app. Um userId explícito (args.recipient) vence;
+            // sem ele, assume o próprio usuário logado (caso de teste "notificar a si mesmo") para
+            // a notificação cair na caixa pessoal ("Minhas") em vez de virar broadcast de sistema.
+            const npCtx = getToolContext();
+            const pRecipient = args?.recipient ? String(args.recipient).trim() : (npCtx.userId || undefined);
+
             try {
-                const { notificationService } = require('./notificationService');
                 await notificationService.notifyPerson({
                     event: 'custom',
                     title: `Mensagem para ${pName}`,
                     message: pMsg,
                     channels: pChannels,
+                    recipient: pRecipient,
                     recipientName: pName,
                     recipientPhone: pPhone,
                     recipientEmail: pEmail,
+                    senderId: npCtx.userId,
                     senderName: 'Marciano',
                 });
                 const sent = pChannels.join(', ');
