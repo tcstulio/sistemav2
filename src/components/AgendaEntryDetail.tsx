@@ -1,9 +1,9 @@
 
 import React, { useEffect, useState, useRef } from 'react';
-import { DolibarrConfig, AgendaEvent, AppView } from '../types';
+import { DolibarrConfig, AgendaEvent, AppView, Task, Project, Intervention } from '../types';
 import { dbService } from '../services/dbService';
 import { DolibarrService } from '../services/dolibarrService';
-import { mapAgendaEvent, mapTask, mapProject, mapIntervention } from '../hooks/dolibarr/mappers';
+import { mapAgendaEvent, mapTask, mapProject, mapIntervention, type RawDolibarrRecord } from '../hooks/dolibarr/mappers';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
 import { CalendarDays, Clock, FolderKanban, ClipboardList, ChevronLeft, Calendar as CalendarIcon, Link, User, Building, FileText, Ticket, ExternalLink, AlertCircle, Eye, EyeOff, Pencil, Trash2, Save, X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -18,9 +18,13 @@ interface AgendaEntryDetailProps {
     editPrefill?: Record<string, string>; // deeplink HITL: mudanças sugeridas p/ edit_event (#57/#78)
 }
 
+type AgendaDetailItem = AgendaEvent | Task | Project | Intervention;
+type AgendaTaskDetail = Task & { fk_projet?: string };
+type AgendaInterventionDetail = Intervention & { fk_projet?: string };
+
 const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialItemId, onNavigate, editPrefill }) => {
     const { getLink, openLink } = useDolibarrLink(config);
-    const [data, setData] = useState<any | null>(null);
+    const [data, setData] = useState<AgendaDetailItem | null>(null);
     const [type, setType] = useState<'event' | 'task' | 'project' | 'intervention' | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -60,23 +64,23 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
                 setType(detectedType);
 
                 // Read from local IndexedDB (already synced via custom_sync.php)
-                let rawData;
-                let result;
+                let rawData: RawDolibarrRecord | undefined;
+                let result: AgendaDetailItem | null = null;
                 switch (detectedType) {
                     case 'event':
-                        rawData = await dbService.get<any>('events', id);
+                        rawData = await dbService.get<RawDolibarrRecord>('events', id);
                         result = rawData ? mapAgendaEvent(rawData) : null;
                         break;
                     case 'task':
-                        rawData = await dbService.get<any>('tasks', id);
+                        rawData = await dbService.get<RawDolibarrRecord>('tasks', id);
                         result = rawData ? mapTask(rawData) : null;
                         break;
                     case 'project':
-                        rawData = await dbService.get<any>('projects', id);
+                        rawData = await dbService.get<RawDolibarrRecord>('projects', id);
                         result = rawData ? mapProject(rawData) : null;
                         break;
                     case 'intervention':
-                        rawData = await dbService.get<any>('interventions', id);
+                        rawData = await dbService.get<RawDolibarrRecord>('interventions', id);
                         result = rawData ? mapIntervention(rawData) : null;
                         break;
                 }
@@ -184,7 +188,8 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
 
         setIsSaving(true);
         try {
-            await DolibarrService.updateEvent(config, data.id, {
+            const event = data as AgendaEvent;
+            await DolibarrService.updateEvent(config, event.id, {
                 label: editForm.label,
                 description: editForm.description,
                 datep: editForm.date_start ? editForm.date_start / 1000 : undefined, // Convert MS to Seconds for API
@@ -194,7 +199,7 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
             });
 
             // Update local state optimistically
-            setData({ ...data, ...editForm });
+            setData({ ...event, ...editForm });
             setIsEditing(false);
 
             // Trigger a background refresh if possible? 
@@ -453,7 +458,7 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
     // 2. TASK RENDERER
     if (type === 'task') {
         // Need to cast correctly, assuming Task interface matches response
-        const task = data as any;
+        const task = data as AgendaTaskDetail;
         return (
             <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto">
                 <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 p-4 md:p-6 sticky top-0 z-10">
@@ -469,7 +474,7 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
                                 {task.date_end && <span className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded border border-slate-200 dark:border-slate-700"><Clock size={14} /> Fim: {formatDate(task.date_end)}</span>}
                             </div>
                         </div>
-                        <div className={`px-3 py-1.5 rounded-full text-sm font-medium border ${parseInt(task.progress) === 100 ? 'bg-green-100 text-green-700 border-green-200' : 'bg-orange-100 text-orange-700 border-orange-200'}`}>{task.progress}% Concluído</div>
+                        <div className={`px-3 py-1.5 rounded-full text-sm font-medium border ${parseInt(String(task.progress)) === 100 ? 'bg-green-100 text-green-700 border-green-200' : 'bg-orange-100 text-orange-700 border-orange-200'}`}>{task.progress}% Concluído</div>
                     </div>
                 </div>
 
