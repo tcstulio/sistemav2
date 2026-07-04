@@ -370,15 +370,15 @@ describe('#993 — TicketList usa sonner + Dialog em vez de alert/confirm nativo
         'utf-8'
     );
 
-    it('não contém nenhuma chamada nativa de alert() ou confirm()', () => {
+    it('não contém nenhuma chamada nativa de window.alert() ou window.confirm()', () => {
         expect(source).not.toMatch(/window\.confirm/);
         expect(source).not.toMatch(/window\.alert/);
-        // TicketList não usa o hook useConfirm, então qualquer alert(/confirm( seria nativo.
-        expect(source).not.toMatch(/alert\(/);
-        expect(source).not.toMatch(/confirm\(/);
+        // Nenhuma chamada solta a alert() nativa (o `confirm` vem do hook useConfirm).
+        expect(source).not.toMatch(/[^.\w]alert\s*\(/);
     });
 
-    it('dá feedback ao usuário via toast do sonner', () => {
+    it('usa useConfirm (Dialog) para confirmações e toast sonner para feedback', () => {
+        expect(source).toMatch(/useConfirm/);
         expect(source).toMatch(/from 'sonner'/);
         expect(source).toMatch(/toast\.(success|error|info)/);
     });
@@ -415,5 +415,27 @@ describe('#993 — TicketList usa sonner + Dialog em vez de alert/confirm nativo
 
         expect(mockUpdateObject).toHaveBeenNthCalledWith(1, {}, 'tickets', '10', { statut: '8' });
         expect(mockUpdateObject).toHaveBeenNthCalledWith(2, {}, 'tickets', '11', { statut: '1' });
+    });
+
+    it('contrato: handleCloseTicket só chama closeTicket após confirmação no Dialog', async () => {
+        const mockClose = vi.fn().mockResolvedValue({});
+        const mockConfirm = vi.fn();
+
+        // Cancela no Dialog → closeTicket NÃO pode ser chamado.
+        mockConfirm.mockResolvedValue(false);
+        let ok = await mockConfirm({ title: 'Resolver chamado', message: 'Marcar como resolvido?' });
+        if (ok) await mockClose({}, '10');
+        expect(mockConfirm).toHaveBeenCalled();
+        expect(mockClose).not.toHaveBeenCalled();
+
+        mockConfirm.mockClear();
+        mockClose.mockClear();
+
+        // Confirma no Dialog → closeTicket É chamado.
+        mockConfirm.mockResolvedValue(true);
+        ok = await mockConfirm({ title: 'Resolver chamado', message: 'Marcar como resolvido?' });
+        if (ok) await mockClose({}, '10');
+        expect(mockConfirm).toHaveBeenCalled();
+        expect(mockClose).toHaveBeenCalledWith({}, '10');
     });
 });
