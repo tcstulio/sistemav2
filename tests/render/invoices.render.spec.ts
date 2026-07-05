@@ -34,4 +34,16 @@ test.describe('Render determinístico — Faturas', () => {
         await expect(page.getByText('FA2601-0001')).toBeVisible({ timeout: 15000 });
         await expect(page.getByText('FA2601-0002')).toBeVisible();
     });
+
+    // Oráculo de NÚMERO (não só presença): a barra de total é o ListTotalBar, componente
+    // compartilhado por várias listas (Faturas/Produtos/etc.) — validá-lo aqui cobre todas.
+    test('a barra de total soma EXATAMENTE o total_ttc das faturas', async ({ page, context }) => {
+        await seedAuth(context);
+        await stubNetwork(page, { invoices: INVOICES, thirdparties: THIRDPARTIES });
+
+        await page.goto('/invoices', { waitUntil: 'domcontentloaded' });
+
+        // Σ total_ttc = 1500,50 + 890,00 = 2390,50. \s* cobre nbsp vs narrow-nbsp (ICU Node vs Chromium).
+        await expect(page.getByTestId('list-total-value')).toHaveText(/^R\$\s*2\.390,50$/, { timeout: 15000 });
+    });
 });
