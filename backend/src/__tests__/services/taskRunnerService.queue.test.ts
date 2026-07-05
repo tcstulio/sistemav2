@@ -78,7 +78,7 @@ function makeStoredTask(n: number): Task {
 // demora a assentar e estourava o deadline → flaky (1 falha intermitente travava TODOS os PRs).
 // O deadline é só rede de segurança contra hang real; aumentá-lo não mascara bug (ainda falha,
 // só mais devagar), mas elimina o falso-negativo de timing.
-async function flushUntil(pred: () => boolean, timeoutMs = 15000): Promise<void> {
+async function flushUntil(pred: () => boolean, timeoutMs = 30000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (!pred()) {
         if (Date.now() > deadline) throw new Error('flushUntil: condição não atingida no tempo');
@@ -194,7 +194,7 @@ describe('taskRunnerService — robustez da fila (#644)', () => {
         expect(t100.status).toBe('cancelled');
         // pendingExecs reflete APENAS #101 ativa (o slot de #100 foi decrementado no finally).
         expect(svc.pendingExecs).toBe(1);
-    }, 20000); // timeout do it() = 20s: o flushUntil tem deadline de 15s, mas o DEFAULT do vitest é
-    // 5s — sob carga do CI o teste era MORTO aos 5s (antes do flushUntil), causando o flaky "Test
-    // timed out in 5000ms" que travava TODOS os PRs. Alinha o teto do it() ao deadline interno.
+    }, 35000); // teto do it() = 35s, alinhado ao deadline do flushUntil (30s) + folga. O DEFAULT do
+    // vitest (5s) matava o teste antes; e sob carga alta do CI o cascade async da fila tem variância
+    // enorme (<5s a >15s) → 15s ainda estourava. 30s cobre o pior caso lento sem mascarar hang real.
 });
