@@ -205,6 +205,7 @@ interface DiffViewerProps {
     judgeReview?: string;
     visualScore?: number;
     visualReview?: string;
+    screenVerify?: { ok: boolean; routes: string[]; screens: { route: string; ok: boolean; errors: string[] }[] };
     prUrl?: string;
     onClose: () => void;
     onMerge: () => void;
@@ -212,7 +213,7 @@ interface DiffViewerProps {
     onReject: () => void;
 }
 
-const DiffViewer: React.FC<DiffViewerProps> = ({ diff, issueNumber, judgeScore, judgeReview, visualScore, visualReview, prUrl, onClose, onMerge, onFix, onReject }) => {
+const DiffViewer: React.FC<DiffViewerProps> = ({ diff, issueNumber, judgeScore, judgeReview, visualScore, visualReview, screenVerify, prUrl, onClose, onMerge, onFix, onReject }) => {
     const files = parseDiff(diff);
     const totalAdd = files.reduce((s, f) => s + f.additions, 0);
     const totalDel = files.reduce((s, f) => s + f.deletions, 0);
@@ -264,6 +265,25 @@ const DiffViewer: React.FC<DiffViewerProps> = ({ diff, issueNumber, judgeScore, 
                 {/* Prova visual (advisory) — só quando temos a task */}
                 {issueNumber !== undefined && (
                     <VisualProofPanel issueNumber={issueNumber} initialScore={visualScore} initialReview={visualReview} />
+                )}
+
+                {/* Verificação das TELAS AFETADAS (o robô conferiu a tela que mexeu, com dado mockado) */}
+                {screenVerify && screenVerify.routes.length > 0 && (
+                    <div className={`mx-6 mt-4 p-4 rounded-xl border ${screenVerify.ok ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'}`}>
+                        <div className="flex items-center gap-2 mb-2">
+                            <span className="text-sm font-bold text-slate-700 dark:text-slate-200">Telas afetadas</span>
+                            <span className={`text-xs font-mono px-2 py-0.5 rounded-full ${screenVerify.ok ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
+                                {screenVerify.ok ? 'renderizam OK' : 'FALHA'}
+                            </span>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            {screenVerify.screens.map((s) => (
+                                <span key={s.route} title={s.errors.join(' | ')} className={`text-xs px-2 py-1 rounded-lg font-mono ${s.ok ? 'bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-300' : 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-300'}`}>
+                                    {s.ok ? '✅' : '❌'} {s.route}{!s.ok && s.errors[0] ? ` — ${s.errors[0].slice(0, 60)}` : ''}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
                 )}
 
                 {/* Diff Content */}

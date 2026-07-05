@@ -18,6 +18,7 @@ import { claudeCliService } from './claudeCliService';
 import { parseTscErrors, parseGlobalTscErrors, serializeErrors, deserializeErrors, computeBlocking, splitTouchedByProject } from './gateDelta';
 import { previewPortsFor } from '../utils/previewPorts';
 import { screenshotService } from './screenshotService';
+import { screenVerifyService } from './screenVerifyService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
 
 const log = logger.child('TaskRunner');
@@ -241,7 +242,14 @@ export interface Task {
     gateFixInstruction?: string;  // correção PERSISTENTE injetada nos builders (imune ao wipe de feedbackHistory na síntese)
     visualScore?: number;
     visualReview?: string;
-    // 'synthesis' (padrão): 3 explorações do zero + 3 sínteses — bom p/ tasks pequenas/criativas.
+    // Veredito do "robô verifica a tela AFETADA" (#1069): renderiza a(s) tela(s) que a task mexeu
+    // com dado mockado e checa se renderizam (sem tela-branca/erro). Advisory — não gateia merge.
+    screenVerify?: {
+        ok: boolean;
+        routes: string[];
+        screens: { route: string; ok: boolean; errors: string[] }[];
+    };
+// 'synthesis' (padrão): 3 explorações do zero + 3 sínteses — bom p/ tasks pequenas/criativas.
     // 'cumulative': loop incremental gated (não reseta; constrói sobre o progresso parcial até
     // convergir) — bom p/ tasks grandes/mecânicas (refactor em massa). Ver runCumulativeImplementation.
     executionMode?: 'synthesis' | 'cumulative';
@@ -2405,7 +2413,7 @@ Return ONLY a JSON:
      * NÃO altera status nem o caminho de merge. Best-effort: erros viram evento + visualReview e
      * retornam `hasScreenshots:false` (a rota traduz o resultado; a UI mostra o motivo).
      */
-    async generateVisualProof(issueNumber: number): Promise<{ visualScore?: number; visualReview?: string; hasScreenshots: boolean }> {
+    async generateVisualProof(issueNumber: number): Promise<{ visualScore?: number; visualReview?: string; hasScreenshots: boolean; screenVerify?: Task['screenVerify'] }> {
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} não encontrada`);
         if (!task.branch) throw new Error('Task não tem branch — execute a task primeiro.');
@@ -2413,10 +2421,12 @@ Return ONLY a JSON:
         this.recordEvent(task, 'judge_started', 'Prova visual solicitada — subindo preview e capturando telas autenticadas...');
         this.emitStatus(task);
 
-        // 1) Captura before/after AUTENTICADOS via preview EFÊMERO sob o lock (livre-de-corrida).
-        let paths: { beforePath: string; afterPath: string };
+        // 1) Captura before/after AUTENTICADOS + VERIFICA as telas AFETADAS, via preview EFÊMERO
+        //    sob o lock (livre-de-corrida).
+        let paths: { beforePath: string; afterPath: string; screenVerify?: Task['screenVerify'] };
         try {
             paths = await this.captureVisualProofPngs(task);
+            if (paths.screenVerify) task.screenVerify = paths.screenVerify;
         } catch (e: any) {
             this.recordEvent(task, 'judge_error', `Prova visual: captura falhou — ${e.message}`, { error: e.message });
             this.emitLog(issueNumber, 'warn', `Prova visual: captura falhou (${e.message}).`);
@@ -2439,6 +2449,7 @@ Return ONLY a JSON:
             visualScore: task.visualScore,
             visualReview: task.visualReview,
             hasScreenshots: screenshotService.screenshotsExist(issueNumber),
+            screenVerify: task.screenVerify,
         };
     }
 
@@ -2449,7 +2460,7 @@ Return ONLY a JSON:
      * o vite) SEM precisar de um worktree isolado dedicado (isso fica p/ a fase autônoma). O vite
      * faz proxy de /api -> :3004 (backend principal), então não sobe backend por-preview.
      */
-    private async captureVisualProofPngs(task: Task): Promise<{ beforePath: string; afterPath: string }> {
+    private async captureVisualProofPngs(task: Task): Promise<{ beforePath: string; afterPath: string; screenVerify?: Task['screenVerify'] }> {
         const issueNumber = task.issueNumber;
         const { frontendPort } = previewPortsFor(issueNumber);
         return this.withWorktreeLock(`visual-proof #${issueNumber}`, async () => {
@@ -2468,13 +2479,39 @@ Return ONLY a JSON:
                 await this.waitForPort(frontendPort, 60_000);
                 await new Promise((r) => setTimeout(r, 2500)); // respiro p/ o vite servir o 1º bundle
                 this.emitLog(issueNumber, 'info', `Preview efêmero pronto (:${frontendPort}). Capturando telas autenticadas...`);
-                return await screenshotService.captureForTask(
+                const pngs = await screenshotService.captureForTask(
                     issueNumber, 'http://localhost:3003', `http://localhost:${frontendPort}`, { auth: true },
                 );
+                // Com o preview de pé: o robô verifica a(s) TELA(S) que ele MEXEU (dado mockado). (#1069)
+                const screenVerify = await this.verifyAffectedScreensForTask(task, frontendPort);
+                return { ...pngs, screenVerify };
             } finally {
                 if (child.pid) await killTree(child.pid).catch(() => {});
             }
         });
+    }
+
+    /**
+     * Verifica as TELAS AFETADAS pela branch da task (via `affectedScreens` no diff origin/main...HEAD),
+     * renderizando cada uma com dado MOCKADO contra o preview em `frontendPort` e checando se renderizam.
+     * Advisory — grava o veredito e nunca lança. É o "robô verifica a tela que mexeu" (#1069).
+     */
+    private async verifyAffectedScreensForTask(task: Task, frontendPort: number): Promise<Task['screenVerify']> {
+        try {
+            const { stdout } = await git(['diff', '--name-only', 'origin/main...HEAD'], { timeout: 20000, cwd: WT_ROOT });
+            const changed = stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+            const res = await screenVerifyService.verifyAffectedScreens(`http://localhost:${frontendPort}`, changed);
+            const failSummary = res.screens.filter((s) => !s.ok).map((s) => `${s.route}: ${s.errors[0] || 'falha'}`).join('; ');
+            this.recordEvent(task, res.ok ? 'judge_score' : 'judge_error',
+                `Telas afetadas (${res.routes.join(', ') || 'nenhuma'}): ${res.ok ? 'renderizam OK' : 'FALHA — ' + failSummary}`,
+                { screenVerify: res });
+            this.emitLog(task.issueNumber, res.ok ? 'success' : 'warn',
+                `Verificação de telas afetadas [${res.routes.join(', ')}]: ${res.ok ? 'OK' : 'FALHOU — ' + failSummary}`);
+            return { ok: res.ok, routes: res.routes, screens: res.screens.map((s) => ({ route: s.route, ok: s.ok, errors: s.errors })) };
+        } catch (e: any) {
+            log.warn(`verifyAffectedScreens falhou p/ #${task.issueNumber}: ${e?.message || e}`);
+            return undefined;
+        }
     }
 
     /** Espera uma porta TCP local aceitar conexão (preview de pé) até o timeout. */
