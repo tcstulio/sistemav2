@@ -1031,7 +1031,7 @@ const IssuesPage: React.FC = () => {
                     <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 flex flex-col items-center gap-3"><Loader2 size={24} className="animate-spin text-indigo-500" /><p className="text-sm text-slate-500">Carregando diff...</p></div>
                 </div>
             ) : (
-                <DiffViewer diff={diffText} issueNumber={reviewTask.issueNumber} judgeScore={reviewTask.judgeScore} judgeReview={reviewTask.judgeReview} visualScore={reviewTask.visualScore} visualReview={reviewTask.visualReview} prUrl={reviewTask.prUrl}
+                <DiffViewer diff={diffText} issueNumber={reviewTask.issueNumber} judgeScore={reviewTask.judgeScore} judgeReview={reviewTask.judgeReview} visualScore={reviewTask.visualScore} visualReview={reviewTask.visualReview} screenVerify={reviewTask.screenVerify} prUrl={reviewTask.prUrl}
                     onClose={() => setReviewTask(null)}
                     onMerge={async () => { if (!isAdmin) { toast.error('Apenas administradores.'); return; } await TaskService.merge(reviewTask.issueNumber); setReviewTask(null); toast.success('PR merged!'); loadTasks(); }}
                     onFix={() => setReviewTask(null)}

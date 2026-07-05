@@ -74,6 +74,11 @@ export interface Task {
     judgeAttempts?: number;
     visualScore?: number;
     visualReview?: string;
+    screenVerify?: {
+        ok: boolean;
+        routes: string[];
+        screens: { route: string; ok: boolean; errors: string[] }[];
+    };
     feedbackHistory: string[];
     startedAt?: string;
     arrivedAt?: string;
