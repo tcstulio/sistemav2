@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('fs', () => ({ existsSync: vi.fn(() => false), readFileSync: vi.fn(), mkdirSync: vi.fn() }));
+vi.mock('fs', () => ({
+    existsSync: vi.fn(() => false),
+    readFileSync: vi.fn(),
+    mkdirSync: vi.fn(),
+    promises: {
+        writeFile: vi.fn().mockResolvedValue(undefined),
+        rename: vi.fn().mockResolvedValue(undefined),
+    },
+}));
 vi.mock('../../utils/atomicWrite', () => ({ atomicWriteSync: vi.fn() }));
 vi.mock('../../services/socketService', () => ({ socketService: { emit: vi.fn() } }));
 vi.mock('../../services/channelRouter', () => ({ channelRouter: { sendWhatsApp: vi.fn(), sendEmail: vi.fn() } }));
@@ -56,5 +64,39 @@ describe('notificationService — isolamento por usuário (#519)', () => {
     it('sem userId, getForUser/getUnreadCount não filtram (compat)', () => {
         expect(notificationService.getForUser('').length).toBe(4);
         expect(notificationService.getUnreadCount()).toBe(4);
+    });
+});
+
+describe('notificationService — notifyPerson + flush (#1004)', () => {
+    beforeEach(() => seed([]));
+
+    it('notifyPerson preserva recipient/senderId na notificação criada', async () => {
+        const notif = await notificationService.notifyPerson({
+            event: 'custom',
+            title: 'T',
+            message: 'M',
+            channels: ['in-app'],
+            recipient: 'u1',
+            senderId: 'u1',
+            senderName: 'Marciano',
+        });
+        expect(notif.recipient).toBe('u1');
+        expect(notif.senderId).toBe('u1');
+        expect(notif.senderName).toBe('Marciano');
+    });
+
+    it('notifyPerson persiste em disco (flush) antes de retornar', async () => {
+        const fsMock: any = await import('fs');
+        const before = (fsMock.promises.writeFile as any).mock.calls.length;
+        await notificationService.notifyPerson({
+            event: 'custom',
+            title: 'T',
+            message: 'M',
+            channels: ['in-app'],
+            recipient: 'u1',
+        });
+        // flush() cancela o debounce e chama performSave → writeFile + rename executados síncronamente
+        expect((fsMock.promises.writeFile as any).mock.calls.length).toBeGreaterThan(before);
+        expect((fsMock.promises.rename as any).mock.calls.length).toBeGreaterThan(0);
     });
 });
