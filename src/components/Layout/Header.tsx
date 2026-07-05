@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useDolibarr, PreviewTarget } from '../../context/DolibarrContext';
 import { DolibarrService } from '../../services/dolibarrService';
-import { Menu, Settings, Bell, RefreshCw, User, LogOut, ChevronDown, Eye, EyeOff, Search } from 'lucide-react';
+import { Menu, Settings, RefreshCw, User, LogOut, ChevronDown, Eye, EyeOff, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { UserAvatar } from '../HR/UserAvatar';
+import { NotificationBell } from '../NotificationBell';
 
 interface HeaderProps {
     setIsSidebarOpen: (open: boolean) => void;
@@ -192,13 +193,10 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
                         </div>
                     )}
 
-                    <button
+                    <NotificationBell
+                        unreadCount={notifications.filter(n => !n.read).length}
                         onClick={() => setIsNotificationPanelOpen(true)}
-                        className="relative p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"
-                    >
-                        <Bell size={20} />
-                        {notifications.some(n => !n.read) && <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-900"></span>}
-                    </button>
+                    />
 
                     {/* User Dropdown */}
                     <div className="relative" ref={menuRef}>
