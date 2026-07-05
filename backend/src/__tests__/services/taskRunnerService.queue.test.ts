@@ -88,6 +88,12 @@ async function flushUntil(pred: () => boolean, timeoutMs = 15000): Promise<void>
 
 describe('taskRunnerService — robustez da fila (#644)', () => {
     beforeEach(() => {
+        // O cascade da fila (autoPlayNext) SEGURA o dispatch em horário de PICO (06-10 UTC) p/ poupar
+        // cota GLM. Sem desligar isto, o teste PASSA/FALHA conforme a HORA do relógio: durante o pico
+        // a #101 não é despachada e o flushUntil estoura ("Test timed out") — flaky que travava os PRs
+        // só em certas janelas do dia. Desliga o peak-hold p/ o teste ser determinístico.
+        process.env.TASKRUNNER_PEAK_HOLD = 'false';
+
         const svc = taskRunnerService as any;
         // Reseta o estado interno do singleton p/ isolar cada teste (o singleton é construído
         // no import e compartilhado; sem isto, pendingExecs/execChain/store vazam entre testes).
@@ -194,5 +200,7 @@ describe('taskRunnerService — robustez da fila (#644)', () => {
         expect(t100.status).toBe('cancelled');
         // pendingExecs reflete APENAS #101 ativa (o slot de #100 foi decrementado no finally).
         expect(svc.pendingExecs).toBe(1);
-    });
+    }, 15000); // teto do it() = 15s (folga p/ o cascade async sob carga do CI), alinhado ao flushUntil.
+    // A causa raiz do flaky NÃO era tempo — era o peak-hold (ver beforeEach); com ele desligado o
+    // cascade despacha rápido. Este teto é só rede de segurança contra hang real.
 });
