@@ -1,8 +1,8 @@
 // VER (canAccess) — mapa de permissões de LEITURA do Dolibarr por tela + resolução PURA/testável.
 //
-// Espelha o `canAccess` do DolibarrContext (que hoje mantém uma cópia inline do rightsMap; de-duplicar
-// o DolibarrContext p/ importar daqui é follow-up de baixo risco). É o PAR do `writePermissions.ts`
-// (FAZER): juntos, `permissionMatrix.ts` deriva a matriz papel×tela×ação SEM UI e SEM login por papel.
+// FONTE CANÔNICA do VER — o DolibarrContext.computeBaseAccess importa daqui (de-dup #1073 / adversarial:
+// antes havia 2 cópias do rightsMap que podiam divergir). É o PAR do `writePermissions.ts` (FAZER):
+// juntos, `permissionMatrix.ts` deriva a matriz papel×tela×ação SEM UI e SEM login por papel.
 
 export interface AccessIdentity {
     admin?: number | string | boolean;
@@ -43,6 +43,29 @@ export const RIGHTS_MAP: Record<string, AccessEntry> = {
     tickets: { module: 'ticket', perms: ['read', 'lire'] },
     bank_accounts: { module: 'banque', perms: ['lire', 'read'] },
     categories: { module: 'categorie', perms: ['lire', 'read'] },
+    // Vendas/Finanças extras
+    supplier_proposals: { module: 'fournisseur', perms: ['lire', 'read'] },
+    supplier_payments: { module: 'fournisseur', perms: ['facture.lire'] },
+    tax_payments: { module: 'tax', perms: ['charges.lire', 'read', 'lire'] },
+    salary_payments: { module: 'salaries', perms: ['read', 'lire'] },
+    expense_report_payments: { module: 'expensereport', perms: ['lire', 'read'] },
+    movements: { module: 'stock', perms: ['mouvement.lire'] },
+    // Comunicação & IA (liberadas a qualquer autenticado — societe.lire)
+    whatsapp: { module: 'societe', perms: ['lire', 'read'] },
+    email: { module: 'societe', perms: ['lire', 'read'] },
+    chat: { module: 'societe', perms: ['lire', 'read'] },
+    automation: { module: 'societe', perms: ['lire', 'read'] },
+    partnerships: { module: 'societe', perms: ['lire', 'read'] },
+    venues: { module: 'societe', perms: ['lire', 'read'] },
+    // Relatórios
+    reports: { module: 'facture', perms: ['lire', 'read'] },
+    monthly_report: { module: 'facture', perms: ['lire', 'read'] },
+    // Sistema
+    activity: { module: 'agenda', perms: ['myevent.read', 'allactions.read'] },
+    system_events: { module: 'societe', perms: ['lire', 'read'] },
+    development: { module: 'user', perms: ['user.lire'] },
+    settings: { module: 'user', perms: ['self.read'] },
+    simulator: { module: 'societe', perms: ['lire', 'read'] },
 };
 
 function truthy(v: any): boolean { return v === '1' || v === 1 || v === true; }
