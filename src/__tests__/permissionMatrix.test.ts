@@ -35,6 +35,42 @@ describe('canAccessScreen (VER)', () => {
     });
 });
 
+// Trava o SUPERSET do de-dup (#1073): estas telas antes só existiam na cópia inline do
+// DolibarrContext. Agora que o gate vivo importa RIGHTS_MAP, elas têm de resolver aqui também.
+describe('superset de telas (de-dup #1073)', () => {
+    const SUPRIMENTOS = { admin: 0, rights: { fournisseur: { lire: '1' } } };
+    const COMERCIAL = { admin: 0, rights: { societe: { lire: '1' } } };
+    const USER_SELF = { admin: 0, rights: { user: { self: { read: '1' } } } };
+
+    it('admin vê as telas novas', () => {
+        for (const s of ['whatsapp', 'reports', 'settings', 'supplier_proposals', 'movements', 'system_events']) {
+            expect(canAccessScreen(ADMIN, s)).toBe(true);
+        }
+    });
+
+    it('reports/monthly_report seguem o módulo facture (Financeiro vê, freela não)', () => {
+        expect(canAccessScreen(FINANCEIRO, 'reports')).toBe(true);
+        expect(canAccessScreen(FINANCEIRO, 'monthly_report')).toBe(true);
+        expect(canAccessScreen(FREELA, 'reports')).toBe(false);
+    });
+
+    it('supplier_proposals exige módulo fournisseur (Financeiro-só-facture NÃO vê)', () => {
+        expect(canAccessScreen(SUPRIMENTOS, 'supplier_proposals')).toBe(true);
+        expect(canAccessScreen(FINANCEIRO, 'supplier_proposals')).toBe(false);
+    });
+
+    it('telas de comunicação seguem societe.lire', () => {
+        expect(canAccessScreen(COMERCIAL, 'whatsapp')).toBe(true);
+        expect(canAccessScreen(COMERCIAL, 'chat')).toBe(true);
+        expect(canAccessScreen(FREELA, 'whatsapp')).toBe(false);
+    });
+
+    it('settings segue o perm aninhado user.self.read', () => {
+        expect(canAccessScreen(USER_SELF, 'settings')).toBe(true);
+        expect(canAccessScreen(FREELA, 'settings')).toBe(false);
+    });
+});
+
 describe('deriveScreenMatrix (papel×tela×ação)', () => {
     it('gera uma linha por tela do MENU_REGISTRY', () => {
         const rows = deriveScreenMatrix(ADMIN);
