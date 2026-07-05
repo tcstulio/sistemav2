@@ -194,5 +194,7 @@ describe('taskRunnerService — robustez da fila (#644)', () => {
         expect(t100.status).toBe('cancelled');
         // pendingExecs reflete APENAS #101 ativa (o slot de #100 foi decrementado no finally).
         expect(svc.pendingExecs).toBe(1);
-    });
+    }, 20000); // timeout do it() = 20s: o flushUntil tem deadline de 15s, mas o DEFAULT do vitest é
+    // 5s — sob carga do CI o teste era MORTO aos 5s (antes do flushUntil), causando o flaky "Test
+    // timed out in 5000ms" que travava TODOS os PRs. Alinha o teto do it() ao deadline interno.
 });
