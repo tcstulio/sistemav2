@@ -46,6 +46,20 @@ function canLogTimeOnTask(task: Task, userId: string | undefined, taskContacts: 
     );
 }
 
+/** #1099: mapa estático de cor → classes Tailwind ativas do filtro (literais; o scanner do Tailwind v4 ignora interpolação). */
+const ME_FILTER_ACTIVE_CLASSES: Record<string, string> = {
+    blue: 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/20 dark:border-blue-800 ring-1 ring-blue-200',
+    amber: 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 ring-1 ring-amber-200',
+    purple: 'bg-purple-50 border-purple-200 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 ring-1 ring-purple-200',
+};
+
+/** #1099: mapa estático de cor → classes do indicador circular ativo (literais). */
+const ME_FILTER_CIRCLE_ACTIVE_CLASSES: Record<string, string> = {
+    blue: 'bg-blue-500 text-white',
+    amber: 'bg-amber-500 text-white',
+    purple: 'bg-purple-500 text-white',
+};
+
 const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => {
     const { config, currentUser: user } = useDolibarr(); // Get config & currentUser
     const { data: tasks, isError: isTasksError, error: tasksError, refetch: refetchTasks } = useTasks(config); // Fetch Tasks
@@ -1086,21 +1100,25 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                                         { id: 'assigned', label: 'Atribuído diretamente', active: showAssigned, setter: setShowAssigned, color: 'blue' },
                                         { id: 'projectTeam', label: 'Membro da Equipe do Projeto', active: showProjectTeam, setter: setShowProjectTeam, color: 'amber' },
                                         { id: 'participant', label: 'Participante convidado', active: showParticipant, setter: setShowParticipant, color: 'purple' }
-                                    ].map(filter => (
+                                    ].map(filter => {
+                                        const activeClasses = ME_FILTER_ACTIVE_CLASSES[filter.color] ?? '';
+                                        const circleActiveClasses = ME_FILTER_CIRCLE_ACTIVE_CLASSES[filter.color] ?? '';
+                                        return (
                                         <button
                                             key={filter.id}
                                             onClick={() => filter.setter(!filter.active)}
                                             className={`flex items-center justify-between p-4 rounded-xl border transition-all ${filter.active
-                                                ? `bg-${filter.color}-50 border-${filter.color}-200 text-${filter.color}-700 dark:bg-${filter.color}-900/20 dark:border-${filter.color}-800 ring-1 ring-${filter.color}-200`
+                                                ? activeClasses
                                                 : 'bg-white border-slate-100 dark:bg-slate-800/50 dark:border-slate-700 text-slate-600'
                                                 }`}
                                         >
                                             <span className="font-semibold">{filter.label}</span>
-                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center ${filter.active ? `bg-${filter.color}-500 text-white` : 'border-2 border-slate-200'}`}>
+                                            <div className={`w-6 h-6 rounded-full flex items-center justify-center ${filter.active ? circleActiveClasses : 'border-2 border-slate-200'}`}>
                                                 {filter.active && <CheckCircle2 size={16} />}
                                             </div>
                                         </button>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             </div>
                         )}

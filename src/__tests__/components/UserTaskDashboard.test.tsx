@@ -453,4 +453,86 @@ describe('UserTaskDashboard', () => {
             expect(screen.queryByText('ERRO_PROJETOS')).not.toBeInTheDocument();
         });
     });
+
+    // ── #1099 — Classes Tailwind literais nos filtros Me-mode ──────────
+    describe('#1099: filtros Me-mode com classes Tailwind literais (sem interpolação)', () => {
+        const openMeFilterModal = () => {
+            // viewMode default = 'me'; abre o modal de filtros pelo toggle mobile.
+            fireEvent.click(screen.getByText('Filtros'));
+        };
+
+        const getFilterButton = (label: string) =>
+            screen.getByText(label).closest('button') as HTMLButtonElement;
+
+        const getCircle = (btn: HTMLElement) =>
+            btn.querySelector('.w-6') as HTMLElement | null;
+
+        it('aplica classes literais azuis no filtro "Atribuído diretamente" ativo', () => {
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+            openMeFilterModal();
+
+            const btn = getFilterButton('Atribuído diretamente');
+            expect(btn.className).toContain('bg-blue-50');
+            expect(btn.className).toContain('border-blue-200');
+            expect(btn.className).toContain('text-blue-700');
+            expect(btn.className).toContain('dark:bg-blue-900/20');
+            const circle = getCircle(btn);
+            expect(circle?.className).toContain('bg-blue-500');
+        });
+
+        it('aplica classes literais âmbar no filtro "Membro da Equipe do Projeto" ativo', () => {
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+            openMeFilterModal();
+
+            const btn = getFilterButton('Membro da Equipe do Projeto');
+            expect(btn.className).toContain('bg-amber-50');
+            expect(btn.className).toContain('border-amber-200');
+            expect(btn.className).toContain('text-amber-700');
+            expect(btn.className).toContain('dark:border-amber-800');
+            const circle = getCircle(btn);
+            expect(circle?.className).toContain('bg-amber-500');
+        });
+
+        it('aplica classes literais roxas no filtro "Participante convidado" ativo', () => {
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+            openMeFilterModal();
+
+            const btn = getFilterButton('Participante convidado');
+            expect(btn.className).toContain('bg-purple-50');
+            expect(btn.className).toContain('border-purple-200');
+            expect(btn.className).toContain('text-purple-700');
+            expect(btn.className).toContain('ring-purple-200');
+            const circle = getCircle(btn);
+            expect(circle?.className).toContain('bg-purple-500');
+        });
+
+        it('não renderiza classes interpoladas (sem "${" nem "undefined")', () => {
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+            openMeFilterModal();
+
+            const btn = getFilterButton('Atribuído diretamente');
+            expect(btn.className).not.toContain('${');
+            expect(btn.className).not.toContain('undefined');
+            const circle = getCircle(btn);
+            expect(circle?.className).not.toContain('${');
+            expect(circle?.className).not.toContain('undefined');
+        });
+
+        it('ao desativar o filtro, troca para classes neutras (sem cor de tema)', () => {
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+            openMeFilterModal();
+
+            const btn = getFilterButton('Atribuído diretamente');
+            expect(btn.className).toContain('bg-blue-50');
+
+            fireEvent.click(btn);
+
+            expect(btn.className).not.toContain('bg-blue-50');
+            expect(btn.className).not.toContain('text-blue-700');
+            expect(btn.className).toContain('bg-white');
+            const circle = getCircle(btn);
+            expect(circle?.className).not.toContain('bg-blue-500');
+            expect(circle?.className).toContain('border-2');
+        });
+    });
 });
