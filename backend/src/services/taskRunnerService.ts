@@ -851,23 +851,32 @@ class TaskRunnerService {
         let release!: () => void;
         this.worktreeLock = new Promise<void>((r) => { release = r; });
         
-        await Promise.race([
-            prev,
-            new Promise<void>((_, reject) => setTimeout(() => {
-                this.sweepOrphanedOpencode(`lock-timeout-in-${label}`).catch(() => {});
-                this.cleanStaleLocks(true);
-                const stuckTask = Object.values(this.store.tasks).find(t => t.status === 'running' || t.status === 'fixing');
-                if (stuckTask) {
-                    stuckTask.status = 'failed';
-                    stuckTask.error = 'Timeout no worktree lock (holder anterior não liberou dentro do watchdog total)';
-                    this.save();
-                }
-                reject(new Error(`worktreeLock timeout: holder anterior não liberou a tempo. Lock abortado para ${label}`));
-            // #963 (aprendizado da task #986, 2026-07-04): era 10min — MENOR que UM run do opencode
-            // (30min) e que o watchdog total (3h), então matava tasks longas LEGÍTIMAS por aquisição
-            // concorrente do lock. Alinha ao watchdog total (o backstop correto): só dispara em deadlock real.
-            }, MAX_TASK_WALL_MS + 5 * 60_000))
-        ]);
+        try {
+            await Promise.race([
+                prev,
+                new Promise<void>((_, reject) => setTimeout(() => {
+                    this.sweepOrphanedOpencode(`lock-timeout-in-${label}`).catch(() => {});
+                    this.cleanStaleLocks(true);
+                    const stuckTask = Object.values(this.store.tasks).find(t => t.status === 'running' || t.status === 'fixing');
+                    if (stuckTask) {
+                        stuckTask.status = 'failed';
+                        stuckTask.error = 'Timeout no worktree lock (holder anterior não liberou dentro do watchdog total)';
+                        this.save();
+                    }
+                    reject(new Error(`worktreeLock timeout: holder anterior não liberou a tempo. Lock abortado para ${label}`));
+                // #963 (aprendizado da task #986, 2026-07-04): era 10min — MENOR que UM run do opencode
+                // (30min) e que o watchdog total (3h), então matava tasks longas LEGÍTIMAS por aquisição
+                // concorrente do lock. Alinha ao watchdog total (o backstop correto): só dispara em deadlock real.
+                }, MAX_TASK_WALL_MS + 5 * 60_000))
+            ]);
+        } catch (e) {
+            // #1114: se a AQUISIÇÃO estoura o watchdog (a race REJEITA), o `release()` do finally abaixo
+            // NUNCA roda (o try/fn nem começa) → this.worktreeLock fica pendurado p/ sempre e TODA task
+            // seguinte também dá timeout (a CASCATA que travou o robô por ~3h em 2026-07-06). Liberar o
+            // elo AQUI faz a cadeia se auto-curar após um holder pendurado/restart.
+            release();
+            throw e;
+        }
         try {
             return await fn();
         } finally {
@@ -1027,7 +1036,7 @@ class TaskRunnerService {
             const { uiConfigService } = require('./uiConfigService');
             return uiConfigService.get().taskAutomation;
         } catch {
-            return { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8 };
+            return { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9 };
         }
     }
 
@@ -2176,10 +2185,15 @@ Return ONLY a JSON:
                     attempt: task.judgeAttempts,
                 });
 
-                if (result.score >= 8 || task.judgeAttempts >= 3) {
+                // #1125: piso de APROVAÇÃO configurável (default 9). Antes eram 8/6 HARDCODED que ignoravam
+                // a config — o robô aprovava com nota abaixo da que o admin pedia. Agora: tenta até >=
+                // minApproveScore (ou esgota 3 tentativas) e só marca 'approved' se atingir o piso; senão,
+                // revisão humana. O merge segue gated por minMergeScore à parte.
+                const minApprove = this.getAutomationConfig().minApproveScore ?? 9;
+                if (result.score >= minApprove || task.judgeAttempts >= 3) {
                     task.phase = 'done';
-                    task.status = result.score >= 6 ? 'approved' : 'reviewing';
-                    this.emitLog(task.issueNumber, 'success', `Judge: ${result.score}/10 — ${result.score >= 8 ? 'auto-aprovado' : result.score >= 6 ? 'aprovado (múltiplas tentativas)' : 'requer revisão humana'}`);
+                    task.status = result.score >= minApprove ? 'approved' : 'reviewing';
+                    this.emitLog(task.issueNumber, 'success', `Judge: ${result.score}/10 — ${result.score >= minApprove ? `aprovado (>= ${minApprove})` : `requer revisão humana (< ${minApprove})`}`);
                 } else {
                     // Score < 8 e ainda há tentativas → AUTO-FIX. Antes a faixa 6-7 PARAVA p/ revisão
                     // humana sem tentar consertar; agora ela também re-roda com o feedback do Judge

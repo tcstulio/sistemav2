@@ -17,6 +17,8 @@ export interface TaskAutomationConfig {
     autoMerge: boolean;
     autoDecompose: boolean;
     minMergeScore: number;
+    /** Nota mínima do Judge p/ APROVAR uma task (default 9). Abaixo → revisão humana. #1125 */
+    minApproveScore: number;
 }
 
 export interface UiConfig {
