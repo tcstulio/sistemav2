@@ -96,4 +96,73 @@ describe('taskRunnerService — withWorktreeLock: cadeia não-envenenável (#111
         // Ao fim, o elo está liberado (promise resolvida) — pronto p/ a próxima aquisição.
         await expect(svc.worktreeLock).resolves.toBeUndefined();
     });
+
+    it('concorrência real: duas aquisições simultâneas SERIALIZAM (a 2ª só roda após a 1ª liberar)', async () => {
+        // Exercita a SERIALIZAÇÃO de verdade (judge #1114 ponto 2): lança duas aquisições em
+        // paralelo e prova que a 2ª fica BLOQUEADA no `await prev` enquanto a 1ª segura o lock,
+        // só entrando no fn() DEPOIS que a 1ª chama release() no finally.
+        let firstRelease!: () => void;
+        let secondStarted = false;
+        const order: string[] = [];
+
+        // 1ª aquisição: segura o lock até resolvermos o gate manualmente (simula holder lento).
+        const first = svc.withWorktreeLock('conc#1', async () => {
+            order.push('first-start');
+            await new Promise<void>(r => { firstRelease = r; });
+            order.push('first-end');
+            return 'r1';
+        });
+
+        // Drena microtasks até a 1ª adquirir o lock (prev=resolved) e travar no gate. Robusto a
+        // quantos ticks o scheduler precisar (não depende de contagem exata de microtasks).
+        for (let i = 0; i < 20 && typeof firstRelease !== 'function'; i++) {
+            await Promise.resolve();
+        }
+        expect(typeof firstRelease).toBe('function'); // sanity: a 1ª entrou no fn()
+
+        // 2ª aquisição em paralelo: seu `prev` é o elo da 1ª (ainda pendurado) → BLOQUEADA.
+        const second = svc.withWorktreeLock('conc#2', async () => {
+            secondStarted = true;
+            order.push('second-start');
+            return 'r2';
+        });
+
+        // Evidência de SERIALIZAÇÃO: a 2ª ainda NÃO rodou (lock ocupado pela 1ª).
+        expect(secondStarted).toBe(false);
+
+        // Libera a 1ª → o finally dela resolve o elo → a 2ª finalmente adquire e roda.
+        firstRelease();
+        const [r1, r2] = await Promise.all([first, second]);
+
+        expect(r1).toBe('r1');
+        expect(r2).toBe('r2');
+        // Ordem prova a serialização: a 1ª TERMINOU antes da 2ª COMEÇAR (sem overlap).
+        expect(order).toEqual(['first-start', 'first-end', 'second-start']);
+    });
+
+    it('no timeout, release() do elo abortado é invocado EXATAMENTE UMA vez (sem leak nem double-free)', async () => {
+        // Judge #1114 ponto 3: além de provar que a cadeia se cura, asserir que release() é
+        // chamado exatamente UMA vez no elo rejeitado — nem zero (o bug original do incidente),
+        // nem duas (double-free que poderia corromper a cadeia).
+        svc.worktreeLock = new Promise<void>(() => { /* holder pendurado */ });
+
+        const first = svc.withWorktreeLock('acq#1', async () => 'r1');
+        const firstErr = first.catch((e: Error) => e);
+
+        // withWorktreeLock roda sincrono até o 1º await, então NESTE ponto svc.worktreeLock JÁ É
+        // o elo (a release-promise) criado POR ESTA aquisição. Capturamos p/ observar o setlement.
+        const link = svc.worktreeLock as Promise<void>;
+        let settled = 0;
+        link.then(() => { settled++; }, () => { settled++; });
+
+        // Estoura o watchdog total do lock (3h05) — único timer pendente após o reset do beforeEach.
+        await vi.advanceTimersByTimeAsync(12 * 60 * 60 * 1000); // 12h > 3h05
+        expect(String(await firstErr)).toMatch(/worktreeLock timeout/i);
+
+        // Uma promise só setla UMA vez: settled===1 implica exatamente uma invocação de release()
+        // neste elo. 0 = leak (bug original); >1 = impossível p/ uma promise, mas o contador ainda
+        // trava o contrato caso a implementação um dia troque release por algo re-entrante.
+        expect(settled).toBe(1);
+        await expect(link).resolves.toBeUndefined();
+    });
 });
