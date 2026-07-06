@@ -9,6 +9,7 @@ import { approvalService } from './approvalService';
 import { interApiService } from './interApiService';
 import { itauApiService } from './itauApiService';
 import { logger } from '../utils/logger';
+import { FEATURES } from '../config/features';
 
 const log = logger.child('BotService');
 
@@ -53,8 +54,10 @@ class BotService {
             const sessionId = message.sessionId;
             let body = message.body;
 
-            // AUDIO TRANSCRIPTION - Transcribe voice messages for LLM processing
-            if ((message.type === 'ptt' || message.type === 'audio') && message.hasMedia) {
+            // AUDIO TRANSCRIPTION - Transcribe voice messages for LLM processing.
+            // #1127: respeita a flag AUDIO_TRANSCRIPTION_ENABLED (antes transcrevia SEMPRE, sem como
+            // cortar o custo de ASR). Default true; setar AUDIO_TRANSCRIPTION_ENABLED=false desliga.
+            if (FEATURES.AUDIO_TRANSCRIPTION_ENABLED && (message.type === 'ptt' || message.type === 'audio') && message.hasMedia) {
                 log.info('Audio message detected, attempting transcription...');
                 try {
                     const media = await messageService.getMessageMedia(sessionId, message.id);
