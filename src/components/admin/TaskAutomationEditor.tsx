@@ -15,7 +15,7 @@ export interface TaskAutomationEditorProps {
 export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAdmin, themeColor = 'indigo' }) => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [config, setConfig] = useState<TaskAutomationConfig>({ autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8 });
+    const [config, setConfig] = useState<TaskAutomationConfig>({ autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9 });
 
     useEffect(() => {
         if (!isAdmin) { setLoading(false); return; }
@@ -114,6 +114,29 @@ export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAd
                                 <input type="checkbox" checked={config.autoMerge} onChange={(e) => setConfig({ ...config, autoMerge: e.target.checked })} className="sr-only peer" />
                                 <div className={`w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-${themeColor}-600`}></div>
                             </label>
+                        </div>
+
+                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700">
+                            <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
+                                <ShieldCheck size={16} /> Nota minima para APROVAR (Judge)
+                            </div>
+                            <p className="text-xs text-slate-500 mb-2">Abaixo desta nota a task vai para revisao humana em vez de aprovada. O merge tem gate proprio (acima).</p>
+                            <div className="flex items-center gap-3">
+                                <input
+                                    type="range"
+                                    min={1}
+                                    max={10}
+                                    value={config.minApproveScore}
+                                    onChange={(e) => setConfig({ ...config, minApproveScore: Number(e.target.value) })}
+                                    className="flex-1"
+                                />
+                                <span className={`text-lg font-bold min-w-[3ch] text-center ${
+                                    config.minApproveScore >= 9 ? 'text-emerald-500' : config.minApproveScore >= 7 ? 'text-amber-500' : 'text-red-500'
+                                }`}>
+                                    {config.minApproveScore}
+                                </span>
+                                <span className="text-xs text-slate-400">/10</span>
+                            </div>
                         </div>
 
                         {config.autoMerge && (

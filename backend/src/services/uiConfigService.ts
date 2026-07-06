@@ -80,6 +80,8 @@ export interface TaskAutomationConfig {
     autoMerge: boolean;
     autoDecompose: boolean;
     minMergeScore: number;
+    /** Piso de nota do Judge (0-10) p/ APROVAR uma task (default 9). Abaixo dele → revisão humana. #1125 */
+    minApproveScore: number;
 }
 
 export interface UiConfig {
@@ -138,7 +140,7 @@ const DEFAULTS: UiConfig = {
     customPages: [],
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
     taskNotificationsExternalEnabled: false,
-    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8 },
+    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9 },
     version: 0,
 };
 
@@ -282,11 +284,13 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
     if (!v || typeof v !== 'object') return { ...d };
     const a = v as Record<string, unknown>;
     const minScore = typeof a.minMergeScore === 'number' ? Math.max(1, Math.min(10, Math.round(a.minMergeScore))) : d.minMergeScore;
+    const minApprove = typeof a.minApproveScore === 'number' ? Math.max(1, Math.min(10, Math.round(a.minApproveScore))) : d.minApproveScore;
     return {
         autoPlay: a.autoPlay === true,
         autoMerge: a.autoMerge === true,
         autoDecompose: a.autoDecompose === true,
         minMergeScore: minScore,
+        minApproveScore: minApprove,
     };
 }
 
