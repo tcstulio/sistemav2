@@ -416,7 +416,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                                         ))}
                                         <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
                                             <span className="text-sm font-bold text-slate-800 dark:text-white">
-                                                Total: {formatCurrency(selectedContract.lines.reduce((sum, l) => sum + (l.price * l.qty), 0))}
+                                                Total: {formatCurrency(selectedContract.lines.reduce((sum, l) => sum + ((Number(l.price) || 0) * (Number(l.qty) || 0)), 0))}
                                             </span>
                                         </div>
                                     </div>

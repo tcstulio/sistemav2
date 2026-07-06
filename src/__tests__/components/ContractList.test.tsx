@@ -284,4 +284,118 @@ describe('ContractList', () => {
             });
         });
     });
+
+    describe('Contract detail - NaN guard on lines total (#1107)', () => {
+        it('does not render NaN total when line price/qty are missing (null/undefined)', async () => {
+            const user = userEvent.setup();
+            vi.mocked(useContracts).mockReturnValue({
+                data: [
+                    {
+                        id: '3',
+                        ref: 'CTR-003',
+                        socid: '20',
+                        project_id: '',
+                        date_contrat: Math.floor(new Date('2024-05-01').getTime() / 1000),
+                        statut: '1' as const,
+                        note_public: '',
+                        lines: [
+                            { id: '200', desc: 'Preço ausente', qty: 2, price: undefined },
+                            { id: '201', desc: 'Qtd ausente', qty: undefined, price: 100 },
+                            { id: '202', desc: 'Preço nulo', qty: 3, price: null },
+                            { id: '203', desc: 'Válido', qty: 1, price: 500 },
+                        ],
+                    },
+                ],
+                refetch: vi.fn(),
+            } as any);
+
+            renderList();
+
+            await waitFor(() => screen.getByText('CTR-003'));
+            await user.click(screen.getByText('CTR-003'));
+
+            await waitFor(() => {
+                expect(screen.getByText('Linhas de Serviço')).toBeInTheDocument();
+            });
+
+            // Without the guard, `undefined * number` => NaN and the whole total
+            // becomes "R$ NaN". Invalid lines must contribute 0; only the valid
+            // line (1 * 500) counts.
+            expect(screen.queryByText(/NaN/)).toBeNull();
+            const totalEl = screen.getByText(/Total:/i);
+            expect(totalEl.textContent).not.toMatch(/NaN/);
+            expect(totalEl).toHaveTextContent(/500,00/);
+        });
+
+        it('renders R$ 0,00 total when every line is missing price/qty', async () => {
+            const user = userEvent.setup();
+            vi.mocked(useContracts).mockReturnValue({
+                data: [
+                    {
+                        id: '4',
+                        ref: 'CTR-004',
+                        socid: '20',
+                        project_id: '',
+                        date_contrat: Math.floor(new Date('2024-06-01').getTime() / 1000),
+                        statut: '0' as const,
+                        note_public: '',
+                        lines: [
+                            { id: '300', desc: 'Tudo ausente', qty: undefined, price: undefined },
+                            { id: '301', desc: 'Só preço', qty: undefined, price: 100 },
+                        ],
+                    },
+                ],
+                refetch: vi.fn(),
+            } as any);
+
+            renderList();
+
+            await waitFor(() => screen.getByText('CTR-004'));
+            await user.click(screen.getByText('CTR-004'));
+
+            await waitFor(() => {
+                expect(screen.getByText(/Total:/i)).toBeInTheDocument();
+            });
+
+            expect(screen.queryByText(/NaN/)).toBeNull();
+            const totalEl = screen.getByText(/Total:/i);
+            expect(totalEl.textContent).not.toMatch(/NaN/);
+            expect(totalEl).toHaveTextContent(/0,00/);
+        });
+
+        it('guards the total reduce against literal NaN price/qty', async () => {
+            const user = userEvent.setup();
+            vi.mocked(useContracts).mockReturnValue({
+                data: [
+                    {
+                        id: '5',
+                        ref: 'CTR-005',
+                        socid: '20',
+                        project_id: '',
+                        date_contrat: Math.floor(new Date('2024-07-01').getTime() / 1000),
+                        statut: '1' as const,
+                        note_public: '',
+                        lines: [
+                            { id: '400', desc: 'Valores corrompidos', qty: NaN, price: NaN },
+                            { id: '401', desc: 'Válido', qty: 2, price: 200 },
+                        ],
+                    },
+                ],
+                refetch: vi.fn(),
+            } as any);
+
+            renderList();
+
+            await waitFor(() => screen.getByText('CTR-005'));
+            await user.click(screen.getByText('CTR-005'));
+
+            // Scope the assertion to the Total element: with the guard the total
+            // is (0*0) + (2*200) = 400, never NaN. (A per-line price span with a
+            // literal NaN value may still show "R$ NaN" — that display path is
+            // outside the scope of this aggregate-total fix.)
+            const totalEl = await screen.findByText(/Total:/i);
+            expect(totalEl.textContent).not.toMatch(/NaN/);
+            expect(totalEl).toHaveTextContent(/400,00/);
+        });
+    });
 });

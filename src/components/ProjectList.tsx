@@ -311,9 +311,9 @@ const ProjectDetail: React.FC<{
                             <ProjectOverviewTab
                                 project={project}
                                 customerName={getCustomerName(project.socid)}
-                                totalInvoiced={projectInvoices.reduce((acc, i) => acc + i.total_ttc, 0)}
-                                totalSupplierBills={projectSupplierInvoices.reduce((acc, i) => acc + i.total_ttc, 0)}
-                                totalExpenses={projectExpenses.reduce((acc, i) => acc + i.total_ttc, 0)}
+                                totalInvoiced={projectInvoices.reduce((acc, i) => acc + (Number(i.total_ttc) || 0), 0)}
+                                totalSupplierBills={projectSupplierInvoices.reduce((acc, i) => acc + (Number(i.total_ttc) || 0), 0)}
+                                totalExpenses={projectExpenses.reduce((acc, i) => acc + (Number(i.total_ttc) || 0), 0)}
                                 createdByName={resolveUserName(project.fk_user_creat, users)}
                                 modifiedByName={resolveUserName(project.fk_user_modif, users)}
                                 onNavigate={onNavigate}
