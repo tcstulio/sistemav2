@@ -384,6 +384,14 @@ export const LlmSettingsTab: React.FC = () => {
     const [isFetchingModels, setIsFetchingModels] = useState(false);
     const [testResult, setTestResult] = useState<TestResult | null>(null);
     const [isTesting, setIsTesting] = useState(false);
+    // Indica se há chave persistida no backend p/ cada provider (#1128). Não exibimos
+    // o valor da chave (segurança) — apenas se ela já está configurada, para a UI não
+    // mais dar a falsa impressão de "vazio" quando na verdade há chave salva.
+    const [keyConfigured, setKeyConfigured] = useState<{ google: boolean; zai: boolean; minimax: boolean }>({
+        google: false,
+        zai: false,
+        minimax: false
+    });
 
     // Modules tab
     const [moduleConfigs, setModuleConfigs] = useState<Record<string, ModuleConfig>>({});
@@ -592,6 +600,14 @@ export const LlmSettingsTab: React.FC = () => {
                 minimaxKey: '',
                 modelName: response.data.localModelName || (response.data.configProvider === 'google' ? 'gemini-2.0-flash' : response.data.configProvider === 'glm' ? 'glm-5.1' : response.data.configProvider === 'minimax' ? 'MiniMax-M3' : 'llama3')
             });
+            // Recarrega o estado persistido das chaves (#1128): o input continua vazio
+            // (não expomos o segredo), mas marcamos quais providers já têm chave salva.
+            setKeyConfigured({
+                google: !!response.data.googleApiKeyConfigured,
+                zai: !!response.data.zaiApiKeyConfigured,
+                minimax: !!response.data.minimaxApiKeyConfigured
+            });
+            // Quando o admin salva uma chave digitada, ela passa a estar configurada.
             // Fetch models for whatever provider is configured
             fetchModels(response.data.configProvider || 'local');
         } catch (e) {
@@ -1031,6 +1047,11 @@ export const LlmSettingsTab: React.FC = () => {
                                             className="w-full p-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 dark:text-white font-mono text-sm"
                                             placeholder="AIzaSy..."
                                         />
+                                        {keyConfigured.google && !config.googleKey && (
+                                            <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">
+                                                ✓ Chave já configurada — deixe vazio para manter a atual.
+                                            </p>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -1082,6 +1103,11 @@ export const LlmSettingsTab: React.FC = () => {
                                             className="w-full p-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 dark:text-white font-mono text-sm"
                                             placeholder="Sua API key do Z.AI"
                                         />
+                                        {keyConfigured.zai && !config.zaiKey && (
+                                            <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">
+                                                ✓ Chave já configurada — deixe vazio para manter a atual.
+                                            </p>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -1130,6 +1156,11 @@ export const LlmSettingsTab: React.FC = () => {
                                             className="w-full p-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 dark:text-white font-mono text-sm"
                                             placeholder="Sua API key do MiniMax"
                                         />
+                                        {keyConfigured.minimax && !config.minimaxKey && (
+                                            <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">
+                                                ✓ Chave já configurada — deixe vazio para manter a atual.
+                                            </p>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">

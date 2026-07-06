@@ -11,6 +11,10 @@ const mockConfigService = vi.hoisted(() => ({
     getFallbackChain: vi.fn((moduleName: string) => [moduleName === 'banking' ? 'google' : 'local']),
     setFallbackChain: vi.fn(),
     getAllFallbackChains: vi.fn(() => ({})),
+    setLlmConfig: vi.fn(),
+    getLlmConfig: vi.fn(() => ({})),
+    setWhatsAppProvider: vi.fn(),
+    getWhatsAppProvider: vi.fn(() => undefined),
 }));
 
 vi.mock('../../services/configService', () => ({
@@ -296,6 +300,15 @@ describe('adminRoutes', () => {
             expect(res.status).toBe(200);
             expect(res.body.provider).toBeDefined();
         });
+
+        it('expoe flags de chave configurada por provider (#1128)', async () => {
+            const res = await request(app).get('/api/admin/config/llm');
+
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveProperty('googleApiKeyConfigured');
+            expect(res.body).toHaveProperty('zaiApiKeyConfigured');
+            expect(res.body).toHaveProperty('minimaxApiKeyConfigured');
+        });
     });
 
     describe('GET /api/admin/config/llm/models', () => {
@@ -359,6 +372,24 @@ describe('adminRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(mockConfigService.resetModulesToGlobal).toHaveBeenCalledTimes(1);
+        });
+
+        it('persiste provider/url/key/model via configService.setLlmConfig (#1128)', async () => {
+            mockConfigService.setLlmConfig.mockClear();
+            const res = await request(app)
+                .post('/api/admin/config/llm')
+                .send({ provider: 'glm', url: 'https://api.z.ai/', key: 'zk', modelName: 'glm-5.2' });
+
+            expect(res.status).toBe(200);
+            expect(mockConfigService.setLlmConfig).toHaveBeenCalledTimes(1);
+            expect(mockConfigService.setLlmConfig).toHaveBeenCalledWith({
+                provider: 'glm',
+                url: 'https://api.z.ai/',
+                key: 'zk',
+                modelName: 'glm-5.2'
+            });
+            // Mensagem não deve mais sugerir "restart server to persist".
+            expect(res.body.message).not.toMatch(/restart server to persist/i);
         });
     });
 
@@ -489,6 +520,20 @@ describe('adminRoutes', () => {
                 .send({ provider: 'invalid' });
 
             expect(res.status).toBe(400);
+        });
+
+        it('persiste o provider via configService.setWhatsAppProvider (#1128)', async () => {
+            mockConfigService.setWhatsAppProvider.mockClear();
+            mockChannelRouter.setWhatsAppProvider.mockClear();
+            const res = await request(app)
+                .post('/api/admin/config/features/provider')
+                .send({ provider: 'moltbot' });
+
+            expect(res.status).toBe(200);
+            expect(mockChannelRouter.setWhatsAppProvider).toHaveBeenCalledWith('moltbot');
+            expect(mockConfigService.setWhatsAppProvider).toHaveBeenCalledWith('moltbot');
+            // Note não deve mais dizer "Runtime change only".
+            expect(res.body.note).not.toMatch(/runtime change only/i);
         });
     });
 

@@ -2,6 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 import { config } from '../config/env';
+import { FEATURES } from '../config/features';
 import { atomicWriteSync } from '../utils/atomicWrite';
 
 interface ModuleConfig {
@@ -10,10 +11,34 @@ interface ModuleConfig {
     fallbackChain?: string[];
 }
 
+// Provider de WhatsApp persistido (mesmo tipo de config/features.ts).
+type WhatsAppProvider = 'legacy' | 'moltbot';
+
+/**
+ * Configuração de LLM persistida (#1128). Cada campo é opcional: quando
+ * presente, sobrescreve o valor vindo do `process.env` no boot. Espelha os
+ * campos de `config` (env.ts) que o endpoint POST /config/llm muta, para que
+ * provider/url/key/model escolhidos na UI sobrevivam a restart.
+ */
+interface PersistedLlmConfig {
+    llmProvider?: string;
+    localLlmUrl?: string;
+    localModelName?: string;
+    zaiBaseUrl?: string;
+    zaiApiKey?: string;
+    zaiModel?: string;
+    minimaxBaseUrl?: string;
+    minimaxApiKey?: string;
+    minimaxModel?: string;
+    googleApiKey?: string;
+}
+
 interface PersistedConfig {
     moduleConfigs: Record<string, ModuleConfig>;
     customPrompts: Record<string, string>;
     fallbackChains?: Record<string, string[]>;
+    llm?: PersistedLlmConfig;
+    whatsappProvider?: WhatsAppProvider;
 }
 
 const CONFIG_PATH = path.join(process.cwd(), 'data', 'config.json');
@@ -64,9 +89,19 @@ class ConfigService {
     private customPrompts: Record<string, string>;
     // Cadeia de fallback POR MÓDULO — quando presente, sobrescreve o default global.
     private fallbackChains: Record<string, string[]>;
+    // Config de LLM persistida (provider/url/key/model) — override do env (#1128).
+    private llmConfig: PersistedLlmConfig;
+    // WhatsApp provider persistido — override do env WHATSAPP_PROVIDER (#1128).
+    private whatsappProvider: WhatsAppProvider | undefined;
 
     constructor() {
         const persisted = this.loadFromDisk();
+        // Aplica override de LLM ANTES de derivar defaults para que
+        // modelForProvider/defaultModules usem o provider persistido.
+        this.llmConfig = persisted?.llm ?? {};
+        this.whatsappProvider = this.sanitizeWhatsAppProvider(persisted?.whatsappProvider);
+        this.applyLlmToRuntime();
+        this.applyWhatsAppProviderToRuntime();
         this.moduleConfigs = persisted?.moduleConfigs ?? defaultModules();
         this.customPrompts = persisted?.customPrompts ?? defaultPrompts();
         this.fallbackChains = persisted?.fallbackChains ?? {};
@@ -108,12 +143,94 @@ class ConfigService {
             const persisted: PersistedConfig = {
                 moduleConfigs: this.moduleConfigs,
                 customPrompts: this.customPrompts,
-                fallbackChains: this.fallbackChains
+                fallbackChains: this.fallbackChains,
+                llm: this.llmConfig,
+                whatsappProvider: this.whatsappProvider
             };
             atomicWriteSync(CONFIG_PATH, persisted);
         } catch (e: any) {
             console.error(`[ConfigService] Falha ao persistir config: ${e?.message || e}`);
         }
+    }
+
+    /**
+     * Sobe os valores de LLM persistidos para o objeto `config` runtime (#1128).
+     * Precedência: data/config.json > process.env > built-in default. Só sobrescreve
+     * campos que foram explicitamente persistidos (undefined = mantém o do env).
+     */
+    private applyLlmToRuntime(): void {
+        const c = this.llmConfig;
+        if (c.llmProvider !== undefined) config.llmProvider = c.llmProvider;
+        if (c.localLlmUrl !== undefined) config.localLlmUrl = c.localLlmUrl;
+        if (c.localModelName !== undefined) config.localModelName = c.localModelName;
+        if (c.zaiBaseUrl !== undefined) config.zaiBaseUrl = c.zaiBaseUrl;
+        if (c.zaiApiKey !== undefined) config.zaiApiKey = c.zaiApiKey;
+        if (c.zaiModel !== undefined) config.zaiModel = c.zaiModel;
+        if (c.minimaxBaseUrl !== undefined) config.minimaxBaseUrl = c.minimaxBaseUrl;
+        if (c.minimaxApiKey !== undefined) config.minimaxApiKey = c.minimaxApiKey;
+        if (c.minimaxModel !== undefined) config.minimaxModel = c.minimaxModel;
+        if (c.googleApiKey !== undefined) config.googleApiKey = c.googleApiKey;
+    }
+
+    /**
+     * Espelha o WhatsApp provider persistido para FEATURES, mantendo consistência
+     * com isUsingMoltbot()/getAllFeatures() e com o channelRouter (#1128).
+     */
+    private applyWhatsAppProviderToRuntime(): void {
+        if (this.whatsappProvider) {
+            FEATURES.WHATSAPP_PROVIDER = this.whatsappProvider;
+        }
+    }
+
+    private sanitizeWhatsAppProvider(value: unknown): WhatsAppProvider | undefined {
+        return value === 'legacy' || value === 'moltbot' ? value : undefined;
+    }
+
+    /**
+     * Persiste provider/url/key/model do LLM (#1128). Muta o `config` runtime
+     * (mesmo mapeamento por provider do POST /config/llm) e grava em data/config.json.
+     * Campos omitidos/falsy no `update` não alteram o que já está persistido.
+     */
+    setLlmConfig(update: { provider?: string; url?: string; key?: string; modelName?: string }): void {
+        const { provider, url, key, modelName } = update;
+        if (provider) {
+            this.llmConfig.llmProvider = provider;
+            config.llmProvider = provider;
+        }
+        if (url) {
+            if (provider === 'glm') { this.llmConfig.zaiBaseUrl = url; config.zaiBaseUrl = url; }
+            else if (provider === 'minimax') { this.llmConfig.minimaxBaseUrl = url; config.minimaxBaseUrl = url; }
+            else { this.llmConfig.localLlmUrl = url; config.localLlmUrl = url; }
+        }
+        if (key) {
+            if (provider === 'glm') { this.llmConfig.zaiApiKey = key; config.zaiApiKey = key; }
+            else if (provider === 'minimax') { this.llmConfig.minimaxApiKey = key; config.minimaxApiKey = key; }
+            else { this.llmConfig.googleApiKey = key; config.googleApiKey = key; }
+        }
+        if (modelName) {
+            if (provider === 'glm') { this.llmConfig.zaiModel = modelName; config.zaiModel = modelName; }
+            else if (provider === 'minimax') { this.llmConfig.minimaxModel = modelName; config.minimaxModel = modelName; }
+            else { this.llmConfig.localModelName = modelName; config.localModelName = modelName; }
+        }
+        this.flush();
+    }
+
+    getLlmConfig(): PersistedLlmConfig {
+        return { ...this.llmConfig };
+    }
+
+    /**
+     * Persiste o WhatsApp provider (#1128). Além de gravar em data/config.json,
+     * espelha para FEATURES para consistência imediata com isUsingMoltbot().
+     */
+    setWhatsAppProvider(provider: WhatsAppProvider): void {
+        this.whatsappProvider = provider;
+        FEATURES.WHATSAPP_PROVIDER = provider;
+        this.flush();
+    }
+
+    getWhatsAppProvider(): WhatsAppProvider | undefined {
+        return this.whatsappProvider;
     }
 
     getModuleConfig(moduleName: string): ModuleConfig {

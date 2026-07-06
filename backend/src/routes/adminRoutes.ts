@@ -89,7 +89,8 @@ router.get('/config/llm', (req, res) => {
         zaiApiKeyConfigured: !!config.zaiApiKey,
         minimaxBaseUrl: config.minimaxBaseUrl,
         minimaxModel: config.minimaxModel,
-        minimaxApiKeyConfigured: !!config.minimaxApiKey
+        minimaxApiKeyConfigured: !!config.minimaxApiKey,
+        googleApiKeyConfigured: !!config.googleApiKey
     });
 });
 
@@ -332,25 +333,11 @@ router.post('/config/llm', async (req, res) => {
 
         aiService.setConfig(provider, url, key, modelName);
 
-        config.llmProvider = provider;
+        // Persiste provider/url/key/model em data/config.json (#1128) — sobrevive a restart.
+        configService.setLlmConfig({ provider, url, key, modelName });
         configService.resetModulesToGlobal();
-        if (url) {
-            if (provider === 'glm') config.zaiBaseUrl = url;
-            else if (provider === 'minimax') config.minimaxBaseUrl = url;
-            else config.localLlmUrl = url;
-        }
-        if (key) {
-            if (provider === 'glm') config.zaiApiKey = key;
-            else if (provider === 'minimax') config.minimaxApiKey = key;
-            else config.googleApiKey = key;
-        }
-        if (modelName) {
-            if (provider === 'glm') config.zaiModel = modelName;
-            else if (provider === 'minimax') config.minimaxModel = modelName;
-            else config.localModelName = modelName;
-        }
 
-        res.json({ status: 'success', message: `LLM Provider switched to ${provider} (Model: ${modelName || 'default'}). Note: restart server to persist via .env.` });
+        res.json({ status: 'success', message: `LLM Provider switched to ${provider} (Model: ${modelName || 'default'}). Configuração persistida.` });
     } catch (e: any) {
         res.status(500).json({ status: 'error', message: e.message });
     }
@@ -549,11 +536,13 @@ router.post('/config/features/provider', (req, res) => {
     }
 
     channelRouter.setWhatsAppProvider(provider);
+    // Persiste em data/config.json (#1128) — sobrevive a restart.
+    configService.setWhatsAppProvider(provider);
 
     res.json({
         success: true,
         provider: channelRouter.getWhatsAppProvider(),
-        note: 'Runtime change only. Set WHATSAPP_PROVIDER in .env to persist.'
+        note: 'Provider persistido em data/config.json — sobrevive a restart.'
     });
 });
 

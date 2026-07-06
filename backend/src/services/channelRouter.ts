@@ -8,6 +8,7 @@
  */
 
 import { FEATURES, isUsingMoltbot } from '../config/features';
+import { configService } from './configService';
 import { moltbotGateway, MessageResult as MoltbotMessageResult } from './moltbotGateway';
 import { messageService as legacyMessageService } from './legacy/messageService';
 import { emailService } from './emailService';
@@ -56,7 +57,9 @@ class ChannelRouter {
     private defaultSessionId: string = 'default';
 
     constructor() {
-        this.whatsAppProvider = FEATURES.WHATSAPP_PROVIDER;
+        // Precedência (#1128): valor persistido em data/config.json > env FEATURES.
+        // Lê do configService para ser robusto à ordem de import dos módulos.
+        this.whatsAppProvider = configService.getWhatsAppProvider() ?? FEATURES.WHATSAPP_PROVIDER;
         log.info(`Initialized with WhatsApp provider: ${this.whatsAppProvider}`);
     }
 

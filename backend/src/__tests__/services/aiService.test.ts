@@ -87,6 +87,7 @@ vi.mock('../../services/configService', () => ({
         setPrompts: vi.fn(),
         isRunWithChainEnabled: vi.fn().mockReturnValue(false),
         getFallbackChain: vi.fn().mockReturnValue(['google']),
+        getWhatsAppProvider: vi.fn().mockReturnValue(undefined),
     },
     ConfigService: class {},
 }));
