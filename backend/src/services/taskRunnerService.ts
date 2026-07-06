@@ -14,6 +14,7 @@ import { isPeakUtcHour } from '../utils/peakWindow';
 import { socketService } from './socketService';
 import { killTree, isAlive, killOpencodeOrphans } from '../utils/processTree';
 import { runOpencode, resolveBash } from '../utils/runOpencode';
+import { getFreeDiskBytes, formatGB } from '../utils/diskSpace';
 import { claudeCliService } from './claudeCliService';
 import { parseTscErrors, parseGlobalTscErrors, serializeErrors, deserializeErrors, computeBlocking, splitTouchedByProject } from './gateDelta';
 import { previewPortsFor } from '../utils/previewPorts';
@@ -54,6 +55,14 @@ const BASELINE_CACHE_DIR = path.join(__dirname, '../../data/baseline-cache');
 // de lógica que passa no tsc. Como o main é mantido verde pela CI, falha aqui = regressão da task.
 // TASKRUNNER_TEST_GATE=0 desliga (ex.: se testes flaky causarem falso-bloqueio recorrente).
 const TEST_GATE = process.env.TASKRUNNER_TEST_GATE !== '0';
+
+// Guard de DISCO (#1111): antes de criar/usar o worktree, checa o espaço livre no volume do
+// WT_ROOT. Se abaixo do limiar, tenta limpeza (prune + reap) e, se ainda baixo, FALHA a task
+// com erro claro em vez de deixar o `worktree add`/opencode pendurar silenciosamente (causa do
+// incidente 2026-07-06: disco em ~2,4 GB travou o robô por 3h, todas as tasks zumbi). Limiar
+// configurável via env (default 3 GB). TASKRUNNER_DISK_GUARD=0 desliga (emergência).
+const DISK_GUARD = process.env.TASKRUNNER_DISK_GUARD !== '0';
+const DISK_MIN_FREE_BYTES = (Number(process.env.TASKRUNNER_DISK_MIN_GB) || 3) * 1024 * 1024 * 1024;
 
 // Auto-recuperação da fila (#644 criterion opcional): se um ghost/hung promise deixar a
 // cadeia com pendingExecs>0 mas SEM nenhuma task ativa (running/fixing/cancelling) por mais
@@ -831,6 +840,9 @@ class TaskRunnerService {
     // então rodar duas execuções ao mesmo tempo corromperia o git. Tasks extras ficam 'pending' até a vez.
     private pendingExecs = 0;
     private execChain: Promise<void> = Promise.resolve();
+    // Task atualmente em execução (sincronizada com a execChain) — dá contexto p/ emitir
+    // eventos/logs do guard de disco chamado de dentro de ensureWorktree, que só recebe `branch`.
+    private currentExecTask: Task | undefined = undefined;
 
     // Mutex único cobrindo TODA operação que toca o worktree compartilhado (WT_ROOT) ou o
     // projectID compartilhado do opencode: executeTask, tryAutoMerge, startPreview e o Judge
@@ -986,9 +998,11 @@ class TaskRunnerService {
             }, MAX_TASK_WALL_MS);
             try {
                 // Lock do worktree: serializa com tryAutoMerge/startPreview de outras tasks.
+                this.currentExecTask = task;
                 await this.withWorktreeLock(`exec #${task.issueNumber}`, () => this.executeTask(task, branch));
             } finally {
                 clearTimeout(watchdog);
+                this.currentExecTask = undefined;
             }
         }).catch((e: any) => {
             // killTask (ou o settle forçado do runOpencode após kill falho) pode já ter marcado a
@@ -1207,8 +1221,56 @@ class TaskRunnerService {
         }
     }
 
+    /**
+     * Guard de DISCO (#1111): mede o espaço livre no volume do WT_ROOT antes de criar/usar o
+     * worktree. Se abaixo do limiar, tenta limpeza automática (prune de worktrees + reap de
+     * órfãos) e re-mede; se ainda baixo, lança erro claro — quem chama (ensureWorktree →
+     * executeTask → catch da execChain) marca a task como failed em vez de zumbi. Se a medição
+     * falhar (null), PROSSEGUE (não trava o robô por falha da própria checagem).
+     */
+    private async ensureDiskSpace(task?: Task): Promise<void> {
+        if (!DISK_GUARD) return;
+        const free = await getFreeDiskBytes(WT_ROOT);
+        if (free === null) {
+            log.warn('ensureDiskSpace: não foi possível medir o disco livre — prosseguindo (best-effort)');
+            return;
+        }
+        if (free >= DISK_MIN_FREE_BYTES) return;
+
+        const minGB = formatGB(DISK_MIN_FREE_BYTES);
+        const beforeGB = formatGB(free);
+        log.warn(`ensureDiskSpace: disco BAIXO (${beforeGB} GB < mínimo ${minGB} GB) — tentando limpeza...`);
+        this.emitLog(task?.issueNumber ?? 0, 'warn', `Disco baixo (${beforeGB} GB) — tentando limpeza automática antes de prosseguir.`);
+        if (task) this.recordEvent(task, 'worktree_cleanup', `Disco baixo (${beforeGB} GB < ${minGB} GB mínimo) — tentando limpeza (prune + reap)`, { diskLow: true, freeBytes: free });
+
+        // (a) Limpeza automática: prune de worktrees obsoletos + reap de opencode órfão (segura disco/CPU).
+        try { await git(['worktree', 'prune'], { timeout: 30000 }); } catch (e: any) { log.warn(`ensureDiskSpace: worktree prune falhou: ${e?.message || e}`); }
+        await this.sweepOrphanedOpencode('disk-low', [], task).catch(() => false);
+
+        // Re-mede após a limpeza.
+        const after = await getFreeDiskBytes(WT_ROOT);
+        if (after !== null && after >= DISK_MIN_FREE_BYTES) {
+            const afterGB = formatGB(after);
+            log.warn(`ensureDiskSpace: limpeza recuperou disco — agora ${afterGB} GB livres (era ${beforeGB} GB)`);
+            this.emitLog(task?.issueNumber ?? 0, 'success', `Limpeza recuperou disco: ${afterGB} GB livres.`);
+            if (task) this.recordEvent(task, 'worktree_cleanup', `Disco recuperado após limpeza: ${afterGB} GB livres`, { diskRecovered: true, freeBytes: after });
+            return;
+        }
+        // (b) Ainda baixo: falha a task com erro claro (não deixa virar zumbi).
+        const finalGB = formatGB(after ?? free);
+        const msg = `disco insuficiente: ${finalGB} GB livres (mínimo ${minGB} GB) — limpeza automática não recuperou espaço`;
+        log.error(`ensureDiskSpace: ${msg}`);
+        this.emitLog(task?.issueNumber ?? 0, 'error', `Disco insuficiente (${finalGB} GB) — task abortada para não travar a fila.`);
+        if (task) this.recordEvent(task, 'task_failed', msg, { diskFull: true, freeBytes: after ?? free });
+        throw new Error(msg);
+    }
+
     /** Garante um worktree git ISOLADO, limpo, no branch fix-N a partir de origin/main. */
     private async ensureWorktree(branch: string, opts?: { preserveBranch?: boolean }): Promise<void> {
+        // Guard de disco (#1111): falha rápido com erro claro se o volume do WT_ROOT estiver cheio,
+        // ANTES de qualquer `worktree add`/fetch/checkout que penduraria silenciosamente.
+        const ctxTask = this.currentExecTask;
+        await this.ensureDiskSpace(ctxTask);
         const gone = await this.sweepOrphanedOpencode('ensureWorktree');
         this.cleanStaleLocks(gone);
         await git(['fetch', 'origin', 'main'], { timeout: 60000 });
