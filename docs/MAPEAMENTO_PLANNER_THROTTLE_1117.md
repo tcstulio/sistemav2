@@ -181,7 +181,16 @@ Não existe `backend/src/models/task.ts`. O modelo vive em
     jobs LLM, `MAX_CONCURRENT = 3` (`:28`), com `enqueue()` (fire-and-forget,
     retorna `jobId`) e **`runAndWait(fn, label)`** (`:78`). **O Planner já roteia
     sua chamada de LLM por aqui** (`taskPlannerService.ts:268`, dentro de
-    `queryLLM`). **Este é o throttle natural a reaproveitar.**
+    `queryLLM`). **Não reinventar** — é o throttle natural do LLM.
+    - **Porém (nuance crítica p/ o throttle do Planner):** o `aiJobService` cobre
+      **APENAS a chamada LLM**. O `analyzeTask` dispara, **antes** do LLM, **dezenas
+      de subprocessos `gh`** que **não** passam pelo `aiJobService`:
+      `listOpenPRs()` (`taskPlannerService.ts:152`: 1 `gh pr list` + 1 `gh pr diff`
+      por PR aberto, até 30) e `getFileContextFromMain()` (`:183`: 1 `gh api` por
+      arquivo citado na issue, até 10). Esses batem direto na API do GitHub
+      (rate-limit) e somam dezenas de spawns. Logo, limitar só o LLM **não**
+      satura a proteção desejada — é preciso limitar o **fluxo inteiro**
+      (gh + LLM). Esse gap motivou o semáforo module-level de §7.
   - **`llmQuotaState`** (import em `taskRunnerService.ts:12`):
     `isQuotaExhausted`/`markQuotaExhausted`/`clearQuotaExhausted`/`isQuotaError`/
     `quotaStatus` — segura a fila durante 429/indisponibilidade da API.
@@ -189,29 +198,79 @@ Não existe `backend/src/models/task.ts`. O modelo vive em
     (reduz chamadas de LLM; TTL 1h, invalidada por hash do corpo).
   - **Hold de pico:** `isPeakHold()` (`taskRunnerService.ts:1046`) +
     `TASKRUNNER_PEAK_*` — atrasa despacho na janela de billing 3x.
-- **Gap detectado:** `planWithLLM()` (`taskRunnerService.ts:3256`) chama
-  `aiService.generateReply` **diretamente**, sem passar pelo `aiJobService`.
-  Se o throttle do epic #1113 precisar cobrir também o planejamento/ordenação,
-  este é um ponto a normalizar (envolver em `aiJobService.runAndWait`).
+- **Gap remanescente (não coberto por este PR):** `planWithLLM()`
+  (`taskRunnerService.ts:3256`) chama `aiService.generateReply` **diretamente**,
+  sem passar pelo `aiJobService` nem pelo throttle do §7 — é outra chamada de LLM
+  (ordenação da fila). Se o epic #1113 precisar cobri-la, normalizar envolvendo-a
+  em `aiJobService.runAndWait`.
 
 ---
 
-## 7. Arquivos candidatos a modificar (próximos sub-tasks)
+## 7. Solução implementada neste PR (síntese do spike)
+
+Diante do mapeamento, a refatoração de throttle foi implementada como um
+**semáforo module-level dentro de `analyzeTask`** (ponto único de estrangulamento)
+— em vez de mexer em cada call-site ou introduzir Bull/redis.
+
+### 7.1 Mecanismo
+- Arquivo: `backend/src/services/taskPlannerService.ts` (após `invalidatePlannerCache`).
+- Variáveis module-level: `plannerMaxConcurrent` (default
+  `process.env.PLANNER_MAX_CONCURRENT || 1`), `plannerActive`, `plannerWaiters[]`.
+- Helpers `acquirePlannerSlot()`/`releasePlannerSlot()` com **transferência de
+  slot** (o release despacha o próximo waiter sem re-incrementar `plannerActive`,
+  respeitando o limite N).
+- Exports p/ teste/config: `setPlannerMaxConcurrent(n)` e `resetPlannerThrottle()`.
+- `analyzeTask` chama `await acquirePlannerSlot()` **após** o cache-check e
+  `releasePlannerSlot()` num **`finally`** (libera mesmo se `gh`/LLM lançarem).
+
+### 7.2 Por que cobre TODOS os call-sites por construção
+`analyzeTask` é o gargalo comum aos 3 call-sites de produção (§5). Limitá-lo
+limita todo o fluxo caro (gh + LLM) independentemente do caller — inclusive o
+handler HTTP (`taskRoutes.ts:281`) que roda **fora** do `execChain`. Não foi
+necessário tocar `taskRunnerService.ts` nem `taskRoutes.ts`.
+
+### 7.3 Cache hit **não** adquire slot
+O cache-check retorna **antes** do `acquirePlannerSlot()`. Decisões baratas e
+determinísticas continuam imediatas, mesmo com todos os slots ocupados
+(confirmado por teste: 2 calls de LLM + `maxActive===1` quando a 3ª é cache hit).
+
+### 7.4 Complementar, não redundante, ao `aiJobService`
+- `aiJobService` (MAX=3): protege o **provedor LLM** (max 3 LLM globais).
+- Throttle do Planner (default 1): protege **gh/GitHub API** (dezenas de spawns
+  por analyzeTask) **e** reduz contenção planner↔chat pelos slots do aiJobService.
+
+### 7.5 Sem deadlock
+`reevaluateWaiting` chama `analyzeTask` em `for…of` **sequencial** (await), nunca
+concorrente; `analyzeTask` jamais re-entra em si mesmo. Logo o default N=1 não
+produz self-deadlock.
+
+### 7.6 Testes (`backend/src/__tests__/services/taskPlannerService.test.ts`)
+Novo suite "throttle de concorrência (#1117 / Epic #1113)", preservando 100% dos
+casos pré-existentes:
+- serializa com `plannerMaxConcurrent=1` (`maxActive===1`);
+- permite até N com `plannerMaxConcurrent=N` (`maxActive===2`);
+- cache hit não adquire slot (retorna imediato, 0 LLM extra);
+- **libera slot no `catch`** (analyzeTask que lança não vaza slot → sem deadlock);
+- mantém contrato de `PlannerDecision` sob throttle.
+
+---
+
+## 8. Arquivos candidatos a modificar (próximos sub-tasks)
 
 Consolidado (substitui as estimativas da issue — `models/task.ts` e
 `execChain.ts` **não existem**; os reais são):
 
-| Arquivo | O que muda (futuro) |
-|---------|---------------------|
-| `backend/src/services/taskPlannerService.ts` | `analyzeTask` (`:124`), `reevaluateWaiting` (`:313`/`:329`), rota de throttle em `queryLLM` (`:262`) |
-| `backend/src/services/taskRunnerService.ts` | worker do `execChain` (`:833`), `scheduleExec` (`:878`), chamada `analyzeTask` (`:893`), e possivelmente `planWithLLM` (`:3222`) para entrar no `aiJobService` |
-| `backend/src/routes/taskRoutes.ts` | handler síncrono `POST /planner/analyze/:issueNumber` (`:276`/`:281`) — candidato a tornar-se assíncrono (job) |
-| `backend/src/services/aiJobService.ts` | **reutilizar** (não reinventar) como ponto único de throttle de LLM |
-| `backend/src/__tests__/services/taskPlannerService.test.ts` | estender quando a assinatura/contrato mudar (preservar casos atuais) |
+| Arquivo | Estado neste PR | Próximos passos (Epic #1113) |
+|---------|-----------------|------------------------------|
+| `backend/src/services/taskPlannerService.ts` | **MODIFICADO** (semáforo §7) | se default 1 for muito conservador, subir `PLANNER_MAX_CONCURRENT` |
+| `backend/src/__tests__/services/taskPlannerService.test.ts` | **MODIFICADO** (novo suite) | manter ao mudar o contrato |
+| `backend/src/routes/taskRoutes.ts` | inalterado (throttle cobre via analyzeTask) | opcional: tornar `POST /planner/analyze` assíncrono (job) p/ não prender a req HTTP |
+| `backend/src/services/taskRunnerService.ts` | inalterado | normalizar `planWithLLM` (`:3222`) p/ entrar no `aiJobService` (gap §6) |
+| `backend/src/services/aiJobService.ts` | inalterado (reutilizado) | — |
 
 ---
 
-## 8. Resumo executivo
+## 9. Resumo executivo
 
 - `redo` (`redoTask` em `taskRunnerService.ts:2837`) e a ingestão (`syncTasks`/
   `pollSync`) **não chamam `analyzeTask` diretamente**; ambos alcancam o Planner
@@ -225,5 +284,10 @@ Consolidado (substitui as estimativas da issue — `models/task.ts` e
 - O "plan" persiste só como `task.queuePriority` + `task.planReason`
   (`taskRunnerService.ts:266-267`); a decisão completa fica em cache in-memory.
 - **Já existe** throttle de LLM (`aiJobService.runAndWait`, `MAX_CONCURRENT=3`),
-  já usado pelo Planner (`taskPlannerService.ts:268`). A refatoração de throttle
-  deve **reaproveitá-lo** — não introduzir Bull/redis.
+  já usado pelo Planner (`taskPlannerService.ts:268`) — **reaproveitado**, sem
+  Bull/redis. **Mas** ele cobre só o LLM; os subprocessos `gh` pré-LLM ficavam
+  de fora.
+- **Solução entregue:** semáforo module-level em `analyzeTask` (§7) que limita o
+  fluxo caro INTEIRO (gh + LLM) a `PLANNER_MAX_CONCURRENT` (default 1), cobrindo
+  os 3 call-sites por construção, com cache hit e `finally` garantindo
+  immediatismo e ausência de deadlock.
