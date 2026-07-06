@@ -374,6 +374,13 @@ if (!IS_PREVIEW) {
     taskRunnerService.startPolling();
 }
 
+// Start GC de Worktrees scheduler (issue #1112): cron diário do backend que dispara
+// scripts/gc-worktrees.ts (subprocesso isolado, junction-safe). Config via env:
+// GC_SCHEDULE_ENABLED / GC_SCHEDULE_TIME (default "03:00").
+import { gcSchedulerService } from './services/gcSchedulerService';
+gcSchedulerService.start();
+log.info('GcSchedulerService started (issue #1112)');
+
 // Initialize Banking Services
 import { interApiService } from './services/interApiService';
 import { itauApiService } from './services/itauApiService';
@@ -432,6 +439,9 @@ const gracefulShutdown = async (signal: string) => {
 
     // 3. Stop Alert Cron
     alertCronService.stop();
+
+    // Stop GC de Worktrees scheduler (#1112)
+    gcSchedulerService.stop();
 
     // 3. Destroy WhatsApp Clients (Releases Chrome processes & Ports)
     try {
