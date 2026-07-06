@@ -389,10 +389,10 @@ describe('ContractList', () => {
             await waitFor(() => screen.getByText('CTR-005'));
             await user.click(screen.getByText('CTR-005'));
 
-            // Scope the assertion to the Total element: with the guard the total
-            // is (0*0) + (2*200) = 400, never NaN. (A per-line price span with a
-            // literal NaN value may still show "R$ NaN" — that display path is
-            // outside the scope of this aggregate-total fix.)
+            // With the per-line + total guards, literal NaN price/qty never leaks:
+            // invalid values fall back to 0, so the total is (0*0) + (2*200) = 400,
+            // never NaN — and no per-line span renders "R$ NaN" either.
+            expect(screen.queryByText(/NaN/)).toBeNull();
             const totalEl = await screen.findByText(/Total:/i);
             expect(totalEl.textContent).not.toMatch(/NaN/);
             expect(totalEl).toHaveTextContent(/400,00/);
