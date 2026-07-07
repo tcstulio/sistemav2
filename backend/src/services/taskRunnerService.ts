@@ -2193,6 +2193,9 @@ class TaskRunnerService {
             const judgePrompt = `You are a strict senior code reviewer (LLM Judge) for a production system.
 Evaluate this PR against the original issue and project conventions.
 
+## O que sua decisão CAUSA (leia antes de pontuar)
+"approved": true significa PRONTO PARA PRODUÇÃO — o PR será MERGEADO AUTOMATICAMENTE na main, SEM nenhuma revisão humana adicional. Só marque true se VOCÊ MESMO mergearia este código em produção agora; na dúvida, use false (vai para revisão humana). Score e approved são INDEPENDENTES: o score mede qualidade, approved é seu aval final de "pode ir para a main" — um score alto NÃO obriga approved=true.
+
 ## Projeto
 - Backend: Express + TypeScript (porta 3004), Dolibarr ERP como backend de dados
 - Frontend: React + Vite (porta 5173)
@@ -2335,6 +2338,8 @@ Return ONLY a JSON:
                     log.info(`Judge score ${result.score}/10 (<8), auto-fixing (attempt ${task.judgeAttempts})`);
                     this.emitLog(task.issueNumber, 'warn', `Judge: ${result.score}/10 (< ${minApprove}). Auto-corrigindo (tentativa ${task.judgeAttempts}/${maxJudgeRounds})...`);
                     const fixContext = [
+                        // #1154 P1 item 8: o coder passa a saber A RÉGUA (a nota-alvo p/ aprovar), não só a crítica.
+                        `Esta task só é APROVADA com nota do Judge >= ${minApprove}/10 (atual: ${result.score}). Corrija os pontos abaixo para elevar a qualidade real até esse piso.`,
                         `Judge (score ${result.score}/10): ${result.review}`,
                         ...(result.missing_coverage?.length ? [`Cobertura faltando: ${result.missing_coverage.join(', ')}`] : []),
                     ].join('\n');
@@ -2344,7 +2349,11 @@ Return ONLY a JSON:
                     task.status = 'fixing';
                     this.save();
 
-                    await this.executeTask(task, task.branch || `fix-${task.issueNumber}`);
+                    // #1154 P1 item 5: auto-fix via scheduleExec (NÃO recursão direta em executeTask). Antes
+                    // as tentativas 2/3 re-entravam DENTRO do mesmo lock+watchdog desta execução (startedAt
+                    // único) → o watchdog podia matar no meio e a task virava failed com PR válido. Agora cada
+                    // tentativa é um exec FRESCO na fila (lock+watchdog próprios), igual ao selfHealFromGate.
+                    this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'fixing');
                     return;
                 }
             } else {
@@ -2775,7 +2784,16 @@ Return ONLY a JSON:
         }
     }
 
-    private selfHealFromGate(task: Task, kind: 'testRegression' | 'approvedVeto' | 'ciFailure', detail: string): boolean {
+    /**
+     * #1154 P1 item 6: erro de INFRA TRANSITÓRIA (rede/gh/timeout/5xx/rate-limit) durante o auto-merge —
+     * NÃO deve queimar um PR de score alto para revisão humana; mantém 'approved' e o resumePendingMerges
+     * re-tenta. Conflito real / typecheck / veto NÃO casam aqui (vão para os ramos específicos → revisão).
+     */
+    private isTransientError(msg: string): boolean {
+        return /ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang up|timeout|network|getaddrinfo|could not resolve host|\b50[234]\b|rate limit|secondary rate|abuse detection|TLS|handshake/i.test(msg);
+    }
+
+    private selfHealFromGate(task: Task, kind: 'testRegression' | 'approvedVeto' | 'ciFailure' | 'typecheckAfterRebase', detail: string): boolean {
         const GATE_MAX = Number(process.env.TASKRUNNER_GATE_FIX_MAX ?? this.getAutomationConfig().maxGateFixRounds ?? 3); // #963/#1154: env sobrepõe; default vem do config da UI
         if (!task.branch) return false;                            // sem branch não há o que re-submeter
         if ((task.gateFixAttempts || 0) >= GATE_MAX) return false; // teto esgotado → chamador estaciona
@@ -2790,6 +2808,10 @@ Return ONLY a JSON:
             ? `O merge foi BLOQUEADO: a CI da branch FALHOU nos checks obrigatórios (${detail}). `
               + `Reproduza a falha LOCALMENTE — rode \`tsc --noEmit\` e a suíte de testes (vitest) —, identifique a causa e corrija o CÓDIGO. `
               + `NÃO delete testes nem reduza escopo. Se o typecheck passa local mas a CI falha, verifique diferenças de ambiente (imports ausentes, mocks, ou testes dependentes de data/fuso que quebram em UTC).`
+            : kind === 'typecheckAfterRebase'
+            ? `O merge foi BLOQUEADO: após o REBASE com a main, o typecheck/build QUEBROU (${detail}). `
+              + `Provável conflito SEMÂNTICO com código novo que entrou na main (uma assinatura/tipo/import mudou desde que você começou). `
+              + `Rode \`tsc --noEmit\` no estado já rebaseado, ajuste seu código ao que a main espera AGORA — NÃO reverta o rebase nem delete testes.`
             : `O merge foi BLOQUEADO: o revisor (Juiz) REPROVOU o PR. Motivo apontado: ${detail}. `
               + `Corrija exatamente o ponto apontado, SEM deletar testes nem reduzir o escopo da issue.`;
         task.gateFixInstruction = instruction;
@@ -2949,7 +2971,12 @@ Return ONLY a JSON:
                 verify = await this.verify(task);
             });
             if (!verify.ok) {
-                this.recordEvent(task, 'task_failed', `Auto-merge abortado: typecheck/build falhou apos rebase. ${verify.output.slice(-500)}`);
+                // #1154 P1 item 6: typecheck/build quebrou APÓS o rebase com a main (conflito semântico com
+                // código novo) — é reversível pelo coder. Self-heal 1x (teto) com os erros; esgotado, revisão.
+                // Antes estacionava seco: um PR de score alto ficava preso sem sequer tentar consertar.
+                this.recordEvent(task, 'ci_failure', 'Auto-merge: typecheck/build falhou após rebase com a main.', { afterRebase: true });
+                if (this.selfHealFromGate(task, 'typecheckAfterRebase', verify.output.slice(-1500))) return;
+                this.recordEvent(task, 'task_failed', `Auto-merge bloqueado: typecheck/build falhou após rebase e teto de auto-fix esgotado. → revisão humana. ${verify.output.slice(-400)}`);
                 task.status = 'reviewing';
                 this.save();
                 this.emitStatus(task);
@@ -3007,8 +3034,17 @@ Return ONLY a JSON:
 
             this.reevaluateAfterMerge();
         } catch (e: any) {
-            this.recordEvent(task, 'task_failed', `Auto-merge abortado: ${e?.message || e}`);
-            task.status = 'reviewing';
+            const msg = String(e?.message || e);
+            // #1154 P1 item 6: distingue INFRA TRANSITÓRIA (rede/gh/timeout/5xx) de falha real. Transitório
+            // NÃO queima um PR de score alto p/ revisão humana — mantém 'approved' e o resumePendingMerges
+            // re-tenta. (Cota já é tratada no .catch do scheduleExec; conflito/typecheck têm ramos próprios.)
+            if (this.isTransientError(msg)) {
+                this.recordEvent(task, 'task_started', `Auto-merge adiado por erro transitório (${msg.slice(0, 200)}) — mantido 'approved', re-tenta.`, { transient: true });
+                // task.status permanece 'approved' (resumível pelo resumePendingMerges)
+            } else {
+                this.recordEvent(task, 'task_failed', `Auto-merge abortado: ${msg}`);
+                task.status = 'reviewing';
+            }
             this.save();
             this.emitStatus(task);
         }
