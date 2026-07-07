@@ -50,6 +50,11 @@ vi.mock('../../services/githubService', () => ({
     },
 }));
 
+// #1175: IssuesPage agora lê os pisos de score da ui-config.
+vi.mock('../../services/uiConfigService', () => ({
+    getUiConfig: vi.fn(() => Promise.resolve(null)),
+}));
+
 vi.mock('../../context/DolibarrContext', () => ({
     useDolibarr: () => ({ currentUser: { admin: 1 } }),
 }));

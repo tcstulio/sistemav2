@@ -7,6 +7,12 @@ import { AlertCircle, Bug, Sparkles, Shield, Wrench, TestTube, GitMerge, Loader2
 import { toast } from 'sonner';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useConfirm } from '../../hooks/useConfirm';
+import { getUiConfig } from '../../services/uiConfigService';
+import {
+    resolveScoreThresholds, scoreTone, scoreTextClasses, scoreBadgeClasses,
+    scoreTooltip, phaseSuffix, resolveCardStatusDisplay, holdReasonLabel,
+    type ScoreThresholds,
+} from './taskBadge';
 import DiffViewer from '../TasksBoard/DiffViewer';
 import TaskConsole from '../TasksBoard/TaskConsole';
 import { DndContext, closestCorners, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
@@ -44,7 +50,10 @@ const TERMINAL_STATUSES = ['merged', 'rejected', 'rejected_precheck', 'cancelled
 const PIPELINE_COLUMNS = [
     { key: 'queue', label: 'Fila', statuses: ['pending'] },
     { key: 'active', label: 'Em Execução', statuses: ['running', 'fixing', 'cancelling'] },
-    { key: 'review', label: 'Revisão', statuses: ['reviewing', 'approved'] },
+    // #1175: "Aguardando você" separa reviewing (Judge escalou p/ revisão humana) de approved
+    // retido por piso (mergeHoldReason). O approved transitório (sem hold) fica aqui com chip
+    // "mergeando..." até virar merged.
+    { key: 'review', label: 'Aguardando você', statuses: ['reviewing', 'approved'] },
     { key: 'done', label: 'Concluído', statuses: ['merged', 'rejected', 'rejected_precheck'] },
     { key: 'failed', label: 'Falhadas', statuses: ['failed'] },
     { key: 'cancelled', label: 'Canceladas', statuses: ['cancelled'] },
@@ -186,13 +195,16 @@ const SortableMiniCard: React.FC<{
     isAdmin: boolean;
     queuePosition?: number;
     isDragOverlay?: boolean;
-}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, isAdmin, queuePosition, isDragOverlay }) => {
+    scoreThresholds: ScoreThresholds;
+}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, isAdmin, queuePosition, isDragOverlay, scoreThresholds }) => {
     const [showFeedback, setShowFeedback] = useState(false);
     const [feedback, setFeedback] = useState('');
-    const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
+    const cfg = resolveCardStatusDisplay(task, STATUS_CONFIG);
     const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
     const canKill = ['running', 'fixing'].includes(task.status);
     const isSortable = task.status === 'pending';
+    const phSuffix = phaseSuffix(task);
+    const holdReason = holdReasonLabel(task);
 
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
         id: `task-${task.issueNumber}`,
@@ -226,20 +238,29 @@ const SortableMiniCard: React.FC<{
                     <span className="flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold">{queuePosition}</span>
                 )}
                 <span className="text-[10px] font-mono text-slate-400">#{task.issueNumber}</span>
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${cfg.color} ${cfg.bg}`}>
-                    {cfg.icon} {cfg.label}
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${cfg.color} ${cfg.bg}`} data-testid={`task-status-chip-${task.issueNumber}`}>
+                    {cfg.icon} {cfg.label}{phSuffix ? ` — ${phSuffix}` : ''}
                 </span>
                 {outcomeTime && (
                     <span className="text-[9px] text-slate-400 ml-auto">{outcomeTime}</span>
                 )}
                 {task.judgeScore !== undefined && (
-                    <span className={`text-[9px] font-medium ${task.judgeScore >= 7 ? 'text-green-600' : 'text-amber-600'}`}>
+                    <span
+                        className={`text-[9px] font-medium ${scoreTextClasses(scoreTone(task.judgeScore, scoreThresholds))}`}
+                        title={scoreTooltip(task.judgeScore, scoreThresholds)}
+                        data-testid={`task-score-${task.issueNumber}`}
+                    >
                         <Star size={8} className="inline" /> {task.judgeScore}/10
                     </span>
                 )}
                 <PrecheckBadge report={task.precheckReport} compact />
             </div>
             <h4 className="text-xs font-medium text-slate-800 dark:text-white leading-tight mb-1 line-clamp-2">{task.title}</h4>
+            {holdReason && (
+                <p className="text-[10px] text-amber-600 dark:text-amber-400 mb-1 line-clamp-2" data-testid={`task-hold-${task.issueNumber}`}>
+                    <Clock size={8} className="inline mr-0.5" /> {holdReason}
+                </p>
+            )}
             {task.planReason && (
                 <p className="text-[10px] text-indigo-500 dark:text-indigo-400 mb-1 line-clamp-2">{task.planReason}</p>
             )}
@@ -332,14 +353,17 @@ const TaskListCard: React.FC<{
     onHistory: (task: Task) => void;
     isAdmin: boolean;
     queuePosition?: number;
-}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, isAdmin, queuePosition }) => {
+    scoreThresholds: ScoreThresholds;
+}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, isAdmin, queuePosition, scoreThresholds }) => {
     const [expanded, setExpanded] = useState(false);
     const [feedback, setFeedback] = useState('');
     const [showFeedback, setShowFeedback] = useState(false);
-    const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
+    const cfg = resolveCardStatusDisplay(task, STATUS_CONFIG);
     const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
     const canKill = ['running', 'fixing'].includes(task.status);
     const outcomeTime = formatOutcomeTime(task.status, task);
+    const phSuffix = phaseSuffix(task);
+    const holdReason = holdReasonLabel(task);
 
     return (
         <Card className="relative overflow-hidden cursor-pointer hover:border-indigo-200 dark:hover:border-indigo-700 transition-colors" onClick={() => onHistory(task)}>
@@ -353,8 +377,8 @@ const TaskListCard: React.FC<{
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="text-xs font-mono text-slate-400">#{task.issueNumber}</span>
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color} ${cfg.bg}`}>
-                            {cfg.icon} {cfg.label}
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color} ${cfg.bg}`} data-testid={`task-status-chip-${task.issueNumber}`}>
+                            {cfg.icon} {cfg.label}{phSuffix ? ` — ${phSuffix}` : ''}
                         </span>
                         {outcomeTime && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] text-slate-500 bg-slate-100 dark:bg-slate-800" data-testid="outcome-time">
@@ -362,7 +386,11 @@ const TaskListCard: React.FC<{
                             </span>
                         )}
                         {task.judgeScore !== undefined && (
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${task.judgeScore >= 7 ? 'text-green-600 bg-green-50' : 'text-amber-600 bg-amber-50'}`}>
+                            <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${scoreBadgeClasses(scoreTone(task.judgeScore, scoreThresholds))}`}
+                                title={scoreTooltip(task.judgeScore, scoreThresholds)}
+                                data-testid={`task-score-${task.issueNumber}`}
+                            >
                                 <Star size={10} /> {task.judgeScore}/10
                             </span>
                         )}
@@ -375,6 +403,11 @@ const TaskListCard: React.FC<{
                         <PrecheckBadge report={task.precheckReport} />
                     </h3>
                     {task.status === 'rejected_precheck' && <RejectedPrecheckBanner report={task.precheckReport} />}
+                    {holdReason && (
+                        <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5 line-clamp-2" data-testid={`task-hold-${task.issueNumber}`}>
+                            <Clock size={10} className="inline mr-0.5" /> {holdReason}
+                        </p>
+                    )}
                     {task.planReason && (
                         <p className="text-[10px] text-indigo-500 dark:text-indigo-400 mt-0.5 line-clamp-1">{task.planReason}</p>
                     )}
@@ -556,6 +589,10 @@ const IssuesPage: React.FC = () => {
     const [historyTask, setHistoryTask] = useState<Task | null>(null);
     const [labelingIssue, setLabelingIssue] = useState<number | null>(null);
 
+    // #1175: pisos REAIS de merge/approve (GET /api/ui-config). Score colorido contra o piso da
+    // config, não hardcoded. Fallback sensato (8/9) se a config não carregar.
+    const [scoreThresholds, setScoreThresholds] = useState<ScoreThresholds>(() => resolveScoreThresholds(null));
+
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
     const loadIssues = useCallback(async () => {
@@ -587,6 +624,19 @@ const IssuesPage: React.FC = () => {
 
     useEffect(() => { loadIssues(); }, [loadIssues]);
     useEffect(() => { loadTasks(); const iv = setInterval(loadTasks, 10000); return () => clearInterval(iv); }, [loadTasks]);
+
+    // #1175: carrega os pisos de score uma vez (montagem). Em falha, mantém os defaults.
+    useEffect(() => {
+        let cancelled = false;
+        getUiConfig()
+            .then(cfg => {
+                if (!cancelled && cfg?.taskAutomation) {
+                    setScoreThresholds(resolveScoreThresholds(cfg.taskAutomation));
+                }
+            })
+            .catch(() => { /* mantém defaults defensivos */ });
+        return () => { cancelled = true; };
+    }, []);
 
     const filteredIssues = searchQuery
         ? issues.filter(i => i.title.toLowerCase().includes(searchQuery.toLowerCase()) || String(i.number).includes(searchQuery))
@@ -958,6 +1008,7 @@ const IssuesPage: React.FC = () => {
                                                             onHistory={setHistoryTask}
                                                             isAdmin={isAdmin}
                                                             queuePosition={getQueuePosition(task)}
+                                                            scoreThresholds={scoreThresholds}
                                                         />
                                                     ))}
                                                 </div>
@@ -980,7 +1031,7 @@ const IssuesPage: React.FC = () => {
                                 </Card>
                             )}
                             {filteredTasks.map(task => (
-                                <TaskListCard key={task.issueNumber} task={task} onAction={handleTaskAction} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} onHistory={setHistoryTask} isAdmin={isAdmin} queuePosition={getQueuePosition(task)} />
+                                <TaskListCard key={task.issueNumber} task={task} onAction={handleTaskAction} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} onHistory={setHistoryTask} isAdmin={isAdmin} queuePosition={getQueuePosition(task)} scoreThresholds={scoreThresholds} />
                             ))}
                         </div>
                     )}
