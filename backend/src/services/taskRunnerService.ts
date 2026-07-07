@@ -2757,29 +2757,40 @@ Return ONLY a JSON:
      * it()/test() ou deleção de arquivo de teste. Não descarta o trabalho — manda p/ revisão humana.
      * Fail-safe: em erro do próprio guard, bloqueia (revisão) em vez de deixar passar cego.
      */
+    /**
+     * Conta casos de teste (it/test) adicionados/removidos num diff unificado + arquivos de teste apagados.
+     * #1154 P3 item 27: as formas multi-caso (it.each/test.each/it.concurrent.each) contam — senão converter
+     * `it()` em `it.each()` marcaria o it() REMOVIDO sem o it.each() ADICIONADO (falso regresso). it.skip/it.todo
+     * NÃO contam de propósito: desabilitar um teste É regressão.
+     */
+    countTestChanges(diff: string): { added: number; removed: number; deletedTestFiles: string[] } {
+        const isTestPath = (p: string) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(p);
+        let added = 0, removed = 0;
+        const deletedTestFiles: string[] = [];
+        let curFile = '', curDeleted = false;
+        const flush = () => { if (curDeleted && isTestPath(curFile)) deletedTestFiles.push(curFile); };
+        for (const ln of diff.split('\n')) {
+            if (ln.startsWith('diff --git ')) {
+                flush();
+                const m = ln.match(/ a\/(.+?) b\//);
+                curFile = m ? m[1] : '';
+                curDeleted = false;
+                continue;
+            }
+            if (ln.startsWith('deleted file mode')) { curDeleted = true; continue; }
+            if (/^\+\s*(it|test)(\.(each|concurrent))*\s*\(/.test(ln)) added++;
+            else if (/^-\s*(it|test)(\.(each|concurrent))*\s*\(/.test(ln)) removed++;
+        }
+        flush();
+        return { added, removed, deletedTestFiles };
+    }
+
     private async checkTestRegression(task: Task): Promise<{ blocked: boolean; message: string; reason: 'ok' | 'regression' | 'infra' }> {
         if (!task.prNumber) return { blocked: false, message: '', reason: 'ok' };
         try {
             const { stdout: diff } = await gh(['pr', 'diff', String(task.prNumber), '--repo', REPO], { timeout: 60000 });
             if (!diff || !diff.trim()) return { blocked: false, message: '', reason: 'ok' };
-            const isTestPath = (p: string) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(p);
-            let added = 0, removed = 0;
-            const deletedTestFiles: string[] = [];
-            let curFile = '', curDeleted = false;
-            const flush = () => { if (curDeleted && isTestPath(curFile)) deletedTestFiles.push(curFile); };
-            for (const ln of diff.split('\n')) {
-                if (ln.startsWith('diff --git ')) {
-                    flush();
-                    const m = ln.match(/ a\/(.+?) b\//);
-                    curFile = m ? m[1] : '';
-                    curDeleted = false;
-                    continue;
-                }
-                if (ln.startsWith('deleted file mode')) { curDeleted = true; continue; }
-                if (/^\+\s*(it|test)\s*\(/.test(ln)) added++;
-                else if (/^-\s*(it|test)\s*\(/.test(ln)) removed++;
-            }
-            flush();
+            const { added, removed, deletedTestFiles } = this.countTestChanges(diff);
             const net = added - removed;
             if (deletedTestFiles.length > 0 || net < 0) {
                 return {
@@ -2999,7 +3010,15 @@ Return ONLY a JSON:
                     this.recordEvent(task, 'task_started', 'Auto-merge: rebaseando com main...');
                     await git(['fetch', 'origin', 'main'], { timeout: 30000 });
                     await git(['checkout', task.branch], { timeout: 15000, cwd: WT_ROOT });
-                    await git(['rebase', 'origin/main'], { timeout: 60000, cwd: WT_ROOT });
+                    try {
+                        await git(['rebase', 'origin/main'], { timeout: 60000, cwd: WT_ROOT });
+                    } catch (rebaseErr: any) {
+                        // #1154 P3 item 32: um rebase CONFLITADO deixa o worktree num rebase EM ANDAMENTO — o
+                        // `reset --hard` do próximo setup NÃO desfaz isso, e a próxima task colide. Aborta antes
+                        // de propagar (o chamador classifica: conflito real → revisão; transitório → retry).
+                        await git(['rebase', '--abort'], { timeout: 30000, cwd: WT_ROOT }).catch(() => { /* nada a abortar */ });
+                        throw rebaseErr;
+                    }
                     await git(['push', 'origin', task.branch, '--force'], { timeout: 30000, cwd: WT_ROOT });
                     this.recordEvent(task, 'task_started', 'Auto-merge: rebase OK');
                 }
