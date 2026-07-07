@@ -63,6 +63,16 @@ describe('uiConfigService', () => {
         expect(out2.taskAutomation.maxGateFixRounds).toBe(3); // ausente → default
     });
 
+    it('taskAutomation item 23: teto de custo — defaults 20/200 e clamp (task 1..100, dia 10..5000)', () => {
+        const svc = new UiConfigService('ui.json');
+        expect(svc.get().taskAutomation).toMatchObject({ maxRoundsPerTask: 20, dailyRoundBudget: 200 });
+        const out = svc.update({ taskAutomation: { maxRoundsPerTask: 0, dailyRoundBudget: 99999 } } as any);
+        expect(out.taskAutomation.maxRoundsPerTask).toBe(1);     // 0 → piso 1
+        expect(out.taskAutomation.dailyRoundBudget).toBe(5000);  // 99999 → teto 5000
+        const out2 = svc.update({ taskAutomation: { dailyRoundBudget: 5 } } as any);
+        expect(out2.taskAutomation.dailyRoundBudget).toBe(10);   // 5 → piso 10
+    });
+
     it('update aplica e persiste campos válidos', () => {
         const svc = new UiConfigService('ui.json');
         const out = svc.update({ companyName: 'ACME', logoText: 'A', themeColor: 'emerald' });

@@ -255,6 +255,7 @@ export interface Task {
     // em vez de só estacionar, realimentamos o coder UMA vez com uma correção derivada do próprio gate.
     gateFixAttempts?: number;     // teto (default 3, #963 Fase A), SEPARADO de judgeAttempts (não se multiplicam)
     gateFixInstruction?: string;  // correção PERSISTENTE injetada nos builders (imune ao wipe de feedbackHistory na síntese)
+    roundsUsed?: number; // #1154 item 23: rodadas de opencode acumuladas na vida da task (para o teto de custo por task)
     // #1154 P1 item 3: crítica do Judge + feedback humano são AÇÕES a atender que DEVEM sobreviver ao wipe
     // de feedbackHistory entre fases (senão o auto-fix roda CEGO). PERSISTENTE como gateFixInstruction:
     // injetado em TODOS os builders + lido pelo Judge; limpo só na aprovação/redo.
@@ -1130,7 +1131,7 @@ class TaskRunnerService {
             const { uiConfigService } = require('./uiConfigService');
             return uiConfigService.get().taskAutomation;
         } catch {
-            return { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3 };
+            return { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200 };
         }
     }
 
@@ -1161,6 +1162,13 @@ class TaskRunnerService {
         // Horário de pico (3x): segura o dispatch p/ não queimar a cota semanal 3x mais rápido.
         // A task em execução segue; só novos dispatches esperam o off-peak (pollSync retoma).
         if (this.isPeakHold()) { log.info('Auto-play em hold de PICO (GLM 3x) — aguardando off-peak (retoma ~07:00 BRT / 10:00 UTC).'); return; }
+        // #1154 item 23: teto de custo DIÁRIO — atingido, segura NOVOS dispatches até a virada do dia
+        // (a task em execução segue; o pollSync retoma quando o contador zera no dia seguinte).
+        const dailyBudget = config.dailyRoundBudget ?? 200;
+        if (this.dailyRoundsToday() >= dailyBudget) {
+            log.warn(`Auto-play em hold: teto DIÁRIO de ${dailyBudget} rodadas de opencode atingido (${this.dailyRoundsToday()}) — retoma na virada do dia.`);
+            return;
+        }
         const queued = this.getQueuedTasks();
         if (queued.length === 0) return;
         const next = queued[0];
@@ -1282,7 +1290,24 @@ class TaskRunnerService {
      * que nunca há 2 opencode no mesmo projectID — nem entre tasks, nem entre as 6 tentativas
      * (3 exploração + 3 síntese) de uma mesma task. Este é o fix central do #335.
      */
+    // #1154 item 23: teto de custo. Contador GLOBAL de rodadas de opencode do dia (reseta na virada).
+    private dailyRounds: { date: string; count: number } = { date: '', count: 0 };
+
+    /** Contabiliza uma rodada de opencode (por task + global do dia) para os tetos de custo. */
+    private accountRound(task: Task): void {
+        task.roundsUsed = (task.roundsUsed || 0) + 1;
+        const today = new Date().toISOString().slice(0, 10);
+        if (this.dailyRounds.date !== today) this.dailyRounds = { date: today, count: 0 };
+        this.dailyRounds.count++;
+    }
+    /** Rodadas de opencode consumidas HOJE (0 se o contador é de outro dia). */
+    private dailyRoundsToday(): number {
+        const today = new Date().toISOString().slice(0, 10);
+        return this.dailyRounds.date === today ? this.dailyRounds.count : 0;
+    }
+
     private async runOpencodeIsolated(task: Task): Promise<string> {
+        this.accountRound(task); // #1154 item 23: conta a rodada (por task + por dia) p/ os tetos de custo
         const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`, [], task);
         this.cleanStaleLocks(gone);
         try {
@@ -1920,6 +1945,19 @@ class TaskRunnerService {
         const { issueNumber } = task;
         log.info(`Starting task #${issueNumber} on branch ${branch} (worktree isolado)`);
         this.recordEvent(task, 'task_started', `Iniciando #${issueNumber} em worktree isolado (branch ${branch})`, { branch });
+
+        // #1154 item 23: teto de custo POR TASK — se a task já consumiu o limite de rodadas de opencode
+        // (somando exploração + síntese + auto-fixes ao longo dos ciclos), escala p/ revisão humana COM o
+        // motivo em vez de rodar indefinidamente.
+        const roundCap = this.getAutomationConfig().maxRoundsPerTask ?? 20;
+        if ((task.roundsUsed || 0) >= roundCap) {
+            task.status = 'reviewing';
+            task.error = `Teto de custo atingido: ${task.roundsUsed} rodadas de opencode (limite ${roundCap}/task). Requer revisão humana.`;
+            this.recordEvent(task, 'task_failed', `⏸️ Teto de ${roundCap} rodadas/task atingido (${task.roundsUsed}) — escalando p/ revisão humana.`, { costCeiling: 'perTask', roundsUsed: task.roundsUsed });
+            this.save();
+            this.emitStatus(task);
+            return;
+        }
 
         // 1) Worktree limpo e isolado (nunca toca o dev/main)
         // preserveBranch quando JÁ existe PR (caminho /fix ou auto-fix do Judge): edita por cima do

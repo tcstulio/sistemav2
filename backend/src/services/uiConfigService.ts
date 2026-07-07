@@ -86,6 +86,10 @@ export interface TaskAutomationConfig {
     maxJudgeRounds: number;
     /** Máx. de rodadas de SELF-HEAL de gate (regressão de testes / veto do Juiz / CI vermelha) antes de escalar (default 3, 1-10). #1154 */
     maxGateFixRounds: number;
+    /** Teto de rodadas de opencode POR TASK antes de escalar p/ revisão humana (default 20, 1-100). #1154 item 23 */
+    maxRoundsPerTask: number;
+    /** Teto GLOBAL de rodadas de opencode POR DIA — atingido, segura novos dispatches até a virada do dia (default 200, 10-5000). #1154 item 23 */
+    dailyRoundBudget: number;
 }
 
 export interface UiConfig {
@@ -144,7 +148,7 @@ const DEFAULTS: UiConfig = {
     customPages: [],
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
     taskNotificationsExternalEnabled: false,
-    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3 },
+    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200 },
     version: 0,
 };
 
@@ -292,6 +296,9 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
     // #1154: rodadas de correção configuráveis (1-10). Clamp defensivo — 0 travaria o loop, >10 é custo sem retorno.
     const maxJudge = typeof a.maxJudgeRounds === 'number' ? Math.max(1, Math.min(10, Math.round(a.maxJudgeRounds))) : d.maxJudgeRounds;
     const maxGate = typeof a.maxGateFixRounds === 'number' ? Math.max(1, Math.min(10, Math.round(a.maxGateFixRounds))) : d.maxGateFixRounds;
+    // #1154 item 23: tetos de custo. Por-task clampa 1..100; diário 10..5000 (defensivo).
+    const maxPerTask = typeof a.maxRoundsPerTask === 'number' ? Math.max(1, Math.min(100, Math.round(a.maxRoundsPerTask))) : d.maxRoundsPerTask;
+    const dailyBudget = typeof a.dailyRoundBudget === 'number' ? Math.max(10, Math.min(5000, Math.round(a.dailyRoundBudget))) : d.dailyRoundBudget;
     return {
         autoPlay: a.autoPlay === true,
         autoMerge: a.autoMerge === true,
@@ -300,6 +307,8 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
         minApproveScore: minApprove,
         maxJudgeRounds: maxJudge,
         maxGateFixRounds: maxGate,
+        maxRoundsPerTask: maxPerTask,
+        dailyRoundBudget: dailyBudget,
     };
 }
 
