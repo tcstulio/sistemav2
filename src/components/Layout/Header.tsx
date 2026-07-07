@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useDolibarr, PreviewTarget } from '../../context/DolibarrContext';
 import { DolibarrService } from '../../services/dolibarrService';
-import { Menu, Settings, RefreshCw, User, LogOut, ChevronDown, Eye, EyeOff, Search } from 'lucide-react';
+import { Menu, Settings, RefreshCw, User, LogOut, ChevronDown, Eye, EyeOff, Search, Phone } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { UserAvatar } from '../HR/UserAvatar';
 import { NotificationBell } from '../NotificationBell';
+import { resolveUserMobile } from '../../utils/userMobile';
 
 interface HeaderProps {
     setIsSidebarOpen: (open: boolean) => void;
@@ -25,6 +26,7 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
     const navigate = useNavigate();
 
     const isAdmin = currentUser?.admin === 1 || currentUser?.admin === '1' || (currentUser?.admin as unknown) === true;
+    const userMobile = currentUser ? resolveUserMobile(currentUser) : undefined;
 
     // Close menus when clicking outside
     useEffect(() => {
@@ -224,6 +226,12 @@ export const Header: React.FC<HeaderProps> = ({ setIsSidebarOpen, setIsNotificat
                                         {currentUser?.job ? `${currentUser.job} • ` : ''} 
                                         {currentUser?.email || currentUser?.login || 'Usuário'}
                                     </p>
+                                    {userMobile && (
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate flex items-center gap-1 mt-0.5">
+                                            <Phone size={11} className="shrink-0" />
+                                            <span>{userMobile}</span>
+                                        </p>
+                                    )}
                                 </div>
 
                                 <button
