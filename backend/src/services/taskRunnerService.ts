@@ -505,6 +505,8 @@ class TaskRunnerService {
         await this.syncWithGitHub();
         // Fase 0 item 5: retoma auto-merges pendentes (CI passou depois do timeout, ou attempt anterior morreu).
         this.resumePendingMerges().catch((e) => log.warn(`resumePendingMerges (poll) falhou: ${e?.message || e}`));
+        // #1154 P3 item 18: detecta PRs mergeados à mão e reconcilia a task p/ 'merged' (+ fecha a épica).
+        this.reconcileManualMerges().catch((e) => log.warn(`reconcileManualMerges (poll) falhou: ${e?.message || e}`));
         const tasks = await this.syncTasks();
         const newTaskNumbers = tasks
             .filter((t) => !before.has(t.issueNumber) && !this.notifiedTasks.has(t.issueNumber))
@@ -713,8 +715,17 @@ class TaskRunnerService {
                     attempts: [],
                     kind: 'task',
                 };
-            } else if (issue.state === 'CLOSED' && this.store.tasks[num].status === 'pending') {
-                this.store.tasks[num].startedAt = undefined;
+            } else {
+                const t = this.store.tasks[num];
+                // #1154 P3 item 24: refresca title/body/labels enquanto a task ainda está PENDENTE — o
+                // Judge e o Planner liam a versão cacheada na CRIAÇÃO, então uma edição do issue ANTES da
+                // execução era ignorada. Não mexe depois que começou (não troca o spec no meio do trabalho).
+                if (t.status === 'pending') {
+                    t.title = issue.title;
+                    t.body = issue.body || '';
+                    t.labels = (issue.labels || []).map((l: any) => l.name || l);
+                    if (issue.state === 'CLOSED') t.startedAt = undefined;
+                }
             }
         }
         this.save();
@@ -2740,6 +2751,9 @@ Return ONLY a JSON:
                 stdio: ['ignore', 'pipe', 'pipe'],
                 windowsHide: true,
             });
+            // #1154 P3 item 31: DRENA os pipes — sem consumir stdout/stderr, o buffer (~64KB) enche e o vite
+            // TRAVA no write (vira zumbi segurando a porta). .resume() escoa em modo flowing e descarta.
+            child.stdout?.resume(); child.stderr?.resume();
             try {
                 await this.waitForPort(frontendPort, 60_000);
                 await new Promise((r) => setTimeout(r, 2500)); // respiro p/ o vite servir o 1º bundle
@@ -2958,6 +2972,32 @@ Return ONLY a JSON:
             if (task.mergeHoldReason) continue;
             this.recordEvent(task, 'task_started', 'Retomando auto-merge pendente (CI retomável)...');
             this.tryAutoMerge(task).catch((e: any) => log.warn(`resume auto-merge #${task.issueNumber}: ${e?.message || e}`));
+        }
+    }
+
+    /**
+     * #1154 P3 item 18: reconcilia tasks cujo PR foi mergeado À MÃO (fora do robô). Sem isto a task
+     * ficava 'approved'/'reviewing' para sempre e a épica-pai nunca completava. Best-effort no pollSync.
+     */
+    private async reconcileManualMerges(): Promise<void> {
+        const candidates = Object.values(this.store.tasks)
+            .filter((t) => (t.status === 'approved' || t.status === 'reviewing') && t.prNumber && !this.mergeInFlight.has(t.issueNumber))
+            .slice(0, 20); // teto por ciclo (evita rajada de gh se houver muitas)
+        for (const task of candidates) {
+            try {
+                const { stdout } = await gh(['pr', 'view', String(task.prNumber), '--repo', REPO, '--json', 'state,merged'], { timeout: 20000 });
+                const j = JSON.parse(stdout);
+                if (j.merged === true || j.state === 'MERGED') {
+                    task.status = 'merged';
+                    task.completedAt = new Date().toISOString();
+                    task.updatedAt = task.completedAt;
+                    this.finalizeTaskMetrics(task);
+                    this.recordEvent(task, 'pr_merged', `PR #${task.prNumber} detectado como mergeado manualmente — task reconciliada p/ 'merged'.`, { prNumber: task.prNumber, reconciledManual: true });
+                    this.save();
+                    this.emitStatus(task);
+                    this.checkEpicCompletion(task);
+                }
+            } catch { /* best-effort — rede/gh transitório, tenta no próximo ciclo */ }
         }
     }
 
@@ -3872,6 +3912,9 @@ The first element should be the task to execute first.`;
 
         this.activePreviews.set(issueNumber, { pid: child.pid!, port: previewPort, startedAt: new Date().toISOString() });
 
+        // #1154 P3 item 31: drena os pipes antes do unref — senão o buffer enche e o nodemon/vite do preview
+        // trava/vira zumbi segurando as portas.
+        child.stdout?.resume(); child.stderr?.resume();
         child.unref();
 
         this.recordEvent(task, 'task_started', `Preview iniciado na porta ${previewPort} (branch ${task.branch})`, { port: previewPort, backendPort, branch: task.branch });
