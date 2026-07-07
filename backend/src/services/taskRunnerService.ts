@@ -129,6 +129,8 @@ export type TaskEventType =
     | 'planner_started'
     | 'planner_decision'
     | 'opencode_output'
+    | 'merge_hold'
+    | 'ci_failure'
     | 'error';
 
 export interface TaskEvent {
@@ -253,6 +255,10 @@ export interface Task {
     // de feedbackHistory entre fases (senão o auto-fix roda CEGO). PERSISTENTE como gateFixInstruction:
     // injetado em TODOS os builders + lido pelo Judge; limpo só na aprovação/redo.
     durableFeedback?: string[];
+    // #1154 P1 item 10: por que o merge de uma task 'approved' foi RETIDO (score < piso, auto-merge off,
+    // CI vermelha c/ auto-fix esgotado). Torna audível o "approved parado", governa a notificação de
+    // 'approved' e faz o resumePendingMerges parar de re-tentar (e logar) o que não se resolve sozinho.
+    mergeHoldReason?: string;
     visualScore?: number;
     visualReview?: string;
     // Veredito do "robô verifica a tela AFETADA" (#1069): renderiza a(s) tela(s) que a task mexeu
@@ -559,6 +565,11 @@ class TaskRunnerService {
                 failed: { title: `Task #${task.issueNumber} falhou`, msg: task.error || 'A execução falhou.', pri: 'high' },
                 rejected: { title: `Task #${task.issueNumber} rejeitada`, msg: 'Rejeitada na revisão.', pri: 'low' },
             };
+            // #1154 P1 item 10: 'approved' só notifica quando ESTACIONADO com motivo (não no approved
+            // transitório do caminho feliz, que segue direto p/ o merge). Fim do "approved parado sem explicação".
+            if (task.status === 'approved' && task.mergeHoldReason) {
+                NOTIFY.approved = { title: `Task #${task.issueNumber} aprovada — aguarda você`, msg: task.mergeHoldReason, pri: 'high' };
+            }
             const spec = NOTIFY[task.status];
             if (spec && task._lastNotifiedStatus !== task.status) {
                 task._lastNotifiedStatus = task.status;
@@ -915,6 +926,7 @@ class TaskRunnerService {
     }
 
     private scheduleExec(task: Task, branch: string, activeStatus: TaskStatus = 'running'): void {
+        task.mergeHoldReason = undefined; // #1154 P1 item 10: novo exec (fix/redo/feedback) tira a task do hold de merge
         const willQueue = this.pendingExecs > 0;
         this.pendingExecs++;
         if (willQueue) {
@@ -2415,16 +2427,20 @@ Return ONLY a JSON:
     // FORA do worktree lock (não trava a fila). CLEAN/UNSTABLE/HAS_HOOKS = pode mergear (UNSTABLE =
     // mergeável apesar de check NÃO-obrigatória falhando); DIRTY/CONFLICTING = conflito real;
     // BLOCKED/BEHIND/UNKNOWN = ainda aguardando CI/sync → continua esperando até o timeout.
-    private async waitForPrMergeable(prNumber: number, timeoutMs: number): Promise<{ ok: boolean; state: string }> {
+    private async waitForPrMergeable(prNumber: number, timeoutMs: number): Promise<{ ok: boolean; state: string; failedChecks?: string[] }> {
         const deadline = Date.now() + timeoutMs;
         let state = 'UNKNOWN';
         while (Date.now() < deadline) {
             try {
-                const { stdout } = await gh(['pr', 'view', String(prNumber), '--repo', REPO, '--json', 'mergeStateStatus,mergeable'], { timeout: 20000 });
+                const { stdout } = await gh(['pr', 'view', String(prNumber), '--repo', REPO, '--json', 'mergeStateStatus,mergeable,statusCheckRollup'], { timeout: 20000 });
                 const j = JSON.parse(stdout);
                 state = j.mergeStateStatus || 'UNKNOWN';
                 if (j.mergeable === 'CONFLICTING' || state === 'DIRTY') return { ok: false, state };
                 if (state === 'CLEAN' || state === 'UNSTABLE' || state === 'HAS_HOOKS') return { ok: true, state };
+                // #1154 P1 item 4: BLOCKED/UNKNOWN cobre CI LENTA e CI VERMELHA — o rollup distingue. Se um
+                // required check já CONCLUIU em falha, não adianta esperar o timeout: retorna já como falha.
+                const failedChecks = this.failedChecksFromRollup(j.statusCheckRollup);
+                if (failedChecks.length) return { ok: false, state: `CI_FAILURE(${state})`, failedChecks };
             } catch { /* transiente — tenta de novo */ }
             await new Promise((res) => setTimeout(res, 10000));
         }
@@ -2757,16 +2773,21 @@ Return ONLY a JSON:
         }
     }
 
-    private selfHealFromGate(task: Task, kind: 'testRegression' | 'approvedVeto', detail: string): boolean {
+    private selfHealFromGate(task: Task, kind: 'testRegression' | 'approvedVeto' | 'ciFailure', detail: string): boolean {
         const GATE_MAX = Number(process.env.TASKRUNNER_GATE_FIX_MAX ?? 3); // #963 Fase A: N retentativas (era 1)
         if (!task.branch) return false;                            // sem branch não há o que re-submeter
         if ((task.gateFixAttempts || 0) >= GATE_MAX) return false; // teto esgotado → chamador estaciona
         // #963 (follow-up): parada por SEM-PROGRESSO via sinal em memória (diff da última tentativa),
         // NÃO via rede (evita git ls-remote em teste). Enquanto isso, o teto GATE_MAX já limita o custo.
-        const instruction = kind === 'testRegression'
+        const instruction =
+            kind === 'testRegression'
             ? `O merge foi BLOQUEADO por um gate determinístico: você REDUZIU a cobertura de testes (${detail}). `
               + `RESTAURE os casos de teste removidos — recrie cada it()/test() que sumiu (num bloco describe() separado, se preciso), SEM apagar os testes novos. `
               + `Se um teste antigo ficou inválido pela mudança de comportamento, ADAPTE-o mantendo a asserção equivalente — NUNCA delete, esvazie nem use it.skip(). NÃO use asserções triviais (ex.: expect(true).toBe(true)).`
+            : kind === 'ciFailure'
+            ? `O merge foi BLOQUEADO: a CI da branch FALHOU nos checks obrigatórios (${detail}). `
+              + `Reproduza a falha LOCALMENTE — rode \`tsc --noEmit\` e a suíte de testes (vitest) —, identifique a causa e corrija o CÓDIGO. `
+              + `NÃO delete testes nem reduza escopo. Se o typecheck passa local mas a CI falha, verifique diferenças de ambiente (imports ausentes, mocks, ou testes dependentes de data/fuso que quebram em UTC).`
             : `O merge foi BLOQUEADO: o revisor (Juiz) REPROVOU o PR. Motivo apontado: ${detail}. `
               + `Corrija exatamente o ponto apontado, SEM deletar testes nem reduzir o escopo da issue.`;
         task.gateFixInstruction = instruction;
@@ -2792,6 +2813,11 @@ Return ONLY a JSON:
         for (const task of Object.values(this.store.tasks)) {
             if (task.status !== 'approved' || !task.prNumber) continue;
             if (this.mergeInFlight.has(task.issueNumber)) continue;
+            // #1154 P1 item 10: NÃO re-tentar (nem logar "Retomando" a cada 5min) tasks RETIDAS por motivo
+            // que não se resolve sozinho — a hold (score<piso, auto-merge off, CI vermelha esgotada) já foi
+            // notificada e só sai por ação humana (feedback/redo limpam via scheduleExec). Elimina o spam de
+            // ~288 eventos/dia + o loop eterno. Só CI genuinamente PENDENTE (sem mergeHoldReason) volta à fila.
+            if (task.mergeHoldReason) continue;
             this.recordEvent(task, 'task_started', 'Retomando auto-merge pendente (CI retomável)...');
             this.tryAutoMerge(task).catch((e: any) => log.warn(`resume auto-merge #${task.issueNumber}: ${e?.message || e}`));
         }
@@ -2806,10 +2832,49 @@ Return ONLY a JSON:
         finally { this.mergeInFlight.delete(task.issueNumber); }
     }
 
+    /**
+     * #1154 P1 item 10: a task está 'approved' mas o merge foi RETIDO por um motivo que exige o humano
+     * (score < piso de merge, auto-merge desligado, ou CI vermelha com auto-fix esgotado). Registra o
+     * motivo UMA vez (idempotente por motivo), marca o hold e emite status — o emitStatus então NOTIFICA
+     * (o NOTIFY ganha entrada 'approved' quando há mergeHoldReason). Fim do "approved parado sem explicação".
+     */
+    private holdApproved(task: Task, reason: string): void {
+        if (task.mergeHoldReason === reason) return; // mesmo motivo → não re-registra nem re-notifica (anti-spam)
+        task.mergeHoldReason = reason;
+        this.recordEvent(task, 'merge_hold', `⏸️ Merge retido — aguarda você: ${reason}`, { mergeHold: true });
+        this.save();
+        this.emitStatus(task);
+    }
+
+    /**
+     * #1154 P1 item 4: extrai do statusCheckRollup os checks que CONCLUÍRAM em FALHA (vermelho).
+     * mergeStateStatus=BLOCKED cobre "check falhou" E "check ainda rodando" — só o rollup distingue.
+     * Checks pendentes/verdes NÃO entram (ainda podem ficar verdes; não são falha).
+     */
+    private failedChecksFromRollup(rollup: any): string[] {
+        if (!Array.isArray(rollup)) return [];
+        const FAIL = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
+        const failed: string[] = [];
+        for (const c of rollup) {
+            const concl = String(c?.conclusion || c?.state || '').toUpperCase();
+            if (FAIL.has(concl)) failed.push(String(c?.name || c?.context || 'check'));
+        }
+        return failed;
+    }
+
     private async tryAutoMergeInner(task: Task): Promise<void> {
         const config = this.getAutomationConfig();
-        if (!config.autoMerge) return;
-        if ((task.judgeScore || 0) < config.minMergeScore) return;
+        if (!config.autoMerge) {
+            // #1154 P1 item 10: aprovado, mas auto-merge DESLIGADO → aguarda merge manual. Audível (antes: return mudo).
+            this.holdApproved(task, `Auto-merge desligado — PR #${task.prNumber ?? '?'} aprovado (score ${task.judgeScore ?? '?'}/10), aguarda seu merge manual.`);
+            return;
+        }
+        if ((task.judgeScore || 0) < config.minMergeScore) {
+            // #1154 P1 item 10: score abaixo do piso de MERGE — não adianta re-tentar sozinho, precisa de você. Audível.
+            this.holdApproved(task, `Score ${task.judgeScore ?? 0}/10 abaixo do piso de merge (${config.minMergeScore}). Aprovado para revisão, mas o merge automático exige ${config.minMergeScore} — dê feedback para reabrir o ciclo ou ajuste o piso.`);
+            return;
+        }
+        task.mergeHoldReason = undefined; // passou o guard de score → não está mais retida por esses motivos
         // VALOR 2: veto do Juiz — approved=false BLOQUEIA (só reprova; nunca aprova sozinho, pois o
         // score acima continua obrigatório). Resolve a cegueira do gate p/ a intenção do Juiz.
         if (task.judgeApproved === false) {
@@ -2902,6 +2967,15 @@ Return ONLY a JSON:
                     // restart). Antes virava 'reviewing' e o trabalho (judge alto) ficava preso esperando humano.
                     if (/DIRTY|CONFLICTING/i.test(checks.state)) {
                         this.recordEvent(task, 'task_failed', `Auto-merge bloqueado: conflito real (mergeStateStatus=${checks.state}). → revisão humana.`);
+                        task.status = 'reviewing';
+                    } else if (checks.failedChecks?.length) {
+                        // #1154 P1 item 4: CI VERMELHA (não só lenta). Realimenta o coder 1x (teto gateFixAttempts)
+                        // com os checks que falharam; esgotado o teto, escala p/ revisão humana AUDÍVEL. Fim do
+                        // loop eterno de re-tentar a cada 5min uma CI que jamais ficaria verde sozinha.
+                        const detail = checks.failedChecks.join(', ');
+                        this.recordEvent(task, 'ci_failure', `Auto-merge: CI vermelha nos checks obrigatórios (${detail}).`, { failedChecks: checks.failedChecks });
+                        if (this.selfHealFromGate(task, 'ciFailure', detail)) return; // agendou fix (já emitiu status)
+                        this.recordEvent(task, 'task_failed', `Auto-merge bloqueado: CI vermelha (${detail}) e teto de auto-fix esgotado. → revisão humana.`, { ciFailure: true, failedChecks: checks.failedChecks });
                         task.status = 'reviewing';
                     } else {
                         this.recordEvent(task, 'task_started', `Auto-merge adiado: CI ainda não verde (${checks.state}) — mantido 'approved', re-tenta quando a CI fechar.`);
