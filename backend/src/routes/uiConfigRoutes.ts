@@ -11,6 +11,7 @@ import { taskRunnerService } from '../services/taskRunnerService';
 import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
 import { adminAuditService } from '../services/adminAuditService';
 import { createLogger } from '../utils/logger';
+import { resolveUserMobile } from '../utils/userMobile';
 import axios from 'axios';
 import { config as envConfig } from '../config/env';
 
@@ -190,7 +191,7 @@ router.get('/admin/users-missing-phone', requireDolibarrAdmin, async (req: Reque
 
         const missing = allUsers
             .filter(u => {
-                const mobile = (u.phone_mobile || u.user_mobile || '').toString().trim();
+                const mobile = resolveUserMobile(u) || '';
                 return !mobile;
             })
             .map(u => ({

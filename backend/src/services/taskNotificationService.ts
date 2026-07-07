@@ -9,6 +9,7 @@ import { uiConfigService, TaskNotifEvent } from './uiConfigService';
 import { renderTaskTemplate } from './notificationTemplates';
 import { resolveRoleUsers, planTargets, TaskContact } from './taskNotificationLogic';
 import { createLogger } from '../utils/logger';
+import { resolveUserMobile } from '../utils/userMobile';
 
 const log = createLogger('TaskNotifications');
 
@@ -51,7 +52,7 @@ export async function dispatchTaskNotification(
                 channels: channels as NotificationChannel[],
                 recipient: userId,
                 recipientName: name,
-                recipientPhone: user?.phone_mobile || user?.user_mobile || user?.office_phone || undefined,
+                recipientPhone: resolveUserMobile(user) || user?.office_phone || undefined,
                 recipientEmail: user?.email || undefined,
                 priority: (event === 'overdue' || event === 'stalled') ? 'high' : 'medium',
                 entityType: 'task',
