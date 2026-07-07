@@ -19,6 +19,10 @@ export interface TaskAutomationConfig {
     minMergeScore: number;
     /** Nota mínima do Judge p/ APROVAR uma task (default 9). Abaixo → revisão humana. #1125 */
     minApproveScore: number;
+    /** Máx. de rodadas de auto-fix do Judge (nota baixa) antes de escalar p/ revisão humana (default 3). #1154 */
+    maxJudgeRounds?: number;
+    /** Máx. de rodadas de self-heal de gate (regressão/veto/CI) antes de escalar (default 3). #1154 */
+    maxGateFixRounds?: number;
 }
 
 export interface UiConfig {

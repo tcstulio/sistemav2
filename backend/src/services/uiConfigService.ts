@@ -82,6 +82,10 @@ export interface TaskAutomationConfig {
     minMergeScore: number;
     /** Piso de nota do Judge (0-10) p/ APROVAR uma task (default 9). Abaixo dele → revisão humana. #1125 */
     minApproveScore: number;
+    /** Máx. de rodadas de AUTO-FIX do Judge (score baixo) antes de escalar p/ revisão humana (default 3, 1-10). #1154 */
+    maxJudgeRounds: number;
+    /** Máx. de rodadas de SELF-HEAL de gate (regressão de testes / veto do Juiz / CI vermelha) antes de escalar (default 3, 1-10). #1154 */
+    maxGateFixRounds: number;
 }
 
 export interface UiConfig {
@@ -140,7 +144,7 @@ const DEFAULTS: UiConfig = {
     customPages: [],
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
     taskNotificationsExternalEnabled: false,
-    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9 },
+    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3 },
     version: 0,
 };
 
@@ -285,12 +289,17 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
     const a = v as Record<string, unknown>;
     const minScore = typeof a.minMergeScore === 'number' ? Math.max(1, Math.min(10, Math.round(a.minMergeScore))) : d.minMergeScore;
     const minApprove = typeof a.minApproveScore === 'number' ? Math.max(1, Math.min(10, Math.round(a.minApproveScore))) : d.minApproveScore;
+    // #1154: rodadas de correção configuráveis (1-10). Clamp defensivo — 0 travaria o loop, >10 é custo sem retorno.
+    const maxJudge = typeof a.maxJudgeRounds === 'number' ? Math.max(1, Math.min(10, Math.round(a.maxJudgeRounds))) : d.maxJudgeRounds;
+    const maxGate = typeof a.maxGateFixRounds === 'number' ? Math.max(1, Math.min(10, Math.round(a.maxGateFixRounds))) : d.maxGateFixRounds;
     return {
         autoPlay: a.autoPlay === true,
         autoMerge: a.autoMerge === true,
         autoDecompose: a.autoDecompose === true,
         minMergeScore: minScore,
         minApproveScore: minApprove,
+        maxJudgeRounds: maxJudge,
+        maxGateFixRounds: maxGate,
     };
 }
 

@@ -1080,7 +1080,7 @@ class TaskRunnerService {
             const { uiConfigService } = require('./uiConfigService');
             return uiConfigService.get().taskAutomation;
         } catch {
-            return { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9 };
+            return { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3 };
         }
     }
 
@@ -2317,8 +2317,10 @@ Return ONLY a JSON:
                 // a config — o robô aprovava com nota abaixo da que o admin pedia. Agora: tenta até >=
                 // minApproveScore (ou esgota 3 tentativas) e só marca 'approved' se atingir o piso; senão,
                 // revisão humana. O merge segue gated por minMergeScore à parte.
-                const minApprove = this.getAutomationConfig().minApproveScore ?? 9;
-                if (result.score >= minApprove || task.judgeAttempts >= 3) {
+                const autoCfg = this.getAutomationConfig();
+                const minApprove = autoCfg.minApproveScore ?? 9;
+                const maxJudgeRounds = autoCfg.maxJudgeRounds ?? 3; // #1154: rodadas de auto-fix configuráveis
+                if (result.score >= minApprove || task.judgeAttempts >= maxJudgeRounds) {
                     task.phase = 'done';
                     task.status = result.score >= minApprove ? 'approved' : 'reviewing';
                     // #1154 P1 item 3: aprovou → a régua foi cumprida, zera o feedback durável. Se escalou
@@ -2331,7 +2333,7 @@ Return ONLY a JSON:
                     // mirando >=8. Esgotadas as 3 tentativas, o ramo acima resolve: >=6 aprova
                     // (good-enough, sem onerar o humano), <6 escala p/ revisão humana.
                     log.info(`Judge score ${result.score}/10 (<8), auto-fixing (attempt ${task.judgeAttempts})`);
-                    this.emitLog(task.issueNumber, 'warn', `Judge: ${result.score}/10 (<8). Auto-corrigindo (tentativa ${task.judgeAttempts}/3)...`);
+                    this.emitLog(task.issueNumber, 'warn', `Judge: ${result.score}/10 (< ${minApprove}). Auto-corrigindo (tentativa ${task.judgeAttempts}/${maxJudgeRounds})...`);
                     const fixContext = [
                         `Judge (score ${result.score}/10): ${result.review}`,
                         ...(result.missing_coverage?.length ? [`Cobertura faltando: ${result.missing_coverage.join(', ')}`] : []),
@@ -2774,7 +2776,7 @@ Return ONLY a JSON:
     }
 
     private selfHealFromGate(task: Task, kind: 'testRegression' | 'approvedVeto' | 'ciFailure', detail: string): boolean {
-        const GATE_MAX = Number(process.env.TASKRUNNER_GATE_FIX_MAX ?? 3); // #963 Fase A: N retentativas (era 1)
+        const GATE_MAX = Number(process.env.TASKRUNNER_GATE_FIX_MAX ?? this.getAutomationConfig().maxGateFixRounds ?? 3); // #963/#1154: env sobrepõe; default vem do config da UI
         if (!task.branch) return false;                            // sem branch não há o que re-submeter
         if ((task.gateFixAttempts || 0) >= GATE_MAX) return false; // teto esgotado → chamador estaciona
         // #963 (follow-up): parada por SEM-PROGRESSO via sinal em memória (diff da última tentativa),
