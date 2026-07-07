@@ -197,8 +197,10 @@ export const TaskService = {
         return response.data;
     },
 
-    merge: async (issueNumber: number): Promise<Task> => {
-        const response = await axios.post(`${API_URL}/${issueNumber}/merge`, {}, getAuthHeaders());
+    // #1154 P3 item 30: force EXPLÍCITO (default false = respeita os gates). Só true quando o admin
+    // confirma sobrepor piso/veto/regressão; o backend grava a trilha (ator + gates sobrepostos).
+    merge: async (issueNumber: number, force = false): Promise<Task> => {
+        const response = await axios.post(`${API_URL}/${issueNumber}/merge`, { force }, getAuthHeaders());
         return response.data;
     },
 
