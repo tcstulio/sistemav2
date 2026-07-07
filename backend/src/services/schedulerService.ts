@@ -328,6 +328,10 @@ class SchedulerService {
         }
     }
 
+    get isRunning(): boolean {
+        return this.intervalId !== null;
+    }
+
     private async processQueue() {
         const now = Date.now();
 
