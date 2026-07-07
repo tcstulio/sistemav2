@@ -8,12 +8,15 @@ const mockUiConfigService = vi.hoisted(() => ({
     get: vi.fn(() => ({ companyName: 'CoolGroove', logoText: 'D', themeColor: 'indigo' })),
     update: vi.fn((p: any) => ({ companyName: 'CoolGroove', logoText: 'D', themeColor: 'indigo', ...p })),
 }));
+const mockOnMinMergeScoreLowered = vi.hoisted(() => vi.fn());
 
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrLogin: mockRequireDolibarrLogin,
     requireDolibarrAdmin: mockRequireDolibarrAdmin,
 }));
 vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfigService }));
+// #1168: a rota faz require lazy de taskRunnerService só quando o piso baixa — o mock intercepta o require.
+vi.mock('../../services/taskRunnerService', () => ({ taskRunnerService: { onMinMergeScoreLowered: mockOnMinMergeScoreLowered } }));
 vi.mock('../../services/adminAuditService', () => ({ adminAuditService: { record: vi.fn(), list: vi.fn(() => []) } }));
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn() }),
@@ -55,5 +58,21 @@ describe('uiConfigRoutes', () => {
         const res = await request(app).put('/api/ui-config').send({ companyName: 'X' });
         expect(res.status).toBe(403);
         expect(mockUiConfigService.update).not.toHaveBeenCalled();
+    });
+
+    it('#1168: PUT baixando minMergeScore chama taskRunnerService.onMinMergeScoreLowered(prev, next)', async () => {
+        mockUiConfigService.get.mockReturnValueOnce({ taskAutomation: { minMergeScore: 9 } });
+        mockUiConfigService.update.mockReturnValueOnce({ taskAutomation: { minMergeScore: 8 } });
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: { minMergeScore: 8 } });
+        expect(res.status).toBe(200);
+        expect(mockOnMinMergeScoreLowered).toHaveBeenCalledWith(9, 8);
+    });
+
+    it('#1168: PUT subindo/igualando minMergeScore NÃO chama onMinMergeScoreLowered', async () => {
+        mockUiConfigService.get.mockReturnValueOnce({ taskAutomation: { minMergeScore: 8 } });
+        mockUiConfigService.update.mockReturnValueOnce({ taskAutomation: { minMergeScore: 9 } });
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: { minMergeScore: 9 } });
+        expect(res.status).toBe(200);
+        expect(mockOnMinMergeScoreLowered).not.toHaveBeenCalled();
     });
 });
