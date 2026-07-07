@@ -23,6 +23,10 @@ export interface TaskAutomationConfig {
     maxJudgeRounds?: number;
     /** Máx. de rodadas de self-heal de gate (regressão/veto/CI) antes de escalar (default 3). #1154 */
     maxGateFixRounds?: number;
+    /** Teto de rodadas de opencode por task antes de escalar p/ revisão (default 20). #1154 item 23 */
+    maxRoundsPerTask?: number;
+    /** Teto global de rodadas de opencode por dia — segura novos dispatches ao atingir (default 200). #1154 item 23 */
+    dailyRoundBudget?: number;
 }
 
 export interface UiConfig {

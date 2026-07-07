@@ -15,7 +15,7 @@ export interface TaskAutomationEditorProps {
 export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAdmin, themeColor = 'indigo' }) => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [config, setConfig] = useState<TaskAutomationConfig>({ autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3 });
+    const [config, setConfig] = useState<TaskAutomationConfig>({ autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200 });
 
     useEffect(() => {
         if (!isAdmin) { setLoading(false); return; }
@@ -190,6 +190,39 @@ export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAd
                                         max={10}
                                         value={config.maxGateFixRounds ?? 3}
                                         onChange={(e) => setConfig({ ...config, maxGateFixRounds: Math.max(1, Math.min(10, Number(e.target.value) || 1)) })}
+                                        className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-medium text-slate-800 dark:text-slate-100"
+                                    />
+                                </label>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700">
+                            <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
+                                <RefreshCw size={16} /> Teto de custo (rodadas de opencode)
+                            </div>
+                            <p className="text-xs text-slate-500 mb-3">
+                                Limita quanto o robo gasta. <strong>Por task</strong>: ao atingir, escala p/ revisao humana com o motivo. <strong>Por dia</strong>: ao atingir, segura novos inicios ate a virada do dia (a task em execucao segue).
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <label className="text-xs text-slate-500 dark:text-slate-400">
+                                    Rodadas por task (1&ndash;100)
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={100}
+                                        value={config.maxRoundsPerTask ?? 20}
+                                        onChange={(e) => setConfig({ ...config, maxRoundsPerTask: Math.max(1, Math.min(100, Number(e.target.value) || 1)) })}
+                                        className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-medium text-slate-800 dark:text-slate-100"
+                                    />
+                                </label>
+                                <label className="text-xs text-slate-500 dark:text-slate-400">
+                                    Rodadas por dia (10&ndash;5000)
+                                    <input
+                                        type="number"
+                                        min={10}
+                                        max={5000}
+                                        value={config.dailyRoundBudget ?? 200}
+                                        onChange={(e) => setConfig({ ...config, dailyRoundBudget: Math.max(10, Math.min(5000, Number(e.target.value) || 10)) })}
                                         className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-medium text-slate-800 dark:text-slate-100"
                                     />
                                 </label>
