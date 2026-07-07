@@ -72,6 +72,7 @@ import {
     GroupUser,
     PermissionDefinition,
 } from '../../types';
+import { resolveUserMobile } from '../../utils/userMobile';
 
 // ============ Types ============
 
@@ -650,7 +651,7 @@ export const mapUser = (raw: RawDolibarrRecord): DolibarrUser => ({
     firstname: raw.firstname,
     lastname: raw.lastname,
     email: raw.email,
-    phone_mobile: raw.user_mobile || raw.phone_mobile,
+    phone_mobile: resolveUserMobile(raw),
     office_phone: raw.office_phone || raw.phone_pro,
     photo: raw.photo,
     statut: toString(raw.statut) as '0' | '1',
