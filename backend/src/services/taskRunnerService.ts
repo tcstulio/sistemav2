@@ -3325,10 +3325,11 @@ Return ONLY a JSON:
         }
     }
 
-    async mergeTask(issueNumber: number, opts: { force?: boolean } = {}): Promise<Task> {
+    async mergeTask(issueNumber: number, opts: { force?: boolean; actor?: string } = {}): Promise<Task> {
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
         if (!task.prNumber) throw new Error('No PR to merge');
+        const bypassed: string[] = []; // #1154 P3 item 30: gates SOBREPOSTOS por um force (para a trilha)
 
         // Gate de qualidade independente de quem chama: salvo override humano explícito (force),
         // exige judgeScore >= minMergeScore antes de mergear na main. Protege contra merge sem
@@ -3350,6 +3351,14 @@ Return ONLY a JSON:
             if (reg.blocked) {
                 throw new Error(`Merge bloqueado: ${reg.message} Aprovação humana (force) é necessária para sobrepor.`);
             }
+        } else {
+            // #1154 P3 item 30: force NÃO bloqueia, mas REGISTRA na trilha o que está sendo sobreposto —
+            // antes o merge humano forçado gravava o MESMO evento do merge automático (sem dizer que foi
+            // forçado, por quem, nem quais gates ele pulou).
+            const minScore = this.getAutomationConfig().minMergeScore;
+            if ((task.judgeScore ?? 0) < minScore) bypassed.push(`score ${task.judgeScore ?? 'n/a'} < ${minScore}`);
+            if (task.judgeApproved === false) bypassed.push('veto do Juiz (approved=false)');
+            try { const reg = await this.checkTestRegression(task); if (reg.blocked) bypassed.push(`regressão de testes (${reg.reason})`); } catch { /* infra — não entra na trilha */ }
         }
 
         await gh(['pr', 'merge', String(task.prNumber), '--repo', REPO, '--squash', '--delete-branch'], { timeout: 30000 });
@@ -3359,7 +3368,13 @@ Return ONLY a JSON:
         task.completedAt = new Date().toISOString();
         task.updatedAt = task.completedAt;
         this.finalizeTaskMetrics(task);
-        this.recordEvent(task, 'pr_merged', `PR #${task.prNumber} merged com sucesso`, { prNumber: task.prNumber });
+        // #1154 P3 item 30: a trilha diz se foi forçado, por quem, e o que foi sobreposto.
+        const actor = opts.actor || (opts.force ? 'humano' : 'automático');
+        this.recordEvent(task, 'pr_merged',
+            opts.force
+                ? `PR #${task.prNumber} mergeado À FORÇA por ${actor}${bypassed.length ? ` — gates sobrepostos: ${bypassed.join('; ')}` : ' (nenhum gate pendente)'}`
+                : `PR #${task.prNumber} merged com sucesso`,
+            { prNumber: task.prNumber, force: !!opts.force, actor, gatesBypassed: bypassed });
         this.recordEvent(task, 'task_completed', `Task concluída (PR #${task.prNumber} merged)`);
         this.save();
         this.emitStatus(task);
@@ -3792,10 +3807,12 @@ The first element should be the task to execute first.`;
         if (fsExtra.existsSync(mainEnvPath)) {
             let envContent = fsExtra.readFileSync(mainEnvPath, 'utf8');
             envContent = envContent.replace(/^PORT=.*$/m, `PORT=${backendPort}`);
-            envContent += `\nVITE_API_URL=http://localhost:${backendPort}\n`;
+            // #1154 P3 item 22: sinaliza o backend de preview p/ NÃO subir os workers de fundo (crons,
+            // notificações, WhatsApp, o próprio TaskRunner, bancos) — senão rodariam contra a PROD real.
+            envContent += `\nVITE_API_URL=http://localhost:${backendPort}\nPREVIEW_MODE=1\n`;
             fsExtra.writeFileSync(previewEnvPath, envContent);
         } else {
-            const envContent = `PORT=${backendPort}\nVITE_API_URL=http://localhost:${backendPort}\n`;
+            const envContent = `PORT=${backendPort}\nVITE_API_URL=http://localhost:${backendPort}\nPREVIEW_MODE=1\n`;
             fsExtra.writeFileSync(previewEnvPath, envContent);
         }
 

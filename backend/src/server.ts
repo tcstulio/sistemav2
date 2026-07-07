@@ -332,41 +332,51 @@ const server = app.listen(Number(config.port), '0.0.0.0', () => {
 // Initialize Socket.io with the HTTP server
 socketService.init(server);
 
+// #1154 P3 item 22: quando o TaskRunner sobe este backend como PREVIEW (renderizar/screenshot de uma
+// tela p/ verificar), ele copia o .env de PRODUÇÃO. Sem isto, o preview rodaria os workers de fundo
+// contra a PROD real — dispararia crons, notificações e mensagens de WhatsApp, e até rodaria o PRÓPRIO
+// robô. PREVIEW_MODE=1 desliga todos os efeitos colaterais (o preview vira read-only).
+const IS_PREVIEW = process.env.PREVIEW_MODE === '1';
+if (IS_PREVIEW) log.warn('PREVIEW_MODE=1 — workers de fundo DESLIGADOS (scheduler/crons/TaskRunner/bancos/tunnel): preview read-only.');
+
 // Cloudflare tunnel automático (se CLOUDFLARE_TUNNEL_ENABLED=true) — URL pública dinâmica
-tunnelService.start();
+if (!IS_PREVIEW) tunnelService.start();
 
 // Initialize WhatsApp Service
 log.info('SessionService loaded');
 
 // Start Scheduler Worker (checks for pending messages every 30s)
-schedulerService.startWorker();
-log.info('SchedulerService worker started');
-
-// Start Event Scraper Worker (interval/auto-run vêm da config — scraperConfigStore)
 import { eventScraperService } from './services/eventScraperService';
-eventScraperService.startWorker();
-log.info('EventScraperService worker started (config-driven)');
-
-// Start Alert Cron (invoices, stock, tasks, tickets)
 import { alertCronService } from './services/alertCronService';
-alertCronService.start();
-log.info('AlertCronService started');
-
-// Reidrata o estado durável da delegação a partir do Dolibarr (#293) — best-effort, não bloqueia o boot.
 import { delegationService } from './services/delegationService';
-delegationService.hydrateFromDolibarr()
-    .then((n) => { if (n > 0) log.info(`DelegationService: ${n} delegação(ões) reidratada(s) do Dolibarr (#293)`); })
-    .catch(() => { /* best-effort */ });
-
-// Start TaskRunner polling (sync GitHub issues com label "opencode-task")
 import { taskRunnerService } from './services/taskRunnerService';
-taskRunnerService.startPolling();
+if (!IS_PREVIEW) {
+    schedulerService.startWorker();
+    log.info('SchedulerService worker started');
+
+    // Start Event Scraper Worker (interval/auto-run vêm da config — scraperConfigStore)
+    eventScraperService.startWorker();
+    log.info('EventScraperService worker started (config-driven)');
+
+    // Start Alert Cron (invoices, stock, tasks, tickets)
+    alertCronService.start();
+    log.info('AlertCronService started');
+
+    // Reidrata o estado durável da delegação a partir do Dolibarr (#293) — best-effort, não bloqueia o boot.
+    delegationService.hydrateFromDolibarr()
+        .then((n) => { if (n > 0) log.info(`DelegationService: ${n} delegação(ões) reidratada(s) do Dolibarr (#293)`); })
+        .catch(() => { /* best-effort */ });
+
+    // Start TaskRunner polling (sync GitHub issues com label "opencode-task")
+    taskRunnerService.startPolling();
+}
 
 // Initialize Banking Services
 import { interApiService } from './services/interApiService';
 import { itauApiService } from './services/itauApiService';
 
 (async () => {
+    if (IS_PREVIEW) return; // #1154 P3 item 22: preview não conecta aos bancos
     try {
         await interApiService.initialize();
         log.info('Banco Inter API initialized');
