@@ -1959,6 +1959,12 @@ class TaskRunnerService {
             return;
         }
 
+        // #1154 P3 item 28: o score do Juiz Visual reflete a IMPLEMENTAÇÃO anterior. Numa re-execução
+        // (auto-fix/feedback) o código muda, então o score antigo fica ENVELHECIDO — mas era comparado no
+        // merge e limpo só no redo. Zera aqui; se o Juiz Visual rodar nesta execução, grava um score fresco.
+        task.visualScore = undefined;
+        task.visualReview = undefined;
+
         // 1) Worktree limpo e isolado (nunca toca o dev/main)
         // preserveBranch quando JÁ existe PR (caminho /fix ou auto-fix do Judge): edita por cima do
         // trabalho existente em vez de regenerar do zero. Run inicial (sem PR) → fresco do main.
@@ -2068,7 +2074,10 @@ class TaskRunnerService {
             // Reset worktree para próxima tentativa (se não for a última)
             if (attempt < MAX_EXPLORE) {
                 await git(['checkout', '--', '.'], { timeout: 15000, cwd: WT_ROOT });
-                await git(['clean', '-fd', '--', 'src/', 'backend/src/'], { timeout: 15000, cwd: WT_ROOT });
+                // #1154 P3 item 25: clean TOTAL (não só src/ + backend/src/) — a tentativa anterior pode ter
+                // criado arquivos untracked em qualquer pasta (docs, configs, testes fora dessas raízes) que
+                // vazavam para a próxima. `-fd` sem `-x` preserva o gitignored (node_modules).
+                await git(['clean', '-fd'], { timeout: 15000, cwd: WT_ROOT });
                 task.feedbackHistory = [];
             }
         }

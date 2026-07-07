@@ -73,6 +73,13 @@ describe('uiConfigService', () => {
         expect(out2.taskAutomation.dailyRoundBudget).toBe(10);   // 5 → piso 10
     });
 
+    it('taskAutomation item 29: piso de nota SANE = 5 (não aceita <5 para aprovar/mergear)', () => {
+        const svc = new UiConfigService('ui.json');
+        const out = svc.update({ taskAutomation: { minMergeScore: 2, minApproveScore: 1 } } as any);
+        expect(out.taskAutomation.minMergeScore).toBe(5);   // 2 → piso 5
+        expect(out.taskAutomation.minApproveScore).toBe(5); // 1 → piso 5
+    });
+
     it('update aplica e persiste campos válidos', () => {
         const svc = new UiConfigService('ui.json');
         const out = svc.update({ companyName: 'ACME', logoText: 'A', themeColor: 'emerald' });
