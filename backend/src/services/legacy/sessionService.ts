@@ -6,6 +6,7 @@ import { socketService } from '../socketService';
 import { config } from '../../config/env';
 import { botService } from '../botService';
 import { createLogger } from '../../utils/logger';
+import { killChromesByProfile } from '../../utils/processTree';
 
 const log = createLogger('SessionService');
 
@@ -141,12 +142,32 @@ export class SessionService {
         try {
             let authStrategy;
             const legacyPath = path.join('.wwebjs_auth', 'session');
+            const usesLegacy = sessionId === 'default' && fs.existsSync(legacyPath);
 
-            if (sessionId === 'default' && fs.existsSync(legacyPath)) {
+            if (usesLegacy) {
                 log.info("Using legacy 'session' folder for default.");
                 authStrategy = new LocalAuth();
             } else {
                 authStrategy = new LocalAuth({ clientId: sessionId });
+            }
+
+            // #896/#1174: defesa ATIVA contra chrome ZUMBI segurando o SingletonLock do perfil (incidentes
+            // 2026-06-25 e 2026-07-07: 7 chromes de um restart antigo travavam TODO initialize → sessão
+            // 'degraded' p/ sempre). O gracefulShutdown existe desde bcee37e mas NÃO cobre o Windows:
+            // o nodemon reinicia SEM entregar sinal, então o destroy() nunca roda. Aqui é infalível:
+            // quem segura o perfil que VAMOS abrir é zumbi por definição. Needle específico do perfil
+            // desta sessão (não afeta outras sessões ativas nem o navegador pessoal — kill ESTRITO).
+            // Sessão legacy ('session' sem sufixo) fica de fora: o needle seria prefixo dos 'session-*'.
+            if (!usesLegacy) {
+                try {
+                    const profileNeedle = path.join('.wwebjs_auth', `session-${sessionId}`);
+                    const sweep = await killChromesByProfile(profileNeedle);
+                    if (sweep.killed.length) {
+                        log.warn(`[${sessionId}] ${sweep.killed.length} chrome zumbi segurando o perfil — morto(s) antes do init: [${sweep.killed.join(', ')}]`);
+                        await new Promise((r) => setTimeout(r, 1000)); // respiro p/ o SO soltar o SingletonLock
+                    }
+                    if (sweep.errors.length) log.warn(`[${sessionId}] sweep de chrome: ${sweep.errors.join('; ')}`);
+                } catch { /* defesa é best-effort — nunca impede o start */ }
             }
 
             const client = new Client({
@@ -177,6 +198,9 @@ export class SessionService {
             }).catch(error => {
                 log.error(`Failed to init ${sessionId}`, error);
                 this.setStatus(sessionId, 'STOPPED');
+                // #896 (metade que faltou do PR #897): destrói o browser da inicialização FALHADA —
+                // sem isto o chrome do init quebrado fica órfão segurando o perfil até alguém matar.
+                client.destroy().catch(() => { /* já morto/nunca abriu */ });
                 this.clients.delete(sessionId);
             }).finally(() => {
                 this.initializationLocks.delete(sessionId);
@@ -319,6 +343,17 @@ export class SessionService {
                     this.setStatus(sessionId, 'WORKING');
                 }
             }, 10000);
+        });
+
+        // #900 (parte válida do PR #901): reconexões silenciosas do wwebjs às vezes chegam só como
+        // change_state=CONNECTED (sem 'ready'/'authenticated' novos) — sem este handler a sessão
+        // funcional ficava marcada não-WORKING p/ sempre (health 'degraded' falso).
+        client.on('change_state', (state) => {
+            log.info(`[${sessionId}] State changed: ${state}`);
+            if (String(state) === 'CONNECTED' && this.getStatus(sessionId) !== 'WORKING') {
+                log.info(`[${sessionId}] Forcing WORKING status due to CONNECTED state`);
+                this.setStatus(sessionId, 'WORKING');
+            }
         });
 
         client.on('disconnected', (reason) => {

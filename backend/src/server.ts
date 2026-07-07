@@ -407,11 +407,13 @@ import { agentConfigService } from './services/agentConfigService';
 const gracefulShutdown = async (signal: string) => {
     log.info(`${signal} received - starting graceful shutdown`);
 
-    // Safety Timeout: Force exit after 5 seconds if anything hangs
+    // Safety Timeout: força a saída se algo travar. 12s (era 5s): o client.destroy() do WhatsApp
+    // precisa fechar o Chrome inteiro e 5s cortava o destroy no meio → chrome ÓRFÃO segurando o
+    // perfil mesmo num shutdown "gracioso" (#896 — uma das fontes dos zumbis de 2026-07-07).
     setTimeout(() => {
         log.error('Shutdown timed out - forcing exit');
         process.exit(1);
-    }, 5000).unref();
+    }, 12000).unref();
 
     // 1. Close HTTP Server (Stops accepting new connections)
     server.close((err) => {
