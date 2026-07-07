@@ -938,6 +938,18 @@ class TaskRunnerService {
         }
         this.execChain = this.execChain.catch(() => { /* isola falha anterior da cadeia */ }).then(async () => {
             try {
+                // #1154 P2 item 11: a task pode ter sido DELETADA ou CANCELADA enquanto esperava a vez na
+                // fila serial. Sem re-checar aqui, ela RESSUSCITA — roda o planner, o opencode, e pode até
+                // auto-mergear o PR de uma task já deletada. Aborta antes de qualquer efeito (o finally
+                // decrementa pendingExecs + segue a fila normalmente).
+                if (this.deletedIssueNumbers.has(task.issueNumber) || !this.store.tasks[task.issueNumber]) {
+                    this.recordEvent(task, 'task_killed', 'Execução abortada: task deletada enquanto aguardava na fila.', { abortedQueued: 'deleted' });
+                    return;
+                }
+                if (this.isCancelSignal(task)) {
+                    this.recordEvent(task, 'task_killed', 'Execução abortada: task cancelada enquanto aguardava na fila.', { abortedQueued: 'cancelled' });
+                    return;
+                }
                 const { taskPlannerService } = require('./taskPlannerService');
                 this.recordEvent(task, 'planner_started', 'Planner: analisando viabilidade...');
                 this.emitLog(task.issueNumber, 'info', 'Planner: analisando viabilidade da task...');
@@ -1030,6 +1042,18 @@ class TaskRunnerService {
                 // Lock do worktree: serializa com tryAutoMerge/startPreview de outras tasks.
                 this.currentExecTask = task;
                 await this.withWorktreeLock(`exec #${task.issueNumber}`, () => this.executeTask(task, branch));
+                // #1154 P2 item 13: se o watchdog disparou (killRequested) e o executeTask RETORNOU (não lançou)
+                // deixando a task ainda 'running'/'fixing', ela ficaria ZUMBI para sempre (o .catch abaixo só
+                // roda em throw). Reconcilia: watchdog + status ativo → failed (evento audível).
+                if (task.killRequested && (task.status === 'running' || task.status === 'fixing')) {
+                    task.status = 'failed';
+                    task.error = task.error || 'Execução abortada pelo watchdog (tempo total excedido).';
+                    task.completedAt = new Date().toISOString();
+                    task.updatedAt = task.completedAt;
+                    this.finalizeTaskMetrics(task);
+                    this.recordEvent(task, 'task_failed', 'Watchdog: execução encerrada sem estado terminal — marcada failed.', { watchdogReconcile: true });
+                    this.emitStatus(task);
+                }
             } finally {
                 clearTimeout(watchdog);
                 this.currentExecTask = undefined;
@@ -2149,8 +2173,14 @@ class TaskRunnerService {
             this.emitLog(issueNumber, 'info', 'Executando Judge (revisão automática)...');
             await this.runJudge(task);
         } else {
+            // #1154 P2 item 16: PR não foi criado (falha do gh — não "already exists"). Antes ia p/ 'reviewing'
+            // MUDO e sem PR: o humano via "aguardando revisão" sem nada para revisar. Agora: erro explícito +
+            // emitStatus (dispara a notificação). A branch foi commitada/pushada — dá p/ criar o PR à mão ou Redo.
             task.status = 'reviewing';
+            task.error = 'Falha ao criar o PR (a branch foi commitada e pushada — crie o PR manualmente ou use Redo).';
+            this.recordEvent(task, 'pr_creation_failed', 'Sem PR após a execução — requer criação manual do PR ou Redo.', { noPr: true });
             this.save();
+            this.emitStatus(task);
         }
     }
 
@@ -3126,6 +3156,11 @@ Return ONLY a JSON:
     async rejectTask(issueNumber: number): Promise<Task> {
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
+
+        // #1154 P2 item 12: se a task estiver EXECUTANDO, sinaliza o kill ANTES de fechar o PR/marcar
+        // rejected — senão o exec vivo (que não observa 'rejected') seguiria, criaria um PR novo e
+        // re-aprovaria, evaporando a rejeição. 'rejected' é terminal, então o .catch do exec o preserva.
+        task.killRequested = true;
 
         if (task.prNumber) {
             try {
