@@ -11,6 +11,10 @@ import type { Task } from './taskRunnerService';
 export const LIST_BODY_MAX_CHARS = 500;
 export const LIST_JUDGE_REVIEW_MAX_CHARS = 300;
 
+// Overloads preservam a distinção de tipos: campo obrigatório (string) continua string (não
+// mascara undefined como '') e campo opcional (string | undefined) continua undefined quando ausente.
+function truncateForList(value: string, max: number): string;
+function truncateForList(value: string | undefined, max: number): string | undefined;
 function truncateForList(value: string | undefined, max: number): string | undefined {
     if (value === undefined) return undefined;
     if (value.length <= max) return value;
@@ -36,7 +40,8 @@ export function toTaskListItem(task: Task): TaskListItem {
     const { events, cpuMemSamples, baselineErrors, baselineGlobals, ...rest } = task;
     return {
         ...rest,
-        body: truncateForList(task.body, LIST_BODY_MAX_CHARS) ?? '',
+        // `body` é obrigatório (string) — overload devolve string, sem `?? ''` que mascararia undefined.
+        body: truncateForList(task.body, LIST_BODY_MAX_CHARS),
         judgeReview: truncateForList(task.judgeReview, LIST_JUDGE_REVIEW_MAX_CHARS),
         eventsCount,
     };

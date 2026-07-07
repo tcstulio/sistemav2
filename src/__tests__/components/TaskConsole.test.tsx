@@ -143,3 +143,45 @@ describe('TaskConsole', () => {
         alertSpy.mockRestore();
     });
 });
+
+/**
+ * Auditoria #1179: o TaskConsole NÃO consome `task.events` embutidos na listagem (GET /api/tasks
+ * vem enxuto). A timeline é buscada ON-DEMAND via TaskService.listEvents (→ GET /:issueNumber/events)
+ * ao abrir o console; o socket ao vivo continua para eventos em tempo real. Aqui garantimos isso.
+ */
+describe('TaskConsole — timeline on-demand via listEvents (#1179)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        socketHandlers = {};
+    });
+
+    it('busca a timeline via TaskService.listEvents(issueNumber) ao montar — não usa task.events', async () => {
+        renderWithProvider({ issueNumber: 456 });
+        await waitFor(() => {
+            expect(TaskService.listEvents).toHaveBeenCalledWith(456);
+        });
+    });
+
+    it('renderiza os eventos retornados por listEvents (origem on-demand, não embutida)', async () => {
+        vi.mocked(TaskService.listEvents).mockResolvedValue([
+            { ts: '2024-07-07T10:00:00.000Z', type: 'task_started', message: 'Inicio on-demand marcadorA' },
+            { ts: '2024-07-07T10:05:00.000Z', type: 'pr_created', message: 'PR criado marcadorB' },
+        ] as any);
+
+        renderWithProvider({ issueNumber: 456 });
+
+        expect(await screen.findByText('Inicio on-demand marcadorA')).toBeTruthy();
+        expect(screen.getByText('PR criado marcadorB')).toBeTruthy();
+        expect(TaskService.listEvents).toHaveBeenCalledWith(456);
+    });
+
+    it('continua funcionando (sem travar) se listEvents falhar — cai no socket ao vivo', async () => {
+        vi.mocked(TaskService.listEvents).mockRejectedValue(new Error('boom'));
+
+        renderWithProvider({ issueNumber: 456 });
+
+        // "histórico carregado" aparece mesmo com erro (fallback resiliente p/ o socket ao vivo)
+        expect(await screen.findByText(/histórico carregado/i)).toBeTruthy();
+        expect(screen.getByText(/Task #456/)).toBeTruthy();
+    });
+});

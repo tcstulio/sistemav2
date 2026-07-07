@@ -84,3 +84,79 @@ describe('toTaskListItem (#1179 — projecao enxuta)', () => {
         expect(item.prNumber).toBe(99);
     });
 });
+
+/**
+ * Benchmark de payload (#1179 — critério de aceite #1: "Payload da listagem < 2 MB com o store
+ * atual (~400 tasks) — medir e registrar"). Reproduz o store de produção: ~400 tasks com ~241
+ * eventos embutidos cada (a média medida em 2026-07-07 era 47,5 MB). Mede o tamanho do payload
+ * ANTES (events embutidos, como era) vs DEPOIS (projeção enxuta via toTaskListItem) e registra
+ * os números no log do teste. Falha se a listagem enxuta ultrapassar 2 MB (regressão de payload).
+ */
+describe('toTaskListItem (#1179 — benchmark de payload < 2MB)', () => {
+    // ~241 eventos/task foi a média medida em produção (issue #1179: 399 tasks × ~241 eventos).
+    const TASK_COUNT = 400;
+    const EVENTS_PER_TASK = 241;
+
+    const EVENT_TYPES = [
+        'task_started', 'opencode_output', 'typecheck_ok', 'judge_started', 'judge_score',
+        'pr_created', 'pr_merged', 'task_completed', 'error',
+    ];
+
+    function makeRealisticEvent(i: number) {
+        const base = {
+            ts: `2024-07-07T10:${String(Math.floor(i / 60) % 60).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z`,
+            type: EVENT_TYPES[i % EVENT_TYPES.length],
+            message: `Evento ${i}: linha de log humanamente legível do task runner (opencode output/typecheck/judge) com tamanho realista de cerca de oitenta caracteres para refletir produção.`,
+        };
+        // ~1 em cada 8 eventos carrega `meta` com output do opencode (campo volumoso da vida real).
+        return i % 8 === 0
+            ? { ...base, meta: { output: 'o'.repeat(220) } }
+            : base;
+    }
+
+    function makeRealisticTask(issueNumber: number): Task {
+        const events = Array.from({ length: EVENTS_PER_TASK }, (_, i) => makeRealisticEvent(i));
+        return {
+            ...makeTask({
+                issueNumber,
+                title: `Task de produção #${issueNumber} — título realista para o benchmark de payload do board`,
+                body: 'b'.repeat(2000),
+                judgeReview: 'r'.repeat(1200),
+                status: 'merged',
+                prNumber: issueNumber + 1000,
+                branch: `fix-${issueNumber}`,
+                labels: ['bug', 'enhancement', 'opencode-task'],
+            }),
+            events,
+        } as Task;
+    }
+
+    it('a listagem ENXUTA fica abaixo de 2 MB (e registra o tamanho antes/depois)', () => {
+        const store = Array.from({ length: TASK_COUNT }, (_, i) => makeRealisticTask(i + 1));
+
+        // ANTES: payload como era (events embutidos) — o gargalo de 47 MB.
+        const beforeBytes = Buffer.byteLength(JSON.stringify(store), 'utf8');
+        const beforeMB = beforeBytes / (1024 * 1024);
+
+        // DEPOIS: projeção enxuta devolvida pelo GET /api/tasks (#1179).
+        const afterBytes = Buffer.byteLength(JSON.stringify(store.map(toTaskListItem)), 'utf8');
+        const afterMB = afterBytes / (1024 * 1024);
+
+        // Registro da medição (evidência exigida pelo critério de aceite #1).
+        // eslint-disable-next-line no-console
+        console.log(
+            `[#1179 benchmark] tasks=${TASK_COUNT} eventos/task=${EVENTS_PER_TASK} | ` +
+            `antes=${beforeMB.toFixed(2)} MB -> depois=${afterMB.toFixed(2)} MB ` +
+            `(${(((beforeBytes - afterBytes) / beforeBytes) * 100).toFixed(1)}% de redução)`
+        );
+
+        // Critério de aceite #1: listagem enxuta < 2 MB.
+        expect(afterBytes).toBeLessThan(2 * 1024 * 1024);
+        // Sanidade: a projeção precisa de fato reduzir o payload drasticamente.
+        expect(afterBytes).toBeLessThan(beforeBytes / 10);
+        // Garante que os events sumiram da listagem (não é só compressão de strings).
+        const sample = store.map(toTaskListItem)[0];
+        expect(sample).not.toHaveProperty('events');
+        expect(sample.eventsCount).toBe(EVENTS_PER_TASK);
+    });
+});

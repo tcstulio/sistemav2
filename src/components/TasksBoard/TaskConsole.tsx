@@ -87,6 +87,9 @@ const TaskConsole: React.FC<TaskConsoleProps> = ({ issueNumber, onClose }) => {
     };
 
     // Carrega historico persistido (#306) antes de abrir socket.
+    // #1179: a listagem (GET /api/tasks) vem SEM `events` (payload enxuto). A timeline é buscada
+    // ON-DEMAND aqui via listEvents (→ GET /:issueNumber/events); o socket ao vivo complementa
+    // eventos em tempo real. Nenhuma leitura de task.events embutido no board.
     useEffect(() => {
         let cancelled = false;
         (async () => {

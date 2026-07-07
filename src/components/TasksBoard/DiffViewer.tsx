@@ -119,6 +119,11 @@ const DiffFileBlock: React.FC<{ file: DiffFile }> = ({ file }) => {
 // Painel "Prova visual": mostra before/after AUTENTICADOS + score/resumo do Judge Visual (advisory),
 // e permite gerar/regerar sob demanda. As imagens são buscadas por fetch autenticado (blob) — a
 // apiKey nunca vai na querystring do <img src>.
+//
+// #1179 (auditoria de task.events): o DiffViewer é PURAMENTE presentacional — recebe diff +
+// judgeReview (+ campos visuais) por PROPS e NÃO consome `task.events` da listagem, nem chama
+// TaskService.listEvents. A revisão (IssuesPage.openReview) busca a task CHEIA on-demand e repassa
+// judgeReview completo/diff por props, então a listagem enxuta não afeta este componente.
 const VisualProofPanel: React.FC<{ issueNumber: number; initialScore?: number; initialReview?: string }> = ({ issueNumber, initialScore, initialReview }) => {
     const [beforeSrc, setBeforeSrc] = useState<string | null>(null);
     const [afterSrc, setAfterSrc] = useState<string | null>(null);

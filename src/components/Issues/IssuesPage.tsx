@@ -135,6 +135,12 @@ const TaskHistoryModal: React.FC<{
                 <div className="flex-1 overflow-y-auto p-4">
                     <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-3 flex items-center gap-1.5">
                         <Clock size={11} /> Histórico de eventos
+                        {/* #1179: eventsCount vem da listagem enxuta (timeline é buscada on-demand). */}
+                        {(loading ? task.eventsCount : events.length) !== undefined && (loading ? (task.eventsCount ?? 0) : events.length) > 0 && (
+                            <span className="ml-1 px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 normal-case font-medium">
+                                {loading ? task.eventsCount : events.length}
+                            </span>
+                        )}
                     </h4>
                     {loading ? (
                         <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-indigo-500" /></div>
@@ -632,8 +638,22 @@ const IssuesPage: React.FC = () => {
     }, [tasks]);
 
     const openReview = async (task: Task) => {
-        setReviewTask(task); setDiffLoading(true);
-        try { setDiffText(await TaskService.getDiff(task.issueNumber)); } catch { setDiffText(''); }
+        // #1179: a listagem (GET /api/tasks) vem ENXUTA — judgeReview truncado (~300), body (~500),
+        // sem events. A revisão (DiffViewer) precisa do judgeReview COMPLETO + visualScore/screenVerify
+        // sem cortes. Busca a task CHEIA on-demand (GET /:issueNumber, não-projetado) só ao abrir a
+        // revisão; se falhar, cai no item da listagem para não travar o fluxo.
+        setDiffLoading(true);
+        try {
+            const [fullTask, diff] = await Promise.all([
+                TaskService.get(task.issueNumber).catch(() => task),
+                TaskService.getDiff(task.issueNumber),
+            ]);
+            setReviewTask(fullTask);
+            setDiffText(diff);
+        } catch {
+            setReviewTask(task);
+            setDiffText('');
+        }
         setDiffLoading(false);
     };
 
