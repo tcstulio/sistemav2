@@ -48,6 +48,21 @@ describe('uiConfigService', () => {
         expect(out.taskNotifications.completed.criador).toContain('in-app');      // evento ausente -> default mantido
     });
 
+    it('taskAutomation: defaults incluem as rodadas configuráveis (maxJudgeRounds/maxGateFixRounds = 3)', () => {
+        const svc = new UiConfigService('ui.json');
+        expect(svc.get().taskAutomation).toMatchObject({ minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3 });
+    });
+
+    it('taskAutomation: clampa as rodadas para 1..10 inteiro (0 não trava o loop; >10 sem custo extra)', () => {
+        const svc = new UiConfigService('ui.json');
+        const out = svc.update({ taskAutomation: { maxJudgeRounds: 0, maxGateFixRounds: 99 } } as any);
+        expect(out.taskAutomation.maxJudgeRounds).toBe(1);    // 0 → piso 1
+        expect(out.taskAutomation.maxGateFixRounds).toBe(10); // 99 → teto 10
+        const out2 = svc.update({ taskAutomation: { maxJudgeRounds: 4.7 } } as any);
+        expect(out2.taskAutomation.maxJudgeRounds).toBe(5);   // arredonda
+        expect(out2.taskAutomation.maxGateFixRounds).toBe(3); // ausente → default
+    });
+
     it('update aplica e persiste campos válidos', () => {
         const svc = new UiConfigService('ui.json');
         const out = svc.update({ companyName: 'ACME', logoText: 'A', themeColor: 'emerald' });
