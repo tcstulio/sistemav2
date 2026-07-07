@@ -100,6 +100,10 @@ export interface Task {
     parentEpic?: number;
     // Pré-análise (#1017): verdict/evidence do pre-check que roda antes da execução.
     precheckReport?: PrecheckReport;
+    // #1175: por que uma task 'approved' foi RETIDA (score < piso / auto-merge off). Faz a UI
+    // distinguir "Aguardando você" (precisa do humano) do approved transitório (mergeando...).
+    mergeHoldReason?: string;
+    mergeHoldKind?: 'score' | 'autoMergeOff';
 }
 
 export interface TaskEvent {
