@@ -60,6 +60,19 @@ export function isScheduleEnabled(env: NodeJS.ProcessEnv = process.env): boolean
     return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
+/**
+ * True quando este processo é um BACKEND DE PREVIEW (PREVIEW_MODE=1). Um backend de preview
+ * NUNCA deve iniciar o GC de worktrees: ele pode estar rodando DE DENTRO de uma worktree em
+ * uso (risco de apagar a própria worktree ativa — incidente #1170). Compara como STRING ("1"),
+ * pois variáveis de ambiente são sempre strings (env===1 numérico seria sempre false).
+ *
+ * Padrão idêntico ao IS_PREVIEW do server.ts (PR #1163): este helper é o PORTÃO de segurança
+ * do scheduler — server.ts só chama gcSchedulerService.start() quando isPreviewBackend()=false.
+ */
+export function isPreviewBackend(env: NodeJS.ProcessEnv = process.env): boolean {
+    return (env.PREVIEW_MODE ?? '').toString().trim() === '1';
+}
+
 /** Resolve o horário diário configurado (default "03:00"). */
 export function resolveScheduleTime(env: NodeJS.ProcessEnv = process.env): string {
     return (env.GC_SCHEDULE_TIME ?? DEFAULT_GC_SCHEDULE_TIME).toString().trim();
@@ -178,9 +191,21 @@ class GcSchedulerService {
         return this.running;
     }
 
-    /** Liga o ticker de 1min. Idempotente (re-entrar é no-op). Não bloqueia o boot. */
+    /**
+     * Liga o ticker de 1min. Idempotente (re-entrar é no-op). Não bloqueia o boot.
+     *
+     * DEFENSE-IN-DEPTH (incidente #1170, correção #3): um backend de preview (PREVIEW_MODE=1)
+     * NUNCA inicia o GC — pode estar rodando DE DENTRO de uma worktree em uso e apagá-la-ia.
+     * server.ts já guarda com `if (!IS_PREVIEW)`, mas isPreviewBackend() aqui é o portão
+     * determinístico/testável que protege mesmo se start() for invocado de outro ponto.
+     * No-op + log (não lança — não derruba o boot de um preview).
+     */
     start(): void {
         if (this.running) return;
+        if (isPreviewBackend()) {
+            log.warn('GC scheduler start() bloqueado — PREVIEW_MODE=1 (preview backend não roda GC de worktrees)');
+            return;
+        }
         this.running = true;
         this.interval = setInterval(() => {
             this.checkAndRun().catch((e) => log.error('gcScheduler tick falhou', e));

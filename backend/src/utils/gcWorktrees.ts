@@ -57,6 +57,8 @@ export type WorktreeDirClassification = 'orphan' | 'known' | 'protected';
 export interface GcReport {
     gitPruned: boolean;
     gitWorktreesRemoved: string[];
+    /** Worktrees git-registered PRESERVADOS (processo vivo detectado — correção #3). */
+    gitWorktreesKept: string[];
     orphanDirsRemoved: string[];
     orphanDirsKept: string[];
     junctionsUnlinked: string[];
@@ -118,6 +120,21 @@ export function buildJunctionSafeRemovalPlan(junctionPaths: string[], parentDir:
         { kind: 'rmdir', path: parentDir },
     ];
     return { junctions, residualDir: parentDir, steps };
+}
+
+/**
+ * Passos de PRÉ-UNLINK de junctions para caminhos onde a remoção do dir RESIDUAL é delegada a
+ * outra via (ex.: `git worktree remove -f -f`). Garante junction-safety ANTES do git remover o
+ * restante da árvore (incidente #1170): o node_modules junction é desligado via rmdir (no link,
+ * NÃO segue o alvo) antes do `git worktree remove`, de modo que o git jamais tenha um junction
+ * p/ seguir. Retorna SOMENTE passos `unlink-junction` (sem rmdir residual — esse é trabalho do git).
+ *
+ * Cobertura junction-safe em TODOS os caminhos (correção #3):
+ *  - Órfãos não-registrados  → buildJunctionSafeRemovalPlan (unlink + rmSync residual).
+ *  - Worktree git registrado  → junctionPreUnlinkSteps (unlink) + `git worktree remove` (residual).
+ */
+export function junctionPreUnlinkSteps(junctionPaths: string[]): RemovalStep[] {
+    return [...junctionPaths].map<RemovalStep>((jp) => ({ kind: 'unlink-junction', path: jp }));
 }
 
 /**
@@ -218,12 +235,32 @@ export function isUnderClaudeWorktrees(absPath: string, claudeWorktreesDirs: str
     });
 }
 
+/**
+ * True se algum processo vivo está rodando DE DENTRO de `worktreePath` (cwd dentro dele).
+ * O GC usa isto para NUNCA tocar worktree com processo vivo (opencode/preview) — incidente #1170,
+ * correção #3. `liveCwds` = cwds absolutos dos processos vivos (coletados pelo executor, best-effort:
+ * inclui o cwd do próprio GC + paths extraídos das command lines de opencode/node vivos).
+ *
+ * Comparação via normalizePath (case/barra-insensitive); prefix-match com separador ('/') evita
+ * falso-positivo entre "wt1" e "wt10". Primário: o reap roda ANTES da remoção (mata órfãos);
+ * este guard é defesa-em-profundidão p/ o caso raro de um processo vivo não-órfão num worktree.
+ */
+export function isWorktreeInUse(worktreePath: string, liveCwds: string[]): boolean {
+    const wt = normalizePath(worktreePath);
+    return liveCwds.some((c) => {
+        if (!c) return false;
+        const cwd = normalizePath(c);
+        return cwd === wt || cwd.startsWith(wt + '/');
+    });
+}
+
 /** Sumário humano do relatório de GC (várias linhas). */
 export function summarizeReport(r: GcReport): string {
     const lines: string[] = [];
     lines.push('=== GC de Worktrees — Relatório ===');
     if (r.gitPruned) lines.push('git worktree prune: OK');
     lines.push(`worktrees git removidos: ${r.gitWorktreesRemoved.length}${r.gitWorktreesRemoved.length ? ` [${r.gitWorktreesRemoved.join(', ')}]` : ''}`);
+    if (r.gitWorktreesKept.length) lines.push(`worktrees git preservados (processo vivo): ${r.gitWorktreesKept.length} [${r.gitWorktreesKept.map((p) => path.basename(p)).join(', ')}]`);
     lines.push(`dirs órfãos removidos: ${r.orphanDirsRemoved.length}${r.orphanDirsRemoved.length ? ` [${r.orphanDirsRemoved.map((p) => path.basename(p)).join(', ')}]` : ''}`);
     lines.push(`dirs órfãos preservados: ${r.orphanDirsKept.length}`);
     lines.push(`junctions desligados (junction-safe): ${r.junctionsUnlinked.length}${r.junctionsUnlinked.length ? ` [${r.junctionsUnlinked.map((p) => path.basename(p)).join(', ')}]` : ''}`);

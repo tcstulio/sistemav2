@@ -12,6 +12,8 @@ import {
     isTaskrunnerPreviewPort,
     isTaskrunnerVitePreview,
     isUnderClaudeWorktrees,
+    isWorktreeInUse,
+    junctionPreUnlinkSteps,
     normalizePath,
     parseWorktreePorcelain,
     shouldAlertLowDisk,
@@ -115,6 +117,35 @@ describe('buildJunctionSafeRemovalPlan', () => {
         const plan = buildJunctionSafeRemovalPlan(input, '/a');
         expect(input).toEqual(['/a/node_modules']);
         plan.junctions.push('/mutado');
+        expect(input).toEqual(['/a/node_modules']);
+    });
+});
+
+describe('junctionPreUnlinkSteps — junction-safe no caminho `git worktree remove` (correção #3)', () => {
+    it('retorna SOMENTE passos unlink-junction (sem rmdir residual — residual é do git)', () => {
+        const nm = 'C:\\repo\\.claude\\worktrees\\wt1\\node_modules';
+        const cache = 'C:\\repo\\.claude\\worktrees\\wt1\\.cache';
+        const steps = junctionPreUnlinkSteps([nm, cache]);
+        expect(steps).toEqual([
+            { kind: 'unlink-junction', path: nm },
+            { kind: 'unlink-junction', path: cache },
+        ]);
+        expect(steps.every((s) => s.kind === 'unlink-junction')).toBe(true);
+    });
+
+    it('node_modules (junction perigoso) é desligado ANTES do git worktree remove', () => {
+        const nm = '/r/.claude/worktrees/x/node_modules';
+        const steps = junctionPreUnlinkSteps([nm]);
+        expect(steps).toEqual([{ kind: 'unlink-junction', path: nm }]);
+    });
+
+    it('sem junctions → [] (git worktree remove prossegue sem pré-unlink)', () => {
+        expect(junctionPreUnlinkSteps([])).toEqual([]);
+    });
+
+    it('NÃO mutate o array de entrada', () => {
+        const input = ['/a/node_modules'];
+        junctionPreUnlinkSteps(input);
         expect(input).toEqual(['/a/node_modules']);
     });
 });
@@ -289,11 +320,49 @@ describe('isUnderClaudeWorktrees', () => {
     });
 });
 
+describe('isWorktreeInUse — GC NUNCA toca worktree com processo vivo (correção #3)', () => {
+    const wt = 'C:/Projetos/sistemav2/.claude/worktrees/wt1';
+
+    it('true quando um processo vivo tem cwd == worktree (opencode rodando nele)', () => {
+        expect(isWorktreeInUse(wt, [wt])).toBe(true);
+        expect(isWorktreeInUse(wt, ['C:/outro/path', wt])).toBe(true);
+    });
+
+    it('true quando cwd é SUBDIR do worktree (opencode em subpasta)', () => {
+        expect(isWorktreeInUse(wt, [`${wt}/backend/src`])).toBe(true);
+        expect(isWorktreeInUse(wt, [`${wt}/.git`])).toBe(true);
+    });
+
+    it('false quando liveCwds vazio ou nenhum cwd dentro do worktree', () => {
+        expect(isWorktreeInUse(wt, [])).toBe(false);
+        expect(isWorktreeInUse(wt, ['C:/outro/path'])).toBe(false);
+        expect(isWorktreeInUse(wt, ['C:/Projetos/sistemav2'])).toBe(false); // pai, não filho
+    });
+
+    it('NÃO falso-positiva entre wt1 e wt10 (prefix-match exige separador)', () => {
+        expect(isWorktreeInUse('C:/r/.claude/worktrees/wt1', ['C:/r/.claude/worktrees/wt10'])).toBe(false);
+        expect(isWorktreeInUse('C:/r/.claude/worktrees/wt10', ['C:/r/.claude/worktrees/wt1'])).toBe(false);
+        // mas wt1/sub ainda casa wt1:
+        expect(isWorktreeInUse('C:/r/.claude/worktrees/wt1', ['C:/r/.claude/worktrees/wt1/sub'])).toBe(true);
+    });
+
+    it('case/bara-insensitive (Windows)', () => {
+        expect(isWorktreeInUse('C:\\Projetos\\Sistemav2\\.claude\\Worktrees\\Wt1',
+            ['c:/projetos/sistemav2/.claude/worktrees/wt1'])).toBe(true);
+        expect(isWorktreeInUse(wt, ['C:\\Projetos\\sistemav2\\.claude\\worktrees\\wt1\\backend'])).toBe(true);
+    });
+
+    it('ignora cwd vazio/nulo na lista', () => {
+        expect(isWorktreeInUse(wt, ['', '  ', '/outro'])).toBe(false);
+    });
+});
+
 describe('summarizeReport', () => {
     it('renderiza relatório completo com contagens e alerta', () => {
         const r: GcReport = {
             gitPruned: true,
             gitWorktreesRemoved: ['C:/r/.claude/worktrees/wtA'],
+            gitWorktreesKept: ['C:/r/.claude/worktrees/wtLive'],
             orphanDirsRemoved: ['C:/r/.claude/worktrees/wtB'],
             orphanDirsKept: ['C:/r/.claude/worktrees/wtC'],
             junctionsUnlinked: ['C:/r/.claude/worktrees/wtB/node_modules'],
@@ -307,6 +376,7 @@ describe('summarizeReport', () => {
         const s = summarizeReport(r);
         expect(s).toContain('git worktree prune: OK');
         expect(s).toContain('worktrees git removidos: 1');
+        expect(s).toContain('worktrees git preservados (processo vivo): 1');
         expect(s).toContain('dirs órfãos removidos: 1');
         expect(s).toContain('dirs órfãos preservados: 1');
         expect(s).toContain('junctions desligados (junction-safe): 1');
@@ -321,6 +391,7 @@ describe('summarizeReport', () => {
         const r: GcReport = {
             gitPruned: false,
             gitWorktreesRemoved: [],
+            gitWorktreesKept: [],
             orphanDirsRemoved: [],
             orphanDirsKept: [],
             junctionsUnlinked: [],
@@ -333,6 +404,7 @@ describe('summarizeReport', () => {
         };
         const s = summarizeReport(r);
         expect(s).toContain('worktrees git removidos: 0');
+        expect(s).not.toContain('preservados (processo vivo)');
         expect(s).toContain('espaço liberado: N/A');
         expect(s).toContain('medição indisponível');
         expect(s).toContain('erros: nenhum');
@@ -342,6 +414,7 @@ describe('summarizeReport', () => {
         const r: GcReport = {
             gitPruned: true,
             gitWorktreesRemoved: [],
+            gitWorktreesKept: [],
             orphanDirsRemoved: [],
             orphanDirsKept: [],
             junctionsUnlinked: [],

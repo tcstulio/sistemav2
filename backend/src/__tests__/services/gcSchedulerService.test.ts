@@ -21,6 +21,7 @@ import {
     dailySlot,
     shouldRunGcNow,
     isScheduleEnabled,
+    isPreviewBackend,
     resolveScheduleTime,
     resolveGcRepoRoot,
     DEFAULT_GC_SCHEDULE_TIME,
@@ -37,6 +38,7 @@ describe('gcSchedulerService — Agendamento do GC de worktrees (issue #1112)', 
         delete process.env.GC_SCHEDULE_ENABLED;
         delete process.env.GC_SCHEDULE_TIME;
         delete process.env.GC_REPO_ROOT;
+        delete process.env.PREVIEW_MODE;
         // Runner fake determinístico (não spawna subprocesso real).
         setGcRunner(() => Promise.resolve<GcSpawnResult>({ exitCode: 0, stdout: 'ok', stderr: '' }));
         try { gcSchedulerService.stop(); } catch { /* noop */ }
@@ -48,7 +50,7 @@ describe('gcSchedulerService — Agendamento do GC de worktrees (issue #1112)', 
         try { gcSchedulerService.stop(); } catch { /* noop */ }
         resetGcRunner();
         // Restaura env.
-        for (const k of ['GC_SCHEDULE_ENABLED', 'GC_SCHEDULE_TIME', 'GC_REPO_ROOT']) {
+        for (const k of ['GC_SCHEDULE_ENABLED', 'GC_SCHEDULE_TIME', 'GC_REPO_ROOT', 'PREVIEW_MODE']) {
             if (k in origEnv) process.env[k] = origEnv[k as keyof typeof origEnv];
             else delete process.env[k];
         }
@@ -145,6 +147,35 @@ describe('gcSchedulerService — Agendamento do GC de worktrees (issue #1112)', 
         });
     });
 
+    describe('isPreviewBackend', () => {
+        it('true apenas para PREVIEW_MODE="1" (string — env vars são sempre string)', () => {
+            expect(isPreviewBackend({ PREVIEW_MODE: '1' })).toBe(true);
+        });
+        it('false quando ausente/vazio', () => {
+            expect(isPreviewBackend({})).toBe(false);
+            expect(isPreviewBackend({ PREVIEW_MODE: '' })).toBe(false);
+            expect(isPreviewBackend({ PREVIEW_MODE: undefined })).toBe(false);
+        });
+        it('false para outros valores (0, true, yes, numérico)', () => {
+            expect(isPreviewBackend({ PREVIEW_MODE: '0' })).toBe(false);
+            expect(isPreviewBackend({ PREVIEW_MODE: 'true' })).toBe(false);
+            expect(isPreviewBackend({ PREVIEW_MODE: 'yes' })).toBe(false);
+            // Numérico literal: env é string, então nunca casa "1" numérico —
+            // justifica o helper comparar como string (correção #1).
+            expect(isPreviewBackend({ PREVIEW_MODE: 1 as unknown as string })).toBe(true);
+        });
+        it('trim whitespace ("  1  " → true)', () => {
+            expect(isPreviewBackend({ PREVIEW_MODE: '  1  ' })).toBe(true);
+        });
+        it('SECURITY: preview backend nunca deve iniciar GC (invariant do server.ts)', () => {
+            // Espelha o guard de server.ts: start() só é chamado quando isPreviewBackend()=false.
+            const willStart = !isPreviewBackend({ PREVIEW_MODE: '1' });
+            expect(willStart).toBe(false);
+            const willStartNormal = !isPreviewBackend({});
+            expect(willStartNormal).toBe(true);
+        });
+    });
+
     describe('resolveScheduleTime', () => {
         it('default "03:00"', () => {
             expect(resolveScheduleTime({})).toBe(DEFAULT_GC_SCHEDULE_TIME);
@@ -220,6 +251,24 @@ describe('gcSchedulerService — Agendamento do GC de worktrees (issue #1112)', 
             const msg = loggerSpies.info.mock.calls.find((c) => String(c[0]).includes('iniciado'))?.[0];
             expect(msg).toContain('schedule=04:30');
             expect(msg).toContain('habilitado=true');
+        });
+        it('SECURITY (correção #3): start() no-op em PREVIEW_MODE=1 (defense-in-depth — não agenda ticker)', () => {
+            process.env.PREVIEW_MODE = '1';
+            const spy = vi.spyOn(global, 'setInterval');
+            gcSchedulerService.start();
+            expect(gcSchedulerService.isRunning).toBe(false);
+            expect(spy).not.toHaveBeenCalled();
+            expect(loggerSpies.warn).toHaveBeenCalledWith(
+                expect.stringContaining('start() bloqueado'),
+            );
+            spy.mockRestore();
+        });
+        it('start() procede quando PREVIEW_MODE ausente/0 (não-falso-positivo)', () => {
+            process.env.PREVIEW_MODE = '0';
+            const spy = vi.spyOn(global, 'setInterval');
+            gcSchedulerService.start();
+            expect(gcSchedulerService.isRunning).toBe(true);
+            spy.mockRestore();
         });
     });
 

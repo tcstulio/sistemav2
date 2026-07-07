@@ -28,6 +28,9 @@ import {
     isNodeModulesEntry,
     isOrphanOpencode,
     isTaskrunnerVitePreview,
+    isUnderClaudeWorktrees,
+    isWorktreeInUse,
+    junctionPreUnlinkSteps,
     normalizePath,
     parseWorktreePorcelain,
     PROMPT_FILE,
@@ -230,6 +233,35 @@ async function tryGetCommandLines(pids: number[]): Promise<Map<number, string>> 
     return m;
 }
 
+/**
+ * Coleta cwds de processos vivos (best-effort) p/ o guard `isWorktreeInUse` (correção #3).
+ * No Windows não há API portátil p/ o cwd de processo alheio (vive no PEB), então a estratégia é
+ * conservadora e em camadas: (1) sempre inclui o cwd do PRÓPRIO GC (protege um run manual feito de
+ * dentro de um worktree — complementa o guard PREVIEW_MODE do scheduler); (2) extrai paths absolutos
+ * sob `.claude/worktrees` das command lines de opencode/node vivos (pega processos lançados com path
+ * explícito, ex.: `node .../wt1/...`). O guard PRIMÁRIO é o reap ANTES da remoção (mata órfãos); este
+ * coletor é defesa-em-profundidão p/ o caso raro de um processo vivo não-órfão num worktree.
+ */
+async function collectLiveCwds(): Promise<string[]> {
+    const cwds = new Set<string>();
+    try { cwds.add(process.cwd()); } catch { /* ignore */ }
+    try {
+        const pids = [
+            ...(await listPidsByName('opencode')),
+            ...(await listPidsByName('node')),
+        ].filter((p) => p !== process.pid);
+        const cls = await tryGetCommandLines(pids);
+        for (const [, cl] of cls) {
+            if (!cl) continue;
+            for (const m of cl.matchAll(/([A-Za-z]:[\\/][^\s"'|<>]*|\/[^\s"'|<>]+)/g)) {
+                const p = m[1];
+                if (isUnderClaudeWorktrees(p, CLAUDE_WORKTREES_DIRS)) cwds.add(p);
+            }
+        }
+    } catch { /* best-effort: falha aqui NÃO impede o GC — apenas enfraquece o guard in-use */ }
+    return [...cwds];
+}
+
 async function main(): Promise<void> {
     log(`iniciando GC${DRY_RUN ? ' (DRY-RUN)' : ''} — REPO_ROOT=${REPO_ROOT} WT_ROOT=${WT_ROOT}`);
     log(`scanning .claude/worktrees dirs: ${CLAUDE_WORKTREES_DIRS.length ? CLAUDE_WORKTREES_DIRS.join(', ') : '(nenhum)'}`);
@@ -237,6 +269,7 @@ async function main(): Promise<void> {
     const report: GcReport = {
         gitPruned: false,
         gitWorktreesRemoved: [],
+        gitWorktreesKept: [],
         orphanDirsRemoved: [],
         orphanDirsKept: [],
         junctionsUnlinked: [],
@@ -267,29 +300,72 @@ async function main(): Promise<void> {
         report.errors.push(`git worktree list: ${String((e as Error).message).substring(0, 160)}`);
     }
 
-    // 3) Remove worktrees git STALE registrados sob .claude/worktrees (origem do Claude Code),
-    //    via `git worktree remove -f -f`. Nunca toca repo principal nem WT_ROOT.
+    // 3) REAP de processos órfãos (vite preview / opencode sem task) ANTES da remoção (correção #3).
+    //    Ordem crítica: mata órfãos PRIMEIRO p/ que seus worktrees estejam livres p/ remoção segura
+    //    — nunca remove um worktree de debaixo de um processo vivo. Em DRY-RUN não enumera.
+    if (!NO_PROC_REAP) {
+        if (DRY_RUN) {
+            log('[dry-run] reap de processos pulado (não enumera em dry-run)');
+        } else {
+            try {
+                report.processesReaped = await reapProcesses();
+                const total = report.processesReaped.reduce((n, p) => n + p.pids.length, 0);
+                if (total) log(`processos reapeados: ${total}`);
+            } catch (e) {
+                report.errors.push(`reap processes: ${String((e as Error).message).substring(0, 160)}`);
+            }
+        }
+    }
+
+    // 4) Coleta cwds de processos vivos (best-effort) p/ o guard isWorktreeInUse. Feito APÓS o reap
+    //    p/ que órfãos já mortos não apareçam como "em uso". Defesa-em-profundidão (#1170/#3).
+    const liveCwds = DRY_RUN ? [] : await collectLiveCwds();
+
+    // 5) Remove worktrees git STALE registrados sob .claude/worktrees (origem do Claude Code),
+    //    via `git worktree remove -f -f`. Nunca toca repo principal nem WT_ROOT. JUNCTION-SAFE em
+    //    TODOS os caminhos (correção #3): junctions (node_modules) são desligados via rmdir ANTES
+    //    do `git worktree remove`, de modo que o git jamais siga um junction e apague o alvo
+    //    (incidente #1170). Guard isWorktreeInUse: NUNCA toca worktree com processo vivo.
     for (const wt of knownPaths) {
         const cls = classifyWorktreeDir(wt, [], protectedPaths);
         if (cls === 'protected') continue;
         const underClaude = CLAUDE_WORKTREES_DIRS.some((d) => normalizePath(wt).startsWith(normalizePath(d)));
         if (!underClaude) continue;
+        if (isWorktreeInUse(wt, liveCwds)) {
+            report.gitWorktreesKept.push(wt);
+            log(`worktree git PRESERVADO (processo vivo): ${path.basename(wt)}`);
+            continue;
+        }
         const exists = fs.existsSync(wt);
+        // JUNCTION-SAFE (correção #3, incidente #1170): desliga junctions ANTES do git remove.
+        const { junctions } = collectJunctions(wt);
+        const preUnlink = junctionPreUnlinkSteps(junctions);
         if (!DRY_RUN) {
+            for (const step of preUnlink) {
+                if (step.kind === 'unlink-junction' && fs.existsSync(step.path)) {
+                    try {
+                        fs.rmdirSync(step.path);
+                        report.junctionsUnlinked.push(step.path);
+                    } catch (e) {
+                        report.errors.push(`pre-unlink ${step.path}: ${String((e as Error).message).substring(0, 120)}`);
+                    }
+                }
+            }
             try {
                 await git(['worktree', 'remove', '-f', '-f', wt], { timeout: 60000 });
                 report.gitWorktreesRemoved.push(wt);
-                log(`git worktree remove -f -f: ${path.basename(wt)}${exists ? '' : ' (dir ausente)'}`);
+                log(`git worktree remove -f -f: ${path.basename(wt)}${exists ? '' : ' (dir ausente)'}${junctions.length ? ` — ${junctions.length} junction(s) desligado(s) antes` : ''}`);
             } catch (e) {
                 report.errors.push(`git worktree remove ${wt}: ${String((e as Error).message).substring(0, 160)}`);
             }
         } else {
             report.gitWorktreesRemoved.push(wt);
-            log(`[dry-run] removeria worktree git: ${path.basename(wt)}`);
+            report.junctionsUnlinked.push(...junctions);
+            log(`[dry-run] removeria worktree git (junction-safe): ${path.basename(wt)} (${junctions.length} junction(s))`);
         }
     }
 
-    // 4) Remove dirs ÓRFÃOS em .claude/worktrees (não registrados no git) — JUNCTION-SAFE.
+    // 6) Remove dirs ÓRFÃOS em .claude/worktrees (não registrados no git) — JUNCTION-SAFE + guard vivo.
     for (const wtDir of CLAUDE_WORKTREES_DIRS) {
         let entries: string[] = [];
         try {
@@ -305,6 +381,11 @@ async function main(): Promise<void> {
             const cls = classifyWorktreeDir(abs, knownPaths, protectedPaths);
             if (cls !== 'orphan') {
                 report.orphanDirsKept.push(abs);
+                continue;
+            }
+            if (isWorktreeInUse(abs, liveCwds)) {
+                report.orphanDirsKept.push(abs);
+                log(`órfão PRESERVADO (processo vivo): ${name}`);
                 continue;
             }
             if (DRY_RUN) {
@@ -330,22 +411,7 @@ async function main(): Promise<void> {
         }
     }
 
-    // 5) Reap de processos órfãos (vite preview / opencode sem task).
-    if (!NO_PROC_REAP) {
-        if (DRY_RUN) {
-            log('[dry-run] reap de processos pulado (não enumera em dry-run)');
-        } else {
-            try {
-                report.processesReaped = await reapProcesses();
-                const total = report.processesReaped.reduce((n, p) => n + p.pids.length, 0);
-                if (total) log(`processos reapeados: ${total}`);
-            } catch (e) {
-                report.errors.push(`reap processes: ${String((e as Error).message).substring(0, 160)}`);
-            }
-        }
-    }
-
-    // 6) Disco depois + métricas.
+    // 7) Disco depois + métricas.
     report.diskAfter = readDisk(REPO_ROOT);
     report.freedBytes = computeFreedBytes(report.diskBefore, report.diskAfter);
     report.lowDiskAlert = shouldAlertLowDisk(report.diskAfter.freeBytes, DISK_THRESHOLD);
