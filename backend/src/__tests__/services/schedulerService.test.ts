@@ -626,6 +626,21 @@ describe('SchedulerService', () => {
         it('does nothing when stopping non-running worker', () => {
             schedulerService.stopWorker();
         });
+
+        it('isRunning is false before starting (#1166)', () => {
+            expect(schedulerService.isRunning).toBe(false);
+        });
+
+        it('isRunning is true after startWorker (#1166)', () => {
+            schedulerService.startWorker();
+            expect(schedulerService.isRunning).toBe(true);
+        });
+
+        it('isRunning is false after stopWorker (#1166)', () => {
+            schedulerService.startWorker();
+            schedulerService.stopWorker();
+            expect(schedulerService.isRunning).toBe(false);
+        });
     });
 
     describe('processQueue', () => {
