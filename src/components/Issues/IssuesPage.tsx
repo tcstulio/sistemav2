@@ -639,12 +639,28 @@ const IssuesPage: React.FC = () => {
         setDiffLoading(false);
     };
 
+    // #1154 P3 item 30: merge que RESPEITA os gates (piso/veto/regressão); se eles bloquearem, oferece
+    // FORÇAR conscientemente — e o backend grava a trilha (quem forçou + gates sobrepostos).
+    const mergeWithForcePrompt = async (issueNumber: number) => {
+        try {
+            await TaskService.merge(issueNumber);
+            toast.success('PR merged!');
+        } catch (mErr: any) {
+            const msg = mErr.response?.data?.error || mErr.message || '';
+            if (!/bloqueado/i.test(msg)) throw mErr; // erro real (não-gate) → propaga
+            if (await confirm({ title: `Forçar merge de #${issueNumber}?`, message: `${msg}\n\nForçar sobrepõe os gates e fica registrado na trilha.`, confirmText: 'Forçar merge', cancelText: 'Cancelar', danger: true })) {
+                await TaskService.merge(issueNumber, true);
+                toast.success('PR merged (forçado).');
+            }
+        }
+    };
+
     const handleTaskAction = async (action: string, task: Task, extra?: string) => {
         if (!isAdmin) { toast.error('Apenas administradores.'); return; }
         try {
             switch (action) {
                 case 'start': toast.info(`Iniciando #${task.issueNumber}...`); await TaskService.start(task.issueNumber); break;
-                case 'merge': await TaskService.merge(task.issueNumber); toast.success('PR merged!'); break;
+                case 'merge': await mergeWithForcePrompt(task.issueNumber); break;
                 case 'reject': await TaskService.reject(task.issueNumber); toast.info('Rejeitada'); break;
                 case 'redo': await TaskService.redo(task.issueNumber); toast.info('Refazendo...'); break;
                 case 'fix':
@@ -1033,7 +1049,7 @@ const IssuesPage: React.FC = () => {
             ) : (
                 <DiffViewer diff={diffText} issueNumber={reviewTask.issueNumber} judgeScore={reviewTask.judgeScore} judgeReview={reviewTask.judgeReview} visualScore={reviewTask.visualScore} visualReview={reviewTask.visualReview} screenVerify={reviewTask.screenVerify} prUrl={reviewTask.prUrl}
                     onClose={() => setReviewTask(null)}
-                    onMerge={async () => { if (!isAdmin) { toast.error('Apenas administradores.'); return; } await TaskService.merge(reviewTask.issueNumber); setReviewTask(null); toast.success('PR merged!'); loadTasks(); }}
+                    onMerge={async () => { if (!isAdmin) { toast.error('Apenas administradores.'); return; } try { await mergeWithForcePrompt(reviewTask.issueNumber); setReviewTask(null); loadTasks(); } catch (e: any) { toast.error(e.response?.data?.error || e.message); } }}
                     onFix={() => setReviewTask(null)}
                     onReject={async () => { if (!isAdmin) { toast.error('Apenas administradores.'); return; } await TaskService.reject(reviewTask.issueNumber); setReviewTask(null); toast.info('Rejeitada'); loadTasks(); }}
                 />

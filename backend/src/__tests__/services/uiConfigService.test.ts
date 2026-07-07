@@ -48,6 +48,38 @@ describe('uiConfigService', () => {
         expect(out.taskNotifications.completed.criador).toContain('in-app');      // evento ausente -> default mantido
     });
 
+    it('taskAutomation: defaults incluem as rodadas configuráveis (maxJudgeRounds/maxGateFixRounds = 3)', () => {
+        const svc = new UiConfigService('ui.json');
+        expect(svc.get().taskAutomation).toMatchObject({ minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3 });
+    });
+
+    it('taskAutomation: clampa as rodadas para 1..10 inteiro (0 não trava o loop; >10 sem custo extra)', () => {
+        const svc = new UiConfigService('ui.json');
+        const out = svc.update({ taskAutomation: { maxJudgeRounds: 0, maxGateFixRounds: 99 } } as any);
+        expect(out.taskAutomation.maxJudgeRounds).toBe(1);    // 0 → piso 1
+        expect(out.taskAutomation.maxGateFixRounds).toBe(10); // 99 → teto 10
+        const out2 = svc.update({ taskAutomation: { maxJudgeRounds: 4.7 } } as any);
+        expect(out2.taskAutomation.maxJudgeRounds).toBe(5);   // arredonda
+        expect(out2.taskAutomation.maxGateFixRounds).toBe(3); // ausente → default
+    });
+
+    it('taskAutomation item 23: teto de custo — defaults 20/200 e clamp (task 1..100, dia 10..5000)', () => {
+        const svc = new UiConfigService('ui.json');
+        expect(svc.get().taskAutomation).toMatchObject({ maxRoundsPerTask: 20, dailyRoundBudget: 200 });
+        const out = svc.update({ taskAutomation: { maxRoundsPerTask: 0, dailyRoundBudget: 99999 } } as any);
+        expect(out.taskAutomation.maxRoundsPerTask).toBe(1);     // 0 → piso 1
+        expect(out.taskAutomation.dailyRoundBudget).toBe(5000);  // 99999 → teto 5000
+        const out2 = svc.update({ taskAutomation: { dailyRoundBudget: 5 } } as any);
+        expect(out2.taskAutomation.dailyRoundBudget).toBe(10);   // 5 → piso 10
+    });
+
+    it('taskAutomation item 29: piso de nota SANE = 5 (não aceita <5 para aprovar/mergear)', () => {
+        const svc = new UiConfigService('ui.json');
+        const out = svc.update({ taskAutomation: { minMergeScore: 2, minApproveScore: 1 } } as any);
+        expect(out.taskAutomation.minMergeScore).toBe(5);   // 2 → piso 5
+        expect(out.taskAutomation.minApproveScore).toBe(5); // 1 → piso 5
+    });
+
     it('update aplica e persiste campos válidos', () => {
         const svc = new UiConfigService('ui.json');
         const out = svc.update({ companyName: 'ACME', logoText: 'A', themeColor: 'emerald' });
