@@ -291,8 +291,11 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
     const d = DEFAULTS.taskAutomation;
     if (!v || typeof v !== 'object') return { ...d };
     const a = v as Record<string, unknown>;
-    const minScore = typeof a.minMergeScore === 'number' ? Math.max(1, Math.min(10, Math.round(a.minMergeScore))) : d.minMergeScore;
-    const minApprove = typeof a.minApproveScore === 'number' ? Math.max(1, Math.min(10, Math.round(a.minApproveScore))) : d.minApproveScore;
+    // #1154 P3 item 29: piso SANE de 5 (antes aceitava 1) — aprovar/mergear automaticamente com nota < 5/10
+    // nunca é intencional; é secure-default contra um valor perigoso digitado por engano.
+    const SCORE_FLOOR = 5;
+    const minScore = typeof a.minMergeScore === 'number' ? Math.max(SCORE_FLOOR, Math.min(10, Math.round(a.minMergeScore))) : d.minMergeScore;
+    const minApprove = typeof a.minApproveScore === 'number' ? Math.max(SCORE_FLOOR, Math.min(10, Math.round(a.minApproveScore))) : d.minApproveScore;
     // #1154: rodadas de correção configuráveis (1-10). Clamp defensivo — 0 travaria o loop, >10 é custo sem retorno.
     const maxJudge = typeof a.maxJudgeRounds === 'number' ? Math.max(1, Math.min(10, Math.round(a.maxJudgeRounds))) : d.maxJudgeRounds;
     const maxGate = typeof a.maxGateFixRounds === 'number' ? Math.max(1, Math.min(10, Math.round(a.maxGateFixRounds))) : d.maxGateFixRounds;

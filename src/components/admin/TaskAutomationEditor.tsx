@@ -124,7 +124,7 @@ export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAd
                             <div className="flex items-center gap-3">
                                 <input
                                     type="range"
-                                    min={1}
+                                    min={5}
                                     max={10}
                                     value={config.minApproveScore}
                                     onChange={(e) => setConfig({ ...config, minApproveScore: Number(e.target.value) })}
@@ -147,7 +147,7 @@ export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAd
                                 <div className="flex items-center gap-3">
                                     <input
                                         type="range"
-                                        min={1}
+                                        min={5}
                                         max={10}
                                         value={config.minMergeScore}
                                         onChange={(e) => setConfig({ ...config, minMergeScore: Number(e.target.value) })}
