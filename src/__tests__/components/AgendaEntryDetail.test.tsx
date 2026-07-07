@@ -260,12 +260,12 @@ describe('AgendaEntryDetail', () => {
             expect(screen.getByText('Agenda / Projeto (Prazo)')).toBeInTheDocument();
         });
 
-        it('renders intervention details incl. fk_projet link (int- prefix)', async () => {
+        it('renders intervention details incl. project link (int- prefix)', async () => {
             mockMapIntervention.mockReturnValue({
                 id: '20',
                 ref: 'IN020',
                 socid: '3',
-                fk_projet: '5',
+                project_id: '5', // mapper normaliza o vínculo de projeto em project_id (#997)
                 date: 1700000000000,
                 date_creation: 1700000000000,
                 description: 'Manutenção preventiva',
@@ -277,6 +277,8 @@ describe('AgendaEntryDetail', () => {
             });
             expect(screen.getByText('Agenda / Intervenção')).toBeInTheDocument();
             expect(screen.getByText('Manutenção preventiva')).toBeInTheDocument();
+            // o card de projeto vinculado usa project_id (não mais fk_projet)
+            expect(screen.getByText('Projeto Vinculado')).toBeInTheDocument();
         });
     });
 });

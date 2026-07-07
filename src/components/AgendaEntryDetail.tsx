@@ -22,9 +22,10 @@ interface AgendaEntryDetailProps {
 // 4 entidades distintas da agenda (evento, tarefa, projeto e intervenção). Tipar como só
 // `AgendaEvent` forçaria casts incorretos nos demais renderers, então usamos a union real —
 // reutilizando as interfaces já existentes do módulo de agenda em vez de recriá-las.
+// #997: os mappers (mapTask/mapIntervention) normalizam o vínculo de projeto em
+// `project_id`; nunca emitem o campo raw `fk_projet`. Por isso usamos os tipos
+// canônicos direto, sem aliases que reintroduziriam esse acesso morto.
 type AgendaDetailItem = AgendaEvent | Task | Project | Intervention;
-type AgendaTaskDetail = Task & { fk_projet?: string };
-type AgendaInterventionDetail = Intervention & { fk_projet?: string };
 
 const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialItemId, onNavigate, editPrefill }) => {
     const { getLink, openLink } = useDolibarrLink(config);
@@ -462,7 +463,7 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
     // 2. TASK RENDERER
     if (type === 'task') {
         // Need to cast correctly, assuming Task interface matches response
-        const task = data as AgendaTaskDetail;
+        const task = data as Task;
         return (
             <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto">
                 <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 p-4 md:p-6 sticky top-0 z-10">
@@ -504,8 +505,8 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {(task.fk_projet || task.project_id) && (
-                            <div onClick={() => onNavigate('projects', (task.fk_projet || task.project_id)!)} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-indigo-300 cursor-pointer transition-all hover:shadow-md flex items-center gap-3 group">
+                        {task.project_id && (
+                            <div onClick={() => onNavigate('projects', task.project_id!)} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-indigo-300 cursor-pointer transition-all hover:shadow-md flex items-center gap-3 group">
                                 <div className="p-2 bg-indigo-50 rounded-lg group-hover:bg-indigo-100"><FolderKanban size={20} className="text-indigo-600" /></div>
                                 <div><p className="text-sm text-slate-500">Projeto Pai</p><p className="font-medium text-slate-900 dark:text-white">Ver Projeto</p></div>
                                 <ChevronLeft size={16} className="ml-auto transform rotate-180 text-slate-400" />
@@ -555,7 +556,7 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
 
     // 4. INTERVENTION RENDERER
     if (type === 'intervention') {
-        const intervention = data as AgendaInterventionDetail;
+        const intervention = data as Intervention;
         return (
             <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-y-auto">
                 <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 p-4 md:p-6 sticky top-0 z-10">
@@ -579,8 +580,8 @@ const AgendaEntryDetail: React.FC<AgendaEntryDetailProps> = ({ config, initialIt
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {(intervention.fk_projet || intervention.project_id) && (
-                            <div onClick={() => onNavigate('projects', (intervention.fk_projet || intervention.project_id)!)} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-indigo-300 cursor-pointer transition-all hover:shadow-md flex items-center gap-3 group">
+                        {intervention.project_id && (
+                            <div onClick={() => onNavigate('projects', intervention.project_id!)} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-indigo-300 cursor-pointer transition-all hover:shadow-md flex items-center gap-3 group">
                                 <div className="p-2 bg-indigo-50 rounded-lg group-hover:bg-indigo-100"><FolderKanban size={20} className="text-indigo-600" /></div>
                                 <div><p className="text-sm text-slate-500">Projeto Vinculado</p><p className="font-medium text-slate-900 dark:text-white">Ver Projeto</p></div>
                                 <ChevronLeft size={16} className="ml-auto transform rotate-180 text-slate-400" />
