@@ -378,6 +378,9 @@ class TaskRunnerService {
             t.childPid = undefined;
             t.killRequested = false;
             this.recordEvent(t, 'task_failed', `⚠️ Backend reiniciou durante execução (status=${prev}). Task marcada como failed — use Retry para reiniciar.`, { recovery: true, previousStatus: prev });
+            // #1154 P2 item 17: emite status → dispara a notificação de 'failed' e atualiza a UI. Antes o
+            // recovery era SILENCIOSO (só recordEvent): o usuário não sabia que a task morreu no restart.
+            this.emitStatus(t);
         }
         this.pendingExecs = 0;
         this.save();
@@ -570,6 +573,11 @@ class TaskRunnerService {
             if (task.status === 'approved' && task.mergeHoldReason) {
                 NOTIFY.approved = { title: `Task #${task.issueNumber} aprovada — aguarda você`, msg: task.mergeHoldReason, pri: 'high' };
             }
+            // #1154 P2 item 19: recomeçar trabalho (running/fixing/pending) zera a idempotência — senão
+            // re-entrar em 'reviewing'/'failed' depois de um ciclo de correção fica MUDO (não re-notifica).
+            if ((task.status === 'running' || task.status === 'fixing' || task.status === 'pending') && task._lastNotifiedStatus) {
+                task._lastNotifiedStatus = undefined;
+            }
             const spec = NOTIFY[task.status];
             if (spec && task._lastNotifiedStatus !== task.status) {
                 task._lastNotifiedStatus = task.status;
@@ -598,6 +606,10 @@ class TaskRunnerService {
         if (!Array.isArray(task.events)) task.events = [];
         const evt: TaskEvent = { ts: new Date().toISOString(), type, message, meta };
         task.events.push(evt);
+        // #1154 P2 item 20: cap a timeline (loops de auto-fix/resume podem gerar centenas de eventos; a
+        // listagem devolve TUDO a cada 10s). Preserva os mais recentes.
+        const EVENTS_CAP = 500;
+        if (task.events.length > EVENTS_CAP) task.events.splice(0, task.events.length - EVENTS_CAP);
         this.save();
         // Mapeia para os tipos visuais que a UI ja conhece (info/success/warn/error/ai).
         const uiType =
