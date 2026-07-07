@@ -7,6 +7,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { uiConfigService } from '../services/uiConfigService';
+import { taskRunnerService } from '../services/taskRunnerService';
 import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
 import { adminAuditService } from '../services/adminAuditService';
 import { createLogger } from '../utils/logger';
@@ -83,7 +84,17 @@ router.get('/', requireDolibarrLogin, (_req: Request, res: Response) => {
 router.put('/', requireDolibarrAdmin, (req: Request, res: Response) => {
     try {
         const data = UpdateSchema.parse(req.body);
+        // #1168: captura o piso de merge ANTES do save p/ detectar baixa e destravar holds de score
+        // de tasks 'approved' que estavam retidas (o mergeHoldReason persistia e o resumePendingMerges as pulava).
+        const prevMinMerge = (data.taskAutomation && typeof data.taskAutomation.minMergeScore === 'number')
+            ? uiConfigService.get().taskAutomation.minMergeScore
+            : undefined;
         const updated = uiConfigService.update(data as any);
+        // #1168: baixar o minMergeScore destrava tasks 'approved' retidas por score p/ re-avaliação.
+        // Holds por outros motivos (auto-merge off) são preservados pelo próprio método (mergeHoldKind !== 'score').
+        if (prevMinMerge !== undefined && updated.taskAutomation.minMergeScore < prevMinMerge) {
+            taskRunnerService.onMinMergeScoreLowered(prevMinMerge, updated.taskAutomation.minMergeScore);
+        }
         log.info('UI config da organização atualizado por admin');
         const adminUser = (req as any).user || {};
         adminAuditService.record({

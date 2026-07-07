@@ -264,6 +264,9 @@ export interface Task {
     // CI vermelha c/ auto-fix esgotado). Torna audível o "approved parado", governa a notificação de
     // 'approved' e faz o resumePendingMerges parar de re-tentar (e logar) o que não se resolve sozinho.
     mergeHoldReason?: string;
+    // #1168: classifica o hold p/ re-avaliação SELETIVA quando o admin baixa o minMergeScore — só os
+    // holds de 'score' são destravados (autoMergeOff é insensível ao piso e segue aguardando merge manual).
+    mergeHoldKind?: 'score' | 'autoMergeOff';
     visualScore?: number;
     visualReview?: string;
     // Veredito do "robô verifica a tela AFETADA" (#1069): renderiza a(s) tela(s) que a task mexeu
@@ -961,6 +964,7 @@ class TaskRunnerService {
 
     private scheduleExec(task: Task, branch: string, activeStatus: TaskStatus = 'running'): void {
         task.mergeHoldReason = undefined; // #1154 P1 item 10: novo exec (fix/redo/feedback) tira a task do hold de merge
+        task.mergeHoldKind = undefined;   // #1168: limpa também a classificação do hold
         const willQueue = this.pendingExecs > 0;
         this.pendingExecs++;
         if (willQueue) {
@@ -2976,6 +2980,35 @@ Return ONLY a JSON:
     }
 
     /**
+     * #1168: baixar o minMergeScore na config NÃO destravava tasks já retidas por score — o
+     * resumePendingMerges pula mergeHoldReason (correto, p/ evitar spam), e o hold só saía por ação
+     * humana (feedback/redo). Assim, ao BAIXAR o piso, limpamos seletivamente os holds de 'score'
+     * das tasks 'approved' e re-avaliamos no próximo ciclo: as que agora passam seguem p/ o merge;
+     * as que ainda estão abaixo re-recebem o hold já com o piso novo (razão atualizada). Holds por
+     * OUTROS motivos (auto-merge off) são preservados — não são sensíveis ao piso.
+     */
+    onMinMergeScoreLowered(prevMinMergeScore: number, newMinMergeScore: number): void {
+        if (newMinMergeScore >= prevMinMergeScore) return;        // só age quando o piso BAIXA
+        if (!this.getAutomationConfig().autoMerge) return;       // sem auto-merge, não há o que retomar
+        let cleared = 0;
+        for (const task of Object.values(this.store.tasks)) {
+            if (task.status !== 'approved' || !task.mergeHoldReason) continue;
+            if (task.mergeHoldKind !== 'score') continue;        // preserva autoMergeOff (insensível ao piso)
+            task.mergeHoldReason = undefined;
+            task.mergeHoldKind = undefined;
+            this.recordEvent(task, 'merge_hold', `▶️ Hold de score liberado: piso de merge baixado (${prevMinMergeScore}→${newMinMergeScore}); será re-avaliado no próximo ciclo.`, { mergeHoldCleared: true, prevMinMergeScore, newMinMergeScore });
+            this.emitStatus(task);
+            cleared++;
+        }
+        if (cleared > 0) {
+            log.info(`#1168: piso de merge ${prevMinMergeScore}→${newMinMergeScore} — ${cleared} task(s) retida(s) por score liberada(s) p/ re-avaliação.`);
+            // Re-avalia já: o resumePendingMerges re-dispara o auto-merge das que agora passam no piso (e
+            // re-holda, com a razão atualizada, as que continuam abaixo — sem ficar mudo).
+            this.resumePendingMerges().catch((e) => log.warn(`#1168 resumePendingMerges após baixar piso falhou: ${e?.message || e}`));
+        }
+    }
+
+    /**
      * #1154 P3 item 18: reconcilia tasks cujo PR foi mergeado À MÃO (fora do robô). Sem isto a task
      * ficava 'approved'/'reviewing' para sempre e a épica-pai nunca completava. Best-effort no pollSync.
      */
@@ -3016,9 +3049,10 @@ Return ONLY a JSON:
      * motivo UMA vez (idempotente por motivo), marca o hold e emite status — o emitStatus então NOTIFICA
      * (o NOTIFY ganha entrada 'approved' quando há mergeHoldReason). Fim do "approved parado sem explicação".
      */
-    private holdApproved(task: Task, reason: string): void {
+    private holdApproved(task: Task, reason: string, kind?: 'score' | 'autoMergeOff'): void {
         if (task.mergeHoldReason === reason) return; // mesmo motivo → não re-registra nem re-notifica (anti-spam)
         task.mergeHoldReason = reason;
+        task.mergeHoldKind = kind; // #1168: classifica o hold p/ destrave seletivo quando o piso cai
         this.recordEvent(task, 'merge_hold', `⏸️ Merge retido — aguarda você: ${reason}`, { mergeHold: true });
         this.save();
         this.emitStatus(task);
@@ -3044,15 +3078,16 @@ Return ONLY a JSON:
         const config = this.getAutomationConfig();
         if (!config.autoMerge) {
             // #1154 P1 item 10: aprovado, mas auto-merge DESLIGADO → aguarda merge manual. Audível (antes: return mudo).
-            this.holdApproved(task, `Auto-merge desligado — PR #${task.prNumber ?? '?'} aprovado (score ${task.judgeScore ?? '?'}/10), aguarda seu merge manual.`);
+            this.holdApproved(task, `Auto-merge desligado — PR #${task.prNumber ?? '?'} aprovado (score ${task.judgeScore ?? '?'}/10), aguarda seu merge manual.`, 'autoMergeOff');
             return;
         }
         if ((task.judgeScore || 0) < config.minMergeScore) {
             // #1154 P1 item 10: score abaixo do piso de MERGE — não adianta re-tentar sozinho, precisa de você. Audível.
-            this.holdApproved(task, `Score ${task.judgeScore ?? 0}/10 abaixo do piso de merge (${config.minMergeScore}). Aprovado para revisão, mas o merge automático exige ${config.minMergeScore} — dê feedback para reabrir o ciclo ou ajuste o piso.`);
+            this.holdApproved(task, `Score ${task.judgeScore ?? 0}/10 abaixo do piso de merge (${config.minMergeScore}). Aprovado para revisão, mas o merge automático exige ${config.minMergeScore} — dê feedback para reabrir o ciclo ou ajuste o piso.`, 'score');
             return;
         }
         task.mergeHoldReason = undefined; // passou o guard de score → não está mais retida por esses motivos
+        task.mergeHoldKind = undefined;   // #1168: idem — limpa a classificação do hold
         // VALOR 2: veto do Juiz — approved=false BLOQUEIA (só reprova; nunca aprova sozinho, pois o
         // score acima continua obrigatório). Resolve a cegueira do gate p/ a intenção do Juiz.
         if (task.judgeApproved === false) {
