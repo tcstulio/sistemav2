@@ -111,6 +111,7 @@ vi.mock('../../services/chatSessionService', () => ({
     chatSessionService: {
         createSession: vi.fn(() => ({ id: 'mock_session' })),
         addMessage: vi.fn(),
+        getMessages: vi.fn(() => []),
         getSession: vi.fn(),
         getSessions: vi.fn(() => []),
         deleteSession: vi.fn(),
@@ -134,6 +135,17 @@ function createApp() {
     app.use(express.json());
     app.use('/api', aiRoutes);
     return app;
+}
+
+// Espera um job assíncrono (/generate-reply-async) atingir estado terminal.
+async function waitForJob(app: express.Application, jobId: string, timeoutMs = 2000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        const res = await request(app).get(`/api/jobs/${jobId}`);
+        if (res.body.status === 'done' || res.body.status === 'error') return res.body;
+        await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error(`Job ${jobId} não terminou em ${timeoutMs}ms`);
 }
 
 describe('aiRoutes', () => {
@@ -917,6 +929,157 @@ describe('aiRoutes', () => {
                 .put('/api/agent/bootstrap-config')
                 .send({ enabled: 'yes' });
             expect(res.status).toBe(400);
+        });
+    });
+
+    // =====================================================
+    // issue #1151: histórico autoritativo do servidor + persistência pré-enqueue
+    // =====================================================
+    describe('issue #1151: servidor autoritativo + persistência da msg antes do enqueue', () => {
+        beforeEach(() => {
+            // Outros describes deste arquivo usam mockRejectedValue (persistente: o
+            // clearAllMocks global não reseta implementação), o que vazava para cá.
+            // Garante estado "feliz" limpo para os testes que validam sucesso.
+            mockAiService.generateReply.mockResolvedValue({ text: 'Generated reply text' });
+        });
+
+        it('persiste a msg do usuário ANTES de enfileirar (POST /generate-reply-async)', async () => {
+            const { chatSessionService } = await import('../../services/chatSessionService');
+            const res = await request(app)
+                .post('/api/generate-reply-async')
+                .send({ sessionId: 'sess_1151', message: 'busque ACME', module: 'chat' });
+
+            expect(res.status).toBe(202);
+            // A persistência da msg do usuário é síncrona, antes do enqueue → já aconteceu
+            // quando o 202 foi devolvido.
+            expect(chatSessionService.addMessage).toHaveBeenCalledWith('sess_1151', expect.objectContaining({
+                role: 'user',
+                content: 'busque ACME',
+            }));
+        });
+
+        it('a ordem na tabela é: user (antes do enqueue) ANTES de model (após o job)', async () => {
+            const { chatSessionService } = await import('../../services/chatSessionService');
+            const start = await request(app)
+                .post('/api/generate-reply-async')
+                .send({ sessionId: 'sess_ord', message: 'msg1', module: 'chat' });
+            await waitForJob(app, start.body.jobId);
+
+            const calls = (chatSessionService.addMessage as ReturnType<typeof vi.fn>).mock.calls;
+            const userCallIdx = calls.findIndex((c: any[]) => c[1]?.role === 'user');
+            const modelCallIdx = calls.findIndex((c: any[]) => c[1]?.role === 'model');
+            expect(userCallIdx).toBeGreaterThanOrEqual(0);
+            expect(modelCallIdx).toBeGreaterThanOrEqual(0);
+            expect(userCallIdx).toBeLessThan(modelCallIdx);
+        });
+
+        it('ignora o history do cliente e monta o contexto do LLM a partir de getMessages (servidor)', async () => {
+            const { chatSessionService } = await import('../../services/chatSessionService');
+            (chatSessionService.getMessages as ReturnType<typeof vi.fn>).mockReturnValue([
+                { role: 'user', content: 'busque ACME' },
+                { role: 'model', content: 'ACME encontrada' },
+                { role: 'user', content: 'crie a fatura pra ele' },
+            ]);
+
+            await request(app)
+                .post('/api/generate-reply')
+                .send({
+                    sessionId: 'sess_ctx',
+                    message: 'crie a fatura pra ele',
+                    // history do cliente propositalmente DIVERGENTE — deve ser ignorado
+                    history: [{ role: 'user', parts: 'histórico obsoleto do cliente' }],
+                    module: 'chat',
+                });
+
+            expect(mockAiService.generateReply).toHaveBeenCalledTimes(1);
+            const historyArg = mockAiService.generateReply.mock.calls[0][0];
+            expect(historyArg).toEqual([
+                { role: 'user', parts: 'busque ACME' },
+                { role: 'model', parts: 'ACME encontrada' },
+                { role: 'user', parts: 'crie a fatura pra ele' },
+            ]);
+            // nada vindo do history do cliente
+            expect(JSON.stringify(historyArg)).not.toContain('histórico obsoleto do cliente');
+        });
+
+        it('msg2 recebe no contexto a resposta de msg1 (getMessages autoritativo)', async () => {
+            const { chatSessionService } = await import('../../services/chatSessionService');
+            (chatSessionService.getMessages as ReturnType<typeof vi.fn>).mockReturnValue([
+                { role: 'user', content: 'busque ACME' },
+                { role: 'model', content: 'Encontrei a ACME Ltda.' },
+                { role: 'user', content: 'crie a fatura pra ele' },
+            ]);
+
+            await request(app)
+                .post('/api/generate-reply')
+                .send({ sessionId: 'sess_turn', message: 'crie a fatura pra ele', module: 'chat' });
+
+            const historyArg = mockAiService.generateReply.mock.calls[0][0];
+            expect(historyArg).toEqual(
+                expect.arrayContaining([
+                    { role: 'user', parts: 'busque ACME' },
+                    { role: 'model', parts: 'Encontrei a ACME Ltda.' },
+                    { role: 'user', parts: 'crie a fatura pra ele' },
+                ])
+            );
+        });
+
+        it('erro do job → persiste msg de erro na sessão (não fica muda)', async () => {
+            const { chatSessionService } = await import('../../services/chatSessionService');
+            mockAiService.generateReply.mockRejectedValueOnce(new Error('LLM boom'));
+
+            const res = await request(app)
+                .post('/api/generate-reply')
+                .send({ sessionId: 'sess_err', message: 'quebre aqui', module: 'chat' });
+
+            expect(res.status).toBe(500);
+            // usuário persistido (pré-enqueue) + mensagem de erro do assistente
+            expect(chatSessionService.addMessage).toHaveBeenCalledWith('sess_err', expect.objectContaining({
+                role: 'user',
+                content: 'quebre aqui',
+            }));
+            expect(chatSessionService.addMessage).toHaveBeenCalledWith('sess_err', expect.objectContaining({
+                role: 'model',
+                content: expect.stringContaining('LLM boom'),
+            }));
+        });
+
+        it('cliente envia apenas {sessionId, message} (sem history) e funciona', async () => {
+            const res = await request(app)
+                .post('/api/generate-reply')
+                .send({ sessionId: 'sess_min', message: 'olá', module: 'chat' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.reply).toBeDefined();
+        });
+
+        it('sem sessionId mantém comportamento legado (usa history do cliente, não persiste)', async () => {
+            const { chatSessionService } = await import('../../services/chatSessionService');
+            const legacyHistory = [{ role: 'user', parts: 'pergunta legada' }];
+
+            await request(app)
+                .post('/api/generate-reply')
+                .send({ history: legacyHistory, module: 'chat' });
+
+            const historyArg = mockAiService.generateReply.mock.calls[0][0];
+            expect(historyArg).toEqual(legacyHistory);
+            expect(chatSessionService.addMessage).not.toHaveBeenCalled();
+        });
+
+        it('persiste a msg do usuário antes do enqueue também na rota síncrona', async () => {
+            const { chatSessionService } = await import('../../services/chatSessionService');
+            await request(app)
+                .post('/api/generate-reply')
+                .send({ sessionId: 'sess_sync', message: 'msg sync', module: 'chat' });
+
+            expect(chatSessionService.addMessage).toHaveBeenCalledWith('sess_sync', expect.objectContaining({
+                role: 'user',
+                content: 'msg sync',
+            }));
+            // e a resposta do assistente também é persistida
+            expect(chatSessionService.addMessage).toHaveBeenCalledWith('sess_sync', expect.objectContaining({
+                role: 'model',
+            }));
         });
     });
 });
