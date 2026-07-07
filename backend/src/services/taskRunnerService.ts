@@ -70,6 +70,10 @@ const DISK_MIN_FREE_BYTES = (Number(process.env.TASKRUNNER_DISK_MIN_GB) || 3) * 
 // isto raramente dispara — é backstop de segurança contra qualquer estado preso. Default 5min.
 const QUEUE_RECOVERY_MIN_MS = (Number(process.env.TASKRUNNER_QUEUE_RECOVERY_MIN) || 5) * 60 * 1000;
 const QUEUE_CHECK_INTERVAL_MS = 60 * 1000;
+// #1154 P2 item 15: quando o Planner manda AGUARDAR (wait), a task não pode voltar imediatamente à fila —
+// senão autoPlay a re-despacha na hora, o Planner manda esperar de novo, e vira um SPIN LOOP quente. Fica
+// fora da fila por este cooldown; o pollSync re-avalia depois (default 2min).
+const PLAN_WAIT_COOLDOWN_MS = (Number(process.env.TASKRUNNER_WAIT_COOLDOWN_MIN) || 2) * 60 * 1000;
 
 function git(args: string[], opts?: { timeout?: number; cwd?: string }) {
     return execFileAsync('git', args, { cwd: opts?.cwd || REPO_ROOT, timeout: opts?.timeout, maxBuffer: BIG });
@@ -284,6 +288,7 @@ export interface Task {
     killedAt?: string;
     queuePriority?: number;
     planReason?: string;
+    planWaitUntil?: number; // #1154 P2 item 15: epoch ms até quando a task fica fora da fila após o Planner mandar aguardar (anti spin-loop)
     _lastNotifiedStatus?: TaskStatus; // idempotência das notificações de transição (não re-notifica o mesmo status)
     phase: TaskPhase;
     attempts: AttemptResult[];
@@ -434,9 +439,14 @@ class TaskRunnerService {
             
             const hasGhostActive = activeTasks.some(t => {
                 if (t.childPid && !isAlive(t.childPid)) return true;
-                if (!t.childPid && t.startedAt) {
-                    const elapsed = Date.now() - new Date(t.startedAt).getTime();
-                    return elapsed > 15 * 60_000;
+                // #1154 P2 item 14: SEM childPid NÃO é ghost por tempo-desde-startedAt — o Judge, o verify e o
+                // auto-merge (espera de CI) rodam sem childPid e levam minutos; marcá-los "ghost" fazia o
+                // checkQueueHealth resetar a cadeia e despachar uma 2ª task EM PARALELO. Usa HEARTBEAT (último
+                // evento): ativo = gravou evento nos últimos 15min. Só travado de verdade (sem heartbeat) é ghost.
+                if (!t.childPid) {
+                    const lastTs = t.events?.length ? t.events[t.events.length - 1].ts : t.startedAt;
+                    if (!lastTs) return false;
+                    return Date.now() - new Date(lastTs).getTime() > 15 * 60_000;
                 }
                 return false;
             });
@@ -987,6 +997,10 @@ class TaskRunnerService {
 
                 if (decision.action === 'wait') {
                     task.status = 'pending';
+                    // #1154 P2 item 15: cooldown — tira a task da fila por um tempo. Sem isto, autoPlay a
+                    // re-despacha na hora e o Planner manda aguardar de novo → spin loop quente. O pollSync
+                    // re-avalia quando o cooldown vence.
+                    task.planWaitUntil = Date.now() + PLAN_WAIT_COOLDOWN_MS;
                     task.updatedAt = new Date().toISOString();
                     this.emitLog(task.issueNumber, 'warn', `Planner: aguardando — ${decision.reason}`);
                     this.save();
@@ -3512,9 +3526,13 @@ Return ONLY a JSON:
     }
 
     getQueuedTasks(): Task[] {
+        const now = Date.now();
         return Object.values(this.store.tasks)
             // Épicas não são "rodáveis" — elas decompõem em sub-tasks; nunca entram na fila de execução.
             .filter(t => t.status === 'pending' && t.kind !== 'epic' && !this.isTerminalStatus(t.status))
+            // #1154 P2 item 15: exclui tasks em cooldown de "wait" do Planner (anti spin-loop). Voltam
+            // à fila quando o cooldown vence e o pollSync re-avalia.
+            .filter(t => !t.planWaitUntil || t.planWaitUntil <= now)
             .sort((a, b) => (a.queuePriority ?? 999) - (b.queuePriority ?? 999));
     }
 
