@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
 import { taskRunnerService } from '../services/taskRunnerService';
+import { toTaskListItem } from '../services/taskListItem';
 import { screenshotService } from '../services/screenshotService';
 import { createLogger } from '../utils/logger';
 import fs from 'fs';
@@ -20,7 +21,10 @@ router.get('/', requireDolibarrLogin, async (req, res) => {
         taskRunnerService.syncWithGitHub().catch((e: any) =>
             log.warn('syncWithGitHub (bg) falhou', { error: e?.message })
         );
-        res.json(tasks);
+        // #1179: listagem ENXUTA — devolve as tasks SEM o array `events` (timeline pesada,
+        // ~241 eventos/task × 400 tasks = ~47MB antes). `events` vem on-demand via
+        // GET /:issueNumber/events (TaskHistoryModal/TaskConsole). body/judgeReview truncados.
+        res.json(tasks.map(toTaskListItem));
     } catch (error: any) {
         log.error('List tasks error', { error: error.message });
         res.status(500).json({ error: error.message });

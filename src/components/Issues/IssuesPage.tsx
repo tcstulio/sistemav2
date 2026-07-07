@@ -82,13 +82,11 @@ const TaskHistoryModal: React.FC<{
         let cancelled = false;
         const load = async () => {
             try {
-                // Prefer events already embedded in task, otherwise fetch
-                if (task.events && task.events.length > 0) {
-                    if (!cancelled) { setEvents(task.events); setLoading(false); }
-                } else {
-                    const evts = await TaskService.listEvents(task.issueNumber);
-                    if (!cancelled) { setEvents(evts); setLoading(false); }
-                }
+                // #1179: a listagem (GET /api/tasks) vem SEM o array `events` (payload enxuto).
+                // A timeline completa é buscada ON-DEMAND ao abrir o modal — evita os ~47MB de
+                // events embutidos no board a cada polling.
+                const evts = await TaskService.listEvents(task.issueNumber);
+                if (!cancelled) { setEvents(evts); setLoading(false); }
             } catch {
                 if (!cancelled) setLoading(false);
             }

@@ -86,6 +86,9 @@ export interface Task {
     completedAt?: string;
     error?: string;
     events?: TaskEvent[];
+    // #1179: a listagem (GET /api/tasks) vem ENXUTA (sem o array `events`). O `eventsCount`
+    // indica quantos eventos há na timeline (disponível on-demand via listEvents/get).
+    eventsCount?: number;
     childPid?: number;
     killRequested?: boolean;
     killedAt?: string;

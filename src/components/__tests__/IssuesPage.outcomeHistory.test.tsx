@@ -232,9 +232,9 @@ describe('IssuesPage — histórico clicável (#637)', () => {
             { ts: '2024-06-21T15:30:00.000Z', type: 'error', message: 'Erro fatal no typecheck' },
         ];
         taskServiceMock.list.mockResolvedValue([
-            makeTask({ status: 'failed', events }),
+            makeTask({ status: 'failed' }),
         ]);
-        // events embedded in task — listEvents should not be called
+        // #1179: a listagem vem sem `events` embutidos — o modal busca on-demand via listEvents.
         listEventsSpy.mockResolvedValue(events);
 
         const user = userEvent.setup();
@@ -248,6 +248,8 @@ describe('IssuesPage — histórico clicável (#637)', () => {
         // Tipos de evento visíveis
         expect(screen.getByText('start')).toBeTruthy();
         expect(screen.getByText('error')).toBeTruthy();
+        // Timeline buscada on-demand ao abrir o modal
+        expect(listEventsSpy).toHaveBeenCalledWith(99);
     });
 
     it('chama listEvents quando a task não traz events embutidos', async () => {
