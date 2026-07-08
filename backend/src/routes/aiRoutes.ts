@@ -176,6 +176,7 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
                     result: result.slice(0, 500),
                     durationMs: duration,
                     isError: result.toLowerCase().includes('error') || result.toLowerCase().includes('erro'),
+                    requestedVia: 'chat', // F0.1 (#1234): origem do pedido — o agente/chat é interativo
                 });
             } catch { /* ignore activity logging errors */ }
         };
