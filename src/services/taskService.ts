@@ -80,6 +80,10 @@ export interface Task {
         screens: { route: string; ok: boolean; errors: string[] }[];
     };
     feedbackHistory: string[];
+    // #1176: feedback humano PERSISTENTE (sobrevive ao wipe entre fases no backend). Histórico
+    // de correções já dadas pelo admin — exibido no modal de feedback. Quando ausente, a UI
+    // recua para os eventos feedback_received.
+    durableFeedback?: string[];
     startedAt?: string;
     arrivedAt?: string;
     updatedAt: string;
