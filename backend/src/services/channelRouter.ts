@@ -10,6 +10,7 @@
 import { FEATURES, isUsingMoltbot } from '../config/features';
 import { moltbotGateway, MessageResult as MoltbotMessageResult } from './moltbotGateway';
 import { messageService as legacyMessageService } from './legacy/messageService';
+import { sessionService } from './legacy/sessionService';
 import { emailService } from './emailService';
 import { createLogger } from '../utils/logger';
 
@@ -86,6 +87,24 @@ class ChannelRouter {
         this.defaultSessionId = sessionId;
     }
 
+    /**
+     * Resolve a sessão de envio. sessionId explícito é sempre respeitado. Sem ele, usa a default;
+     * e se a default não estiver WORKING (ex.: a única sessão conectada tem outro nome, como 'v4'),
+     * cai na primeira sessão WORKING — logando o desvio (cuidado se houver várias sessões: pode
+     * enviar de outro número; follow-up = sessão primária configurável). Sem nenhuma sessão pronta,
+     * devolve a default para o erro "Session X not found" ficar explícito.
+     */
+    private resolveSession(sessionId?: string): string {
+        if (sessionId) return sessionId;
+        if (sessionService.getStatus(this.defaultSessionId) === 'WORKING') return this.defaultSessionId;
+        const working = sessionService.getFirstWorkingSessionId();
+        if (working && working !== this.defaultSessionId) {
+            log.warn(`Sessão default '${this.defaultSessionId}' indisponível; roteando para a sessão WORKING '${working}'.`);
+            return working;
+        }
+        return this.defaultSessionId;
+    }
+
     // ========================================
     // UNIFIED SEND
     // ========================================
@@ -137,7 +156,7 @@ class ChannelRouter {
         content: string,
         sessionId?: string
     ): Promise<SendResult> {
-        const session = sessionId || this.defaultSessionId;
+        const session = this.resolveSession(sessionId);
 
         // Dry-run mode
         if (FEATURES.DRY_RUN_MODE) {
@@ -196,7 +215,7 @@ class ChannelRouter {
         caption?: string,
         sessionId?: string
     ): Promise<SendResult> {
-        const session = sessionId || this.defaultSessionId;
+        const session = this.resolveSession(sessionId);
 
         if (FEATURES.DRY_RUN_MODE) {
             log.info(`DRY RUN - WhatsApp file to ${recipient}: ${filename}`);
@@ -249,7 +268,7 @@ class ChannelRouter {
         audioData: string,
         sessionId?: string
     ): Promise<SendResult> {
-        const session = sessionId || this.defaultSessionId;
+        const session = this.resolveSession(sessionId);
 
         if (FEATURES.DRY_RUN_MODE) {
             log.info(`DRY RUN - WhatsApp voice to ${recipient}`);
