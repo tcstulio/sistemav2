@@ -54,6 +54,7 @@ export class DolibarrService extends DolibarrServiceBase {
     closeProposal = (proposalId: string, data: CloseProposalModel, userKey?: string) => this.commercial.closeProposal(proposalId, data, userKey);
     getInvoice = (id: string) => this.commercial.getInvoice(id);
     getOrder = (id: string) => this.commercial.getOrder(id);
+    getProposal = (id: string) => this.commercial.getProposal(id);
     listInvoices = (params?: { status?: string, limit?: number }) => this.commercial.listInvoices(params);
     listOrders = (params?: { status?: string, search?: string, limit?: number }) => this.commercial.listOrders(params);
     listProposals = (params?: { status?: string, search?: string, limit?: number }) => this.commercial.listProposals(params);
