@@ -48,7 +48,13 @@ describe('formatBytes', () => {
 
 describe('normalizePath', () => {
     it('lowercase + forward slash + resolve', () => {
-        expect(normalizePath('C:\\Projetos\\Repo\\Sub')).toBe('c:/projetos/repo/sub');
+        // path.resolve() trata 'C:\...' como ABSOLUTO só no Windows; no Linux (CI) vira relativo ao cwd
+        // (→ /home/runner/...). Como o gc de worktrees roda em PRODUÇÃO só no Windows, a asserção do
+        // caminho Windows-absoluto é Windows-específica; no Linux ela seria um falso-negativo de ambiente.
+        if (process.platform === 'win32') {
+            expect(normalizePath('C:\\Projetos\\Repo\\Sub')).toBe('c:/projetos/repo/sub');
+        }
+        // Independente de plataforma (path.resolve dos DOIS lados = consistente):
         expect(normalizePath('/a/b/../c')).toBe(path.resolve('/a/b/../c').toLowerCase().replace(/\\/g, '/'));
     });
 
