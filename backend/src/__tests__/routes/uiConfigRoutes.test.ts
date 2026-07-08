@@ -236,4 +236,30 @@ describe('uiConfigRoutes', () => {
         expect(res.status).toBe(400);
         expect(mockUiConfigService.update).not.toHaveBeenCalled();
     });
+
+    // #1204: kill-switches de automações de fundo — o Zod precisa declarar o objeto para os
+    // flags sobreviverem ao .parse() e chegarem intactos ao service (round-trip).
+    it('#1204: PUT com automationSwitches propaga os 2 flags pro service intactos', async () => {
+        const sw = { schedulerEnabled: false, alertCronEnabled: false };
+        mockUiConfigService.update.mockReturnValueOnce({ automationSwitches: sw });
+        const res = await request(app).put('/api/ui-config').send({ automationSwitches: sw });
+        expect(res.status).toBe(200);
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ automationSwitches: sw });
+        const sent = mockUiConfigService.update.mock.calls[0][0].automationSwitches;
+        expect(sent).toEqual({ schedulerEnabled: false, alertCronEnabled: false });
+        expect(res.body.automationSwitches).toEqual({ schedulerEnabled: false, alertCronEnabled: false });
+    });
+
+    it('#1204: PUT com só um flag (schedulerEnabled) chega intacto (não estripado pelo Zod)', async () => {
+        mockUiConfigService.update.mockReturnValueOnce({ automationSwitches: { schedulerEnabled: false, alertCronEnabled: true } });
+        const res = await request(app).put('/api/ui-config').send({ automationSwitches: { schedulerEnabled: false } });
+        expect(res.status).toBe(200);
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ automationSwitches: { schedulerEnabled: false } });
+    });
+
+    it('#1204: PUT com tipo errado em automationSwitches.schedulerEnabled retorna 400', async () => {
+        const res = await request(app).put('/api/ui-config').send({ automationSwitches: { schedulerEnabled: 'no' } });
+        expect(res.status).toBe(400);
+        expect(mockUiConfigService.update).not.toHaveBeenCalled();
+    });
 });

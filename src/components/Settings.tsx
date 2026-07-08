@@ -15,6 +15,7 @@ import { DashboardConfigEditor } from './admin/DashboardConfigEditor';
 import { ScreenPermissionsEditor } from './admin/ScreenPermissionsEditor';
 import { NotificationConfigEditor } from './admin/NotificationConfigEditor';
 import { TaskAutomationEditor } from './admin/TaskAutomationEditor';
+import { BackgroundAutomationSwitches } from './admin/BackgroundAutomationSwitches';
 import { GovernanceEditor } from './admin/GovernanceEditor';
 import { AgentBootstrapEditor } from './admin/AgentBootstrapEditor';
 import { PageLayout, PageHeader, Card, Button, Input, Modal } from './ui';
@@ -402,6 +403,9 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
 
                 {/* Automacoes do TaskRunner (#351) — so admin */}
                 {isAdmin && settingsTab === 'admin' && <TaskAutomationEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
+
+                {/* Kill-switches de automações de fundo (#1204) — so admin */}
+                {isAdmin && settingsTab === 'admin' && <BackgroundAutomationSwitches isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
                 {/* Governanca de acoes do agente (HITL de irreversiveis) — so admin */}
                 {isAdmin && settingsTab === 'admin' && <GovernanceEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
