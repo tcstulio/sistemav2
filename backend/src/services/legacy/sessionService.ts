@@ -58,6 +58,18 @@ export class SessionService {
         return this.clients.get(sessionId);
     }
 
+    /**
+     * Id da primeira sessão em estado WORKING (ordem de inserção), ou undefined se nenhuma
+     * estiver pronta. Fallback de roteamento quando a sessão default nomeada não existe/está fora
+     * (ex.: a única sessão conectada tem outro nome, como 'v4').
+     */
+    public getFirstWorkingSessionId(): string | undefined {
+        for (const [id, status] of this.sessionStatus) {
+            if (status === 'WORKING') return id;
+        }
+        return undefined;
+    }
+
     public getStatus(sessionId: string) {
         return this.sessionStatus.get(sessionId) || 'STOPPED';
     }
