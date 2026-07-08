@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { GithubService, GitHubIssue, IssueStats } from '../../services/githubService';
 import { TaskService, Task } from '../../services/taskService';
 import { PrecheckBadge, PrecheckAnalysis, RejectedPrecheckBanner } from '../TaskCard';
+import { BoardHeader } from '../BoardHeader';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
 import { AlertCircle, Bug, Sparkles, Shield, Wrench, TestTube, GitMerge, Loader2, Eye, CheckCircle, XCircle, RotateCcw, MessageSquare, Trash2, Pencil, Terminal, ExternalLink, Search, Tag, CircleDot, Clock, ThumbsUp, Star, Play, RefreshCw, ShieldOff, Plus, Filter, LayoutGrid, List, GripVertical } from 'lucide-react';
 import { toast } from 'sonner';
@@ -749,6 +750,9 @@ const IssuesPage: React.FC = () => {
 
     const [tasks, setTasks] = useState<Task[]>([]);
     const [tasksLoading, setTasksLoading] = useState(true);
+    // #1189: tick incrementado no mesmo refetch de 10s das tasks — alimenta o BoardHeader
+    // (barra de orçamento diário) sem criar polling próprio.
+    const [tasksTick, setTasksTick] = useState(0);
     const [taskViewMode, setTaskViewMode] = useState<'pipeline' | 'list'>('pipeline');
     const [taskTab, setTaskTab] = useState<'active' | 'done' | 'all'>('active');
     const [taskSearch, setTaskSearch] = useState('');
@@ -804,7 +808,7 @@ const IssuesPage: React.FC = () => {
     }, []);
 
     useEffect(() => { loadIssues(); }, [loadIssues]);
-    useEffect(() => { loadTasks(); const iv = setInterval(loadTasks, 10000); return () => clearInterval(iv); }, [loadTasks]);
+    useEffect(() => { loadTasks(); const iv = setInterval(() => { loadTasks(); setTasksTick((t) => t + 1); }, 10000); return () => clearInterval(iv); }, [loadTasks]);
 
     // #1175: carrega os pisos de score uma vez (montagem). Em falha, mantém os defaults.
     useEffect(() => {
@@ -1021,7 +1025,12 @@ const IssuesPage: React.FC = () => {
             <PageHeader
                 title="Issues & Tasks"
                 subtitle="GitHub issues, tasks automáticas e estatísticas do projeto"
-                actions={tab !== 'stats' ? periodFilter : undefined}
+                actions={tab !== 'stats' ? (
+                    <div className="flex items-center gap-3 flex-wrap">
+                        <BoardHeader refreshSignal={tasksTick} />
+                        {periodFilter}
+                    </div>
+                ) : undefined}
                 tabs={
                     <Tabs value={tab} onChange={v => setTab(v as any)}>
                         <Tab value="issues">Issues ({issues.length})</Tab>

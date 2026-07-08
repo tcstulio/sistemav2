@@ -1156,6 +1156,19 @@ class TaskRunnerService {
     }
 
     /**
+     * Orçamento DIÁRIO de rodadas de opencode (#1154 item 23 / #1189): quantas rodadas já
+     * foram consumidas hoje (contador que reseta na virada do dia) e qual o teto configurado.
+     * Expõe o valor REAL do estado interno p/ a barra de orçamento no BoardHeader — sem mock.
+     */
+    getDailyRoundsStatus(): { dailyRoundsUsed: number; dailyRoundBudget: number } {
+        const { dailyRoundBudget } = this.getAutomationConfig();
+        return {
+            dailyRoundsUsed: this.dailyRoundsToday(),
+            dailyRoundBudget: typeof dailyRoundBudget === 'number' && dailyRoundBudget > 0 ? dailyRoundBudget : 200,
+        };
+    }
+
+    /**
      * Horário de PICO do Z.AI (GLM consome 3x a cota): 14:00–18:00 UTC+8 = 06:00–10:00 UTC
      * = 03:00–07:00 BRT. Off-peak é 1x (promoção até set/2026). Como o teto é SEMANAL, rodar
      * no pico queima a cota 3x mais rápido -> MENOS tasks por semana. Por isso o robô NÃO
