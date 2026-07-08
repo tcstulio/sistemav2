@@ -71,6 +71,12 @@ const UpdateSchema = z.object({
         autoDecompose: z.boolean().optional(),
         minMergeScore: z.number().min(1).max(10).optional(),
         minApproveScore: z.number().min(1).max(10).optional(),
+        // #1154: rodadas/tetos de custo — validação de faixa fica no sanitizeTaskAutomation (clampa).
+        // Se não forem listados aqui o Zod ESTRIPA as chaves → o save do editor reseta p/ os defaults.
+        maxJudgeRounds: z.number().optional(),
+        maxGateFixRounds: z.number().optional(),
+        maxRoundsPerTask: z.number().optional(),
+        dailyRoundBudget: z.number().optional(),
     }).optional(),
     // Grupo Dolibarr p/ "Habilitar acesso ao app" (sem isto o Zod descartaria o campo e o save não persistiria).
     appAccessGroupId: z.string().max(40).optional(),
