@@ -99,7 +99,7 @@ export const TOOLS_PROMPT = `
         12. list_shipments(search: string) - Lista envios/expedições.
         13. list_supplier_invoices(status: 'unpaid'|'paid') - Lista faturas de fornecedor.
         14. list_expense_reports(status: 'approved'|'paid') - Lista relatórios de despesas.
-        15. list_users(search: string) - Lista usuários/funcionários.
+        15. list_users(search: string) - Lista usuários/funcionários (mostra o [id] e o 📱 celular). Use o [id] como "recipient" no notify_person.
         16. list_warehouses() - Lista estoques/armazéns.
         17. list_tasks(projectId: string) - Lista tarefas de um projeto.
         18. list_user_tasks(userId?: string) - Lista as tarefas atribuídas a um usuário. Omita userId para listar as tarefas do PRÓPRIO usuário logado ("minhas tarefas").
@@ -218,7 +218,7 @@ export const TOOLS_PROMPT = `
 
         FERRAMENTAS DE NOTIFICAÇÃO:
         105. notify_team(message, priority?) - Manda uma notificação in-app pra toda a equipe. Use quando faz algo que os outros precisam saber (criou fatura, validou pedido, etc.).
-        106. notify_person(name, phone?, email?, message, channels?) - Manda notificação pra uma pessoa específica (cliente, fornecedor, membro da equipe). channels = array com "whatsapp" e/ou "email" e/ou "in-app". Precisa de phone pra WhatsApp, email pra email.
+        106. notify_person(name, phone?, email?, message, channels?, recipient?) - Manda notificação pra uma pessoa específica (cliente, fornecedor, membro da equipe). channels = array com "whatsapp" e/ou "email" e/ou "in-app". Para USUÁRIO do sistema, passe "recipient" = [id] do list_users: o telefone/email é resolvido automaticamente do cadastro (não precisa saber o número). Para cliente/externo, informe phone/email direto. in-app exige recipient (id).
         107. send_whatsapp(phone, message) - Manda WhatsApp direto pra qualquer número. phone = número com código país (ex.: "5511999999999").
 
         FERRAMENTA DE GESTÃO DO PROJETO:
@@ -723,6 +723,42 @@ function computeLinesTotal(lines: any): number {
     }, 0);
 }
 
+/** Contato resolvido de um usuário do sistema (para notify_person em canais externos). */
+export interface ResolvedUserContact { userId: string; phone: string; email: string; displayName: string; }
+
+/**
+ * Resolve o contato de um USUÁRIO do sistema a partir do userId (preferido, inequívoco) ou do
+ * nome (best-effort). O telefone vem só de campos MÓVEIS (user_mobile||phone_mobile) — nunca do
+ * fixo (office_phone), que quebraria o WhatsApp. Nome ambíguo (>1 match) ou inexistente NÃO
+ * adivinha: devolve erro pedindo o userId. É a base do "avise o fulano no WhatsApp" sem o LLM
+ * precisar saber o número de cor.
+ */
+export async function resolveUserContact(opts: { userId?: string; name?: string }): Promise<ResolvedUserContact | { error: string }> {
+    let user: any = null;
+    const uid = opts.userId ? String(opts.userId).trim() : '';
+    const name = opts.name ? String(opts.name).trim() : '';
+    if (uid) {
+        user = await dolibarrService.getUserById(uid);
+        if (!user) return { error: `Usuário id ${uid} não encontrado.` };
+    } else if (name) {
+        const matches = await dolibarrService.listUsers(name);
+        if (!matches || matches.length === 0) {
+            return { error: `Nenhum usuário do sistema encontrado com o nome "${name}". Use list_users para achar o id e passe-o em "recipient".` };
+        }
+        if (matches.length > 1) {
+            const list = matches.slice(0, 5).map((m: any) => `${(m.firstname || '')} ${(m.lastname || '')}`.trim() + ` [id ${m.id}]`).join('; ');
+            return { error: `Mais de um usuário corresponde a "${name}": ${list}. Informe o userId exato em "recipient".` };
+        }
+        user = matches[0];
+    } else {
+        return { error: 'Informe "recipient" (id do usuário) ou "name".' };
+    }
+    const phone = String(resolveUserMobile(user) || '').replace(/\D/g, '');
+    const email = String(user.email || '').trim();
+    const displayName = `${(user.firstname || '')} ${(user.lastname || '')}`.trim() || user.login || String(user.id);
+    return { userId: String(user.id), phone, email, displayName };
+}
+
 export async function executeTool(tool: string, args: any = {}): Promise<string> {
     const resolvedTool = TOOL_ALIASES[tool] || tool;
     log.info(`Tool Call: ${tool}${resolvedTool !== tool ? ` -> ${resolvedTool}` : ''}`, args);
@@ -1013,7 +1049,7 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             return '<h3>👥 Usuários</h3><ul>' +
                 users.map((u: any) => {
                     const mobile = resolveUserMobile(u);
-                    return `<li><a href="/hr/${u.id}" class="text-blue-600 underline font-semibold">${u.lastname} ${u.firstname}</a> — ${u.email || ''} ${u.job ? '(' + u.job + ')' : ''}${mobile ? ' | 📱 ' + mobile : ''}</li>`;
+                    return `<li><a href="/hr/${u.id}" class="text-blue-600 underline font-semibold">${u.lastname} ${u.firstname}</a> [id ${u.id}] — ${u.email || ''} ${u.job ? '(' + u.job + ')' : ''}${mobile ? ' | 📱 ' + mobile : ''}</li>`;
                 }).join('') +
                 '</ul>';
         }
@@ -1472,25 +1508,35 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
 
         case 'notify_person': {
             const pName = String(args?.name || '').trim();
-            const pPhone = args?.phone ? String(args.phone).replace(/\D/g, '') : '';
-            const pEmail = args?.email ? String(args.email).trim() : '';
+            let pPhone = args?.phone ? String(args.phone).replace(/\D/g, '') : '';
+            let pEmail = args?.email ? String(args.email).trim() : '';
             const pMsg = String(args?.message || '').trim();
             const pChannels = Array.isArray(args?.channels) ? args.channels : ['in-app'];
+            const npCtx = getToolContext();
+            let pRecipient = args?.recipient ? String(args.recipient).trim() : undefined;
 
             if (!pName) return 'Informe o nome da pessoa (parâmetro "name").';
             if (!pMsg) return 'Informe a mensagem (parâmetro "message").';
-            if (pChannels.includes('whatsapp') && !pPhone) return 'Para WhatsApp, informe o telefone (parâmetro "phone").';
-            if (pChannels.includes('email') && !pEmail) return 'Para email, informe o email (parâmetro "email").';
 
-            // #1004: resolve o destinatário in-app. Um userId explícito (args.recipient) vence;
-            // sem ele, assume o próprio usuário logado (caso de teste "notificar a si mesmo") para
-            // a notificação cair na caixa pessoal ("Minhas") em vez de virar broadcast de sistema.
-            const npCtx = getToolContext();
-            const pRecipient = args?.recipient ? String(args.recipient).trim() : (npCtx.userId || undefined);
+            // NOVO: resolve o contato do USUÁRIO do sistema para canais EXTERNOS quando o telefone/
+            // email não veio, a partir de recipient (userId) ou do name. NÃO roda para in-app puro —
+            // preserva o #1004 (auto-notificação cai no usuário logado, sem lookup no Dolibarr).
+            const wantsWhats = pChannels.includes('whatsapp');
+            const wantsEmail = pChannels.includes('email');
+            if (((wantsWhats && !pPhone) || (wantsEmail && !pEmail)) && (pRecipient || pName)) {
+                const resolved = await resolveUserContact({ userId: pRecipient, name: pRecipient ? undefined : pName });
+                if ('error' in resolved) return resolved.error;
+                if (!pRecipient) pRecipient = resolved.userId;
+                if (wantsWhats && !pPhone) pPhone = resolved.phone;
+                if (wantsEmail && !pEmail) pEmail = resolved.email;
+            }
 
-            // #1004: notify_person é destinado a uma pessoa específica. Se o canal inclui in-app
-            // mas não foi possível resolver o destinatário (nem args.recipient nem userId de contexto),
-            // NÃO cria um broadcast implícito — exige o destinatário para não vazar a mensagem pra todos.
+            if (wantsWhats && !pPhone) return `Não há WhatsApp cadastrado para ${pName}. Cadastre o celular do usuário (perfil) ou informe o telefone em "phone".`;
+            if (wantsEmail && !pEmail) return `Não há email cadastrado para ${pName}. Informe o email em "email".`;
+
+            // #1004: in-app → recipient explícito/resolvido; sem ele, cai no usuário logado (caixa
+            // "Minhas"). Se ainda assim não houver destinatário, NÃO vira broadcast implícito.
+            if (!pRecipient) pRecipient = npCtx.userId || undefined;
             if (pChannels.includes('in-app') && !pRecipient) {
                 return 'Não foi possível resolver o destinatário in-app. Informe o parâmetro "recipient" (id do usuário) ou canais externos (whatsapp/email) com os respectivos dados de contato.';
             }
