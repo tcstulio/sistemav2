@@ -156,6 +156,12 @@ export const TaskService = {
         return response.data;
     },
 
+    // #1189: orçamento diário de rodadas do Runner (valor REAL do backend — sem mock).
+    getStatus: async (): Promise<{ dailyRoundsUsed: number; dailyRoundBudget: number }> => {
+        const response = await axios.get(`${API_URL}/status`, getAuthHeaders());
+        return response.data;
+    },
+
     create: async (title: string, body: string, labels?: string[]): Promise<Task> => {
         const response = await axios.post(API_URL, { title, body, labels }, getAuthHeaders());
         return response.data;
