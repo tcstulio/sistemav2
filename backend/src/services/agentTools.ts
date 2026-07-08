@@ -762,6 +762,21 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             }
         }
 
+        // Gate por entidade nos validate_* (fecha a brecha real): o `permKey` acima nunca barra
+        // esses tools porque `canValidate` é ARRAY (`![]` é sempre false), e o getEntityFromTool
+        // só cobre prepare_create_/prepare_edit_ — então validate_* ficava SEM trava por entidade.
+        // Sem isto, um não-admin (o agente é aberto a qualquer logado) validava — nº fiscal,
+        // ~irreversível — qualquer fatura/pedido/proposta via a chave master. Espelha canCreate/Edit.
+        const validateMatch = resolvedTool.match(/^validate_(invoice|order|proposal)$/);
+        if (validateMatch) {
+            const vEntity = validateMatch[1];
+            const canV = ctx.permissionProfile.agent.canValidate;
+            if (!canV.includes(vEntity) && !canV.includes('all')) {
+                log.warn(`Permission denied: user=${ctx.userLogin} cannot validate ${vEntity}`);
+                return `Você não tem permissão para validar ${vEntity}. Solicite ao administrador.`;
+            }
+        }
+
         // Caps configuráveis pelo admin (opt-in: default null/[] = sem efeito).
         const agent = ctx.permissionProfile.agent;
 
