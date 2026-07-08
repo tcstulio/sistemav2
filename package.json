@@ -29,7 +29,9 @@
     "browser": "npx tsx scripts/interactive-browser.ts",
     "test:ui-full": "npx tsx scripts/comprehensive-ui-test.ts",
     "test:coolgroove": "npx tsx scripts/coolgroove-complete-test.ts",
-    "explore:pages": "npx tsx scripts/explore-all-pages.ts"
+    "explore:pages": "npx tsx scripts/explore-all-pages.ts",
+    "gc:worktrees": "npx tsx scripts/gc-worktrees.ts",
+    "gc:worktrees:dry": "npx tsx scripts/gc-worktrees.ts --dry-run"
   },
   "dependencies": {
     "@capacitor/android": "^8.0.0",

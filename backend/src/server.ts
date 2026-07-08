@@ -353,6 +353,7 @@ import { eventScraperService } from './services/eventScraperService';
 import { alertCronService } from './services/alertCronService';
 import { delegationService } from './services/delegationService';
 import { taskRunnerService } from './services/taskRunnerService';
+import { gcSchedulerService } from './services/gcSchedulerService';
 if (!IS_PREVIEW) {
     schedulerService.startWorker();
     log.info('SchedulerService worker started');
@@ -372,6 +373,15 @@ if (!IS_PREVIEW) {
 
     // Start TaskRunner polling (sync GitHub issues com label "opencode-task")
     taskRunnerService.startPolling();
+
+    // Start GC de Worktrees scheduler (issue #1112): cron diário do backend que dispara
+    // scripts/gc-worktrees.ts (subprocesso isolado, junction-safe). PREVIEW-SAFE (correção #1):
+    // vive DENTRO do bloco if (!IS_PREVIEW) — um backend de preview (PREVIEW_MODE=1) NUNCA roda GC
+    // de worktrees (pode estar rodando de dentro de uma worktree em uso e apagá-la-ia — incidente #1170).
+    // isPreviewBackend() (no próprio gcSchedulerService.start) é o portão determinístico/testável de
+    // defesa-em-profundidão. Config via env: GC_SCHEDULE_ENABLED / GC_SCHEDULE_TIME (default "03:00").
+    gcSchedulerService.start();
+    log.info('GcSchedulerService started (issue #1112)');
 }
 
 // Initialize Banking Services
@@ -432,6 +442,9 @@ const gracefulShutdown = async (signal: string) => {
 
     // 3. Stop Alert Cron
     alertCronService.stop();
+
+    // Stop GC de Worktrees scheduler (#1112)
+    gcSchedulerService.stop();
 
     // 3. Destroy WhatsApp Clients (Releases Chrome processes & Ports)
     try {
