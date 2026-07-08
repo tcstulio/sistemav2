@@ -27,6 +27,7 @@ const ProjectList = React.lazy(() => import('./ProjectList'));
 const CustomerConversations = React.lazy(() => import('./CustomerConversations'));
 const TicketList = React.lazy(() => import('./TicketList'));
 const BankAccountList = React.lazy(() => import('./BankAccountList'));
+const ConfirmAction = React.lazy(() => import('./ConfirmAction'));
 const SupplierList = React.lazy(() => import('./SupplierList').then(m => ({ default: m.SupplierList })));
 const VenueList = React.lazy(() => import('./VenueList').then(m => ({ default: m.VenueList })));
 const SupplierInvoiceList = React.lazy(() => import('./SupplierInvoiceList'));
@@ -298,6 +299,9 @@ const App: React.FC = () => {
                         <Route path="/admin/automations" element={<ViewWrapper Component={AutomationSettings} viewId="settings" />} />
                         <Route path="/opencode-tasks" element={<Navigate to="/issues" replace />} />
                         <Route path="/issues" element={<ViewWrapper Component={IssuesPage} viewId="development" />} />
+                        {/* HITL: confirmação de ação irreversível preparada pelo agente (§8.1). Sem gate de
+                            view — acessível a qualquer logado; a autorização real é do backend (chave do user). */}
+                        <Route path="/confirm-action" element={<ConfirmAction />} />
 
                         <Route path="/chat" element={<ViewWrapper Component={ChatPage} viewId="chat" />}>
                             <Route index element={<ChatConversation />} />
