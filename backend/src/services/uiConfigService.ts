@@ -92,6 +92,13 @@ export interface TaskAutomationConfig {
     dailyRoundBudget: number;
 }
 
+export interface ActionGovernanceConfig {
+    irreversibleRequiresApproval: boolean;
+    adminBypassIrreversible: boolean;
+    approvalValueThreshold: number | null;
+    whatsappDestinationAllowlist: string[];
+}
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
@@ -104,6 +111,7 @@ export interface UiConfig {
     taskNotifications: TaskNotificationsConfig;
     taskNotificationsExternalEnabled: boolean;
     taskAutomation: TaskAutomationConfig;
+    actionGovernance: ActionGovernanceConfig;
     // Concorrência otimista (#central-permissões): incrementa a cada save. A Central envia
     // o version que leu; o backend rejeita (409) se mudou no meio — evita last-write-wins.
     version: number;
@@ -117,13 +125,14 @@ export interface UiConfig {
 export const UI_CONFIG_LIMITS = { maxEntities: 500, maxIdsPerRule: 200, maxIdLen: 80 };
 
 // Entrada de update: branding parcial + prefs/permissões/páginas parciais (sanitizadas em update()).
-export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions' | 'customPages' | 'taskNotifications'>> & {
+export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions' | 'customPages' | 'taskNotifications' | 'actionGovernance'>> & {
     menu?: Partial<OrderVisibilityPrefs>;
     dashboard?: Partial<OrderVisibilityPrefs>;
     screenPermissions?: unknown;
     customPages?: unknown;
     taskNotifications?: unknown;
     taskAutomation?: unknown;
+    actionGovernance?: unknown;
 };
 
 // Padrão aprovado: Responsável leva a cobrança; Interveniente acompanha; Criador é avisado do desfecho.
@@ -149,6 +158,7 @@ const DEFAULTS: UiConfig = {
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
     taskNotificationsExternalEnabled: false,
     taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200 },
+    actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [] },
     version: 0,
 };
 
@@ -315,6 +325,34 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
     };
 }
 
+// Exportado p/ teste unitário direto (mesmo espírito das demais sanitize).
+export function sanitizeActionGovernance(v: unknown): ActionGovernanceConfig {
+    const d = DEFAULTS.actionGovernance;
+    if (!v || typeof v !== 'object') return { ...d };
+    const a = v as Record<string, unknown>;
+    // Booleanos: NUNCA coerção implícita — só valor explicitamente booleano é aceito; resto cai no default.
+    const irreversibleRequiresApproval = typeof a.irreversibleRequiresApproval === 'boolean'
+        ? a.irreversibleRequiresApproval
+        : d.irreversibleRequiresApproval;
+    // adminBypassIrreversible default é true (permissivo).
+    const adminBypassIrreversible = typeof a.adminBypassIrreversible === 'boolean'
+        ? a.adminBypassIrreversible
+        : d.adminBypassIrreversible;
+    // Threshold: finito e >= 0, arredondado; negativo/NaN/null vira null (permissivo).
+    const rawThreshold = a.approvalValueThreshold;
+    const approvalValueThreshold = (Number.isFinite(rawThreshold) && (rawThreshold as number) >= 0)
+        ? Math.round(rawThreshold as number)
+        : null;
+    // Allowlist: cada item vira só dígitos; descarta quem não ficar em 8..15 dígitos.
+    const rawAllowlist = a.whatsappDestinationAllowlist;
+    const whatsappDestinationAllowlist: string[] = Array.isArray(rawAllowlist)
+        ? rawAllowlist
+            .map((item) => (typeof item === 'string' ? item.replace(/\D/g, '') : ''))
+            .filter((digits) => digits.length >= 8 && digits.length <= 15)
+        : [];
+    return { irreversibleRequiresApproval, adminBypassIrreversible, approvalValueThreshold, whatsappDestinationAllowlist };
+}
+
 // Allowlist das cores do Tailwind usadas no tema (evita injeção de classe arbitrária).
 export const ALLOWED_THEME_COLORS = [
     'slate', 'gray', 'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald',
@@ -350,6 +388,7 @@ export class UiConfigService {
                     taskNotifications: sanitizeTaskNotifications(parsed.taskNotifications),
                     taskNotificationsExternalEnabled: parsed.taskNotificationsExternalEnabled === true,
                     taskAutomation: sanitizeTaskAutomation(parsed.taskAutomation),
+                    actionGovernance: sanitizeActionGovernance(parsed.actionGovernance),
                     version: typeof parsed.version === 'number' ? parsed.version : 0,
                 };
             }
@@ -401,6 +440,9 @@ export class UiConfigService {
         }
         if (partial.taskAutomation !== undefined) {
             next.taskAutomation = sanitizeTaskAutomation(partial.taskAutomation);
+        }
+        if (partial.actionGovernance !== undefined) {
+            next.actionGovernance = sanitizeActionGovernance(partial.actionGovernance);
         }
         if (typeof partial.appAccessGroupId === 'string') {
             const v = partial.appAccessGroupId.trim().slice(0, 40);
