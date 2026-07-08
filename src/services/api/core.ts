@@ -450,6 +450,17 @@ export const fetchCurrentUser = async (config: DolibarrConfig, loginHint?: strin
                 headers: getHeaders(config.apiKey)
             });
 
+            // O Dolibarr expõe o celular do usuário em `user_mobile` (e o fixo em `phone_pro`);
+            // o app consome `phone_mobile`/`office_phone` (nomes que só o mapUser produz). Como
+            // este fetch NÃO passa por mapUser, alinhamos aqui — senão o perfil (currentUser) fica
+            // sem celular mesmo havendo número no Dolibarr. Preenchimento CIRÚRGICO: só quando há
+            // origem e o alvo está vazio — não cria campos vazios (preserva o shape do objeto cru).
+            if (fullUser) {
+                const fu = fullUser as any;
+                if (!fu.phone_mobile && fu.user_mobile) fu.phone_mobile = fu.user_mobile;
+                if (!fu.office_phone && fu.phone_pro) fu.office_phone = fu.phone_pro;
+            }
+
             return fullUser;
         }
     } catch (e) {
