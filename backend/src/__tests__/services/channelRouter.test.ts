@@ -32,6 +32,14 @@ vi.mock('../../services/emailService', () => ({
     },
 }));
 
+// Default do mock: nenhuma sessão pronta → resolveSession devolve a default (preserva os testes
+// que esperam 'default'). Casos de fallback sobrescrevem por teste.
+const mockSession = vi.hoisted(() => ({
+    getStatus: vi.fn(() => 'STOPPED'),
+    getFirstWorkingSessionId: vi.fn(() => undefined as string | undefined),
+}));
+vi.mock('../../services/legacy/sessionService', () => ({ sessionService: mockSession }));
+
 import { channelRouter, ChannelRouter } from '../../services/channelRouter';
 import { FEATURES } from '../../config/features';
 import { moltbotGateway } from '../../services/moltbotGateway';
@@ -144,6 +152,33 @@ describe('ChannelRouter', () => {
 
             await channelRouter.sendWhatsApp('5511@c.us', 'Hello', 'custom-session');
             expect(legacyMessageService.sendText).toHaveBeenCalledWith('custom-session', '5511@c.us', 'Hello');
+        });
+
+        it('faz fallback para a sessão WORKING quando a default não está pronta (ex.: só existe "v4")', async () => {
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() });
+            mockSession.getStatus.mockReturnValue('STOPPED');                 // 'default' não está WORKING
+            mockSession.getFirstWorkingSessionId.mockReturnValue('v4_1747');  // a única conectada
+
+            await channelRouter.sendWhatsApp('5511@c.us', 'Oi');
+            expect(legacyMessageService.sendText).toHaveBeenCalledWith('v4_1747', '5511@c.us', 'Oi');
+        });
+
+        it('respeita sessionId explícito mesmo com a default fora (sem fallback)', async () => {
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() });
+            mockSession.getStatus.mockReturnValue('STOPPED');
+            mockSession.getFirstWorkingSessionId.mockReturnValue('v4_1747');
+
+            await channelRouter.sendWhatsApp('5511@c.us', 'Oi', 'sessao-x');
+            expect(legacyMessageService.sendText).toHaveBeenCalledWith('sessao-x', '5511@c.us', 'Oi');
+        });
+
+        it('sem nenhuma sessão WORKING, mantém a default (erro fica explícito no envio)', async () => {
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() });
+            mockSession.getStatus.mockReturnValue('STOPPED');
+            mockSession.getFirstWorkingSessionId.mockReturnValue(undefined);
+
+            await channelRouter.sendWhatsApp('5511@c.us', 'Oi');
+            expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'Oi');
         });
     });
 

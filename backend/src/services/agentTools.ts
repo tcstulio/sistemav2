@@ -18,6 +18,8 @@ import * as path from 'path';
 import { getRecentLogs } from '../utils/logger';
 import { agentConfigService } from './agentConfigService';
 import { channelRouter } from './channelRouter';
+import { uiConfigService } from './uiConfigService';
+import { getWhatsappAllowlist, whatsappDestinationAllowed, socidOf } from '../utils/actionGuards';
 import { notificationService } from './notificationService';
 
 const execFileAsync = promisify(execFile);
@@ -798,6 +800,21 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             }
         }
 
+        // Gate por entidade nos validate_* (fecha a brecha real): o `permKey` acima nunca barra
+        // esses tools porque `canValidate` é ARRAY (`![]` é sempre false), e o getEntityFromTool
+        // só cobre prepare_create_/prepare_edit_ — então validate_* ficava SEM trava por entidade.
+        // Sem isto, um não-admin (o agente é aberto a qualquer logado) validava — nº fiscal,
+        // ~irreversível — qualquer fatura/pedido/proposta via a chave master. Espelha canCreate/Edit.
+        const validateMatch = resolvedTool.match(/^validate_(invoice|order|proposal)$/);
+        if (validateMatch) {
+            const vEntity = validateMatch[1];
+            const canV = ctx.permissionProfile.agent.canValidate;
+            if (!canV.includes(vEntity) && !canV.includes('all')) {
+                log.warn(`Permission denied: user=${ctx.userLogin} cannot validate ${vEntity}`);
+                return `Você não tem permissão para validar ${vEntity}. Solicite ao administrador.`;
+            }
+        }
+
         // Caps configuráveis pelo admin (opt-in: default null/[] = sem efeito).
         const agent = ctx.permissionProfile.agent;
 
@@ -806,6 +823,24 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             && !agent.restrictedCustomers.includes(String(args.socid))) {
             log.warn(`Permission denied: user=${ctx.userLogin} cliente ${args.socid} fora da allowlist`);
             return `Você não tem permissão para agir sobre o cliente ${args.socid}. Solicite ao administrador.`;
+        }
+        // Escopo por cliente também nos validate_* (o socid NÃO vem nos args — busca na entidade).
+        // Fecha a brecha A2: a checagem acima parecia proteger validate_*, mas nunca pegava (sem
+        // socid nos args). Fail-closed: com allowlist configurada, bloqueia se não confirmar o
+        // cliente. Só roda quando há id (senão o handler dá a mensagem "informe o ID") e apenas
+        // com allowlist não-vazia (default = sem fetch extra, sem mudança de comportamento).
+        if (agent.restrictedCustomers?.length > 0 && /^validate_(invoice|order|proposal)$/.test(resolvedTool)) {
+            const entId = String(args?.invoice_id ?? args?.order_id ?? args?.proposal_id ?? args?.id ?? '').trim();
+            if (entId) {
+                const entity = resolvedTool === 'validate_invoice' ? await dolibarrService.getInvoice(entId)
+                    : resolvedTool === 'validate_order' ? await dolibarrService.getOrder(entId)
+                    : await dolibarrService.getProposal(entId);
+                const entSocid = socidOf(entity);
+                if (entSocid == null || !agent.restrictedCustomers.includes(entSocid)) {
+                    log.warn(`Permission denied: user=${ctx.userLogin} ${resolvedTool} cliente ${entSocid ?? '?'} fora da allowlist`);
+                    return `Você não tem permissão para validar esta entidade: o cliente (${entSocid ?? 'desconhecido'}) está fora da sua allowlist. Solicite ao administrador.`;
+                }
+            }
         }
         // Allowlist de projeto.
         const projectId = args?.project_id ?? args?.fk_project;
@@ -1534,6 +1569,12 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             if (wantsWhats && !pPhone) return `Não há WhatsApp cadastrado para ${pName}. Cadastre o celular do usuário (perfil) ou informe o telefone em "phone".`;
             if (wantsEmail && !pEmail) return `Não há email cadastrado para ${pName}. Informe o email em "email".`;
 
+            // #1154 Fase A (governança): a allowlist de destino incide no número FINAL (resolvido do
+            // cadastro OU informado). Vazia = permite tudo (opt-in). Aplicada após a resolução.
+            if (wantsWhats && !whatsappDestinationAllowed(pPhone, getWhatsappAllowlist(uiConfigService.get()))) {
+                return `Destino de WhatsApp ${pPhone} não está na allowlist configurada pelo admin.`;
+            }
+
             // #1004: in-app → recipient explícito/resolvido; sem ele, cai no usuário logado (caixa
             // "Minhas"). Se ainda assim não houver destinatário, NÃO vira broadcast implícito.
             if (!pRecipient) pRecipient = npCtx.userId || undefined;
@@ -1566,6 +1607,11 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             const waMsg = String(args?.message || '').trim();
             if (!waPhone) return 'Informe o telefone (parâmetro "phone", ex.: 5511999999999).';
             if (!waMsg) return 'Informe a mensagem (parâmetro "message").';
+            // #1154 Fase A (governança): allowlist de destino OPT-IN. Vazia (default) = permite tudo —
+            // preserva o WhatsApp p/ cliente (feature testada). Só restringe quando o admin configura.
+            if (!whatsappDestinationAllowed(waPhone, getWhatsappAllowlist(uiConfigService.get()))) {
+                return `Destino ${waPhone} não está na allowlist de WhatsApp configurada pelo admin. Inclua-o na configuração ou use um número autorizado.`;
+            }
             try {
                 const chatId = waPhone.includes('@c.us') ? waPhone : `${waPhone}@c.us`;
                 const result = await channelRouter.sendWhatsApp(chatId, waMsg);
