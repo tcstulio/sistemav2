@@ -12,7 +12,6 @@ import {
     Clock,
     AlertTriangle,
     RefreshCcw,
-    Filter,
     History,
     Loader2,
     ChevronDown,
@@ -21,7 +20,8 @@ import {
     Send,
     FileText,
     CreditCard,
-    Zap
+    Zap,
+    ShieldAlert
 } from 'lucide-react';
 import { logger } from '../../utils/logger';
 
@@ -31,9 +31,9 @@ const log = logger.child('ApprovalDashboard');
 
 interface PendingAction {
     id: string;
-    type: 'pagar_boleto' | 'enviar_pix' | 'baixar_fatura' | 'enviar_documento';
+    type: string;
     banco?: 'inter' | 'itau';
-    payload: any;
+    payload: unknown;
     description: string;
     riskLevel: 'low' | 'medium' | 'high';
     requestedBy: string;
@@ -43,7 +43,7 @@ interface PendingAction {
     reviewedAt?: string;
     rejectionReason?: string;
     executedAt?: string;
-    result?: any;
+    result?: unknown;
     error?: string;
 }
 
@@ -68,24 +68,33 @@ const getRiskBadgeColor = (risk: string) => {
     }
 };
 
-const getTypeIcon = (type: string) => {
-    switch (type) {
-        case 'pagar_boleto': return <CreditCard className="h-5 w-5" />;
-        case 'enviar_pix': return <Zap className="h-5 w-5" />;
-        case 'baixar_fatura': return <FileText className="h-5 w-5" />;
-        case 'enviar_documento': return <Send className="h-5 w-5" />;
-        default: return <FileText className="h-5 w-5" />;
-    }
+const KNOWN_BANKING_TYPES = new Set<string>([
+    'pagar_boleto',
+    'enviar_pix',
+    'baixar_fatura',
+    'enviar_documento',
+]);
+
+const TYPE_META: Record<string, { label: string; icon: React.ReactNode }> = {
+    pagar_boleto: { label: 'Pagamento de Boleto', icon: <CreditCard className="h-5 w-5" /> },
+    enviar_pix: { label: 'Enviar PIX', icon: <Zap className="h-5 w-5" /> },
+    baixar_fatura: { label: 'Baixar Fatura', icon: <FileText className="h-5 w-5" /> },
+    enviar_documento: { label: 'Enviar Documento', icon: <Send className="h-5 w-5" /> },
 };
 
-const getTypeName = (type: string) => {
-    switch (type) {
-        case 'pagar_boleto': return 'Pagamento de Boleto';
-        case 'enviar_pix': return 'Enviar PIX';
-        case 'baixar_fatura': return 'Baixar Fatura';
-        case 'enviar_documento': return 'Enviar Documento';
-        default: return type;
-    }
+const humanizeType = (type: string): string => {
+    const cleaned = type.replace(/[_-]+/g, ' ').trim();
+    if (!cleaned) return type;
+    return cleaned
+        .split(' ')
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+};
+
+const getTypeMeta = (type: string): { label: string; icon: React.ReactNode } => {
+    const known = TYPE_META[type];
+    if (known) return known;
+    return { label: humanizeType(type), icon: <ShieldAlert className="h-5 w-5" /> };
 };
 
 const formatDate = (dateStr: string) => {
@@ -94,6 +103,70 @@ const formatDate = (dateStr: string) => {
 
 const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+};
+
+interface SemanticFieldDef {
+    keys: string[];
+    label: string;
+    currency?: boolean;
+}
+
+const SEMANTIC_PAYLOAD_FIELDS: SemanticFieldDef[] = [
+    { keys: ['description', 'descricao', 'desc', 'title', 'titulo'], label: 'Descrição' },
+    { keys: ['value', 'valor', 'amount', 'preco', 'price'], label: 'Valor', currency: true },
+    { keys: ['beneficiary', 'beneficiario', 'payee'], label: 'Beneficiário' },
+    { keys: ['recipient', 'destinatario'], label: 'Destinatário' },
+    { keys: ['tool', 'ferramenta'], label: 'Ferramenta' },
+    { keys: ['target', 'alvo'], label: 'Alvo' },
+    { keys: ['document', 'documento', 'cpf', 'cnpj', 'cpfcnpj'], label: 'Documento' },
+    { keys: ['name', 'nome'], label: 'Nome' },
+    { keys: ['reason', 'motivo', 'note', 'notes', 'observacao', 'observacoes'], label: 'Motivo' },
+    { keys: ['status'], label: 'Status' },
+];
+
+const payloadValueToText = (raw: unknown): string => {
+    if (typeof raw === 'string') return raw;
+    if (typeof raw === 'boolean') return raw ? 'Sim' : 'Não';
+    if (typeof raw === 'number') return String(raw);
+    if (raw === null || raw === undefined) return '';
+    try {
+        return JSON.stringify(raw);
+    } catch {
+        return String(raw);
+    }
+};
+
+const renderSemanticPayloadFields = (payload: unknown): React.ReactNode => {
+    if (typeof payload !== 'object' || payload === null) {
+        return null;
+    }
+    const obj = payload as Record<string, unknown>;
+    const nodes: React.ReactNode[] = [];
+    for (const field of SEMANTIC_PAYLOAD_FIELDS) {
+        let raw: unknown;
+        let matched = false;
+        for (const key of field.keys) {
+            const val = obj[key];
+            if (val !== undefined && val !== null) {
+                raw = val;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) continue;
+        const text =
+            field.currency && typeof raw === 'number' && Number.isFinite(raw)
+                ? formatCurrency(raw)
+                : payloadValueToText(raw);
+        if (!text) continue;
+        nodes.push(
+            <div key={field.keys[0]} className="flex items-start gap-2 text-sm">
+                <span className="font-medium text-slate-600 dark:text-slate-400">{field.label}:</span>
+                <span className="text-slate-700 dark:text-slate-300 break-all">{text}</span>
+            </div>
+        );
+    }
+    return nodes;
 };
 
 // ===== Component =====
@@ -157,8 +230,8 @@ export function ApprovalDashboard() {
             } else {
                 toast.error(`Erro: ${data.error}`);
             }
-        } catch (error: any) {
-            toast.error(`Erro: ${error.message}`);
+        } catch (error) {
+            toast.error(`Erro: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
             setActionLoading(null);
         }
@@ -182,8 +255,8 @@ export function ApprovalDashboard() {
             } else {
                 toast.error(`Erro: ${data.error}`);
             }
-        } catch (error: any) {
-            toast.error(`Erro: ${error.message}`);
+        } catch (error) {
+            toast.error(`Erro: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
             setActionLoading(null);
         }
@@ -209,12 +282,12 @@ export function ApprovalDashboard() {
                                 action.banco === 'itau' ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' :
                                     'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400'
                             }`}>
-                            {getTypeIcon(action.type)}
+                            {getTypeMeta(action.type).icon}
                         </div>
                         <div>
                             <p className="font-medium text-slate-800 dark:text-white">{action.description}</p>
                             <p className="text-sm text-slate-500 dark:text-slate-400">
-                                {getTypeName(action.type)} • {formatDate(action.requestedAt)}
+                                {getTypeMeta(action.type).label} • {formatDate(action.requestedAt)}
                             </p>
                         </div>
                     </div>
@@ -231,12 +304,26 @@ export function ApprovalDashboard() {
                 {isExpanded && (
                     <div className="px-4 pb-4 border-t border-slate-200 dark:border-slate-700">
                         {/* Payload Details */}
-                        <div className="mt-4 p-3 bg-slate-50 dark:bg-slate-900 rounded-lg">
-                            <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mb-2">Detalhes:</p>
-                            <pre className="text-xs text-slate-700 dark:text-slate-300 overflow-x-auto">
-                                {JSON.stringify(action.payload, null, 2)}
-                            </pre>
-                        </div>
+                        {KNOWN_BANKING_TYPES.has(action.type) ? (
+                            <div className="mt-4 p-3 bg-slate-50 dark:bg-slate-900 rounded-lg">
+                                <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mb-2">Detalhes:</p>
+                                <pre className="text-xs text-slate-700 dark:text-slate-300 overflow-x-auto">
+                                    {JSON.stringify(action.payload, null, 2)}
+                                </pre>
+                            </div>
+                        ) : (
+                            <div className="mt-4 p-3 bg-slate-50 dark:bg-slate-900 rounded-lg">
+                                {renderSemanticPayloadFields(action.payload)}
+                                <details className="mt-2">
+                                    <summary className="text-sm font-medium text-slate-600 dark:text-slate-400 cursor-pointer select-none">
+                                        Detalhes técnicos
+                                    </summary>
+                                    <pre className="mt-2 text-xs text-slate-700 dark:text-slate-300 overflow-x-auto">
+                                        {JSON.stringify(action.payload, null, 2)}
+                                    </pre>
+                                </details>
+                            </div>
+                        )}
 
                         <div className="mt-3 flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
                             <Clock className="h-4 w-4" />
