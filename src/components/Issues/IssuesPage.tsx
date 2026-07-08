@@ -13,6 +13,7 @@ import {
     scoreTooltip, phaseSuffix, resolveCardStatusDisplay, holdReasonLabel,
     type ScoreThresholds,
 } from './taskBadge';
+import { extractJudgeNegatives, deriveFeedbackHistory } from './feedbackDraft';
 import DiffViewer from '../TasksBoard/DiffViewer';
 import TaskConsole from '../TasksBoard/TaskConsole';
 import { DndContext, closestCorners, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
@@ -247,6 +248,142 @@ const TaskHistoryModal: React.FC<{
     );
 };
 
+/**
+ * Modal de feedback estruturado (#1176). Substitui o input inline de 1 linha por uma
+ * experiência completa: crítica do Judge (com "usar os pontos do Judge"), histórico de
+ * feedbacks anteriores, aviso fixo de reabertura de ciclo e textarea generosa.
+ *
+ * O envio roteia para o endpoint existente POST /api/tasks/:n/fix via `onSubmit`.
+ */
+const FeedbackModal: React.FC<{
+    task: Task;
+    minApproveScore: number;
+    onClose: () => void;
+    onSubmit: (feedback: string) => void;
+}> = ({ task, minApproveScore, onClose, onSubmit }) => {
+    const [feedback, setFeedback] = useState('');
+    // Rascunho extraído da crítica do Judge (pontos negativos); vazio quando não há review.
+    const judgeNegatives = useMemo(() => extractJudgeNegatives(task.judgeReview), [task.judgeReview]);
+    // Histórico: prefere durableFeedback; sem ele, recua para os eventos feedback_received.
+    const history = useMemo(() => deriveFeedbackHistory(task), [task]);
+    const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
+
+    const handleSubmit = () => {
+        const trimmed = feedback.trim();
+        if (!trimmed) return;
+        onSubmit(trimmed);
+        onClose();
+    };
+
+    return (
+        <div
+            className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+            onClick={onClose}
+            data-testid="task-feedback-modal"
+        >
+            <div
+                className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl"
+                onClick={e => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="flex items-start justify-between p-4 border-b border-slate-200 dark:border-slate-700 gap-3">
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                            <MessageSquare size={14} className="text-indigo-500 shrink-0" />
+                            <span className="text-xs font-mono text-slate-400">#{task.issueNumber}</span>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color} ${cfg.bg}`}>
+                                {cfg.icon} {cfg.label}
+                            </span>
+                        </div>
+                        <h3 className="text-sm font-semibold text-slate-800 dark:text-white line-clamp-2">{task.title}</h3>
+                    </div>
+                    <button
+                        onClick={onClose}
+                        className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+                        aria-label="Fechar feedback"
+                    >
+                        <XCircle size={18} />
+                    </button>
+                </div>
+
+                {/* Body */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {/* Aviso fixo: reabertura de ciclo */}
+                    <div
+                        className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-300"
+                        data-testid="feedback-reopen-warning"
+                    >
+                        <RotateCcw size={14} className="mt-0.5 shrink-0" />
+                        <span>
+                            Enviar feedback <strong>REABRE o ciclo</strong>: o robô re-trabalha e re-julga mirando ≥ {minApproveScore} (config).
+                        </span>
+                    </div>
+
+                    {/* Crítica do Judge + "usar os pontos do Judge" */}
+                    {task.judgeReview && (
+                        <div
+                            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2.5"
+                            data-testid="feedback-judge-review"
+                        >
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                                <h4 className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1.5">
+                                    <Star size={11} /> Crítica do Judge
+                                </h4>
+                                {judgeNegatives && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setFeedback(judgeNegatives)}
+                                        className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors"
+                                        data-testid="use-judge-points"
+                                    >
+                                        <Sparkles size={11} /> Usar os pontos do Judge
+                                    </button>
+                                )}
+                            </div>
+                            <p className="text-xs text-slate-600 dark:text-slate-300 whitespace-pre-wrap break-words">{task.judgeReview}</p>
+                        </div>
+                    )}
+
+                    {/* Histórico de feedbacks anteriores */}
+                    {history.length > 0 && (
+                        <div data-testid="feedback-history">
+                            <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-1">Feedbacks anteriores</h4>
+                            <ul className="space-y-1 max-h-40 overflow-y-auto">
+                                {history.map((fb, i) => (
+                                    <li key={i} className="text-xs text-amber-700 dark:text-amber-400 whitespace-pre-wrap break-words">• {fb}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+
+                    {/* Textarea generosa */}
+                    <div>
+                        <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block" htmlFor="feedback-textarea">Novo feedback</label>
+                        <textarea
+                            id="feedback-textarea"
+                            value={feedback}
+                            onChange={e => setFeedback(e.target.value)}
+                            rows={6}
+                            placeholder="Descreva o que precisa ser corrigido. Cite os pontos do Judge quando relevante..."
+                            className="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none resize-y"
+                            data-testid="feedback-textarea"
+                            autoFocus
+                        />
+                    </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex justify-end gap-2 p-4 border-t border-slate-200 dark:border-slate-700">
+                    <Button variant="ghost" size="sm" onClick={onClose}>Cancelar</Button>
+                    <Button variant="primary" size="sm" onClick={handleSubmit} disabled={!feedback.trim()} data-testid="feedback-submit">
+                        Enviar feedback
+                    </Button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const SortableMiniCard: React.FC<{
     task: Task;
     onAction: (action: string, task: Task, extra?: string) => void;
@@ -255,13 +392,12 @@ const SortableMiniCard: React.FC<{
     onDelete: (task: Task) => void;
     onConsole: (task: Task) => void;
     onHistory: (task: Task) => void;
+    onFeedback: (task: Task) => void;
     isAdmin: boolean;
     queuePosition?: number;
     isDragOverlay?: boolean;
     scoreThresholds: ScoreThresholds;
-}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, isAdmin, queuePosition, isDragOverlay, scoreThresholds }) => {
-    const [showFeedback, setShowFeedback] = useState(false);
-    const [feedback, setFeedback] = useState('');
+}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, onFeedback, isAdmin, queuePosition, isDragOverlay, scoreThresholds }) => {
     const cfg = resolveCardStatusDisplay(task, STATUS_CONFIG);
     const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
     const canKill = ['running', 'fixing'].includes(task.status);
@@ -347,7 +483,7 @@ const SortableMiniCard: React.FC<{
                                     <button onClick={(e) => { e.stopPropagation(); onAction('merge', task); }} className="text-[10px] px-2 py-0.5 rounded bg-emerald-500 text-white hover:bg-emerald-600 transition-colors">
                                         <GitMerge size={10} className="inline mr-0.5" /> Merge
                                     </button>
-                                    <button onClick={(e) => { e.stopPropagation(); setShowFeedback(!showFeedback); }} className="text-[10px] px-1.5 py-0.5 rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+                                    <button onClick={(e) => { e.stopPropagation(); onFeedback(task); }} aria-label={`Feedback da task #${task.issueNumber}`} className="text-[10px] px-1.5 py-0.5 rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
                                         <MessageSquare size={10} />
                                     </button>
                                     <button onClick={(e) => { e.stopPropagation(); onAction('reject', task); }} className="text-[10px] px-1.5 py-0.5 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
@@ -389,19 +525,6 @@ const SortableMiniCard: React.FC<{
                     )}
                 </div>
             )}
-            {isAdmin && showFeedback && !isDragOverlay && (
-                <div className="mt-2 flex gap-1">
-                    <input
-                        type="text" value={feedback} onChange={e => setFeedback(e.target.value)}
-                        placeholder="Instrução..."
-                        className="flex-1 text-[10px] px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-1 focus:ring-indigo-500 outline-none"
-                        onKeyDown={e => { if (e.key === 'Enter' && feedback.trim()) { onAction('fix', task, feedback.trim()); setFeedback(''); setShowFeedback(false); } }}
-                    />
-                    <button onClick={() => { if (feedback.trim()) { onAction('fix', task, feedback.trim()); setFeedback(''); setShowFeedback(false); } }} disabled={!feedback.trim()} className="text-[10px] px-2 py-1 rounded bg-indigo-500 text-white disabled:opacity-50">
-                        OK
-                    </button>
-                </div>
-            )}
         </div>
     );
 };
@@ -414,13 +537,12 @@ const TaskListCard: React.FC<{
     onDelete: (task: Task) => void;
     onConsole: (task: Task) => void;
     onHistory: (task: Task) => void;
+    onFeedback: (task: Task) => void;
     isAdmin: boolean;
     queuePosition?: number;
     scoreThresholds: ScoreThresholds;
-}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, isAdmin, queuePosition, scoreThresholds }) => {
+}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, onFeedback, isAdmin, queuePosition, scoreThresholds }) => {
     const [expanded, setExpanded] = useState(false);
-    const [feedback, setFeedback] = useState('');
-    const [showFeedback, setShowFeedback] = useState(false);
     const cfg = resolveCardStatusDisplay(task, STATUS_CONFIG);
     const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
     const canKill = ['running', 'fixing'].includes(task.status);
@@ -509,7 +631,7 @@ const TaskListCard: React.FC<{
                         {isAdmin && (
                             <>
                                 <Button variant="primary" size="sm" icon={<CheckCircle size={12} />} onClick={() => onAction('merge', task)}>Merge</Button>
-                                <Button variant="ghost" size="sm" icon={<MessageSquare size={12} />} onClick={() => setShowFeedback(!showFeedback)}>Corrigir</Button>
+                                <Button variant="ghost" size="sm" icon={<MessageSquare size={12} />} onClick={() => onFeedback(task)}>Corrigir</Button>
                                 <Button variant="ghost" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Refazer</Button>
                                 <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('reject', task)}>Rejeitar</Button>
                             </>
@@ -530,15 +652,6 @@ const TaskListCard: React.FC<{
                 {isAdmin && canKill && <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('kill', task)} className="text-amber-600">Cancelar</Button>}
                 {isAdmin && <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500" />}
             </div>
-
-            {isAdmin && showFeedback && (
-                <div className="mt-3 flex gap-2">
-                    <input type="text" value={feedback} onChange={e => setFeedback(e.target.value)} placeholder="Instrução adicional..."
-                        className="flex-1 text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                        onKeyDown={e => { if (e.key === 'Enter' && feedback.trim()) { onAction('fix', task, feedback.trim()); setFeedback(''); setShowFeedback(false); } }} />
-                    <Button variant="primary" size="sm" onClick={() => { if (feedback.trim()) { onAction('fix', task, feedback.trim()); setFeedback(''); setShowFeedback(false); } }} disabled={!feedback.trim()}>Enviar</Button>
-                </div>
-            )}
 
             {expanded && (
                 <div className="mt-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 space-y-2">
@@ -653,6 +766,8 @@ const IssuesPage: React.FC = () => {
     const [isDeleting, setIsDeleting] = useState(false);
     const [consoleTask, setConsoleTask] = useState<Task | null>(null);
     const [historyTask, setHistoryTask] = useState<Task | null>(null);
+    // #1176: task cujo modal de feedback está aberto (substitui o input inline de 1 linha).
+    const [feedbackTask, setFeedbackTask] = useState<Task | null>(null);
     const [labelingIssue, setLabelingIssue] = useState<number | null>(null);
 
     // #1175: pisos REAIS de merge/approve (GET /api/ui-config). Score colorido contra o piso da
@@ -796,6 +911,8 @@ const IssuesPage: React.FC = () => {
                     if (!extra) { toast.error('Informe a correção.'); return; }
                     toast.info('Enviando correção...');
                     await TaskService.fix(task.issueNumber, extra);
+                    // #1176: confirmação de que o ciclo foi reaberto (toast de confirmação do modal).
+                    toast.success('Feedback enviado — a task foi reaberta para correção.');
                     break;
                 case 'kill':
                     if (!(await confirm({ title: `Cancelar a task #${task.issueNumber}?`, message: 'O trabalho em andamento será perdido.', confirmText: 'Sim, cancelar', cancelText: 'Manter executando', danger: true }))) return;
@@ -1117,6 +1234,7 @@ const IssuesPage: React.FC = () => {
                                                             onDelete={setDeleteConfirm}
                                                             onConsole={setConsoleTask}
                                                             onHistory={setHistoryTask}
+                                                            onFeedback={setFeedbackTask}
                                                             isAdmin={isAdmin}
                                                             queuePosition={getQueuePosition(task)}
                                                             scoreThresholds={scoreThresholds}
@@ -1142,7 +1260,7 @@ const IssuesPage: React.FC = () => {
                                 </Card>
                             )}
                             {filteredTasks.map(task => (
-                                <TaskListCard key={task.issueNumber} task={task} onAction={handleTaskAction} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} onHistory={setHistoryTask} isAdmin={isAdmin} queuePosition={getQueuePosition(task)} scoreThresholds={scoreThresholds} />
+                                <TaskListCard key={task.issueNumber} task={task} onAction={handleTaskAction} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} onHistory={setHistoryTask} onFeedback={setFeedbackTask} isAdmin={isAdmin} queuePosition={getQueuePosition(task)} scoreThresholds={scoreThresholds} />
                             ))}
                         </div>
                     )}
@@ -1203,6 +1321,16 @@ const IssuesPage: React.FC = () => {
             {showCreate && <CreateTaskModal onClose={() => setShowCreate(false)} onCreated={loadTasks} />}
 
             {historyTask && <TaskHistoryModal task={historyTask} onClose={() => setHistoryTask(null)} />}
+
+            {/* #1176: modal de feedback estruturado (textarea + crítica do Judge + histórico + aviso). */}
+            {feedbackTask && (
+                <FeedbackModal
+                    task={feedbackTask}
+                    minApproveScore={scoreThresholds.minApproveScore}
+                    onClose={() => setFeedbackTask(null)}
+                    onSubmit={(feedback) => handleTaskAction('fix', feedbackTask, feedback)}
+                />
+            )}
 
             {reviewTask && (diffLoading ? (
                 <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">
