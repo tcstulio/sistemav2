@@ -29,6 +29,17 @@ export interface TaskAutomationConfig {
     dailyRoundBudget?: number;
 }
 
+export interface ActionGovernanceConfig {
+    /** Ações irreversíveis exigem aprovação humana antes de executar (default false). #1209 */
+    irreversibleRequiresApproval: boolean;
+    /** Admins ignoram o gate de ações irreversíveis (default true). #1209 */
+    adminBypassIrreversible: boolean;
+    /** Valor acima do qual uma ação exige aprovação; null = sem teto (default null). #1209 */
+    approvalValueThreshold: number | null;
+    /** Allowlist de destinos WhatsApp permitidos (apenas dígitos, 8–15). #1209 */
+    whatsappDestinationAllowlist: string[];
+}
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
@@ -41,6 +52,7 @@ export interface UiConfig {
     taskNotifications?: TaskNotificationsConfig;
     taskNotificationsExternalEnabled?: boolean;
     taskAutomation?: TaskAutomationConfig;
+    actionGovernance?: ActionGovernanceConfig;
     version?: number; // concorrência otimista (Central de Permissões)
     appAccessGroupId?: string; // grupo Dolibarr usado p/ "Habilitar acesso ao app" (carrega o direito 342)
 }
