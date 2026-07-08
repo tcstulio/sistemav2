@@ -53,7 +53,9 @@ export const DailyRoundsBudgetBar: React.FC<DailyRoundsBudgetBarProps> = ({
     status = 'success',
 }) => {
     const safeBudget = budget > 0 ? budget : DEFAULT_DAILY_ROUND_BUDGET;
-    const safeUsed = Math.max(0, Math.round(used));
+    // Endurece contra `used` ausente/NaN (ex.: GET /api/tasks/status sem dailyRoundsUsed):
+    // Math.round(undefined) = NaN vazaria como texto "NaN/300" no rótulo. Coalesce p/ 0.
+    const safeUsed = Number.isFinite(used) ? Math.max(0, Math.round(used)) : 0;
     const pct = Math.min(100, Math.round((safeUsed / safeBudget) * 100));
     const tone = budgetTone(pct);
 

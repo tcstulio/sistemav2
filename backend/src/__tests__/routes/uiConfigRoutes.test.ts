@@ -119,4 +119,121 @@ describe('uiConfigRoutes', () => {
         expect(res.status).toBe(200);
         expect(mockUiConfigService.update).toHaveBeenCalledWith({ taskAutomation: { autoPlay: true, maxJudgeRounds: 9 } });
     });
+
+    // #1207: actionGovernance no UpdateSchema — o Zod agora lista o objeto com os 4 campos,
+    // então ele sobrevive ao .parse() e chega intacto no service (antes era estripado silenciosamente).
+    it('#1207: PUT com actionGovernance aceita e propaga os 4 campos pro service', async () => {
+        const gov = {
+            irreversibleRequiresApproval: true,
+            adminBypassIrreversible: false,
+            approvalValueThreshold: 500,
+            whatsappDestinationAllowlist: ['5511999999999', '5521888888888'],
+        };
+        mockUiConfigService.update.mockReturnValueOnce({ actionGovernance: gov });
+        const res = await request(app).put('/api/ui-config').send({ actionGovernance: gov });
+        expect(res.status).toBe(200);
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ actionGovernance: gov });
+        const sent = mockUiConfigService.update.mock.calls[0][0].actionGovernance;
+        expect(sent).toMatchObject(gov);
+    });
+
+    it('#1207: PUT com actionGovernance.approvalValueThreshold null é aceito', async () => {
+        const gov = {
+            irreversibleRequiresApproval: false,
+            adminBypassIrreversible: true,
+            approvalValueThreshold: null,
+            whatsappDestinationAllowlist: [],
+        };
+        mockUiConfigService.update.mockReturnValueOnce({ actionGovernance: gov });
+        const res = await request(app).put('/api/ui-config').send({ actionGovernance: gov });
+        expect(res.status).toBe(200);
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ actionGovernance: gov });
+    });
+
+    it('#1207: PUT com chave desconhecida dentro de actionGovernance é estripada (não chega no service)', async () => {
+        const gov = {
+            irreversibleRequiresApproval: true,
+            adminBypassIrreversible: true,
+            approvalValueThreshold: 100,
+            whatsappDestinationAllowlist: ['1234567890'],
+            evilKey: 'should-be-stripped',
+            __proto_injection__: 'should-be-stripped',
+        };
+        const expected = {
+            irreversibleRequiresApproval: true,
+            adminBypassIrreversible: true,
+            approvalValueThreshold: 100,
+            whatsappDestinationAllowlist: ['1234567890'],
+        };
+        mockUiConfigService.update.mockReturnValueOnce({ actionGovernance: expected });
+        const res = await request(app).put('/api/ui-config').send({ actionGovernance: gov });
+        expect(res.status).toBe(200);
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ actionGovernance: expected });
+        const sent = mockUiConfigService.update.mock.calls[0][0].actionGovernance;
+        expect(sent).not.toHaveProperty('evilKey');
+        expect(sent).not.toHaveProperty('__proto_injection__');
+        expect(Object.keys(sent).sort()).toEqual(
+            ['adminBypassIrreversible', 'approvalValueThreshold', 'irreversibleRequiresApproval', 'whatsappDestinationAllowlist'],
+        );
+    });
+
+    it('#1207: PUT com tipo errado em campo de actionGovernance retorna 400', async () => {
+        const res = await request(app).put('/api/ui-config').send({
+            actionGovernance: {
+                irreversibleRequiresApproval: 'sim',
+                adminBypassIrreversible: true,
+                approvalValueThreshold: 100,
+                whatsappDestinationAllowlist: [],
+            },
+        });
+        expect(res.status).toBe(400);
+        expect(mockUiConfigService.update).not.toHaveBeenCalled();
+    });
+
+    it('#1207: PUT com approvalValueThreshold como string retorna 400 (tipo errado)', async () => {
+        const res = await request(app).put('/api/ui-config').send({
+            actionGovernance: {
+                irreversibleRequiresApproval: true,
+                adminBypassIrreversible: true,
+                approvalValueThreshold: '500',
+                whatsappDestinationAllowlist: [],
+            },
+        });
+        expect(res.status).toBe(400);
+        expect(mockUiConfigService.update).not.toHaveBeenCalled();
+    });
+
+    it('#1207: PUT sem actionGovernance não envia actionGovernance pro service (preservado pelo service)', async () => {
+        mockUiConfigService.update.mockReturnValueOnce({ companyName: 'X' });
+        const res = await request(app).put('/api/ui-config').send({ companyName: 'X' });
+        expect(res.status).toBe(200);
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ companyName: 'X' });
+    });
+
+    // #1207: faltar um dos 4 campos obrigatórios deve rejeitar (400) — não propagar payload incompleto.
+    it('#1207: PUT com actionGovernance sem um dos 4 campos retorna 400', async () => {
+        const res = await request(app).put('/api/ui-config').send({
+            actionGovernance: {
+                irreversibleRequiresApproval: true,
+                adminBypassIrreversible: true,
+                approvalValueThreshold: 100,
+                // whatsappDestinationAllowlist omitido
+            },
+        });
+        expect(res.status).toBe(400);
+        expect(mockUiConfigService.update).not.toHaveBeenCalled();
+    });
+
+    it('#1207: PUT com whatsappDestinationAllowlist não-array retorna 400', async () => {
+        const res = await request(app).put('/api/ui-config').send({
+            actionGovernance: {
+                irreversibleRequiresApproval: true,
+                adminBypassIrreversible: true,
+                approvalValueThreshold: null,
+                whatsappDestinationAllowlist: '5511,5522',
+            },
+        });
+        expect(res.status).toBe(400);
+        expect(mockUiConfigService.update).not.toHaveBeenCalled();
+    });
 });

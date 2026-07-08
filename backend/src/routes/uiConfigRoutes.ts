@@ -78,6 +78,15 @@ const UpdateSchema = z.object({
         maxRoundsPerTask: z.number().optional(),
         dailyRoundBudget: z.number().optional(),
     }).optional(),
+    // #1207: governança de ações irreversíveis — só valida forma/tipos aqui; o sanitize real
+    // (clamp de threshold, filtragem de allowlist por dígitos, etc.) fica no service.
+    // Bug #1195: o Zod estripa chaves não listadas, então declarar os 4 campos explicitamente.
+    actionGovernance: z.object({
+        irreversibleRequiresApproval: z.boolean(),
+        adminBypassIrreversible: z.boolean(),
+        approvalValueThreshold: z.number().nullable(),
+        whatsappDestinationAllowlist: z.array(z.string()),
+    }).optional(),
     // Grupo Dolibarr p/ "Habilitar acesso ao app" (sem isto o Zod descartaria o campo e o save não persistiria).
     appAccessGroupId: z.string().max(40).optional(),
 });

@@ -8,7 +8,7 @@ import { atomicWriteSync } from '../../utils/atomicWrite';
 const mockedFs = vi.mocked(fs);
 const mockedWrite = vi.mocked(atomicWriteSync);
 
-import { UiConfigService } from '../../services/uiConfigService';
+import { UiConfigService, sanitizeActionGovernance } from '../../services/uiConfigService';
 
 describe('uiConfigService', () => {
     beforeEach(() => {
@@ -159,5 +159,129 @@ describe('uiConfigService', () => {
         expect(svc.get().companyName).toBe('Loaded');
         expect(svc.get().themeColor).toBe('rose');
         expect(svc.get().logoText).toBe('D'); // default preenchido
+    });
+});
+
+describe('sanitizeActionGovernance', () => {
+    const PERMISSIVE_DEFAULTS = {
+        irreversibleRequiresApproval: false,
+        adminBypassIrreversible: true,
+        approvalValueThreshold: null,
+        whatsappDestinationAllowlist: [],
+    };
+
+    it('input ausente → defaults permissivos completos', () => {
+        expect(sanitizeActionGovernance(undefined)).toEqual(PERMISSIVE_DEFAULTS);
+        expect(sanitizeActionGovernance(null)).toEqual(PERMISSIVE_DEFAULTS);
+        expect(sanitizeActionGovernance({})).toEqual(PERMISSIVE_DEFAULTS);
+    });
+
+    it('threshold negativo → null', () => {
+        expect(sanitizeActionGovernance({ approvalValueThreshold: -100 }).approvalValueThreshold).toBeNull();
+    });
+
+    it('threshold NaN → null', () => {
+        expect(sanitizeActionGovernance({ approvalValueThreshold: NaN }).approvalValueThreshold).toBeNull();
+    });
+
+    it('threshold 499.6 → 500', () => {
+        expect(sanitizeActionGovernance({ approvalValueThreshold: 499.6 }).approvalValueThreshold).toBe(500);
+    });
+
+    it('threshold Infinity → null', () => {
+        expect(sanitizeActionGovernance({ approvalValueThreshold: Infinity }).approvalValueThreshold).toBeNull();
+    });
+
+    it('allowlist com item contendo letras → normalizado p/ só dígitos', () => {
+        const out = sanitizeActionGovernance({ whatsappDestinationAllowlist: ['+55 (11) 99999-9999'] });
+        expect(out.whatsappDestinationAllowlist).toEqual(['5511999999999']);
+    });
+
+    it('allowlist com item < 8 dígitos → descartado', () => {
+        const out = sanitizeActionGovernance({ whatsappDestinationAllowlist: ['abc123', '1234567'] });
+        expect(out.whatsappDestinationAllowlist).toEqual([]);
+    });
+
+    it('allowlist com item > 15 dígitos → descartado', () => {
+        const out = sanitizeActionGovernance({ whatsappDestinationAllowlist: ['1234567890123456'] });
+        expect(out.whatsappDestinationAllowlist).toEqual([]);
+    });
+
+    it('allowlist aceita limites inclusivos (8 e 15 dígitos)', () => {
+        const out = sanitizeActionGovernance({ whatsappDestinationAllowlist: ['12345678', '123456789012345'] });
+        expect(out.whatsappDestinationAllowlist).toEqual(['12345678', '123456789012345']);
+    });
+
+    it('allowlist não-array → []', () => {
+        expect(sanitizeActionGovernance({ whatsappDestinationAllowlist: '5511999999999' }).whatsappDestinationAllowlist).toEqual([]);
+    });
+
+    it('boolean não-boolean (string "true", number 1) → cai no default', () => {
+        const out = sanitizeActionGovernance({
+            irreversibleRequiresApproval: 'true',
+            adminBypassIrreversible: 1,
+        } as any);
+        expect(out.irreversibleRequiresApproval).toBe(false); // default
+        expect(out.adminBypassIrreversible).toBe(true);       // default (true)
+    });
+
+    it('boolean explícito é respeitado', () => {
+        const out = sanitizeActionGovernance({
+            irreversibleRequiresApproval: true,
+            adminBypassIrreversible: false,
+        });
+        expect(out.irreversibleRequiresApproval).toBe(true);
+        expect(out.adminBypassIrreversible).toBe(false);
+    });
+
+    it('load() aplica sanitize quando o arquivo não tem o bloco (defaults permissivos)', () => {
+        mockedFs.existsSync.mockReturnValue(true);
+        mockedFs.readFileSync.mockReturnValue(JSON.stringify({ companyName: 'X' }) as any);
+        const svc = new UiConfigService('ui.json');
+        expect(svc.get().actionGovernance).toEqual(PERMISSIVE_DEFAULTS);
+    });
+
+    it('load() sanitiza actionGovernance inválida do arquivo', () => {
+        mockedFs.existsSync.mockReturnValue(true);
+        mockedFs.readFileSync.mockReturnValue(JSON.stringify({
+            actionGovernance: { irreversibleRequiresApproval: 'sim', approvalValueThreshold: -5, whatsappDestinationAllowlist: ['123'] },
+        }) as any);
+        const svc = new UiConfigService('ui.json');
+        expect(svc.get().actionGovernance).toEqual(PERMISSIVE_DEFAULTS);
+    });
+
+    it('update() aplica sanitize antes de gravar', () => {
+        const svc = new UiConfigService('ui.json');
+        const out = svc.update({
+            actionGovernance: {
+                irreversibleRequiresApproval: 1,
+                adminBypassIrreversible: 0,
+                approvalValueThreshold: -50,
+                whatsappDestinationAllowlist: ['+55 11 9', '1234567890123456', '+55 (11) 98888-7777'],
+            },
+        } as any);
+        expect(out.actionGovernance).toEqual({
+            irreversibleRequiresApproval: false, // default
+            adminBypassIrreversible: true,       // default
+            approvalValueThreshold: null,
+            whatsappDestinationAllowlist: ['5511988887777'], // só o válido
+        });
+        expect(mockedWrite).toHaveBeenCalled();
+        // grava exatamente o saneado (não o input cru)
+        const written = mockedWrite.mock.calls[mockedWrite.mock.calls.length - 1][1] as any;
+        expect(written.actionGovernance).toEqual({
+            irreversibleRequiresApproval: false,
+            adminBypassIrreversible: true,
+            approvalValueThreshold: null,
+            whatsappDestinationAllowlist: ['5511988887777'],
+        });
+    });
+
+    it('update() preserva actionGovernance quando ausente do partial', () => {
+        const svc = new UiConfigService('ui.json');
+        svc.update({ actionGovernance: { irreversibleRequiresApproval: true, approvalValueThreshold: 500 } } as any);
+        const out = svc.update({ companyName: 'Novo' });
+        expect(out.actionGovernance.irreversibleRequiresApproval).toBe(true);
+        expect(out.actionGovernance.approvalValueThreshold).toBe(500);
     });
 });
