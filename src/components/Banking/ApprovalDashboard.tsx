@@ -24,40 +24,22 @@ import {
     ShieldAlert
 } from 'lucide-react';
 import { logger } from '../../utils/logger';
+import { useDolibarr } from '../../context/DolibarrContext';
+import {
+    getPendingActions,
+    getActionHistory,
+    getApprovalStats,
+    approveAction,
+    rejectAction,
+    type PendingAction,
+    type ApprovalStats,
+} from '../../services/approvalService';
 
 const log = logger.child('ApprovalDashboard');
 
-// ===== Types =====
-
-interface PendingAction {
-    id: string;
-    type: string;
-    banco?: 'inter' | 'itau';
-    payload: unknown;
-    description: string;
-    riskLevel: 'low' | 'medium' | 'high';
-    requestedBy: string;
-    requestedAt: string;
-    status: 'pending' | 'approved' | 'rejected' | 'executed' | 'failed';
-    reviewedBy?: string;
-    reviewedAt?: string;
-    rejectionReason?: string;
-    executedAt?: string;
-    result?: unknown;
-    error?: string;
-}
-
-interface ApprovalStats {
-    pending: number;
-    approved: number;
-    rejected: number;
-    executed: number;
-    failed: number;
-}
+// ===== Types (API vem de approvalService.ts) =====
 
 // ===== Helper Functions =====
-
-const API_BASE = '/api/approvals';
 
 const getRiskBadgeColor = (risk: string) => {
     switch (risk) {
@@ -179,31 +161,29 @@ export function ApprovalDashboard() {
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'pending' | 'history'>('pending');
     const [expandedAction, setExpandedAction] = useState<string | null>(null);
-    const [rejectReason, setRejectReason] = useState('');
+
+    // Admin detection — aprovar/recusar é admin-only no backend (requireDolibarrAdmin).
+    // admin pode chegar como número 1, string "1" ou boolean (mesmo guard do Dashboard).
+    const { config, previewTarget } = useDolibarr();
+    const currentUser = config?.currentUser;
+    const isAdmin = !previewTarget && (
+        currentUser?.admin === 1 ||
+        currentUser?.admin === '1' ||
+        (currentUser?.admin as unknown) === true
+    );
 
     // Fetch data
     const fetchData = useCallback(async () => {
         try {
-            const [pendingRes, historyRes, statsRes] = await Promise.all([
-                fetch(`${API_BASE}/pending`),
-                fetch(`${API_BASE}/history?limit=50`),
-                fetch(`${API_BASE}/stats`),
+            const [pending, history, st] = await Promise.all([
+                getPendingActions(),
+                getActionHistory(50),
+                getApprovalStats(),
             ]);
 
-            if (pendingRes.ok) {
-                const data = await pendingRes.json();
-                setPendingActions(data.actions || []);
-            }
-
-            if (historyRes.ok) {
-                const data = await historyRes.json();
-                setHistoryActions(data.history || []);
-            }
-
-            if (statsRes.ok) {
-                const data = await statsRes.json();
-                setStats(data.stats);
-            }
+            setPendingActions(pending);
+            setHistoryActions(history);
+            if (st) setStats(st);
         } catch (error) {
             log.error('Erro ao carregar dados:', error);
         } finally {
@@ -218,17 +198,20 @@ export function ApprovalDashboard() {
         return () => clearInterval(interval);
     }, [fetchData]);
 
-    // Approve action
+    // Approve action (admin-only no backend)
     const handleApprove = async (actionId: string) => {
         setActionLoading(actionId);
         try {
-            const res = await fetch(`${API_BASE}/${actionId}/approve`, { method: 'POST' });
-            const data = await res.json();
-
-            if (data.success) {
+            const result = await approveAction(actionId);
+            if (result.success) {
+                toast.success('Ação aprovada e executada com sucesso');
                 fetchData();
+            } else if (result.status === 401 || result.status === 403) {
+                toast.error('Você não tem permissão para aprovar esta ação.');
             } else {
-                toast.error(`Erro: ${data.error}`);
+                // Erro de regra de negócio/execução retornado pela API (approvalService.ts:262):
+                // o backend EXECUTA e pode falhar — exibimos a mensagem, sem engolir.
+                toast.error(result.error ? `Erro: ${result.error}` : 'Erro ao aprovar ação.');
             }
         } catch (error) {
             toast.error(`Erro: ${error instanceof Error ? error.message : String(error)}`);
@@ -237,23 +220,20 @@ export function ApprovalDashboard() {
         }
     };
 
-    // Reject action
+    // Reject action — prompt pelo motivo (admin-only no backend)
     const handleReject = async (actionId: string) => {
+        const reason = window.prompt('Motivo da rejeição:');
+        if (reason === null) return; // usuário cancelou
         setActionLoading(actionId);
         try {
-            const res = await fetch(`${API_BASE}/${actionId}/reject`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ reason: rejectReason }),
-            });
-            const data = await res.json();
-
-            if (data.success) {
-                setRejectReason('');
-                setExpandedAction(null);
+            const result = await rejectAction(actionId, reason);
+            if (result.success) {
+                toast.success('Ação rejeitada');
                 fetchData();
+            } else if (result.status === 401 || result.status === 403) {
+                toast.error('Você não tem permissão para rejeitar esta ação.');
             } else {
-                toast.error(`Erro: ${data.error}`);
+                toast.error(result.error ? `Erro: ${result.error}` : 'Erro ao rejeitar ação.');
             }
         } catch (error) {
             toast.error(`Erro: ${error instanceof Error ? error.message : String(error)}`);
@@ -330,8 +310,8 @@ export function ApprovalDashboard() {
                             <span>Solicitado por: {action.requestedBy}</span>
                         </div>
 
-                        {/* Actions (only for pending) */}
-                        {isPending && (
+                        {/* Actions (only for pending AND admin — backend é requireDolibarrAdmin) */}
+                        {isPending && isAdmin && (
                             <div className="mt-4 space-y-3">
                                 <div className="flex gap-2">
                                     <button
@@ -342,16 +322,6 @@ export function ApprovalDashboard() {
                                         {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
                                         Aprovar e Executar
                                     </button>
-                                </div>
-
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        value={rejectReason}
-                                        onChange={(e) => setRejectReason(e.target.value)}
-                                        placeholder="Motivo da rejeição (opcional)"
-                                        className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white text-sm"
-                                    />
                                     <button
                                         onClick={() => handleReject(action.id)}
                                         disabled={isLoading}
