@@ -65,6 +65,26 @@ describe('#1189 — DailyRoundsBudgetBar: estados de aquisição', () => {
     });
 });
 
+describe('#1189 — DailyRoundsBudgetBar: robustez contra `used` ausente/NaN (regressão do render sweep /issues)', () => {
+    it('used=undefined NÃO renderiza "NaN" — coalesce p/ 0', () => {
+        render(<DailyRoundsBudgetBar used={undefined as any} budget={20} />);
+        expect(screen.queryByText(/\bNaN\b/)).toBeNull();
+        expect(screen.getByText('Orçamento do dia: 0/20 rodadas')).toBeInTheDocument();
+    });
+
+    it('used=NaN NÃO renderiza "NaN" e a barra fica em tom verde (0%)', () => {
+        render(<DailyRoundsBudgetBar used={NaN} budget={20} />);
+        expect(screen.queryByText(/\bNaN\b/)).toBeNull();
+        expect(fill()).toHaveAttribute('data-tone', 'green');
+        expect((fill() as HTMLElement).style.width).toBe('0%');
+    });
+
+    it('budget ausente cai no default (não gera divisão inválida)', () => {
+        render(<DailyRoundsBudgetBar used={undefined as any} budget={undefined as any} />);
+        expect(screen.queryByText(/\bNaN\b/)).toBeNull();
+    });
+});
+
 describe('#1189 — budgetTone (limites das faixas)', () => {
     it('verde abaixo de 70%', () => {
         expect(budgetTone(0)).toBe('green');
