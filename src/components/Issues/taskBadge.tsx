@@ -152,3 +152,14 @@ export function holdReasonLabel(task: Task): string | null {
     if (task.status !== 'approved' || !task.mergeHoldReason) return null;
     return task.mergeHoldReason;
 }
+
+/**
+ * Conta quantas tasks AGUARDAM uma decisão humana no board (#1167):
+ *  - reviewing              → Judge escalou p/ revisão humana do código
+ *  - approved + mergeHoldReason → aprovado mas RETIDO (piso/autoMergeOff), precisa do humano
+ *
+ * O approved transitório (sem hold, mergeando...) NÃO conta — não pede ação do humano.
+ */
+export function countAwaitingDecision(tasks: Task[]): number {
+    return tasks.filter(t => t.status === 'reviewing' || (t.status === 'approved' && !!t.mergeHoldReason)).length;
+}

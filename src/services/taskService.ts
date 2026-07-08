@@ -162,6 +162,13 @@ export const TaskService = {
         return response.data;
     },
 
+    // #1167: estado de cota de LLM (esgotada? desde quando? motivo?) + hold de pico — alimenta o
+    // banner de quota/peak-hold no board. Endpoint existente, antes sem consumidor na UI.
+    getQuotaStatus: async (): Promise<{ exhausted: boolean; since: number | null; reason: string; peakHold: boolean }> => {
+        const response = await axios.get(`${API_URL}/quota-status`, getAuthHeaders());
+        return response.data;
+    },
+
     create: async (title: string, body: string, labels?: string[]): Promise<Task> => {
         const response = await axios.post(API_URL, { title, body, labels }, getAuthHeaders());
         return response.data;

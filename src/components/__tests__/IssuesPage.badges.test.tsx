@@ -35,6 +35,10 @@ const { getUiConfigMock, taskServiceMock } = vi.hoisted(() => ({
         plan: vi.fn().mockResolvedValue({ order: [], reasons: {} }),
         reorder: vi.fn().mockResolvedValue(undefined),
         getDiff: vi.fn().mockResolvedValue(''),
+        // #1167: quota-status do backend (alimenta o banner). Default: nada ativo.
+        getQuotaStatus: vi.fn().mockResolvedValue({ exhausted: false, since: null, reason: '', peakHold: false }),
+        // #1189: orçamento diário (alimenta o BoardHeader).
+        getStatus: vi.fn().mockResolvedValue({ dailyRoundsUsed: 0, dailyRoundBudget: 200 }),
     },
 }));
 
@@ -233,5 +237,91 @@ describe('IssuesPage — #1175: fase visível no chip das tasks running/fixing',
 
         expect((await screen.findByTestId('task-status-chip-31')).textContent).toContain('síntese 2/3');
         expect(screen.getByTestId('task-status-chip-32').textContent).toContain('julgando');
+    });
+});
+
+describe('IssuesPage — #1167: contador "aguardando sua decisão"', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        getUiConfigMock.mockResolvedValue(null);
+        taskServiceMock.getQuotaStatus.mockResolvedValue({ exhausted: false, since: null, reason: '', peakHold: false });
+    });
+
+    it('mostra "N aguardando sua decisão" = reviewing + approved-retido', async () => {
+        taskServiceMock.list.mockResolvedValue([
+            makeTask({ issueNumber: 40, status: 'reviewing', title: 'Revisão humana' }),
+            makeTask({ issueNumber: 41, status: 'approved', title: 'Retido pelo piso', mergeHoldReason: 'Score 8/10 abaixo do piso.' }),
+            makeTask({ issueNumber: 42, status: 'approved', title: 'Retido autoMergeOff', mergeHoldReason: 'Auto-merge off.' }),
+            makeTask({ issueNumber: 43, status: 'approved', title: 'Mergeando transitório' }), // sem hold — não conta
+            makeTask({ issueNumber: 44, status: 'running', title: 'Executando' }),
+        ]);
+        const user = userEvent.setup();
+        renderPage();
+        await goToTasksPipeline(user);
+
+        // O contador vive no BoardHeader (topo do board, cross-tab). Após carregar as tasks,
+        // decisionCount = reviewing(1) + approved-retido(2) = 3.
+        const counter = await screen.findByTestId('decision-counter');
+        expect(counter.textContent).toContain('3');
+        expect(counter.textContent).toContain('aguardando sua decisão');
+    });
+
+    it('NÃO mostra o contador quando não há tasks aguardando decisão', async () => {
+        taskServiceMock.list.mockResolvedValue([
+            makeTask({ issueNumber: 50, status: 'approved', title: 'Mergeando' }), // sem hold
+            makeTask({ issueNumber: 51, status: 'pending', title: 'Na fila' }),
+        ]);
+        const user = userEvent.setup();
+        renderPage();
+        await goToTasksPipeline(user);
+
+        // Aguarda um card aparecer para garantir que a aba renderizou e o decisionCount
+        // foi recomputado (BoardHeader monta junto com o PageHeader).
+        await screen.findByText('Mergeando');
+        expect(screen.queryByTestId('decision-counter')).toBeNull();
+    });
+});
+
+describe('IssuesPage — #1167: banner de quota-hold / peak-hold', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        getUiConfigMock.mockResolvedValue(null);
+    });
+
+    it('NÃO mostra o banner quando nada está ativo (quota ok + sem pico)', async () => {
+        taskServiceMock.getQuotaStatus.mockResolvedValue({ exhausted: false, since: null, reason: '', peakHold: false });
+        taskServiceMock.list.mockResolvedValue([makeTask({ issueNumber: 60, status: 'pending', title: 'Na fila' })]);
+        const user = userEvent.setup();
+        renderPage();
+        await goToTasksPipeline(user);
+
+        await screen.findByText('Na fila');
+        expect(screen.queryByTestId('quota-hold-banner')).toBeNull();
+    });
+
+    it('mostra banner de quota esgotada (com motivo) quando exhausted=true', async () => {
+        taskServiceMock.getQuotaStatus.mockResolvedValue({ exhausted: true, since: Date.now() - 60_000, reason: 'HTTP 429 rate limit', peakHold: false });
+        taskServiceMock.list.mockResolvedValue([makeTask({ issueNumber: 61, status: 'pending', title: 'Na fila' })]);
+        const user = userEvent.setup();
+        renderPage();
+        await goToTasksPipeline(user);
+
+        const banner = await screen.findByTestId('quota-hold-banner');
+        expect(banner).toHaveAttribute('data-exhausted', 'true');
+        expect(screen.getByTestId('quota-exhausted-row').textContent).toContain('Cota de LLM esgotada');
+        expect(screen.getByTestId('quota-exhausted-row').textContent).toContain('429');
+        expect(screen.queryByTestId('peak-hold-row')).toBeNull();
+    });
+
+    it('mostra banner de peak-hold quando peakHold=true', async () => {
+        taskServiceMock.getQuotaStatus.mockResolvedValue({ exhausted: false, since: null, reason: '', peakHold: true });
+        taskServiceMock.list.mockResolvedValue([makeTask({ issueNumber: 62, status: 'pending', title: 'Na fila' })]);
+        const user = userEvent.setup();
+        renderPage();
+        await goToTasksPipeline(user);
+
+        const banner = await screen.findByTestId('quota-hold-banner');
+        expect(banner).toHaveAttribute('data-peak-hold', 'true');
+        expect(screen.getByTestId('peak-hold-row').textContent).toContain('Hold de pico');
     });
 });

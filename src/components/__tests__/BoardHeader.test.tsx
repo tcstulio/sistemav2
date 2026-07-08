@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { DailyRoundsBudgetBar, budgetTone } from '../BoardHeader';
+import { DailyRoundsBudgetBar, budgetTone, DecisionCounter } from '../BoardHeader';
 
 const fill = () => screen.getByTestId('daily-rounds-budget-fill');
 const root = () => screen.getByTestId('daily-rounds-budget-bar');
@@ -97,5 +97,31 @@ describe('#1189 — budgetTone (limites das faixas)', () => {
     it('vermelho a partir de 100%', () => {
         expect(budgetTone(100)).toBe('red');
         expect(budgetTone(250)).toBe('red');
+    });
+});
+
+describe('#1167 — DecisionCounter: "N aguardando sua decisão"', () => {
+    it('renderiza o contador quando count > 0', () => {
+        render(<DecisionCounter count={3} />);
+        const el = screen.getByTestId('decision-counter');
+        expect(el.textContent).toContain('3');
+        expect(el.textContent).toContain('aguardando sua decisão');
+        expect(el).toHaveAttribute('data-count', '3');
+    });
+
+    it('NÃO renderiza nada quando count <= 0 (não polui o header ocioso)', () => {
+        const { container } = render(<DecisionCounter count={0} />);
+        expect(container.firstChild).toBeNull();
+        expect(screen.queryByTestId('decision-counter')).toBeNull();
+    });
+
+    it('usa singular no title quando há exatamente 1 task', () => {
+        render(<DecisionCounter count={1} />);
+        expect(screen.getByTestId('decision-counter').getAttribute('title')).toContain('task aguardando');
+    });
+
+    it('usa plural no title quando há mais de 1 task', () => {
+        render(<DecisionCounter count={5} />);
+        expect(screen.getByTestId('decision-counter').getAttribute('title')).toContain('tasks aguardando');
     });
 });

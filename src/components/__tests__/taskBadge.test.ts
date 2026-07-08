@@ -13,6 +13,7 @@ import {
     phaseSuffix,
     holdReasonLabel,
     resolveCardStatusDisplay,
+    countAwaitingDecision,
     DEFAULT_MIN_MERGE_SCORE,
     DEFAULT_MIN_APPROVE_SCORE,
 } from '../Issues/taskBadge';
@@ -166,5 +167,30 @@ describe('taskBadge — holdReasonLabel', () => {
         expect(holdReasonLabel(makeTask({ status: 'approved', mergeHoldReason: 'motivo X' }))).toBe('motivo X');
         expect(holdReasonLabel(makeTask({ status: 'approved' }))).toBeNull();
         expect(holdReasonLabel(makeTask({ status: 'reviewing', mergeHoldReason: 'algo' }))).toBeNull();
+    });
+});
+
+describe('taskBadge — countAwaitingDecision (#1167)', () => {
+    it('conta reviewing + approved-com-hold como "aguardando decisão"', () => {
+        const tasks = [
+            makeTask({ issueNumber: 1, status: 'reviewing' }),
+            makeTask({ issueNumber: 2, status: 'approved', mergeHoldReason: 'Score 8/10 abaixo do piso.' }),
+            makeTask({ issueNumber: 3, status: 'approved', mergeHoldReason: 'Auto-merge desligado.' }),
+        ];
+        expect(countAwaitingDecision(tasks)).toBe(3);
+    });
+
+    it('NÃO conta approved transitório (sem hold), nem demais status', () => {
+        const tasks = [
+            makeTask({ issueNumber: 1, status: 'approved' }), // mergeando... (sem hold)
+            makeTask({ issueNumber: 2, status: 'running' }),
+            makeTask({ issueNumber: 3, status: 'pending' }),
+            makeTask({ issueNumber: 4, status: 'merged' }),
+        ];
+        expect(countAwaitingDecision(tasks)).toBe(0);
+    });
+
+    it('lista vazia → 0', () => {
+        expect(countAwaitingDecision([])).toBe(0);
     });
 });

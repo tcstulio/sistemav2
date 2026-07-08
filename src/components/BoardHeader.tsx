@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Clock } from 'lucide-react';
 import { TaskService } from '../services/taskService';
 import { useUiConfig } from '../hooks/useUiConfig';
 
@@ -105,6 +106,32 @@ export const DailyRoundsBudgetBar: React.FC<DailyRoundsBudgetBarProps> = ({
     );
 };
 
+export interface DecisionCounterProps {
+    /** Nº de tasks que pedem decisão humana agora (approved retido + reviewing). */
+    count: number;
+}
+
+/**
+ * Contador "N aguardando sua decisão" no topo do board (#1167). Puramente
+ * apresentacional — o número chega pronto de IssuesPage (computado por
+ * `countAwaitingDecision`). Oculto quando não há nenhuma task precisando do
+ * humano (não polui o header em estado ocioso).
+ */
+export const DecisionCounter: React.FC<DecisionCounterProps> = ({ count }) => {
+    if (count <= 0) return null;
+    return (
+        <span
+            data-testid="decision-counter"
+            data-count={count}
+            title={`${count} ${count === 1 ? 'task aguardando' : 'tasks aguardando'} sua decisão (revisão humana + aprovadas retidas pelo piso/auto-merge)`}
+            className="inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
+        >
+            <Clock size={12} />
+            {count} aguardando sua decisão
+        </span>
+    );
+};
+
 export interface BoardHeaderProps {
     /**
      * Sinal de atualização do board (ex.: contador incrementado a cada refetch de tasks).
@@ -112,16 +139,23 @@ export interface BoardHeaderProps {
      * polling próprio, apenas acompanha o refetch automático que o board já faz (#1189).
      */
     refreshSignal?: number;
+    /**
+     * Quantas tasks pedem a decisão humana agora (#1167): reviewing + approved retido.
+     * Já vem computado de IssuesPage (countAwaitingDecision sobre o conjunto completo de
+     * tasks) — o BoardHeader só exibe.
+     */
+    decisionCount?: number;
 }
 
 /**
- * BoardHeader — cabeçalho do board de tasks. Hoje hospeda a barra de orçamento diário
- * de rodadas; projetado p/ receber mais indicadores no futuro.
+ * BoardHeader — cabeçalho do board de tasks. Hoje hospeda o contador de decisões
+ * pendentes (#1167) e a barra de orçamento diário de rodadas; projetado p/ receber
+ * mais indicadores no futuro.
  *
  * Orçamento (`dailyRoundBudget`) vem de `useUiConfig().taskAutomation.dailyRoundBudget`;
  * consumo (`dailyRoundsUsed`) vem de `GET /api/tasks/status` (valor real do backend).
  */
-export const BoardHeader: React.FC<BoardHeaderProps> = ({ refreshSignal = 0 }) => {
+export const BoardHeader: React.FC<BoardHeaderProps> = ({ refreshSignal = 0, decisionCount = 0 }) => {
     const { config } = useUiConfig();
 
     const [used, setUsed] = useState(0);
@@ -152,7 +186,12 @@ export const BoardHeader: React.FC<BoardHeaderProps> = ({ refreshSignal = 0 }) =
 
     const budget = config?.taskAutomation?.dailyRoundBudget ?? statusBudget ?? DEFAULT_DAILY_ROUND_BUDGET;
 
-    return <DailyRoundsBudgetBar used={used} budget={budget} status={status} />;
+    return (
+        <div className="flex items-center gap-2 flex-wrap">
+            <DecisionCounter count={decisionCount} />
+            <DailyRoundsBudgetBar used={used} budget={budget} status={status} />
+        </div>
+    );
 };
 
 export default BoardHeader;

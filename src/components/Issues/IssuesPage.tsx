@@ -3,6 +3,7 @@ import { GithubService, GitHubIssue, IssueStats } from '../../services/githubSer
 import { TaskService, Task } from '../../services/taskService';
 import { PrecheckBadge, PrecheckAnalysis, RejectedPrecheckBanner } from '../TaskCard';
 import { BoardHeader } from '../BoardHeader';
+import { QuotaHoldBanner } from '../QuotaHoldBanner';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
 import { AlertCircle, Bug, Sparkles, Shield, Wrench, TestTube, GitMerge, Loader2, Eye, CheckCircle, XCircle, RotateCcw, MessageSquare, Trash2, Pencil, Terminal, ExternalLink, Search, Tag, CircleDot, Clock, ThumbsUp, Star, Play, RefreshCw, ShieldOff, Plus, Filter, LayoutGrid, List, GripVertical } from 'lucide-react';
 import { toast } from 'sonner';
@@ -12,6 +13,7 @@ import { getUiConfig } from '../../services/uiConfigService';
 import {
     resolveScoreThresholds, scoreTone, scoreTextClasses, scoreBadgeClasses,
     scoreTooltip, phaseSuffix, resolveCardStatusDisplay, holdReasonLabel,
+    countAwaitingDecision,
     type ScoreThresholds,
 } from './taskBadge';
 import { extractJudgeNegatives, deriveFeedbackHistory } from './feedbackDraft';
@@ -881,6 +883,11 @@ const IssuesPage: React.FC = () => {
         return { total: periodFilteredTasks.length, avgMin, successRate, pending: periodFilteredTasks.filter(t => t.status === 'pending').length, active: periodFilteredTasks.filter(t => ['running', 'fixing'].includes(t.status)).length };
     }, [periodFilteredTasks]);
 
+    // #1167: quantas tasks pedem decisão humana agora (reviewing + approved retido). Usado pelo
+    // contador no topo do board (BoardHeader). reviewing/approved nunca são terminais, então o
+    // recorte de período não os afeta — computamos sobre o conjunto completo de tasks.
+    const decisionCount = useMemo(() => countAwaitingDecision(tasks), [tasks]);
+
     const openReview = async (task: Task) => {
         setReviewTask(task); setDiffLoading(true);
         try { setDiffText(await TaskService.getDiff(task.issueNumber)); } catch { setDiffText(''); }
@@ -1027,7 +1034,7 @@ const IssuesPage: React.FC = () => {
                 subtitle="GitHub issues, tasks automáticas e estatísticas do projeto"
                 actions={tab !== 'stats' ? (
                     <div className="flex items-center gap-3 flex-wrap">
-                        <BoardHeader refreshSignal={tasksTick} />
+                        <BoardHeader refreshSignal={tasksTick} decisionCount={decisionCount} />
                         {periodFilter}
                     </div>
                 ) : undefined}
@@ -1039,6 +1046,13 @@ const IssuesPage: React.FC = () => {
                     </Tabs>
                 }
             />
+
+            {/* #1167: banner de quota-hold / peak-hold — o robô parou de despachar por
+                orçamento/cota. Global: aparece em qualquer aba enquanto o robô estiver pausado
+                (oculta-se sozinho). Re-busca a cada refetch de tasks (refreshSignal). */}
+            <div className="mt-3">
+                <QuotaHoldBanner refreshSignal={tasksTick} />
+            </div>
 
             {/* ISSUES TAB */}
             {tab === 'issues' && (
