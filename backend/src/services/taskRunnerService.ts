@@ -1507,6 +1507,51 @@ class TaskRunnerService {
         return [...files];
     }
 
+    /**
+     * Decide se uma rodada "vazia" (worktree limpo) representa FALHA genuína ou a CONVERGÊNCIA
+     * de um re-work que JÁ tem trabalho commitado na branch (ou diff em PR existente). Função PURA
+     * (sem IO/git) — testável isoladamente. #1190: re-work onde uma rodada anterior JÁ commitou
+     * não pode virar 'failed' numa rodada vazia posterior (perderia trabalho bom).
+     *
+     * @param branchAhead    true se `git rev-list origin/main..HEAD` é NÃO-vazio (branch diverge da main).
+     * @param prHasDiff      true se a task já tem prNumber E esse PR contém diff.
+     * @param worktreeChanges mudanças não-commitadas (de worktreeChanges()).
+     * @returns true quando há trabalho (NÃO deve falhar — seguir p/ commit/push/judge);
+     *          false quando a task é genuinamente vazia (deve falhar como antes).
+     */
+    private hasCommittedWork(branchAhead: boolean, prHasDiff: boolean, worktreeChanges: string[]): boolean {
+        return branchAhead || prHasDiff || worktreeChanges.length > 0;
+    }
+
+    /** A branch do worktree JÁ tem commits além de origin/main? #1190. (`rev-list --count` > 0.) */
+    private async branchIsAheadOfMain(): Promise<boolean> {
+        try {
+            const { stdout } = await git(['rev-list', '--count', 'origin/main..HEAD'], { timeout: 20000, cwd: WT_ROOT });
+            return parseInt((stdout || '').trim(), 10) > 0;
+        } catch { /* sem origin/main ou worktree novo — assume não-ahead (fallback seguro) */ return false; }
+    }
+
+    /** A task já tem um PR (task.prNumber) com diff? #1190. (best-effort; false em qualquer erro.) */
+    private async existingPrHasDiff(task: Task): Promise<boolean> {
+        if (!task.prNumber) return false;
+        try {
+            const { stdout } = await gh(['pr', 'diff', String(task.prNumber), '--repo', REPO, '--name-only'], { timeout: 30000 });
+            return stdout.split('\n').map((l) => l.trim()).filter(Boolean).length > 0;
+        } catch { return false; }
+    }
+
+    /**
+     * Combina as 3 fontes de "há trabalho" via o helper puro hasCommittedWork. Usado antes dos
+     * pontos de "sem mudanças → failed" (cumulativo/síntese) e no passo de commit. #1190.
+     */
+    private async hasExistingCommittedWork(task: Task, worktreeChanges: string[] = []): Promise<boolean> {
+        const [branchAhead, prHasDiff] = await Promise.all([
+            this.branchIsAheadOfMain(),
+            this.existingPrHasDiff(task),
+        ]);
+        return this.hasCommittedWork(branchAhead, prHasDiff, worktreeChanges);
+    }
+
     /** Captura baseline de erros do origin/main (best-effort, cache atômico por SHA em backend/data). Sem vite. */
     private async captureBaseline(task: Task): Promise<void> {
         try {
@@ -1943,6 +1988,15 @@ class TaskRunnerService {
                 verify = await this.verify(task);
                 anyChange = true;
             }
+            // #1190: re-work cujo worktree está limpo MAS a branch já tem trabalho COMMITADO sobre
+            // origin/main (ou um PR existente com diff) NÃO falha — a rodada vazia significa
+            // "convergiu", não "fracassou". Sem isto, o trabalho bom de uma rodada anterior (JÁ
+            // commitado na branch) era descartado e a task marcava 'failed'. Segue p/ commit/push/judge.
+            if (!anyChange && await this.hasExistingCommittedWork(task)) {
+                this.recordEvent(task, 'synthesis_completed', 'Re-work cumulativo convergiu — branch já tem trabalho commitado; seguindo p/ commit/push/judge', { converged: true, reworkRescue: true });
+                verify = await this.verify(task);
+                anyChange = true;
+            }
             if (!anyChange) {
                 task.status = 'failed';
                 task.error = 'Modo cumulativo: nenhuma mudança produzida (nem o resgate Claude).';
@@ -2155,6 +2209,15 @@ class TaskRunnerService {
                     changes = await this.worktreeChanges();
                 }
                 if (changes.length === 0) {
+                    // #1190: re-work cujo worktree está limpo MAS a branch já tem trabalho COMMITADO
+                    // sobre origin/main (ou um PR existente com diff) NÃO falha — a rodada vazia
+                    // significa "convergiu", não "fracassou". Sai do loop de síntese e segue p/ o
+                    // passo de commit/push/PR/judge, que entrega o trabalho já existente na branch.
+                    if (await this.hasExistingCommittedWork(task)) {
+                        this.recordEvent(task, 'synthesis_completed', 'Re-work síntese convergiu — branch já tem trabalho commitado; seguindo p/ commit/push/judge', { converged: true, reworkRescue: true });
+                        verify = await this.verify(task);
+                        break;
+                    }
                     task.status = 'failed';
                     task.error = 'Síntese não produziu mudanças após 3 tentativas (nem o resgate Claude).';
                     task.updatedAt = new Date().toISOString();
@@ -2210,15 +2273,22 @@ class TaskRunnerService {
             commitSha = shaMatch?.[1];
             this.recordEvent(task, 'git_committed', 'Mudanças commitadas', { sha: commitSha });
         } catch {
-            task.status = 'failed';
-            task.error = 'Nada a commitar após a implementação.';
-            task.completedAt = new Date().toISOString();
-            task.updatedAt = task.completedAt;
-            this.finalizeTaskMetrics(task);
-            this.recordEvent(task, 'task_failed', 'Nada a commitar após a implementação.');
-            this.save();
-            this.emitStatus(task);
-            return;
+            // #1190: "nada a commitar" num re-work cujo trabalho JÁ está commitado na branch (worktree
+            // limpo, mas branch diverge da main / PR existente com diff) NÃO é falha — o trabalho bom
+            // já existe. Prossegue para o push (força a branch) e judge em vez de descartar a task.
+            if (await this.hasExistingCommittedWork(task)) {
+                this.recordEvent(task, 'git_committed', 'Nada novo a commitar — re-using trabalho já commitado na branch', { reused: true, reworkRescue: true });
+            } else {
+                task.status = 'failed';
+                task.error = 'Nada a commitar após a implementação.';
+                task.completedAt = new Date().toISOString();
+                task.updatedAt = task.completedAt;
+                this.finalizeTaskMetrics(task);
+                this.recordEvent(task, 'task_failed', 'Nada a commitar após a implementação.');
+                this.save();
+                this.emitStatus(task);
+                return;
+            }
         }
         await git(['push', 'origin', branch, '--force'], { timeout: 60000, cwd: WT_ROOT });
         this.recordEvent(task, 'git_pushed', 'Push realizado. Criando PR...', { branch });
