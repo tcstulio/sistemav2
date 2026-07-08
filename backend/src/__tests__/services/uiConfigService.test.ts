@@ -80,6 +80,34 @@ describe('uiConfigService', () => {
         expect(out.taskAutomation.minApproveScore).toBe(5); // 1 → piso 5
     });
 
+    // #1204 — kill-switches de automações de fundo (default true = nada muda).
+    it('automationSwitches: defaults schedulerEnabled/alertCronEnabled = true', () => {
+        const svc = new UiConfigService('ui.json');
+        expect(svc.get().automationSwitches).toEqual({ schedulerEnabled: true, alertCronEnabled: true });
+    });
+
+    it('automationSwitches: round-trip do PUT persiste os flags (false sobrevive ao sanitize)', () => {
+        const svc = new UiConfigService('ui.json');
+        const out = svc.update({ automationSwitches: { schedulerEnabled: false, alertCronEnabled: false } } as any);
+        expect(out.automationSwitches).toEqual({ schedulerEnabled: false, alertCronEnabled: false });
+        // religar também persiste
+        const out2 = svc.update({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: true } } as any);
+        expect(out2.automationSwitches).toEqual({ schedulerEnabled: true, alertCronEnabled: true });
+    });
+
+    it('automationSwitches: sanitize aceita só booleano explícito; ausente/inválido → default true', () => {
+        const svc = new UiConfigService('ui.json');
+        // flag ausente → default true
+        expect(svc.update({ automationSwitches: { schedulerEnabled: false } } as any).automationSwitches)
+            .toEqual({ schedulerEnabled: false, alertCronEnabled: true });
+        // valor inválido (string) → default true (não coerção implícita)
+        expect(svc.update({ automationSwitches: { schedulerEnabled: 'no', alertCronEnabled: 0 } } as any).automationSwitches)
+            .toEqual({ schedulerEnabled: true, alertCronEnabled: true });
+        // payload inteiro inválido → defaults
+        expect(svc.update({ automationSwitches: 'lixo' } as any).automationSwitches)
+            .toEqual({ schedulerEnabled: true, alertCronEnabled: true });
+    });
+
     it('update aplica e persiste campos válidos', () => {
         const svc = new UiConfigService('ui.json');
         const out = svc.update({ companyName: 'ACME', logoText: 'A', themeColor: 'emerald' });

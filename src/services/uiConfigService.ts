@@ -29,6 +29,12 @@ export interface TaskAutomationConfig {
     dailyRoundBudget?: number;
 }
 
+// #1204 — Kill-switches globais das automações de fundo. Default true = nada muda.
+export interface AutomationSwitchesConfig {
+    schedulerEnabled: boolean;
+    alertCronEnabled: boolean;
+}
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
@@ -41,6 +47,7 @@ export interface UiConfig {
     taskNotifications?: TaskNotificationsConfig;
     taskNotificationsExternalEnabled?: boolean;
     taskAutomation?: TaskAutomationConfig;
+    automationSwitches?: AutomationSwitchesConfig;
     version?: number; // concorrência otimista (Central de Permissões)
     appAccessGroupId?: string; // grupo Dolibarr usado p/ "Habilitar acesso ao app" (carrega o direito 342)
 }

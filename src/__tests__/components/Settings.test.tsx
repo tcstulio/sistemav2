@@ -42,6 +42,9 @@ vi.mock('../../components/admin/NotificationConfigEditor', () => ({
 vi.mock('../../components/admin/TaskAutomationEditor', () => ({
     TaskAutomationEditor: () => <div data-testid="task-automation-editor" />,
 }));
+vi.mock('../../components/admin/BackgroundAutomationSwitches', () => ({
+    BackgroundAutomationSwitches: () => <div data-testid="background-automation-switches" />,
+}));
 
 const baseConfig: DolibarrConfig = {
     apiUrl: 'http://test',

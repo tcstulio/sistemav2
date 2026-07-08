@@ -89,6 +89,12 @@ const UpdateSchema = z.object({
     }).optional(),
     // Grupo Dolibarr p/ "Habilitar acesso ao app" (sem isto o Zod descartaria o campo e o save não persistiria).
     appAccessGroupId: z.string().max(40).optional(),
+    // #1204: kill-switches de automações de fundo (schedulerService / alertCronService). O Zod precisa
+    // declarar o objeto p/ os flags sobreviverem ao .parse() e chegarem ao service (senão são estripados).
+    automationSwitches: z.object({
+        schedulerEnabled: z.boolean().optional(),
+        alertCronEnabled: z.boolean().optional(),
+    }).optional(),
 });
 
 // Leitura: qualquer usuário logado (p/ renderizar branding/tema da org).

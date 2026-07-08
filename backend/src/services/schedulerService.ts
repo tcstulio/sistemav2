@@ -6,6 +6,7 @@ import { emailService } from './emailService'; // New
 import { socketService } from './socketService';
 import { logger } from '../utils/logger';
 import { config } from '../config/env';
+import { uiConfigService } from './uiConfigService';
 
 const log = logger.child('SchedulerService');
 
@@ -332,7 +333,15 @@ class SchedulerService {
         return this.intervalId !== null;
     }
 
-    private async processQueue() {
+    async processQueue() {
+        // #1204 — Kill-switch da UI: pausa o envio de mensagens agendadas (WhatsApp/e-mail) sem
+        // derrubar o backend. Checado a CADA tick (sem cache): religar o switch volta a processar
+        // no próximo ciclo, sem restart.
+        if (!uiConfigService.get().automationSwitches.schedulerEnabled) {
+            log.info('processQueue pausado pela UI (schedulerEnabled=false)');
+            return;
+        }
+
         const now = Date.now();
 
         // Reset rate limit counters every minute
