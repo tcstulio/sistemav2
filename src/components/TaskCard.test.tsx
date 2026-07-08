@@ -4,9 +4,12 @@ import {
     PrecheckBadge,
     PrecheckAnalysis,
     RejectedPrecheckBanner,
+    RoundsChip,
+    PlanCooldownChip,
+    TaskAutomationChips,
     VERDICT_CONFIG,
 } from './TaskCard';
-import type { PrecheckReport } from '../services/taskService';
+import type { PrecheckReport, Task } from '../services/taskService';
 
 describe('PrecheckBadge — vereditos', () => {
     it('NÃO renderiza badge quando não há precheck_report (regression)', () => {
@@ -162,5 +165,143 @@ describe('RejectedPrecheckBanner', () => {
         const banner = screen.getByTestId('precheck-rejected-banner');
         expect(banner).toHaveTextContent('rejeitada pelo pre-check');
         expect(screen.queryByRole('link', { name: 'Abrir original' })).not.toBeInTheDocument();
+    });
+});
+
+describe('RoundsChip (issue #1188)', () => {
+    it('omite silenciosamente quando roundsUsed é undefined (card legacy)', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const { container } = render(<RoundsChip maxRoundsPerTask={10} />);
+        expect(container).toBeEmptyDOMElement();
+        expect(warnSpy).not.toHaveBeenCalled();
+        expect(errorSpy).not.toHaveBeenCalled();
+        warnSpy.mockRestore();
+        errorSpy.mockRestore();
+    });
+
+    it('omite silenciosamente quando roundsUsed é null', () => {
+        const { container } = render(<RoundsChip roundsUsed={null} maxRoundsPerTask={10} />);
+        expect(container).toBeEmptyDOMElement();
+    });
+
+    it('omite silenciosamente quando maxRoundsPerTask está ausente (config legacy)', () => {
+        const { container } = render(<RoundsChip roundsUsed={5} />);
+        expect(container).toBeEmptyDOMElement();
+    });
+
+    it('omite silenciosamente quando maxRoundsPerTask é inválido (0/negativo/NaN)', () => {
+        const { container: c0 } = render(<RoundsChip roundsUsed={5} maxRoundsPerTask={0} />);
+        expect(c0).toBeEmptyDOMElement();
+        const { container: cNeg } = render(<RoundsChip roundsUsed={5} maxRoundsPerTask={-3} />);
+        expect(cNeg).toBeEmptyDOMElement();
+        const { container: cNaN } = render(<RoundsChip roundsUsed={5} maxRoundsPerTask={NaN} />);
+        expect(cNaN).toBeEmptyDOMElement();
+    });
+
+    it('renderiza 🔄 roundsUsed/maxRoundsPerTask com cor neutra quando a proporção < 0.7', () => {
+        render(<RoundsChip roundsUsed={6} maxRoundsPerTask={10} />);
+        const chip = screen.getByTestId('task-rounds-chip');
+        // 6/10 = 0.6 → neutro
+        expect(chip).toHaveTextContent(/🔄\s*6\/10/);
+        expect(chip.className).toContain('slate');
+        expect(chip.className).not.toContain('amber');
+        expect(chip.className).not.toContain('red');
+    });
+
+    it('cor âmbar quando a proporção roundsUsed/maxRoundsPerTask >= 0.7 (limite em 7/10)', () => {
+        // 7/10 = exatamente 0.7 (limite inclusivo)
+        const { rerender } = render(<RoundsChip roundsUsed={7} maxRoundsPerTask={10} />);
+        let chip = screen.getByTestId('task-rounds-chip');
+        expect(chip.className).toContain('amber');
+
+        // 10/10 = 1.0 → ainda âmbar (não extrapolou)
+        rerender(<RoundsChip roundsUsed={10} maxRoundsPerTask={10} />);
+        chip = screen.getByTestId('task-rounds-chip');
+        expect(chip.className).toContain('amber');
+        expect(chip.className).not.toContain('red');
+    });
+
+    it('cor vermelha e valor real quando roundsUsed > maxRoundsPerTask (robô extrapolou)', () => {
+        render(<RoundsChip roundsUsed={25} maxRoundsPerTask={20} />);
+        const chip = screen.getByTestId('task-rounds-chip');
+        expect(chip).toHaveTextContent(/🔄\s*25\/20/);
+        expect(chip.className).toContain('red');
+        expect(chip.className).not.toContain('amber');
+    });
+});
+
+describe('PlanCooldownChip (issue #1188)', () => {
+    it('não renderiza quando status !== "pending" mesmo com planWaitUntil futuro', () => {
+        const future = Date.now() + 5 * 60_000;
+        const { rerender } = render(<PlanCooldownChip status="running" planWaitUntil={future} />);
+        expect(screen.queryByTestId('task-cooldown-chip')).not.toBeInTheDocument();
+        // vário status não-pending também omitem
+        rerender(<PlanCooldownChip status="approved" planWaitUntil={future} />);
+        expect(screen.queryByTestId('task-cooldown-chip')).not.toBeInTheDocument();
+    });
+
+    it('não renderiza quando planWaitUntil está ausente', () => {
+        const { container } = render(<PlanCooldownChip status="pending" />);
+        expect(container).toBeEmptyDOMElement();
+    });
+
+    it('não renderiza quando planWaitUntil <= now (cooldown vencido)', () => {
+        const fixedNow = 1_700_000_000_000;
+        const { rerender } = render(
+            <PlanCooldownChip status="pending" planWaitUntil={fixedNow} now={fixedNow} />,
+        );
+        expect(screen.queryByTestId('task-cooldown-chip')).not.toBeInTheDocument();
+        rerender(<PlanCooldownChip status="pending" planWaitUntil={fixedNow - 1} now={fixedNow} />);
+        expect(screen.queryByTestId('task-cooldown-chip')).not.toBeInTheDocument();
+    });
+
+    it('mostra minutos restantes arredondados para cima (mock Date.now)', () => {
+        const fixedNow = 1_700_000_000_000;
+        const spy = vi.spyOn(Date, 'now').mockReturnValue(fixedNow);
+        render(<PlanCooldownChip status="pending" planWaitUntil={fixedNow + 5 * 60_000} />);
+        // sem passar `now` → exerce Date.now() real (mockado)
+        const chip = screen.getByTestId('task-cooldown-chip');
+        expect(chip).toHaveTextContent('aguardando Planner (5min)');
+        spy.mockRestore();
+    });
+
+    it('garante mínimo de 1 minuto quando faltam poucos segundos (mock Date.now)', () => {
+        const fixedNow = 1_700_000_000_000;
+        const spy = vi.spyOn(Date, 'now').mockReturnValue(fixedNow);
+        // 2s restantes → ceil(2000/60000)=1, e Math.max(1, ...) trava no piso
+        render(<PlanCooldownChip status="pending" planWaitUntil={fixedNow + 2_000} />);
+        expect(screen.getByTestId('task-cooldown-chip')).toHaveTextContent('(1min)');
+        spy.mockRestore();
+    });
+});
+
+describe('TaskAutomationChips — snapshot e regressão (issue #1188)', () => {
+    const baseTask: Task = {
+        issueNumber: 1,
+        title: 'Demo',
+        body: '',
+        labels: [],
+        status: 'pending',
+        feedbackHistory: [],
+        updatedAt: '2024-01-01T00:00:00.000Z',
+    };
+
+    it('card legacy (sem roundsUsed e sem planWaitUntil) renderiza vazio — zero regressão', () => {
+        const { container } = render(<TaskAutomationChips task={baseTask} maxRoundsPerTask={20} />);
+        expect(container).toBeEmptyDOMElement();
+    });
+
+    it('snapshot do card com ambos os chips renderizando', () => {
+        const fixedNow = 1_700_000_000_000;
+        const task: Task = {
+            ...baseTask,
+            roundsUsed: 7,
+            planWaitUntil: fixedNow + 5 * 60_000,
+        };
+        const { container } = render(
+            <TaskAutomationChips task={task} maxRoundsPerTask={10} now={fixedNow} />,
+        );
+        expect(container).toMatchSnapshot();
     });
 });

@@ -1,0 +1,38 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`TaskAutomationChips — snapshot e regressão (issue #1188) > snapshot do card com ambos os chips renderizando 1`] = `
+<div>
+  <span
+    class="inline-flex items-center gap-1 leading-none font-semibold rounded-full border text-[11px] px-2 py-0.5 text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800"
+    data-testid="task-rounds-chip"
+    title="Rodadas de opencode: 7/10"
+  >
+    <span
+      aria-hidden="true"
+    >
+      🔄
+    </span>
+    <span>
+      7
+      /
+      10
+    </span>
+  </span>
+  <span
+    class="inline-flex items-center gap-1 leading-none font-semibold rounded-full border text-[11px] px-2 py-0.5 text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700"
+    data-testid="task-cooldown-chip"
+    title="Planner em cooldown — retoma em ~5min"
+  >
+    <span
+      aria-hidden="true"
+    >
+      ⏳
+    </span>
+    <span>
+      aguardando Planner (
+      5
+      min)
+    </span>
+  </span>
+</div>
+`;
