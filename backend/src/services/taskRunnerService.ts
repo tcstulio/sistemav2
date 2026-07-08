@@ -3083,19 +3083,25 @@ Return ONLY a JSON:
      * ficava 'approved'/'reviewing' para sempre e a épica-pai nunca completava. Best-effort no pollSync.
      */
     private async reconcileManualMerges(): Promise<void> {
+        // #1191: inclui 'failed' — uma task marcada failed (ex.: rodada vazia do bug #1190) cujo PR
+        // DEPOIS é mergeado à mão ficava failed para sempre, embora o trabalho estivesse na main. O
+        // merge posterior é evidência de que o failed era espúrio ou o humano terminou à mão.
+        // 'rejected'/'cancelled' NÃO entram: rejeição/cancelamento é decisão explícita — deixar fora
+        // por segurança (um merge posterior do PR é caso raro; se necessário, tratar com log separado).
         const candidates = Object.values(this.store.tasks)
-            .filter((t) => (t.status === 'approved' || t.status === 'reviewing') && t.prNumber && !this.mergeInFlight.has(t.issueNumber))
+            .filter((t) => (t.status === 'approved' || t.status === 'reviewing' || t.status === 'failed') && t.prNumber && !this.mergeInFlight.has(t.issueNumber))
             .slice(0, 20); // teto por ciclo (evita rajada de gh se houver muitas)
         for (const task of candidates) {
             try {
                 const { stdout } = await gh(['pr', 'view', String(task.prNumber), '--repo', REPO, '--json', 'state,merged'], { timeout: 20000 });
                 const j = JSON.parse(stdout);
                 if (j.merged === true || j.state === 'MERGED') {
+                    const prevStatus = task.status;
                     task.status = 'merged';
                     task.completedAt = new Date().toISOString();
                     task.updatedAt = task.completedAt;
                     this.finalizeTaskMetrics(task);
-                    this.recordEvent(task, 'pr_merged', `PR #${task.prNumber} detectado como mergeado manualmente — task reconciliada p/ 'merged'.`, { prNumber: task.prNumber, reconciledManual: true });
+                    this.recordEvent(task, 'pr_merged', `PR #${task.prNumber} mergeado — task reconciliada de ${prevStatus}→merged.`, { prNumber: task.prNumber, reconciledManual: true, previousStatus: prevStatus });
                     this.save();
                     this.emitStatus(task);
                     this.checkEpicCompletion(task);
