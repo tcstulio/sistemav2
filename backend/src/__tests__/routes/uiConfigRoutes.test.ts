@@ -75,4 +75,48 @@ describe('uiConfigRoutes', () => {
         expect(res.status).toBe(200);
         expect(mockOnMinMergeScoreLowered).not.toHaveBeenCalled();
     });
+
+    // #1195: o Zod do taskAutomation não listava os 4 campos de rodadas/tetos do #1154 — o .parse()
+    // estripava as chaves, então o save do editor RESETAVA maxJudgeRounds/maxGateFixRounds/
+    // maxRoundsPerTask/dailyRoundBudget p/ os defaults (3/3/20/200). Round-trip: o que chega em
+    // update() precisa ter TODOS os campos intactos (não os defaults).
+    it('#1195: PUT com taskAutomation contendo os 4 campos NÃO os estripa (round-trip p/ update)', async () => {
+        const custom = {
+            autoPlay: true,
+            minApproveScore: 6,
+            maxJudgeRounds: 7,
+            maxGateFixRounds: 8,
+            maxRoundsPerTask: 42,
+            dailyRoundBudget: 777,
+        };
+        mockUiConfigService.update.mockReturnValueOnce({ taskAutomation: { ...custom, minMergeScore: 8 } });
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: custom });
+        expect(res.status).toBe(200);
+        // Nenhum dos 4 campos pode ter caído no default (3/3/20/200) nem o minApproveScore (9).
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ taskAutomation: custom });
+        const sent = mockUiConfigService.update.mock.calls[0][0].taskAutomation;
+        expect(sent).toMatchObject({
+            maxJudgeRounds: 7,
+            maxGateFixRounds: 8,
+            maxRoundsPerTask: 42,
+            dailyRoundBudget: 777,
+            minApproveScore: 6,
+        });
+        // O GET (resposta do PUT) devolve os mesmos valores, não os defaults.
+        expect(res.body.taskAutomation).toMatchObject({
+            maxJudgeRounds: 7,
+            maxGateFixRounds: 8,
+            maxRoundsPerTask: 42,
+            dailyRoundBudget: 777,
+            minApproveScore: 6,
+        });
+    });
+
+    it('#1195: PUT só com autoPlay preserva a presença do campo (não reseta os 4 ao default por omissão de Zod)', async () => {
+        // Mesmo enviando só autoPlay, o Zod não pode descartar chaves PRESENTES no payload;
+        // confirma que o schema aceita os 4 campos sem rejeitar/ignorar.
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: { autoPlay: true, maxJudgeRounds: 9 } });
+        expect(res.status).toBe(200);
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ taskAutomation: { autoPlay: true, maxJudgeRounds: 9 } });
+    });
 });
