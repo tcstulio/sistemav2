@@ -183,3 +183,73 @@ describe('taskRoutes — GET /api/tasks/:issueNumber/events (#1179)', () => {
         expect(res.status).toBe(404);
     });
 });
+
+/**
+ * Critério de aceite #1 da issue #1179: "Payload da listagem < 2 MB com o store atual (~400
+ * tasks) — medir e registrar no PR". Ao contrário do benchmark in-memory (taskListItem.test.ts),
+ * AQUI disparamos o Express REAL via supertest: a rota GET /api/tasks aplica a projeção enxuta
+ * de verdade (toTaskListItem) e devolve o body HTTP. Medimos o tamanho da resposta efetiva e
+ * registramos o número no log do teste (evidência exigida pelo critério de aceite).
+ */
+describe('taskRoutes — payload HTTP da listagem < 2MB (#1179, critério #1)', () => {
+    let app: express.Application;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockRequireDolibarrLogin.mockImplementation((_req: any, _res: any, next: any) => next());
+        app = createApp();
+    });
+
+    it('GET /api/tasks devolve < 2 MB com ~400 tasks × 241 eventos (medição registrada)', async () => {
+        const TASK_COUNT = 400;
+        const EVENTS_PER_TASK = 241; // média medida em produção (399 tasks × ~241 eventos ≈ 47 MB)
+        const EVENT_TYPES = [
+            'task_started', 'opencode_output', 'typecheck_ok', 'judge_started', 'judge_score',
+            'pr_created', 'pr_merged', 'task_completed', 'error',
+        ];
+        const makeEvent = (i: number) => {
+            const base = {
+                ts: `2024-07-07T10:${String(Math.floor(i / 60) % 60).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z`,
+                type: EVENT_TYPES[i % EVENT_TYPES.length],
+                message: `Evento ${i}: linha de log humanamente legível do task runner com tamanho realista de cerca de oitenta caracteres.`,
+            };
+            return i % 8 === 0 ? { ...base, meta: { output: 'o'.repeat(220) } } : base;
+        };
+
+        // Store de produção realista: 400 tasks, cada uma com ~241 eventos embutidos (o gargalo).
+        const store = Array.from({ length: TASK_COUNT }, (_, n) =>
+            makeStoredTask({
+                issueNumber: n + 1,
+                title: `Task de produção #${n + 1} — título realista p/ o benchmark de payload do board`,
+                body: 'b'.repeat(2000),
+                judgeReview: 'r'.repeat(1200),
+                status: 'merged',
+                prNumber: n + 1000,
+                branch: `fix-${n + 1}`,
+                events: Array.from({ length: EVENTS_PER_TASK }, (_, i) => makeEvent(i)),
+            })
+        );
+        mockTaskRunnerService.syncTasks.mockResolvedValue(store);
+
+        const res = await request(app).get('/api/tasks');
+
+        expect(res.status).toBe(200);
+        // Tamanho do body HTTP efetivamente devolvido pelo Express (projeção enxuta aplicada).
+        const bytes = Buffer.byteLength(res.text, 'utf8');
+        const mb = bytes / (1024 * 1024);
+        // eslint-disable-next-line no-console
+        console.log(
+            `[#1179 integração HTTP] ${TASK_COUNT} tasks × ${EVENTS_PER_TASK} eventos/task ` +
+            `-> payload da listagem = ${mb.toFixed(2)} MB (critério de aceite: < 2 MB)`
+        );
+        // Critério de aceite #1: listagem enxuta < 2 MB.
+        expect(bytes).toBeLessThan(2 * 1024 * 1024);
+        // Sanidade: a projeção tirou o array `events` de TODOS os itens e manteve eventsCount.
+        expect(Array.isArray(res.body)).toBe(true);
+        expect(res.body).toHaveLength(TASK_COUNT);
+        for (const item of res.body) {
+            expect(item).not.toHaveProperty('events');
+            expect(item).toHaveProperty('eventsCount', EVENTS_PER_TASK);
+        }
+    });
+});
