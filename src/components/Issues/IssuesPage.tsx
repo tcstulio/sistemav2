@@ -84,10 +84,17 @@ const LABEL_ICONS: Record<string, React.ReactNode> = {
 // (issues abertas / tasks em andamento) continua sempre visível. Padrão = "Hoje".
 // Os mesmos valores são enviados para o backend (filtro server-side de issues) e
 // usados client-side para escopar tasks terminais.
-type Period = 'today' | '5' | '7' | '30' | 'all';
+//
+// "Hoje" vs "1 dia" (issue pede filtros de 1 dia, 5 dias, etc):
+// - today = dia de CALENDÁRIO (desde a meia-noite local) — "o que foi realizado no dia".
+// - '1'   = janela móvel das últimas 24h — difere de "Hoje" perto da virada da meia-noite
+//           (ex.: às 01h, "1 dia" inclui o trabalho desde ontem 01h; "Hoje" só o de depois
+//           da 00h de hoje). São coisas diferentes, por isso ambas as opções existem.
+type Period = 'today' | '1' | '5' | '7' | '30' | 'all';
 
 const PERIOD_OPTIONS: { value: Period; label: string }[] = [
     { value: 'today', label: 'Hoje' },
+    { value: '1', label: '1 dia' },
     { value: '5', label: '5 dias' },
     { value: '7', label: '7 dias' },
     { value: '30', label: '30 dias' },
@@ -96,26 +103,42 @@ const PERIOD_OPTIONS: { value: Period; label: string }[] = [
 
 const PERIOD_DAYS: Record<Period, number | null> = {
     today: null, // null = "hoje" (dia de calendário, desde a meia-noite)
+    '1': 1,      // janela móvel de 24h (rolling window) — distinto de "Hoje"
     '5': 5,
     '7': 7,
     '30': 30,
     all: null,
 };
 
-/** Verdadeiro quando dateStr cai dentro do período selecionado (ou período = "Tudo"). */
-const withinPeriod = (dateStr: string | null | undefined, period: Period): boolean => {
+/**
+ * Verdadeiro quando dateStr cai dentro do período selecionado (ou período = "Tudo").
+ *
+ * ─── CÓDIGO DUPLICADO (front/back) — MANTER EM SINCRONIA ───
+ * Esta função é uma CÓPIA intencional de `withinPeriod` em
+ * `backend/src/utils/issuePeriodFilter.ts`. NÃO há módulo compartilhado porque:
+ *  (1) frontend (ESM/Vite) e backend (CommonJS, rootDir=./src) são projetos TS
+ *      separados, sem workspace/monorepo — um `shared/` exigiria mudar rootDir do
+ *      backend e quebrar o build `tsc`;
+ *  (2) cada lado valida independentemente: o BACKEND é autoritativo (filtro
+ *      server-side de issues — defesa em profundidade, cliente não é confiável);
+ *      o FRONTEND é otimista (escopa tasks terminais p/ UX imediato, antes do
+ *      reload). Amb precisam funcionar sozinhos.
+ * INVARIANTE: ao mudar a semântica aqui, replique-a no backend (e vice-versa).
+ * O parâmetro `now` existe só p/ testes determinísticos (default = agora).
+ */
+const withinPeriod = (dateStr: string | null | undefined, period: Period, now: Date = new Date()): boolean => {
     if (period === 'all') return true;
     if (!dateStr) return false;
     const ts = new Date(dateStr).getTime();
     if (Number.isNaN(ts)) return false;
     if (period === 'today') {
-        const midnight = new Date();
+        const midnight = new Date(now);
         midnight.setHours(0, 0, 0, 0);
         return ts >= midnight.getTime();
     }
     const days = PERIOD_DAYS[period];
     if (days === null) return true;
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    const cutoff = now.getTime() - days * 24 * 60 * 60 * 1000;
     return ts >= cutoff;
 };
 
@@ -687,6 +710,13 @@ const IssuesPage: React.FC = () => {
 
     // Tasks ativas (não-terminais) são sempre exibidas; apenas as concluídas são escopadas
     // pelo período (#983) para não acumular milhares de tasks antigas na tela.
+    //
+    // FALLBACK de data (#983, Judge P3): usamos `completedAt || updatedAt`.
+    // Nem toda task terminal tem `completedAt` preenchido — ex.: tasks `failed`/`cancelled`
+    // antigas, ou registros gravados antes do campo existir. Sem o fallback elas sumiriam
+    // indevidamente (data ausente => fora do período em qualquer recorte != "Tudo").
+    // `updatedAt` sempre existe e reflete o último toque da task, que é a melhor proxy de
+    // "quando terminou". Apenas quando AMBOS faltam o item é oculto (não há como datá-lo).
     const periodFilteredTasks = useMemo(() => (
         tasks.filter(t => TERMINAL_STATUSES.includes(t.status) ? withinPeriod(t.completedAt || t.updatedAt, period) : true)
     ), [tasks, period]);

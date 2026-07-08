@@ -42,6 +42,24 @@ describe('withinPeriod', () => {
         expect(withinPeriod(yesterday, 'today', NOW)).toBe(false);
     });
 
+    it('"1" usa janela móvel de 24h (rolling window), independente do dia de calendário', () => {
+        // 12h atrás → dentro das últimas 24h
+        expect(withinPeriod('2024-06-21T04:00:00.000Z', '1', NOW)).toBe(true);
+        // 25h atrás → fora
+        expect(withinPeriod('2024-06-20T15:00:00.000Z', '1', NOW)).toBe(false);
+        // Limite exato de 24h é inclusivo (>= cutoff)
+        const exactly24h = new Date(NOW.getTime() - 24 * 60 * 60 * 1000).toISOString();
+        expect(withinPeriod(exactly24h, '1', NOW)).toBe(true);
+    });
+
+    it('"1" (24h) e "today" (calendário) são DISTINTOS — há datas incluídas por um e não pelo outro', () => {
+        // 1 minuto antes da meia-noite local de hoje: dentro das últimas 24h, mas antes do
+        // reset de calendário. 'today' exclui (pré-meia-noite); '1' inclui (janela móvel).
+        const justBeforeMidnight = new Date(MIDNIGHT.getTime() - 60 * 1000).toISOString();
+        expect(withinPeriod(justBeforeMidnight, 'today', NOW)).toBe(false);
+        expect(withinPeriod(justBeforeMidnight, '1', NOW)).toBe(true);
+    });
+
     it('"5" usa janela móvel de 5*24h', () => {
         // 3 dias atrás → dentro
         expect(withinPeriod('2024-06-18T16:00:00.000Z', '5', NOW)).toBe(true);
@@ -99,6 +117,13 @@ describe('filterIssuesByPeriod', () => {
     it('"today" mantém abertas + fechadas de hoje; descarta antigas e sem data', () => {
         const result = filterIssuesByPeriod(issues, 'today', NOW);
         // índice 0 (aberta) + índice 1 (hoje)
+        expect(result).toHaveLength(2);
+        expect(result.some((i) => i.closedAt === '2024-06-21T08:00:00.000Z')).toBe(true);
+    });
+
+    it('"1" mantém abertas + fechadas nas últimas 24h', () => {
+        const result = filterIssuesByPeriod(issues, '1', NOW);
+        // índice 0 (aberta) + índice 1 (8h atrás) — demais fora da janela de 24h
         expect(result).toHaveLength(2);
         expect(result.some((i) => i.closedAt === '2024-06-21T08:00:00.000Z')).toBe(true);
     });

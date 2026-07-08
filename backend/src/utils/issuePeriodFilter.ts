@@ -65,12 +65,26 @@ function startOfToday(now: Date): number {
 /**
  * Verdadeiro se `dateStr` cai dentro do período selecionado (ou período = "Tudo").
  * - 'today': desde a meia-noite de hoje (dia de calendário).
+ * - '1': janela móvel de 24h (rolling window) — DISTINTA de 'today' (calendário).
+ *        Próximo da meia-noite as duas diferem; por isso '1' existe além de 'today'.
  * - 'N' dias: janela móvel de N*24h.
  * - 'all': sempre verdadeiro.
  *
  * Retorna `true` quando `dateStr` é ausente/nula apenas para 'all'; nos demais
  * casos sem data o item é considerado fora do período (ex.: issue fechada sem
  * closedAt não deve aparecer num recorte temporal).
+ *
+ * ─── CÓDIGO DUPLICADO (front/back) — MANTER EM SINCRONIA ───
+ * Existe uma CÓPIA idêntica no frontend: `src/components/Issues/IssuesPage.tsx`
+ * (helper `withinPeriod`). NÃO extraímos para um módulo compartilhado porque:
+ *  (1) frontend (ESM/Vite) e backend (CommonJS, rootDir=./src) são projetos TS
+ *      separados, sem workspace/monorepo — um `shared/` exigiria mudar o rootDir
+ *      do backend e quebrar o build `tsc`;
+ *  (2) cada lado valida independentemente: o BACKEND é autoritativo (filtro
+ *      server-side de issues — defesa em profundidade, cliente não é confiável);
+ *      o FRONTEND é otimista (escopa tasks terminais p/ UX imediato). Amb
+ *      precisam funcionar sozinhos.
+ * INVARIANTE: ao mudar a semântica aqui, replique-a no frontend (e vice-versa).
  */
 export function withinPeriod(dateStr: string | null | undefined, period: IssuePeriod, now: Date = new Date()): boolean {
     if (period === 'all') return true;

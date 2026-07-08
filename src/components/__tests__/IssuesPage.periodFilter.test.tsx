@@ -121,6 +121,10 @@ describe('IssuesPage — filtro de período (#983)', () => {
         const group = await screen.findByTestId('period-filter');
         const hojeBtn = within(group).getByRole('button', { name: 'Hoje' });
         expect(hojeBtn).toHaveAttribute('aria-pressed', 'true');
+        // "1 dia" é distinto de "Hoje" (issue #983 / Judge P1): janela móvel de 24h
+        // vs dia de calendário. Deve existir como botão próprio, desativado por padrão.
+        const umDiaBtn = within(group).getByRole('button', { name: '1 dia' });
+        expect(umDiaBtn).toHaveAttribute('aria-pressed', 'false');
         // Demais opções presentes
         expect(within(group).getByRole('button', { name: '5 dias' })).toBeTruthy();
         expect(within(group).getByRole('button', { name: '7 dias' })).toBeTruthy();
@@ -225,5 +229,124 @@ describe('IssuesPage — tasks concluídas escopadas pelo período (#983)', () =
 
         expect(await screen.findByText('Task de 3 dias atrás')).toBeTruthy();
         expect(screen.queryByText('Task de 20 dias atrás')).toBeNull();
+    });
+});
+
+describe('IssuesPage — opção "1 dia" distinta de "Hoje" (#983, Judge P1)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        getIssuesSpy.mockResolvedValue([]);
+        taskServiceMock.list.mockResolvedValue([]);
+    });
+
+    it('re-busca issues com period=1 ao clicar em "1 dia"', async () => {
+        const user = userEvent.setup();
+        renderPage();
+        const group = await screen.findByTestId('period-filter');
+        await user.click(within(group).getByRole('button', { name: '1 dia' }));
+        const lastCall = getIssuesSpy.mock.calls[getIssuesSpy.mock.calls.length - 1];
+        expect(lastCall?.[0]).toMatchObject({ period: '1' });
+    });
+
+    it('"1 dia" (24h) exibe task de 23h atrás que "Hoje" omitiria perto da virada da meia-noite', async () => {
+        // Construímos datas relativas à "agora": 23h atrás cai no dia de calendário anterior
+        // quando faltam < 1h para a meia-noite; em qualquer caso, 23h atrás está dentro da
+        // janela móvel de 24h ("1 dia") e deve aparecer.
+        const vinteETresHorasAtras = new Date(Date.now() - 23 * 60 * 60 * 1000).toISOString();
+        taskServiceMock.list.mockResolvedValue([
+            makeTask({ issueNumber: 10, title: 'Task de 23h atrás', status: 'merged', completedAt: vinteETresHorasAtras }),
+        ]);
+
+        const user = userEvent.setup();
+        renderPage();
+        const group = await screen.findByTestId('period-filter');
+        await user.click(within(group).getByRole('button', { name: '1 dia' }));
+        await goToDoneListView(user);
+
+        expect(await screen.findByText('Task de 23h atrás')).toBeTruthy();
+    });
+});
+
+describe('IssuesPage — fallback completedAt→updatedAt (#983, Judge P3)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        getIssuesSpy.mockResolvedValue([]);
+    });
+
+    it('task terminal SEM completedAt mas com updatedAt no período permanece visível (não some)', async () => {
+        // failed antiga sem completedAt — sem o fallback (updatedAt) sumiria indevidamente.
+        taskServiceMock.list.mockResolvedValue([
+            makeTask({
+                issueNumber: 20,
+                title: 'Task failed sem completedAt (updatedAt hoje)',
+                status: 'failed',
+                completedAt: undefined,
+                updatedAt: new Date().toISOString(),
+            }),
+        ]);
+
+        const user = userEvent.setup();
+        renderPage();
+        await goToDoneListView(user);
+
+        expect(await screen.findByText('Task failed sem completedAt (updatedAt hoje)')).toBeTruthy();
+    });
+
+    it('task terminal SEM completedAt e updatedAt antigo é ocultada pelo período (Hoje)', async () => {
+        taskServiceMock.list.mockResolvedValue([
+            makeTask({
+                issueNumber: 21,
+                title: 'Task failed antiga sem completedAt',
+                status: 'failed',
+                completedAt: undefined,
+                updatedAt: new Date(Date.now() - 40 * DAY).toISOString(),
+            }),
+        ]);
+
+        const user = userEvent.setup();
+        renderPage();
+        // Período padrão = Hoje → updatedAt fora do período → oculta
+        await goToDoneListView(user);
+
+        expect(screen.queryByText('Task failed antiga sem completedAt')).toBeNull();
+    });
+
+    it('task terminal SEM completedAt e updatedAt antigo aparece ao trocar para "Tudo"', async () => {
+        taskServiceMock.list.mockResolvedValue([
+            makeTask({
+                issueNumber: 21,
+                title: 'Task failed antiga sem completedAt',
+                status: 'failed',
+                completedAt: undefined,
+                updatedAt: new Date(Date.now() - 40 * DAY).toISOString(),
+            }),
+        ]);
+
+        const user = userEvent.setup();
+        renderPage();
+        const group = await screen.findByTestId('period-filter');
+        await user.click(within(group).getByRole('button', { name: 'Tudo' }));
+        await goToDoneListView(user);
+
+        expect(await screen.findByText('Task failed antiga sem completedAt')).toBeTruthy();
+    });
+
+    it('task terminal sem nenhuma data (completedAt e updatedAt ausentes) é ocultada em período não-"Tudo"', async () => {
+        // Caso defensivo: não há como datar o item → fora de qualquer recorte temporal.
+        taskServiceMock.list.mockResolvedValue([
+            makeTask({
+                issueNumber: 22,
+                title: 'Task sem data nenhuma',
+                status: 'failed',
+                completedAt: undefined,
+                updatedAt: undefined as unknown as string,
+            }),
+        ]);
+
+        const user = userEvent.setup();
+        renderPage();
+        await goToDoneListView(user);
+
+        expect(screen.queryByText('Task sem data nenhuma')).toBeNull();
     });
 });
