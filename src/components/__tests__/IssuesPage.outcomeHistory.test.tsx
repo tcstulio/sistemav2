@@ -109,6 +109,9 @@ const renderPage = () =>
 
 /** Navega para a aba Tasks, muda para "Concluídas" e troca para visão de lista */
 const goToListView = async (user: ReturnType<typeof userEvent.setup>) => {
+    // #983: as tasks de teste usam datas fixas (2024); troca período p/ "Tudo"
+    // para que as tasks terminais não sejam filtradas pelo padrão "Hoje".
+    await user.click(await screen.findByRole('button', { name: 'Tudo' }));
     // Aguarda tasks carregarem (o botão mostra a contagem total)
     await user.click(await screen.findByRole('button', { name: /Tasks \(\d+\)/ }));
     // Mudar para aba "Concluídas" para ver tasks terminais
@@ -118,6 +121,8 @@ const goToListView = async (user: ReturnType<typeof userEvent.setup>) => {
 
 /** Navega para a aba Tasks e muda para "Concluídas" (pipeline) */
 const goToTasksTab = async (user: ReturnType<typeof userEvent.setup>) => {
+    // #983: período "Tudo" para exibir tasks terminais com datas fixas.
+    await user.click(await screen.findByRole('button', { name: 'Tudo' }));
     await user.click(await screen.findByRole('button', { name: /Tasks \(\d+\)/ }));
     // Mudar para aba "Concluídas" para ver tasks terminais no pipeline
     await user.click(await screen.findByRole('button', { name: /Concluídas/ }));

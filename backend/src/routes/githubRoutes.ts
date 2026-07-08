@@ -6,6 +6,7 @@ import path from 'path';
 import os from 'os';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { createLogger } from '../utils/logger';
+import { normalizePeriod, filterIssuesByPeriod, ISSUE_PERIOD_FETCH_LIMIT } from '../utils/issuePeriodFilter';
 
 const log = createLogger('GitHub');
 const router = Router();
@@ -125,12 +126,21 @@ router.post('/issues/:number/state', async (req: Request, res: Response) => {
 
 router.get('/issues', async (req: Request, res: Response) => {
     try {
-        const { state, label, limit } = req.query;
+        const { state, label } = req.query;
+        // #983: filtro de período (Hoje / N dias / Tudo). Padrão do front é "Hoje".
+        // Quando ativo, ampliamos o --limit para capturar issues fechadas recentemente
+        // antes de filtrar por closedAt (evita acúmulo de milhares de concluídas).
+        const period = normalizePeriod(req.query.period);
+        const requestedLimit = Number(req.query.limit) || 0;
+        const effectiveLimit = period !== 'all'
+            ? Math.max(requestedLimit, ISSUE_PERIOD_FETCH_LIMIT)
+            : (requestedLimit || 30);
+
         const args = [
             'issue', 'list',
             '--repo', 'tcstulio/sistemav2',
             '--json', 'number,title,state,labels,createdAt,closedAt,url,assignees',
-            '--limit', String(limit || 30)
+            '--limit', String(effectiveLimit)
         ];
 
         if (state && state !== 'all') {
@@ -144,7 +154,9 @@ router.get('/issues', async (req: Request, res: Response) => {
         }
 
         const stdout = await runGh(args);
-        const issues = JSON.parse(stdout);
+        const fetched = JSON.parse(stdout);
+        // #983: filtra por período server-side (issues abertas sempre passam).
+        const issues = filterIssuesByPeriod(fetched, period);
 
         res.json({ count: issues.length, data: issues });
     } catch (error: any) {
