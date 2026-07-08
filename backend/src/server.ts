@@ -226,6 +226,9 @@ app.use('/api/tasks', taskRoutes);
 import notificationRoutes from './routes/notificationRoutes';
 app.use('/api/notifications', notificationRoutes);
 
+import agentActionRoutes from './routes/agentActionRoutes';
+app.use('/api/agent-actions', agentActionRoutes);
+
 import systemEventsRoutes from './routes/systemEventsRoutes';
 app.use('/api/system-events', systemEventsRoutes);
 
