@@ -10,7 +10,7 @@ import { interApiService } from './interApiService';
 import { itauApiService } from './itauApiService';
 import { logger } from '../utils/logger';
 import { FEATURES } from '../config/features';
-import { isFinancialCommandsEnabled } from '../config/featureSwitches';
+import { isFinancialCommandsEnabled, isCrmContextInjectionEnabled } from '../config/featureSwitches';
 
 const log = logger.child('BotService');
 
@@ -272,19 +272,23 @@ class BotService {
             }
 
             // [ANTIGRAVITY] INJECT CRM DATA
-            try {
-                const phone = chatId.split('@')[0];
-                const customer = await dolibarrService.getThirdPartyByPhone(phone);
+            // #1129: kill-switch de privacidade (env + toggle de UI) — desligado em incidente
+            // NÃO injeta dados do cliente no LLM. Mesmo padrão do kill-switch financeiro.
+            if (isCrmContextInjectionEnabled()) {
+                try {
+                    const phone = chatId.split('@')[0];
+                    const customer = await dolibarrService.getThirdPartyByPhone(phone);
 
-                if (customer) {
-                    log.info(`Found CRM Customer: ${customer.name}`);
-                    const crmData = await dolibarrService.getCustomerContext(customer.id);
-                    context += `\n\n[DADOS DO CLIENTE IDENTIFICADO NO CRM]\nNome: ${customer.name}\n${crmData}\n\nUse estes dados para responder perguntas sobre faturas, tickets ou status.`;
-                } else {
-                    context += `\n\n[CRM] Telefone ${phone} não encontrado no banco de dados.`;
+                    if (customer) {
+                        log.info(`Found CRM Customer: ${customer.name}`);
+                        const crmData = await dolibarrService.getCustomerContext(customer.id);
+                        context += `\n\n[DADOS DO CLIENTE IDENTIFICADO NO CRM]\nNome: ${customer.name}\n${crmData}\n\nUse estes dados para responder perguntas sobre faturas, tickets ou status.`;
+                    } else {
+                        context += `\n\n[CRM] Telefone ${phone} não encontrado no banco de dados.`;
+                    }
+                } catch (crmError) {
+                    log.error("CRM Injection Failed", crmError);
                 }
-            } catch (crmError) {
-                log.error("CRM Injection Failed", crmError);
             }
 
             let signatureName = "Assistente Virtual";

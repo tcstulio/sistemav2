@@ -66,8 +66,12 @@ vi.mock('../../services/itauApiService', () => ({
 }));
 
 // #1129: /pagar e /pix agora são gated por isFinancialCommandsEnabled (kill-switch de admin).
-// Default do mock = habilitado (preserva os testes existentes que exercitam os comandos).
-const mockFeatureSwitches = vi.hoisted(() => ({ isFinancialCommandsEnabled: vi.fn(() => true) }));
+// A injeção de contexto CRM é gated por isCrmContextInjectionEnabled (kill-switch de privacidade).
+// Default do mock = ambos habilitados (preserva os testes existentes).
+const mockFeatureSwitches = vi.hoisted(() => ({
+    isFinancialCommandsEnabled: vi.fn(() => true),
+    isCrmContextInjectionEnabled: vi.fn(() => true),
+}));
 vi.mock('../../config/featureSwitches', () => mockFeatureSwitches);
 
 import { botService } from '../../services/botService';
@@ -86,6 +90,7 @@ describe('BotService', () => {
         vi.clearAllMocks();
         // #1129: comandos financeiros habilitados por padrão nos testes (comportamento histórico).
         mockFeatureSwitches.isFinancialCommandsEnabled.mockReturnValue(true);
+        mockFeatureSwitches.isCrmContextInjectionEnabled.mockReturnValue(true);
         (storeService.getSessionSettings as any).mockReturnValue({
             autoReply: true,
             historyLimit: 10,
@@ -479,6 +484,32 @@ describe('BotService', () => {
             await botService.processMessage(createMessage({ body: 'Hello' }));
 
             expect(aiService.generateReply).toHaveBeenCalled();
+        });
+
+        it('#1129: não injeta dados do cliente no LLM quando CRM context está desligado (kill-switch de privacidade)', async () => {
+            mockFeatureSwitches.isCrmContextInjectionEnabled.mockReturnValue(false);
+            (storeService.getChatSettings as any).mockReturnValue({});
+            (storeService.getSessionSettings as any).mockReturnValue({
+                autoReply: true,
+                historyLimit: 10,
+                autoReplyContext: 'You are a helpful assistant.',
+                signatureName: 'Bot',
+            });
+            (schedulerService.getActiveFlow as any).mockReturnValue(null);
+            (schedulerService.checkConfirmation as any).mockReturnValue(null);
+            (schedulerService.checkFlowTrigger as any).mockReturnValue(null);
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (aiService.generateReply as any).mockResolvedValue('AI response');
+            (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+            (sessionService.sendTyping as any).mockResolvedValue(undefined);
+
+            await botService.processMessage(createMessage({ body: 'Hello' }));
+
+            // Kill-switch ativo: nenhuma busca de cliente, nenhum dado no prompt do LLM.
+            expect(dolibarrService.getThirdPartyByPhone).not.toHaveBeenCalled();
+            expect(dolibarrService.getCustomerContext).not.toHaveBeenCalled();
+            const ctx = (aiService.generateReply as any).mock.calls[0][1];
+            expect(ctx).not.toContain('DADOS DO CLIENTE');
         });
 
         it('handles history with group messages', async () => {
