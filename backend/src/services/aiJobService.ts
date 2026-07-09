@@ -30,11 +30,43 @@ export interface AiJob {
     label?: string;
     /** Expiração (epoch ms). Definido ao concluir (finishedAt + TTL). */
     expiresAt?: number;
+    /** #1011: epoch ms em que o job saiu de queued -> running. */
+    startedAt?: number;
+    /** #1011: último sinal de vida reportado pelo agente (tool-call/progresso). */
+    lastHeartbeat?: number;
+    /** #1011: provider atualmente em uso pelo job (ex.: 'gemini','minimax'). */
+    currentProvider?: string | null;
+    /** #1011: progresso 0..100 reportado pelo agente. */
+    progressPct?: number;
 }
 
 /** Resultado do lookup de um job: distingue 'expirado' de 'inexistente' (GET 404). */
 export type AiJobLookup =
     | { ok: true; job: AiJob; queueAhead: number }
+    | { ok: false; reason: 'expired' | 'missing' };
+
+/**
+ * #1011: status externo do endpoint de heartbeat (/ai-jobs/:id/status). 'expired' é
+ * conceitual — é devolvido como 404 { reason: 'expired' } (TTL purgado), nunca no
+ * corpo 200, pois um job expirado já não está "vivo" para reportar metadados.
+ */
+export type AiJobStatusExternal = 'pending' | 'running' | 'done' | 'failed' | 'expired';
+
+/** #1011: metadados leves do job (sem o `result` completo) para /ai-jobs/:id/status. */
+export interface AiJobStatusInfo {
+    id: string;
+    status: Exclude<AiJobStatusExternal, 'expired'>;
+    alive: boolean;
+    startedAt: string;
+    lastHeartbeat: string;
+    currentProvider: string | null;
+    progressPct: number;
+    queuePosition: number | null;
+}
+
+/** #1011: resultado do lookup de status: distingue 'expired' de 'missing' (GET 404). */
+export type AiJobStatusLookup =
+    | { ok: true; status: AiJobStatusInfo }
     | { ok: false; reason: 'expired' | 'missing' };
 
 const jobs = new Map<string, AiJob>();
@@ -44,14 +76,51 @@ const MAX_CONCURRENT = 3;
 let running = 0;
 const queue: Array<() => void> = [];
 
+// #1011: timestamp do último write-through por job (setJob). Base para o cálculo
+// lastHeartbeat = max(lastWrite, now) no reportProgress — nunca retrocede o heartbeat.
+const lastWriteAt = new Map<string, number>();
+
 function isExpired(j: AiJob, now: number = Date.now()): boolean {
     return j.expiresAt !== undefined && now >= j.expiresAt;
+}
+
+/** #1011: mapeia o status interno p/ o vocabulário externo do endpoint de heartbeat. */
+function mapStatusExternal(s: AiJobStatus): Exclude<AiJobStatusExternal, 'expired'> {
+    switch (s) {
+        case 'queued': return 'pending';
+        case 'running': return 'running';
+        case 'done': return 'done';
+        case 'error': return 'failed';
+    }
+}
+
+/** #1011: clamp de progresso 0..100 (inteiro). Valor inválido/não-finito vira 0. */
+function clampPct(n: number): number {
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+/** #1011: monta os metadados leves (sem `result`) a partir do job em memória. */
+function toStatusInfo(job: AiJob): AiJobStatusInfo {
+    const started = job.startedAt ?? job.createdAt;
+    const heartbeat = job.lastHeartbeat ?? started;
+    return {
+        id: job.id,
+        status: mapStatusExternal(job.status),
+        alive: true,
+        startedAt: new Date(started).toISOString(),
+        lastHeartbeat: new Date(heartbeat).toISOString(),
+        currentProvider: job.currentProvider ?? null,
+        progressPct: typeof job.progressPct === 'number' ? clampPct(job.progressPct) : 0,
+        queuePosition: job.status === 'queued' ? queue.length : null,
+    };
 }
 
 /** Write-through: atualiza o Map e persiste atomicamente no storage durável. */
 function setJob(job: AiJob): void {
     jobs.set(job.id, job);
     saveJob(job);
+    lastWriteAt.set(job.id, Date.now());
 }
 
 function patchJob(id: string, changes: Partial<AiJob>): void {
@@ -65,6 +134,7 @@ function cleanup() {
     for (const [id, j] of jobs) {
         if (isExpired(j, now)) {
             jobs.delete(id);
+            lastWriteAt.delete(id);
             deleteJob(id);
         }
     }
@@ -96,6 +166,10 @@ function restore(): void {
                 finishedAt: raw.finishedAt,
                 label: raw.label,
                 expiresAt: raw.expiresAt,
+                startedAt: raw.startedAt,
+                lastHeartbeat: raw.lastHeartbeat,
+                currentProvider: raw.currentProvider,
+                progressPct: raw.progressPct,
             };
             if (job.status === 'queued' || job.status === 'running') {
                 job.status = 'error';
@@ -105,6 +179,9 @@ function restore(): void {
                 saveJob(job);
             }
             jobs.set(job.id, job);
+            // #1011: lastWrite base para reportProgress em jobs restaurados (terminais
+            // não emitem progresso, mas mantemos o ts consistente caso o estado mude).
+            lastWriteAt.set(job.id, job.lastHeartbeat ?? job.finishedAt ?? job.createdAt ?? now);
         }
         const alive = [...jobs.values()].filter((j) => !isExpired(j)).length;
         log.info(`Reidratados ${jobs.size} jobs do disco (${alive} vivos).`);
@@ -122,7 +199,10 @@ export const aiJobService = {
 
         const run = () => {
             running++;
-            patchJob(id, { status: 'running' });
+            const startedAt = Date.now();
+            // #1011: startedAt + heartbeat inicial ao sair da fila. lastHeartbeat nasce
+            // aqui (job passou a estar vivo); reportProgress() o atualiza a cada tool-call.
+            patchJob(id, { status: 'running', startedAt, lastHeartbeat: startedAt });
             Promise.resolve()
                 .then(fn)
                 .then((result) => {
@@ -173,6 +253,42 @@ export const aiJobService = {
         if (!job) return { ok: false, reason: 'missing' };
         if (isExpired(job)) return { ok: false, reason: 'expired' };
         return { ok: true, job, queueAhead: job.status === 'queued' ? queue.length : 0 };
+    },
+
+    /**
+     * #1011: metadados leves do job para o endpoint de heartbeat (/ai-jobs/:id/status).
+     * Não toca em disco nem devolve o `result` completo — apenas o suficiente para o
+     * cliente detectar que o job continua vivo durante tempestades de 429.
+     */
+    getJobStatus(id: string): AiJobStatusLookup {
+        const job = jobs.get(id);
+        if (!job) return { ok: false, reason: 'missing' };
+        if (isExpired(job)) return { ok: false, reason: 'expired' };
+        return { ok: true, status: toStatusInfo(job) };
+    },
+
+    /**
+     * #1011: sinal de progresso do agente (chamado a cada tool-call/step do job).
+     * Atualiza lastHeartbeat = max(lastWrite, now) — o heartbeat nunca retrocede,
+     * mesmo que um write concorrente tenha gravado um ts levemente à frente (clock
+     * skew). Write-through em disco (consistência p/ restart). Retorna false se o job
+     * não existe (ou já expirou) para o chamador parar de reportar.
+     */
+    reportProgress(
+        id: string,
+        opts: { currentProvider?: string | null; progressPct?: number } = {},
+    ): boolean {
+        const job = jobs.get(id);
+        if (!job || isExpired(job)) return false;
+        const now = Date.now();
+        const lastWrite = lastWriteAt.get(id) ?? job.lastHeartbeat ?? job.startedAt ?? job.createdAt ?? now;
+        const lastHeartbeat = Math.max(lastWrite, now);
+        patchJob(id, {
+            lastHeartbeat,
+            ...(opts.currentProvider !== undefined ? { currentProvider: opts.currentProvider ?? null } : {}),
+            ...(opts.progressPct !== undefined ? { progressPct: clampPct(opts.progressPct) } : {}),
+        });
+        return true;
     },
 
     /** Reidrata jobs do disco (read-on-startup). Exposto p/ testes/restart manual. */

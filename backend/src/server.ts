@@ -158,9 +158,9 @@ app.use(auditMiddleware);
 import adminRoutes from './routes/adminRoutes';
 import groupsRoutes from './routes/groupsRoutes';
 import aiRoutes from './routes/aiRoutes';
+import aiJobsRoutes from './routes/aiJobs';
 import authRoutes from './routes/authRoutes';
 import { authMiddleware, requireDolibarrLogin } from './middleware/authMiddleware';
-
 // Middleware that skips auth for webhook paths (incoming bank notifications must be public)
 const bankingAuthMiddleware = (req: any, res: any, next: any) => {
     if (req.path.startsWith('/webhook/')) return next();
@@ -169,6 +169,9 @@ const bankingAuthMiddleware = (req: any, res: any, next: any) => {
 
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/ai', aiLimiter, aiRoutes);
+// #1011: heartbeat leve de jobs do assistente (GET /api/ai-jobs/:id/status). Os GETs
+// do aiLimiter são skipados (leves/frequentes), então só o limiter global os cobre.
+app.use('/api/ai-jobs', requireDolibarrLogin, aiJobsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', groupsRoutes); // grupos/direitos (sistemav2#820) — mesmo prefixo, paths distintos
 app.use('/api/auth', authLimiter, authRoutes);
