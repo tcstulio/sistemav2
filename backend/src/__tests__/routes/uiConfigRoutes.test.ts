@@ -23,6 +23,7 @@ vi.mock('../../utils/logger', () => ({
 }));
 
 import uiConfigRoutes from '../../routes/uiConfigRoutes';
+import { adminAuditService } from '../../services/adminAuditService';
 
 function createApp() {
     const app = express();
@@ -259,6 +260,66 @@ describe('uiConfigRoutes', () => {
 
     it('#1204: PUT com tipo errado em automationSwitches.schedulerEnabled retorna 400', async () => {
         const res = await request(app).put('/api/ui-config').send({ automationSwitches: { schedulerEnabled: 'no' } });
+        expect(res.status).toBe(400);
+        expect(mockUiConfigService.update).not.toHaveBeenCalled();
+    });
+
+    // #1129: kill-switches perigosos (DRY_RUN / FINANCIAL_COMMANDS / CRM_CONTEXT).
+    it('#1129: PUT com featureSwitches propaga os 3 flags pro service intactos', async () => {
+        const sw = { dryRunMode: true, financialCommands: true, crmContextInjection: false };
+        mockUiConfigService.update.mockReturnValueOnce({ featureSwitches: sw });
+        const res = await request(app).put('/api/ui-config').send({ featureSwitches: sw });
+        expect(res.status).toBe(200);
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ featureSwitches: sw });
+        const sent = mockUiConfigService.update.mock.calls[0][0].featureSwitches;
+        expect(sent).toEqual({ dryRunMode: true, financialCommands: true, crmContextInjection: false });
+        expect(res.body.featureSwitches).toEqual({ dryRunMode: true, financialCommands: true, crmContextInjection: false });
+    });
+
+    it('#1129: PUT mudando financialCommands registra auditoria financeira (trilha de quem acionou)', async () => {
+        // get() (pré-update) indica financial OFF; update habilita → mudou OFF→ON.
+        mockUiConfigService.get.mockReturnValue({ featureSwitches: { financialCommands: false } });
+        mockUiConfigService.update.mockReturnValueOnce({
+            featureSwitches: { dryRunMode: false, financialCommands: true, crmContextInjection: true },
+        });
+        const res = await request(app).put('/api/ui-config').send({ featureSwitches: { financialCommands: true } });
+        expect(res.status).toBe(200);
+        const financialAudit = (adminAuditService.record as any).mock.calls.find(
+            (c: any[]) => c[0].action === 'ui-config.feature-switches.financial',
+        );
+        expect(financialAudit).toBeTruthy();
+        expect(financialAudit[0]).toMatchObject({ target: 'financialCommands' });
+        expect(financialAudit[0].changes.financialCommands).toEqual({ before: false, after: true });
+        expect(financialAudit[0].summary).toContain('HABILITADOS');
+    });
+
+    it('#1129: PUT mantendo financialCommands igual NÃO registra auditoria financeira', async () => {
+        mockUiConfigService.get.mockReturnValue({ featureSwitches: { financialCommands: true } });
+        mockUiConfigService.update.mockReturnValueOnce({
+            featureSwitches: { dryRunMode: false, financialCommands: true, crmContextInjection: true },
+        });
+        const res = await request(app).put('/api/ui-config').send({ featureSwitches: { financialCommands: true } });
+        expect(res.status).toBe(200);
+        const financialAudit = (adminAuditService.record as any).mock.calls.find(
+            (c: any[]) => c[0].action === 'ui-config.feature-switches.financial',
+        );
+        expect(financialAudit).toBeUndefined();
+    });
+
+    it('#1129: PUT sem mexer no financialCommands NÃO registra auditoria financeira', async () => {
+        mockUiConfigService.update.mockReturnValueOnce({
+            featureSwitches: { dryRunMode: true, financialCommands: false, crmContextInjection: true },
+        });
+        const res = await request(app).put('/api/ui-config').send({ featureSwitches: { dryRunMode: true } });
+        expect(res.status).toBe(200);
+        const financialAudit = (adminAuditService.record as any).mock.calls.find(
+            (c: any[]) => c[0].action === 'ui-config.feature-switches.financial',
+        );
+        expect(financialAudit).toBeUndefined();
+    });
+
+    it('#1129: PUT com tipo errado em featureSwitches.dryRunMode retorna 400', async () => {
+        const res = await request(app).put('/api/ui-config').send({ featureSwitches: { dryRunMode: 'sim' } });
         expect(res.status).toBe(400);
         expect(mockUiConfigService.update).not.toHaveBeenCalled();
     });
