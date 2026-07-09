@@ -27,6 +27,35 @@ vi.mock('../../context/DolibarrContext', () => ({
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
+// Socket-fake controlável para o teste de tempo real (#1222). Por padrão
+// holder.current = null, preservando o comportamento dos suites existentes
+// (que não dependem de real-time via socket).
+const sock = vi.hoisted(() => {
+    const listeners: Record<string, Set<(payload: unknown) => void>> = {};
+    const socket = {
+        on(event: string, handler: (payload: unknown) => void) {
+            (listeners[event] ||= new Set()).add(handler);
+        },
+        off(event: string, handler: (payload: unknown) => void) {
+            listeners[event]?.delete(handler);
+        },
+        emit(event: string, payload: unknown) {
+            listeners[event]?.forEach((h) => h(payload));
+        },
+        listenerCount(event: string) {
+            return listeners[event]?.size ?? 0;
+        },
+        reset() {
+            for (const k of Object.keys(listeners)) delete listeners[k];
+        },
+    };
+    const holder: { current: typeof socket | null } = { current: null };
+    return { socket, holder };
+});
+vi.mock('../../contexts/WhatsAppContext', () => ({
+    useWhatsAppContext: () => ({ socket: sock.holder.current }),
+}));
+
 const mockedUseDolibarr = useDolibarr as unknown as ReturnType<typeof vi.fn>;
 
 // --- helpers ---
@@ -64,6 +93,9 @@ function setPending(actions: ActionSeed[]) {
 }
 
 const resetDefaults = () => {
+    // isola os suites existentes do comportamento de tempo real (socket=null)
+    sock.holder.current = null;
+    sock.socket.reset();
     vi.mocked(getPendingActions).mockResolvedValue([]);
     vi.mocked(getActionHistory).mockResolvedValue([]);
     vi.mocked(getApprovalStats).mockResolvedValue(null);
@@ -314,5 +346,114 @@ describe('ApprovalDashboard — auth do app, gate de admin e feedback 403 (#1221
         expect(vi.mocked(getPendingActions)).toHaveBeenCalled();
         expect(fetchSpy).not.toHaveBeenCalled();
         fetchSpy.mockRestore();
+    });
+});
+
+describe('ApprovalDashboard — tempo real via socket (#1222)', () => {
+    const SOCK_EVENTS = ['approval_pending', 'approval_executed', 'approval_rejected', 'approval_failed'];
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        sock.socket.reset();
+        sock.holder.current = sock.socket;
+        vi.mocked(getPendingActions).mockResolvedValue([]);
+        vi.mocked(getActionHistory).mockResolvedValue([]);
+        vi.mocked(getApprovalStats).mockResolvedValue({
+            pending: 0, approved: 0, rejected: 0, executed: 0, failed: 0,
+        });
+        mockedUseDolibarr.mockReturnValue({ config: { currentUser: { admin: 1 } }, previewTarget: null });
+    });
+
+    it('inscreve os 4 eventos ao montar e remove TODOS ao desmontar (sem memory leak)', async () => {
+        const { unmount } = render(<ApprovalDashboard />);
+        await screen.findByText('Aprovações Pendentes');
+
+        for (const e of SOCK_EVENTS) expect(sock.socket.listenerCount(e)).toBe(1);
+
+        unmount();
+
+        for (const e of SOCK_EVENTS) expect(sock.socket.listenerCount(e)).toBe(0);
+    });
+
+    it('approval_pending re-busca apenas pendentes (sem tocar histórico/stats)', async () => {
+        vi.mocked(getPendingActions).mockResolvedValueOnce([
+            makeAction({ id: 'p1', description: 'Ação P1' }) as unknown as PendingAction,
+        ]);
+        render(<ApprovalDashboard />);
+        await waitFor(() => expect(getPendingActions).toHaveBeenCalledTimes(1));
+
+        // nova ação chega via socket
+        vi.mocked(getPendingActions).mockResolvedValueOnce([
+            makeAction({ id: 'p1', description: 'Ação P1' }) as unknown as PendingAction,
+            makeAction({ id: 'p2', description: 'Nova via socket' }) as unknown as PendingAction,
+        ]);
+
+        sock.socket.emit('approval_pending', { actionId: 'p2' });
+
+        await waitFor(() => expect(getPendingActions).toHaveBeenCalledTimes(2));
+        // histórico e stats não foram re-buscados (continuam com 1 — só o fetch inicial)
+        expect(getActionHistory).toHaveBeenCalledTimes(1);
+        expect(getApprovalStats).toHaveBeenCalledTimes(1);
+        // item aparece na lista sem reload manual
+        expect(await screen.findByText('Nova via socket')).toBeInTheDocument();
+    });
+
+    it('approval_executed re-busca pendentes + histórico + stats', async () => {
+        render(<ApprovalDashboard />);
+        await waitFor(() => expect(getPendingActions).toHaveBeenCalledTimes(1));
+
+        sock.socket.emit('approval_executed', { actionId: 'a1', success: true });
+
+        await waitFor(() => expect(getPendingActions).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(getActionHistory).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(getApprovalStats).toHaveBeenCalledTimes(2));
+    });
+
+    it('approval_rejected re-busca pendentes + histórico + stats', async () => {
+        render(<ApprovalDashboard />);
+        await waitFor(() => expect(getPendingActions).toHaveBeenCalledTimes(1));
+
+        sock.socket.emit('approval_rejected', { actionId: 'a1', rejectedBy: 'u1' });
+
+        await waitFor(() => expect(getPendingActions).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(getActionHistory).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(getApprovalStats).toHaveBeenCalledTimes(2));
+    });
+
+    it('approval_failed re-busca pendentes + histórico + stats', async () => {
+        render(<ApprovalDashboard />);
+        await waitFor(() => expect(getPendingActions).toHaveBeenCalledTimes(1));
+
+        sock.socket.emit('approval_failed', { actionId: 'a1', error: 'boom' });
+
+        await waitFor(() => expect(getPendingActions).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(getActionHistory).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(getApprovalStats).toHaveBeenCalledTimes(2));
+    });
+
+    it('item que deixou de ser pendente some da lista após approval_executed (sem reload manual)', async () => {
+        vi.mocked(getPendingActions).mockResolvedValueOnce([
+            makeAction({ id: 'p1', description: 'Some depois' }) as unknown as PendingAction,
+        ]);
+        render(<ApprovalDashboard />);
+        await screen.findByText('Some depois');
+
+        vi.mocked(getPendingActions).mockResolvedValueOnce([]); // não é mais pendente
+        sock.socket.emit('approval_executed', { actionId: 'p1' });
+
+        await waitFor(() => expect(screen.queryByText('Some depois')).not.toBeInTheDocument());
+    });
+
+    it('navegar pra fora e voltar não duplica listeners (1 por evento)', async () => {
+        const { unmount } = render(<ApprovalDashboard />);
+        await screen.findByText('Aprovações Pendentes');
+        for (const e of SOCK_EVENTS) expect(sock.socket.listenerCount(e)).toBe(1);
+
+        unmount();
+        for (const e of SOCK_EVENTS) expect(sock.socket.listenerCount(e)).toBe(0);
+
+        render(<ApprovalDashboard />);
+        await screen.findByText('Aprovações Pendentes');
+        for (const e of SOCK_EVENTS) expect(sock.socket.listenerCount(e)).toBe(1);
     });
 });

@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { logger } from '../../utils/logger';
 import { useDolibarr } from '../../context/DolibarrContext';
+import { useApprovalSocket } from '../../hooks/useApprovalSocket';
 import {
     getPendingActions,
     getActionHistory,
@@ -197,6 +198,34 @@ export function ApprovalDashboard() {
         const interval = setInterval(fetchData, 30000);
         return () => clearInterval(interval);
     }, [fetchData]);
+
+    // Refetch leve (apenas pendentes) — usado no evento approval_pending para evitar
+    // um refresh completo (histórico/stats) a cada nova ação enfileirada.
+    const fetchPending = useCallback(async () => {
+        try {
+            const pending = await getPendingActions();
+            setPendingActions(pending);
+        } catch (error) {
+            log.error('Erro ao recarregar pendentes (socket):', error);
+        }
+    }, []);
+
+    // Tempo real (#1222): os 4 eventos de socket da fila disparam refetch seletivo
+    // sem reload manual. approval_pending => só pendentes; eventos terminais
+    // (executed/rejected/failed) => pendentes + histórico + stats (o item deixa de
+    // ser pendente, saindo da fila e aparecendo no histórico ao re-buscar).
+    useApprovalSocket((event) => {
+        switch (event) {
+            case 'approval_pending':
+                fetchPending();
+                break;
+            case 'approval_executed':
+            case 'approval_rejected':
+            case 'approval_failed':
+                fetchData();
+                break;
+        }
+    });
 
     // Approve action (admin-only no backend)
     const handleApprove = async (actionId: string) => {
