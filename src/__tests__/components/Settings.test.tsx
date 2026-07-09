@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Settings from '../../components/Settings';
 import { ConfirmProvider } from '../../hooks/useConfirm';
-import type { DolibarrConfig } from '../../types';
+import type { DolibarrConfig, DolibarrUser } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
 
 const mockLogout = vi.fn();
@@ -256,5 +256,47 @@ describe('Settings — editar perfil com nome/sobrenome (#596)', () => {
         await waitFor(() => {
             expect(screen.getByText('Novo User')).toBeTruthy();
         });
+    });
+});
+
+describe('Settings — sanitiza note_public no Meu Perfil (#1081)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    const renderWithNote = (note_public: string) => {
+        const config: DolibarrConfig = {
+            ...baseConfig,
+            currentUser: { ...baseConfig.currentUser, note_public } as DolibarrUser,
+        };
+        return render(
+            <MemoryRouter>
+                <ConfirmProvider>
+                    <Settings config={config} />
+                </ConfirmProvider>
+            </MemoryRouter>
+        );
+    };
+
+    it('remove <script> e handlers on* do note_public (XSS armazenado)', () => {
+        const { container } = renderWithNote(
+            '<img src=x onerror="alert(1)"><script>alert(2)</script>'
+        );
+
+        const notasBlock = Array.from(container.querySelectorAll('div')).find((d) =>
+            d.textContent?.includes('Notas Públicas')
+        )?.parentElement;
+
+        const html = container.innerHTML.toLowerCase();
+        expect(html).not.toContain('<script');
+        expect(html).not.toContain('onerror');
+        expect(notasBlock).toBeTruthy();
+    });
+
+    it('preserva HTML de formatação legítimo do note_public (sem regressão)', () => {
+        const { container } = renderWithNote('<b>Importante</b> e <i>ok</i>');
+
+        expect(container.innerHTML).toContain('<b>Importante</b>');
+        expect(container.innerHTML).toContain('<i>ok</i>');
     });
 });
