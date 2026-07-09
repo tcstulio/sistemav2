@@ -81,3 +81,45 @@ describe('#1154 P0-2 — timer-bomba do worktreeLock: caminho FELIZ não dispara
         expect(svc.store.tasks[42].status).toBe('running'); // task inocente intacta (não virou failed)
     });
 });
+
+describe('#1114 — worktreeLock: timeout na aquisição NÃO envenena a cadeia (auto-cura)', () => {
+    beforeEach(() => {
+        svc.stopPolling?.();
+        svc.store = { tasks: {} };
+        svc.sweepOrphanedOpencode = vi.fn(async () => false);
+        svc.cleanStaleLocks = vi.fn();
+        svc.save = vi.fn();
+        svc.recordEvent = vi.fn();
+        svc.emitStatus = vi.fn();
+        vi.useFakeTimers();
+        vi.clearAllTimers();
+    });
+    afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); });
+
+    it('holder pendurado → a próxima aquisição falha no watchdog MAS a seguinte se recupera', async () => {
+        // Simula o incidente 2026-07-06: um holder de um run anterior morreu/restartou SEM chamar
+        // release() (ex.: entre o `prev = this.worktreeLock` e o `release()` do finally). Resultado:
+        // `this.worktreeLock` ficou apontando p/ uma promise que NUNCA resolve. Antes do fix #1114,
+        // a aquisição abaixo rejeitaria SEM chamar release() → TODA task seguinte também daria
+        // timeout (a CASCATA que travou o robô por ~3h). O catch do fix libera o elo → auto-cura.
+        svc.worktreeLock = new Promise<void>(() => {});
+        // Task "running" que o watchdog (ao disparar) marcará failed — confirma que o caminho de timeout rodou.
+        svc.store.tasks = { 42: { issueNumber: 42, status: 'running' } };
+
+        // Aquisição B aguarda o holder morto → só resta o watchdog, que rejeita. O `.catch` anexado
+        // ANTES do disparo do timer evita unhandled-rejection spurious e captura o erro p/ asserção.
+        const failing = svc.withWorktreeLock('exec #42', async () => 'nunca-chega-a-rodar');
+        const failingAssertion = expect(failing).rejects.toThrow(/worktreeLock timeout/);
+        const watchdogMs = (Number(process.env.TASKRUNNER_MAX_TASK_WALL_MIN) || 180) * 60 * 1000 + 5 * 60_000;
+        await vi.advanceTimersByTimeAsync(watchdogMs + 60_000);
+        await failingAssertion;
+        // Efeito colateral esperado do watchdog: a task inocente foi marcada failed.
+        expect(svc.store.tasks[42].status).toBe('failed');
+
+        // CRÍTICO #1114 / CRITÉRIO DE ACEITE: o catch do timeout chamou release() → o elo QUE B CRIOU
+        // está resolvido → this.worktreeLock deixou de apontar p/ a promise morta. A aquisição C
+        // (prev já resolvido) adquire imediatamente, roda o fn e retorna — a cadeia se auto-curou.
+        const recovered = await svc.withWorktreeLock('exec #43', async () => 'cadeia-recuperada');
+        expect(recovered).toBe('cadeia-recuperada');
+    });
+});
