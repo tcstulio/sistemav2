@@ -46,7 +46,8 @@ const OPENCODE_TIMEOUT_MS = (Number(process.env.TASKRUNNER_OPENCODE_TIMEOUT_MIN)
 // Watchdog de tempo TOTAL por task (backstop). Precisa cobrir vários runs de opencode (synthesis:
 // até 6; cumulativo: até MAX_ROUNDS). Configurável via env (default 3h) — suba junto com o timeout
 // por round, senão o watchdog mata antes de a task longa terminar.
-const MAX_TASK_WALL_MS = (Number(process.env.TASKRUNNER_MAX_TASK_WALL_MIN) || 180) * 60 * 1000;
+// Exportado p/ os testes usarem o EXATO valor do watchdog (evita rederivar de env e flakiness entre suites).
+export const MAX_TASK_WALL_MS = (Number(process.env.TASKRUNNER_MAX_TASK_WALL_MIN) || 180) * 60 * 1000;
 
 // Gate por DELTA (Fase 0 item 2-3): ON por padrão; TASKRUNNER_DELTA_GATE=0 volta ao gate estrito antigo.
 // Só reprova por erro de tsc NOVO em arquivo que a task TOCOU (+ global novo). Ver gateDelta.ts.
