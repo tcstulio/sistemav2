@@ -52,4 +52,15 @@ describe('#1189 — getDailyRoundsStatus expõe consumo REAL do orçamento diár
         svc.dailyRounds = { date: today(), count: 3 };
         expect(svc.getDailyRoundsStatus()).toEqual({ dailyRoundsUsed: 3, dailyRoundBudget: 200 });
     });
+
+    it('reflete N rodadas contabilizadas pelo Runner via getDailyRoundsStatus (used === N)', () => {
+        svc.getAutomationConfig = vi.fn(() => ({ autoPlay: false, dailyRoundBudget: 200 }));
+        const task: any = { issueNumber: 42, roundsUsed: 0 };
+        svc.dailyRounds = { date: '', count: 0 };
+        const N = 4;
+        for (let i = 0; i < N; i++) svc.accountRound(task);
+        const status = svc.getDailyRoundsStatus();
+        expect(status.dailyRoundsUsed).toBe(N);
+        expect(status.dailyRoundBudget).toBe(200);
+    });
 });
