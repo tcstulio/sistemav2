@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import HRList from '../../components/HRList';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import * as HRAdmin from '../../services/api/hrAdmin';
+import { useDolibarr } from '../../context/DolibarrContext';
 
 vi.mock('../../context/DolibarrContext', () => ({
     useDolibarr: vi.fn(() => ({
@@ -152,5 +153,102 @@ describe('HRList — confirm/toast refactor (#335)', () => {
             expect(confirmSpy).not.toHaveBeenCalled();
         });
         expect(alertSpy).not.toHaveBeenCalled();
+    });
+});
+
+describe('HRList — classes Tailwind literais por tema (#1094)', () => {
+    const setThemeColor = (themeColor: string) => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: {
+                apiUrl: 'http://test/api',
+                apiKey: 'key',
+                themeColor,
+                darkMode: false,
+            },
+            currentUser: { id: 'u1', login: 'admin' },
+        } as any);
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        setThemeColor('indigo');
+    });
+
+    const tabButton = (label: RegExp) =>
+        screen.getByText(label, { selector: 'button' }).closest('button') as HTMLElement;
+
+    it('a aba ativa (Equipe) usa classes literais da cor de tema (indigo)', () => {
+        renderWithProvider();
+
+        const teamTab = tabButton(/Equipe/);
+        expect(teamTab.className).toContain('border-indigo-600');
+        expect(teamTab.className).toContain('text-indigo-600');
+        expect(teamTab.className).toContain('dark:border-indigo-400');
+        expect(teamTab.className).toContain('dark:text-indigo-400');
+        expect(teamTab.className).not.toContain('${');
+        expect(teamTab.className).not.toContain('undefined');
+    });
+
+    it('as abas inativas usam classes neutras (sem cor de tema)', () => {
+        renderWithProvider();
+
+        const groupsTab = tabButton(/Grupos/);
+        expect(groupsTab.className).toContain('border-transparent');
+        expect(groupsTab.className).not.toContain('border-indigo-600');
+        expect(groupsTab.className).not.toContain('text-indigo-600');
+    });
+
+    it('trocar de aba move as classes ativas para a nova aba', () => {
+        renderWithProvider();
+
+        const groupsTab = tabButton(/Grupos/);
+        expect(groupsTab.className).not.toContain('border-indigo-600');
+
+        fireEvent.click(groupsTab);
+
+        const groupsTabAfter = tabButton(/Grupos/);
+        const teamTabAfter = tabButton(/Equipe/);
+        expect(groupsTabAfter.className).toContain('border-indigo-600');
+        expect(groupsTabAfter.className).toContain('text-indigo-600');
+        expect(teamTabAfter.className).not.toContain('border-indigo-600');
+    });
+
+    it('o botão de ação "Novo Membro" usa classes literais do botão primário (indigo)', () => {
+        renderWithProvider();
+
+        const btn = screen.getByRole('button', { name: /novo membro/i });
+        expect(btn.className).toContain('bg-indigo-600');
+        expect(btn.className).toContain('hover:bg-indigo-700');
+        expect(btn.className).toContain('text-white');
+        expect(btn.className).not.toContain('${');
+        expect(btn.className).not.toContain('undefined');
+    });
+
+    it('aplica a cor correta para tema diferente (emerald) na aba e no botão', () => {
+        setThemeColor('emerald');
+        renderWithProvider();
+
+        const teamTab = tabButton(/Equipe/);
+        expect(teamTab.className).toContain('border-emerald-600');
+        expect(teamTab.className).toContain('text-emerald-600');
+        expect(teamTab.className).not.toContain('border-indigo-600');
+
+        const btn = screen.getByRole('button', { name: /novo membro/i });
+        expect(btn.className).toContain('bg-emerald-600');
+        expect(btn.className).toContain('hover:bg-emerald-700');
+        expect(btn.className).not.toContain('bg-indigo-600');
+    });
+
+    it('cor de tema desconhecida cai no fallback indigo (aba + botão)', () => {
+        setThemeColor('cor-que-nao-existe');
+        renderWithProvider();
+
+        const teamTab = tabButton(/Equipe/);
+        expect(teamTab.className).toContain('border-indigo-600');
+        expect(teamTab.className).not.toContain('undefined');
+
+        const btn = screen.getByRole('button', { name: /novo membro/i });
+        expect(btn.className).toContain('bg-indigo-600');
+        expect(btn.className).not.toContain('undefined');
     });
 });
