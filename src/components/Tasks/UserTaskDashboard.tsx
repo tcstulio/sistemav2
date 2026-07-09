@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { MS_PER_DAY } from '../../utils/dateUtils';
 import { TaskTimeDialog } from './TaskTimeDialog';
 import { TimeAnalysisDashboard } from './TimeAnalysisDashboard';
 import { TaskAssistantModal } from './TaskAssistantModal';
@@ -294,11 +295,11 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
         if (!date) return null;
         if (progress === 100) return 'text-green-600';
 
-        const now = Date.now() / 1000;
+        const now = Date.now();
         const diff = date - now;
 
         if (diff < 0) return 'text-red-600 font-bold'; // Overdue
-        if (diff < 86400 * 2) return 'text-orange-600'; // Due soon (2 days)
+        if (diff < 2 * MS_PER_DAY) return 'text-orange-600'; // Due soon (2 days)
         return 'text-slate-500';
     };
 
@@ -398,7 +399,7 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                             <div className={`flex items-center gap-1 text-xs ${deadlineColor}`}>
                                 <Calendar className="h-3 w-3" />
                                 <span>
-                                    {format(new Date(task.date_end * 1000), "d 'de' MMM", { locale: ptBR })}
+                                    {format(new Date(task.date_end), "d 'de' MMM", { locale: ptBR })}
                                 </span>
                             </div>
                         )}
@@ -920,7 +921,7 @@ const UserTaskDashboard: React.FC<UserTaskDashboardProps> = ({ onNavigate }) => 
                                                                 </span>
                                                                 {task.date_end && (
                                                                     <span className={`text-[10px] ${getDeadlineStatus(task.date_end, task.progress)}`}>
-                                                                        {format(new Date(task.date_end * 1000), "d MMM", { locale: ptBR })}
+                                                                        {format(new Date(task.date_end), "d MMM", { locale: ptBR })}
                                                                     </span>
                                                                 )}
                                                             </div>
