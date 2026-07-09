@@ -22,6 +22,14 @@ export interface PersistedJob {
     label?: string;
     /** Expiração (epoch ms). Undefined enquanto o job não termina (sem limite de tempo). */
     expiresAt?: number;
+    /** #1011: epoch ms em que o job saiu de queued -> running. */
+    startedAt?: number;
+    /** #1011: último sinal de vida reportado pelo agente (tool-call/progresso). */
+    lastHeartbeat?: number;
+    /** #1011: provider atualmente em uso pelo job (ex.: 'gemini','minimax'). */
+    currentProvider?: string | null;
+    /** #1011: progresso 0..100 reportado pelo agente. */
+    progressPct?: number;
 }
 
 /**
