@@ -10,6 +10,7 @@ import { getUiConfig, updateUiConfig } from '../services/uiConfigService';
 import { setOrgBranding } from '../hooks/useOrgBranding';
 import { useConfirm } from '../hooks/useConfirm';
 import { notifyError } from '../utils/notifyError';
+import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { MenuConfigEditor } from './admin/MenuConfigEditor';
 import { DashboardConfigEditor } from './admin/DashboardConfigEditor';
 import { ScreenPermissionsEditor } from './admin/ScreenPermissionsEditor';
@@ -288,7 +289,7 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                                     {localConfig.currentUser?.note_public && (
                                         <div className="mt-2 text-sm">
                                             <span className="text-slate-500 font-medium">Notas Públicas:</span>
-                                            <div className="p-2 mt-1 bg-slate-50 dark:bg-slate-900 rounded border border-slate-100 dark:border-slate-800" dangerouslySetInnerHTML={{ __html: localConfig.currentUser.note_public }} />
+                                            <div className="p-2 mt-1 bg-slate-50 dark:bg-slate-900 rounded border border-slate-100 dark:border-slate-800" dangerouslySetInnerHTML={{ __html: sanitizeHtml(localConfig.currentUser.note_public) }} />
                                         </div>
                                     )}
                                 </div>
