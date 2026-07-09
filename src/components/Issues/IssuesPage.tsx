@@ -4,7 +4,7 @@ import { TaskService, Task } from '../../services/taskService';
 import { PrecheckBadge, PrecheckAnalysis, RejectedPrecheckBanner } from '../TaskCard';
 import { BoardHeader } from '../BoardHeader';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
-import { AlertCircle, Bug, Sparkles, Shield, Wrench, TestTube, GitMerge, Loader2, Eye, CheckCircle, XCircle, RotateCcw, MessageSquare, Trash2, Pencil, Terminal, ExternalLink, Search, Tag, CircleDot, Clock, ThumbsUp, Star, Play, RefreshCw, ShieldOff, Plus, Filter, LayoutGrid, List, GripVertical } from 'lucide-react';
+import { AlertCircle, Bug, Sparkles, Shield, Wrench, TestTube, GitMerge, Loader2, Eye, CheckCircle, XCircle, RotateCcw, MessageSquare, Trash2, Pencil, Terminal, ExternalLink, Search, Tag, CircleDot, Clock, ThumbsUp, Star, Play, RefreshCw, ShieldOff, Plus, Filter, LayoutGrid, List, GripVertical, ChevronDown, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useConfirm } from '../../hooks/useConfirm';
@@ -14,6 +14,7 @@ import {
     scoreTooltip, phaseSuffix, resolveCardStatusDisplay, holdReasonLabel,
     type ScoreThresholds,
 } from './taskBadge';
+import { isEpic, progressFromSubtasks, EpicProgressBar, type EpicProgress } from './epicAggregation';
 import { extractJudgeNegatives, deriveFeedbackHistory } from './feedbackDraft';
 import DiffViewer from '../TasksBoard/DiffViewer';
 import TaskConsole from '../TasksBoard/TaskConsole';
@@ -394,11 +395,14 @@ const SortableMiniCard: React.FC<{
     onConsole: (task: Task) => void;
     onHistory: (task: Task) => void;
     onFeedback: (task: Task) => void;
+    onGotoEpic: (n: number) => void;
     isAdmin: boolean;
     queuePosition?: number;
     isDragOverlay?: boolean;
     scoreThresholds: ScoreThresholds;
-}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, onFeedback, isAdmin, queuePosition, isDragOverlay, scoreThresholds }) => {
+    epicProgress?: EpicProgress;
+    highlighted?: boolean;
+}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, onFeedback, onGotoEpic, isAdmin, queuePosition, isDragOverlay, scoreThresholds, epicProgress, highlighted }) => {
     const cfg = resolveCardStatusDisplay(task, STATUS_CONFIG);
     const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
     const canKill = ['running', 'fixing'].includes(task.status);
@@ -423,10 +427,12 @@ const SortableMiniCard: React.FC<{
         <div
             ref={isSortable ? setNodeRef : undefined}
             style={style}
+            id={isEpic(task) ? `epic-card-${task.issueNumber}` : undefined}
+            data-testid={isEpic(task) ? `epic-card-${task.issueNumber}` : `task-card-${task.issueNumber}`}
             {...(isSortable ? attributes : {})}
             {...(isSortable ? listeners : {})}
             onClick={() => onHistory(task)}
-            className={`p-3 rounded-lg border cursor-pointer ${isActive ? 'border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-900/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'} transition-all hover:shadow-sm hover:border-indigo-300 dark:hover:border-indigo-700 ${isDragging ? 'ring-2 ring-indigo-400 shadow-lg' : ''}`}
+            className={`p-3 rounded-lg border cursor-pointer ${isActive ? 'border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-900/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'} transition-all hover:shadow-sm hover:border-indigo-300 dark:hover:border-indigo-700 ${isDragging ? 'ring-2 ring-indigo-400 shadow-lg' : ''} ${highlighted ? 'ring-2 ring-indigo-400 shadow-lg' : ''}`}
         >
             <div className="flex items-center gap-2 mb-1 flex-wrap">
                 {isSortable && isAdmin && (
@@ -441,6 +447,22 @@ const SortableMiniCard: React.FC<{
                 <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${cfg.color} ${cfg.bg}`} data-testid={`task-status-chip-${task.issueNumber}`}>
                     {cfg.icon} {cfg.label}{phSuffix ? ` — ${phSuffix}` : ''}
                 </span>
+                {isEpic(task) && (
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300" data-testid={`epic-badge-${task.issueNumber}`}>
+                        <Sparkles size={9} /> Épica
+                    </span>
+                )}
+                {!isEpic(task) && task.parentEpic && (
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onGotoEpic(task.parentEpic!); }}
+                        title={`Ir para a épica #${task.parentEpic}`}
+                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors"
+                        data-testid={`task-epic-link-${task.issueNumber}`}
+                    >
+                        ↳ #{task.parentEpic}
+                    </button>
+                )}
                 {outcomeTime && (
                     <span className="text-[9px] text-slate-400 ml-auto">{outcomeTime}</span>
                 )}
@@ -456,6 +478,11 @@ const SortableMiniCard: React.FC<{
                 <PrecheckBadge report={task.precheckReport} compact />
             </div>
             <h4 className="text-xs font-medium text-slate-800 dark:text-white leading-tight mb-1 line-clamp-2">{task.title}</h4>
+            {isEpic(task) && epicProgress && (
+                <div className="mb-1" data-testid={`epic-progress-${task.issueNumber}`}>
+                    <EpicProgressBar progress={epicProgress} compact />
+                </div>
+            )}
             {holdReason && (
                 <p className="text-[10px] text-amber-600 dark:text-amber-400 mb-1 line-clamp-2" data-testid={`task-hold-${task.issueNumber}`}>
                     <Clock size={8} className="inline mr-0.5" /> {holdReason}
@@ -539,10 +566,11 @@ const TaskListCard: React.FC<{
     onConsole: (task: Task) => void;
     onHistory: (task: Task) => void;
     onFeedback: (task: Task) => void;
+    onGotoEpic: (n: number) => void;
     isAdmin: boolean;
     queuePosition?: number;
     scoreThresholds: ScoreThresholds;
-}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, onFeedback, isAdmin, queuePosition, scoreThresholds }) => {
+}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, onFeedback, onGotoEpic, isAdmin, queuePosition, scoreThresholds }) => {
     const [expanded, setExpanded] = useState(false);
     const cfg = resolveCardStatusDisplay(task, STATUS_CONFIG);
     const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
@@ -566,6 +594,17 @@ const TaskListCard: React.FC<{
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color} ${cfg.bg}`} data-testid={`task-status-chip-${task.issueNumber}`}>
                             {cfg.icon} {cfg.label}{phSuffix ? ` — ${phSuffix}` : ''}
                         </span>
+                        {!isEpic(task) && task.parentEpic && (
+                            <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); onGotoEpic(task.parentEpic!); }}
+                                title={`Ir para a épica #${task.parentEpic}`}
+                                className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors"
+                                data-testid={`task-epic-link-${task.issueNumber}`}
+                            >
+                                ↳ épica #{task.parentEpic}
+                            </button>
+                        )}
                         {outcomeTime && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] text-slate-500 bg-slate-100 dark:bg-slate-800" data-testid="outcome-time">
                                 <Clock size={10} /> {outcomeTime}
@@ -674,6 +713,115 @@ const TaskListCard: React.FC<{
     );
 };
 
+/**
+ * Card de ÉPICA na visão de lista (#1178). Container expansível que mostra o progresso
+ * agregado (X/Y subtasks merged) e, ao expandir (chevron), lista as subtasks com status
+ * e link. É o "agrupamento visual completo" que a visão kanban não tem (lá as subtasks
+ * seguem o fluxo real pelas colunas).
+ *
+ * Renderizada como <div> (não <Card>) para podermos anexar id (alvo do scroll a partir do
+ * chip "↳ épica #N" das subtasks) e o estado de destaque (highlighted).
+ */
+const EpicListCard: React.FC<{
+    task: Task;
+    subtasks: Task[];
+    progress: EpicProgress;
+    onHistory: (task: Task) => void;
+    highlighted?: boolean;
+}> = ({ task, subtasks, progress, onHistory, highlighted }) => {
+    const [expanded, setExpanded] = useState(false);
+    const cfg = resolveCardStatusDisplay(task, STATUS_CONFIG);
+    const Chevron = expanded ? ChevronDown : ChevronRight;
+
+    return (
+        <div
+            id={`epic-card-${task.issueNumber}`}
+            data-testid={`epic-card-${task.issueNumber}`}
+            className={`relative bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 rounded-xl shadow-sm overflow-hidden transition-all ${highlighted ? 'ring-2 ring-indigo-400 shadow-lg' : ''}`}
+        >
+            {/* Faixa lateral diferenciando a épica das tasks comuns. */}
+            <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-indigo-500 to-purple-500" />
+            <div className="p-4 pl-5">
+                <div className="flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300" data-testid={`epic-badge-${task.issueNumber}`}>
+                                <Sparkles size={10} /> Épica
+                            </span>
+                            <span className="text-xs font-mono text-slate-400">#{task.issueNumber}</span>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color} ${cfg.bg}`}>
+                                {cfg.icon} {cfg.label}
+                            </span>
+                            <span className="ml-auto text-[10px] font-mono text-slate-500 dark:text-slate-400" data-testid={`epic-progress-text-${task.issueNumber}`}>
+                                {progress.merged}/{progress.total} merged · {progress.percent}%
+                            </span>
+                        </div>
+                        <h3 className="font-semibold text-sm text-slate-800 dark:text-white truncate cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400" onClick={() => onHistory(task)} data-testid={`epic-title-${task.issueNumber}`}>
+                            {task.title}
+                        </h3>
+                        <div className="mt-2" data-testid={`epic-progress-${task.issueNumber}`}>
+                            <EpicProgressBar progress={progress} />
+                        </div>
+                        {/* Breakdown de fases — leitura rápida do andamento agregado. */}
+                        <div className="flex items-center gap-3 mt-1.5 text-[10px] text-slate-400 flex-wrap">
+                            <span>{progress.total} subtasks</span>
+                            {progress.pending > 0 && <span className="text-slate-500">{progress.pending} na fila</span>}
+                            {progress.inProgress > 0 && <span className="text-blue-500">{progress.inProgress} ativas</span>}
+                            {progress.failed > 0 && <span className="text-red-500">{progress.failed} com problema</span>}
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setExpanded(v => !v)}
+                        aria-expanded={expanded}
+                        aria-label={expanded ? `Recolher épica #${task.issueNumber}` : `Expandir épica #${task.issueNumber}`}
+                        data-testid={`epic-toggle-${task.issueNumber}`}
+                        className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    >
+                        <Chevron size={16} />
+                    </button>
+                </div>
+
+                {expanded && (
+                    <div className="mt-3 space-y-1" data-testid={`epic-subtasks-${task.issueNumber}`}>
+                        {subtasks.length === 0 ? (
+                            <p className="text-xs text-slate-400 px-1 py-2">Nenhuma subtask vinculada a esta épica.</p>
+                        ) : subtasks.map(s => {
+                            const scfg = resolveCardStatusDisplay(s, STATUS_CONFIG);
+                            return (
+                                <div
+                                    key={s.issueNumber}
+                                    className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                                    onClick={() => onHistory(s)}
+                                    data-testid={`epic-subtask-${task.issueNumber}-${s.issueNumber}`}
+                                >
+                                    <span className="text-slate-300 dark:text-slate-600 shrink-0">↳</span>
+                                    <span className="text-[10px] font-mono text-slate-400 shrink-0">#{s.issueNumber}</span>
+                                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${scfg.color} ${scfg.bg}`}>
+                                        {scfg.icon} {scfg.label}
+                                    </span>
+                                    <span className="text-xs text-slate-700 dark:text-slate-200 truncate flex-1">{s.title}</span>
+                                    {s.prUrl && (
+                                        <a
+                                            href={s.prUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={e => e.stopPropagation()}
+                                            className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline shrink-0"
+                                        >
+                                            PR #{s.prNumber} <ExternalLink size={8} className="inline" />
+                                        </a>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
 const CreateTaskModal: React.FC<{
     onClose: () => void;
     onCreated: () => void;
@@ -778,6 +926,10 @@ const IssuesPage: React.FC = () => {
     // config, não hardcoded. Fallback sensato (8/9) se a config não carregar.
     const [scoreThresholds, setScoreThresholds] = useState<ScoreThresholds>(() => resolveScoreThresholds(null));
 
+    // #1178: épica destacada momentaneamente quando o usuário clica no chip "↳ épica #N" de uma
+    // subtask (scroll + anel). Limpa sozinho após um tempo para não ficar "preso".
+    const [highlightedEpic, setHighlightedEpic] = useState<number | null>(null);
+
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
     const loadIssues = useCallback(async () => {
@@ -863,6 +1015,57 @@ const IssuesPage: React.FC = () => {
         }
         return result;
     }, [periodFilteredTasks, taskTab, statusFilter, taskSearch]);
+
+    // #1178: agregação épica→subtasks. Calculada sobre o store COMPLETO (tasks), não sobre o
+    // período/filtros, para o progresso agregado ser sempre correto (critério de aceite:
+    // "contando apenas subtasks dela") — mesmo quando uma subtask terminal cai fora da janela
+    // de período visível. Memoizada: só recompute quando `tasks` mudar (ok para 300+ tasks).
+    const tasksByNumber = useMemo(() => {
+        const m = new Map<number, Task>();
+        for (const t of tasks) m.set(t.issueNumber, t);
+        return m;
+    }, [tasks]);
+
+    const subTasksByEpic = useMemo(() => {
+        const map = new Map<number, Task[]>();
+        for (const t of tasks) {
+            if (!isEpic(t)) continue;
+            const ids = t.subTasks && t.subTasks.length > 0 ? t.subTasks : null;
+            let subs: Task[];
+            if (ids) {
+                subs = [];
+                for (const id of ids) {
+                    const s = tasksByNumber.get(id);
+                    if (s) subs.push(s);
+                }
+            } else {
+                subs = tasks.filter(x => x.parentEpic === t.issueNumber);
+            }
+            map.set(t.issueNumber, subs);
+        }
+        return map;
+    }, [tasks, tasksByNumber]);
+
+    const epicProgressById = useMemo(() => {
+        const m = new Map<number, EpicProgress>();
+        for (const [n, subs] of subTasksByEpic) m.set(n, progressFromSubtasks(subs));
+        return m;
+    }, [subTasksByEpic]);
+
+    // #1178: rola até a épica e a destaca. Busca pelo id do card (epic-card-<n>) — funciona
+    // tanto na visão de lista (EpicListCard) quanto na kanban (mini-card de épica).
+    const gotoEpic = useCallback((n: number) => {
+        const el = document.getElementById(`epic-card-${n}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setHighlightedEpic(n);
+    }, []);
+
+    // Limpa o destaque após 2.5s (efeito de "pulse" no anel da épica).
+    useEffect(() => {
+        if (highlightedEpic == null) return;
+        const t = setTimeout(() => setHighlightedEpic(null), 2500);
+        return () => clearTimeout(t);
+    }, [highlightedEpic]);
 
     const statusCounts = useMemo(() => {
         const c: Record<string, number> = {};
@@ -1244,9 +1447,12 @@ const IssuesPage: React.FC = () => {
                                                             onConsole={setConsoleTask}
                                                             onHistory={setHistoryTask}
                                                             onFeedback={setFeedbackTask}
+                                                            onGotoEpic={gotoEpic}
                                                             isAdmin={isAdmin}
                                                             queuePosition={getQueuePosition(task)}
                                                             scoreThresholds={scoreThresholds}
+                                                            epicProgress={isEpic(task) ? epicProgressById.get(task.issueNumber) : undefined}
+                                                            highlighted={highlightedEpic === task.issueNumber}
                                                         />
                                                     ))}
                                                 </div>
@@ -1269,7 +1475,18 @@ const IssuesPage: React.FC = () => {
                                 </Card>
                             )}
                             {filteredTasks.map(task => (
-                                <TaskListCard key={task.issueNumber} task={task} onAction={handleTaskAction} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} onHistory={setHistoryTask} onFeedback={setFeedbackTask} isAdmin={isAdmin} queuePosition={getQueuePosition(task)} scoreThresholds={scoreThresholds} />
+                                isEpic(task) ? (
+                                    <EpicListCard
+                                        key={task.issueNumber}
+                                        task={task}
+                                        subtasks={subTasksByEpic.get(task.issueNumber) ?? []}
+                                        progress={epicProgressById.get(task.issueNumber) ?? progressFromSubtasks([])}
+                                        onHistory={setHistoryTask}
+                                        highlighted={highlightedEpic === task.issueNumber}
+                                    />
+                                ) : (
+                                    <TaskListCard key={task.issueNumber} task={task} onAction={handleTaskAction} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} onHistory={setHistoryTask} onFeedback={setFeedbackTask} onGotoEpic={gotoEpic} isAdmin={isAdmin} queuePosition={getQueuePosition(task)} scoreThresholds={scoreThresholds} />
+                                )
                             ))}
                         </div>
                     )}
