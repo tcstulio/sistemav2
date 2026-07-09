@@ -273,12 +273,18 @@ router.post('/generate-reply-async', (req, res) => {
 });
 
 // Polling do status/resultado de um job do assistente.
+// #1012: TTL persistido — job expirado devolve 404 { reason: 'expired' }; job vivo inclui
+// alive=true para o cliente distinguir do término normal.
 router.get('/jobs/:id', (req, res) => {
-    const job = aiJobService.get(req.params.id);
-    if (!job) return res.status(404).json({ error: 'Job não encontrado ou expirado.' });
-    if (job.status === 'done') return res.json({ status: 'done', ...(job.result || {}) });
-    if (job.status === 'error') return res.json({ status: 'error', error: job.error });
-    res.json({ status: job.status, queueAhead: job.queueAhead });
+    const lookup = aiJobService.get(req.params.id);
+    if (!lookup.ok) {
+        if (lookup.reason === 'expired') return res.status(404).json({ reason: 'expired' });
+        return res.status(404).json({ error: 'Job não encontrado.' });
+    }
+    const job = lookup.job;
+    if (job.status === 'done') return res.json({ status: 'done', alive: true, ...(job.result || {}) });
+    if (job.status === 'error') return res.json({ status: 'error', alive: true, error: job.error });
+    res.json({ status: job.status, alive: true, queueAhead: lookup.queueAhead });
 });
 
 // Resolve um deeplink de prefill (HITL #57 Peça 2/3): o frontend manda o token, o backend
