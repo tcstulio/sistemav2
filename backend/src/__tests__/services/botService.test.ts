@@ -65,6 +65,11 @@ vi.mock('../../services/itauApiService', () => ({
     },
 }));
 
+// #1129: /pagar e /pix agora são gated por isFinancialCommandsEnabled (kill-switch de admin).
+// Default do mock = habilitado (preserva os testes existentes que exercitam os comandos).
+const mockFeatureSwitches = vi.hoisted(() => ({ isFinancialCommandsEnabled: vi.fn(() => true) }));
+vi.mock('../../config/featureSwitches', () => mockFeatureSwitches);
+
 import { botService } from '../../services/botService';
 import { messageService } from '../../services/legacy/messageService';
 import { aiService } from '../../services/aiService';
@@ -79,6 +84,8 @@ import { itauApiService } from '../../services/itauApiService';
 describe('BotService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        // #1129: comandos financeiros habilitados por padrão nos testes (comportamento histórico).
+        mockFeatureSwitches.isFinancialCommandsEnabled.mockReturnValue(true);
         (storeService.getSessionSettings as any).mockReturnValue({
             autoReply: true,
             historyLimit: 10,
@@ -265,6 +272,32 @@ describe('BotService', () => {
 
             expect(messageService.sendText).toHaveBeenCalledWith(
                 'sess1', '5511999999999@c.us', expect.stringContaining('Valor inválido')
+            );
+        });
+
+        it('#1129: /pagar bloqueado quando comandos financeiros estão desligados (kill-switch)', async () => {
+            mockFeatureSwitches.isFinancialCommandsEnabled.mockReturnValue(false);
+            (approvalService.createPendingAction as any).mockResolvedValue({ id: 'action-1' });
+            (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+
+            await botService.processMessage(createMessage({ body: '/pagar ' + '1'.repeat(48) }));
+
+            expect(approvalService.createPendingAction).not.toHaveBeenCalled();
+            expect(messageService.sendText).toHaveBeenCalledWith(
+                'sess1', '5511999999999@c.us', expect.stringContaining('Comandos financeiros desativados')
+            );
+        });
+
+        it('#1129: /pix bloqueado quando comandos financeiros estão desligados (kill-switch)', async () => {
+            mockFeatureSwitches.isFinancialCommandsEnabled.mockReturnValue(false);
+            (approvalService.createPendingAction as any).mockResolvedValue({ id: 'action-1' });
+            (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+
+            await botService.processMessage(createMessage({ body: '/pix 11999999999 100.00' }));
+
+            expect(approvalService.createPendingAction).not.toHaveBeenCalled();
+            expect(messageService.sendText).toHaveBeenCalledWith(
+                'sess1', '5511999999999@c.us', expect.stringContaining('Comandos financeiros desativados')
             );
         });
 

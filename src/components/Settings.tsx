@@ -17,6 +17,7 @@ import { ScreenPermissionsEditor } from './admin/ScreenPermissionsEditor';
 import { NotificationConfigEditor } from './admin/NotificationConfigEditor';
 import { TaskAutomationEditor } from './admin/TaskAutomationEditor';
 import { BackgroundAutomationSwitches } from './admin/BackgroundAutomationSwitches';
+import { SecurityFeatureSwitches } from './admin/SecurityFeatureSwitches';
 import { GovernanceEditor } from './admin/GovernanceEditor';
 import { AgentBootstrapEditor } from './admin/AgentBootstrapEditor';
 import { PageLayout, PageHeader, Card, Button, Input, Modal } from './ui';
@@ -407,6 +408,9 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
 
                 {/* Kill-switches de automações de fundo (#1204) — so admin */}
                 {isAdmin && settingsTab === 'admin' && <BackgroundAutomationSwitches isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
+
+                {/* Kill-switches perigosos: DRY_RUN / FINANCIAL_COMMANDS / CRM_CONTEXT (#1129) — so admin */}
+                {isAdmin && settingsTab === 'admin' && <SecurityFeatureSwitches isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
                 {/* Governanca de acoes do agente (HITL de irreversiveis) — so admin */}
                 {isAdmin && settingsTab === 'admin' && <GovernanceEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}

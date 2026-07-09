@@ -10,6 +10,7 @@ import { interApiService } from './interApiService';
 import { itauApiService } from './itauApiService';
 import { logger } from '../utils/logger';
 import { FEATURES } from '../config/features';
+import { isFinancialCommandsEnabled } from '../config/featureSwitches';
 
 const log = logger.child('BotService');
 
@@ -402,6 +403,12 @@ class BotService {
                 // ===== COMANDOS FINANCEIROS (com aprovação) =====
 
                 case '/pagar': {
+                    // #1129: kill-switch de admin (env + toggle de UI) — desligado em incidente bloqueia /pagar.
+                    if (!isFinancialCommandsEnabled()) {
+                        await messageService.sendText(sessionId, chatId,
+                            '🔒 *Comandos financeiros desativados*\n\nO pagamento via bot está temporariamente indisponível. Contate um administrador.');
+                        return true;
+                    }
                     const args = body.split(' ').slice(1);
                     const codigoBarras = args.join('').replace(/\D/g, ''); // Remove non-digits
 
@@ -439,6 +446,12 @@ class BotService {
                 }
 
                 case '/pix': {
+                    // #1129: kill-switch de admin (env + toggle de UI) — desligado em incidente bloqueia /pix.
+                    if (!isFinancialCommandsEnabled()) {
+                        await messageService.sendText(sessionId, chatId,
+                            '🔒 *Comandos financeiros desativados*\n\nO envio de PIX via bot está temporariamente indisponível. Contate um administrador.');
+                        return true;
+                    }
                     const args = body.split(' ').slice(1);
 
                     if (args.length < 2) {

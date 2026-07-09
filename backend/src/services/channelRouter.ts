@@ -8,6 +8,7 @@
  */
 
 import { FEATURES, isUsingMoltbot } from '../config/features';
+import { isDryRunEnabled } from '../config/featureSwitches';
 import { moltbotGateway, MessageResult as MoltbotMessageResult } from './moltbotGateway';
 import { messageService as legacyMessageService } from './legacy/messageService';
 import { sessionService } from './legacy/sessionService';
@@ -159,7 +160,7 @@ class ChannelRouter {
         const session = this.resolveSession(sessionId);
 
         // Dry-run mode
-        if (FEATURES.DRY_RUN_MODE) {
+        if (isDryRunEnabled()) {
             log.info(`DRY RUN - WhatsApp to ${recipient}: ${content.substring(0, 50)}...`);
             return {
                 success: true,
@@ -217,7 +218,7 @@ class ChannelRouter {
     ): Promise<SendResult> {
         const session = this.resolveSession(sessionId);
 
-        if (FEATURES.DRY_RUN_MODE) {
+        if (isDryRunEnabled()) {
             log.info(`DRY RUN - WhatsApp file to ${recipient}: ${filename}`);
             return { success: true, messageId: `dry-run-${Date.now()}`, provider: 'dry-run' };
         }
@@ -270,7 +271,7 @@ class ChannelRouter {
     ): Promise<SendResult> {
         const session = this.resolveSession(sessionId);
 
-        if (FEATURES.DRY_RUN_MODE) {
+        if (isDryRunEnabled()) {
             log.info(`DRY RUN - WhatsApp voice to ${recipient}`);
             return { success: true, messageId: `dry-run-${Date.now()}`, provider: 'dry-run' };
         }
@@ -310,7 +311,7 @@ class ChannelRouter {
         body: string,
         accountId?: string
     ): Promise<SendResult> {
-        if (FEATURES.DRY_RUN_MODE) {
+        if (isDryRunEnabled()) {
             log.info(`DRY RUN - Email to ${recipient}: ${subject}`);
             return { success: true, messageId: `dry-run-${Date.now()}`, provider: 'dry-run' };
         }
