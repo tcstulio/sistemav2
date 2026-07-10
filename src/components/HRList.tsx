@@ -25,6 +25,7 @@ import { ExpenseScannerModal } from './HR/modals/ExpenseScannerModal';
 import { ExpenseDetailModal } from './HR/modals/ExpenseDetailModal';
 import { GroupModal } from './HR/modals/GroupModal';
 import * as HRAdmin from '../services/api/hrAdmin';
+import { deleteUser } from '../services/api/core';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useUsers, useExpenseReports, useLeaveRequests, useJobPositions, useCandidates, useTasks, useTickets, useProjects, useGroups, useExpenseReportLines, useExpenseReportPayments } from '../hooks/dolibarr';
 import { useConfirm } from '../hooks/useConfirm';
@@ -355,9 +356,12 @@ const HRList: React.FC<HRListProps> = ({
     };
 
     const handleDeleteUser = async (id: string) => {
-        if (!(await confirm('Tem certeza que deseja excluir este usuário?'))) return;
+        if (!(await confirm({ message: 'Tem certeza que deseja excluir este usuário? Esta ação não pode ser desfeita.', danger: true }))) return;
         try {
-            toast.info('Funcionalidade de exclusão pendente de implementação na API.');
+            await deleteUser(config, id);
+            toast.success('Usuário excluído com sucesso.');
+            setSelectedUser(null);
+            onRefresh?.();
         } catch (e) { notifyError('Excluir usuário', e); }
     };
 
