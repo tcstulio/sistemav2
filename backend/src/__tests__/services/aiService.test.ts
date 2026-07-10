@@ -102,7 +102,7 @@ vi.mock('../../services/scraperService', () => ({
     },
 }));
 
-import { aiService, LocalProvider, aggregateInvoicesToMonthlySeries, estimateTokens, pruneContext, toolCallSignature, stableStringify, evaluateConclusionGate, looksLikeUnfinishedAnnouncement, MAX_CONCLUSION_NUDGES } from '../../services/aiService';
+import { aiService, LocalProvider, aggregateInvoicesToMonthlySeries, estimateTokens, pruneContext, toolCallSignature, stableStringify, evaluateConclusionGate, looksLikeUnfinishedAnnouncement, MAX_CONCLUSION_NUDGES, MARCIANO_IDENTITY_PROMPT } from '../../services/aiService';
 import { GoogleGenAI } from '@google/genai';
 import { dolibarrService } from '../../services/dolibarrService';
 import { ScraperService } from '../../services/scraperService';
@@ -1122,5 +1122,111 @@ describe('LocalProvider.generateReply (#957) — seenToolCalls + gate de conclus
         // Não devolveu o anúncio cru; foi para a síntese.
         expect(result.text).toBe('Resumo sintético do que foi coletado.');
         expect(result.text).not.toContain('Vou verificar');
+    });
+});
+
+// ── #1002: system prompt do Marciano (identidade, tom e regras de comportamento) ─────
+describe('MARCIANO_IDENTITY_PROMPT (#1002)', () => {
+    it('abre com a apresentação concisa exata pedida pelo usuário (1ª linha)', () => {
+        const firstLine = MARCIANO_IDENTITY_PROMPT.split('\n')[0];
+        expect(MARCIANO_IDENTITY_PROMPT.startsWith('Sou a IA da CoolGroove')).toBe(true);
+        expect(firstLine).toBe('Sou a IA da CoolGroove — mas pode me chamar de Marciano. Seu assistente pessoal para o dia a dia no sistema.');
+    });
+
+    it('orienta apresentação concisa começando com "Sou a IA da CoolGroove" (≤ 3 linhas)', () => {
+        expect(MARCIANO_IDENTITY_PROMPT).toContain('Sou a IA da CoolGroove');
+        expect(MARCIANO_IDENTITY_PROMPT.toLowerCase()).toContain('3 linhas');
+    });
+
+    it('removeu o texto-base verboso antigo', () => {
+        expect(MARCIANO_IDENTITY_PROMPT).not.toContain('agente de inteligência artificial');
+        expect(MARCIANO_IDENTITY_PROMPT).not.toContain('agente IA do CoolGroove');
+    });
+
+    it('proíbe concordância cega sem evidência (anti-sycophancy)', () => {
+        expect(MARCIANO_IDENTITY_PROMPT.toLowerCase()).toContain('você tem razão');
+        expect(MARCIANO_IDENTITY_PROMPT.toLowerCase()).toContain('verificar evidência');
+        // instrui a investigar quando não tem certeza
+        expect(MARCIANO_IDENTITY_PROMPT.toLowerCase()).toContain('não verifiquei ainda');
+    });
+
+    it('proíbe "anunciar e parar": ferramenta deve vir como JSON na mesma resposta', () => {
+        const lower = MARCIANO_IDENTITY_PROMPT.toLowerCase();
+        expect(lower).toContain('anuncie e pare');
+        expect(lower).toContain('mesma resposta');
+        expect(lower).toContain('só o json');
+    });
+
+    it('mantém Português do Brasil como idioma e o nome "Marciano"', () => {
+        expect(MARCIANO_IDENTITY_PROMPT).toMatch(/Português do Brasil/i);
+        expect(MARCIANO_IDENTITY_PROMPT).toContain('Marciano');
+    });
+});
+
+describe('LocalProvider.generateReply (#1002) — system prompt do Marciano no loop', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        aiService.setConfig('local', 'http://localhost:11434/v1', undefined, 'llama3');
+    });
+
+    it('envia a identidade concisa + as três regras no system message ao modelo', async () => {
+        (axios.post as any).mockResolvedValue({
+            data: { choices: [{ message: { content: 'Sou a IA da CoolGroove — mas pode me chamar de Marciano.' } }], usage: {} },
+        });
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'quem é você?' } as any], 'ctx');
+
+        // A resposta curta foi repassada ao usuário.
+        expect(result.text).toContain('Sou a IA da CoolGroove');
+
+        const sys = (axios.post as any).mock.calls[0][1].messages[0].content;
+        // Identidade + 3 regras (#1002) presentes no prompt enviado ao modelo.
+        expect(sys).toContain('Sou a IA da CoolGroove');
+        expect(sys.toLowerCase()).toContain('verificar evidência');
+        expect(sys.toLowerCase()).toContain('anuncie e pare');
+        // Comportamento intacto: contexto e ferramentas seguem presentes.
+        expect(sys).toContain('CONTEXTO');
+        expect(sys).toMatch(/ferramenta/i);
+    });
+
+    it('substituiu o texto-base verboso antigo do cabeçalho', async () => {
+        (axios.post as any).mockResolvedValue({
+            data: { choices: [{ message: { content: 'ok' } }], usage: {} },
+        });
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        await provider.generateReply([{ role: 'user', parts: 'oi' } as any], 'ctx');
+
+        const sys = (axios.post as any).mock.calls[0][1].messages[0].content;
+        // O cabeçalho antigo era "Você é o Marciano — agente IA do CoolGroove (ERP Dolibarr). Use Português."
+        expect(sys).not.toContain('Você é o Marciano — agente IA do CoolGroove');
+    });
+});
+
+describe('GoogleProvider.generateReply (#1002) — system prompt do Marciano no loop', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('envia a identidade concisa + as regras de comportamento no prompt ao modelo', async () => {
+        const mockGen = vi.fn().mockResolvedValue({ text: 'Sou a IA da CoolGroove — mas pode me chamar de Marciano.' });
+        setupGoogleMock(mockGen);
+
+        const result = await aiService.generateReply([{ role: 'user', parts: 'quem é você?' } as any], 'ctx');
+
+        expect(mockGen).toHaveBeenCalled();
+        // A resposta curta foi repassada ao usuário.
+        expect(result.text).toContain('Sou a IA da CoolGroove');
+
+        const callArg = mockGen.mock.calls[0][0];
+        const promptText: string = typeof callArg.contents === 'string'
+            ? callArg.contents
+            : (callArg.contents?.[0]?.parts?.[0]?.text || '');
+        // Identidade + regras (#1002) presentes no prompt enviado ao modelo.
+        expect(promptText).toContain('Sou a IA da CoolGroove');
+        expect(promptText).toContain('Marciano');
+        expect(promptText).toContain('você tem razão');
+        expect(promptText).toContain('anuncie e pare');
+        // O cabeçalho verboso antigo foi removido.
+        expect(promptText).not.toContain('agente de inteligência artificial');
     });
 });
