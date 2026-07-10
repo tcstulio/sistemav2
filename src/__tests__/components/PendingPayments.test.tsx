@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { PendingPayments } from '../../components/PendingPayments';
@@ -187,5 +187,71 @@ describe('PendingPayments', () => {
 
         expect(screen.getAllByText('FF-001').length).toBeGreaterThan(0);
         expect(screen.queryByText('FA-001')).not.toBeInTheDocument();
+    });
+});
+
+// ------------------------------------------------------------------
+// #1083 — pendências sem vencimento explícito NÃO ficam atrasadas no dia
+// ------------------------------------------------------------------
+describe('PendingPayments — unidade de data do prazo padrão (#1083)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2024-06-15T12:00:00Z'));
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('fatura sem date_lim_reglement usa +30 dias (ms) e NÃO fica atrasada no dia da emissão', () => {
+        const todayMs = new Date('2024-06-15T12:00:00Z').getTime();
+        const invoiceNoDue = [
+            {
+                id: '99',
+                ref: 'FA-NODUE',
+                socid: '5',
+                project_id: undefined,
+                total_ttc: 200,
+                statut: '1',
+                date: todayMs, // ms (como entregue pelo mapper toTimestamp)
+                paye: '0',
+                date_modification: todayMs,
+            },
+        ];
+        vi.mocked(useInvoices).mockReturnValue({ data: invoiceNoDue, isLoading: false, error: null } as any);
+
+        render(<PendingPayments />);
+
+        // O item aparece na lista
+        expect(screen.getAllByText('FA-NODUE').length).toBeGreaterThan(0);
+        // Não deve ser marcado como atrasado (prazo padrão = hoje + 30 dias)
+        expect(screen.queryByText(/atrasado/i)).not.toBeInTheDocument();
+    });
+
+    it('fatura sem date_lim_reglement vence em ~30 dias após a emissão (ms)', () => {
+        const todayMs = new Date('2024-06-15T12:00:00Z').getTime();
+        const invoiceNoDue = [
+            {
+                id: '100',
+                ref: 'FA-DUE30',
+                socid: '5',
+                project_id: undefined,
+                total_ttc: 100,
+                statut: '1',
+                date: todayMs,
+                paye: '0',
+                date_modification: todayMs,
+            },
+        ];
+        vi.mocked(useInvoices).mockReturnValue({ data: invoiceNoDue, isLoading: false, error: null } as any);
+
+        render(<PendingPayments />);
+
+        // 30 dias após 15/jun = 15/jul → formatado em UTC como DD/MM/YYYY
+        // formatDateOnly força interpretação UTC do timestamp (ms)
+        const expectedDue = new Date(todayMs + 30 * 86_400_000)
+            .toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
+        expect(screen.getAllByText(expectedDue).length).toBeGreaterThan(0);
     });
 });

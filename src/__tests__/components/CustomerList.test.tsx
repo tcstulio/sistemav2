@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { toast } from 'sonner';
 import { CustomerList } from '../../components/CustomerList';
+import { useCustomers } from '../../hooks/dolibarr';
+import { useCustomerMutations } from '../../hooks/useMutations';
 import type { ThirdParty } from '../../types';
 
 vi.mock('sonner', () => ({
@@ -278,5 +281,82 @@ describe('CustomerList', () => {
         expect(screen.queryByText('Informações')).not.toBeInTheDocument();
         // Deve ter aberto o modal de confirmação de exclusão.
         expect(await screen.findByText(/tem certeza que deseja excluir/i)).toBeInTheDocument();
+    });
+});
+
+// ── #1095: ao salvar a edição do cliente, o estado/cache não deve ser mutado ──
+//    diretamente (Object.assign(selectedCustomer, editForm)). Deve-se criar um
+//    novo objeto via setSelectedCustomer imutável, preservando o cache original.
+describe('CustomerList — Atualização imutável ao salvar edição (#1095)', () => {
+    let acme: ThirdParty;
+    let updateMutate: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        acme = {
+            id: '1',
+            name: 'ACME Ltda',
+            client: '1',
+            status: '1',
+            fournisseur: '0',
+            email: 'acme@example.com',
+            town: 'São Paulo',
+        };
+        updateMutate = vi.fn().mockResolvedValue({});
+        vi.mocked(useCustomers).mockReturnValue({
+            data: [
+                acme,
+                { id: '2', name: 'Prospecto XYZ', client: '2', status: '1', fournisseur: '0' } as ThirdParty,
+            ],
+            isLoading: false,
+            refetch: vi.fn(),
+        } as any);
+        vi.mocked(useCustomerMutations).mockReturnValue({
+            createCustomer: { mutateAsync: vi.fn() },
+            updateCustomer: { mutateAsync: updateMutate },
+        } as any);
+    });
+
+    it('salva edição criando novo objeto de estado (sem mutar o cache) e reflete na UI', async () => {
+        const user = userEvent.setup();
+        const { container } = render(<CustomerList />);
+
+        // Abre o detalhe do cliente
+        await user.click(screen.getByText('ACME Ltda'));
+        expect(await screen.findByText('Informações')).toBeInTheDocument();
+
+        // Abre o modal de edição (botão de lápis, sem texto acessível)
+        const editBtn = container.querySelector('.lucide-pencil')!.closest('button')!;
+        await user.click(editBtn);
+        expect(await screen.findByText('Editar Cliente')).toBeInTheDocument();
+
+        // Altera o nome
+        const nomeInput = screen.getByLabelText('Nome');
+        await user.clear(nomeInput);
+        await user.type(nomeInput, 'ACME Renomeado LTDA');
+
+        // Salva
+        await user.click(screen.getByRole('button', { name: 'Salvar Alterações' }));
+
+        await waitFor(() => {
+            // mutateAsync chamado com id + editForm contendo o novo nome
+            expect(updateMutate).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    id: '1',
+                    data: expect.objectContaining({ name: 'ACME Renomeado LTDA' }),
+                })
+            );
+            expect(toast.success).toHaveBeenCalledWith('Cliente atualizado com sucesso');
+        });
+
+        // CRÍTICO (#1095): o objeto original do cache NÃO foi mutado.
+        // Antes do fix o código fazia `Object.assign(selectedCustomer, editForm)`.
+        expect(acme.name).toBe('ACME Ltda');
+
+        // A UI atualizou via estado imutável (novo objeto): o cabeçalho do
+        // detalhe passa a exibir o novo nome.
+        await waitFor(() => {
+            expect(screen.getByRole('heading', { name: 'ACME Renomeado LTDA' })).toBeInTheDocument();
+        });
     });
 });

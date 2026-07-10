@@ -65,6 +65,15 @@ vi.mock('../../services/itauApiService', () => ({
     },
 }));
 
+// #1129: /pagar e /pix agora são gated por isFinancialCommandsEnabled (kill-switch de admin).
+// A injeção de contexto CRM é gated por isCrmContextInjectionEnabled (kill-switch de privacidade).
+// Default do mock = ambos habilitados (preserva os testes existentes).
+const mockFeatureSwitches = vi.hoisted(() => ({
+    isFinancialCommandsEnabled: vi.fn(() => true),
+    isCrmContextInjectionEnabled: vi.fn(() => true),
+}));
+vi.mock('../../config/featureSwitches', () => mockFeatureSwitches);
+
 import { botService } from '../../services/botService';
 import { messageService } from '../../services/legacy/messageService';
 import { aiService } from '../../services/aiService';
@@ -79,6 +88,9 @@ import { itauApiService } from '../../services/itauApiService';
 describe('BotService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        // #1129: comandos financeiros habilitados por padrão nos testes (comportamento histórico).
+        mockFeatureSwitches.isFinancialCommandsEnabled.mockReturnValue(true);
+        mockFeatureSwitches.isCrmContextInjectionEnabled.mockReturnValue(true);
         (storeService.getSessionSettings as any).mockReturnValue({
             autoReply: true,
             historyLimit: 10,
@@ -268,6 +280,32 @@ describe('BotService', () => {
             );
         });
 
+        it('#1129: /pagar bloqueado quando comandos financeiros estão desligados (kill-switch)', async () => {
+            mockFeatureSwitches.isFinancialCommandsEnabled.mockReturnValue(false);
+            (approvalService.createPendingAction as any).mockResolvedValue({ id: 'action-1' });
+            (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+
+            await botService.processMessage(createMessage({ body: '/pagar ' + '1'.repeat(48) }));
+
+            expect(approvalService.createPendingAction).not.toHaveBeenCalled();
+            expect(messageService.sendText).toHaveBeenCalledWith(
+                'sess1', '5511999999999@c.us', expect.stringContaining('Comandos financeiros desativados')
+            );
+        });
+
+        it('#1129: /pix bloqueado quando comandos financeiros estão desligados (kill-switch)', async () => {
+            mockFeatureSwitches.isFinancialCommandsEnabled.mockReturnValue(false);
+            (approvalService.createPendingAction as any).mockResolvedValue({ id: 'action-1' });
+            (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+
+            await botService.processMessage(createMessage({ body: '/pix 11999999999 100.00' }));
+
+            expect(approvalService.createPendingAction).not.toHaveBeenCalled();
+            expect(messageService.sendText).toHaveBeenCalledWith(
+                'sess1', '5511999999999@c.us', expect.stringContaining('Comandos financeiros desativados')
+            );
+        });
+
         it('handles /saldo command with Inter', async () => {
             (interApiService.getSaldo as any).mockResolvedValue({ disponivel: 5000 });
             (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
@@ -446,6 +484,32 @@ describe('BotService', () => {
             await botService.processMessage(createMessage({ body: 'Hello' }));
 
             expect(aiService.generateReply).toHaveBeenCalled();
+        });
+
+        it('#1129: não injeta dados do cliente no LLM quando CRM context está desligado (kill-switch de privacidade)', async () => {
+            mockFeatureSwitches.isCrmContextInjectionEnabled.mockReturnValue(false);
+            (storeService.getChatSettings as any).mockReturnValue({});
+            (storeService.getSessionSettings as any).mockReturnValue({
+                autoReply: true,
+                historyLimit: 10,
+                autoReplyContext: 'You are a helpful assistant.',
+                signatureName: 'Bot',
+            });
+            (schedulerService.getActiveFlow as any).mockReturnValue(null);
+            (schedulerService.checkConfirmation as any).mockReturnValue(null);
+            (schedulerService.checkFlowTrigger as any).mockReturnValue(null);
+            (messageService.getMessages as any).mockResolvedValue([]);
+            (aiService.generateReply as any).mockResolvedValue('AI response');
+            (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+            (sessionService.sendTyping as any).mockResolvedValue(undefined);
+
+            await botService.processMessage(createMessage({ body: 'Hello' }));
+
+            // Kill-switch ativo: nenhuma busca de cliente, nenhum dado no prompt do LLM.
+            expect(dolibarrService.getThirdPartyByPhone).not.toHaveBeenCalled();
+            expect(dolibarrService.getCustomerContext).not.toHaveBeenCalled();
+            const ctx = (aiService.generateReply as any).mock.calls[0][1];
+            expect(ctx).not.toContain('DADOS DO CLIENTE');
         });
 
         it('handles history with group messages', async () => {

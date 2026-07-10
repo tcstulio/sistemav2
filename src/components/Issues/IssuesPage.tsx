@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { GithubService, GitHubIssue, IssueStats } from '../../services/githubService';
 import { TaskService, Task } from '../../services/taskService';
-import { PrecheckBadge, PrecheckAnalysis, RejectedPrecheckBanner } from '../TaskCard';
+import { PrecheckBadge, PrecheckAnalysis, RejectedPrecheckBanner, TaskAutomationChips } from '../TaskCard';
 import { BoardHeader } from '../BoardHeader';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
 import { AlertCircle, Bug, Sparkles, Shield, Wrench, TestTube, GitMerge, Loader2, Eye, CheckCircle, XCircle, RotateCcw, MessageSquare, Trash2, Pencil, Terminal, ExternalLink, Search, Tag, CircleDot, Clock, ThumbsUp, Star, Play, RefreshCw, ShieldOff, Plus, Filter, LayoutGrid, List, GripVertical, ChevronDown, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useConfirm } from '../../hooks/useConfirm';
+import { useOrgBranding } from '../../hooks/useOrgBranding';
 import { getUiConfig } from '../../services/uiConfigService';
 import {
     resolveScoreThresholds, scoreTone, scoreTextClasses, scoreBadgeClasses,
@@ -409,6 +410,7 @@ const SortableMiniCard: React.FC<{
     const isSortable = task.status === 'pending';
     const phSuffix = phaseSuffix(task);
     const holdReason = holdReasonLabel(task);
+    const maxRoundsPerTask = useOrgBranding()?.taskAutomation?.maxRoundsPerTask;
 
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
         id: `task-${task.issueNumber}`,
@@ -476,6 +478,7 @@ const SortableMiniCard: React.FC<{
                     </span>
                 )}
                 <PrecheckBadge report={task.precheckReport} compact />
+                <TaskAutomationChips task={task} maxRoundsPerTask={maxRoundsPerTask} />
             </div>
             <h4 className="text-xs font-medium text-slate-800 dark:text-white leading-tight mb-1 line-clamp-2">{task.title}</h4>
             {isEpic(task) && epicProgress && (
@@ -578,6 +581,7 @@ const TaskListCard: React.FC<{
     const outcomeTime = formatOutcomeTime(task.status, task);
     const phSuffix = phaseSuffix(task);
     const holdReason = holdReasonLabel(task);
+    const maxRoundsPerTask = useOrgBranding()?.taskAutomation?.maxRoundsPerTask;
 
     return (
         <Card className="relative overflow-hidden cursor-pointer hover:border-indigo-200 dark:hover:border-indigo-700 transition-colors" onClick={() => onHistory(task)}>
@@ -622,6 +626,7 @@ const TaskListCard: React.FC<{
                         {task.labels.filter(l => l !== 'opencode-task').map(l => (
                             <span key={l} className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">{l}</span>
                         ))}
+                        <TaskAutomationChips task={task} maxRoundsPerTask={maxRoundsPerTask} />
                     </div>
                     <h3 className="font-semibold text-sm text-slate-800 dark:text-white truncate flex items-center gap-1.5">
                         <span className="truncate">{task.title}</span>

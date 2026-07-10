@@ -35,6 +35,13 @@ export interface AutomationSwitchesConfig {
     alertCronEnabled: boolean;
 }
 
+// #1129 — Kill-switches perigosos expostos como toggles de admin (Integrações/Segurança).
+export interface FeatureSwitchesConfig {
+    dryRunMode: boolean;          // impede envio real de mensagens (anti-spam de incidente)
+    financialCommands: boolean;   // habilita /pagar e /pix (movimentam dinheiro real)
+    crmContextInjection: boolean; // injeta dados do cliente no LLM (privacidade)
+}
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
@@ -48,6 +55,7 @@ export interface UiConfig {
     taskNotificationsExternalEnabled?: boolean;
     taskAutomation?: TaskAutomationConfig;
     automationSwitches?: AutomationSwitchesConfig;
+    featureSwitches?: FeatureSwitchesConfig;
     version?: number; // concorrência otimista (Central de Permissões)
     appAccessGroupId?: string; // grupo Dolibarr usado p/ "Habilitar acesso ao app" (carrega o direito 342)
 }
