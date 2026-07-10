@@ -972,7 +972,7 @@ class TaskRunnerService {
         }
     }
 
-    private scheduleExec(task: Task, branch: string, activeStatus: TaskStatus = 'running'): void {
+    private scheduleExec(task: Task, branch: string, activeStatus: TaskStatus = 'running', opts?: { skipPlanner?: boolean }): void {
         task.mergeHoldReason = undefined; // #1154 P1 item 10: novo exec (fix/redo/feedback) tira a task do hold de merge
         task.mergeHoldKind = undefined;   // #1168: limpa também a classificação do hold
         const willQueue = this.pendingExecs > 0;
@@ -998,6 +998,11 @@ class TaskRunnerService {
                     this.recordEvent(task, 'task_killed', 'Execução abortada: task cancelada enquanto aguardava na fila.', { abortedQueued: 'cancelled' });
                     return;
                 }
+                if (opts?.skipPlanner) {
+                    // #1113: re-enfileirar SEM re-planejar — reusa o plano anterior (queuePriority/planReason).
+                    // Caminho de recuperação em lote: evita N chamadas LLM síncronas sob rajada de redos.
+                    this.recordEvent(task, 'planner_decision', `Planner: plano reutilizado (sem re-planejar)${task.planReason ? ` — ${task.planReason}` : ''}.`, { reusedPlan: true, priority: task.queuePriority });
+                } else {
                 const { taskPlannerService } = require('./taskPlannerService');
                 this.recordEvent(task, 'planner_started', 'Planner: analisando viabilidade...');
                 this.emitLog(task.issueNumber, 'info', 'Planner: analisando viabilidade da task...');
@@ -1056,6 +1061,7 @@ class TaskRunnerService {
                     }
                     return; // épica não é executada como task normal (excluída da fila por kind:'epic')
                 }
+                } // fim do else (skipPlanner) — #1113
             } catch (plannerErr: any) {
                 log.warn(`Planner error for #${task.issueNumber}, proceeding without planner: ${plannerErr.message}`);
             }
@@ -3430,10 +3436,13 @@ Return ONLY a JSON:
         if (!task) throw new Error(`Task #${issueNumber} not found`);
 
         if (task.prNumber) {
-            try {
-                await gh(['pr', 'close', String(task.prNumber), '--repo', REPO, '--comment', 'Redoing task'], { timeout: 15000 });
-                this.recordEvent(task, 'pr_closed', `PR #${task.prNumber} fechado para redo`, { prNumber: task.prNumber, reason: 'redo' });
-            } catch { /* PR might not exist */ }
+            // #1113: fecha o PR em BACKGROUND (fire-and-forget) — não bloqueia o handler.
+            // Uma rajada de redos não pode esperar N×(gh pr close) síncronos nem estourar o timeout
+            // do cliente. O reset do estado (prNumber/prHistory) é imediato; o fechamento é best-effort.
+            const prToClose = task.prNumber;
+            gh(['pr', 'close', String(prToClose), '--repo', REPO, '--comment', 'Redoing task'], { timeout: 15000 })
+                .then(() => this.recordEvent(task, 'pr_closed', `PR #${prToClose} fechado para redo`, { prNumber: prToClose, reason: 'redo' }))
+                .catch(() => { /* PR might not exist */ });
             task.prHistory = task.prHistory || [];
             task.prHistory.push(task.prNumber);
         }
@@ -3452,7 +3461,11 @@ Return ONLY a JSON:
         task.phase = 'exploring';
         task.attempts = [];
         task.synthesisAttempt = undefined;
-        task.status = 'running';
+        // #1113: redo apenas ENFILEIRA (status pending) e retorna rápido; o Planner roda no execChain
+        // (async), não no handler HTTP. A chain promove para 'running' quando chegar a vez da task.
+        task.status = 'pending';
+        task.startedAt = undefined;
+        task.completedAt = undefined;
         task.error = undefined;
         task.updatedAt = new Date().toISOString();
         this.recordEvent(task, 'task_started', `Task refeita${instruction ? `: ${instruction.substring(0, 200)}` : ''}`, { redo: true, instruction });
@@ -3461,6 +3474,78 @@ Return ONLY a JSON:
         this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'running');
 
         return task;
+    }
+
+    /**
+     * Re-enfileira uma task SEM re-planejar (#1113): reusa o plano anterior (queuePriority/planReason)
+     * e volta a task para a fila de execução. Caminho de RECUPERAÇÃO — uma rajada de redos/ingestão
+     * não pode disparar N chamadas LLM síncronas do Planner. Só re-planeja quando replan=true.
+     * Retorna rápido: o fechamento de PR (se houver) é em background e o Planner roda no execChain.
+     */
+    async requeueTask(issueNumber: number, opts?: { replan?: boolean }): Promise<Task> {
+        const task = this.store.tasks[issueNumber];
+        if (!task) throw new Error(`Task #${issueNumber} not found`);
+        const replan = opts?.replan === true;
+
+        if (task.prNumber) {
+            // Fecha o PR em BACKGROUND (igual ao redo) — não bloqueia o handler (#1113).
+            const prToClose = task.prNumber;
+            gh(['pr', 'close', String(prToClose), '--repo', REPO, '--comment', 'Re-enfileirando task'], { timeout: 15000 })
+                .then(() => this.recordEvent(task, 'pr_closed', `PR #${prToClose} fechado para re-enfileiramento`, { prNumber: prToClose, reason: 'requeue' }))
+                .catch(() => { /* PR might not exist */ });
+            task.prHistory = task.prHistory || [];
+            task.prHistory.push(task.prNumber);
+        }
+
+        // Reset do estado de execução, PRESERVANDO o plano (queuePriority/planReason) por padrão.
+        task.prNumber = undefined;
+        task.prUrl = undefined;
+        task.judgeScore = undefined;
+        task.judgeReview = undefined;
+        task.judgeAttempts = 0;
+        task.gateFixAttempts = 0;
+        task.gateFixInstruction = undefined;
+        task.visualScore = undefined;
+        task.visualReview = undefined;
+        task.phase = 'exploring';
+        task.attempts = [];
+        task.synthesisAttempt = undefined;
+        task.killRequested = false;
+        task.status = 'pending';
+        task.startedAt = undefined;
+        task.completedAt = undefined;
+        task.error = undefined;
+        task.updatedAt = new Date().toISOString();
+        this.recordEvent(task, 'task_started', `Task re-enfileirada${replan ? ' (re-planejando)' : ' (reusando plano anterior)'}`, { requeue: true, replan });
+        this.save();
+
+        // skipPlanner=!replan: por padrão NÃO chama o Planner (reusa o plano); só re-analisa se pedido.
+        this.scheduleExec(task, task.branch || `fix-${task.issueNumber}`, 'running', { skipPlanner: !replan });
+
+        return task;
+    }
+
+    /**
+     * Re-enfileira VÁRIAS tasks em lote SEM re-planejar (#1113): recuperação em massa. Reusa o plano
+     * de cada uma e devolve todas à fila serial de execução. Retorna rápido (NENHUMA chamada LLM e
+     * nenhum gh pr close síncrono) — o objetivo é re-enfileirar 50+ tasks sem estourar timeout/travar.
+     */
+    async requeueBatch(issueNumbers: number[], opts?: { replan?: boolean }): Promise<{ requeued: number[]; skipped: { issueNumber: number; reason: string }[] }> {
+        const requeued: number[] = [];
+        const skipped: { issueNumber: number; reason: string }[] = [];
+        for (const n of issueNumbers) {
+            const task = this.store.tasks[n];
+            if (!task) { skipped.push({ issueNumber: n, reason: 'Task não encontrada' }); continue; }
+            if (task.kind === 'epic') { skipped.push({ issueNumber: n, reason: 'Épicas não são re-enfileiráveis (decomponha em sub-tasks)' }); continue; }
+            if (task.status === 'running' || task.status === 'fixing') { skipped.push({ issueNumber: n, reason: `Task já está em execução (${task.status})` }); continue; }
+            try {
+                await this.requeueTask(n, opts);
+                requeued.push(n);
+            } catch (e: any) {
+                skipped.push({ issueNumber: n, reason: e?.message || String(e) });
+            }
+        }
+        return { requeued, skipped };
     }
 
     async rejectTask(issueNumber: number): Promise<Task> {

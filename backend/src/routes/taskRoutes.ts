@@ -154,6 +154,23 @@ router.post('/', requireDolibarrAdmin, async (req, res) => {
     }
 });
 
+// #1113: re-enfileirar EM LOTE sem re-planejar (reusa o plano anterior). Recuperação em massa:
+// re-enfileira 50+ tasks sem disparar N chamadas LLM síncronas nem estourar timeout do cliente.
+router.post('/requeue', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const { issueNumbers, replan } = req.body || {};
+        if (!Array.isArray(issueNumbers) || issueNumbers.length === 0) {
+            return res.status(400).json({ error: 'issueNumbers deve ser um array não-vazio de números' });
+        }
+        const nums = Array.from(new Set(issueNumbers.map(Number).filter((n) => Number.isFinite(n) && n > 0)));
+        const result = await taskRunnerService.requeueBatch(nums, replan === true ? { replan: true } : undefined);
+        res.json(result);
+    } catch (error: any) {
+        log.error('Requeue batch error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
 router.post('/:issueNumber/start', requireDolibarrAdmin, async (req, res) => {
     try {
         const issueNumber = Number(req.params.issueNumber);
@@ -188,6 +205,18 @@ router.post('/:issueNumber/redo', requireDolibarrAdmin, async (req, res) => {
         res.json(task);
     } catch (error: any) {
         log.error('Redo task error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
+// #1113: re-enfileirar uma task SEM re-planejar (reusa o plano anterior). replan=true força re-análise.
+router.post('/:issueNumber/requeue', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const replan = req.body?.replan === true;
+        const task = await taskRunnerService.requeueTask(Number(req.params.issueNumber), replan ? { replan: true } : undefined);
+        res.json(task);
+    } catch (error: any) {
+        log.error('Requeue task error', { error: error.message });
         res.status(400).json({ error: error.message });
     }
 });
