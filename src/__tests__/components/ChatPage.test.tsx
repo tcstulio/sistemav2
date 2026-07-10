@@ -7,7 +7,7 @@ vi.mock('react-router-dom', () => ({
     useParams: vi.fn(),
 }));
 
-vi.mock('../../components/Chat/ChatInterface', () => ({
+vi.mock('../../components/chat/ChatInterface', () => ({
     ChatInterface: (props: any) => (
         <div data-testid="chat-interface" data-height={props.height}>
             {props.title}
@@ -15,7 +15,7 @@ vi.mock('../../components/Chat/ChatInterface', () => ({
     ),
 }));
 
-vi.mock('../../components/Chat/ChatLayout', () => ({
+vi.mock('../../components/chat/ChatLayout', () => ({
     ChatLayout: () => <div data-testid="chat-layout" />,
 }));
 
