@@ -798,7 +798,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                         <div className="p-4">
                                                             <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Saldo</p>
                                                             <div className={`text-2xl font-bold ${account.solde >= 0 ? 'text-slate-800 dark:text-white' : 'text-red-500'}`}>
-                                                                {formatCurrency(account.solde)}
+                                                                {formatCurrency(account.solde, account.currency_code)}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -899,7 +899,7 @@ const BankAccountList: React.FC<BankAccountListProps> = ({ onRefresh, onNavigate
                                                                                 </div>
                                                                                 <div className="text-right">
                                                                                     <div className={`font-bold ${line.amount > 0 ? 'text-green-600 dark:text-green-400' : 'text-slate-800 dark:text-slate-200'}`}>
-                                                                                        {line.amount > 0 ? '+' : ''}{formatCurrency(line.amount)}
+                                                                                        {line.amount > 0 ? '+' : ''}{formatCurrency(line.amount, selectedAccount.currency_code)}
                                                                                     </div>
                                                                                     {activeTab === 'reconcile' && (
                                                                                         <button

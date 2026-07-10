@@ -33,24 +33,12 @@ import { notifyError } from '../utils/notifyError';
 import { toast } from 'sonner';
 import { useConfirm } from '../hooks/useConfirm';
 import { formatDateTime } from '../utils/dateUtils';
+import { getTabClasses } from '../utils/theme';
 
 // #125: nº máximo de consultas simultâneas de estoque ao Dolibarr (evita fan-out N+1).
 const STOCK_FETCH_CONCURRENCY = 6;
 
-/** Static map of themeColor → Tailwind tab-active classes (avoids interpolation; Tailwind v4 needs literal classes). */
-const TAB_ACTIVE_CLASSES: Record<string, string> = {
-    indigo: 'border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400',
-    emerald: 'border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400',
-    blue: 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400',
-    rose: 'border-rose-600 text-rose-600 dark:border-rose-400 dark:text-rose-400',
-    violet: 'border-violet-600 text-violet-600 dark:border-violet-400 dark:text-violet-400',
-    amber: 'border-amber-600 text-amber-600 dark:border-amber-400 dark:text-amber-400',
-    teal: 'border-teal-600 text-teal-600 dark:border-teal-400 dark:text-teal-400',
-    orange: 'border-orange-600 text-orange-600 dark:border-orange-400 dark:text-orange-400',
-    pink: 'border-pink-600 text-pink-600 dark:border-pink-400 dark:text-pink-400',
-    sky: 'border-sky-600 text-sky-600 dark:border-sky-400 dark:text-sky-400',
-};
-const TAB_INACTIVE_CLASSES = 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200';
+// Tab theme classes centralized in utils/theme.ts (getTabClasses) — Tailwind v4 literal-class safety.
 
 import {
     PageHeader,
@@ -607,8 +595,6 @@ const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId
         );
     }
 
-    const activeTabClasses = TAB_ACTIVE_CLASSES[config.themeColor] ?? TAB_ACTIVE_CLASSES['indigo'];
-
     return (
         <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
 
@@ -805,14 +791,14 @@ const WarehouseList: React.FC<WarehouseListProps> = ({ onNavigate, initialItemId
                         <div className="flex gap-2">
                             <button
                                 onClick={() => setActiveTab('warehouses')}
-                                className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'warehouses' ? activeTabClasses : TAB_INACTIVE_CLASSES}`}
+                                className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 ${getTabClasses(config.themeColor, activeTab === 'warehouses')}`}
                                 data-testid="tab-warehouses"
                             >
                                 Armazéns
                             </button>
                             <button
                                 onClick={() => setActiveTab('movements')}
-                                className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'movements' ? activeTabClasses : TAB_INACTIVE_CLASSES}`}
+                                className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 ${getTabClasses(config.themeColor, activeTab === 'movements')}`}
                                 data-testid="tab-movements"
                             >
                                 Movimentações

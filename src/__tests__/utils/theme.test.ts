@@ -4,6 +4,9 @@ import {
     getThemeClasses,
     getThemeClass,
     getCardClasses,
+    getTabClasses,
+    TAB_ACTIVE_CLASSES,
+    TAB_INACTIVE_CLASSES,
     ThemeColor,
 } from '../../utils/theme';
 
@@ -138,6 +141,64 @@ describe('theme', () => {
         it('defaults to indigo for unknown color', () => {
             const result = getCardClasses('unknown', true);
             expect(result).toContain('bg-indigo-50');
+        });
+    });
+
+    describe('getTabClasses / TAB_ACTIVE_CLASSES (#1094)', () => {
+        const ALL_TAB_COLORS: ThemeColor[] = [
+            'slate', 'gray', 'zinc', 'neutral', 'stone',
+            'red', 'orange', 'amber', 'yellow', 'lime',
+            'green', 'emerald', 'teal', 'cyan', 'sky',
+            'blue', 'indigo', 'violet', 'purple', 'fuchsia',
+            'pink', 'rose',
+        ];
+
+        it('TAB_ACTIVE_CLASSES contém todas as 22 cores de ThemeColor', () => {
+            ALL_TAB_COLORS.forEach((c) => expect(TAB_ACTIVE_CLASSES[c]).toBeDefined());
+            expect(Object.keys(TAB_ACTIVE_CLASSES).sort()).toEqual([...ALL_TAB_COLORS].sort());
+        });
+
+        it('TAB_ACTIVE_CLASSES lista apenas classes literais (sem interpolação em runtime)', () => {
+            Object.values(TAB_ACTIVE_CLASSES).forEach((v) => expect(v).not.toContain('${'));
+        });
+
+        it('TAB_ACTIVE_CLASSES referencia a própria cor em cada valor (border + text light/dark)', () => {
+            ALL_TAB_COLORS.forEach((c) => {
+                expect(TAB_ACTIVE_CLASSES[c]).toContain(`border-${c}-600`);
+                expect(TAB_ACTIVE_CLASSES[c]).toContain(`text-${c}-600`);
+                expect(TAB_ACTIVE_CLASSES[c]).toContain(`dark:border-${c}-400`);
+                expect(TAB_ACTIVE_CLASSES[c]).toContain(`dark:text-${c}-400`);
+            });
+        });
+
+        it('valores de amostra do TAB_ACTIVE_CLASSES estão exatos', () => {
+            expect(TAB_ACTIVE_CLASSES.indigo).toBe('border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400');
+            expect(TAB_ACTIVE_CLASSES.emerald).toBe('border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400');
+            expect(TAB_ACTIVE_CLASSES.rose).toBe('border-rose-600 text-rose-600 dark:border-rose-400 dark:text-rose-400');
+        });
+
+        it('TAB_INACTIVE_CLASSES é a string neutra esperada (sem cor de tema)', () => {
+            expect(TAB_INACTIVE_CLASSES).toBe('border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200');
+            expect(TAB_INACTIVE_CLASSES).not.toContain('${');
+        });
+
+        it('getTabClasses retorna as classes ativas quando isActive=true', () => {
+            expect(getTabClasses('indigo', true)).toBe(TAB_ACTIVE_CLASSES.indigo);
+            expect(getTabClasses('blue', true)).toBe(TAB_ACTIVE_CLASSES.blue);
+        });
+
+        it('getTabClasses retorna TAB_INACTIVE_CLASSES quando isActive=false', () => {
+            expect(getTabClasses('indigo', false)).toBe(TAB_INACTIVE_CLASSES);
+            expect(getTabClasses('rose', false)).toBe(TAB_INACTIVE_CLASSES);
+        });
+
+        it('getTabClasses sempre retorna TAB_INACTIVE_CLASSES para inativo, mesmo com cor desconhecida', () => {
+            expect(getTabClasses('cor-que-nao-existe', false)).toBe(TAB_INACTIVE_CLASSES);
+        });
+
+        it('getTabClasses cai no fallback indigo para cor desconhecida ativa', () => {
+            expect(getTabClasses('unknown-color', true)).toBe(TAB_ACTIVE_CLASSES.indigo);
+            expect(getTabClasses('', true)).toBe(TAB_ACTIVE_CLASSES.indigo);
         });
     });
 

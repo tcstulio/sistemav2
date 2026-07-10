@@ -76,6 +76,36 @@ export interface FinancialAnalysisAutomationConfig {
 
 const API_URL = '/api/ai';
 
+// #953: faz polling de um job de chat até done/error. Extraído p/ que a resposta seja
+// RECUPERÁVEL após um F5 (o backend guarda o resultado ~30min): o componente persiste o
+// jobId ao enfileirar e chama resumeChatJob(jobId) ao remontar, evitando perder a resposta.
+async function pollChatJob(jobId: string): Promise<any> {
+    const POLL_MS = 2500;
+    const MAX_WAIT_MS = 20 * 60 * 1000; // generoso; o job conclui em background
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < MAX_WAIT_MS) {
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        let job: any;
+        try {
+            const st = await axios.get(`${API_URL}/jobs/${jobId}`, getAuthHeaders());
+            job = st.data;
+        } catch (pollErr: any) {
+            if (pollErr?.response?.status === 404) {
+                throw new Error('O processamento foi interrompido (job expirado). Tente novamente.');
+            }
+            throw pollErr;
+        }
+        if (job.status === 'done') {
+            return { reply: job.reply, sessionId: job.sessionId, usage: job.usage, contextWindow: job.contextWindow, model: job.model, fellBack: job.fellBack };
+        }
+        if (job.status === 'error') {
+            throw new Error(job.error || 'O assistente falhou ao processar.');
+        }
+        // queued/running → segue o polling
+    }
+    throw new Error('Tempo limite do assistente excedido (20 min).');
+}
+
 export const AiService = {
 
     // Resolve um deeplink de prefill gerado pelo agente (#57 Peça 2/3): troca o token assinado
@@ -418,7 +448,8 @@ export const AiService = {
     },
 
     // #947: userImages aceita 1+ imagens (base64 puro, sem prefixo data URL).
-    chatWithData: async (msg: string, history: ChatMessage[], userImages?: string | string[], sessionId?: string, pageContext?: string) => {
+    // #953: onJobStarted recebe o jobId assim que enfileirado (p/ persistir e retomar após F5).
+    chatWithData: async (msg: string, history: ChatMessage[], userImages?: string | string[], sessionId?: string, pageContext?: string, onJobStarted?: (jobId: string) => void) => {
         try {
             const now = new Date();
             const dateStr = now.toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -443,37 +474,19 @@ export const AiService = {
 
             const jobId = start.data?.jobId;
             if (!jobId) throw new Error('Falha ao enfileirar o job do assistente.');
+            onJobStarted?.(jobId); // #953: componente persiste o jobId p/ retomar após F5
 
-            const POLL_MS = 2500;
-            const MAX_WAIT_MS = 20 * 60 * 1000; // generoso; o job conclui em background
-            const startedAt = Date.now();
-            while (Date.now() - startedAt < MAX_WAIT_MS) {
-                await new Promise((r) => setTimeout(r, POLL_MS));
-                let job: any;
-                try {
-                    const st = await axios.get(`${API_URL}/jobs/${jobId}`, getAuthHeaders());
-                    job = st.data;
-                } catch (pollErr: any) {
-                    if (pollErr?.response?.status === 404) {
-                        throw new Error('O processamento foi interrompido (job expirado). Tente novamente.');
-                    }
-                    throw pollErr;
-                }
-                if (job.status === 'done') {
-                    return { reply: job.reply, sessionId: job.sessionId, usage: job.usage, contextWindow: job.contextWindow, model: job.model, fellBack: job.fellBack };
-                }
-                if (job.status === 'error') {
-                    throw new Error(job.error || 'O assistente falhou ao processar.');
-                }
-                // queued/running → segue o polling
-            }
-            throw new Error('Tempo limite do assistente excedido (20 min).');
+            return await pollChatJob(jobId);
 
         } catch (error: any) {
             handleAiError('Chat', error);
             return { reply: "Erro de conexão com o Assistente Virtual.", sessionId: null };
         }
     },
+
+    // #953: retoma um job já enfileirado (após F5). Não trata o erro aqui — o chamador
+    // decide (mostrar a resposta OU limpar o job pendente se expirou).
+    resumeChatJob: (jobId: string) => pollChatJob(jobId),
 
     createChatSession: async (firstMessage?: string): Promise<ChatSessionInfo | null> => {
         try {

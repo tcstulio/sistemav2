@@ -392,6 +392,20 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
         }
     };
 
+    // #993: ação destrutiva (recusar proposta) exige confirmação via Dialog (useConfirm),
+    // não confirm() nativo. Assinar (status 2) não é destrutivo e segue direto.
+    const handleRefuseProposal = async () => {
+        if (!selectedProposal) return;
+        const ok = await confirm({
+            title: 'Recusar proposta?',
+            message: 'A proposta será marcada como recusada. Esta ação não pode ser desfeita.',
+            confirmText: 'Sim, recusar',
+            danger: true,
+        });
+        if (!ok) return;
+        handleCloseProposal('3');
+    };
+
     const handleCreateOrder = async () => {
         if (!selectedProposal) return;
         setProcessingId(selectedProposal.id);
@@ -727,7 +741,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                                 variant="outline"
                                 size="sm"
                                 icon={<Ban size={16} />}
-                                onClick={() => handleCloseProposal('3')}
+                                onClick={handleRefuseProposal}
                                 loading={processingId === selectedProposal.id}
                                 disabled={!!processingId}
                                 className="!text-red-600 !border-red-200 dark:!border-red-900"

@@ -5,6 +5,7 @@ import { useInvoices, useSupplierInvoices, useCustomers, useProducts } from '../
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { FileBarChart, Download, TrendingUp, Users, Package, DollarSign, Loader2, CalendarDays, ExternalLink } from 'lucide-react';
 import { formatCurrency } from '../utils/formatUtils';
+import { getThemeClass } from '../utils/theme';
 import PageLayout from './ui/PageLayout';
 
 const ReportsView: React.FC = () => {
@@ -154,7 +155,7 @@ const ReportsView: React.FC = () => {
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div>
                         <h2 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                            <FileBarChart className={`text-${config.themeColor}-600`} /> Relatórios
+                            <FileBarChart className={getThemeClass(config.themeColor, 'text600')} /> Relatórios
                         </h2>
                         <p className="text-sm text-slate-500 dark:text-slate-400">Inteligência de Negócios & Análises</p>
                     </div>
@@ -189,7 +190,7 @@ const ReportsView: React.FC = () => {
 
                         <button
                             onClick={handleExport}
-                            className={`flex items-center gap-2 px-4 py-2 bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white rounded-lg shadow-sm transition-colors`}
+                            className={`flex items-center gap-2 px-4 py-2 ${getThemeClass(config.themeColor, 'primaryButton')} rounded-lg shadow-sm transition-colors`}
                         >
                             <Download size={18} /> Exportar CSV
                         </button>
