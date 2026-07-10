@@ -112,8 +112,9 @@ async function timed<T>(fn: () => Promise<T>): Promise<{ result: T; latencyMs: n
 async function safeCheck<T extends BaseCheck>(fn: () => Promise<T>): Promise<T> {
     try {
         return await withTimeout(fn(), CHECK_TIMEOUT_MS, 'check');
-    } catch (e: any) {
-        return { status: 'down', error: e?.message || 'unknown error' } as T;
+    } catch (e) {
+        const message = e instanceof Error ? e.message : 'unknown error';
+        return { status: 'down', error: message } as T;
     }
 }
 
@@ -145,10 +146,12 @@ async function defaultCheckDolibarr(): Promise<BaseCheck> {
         );
         if (res.status === 200) return { status: 'ok', latencyMs };
         return { status: 'down', latencyMs, error: `HTTP ${res.status}` };
-    } catch (e: any) {
+    } catch (e) {
         // info-level apenas (não logar stack traces em produção)
-        log.info(`Dolibarr health check failed: ${e?.message || e}`);
-        return { status: 'down', error: e?.code || e?.message || 'request failed' };
+        const code = axios.isAxiosError(e) ? e.code : undefined;
+        const message = e instanceof Error ? e.message : String(e);
+        log.info(`Dolibarr health check failed: ${message}`);
+        return { status: 'down', error: code || message || 'request failed' };
     }
 }
 
