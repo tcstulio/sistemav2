@@ -158,9 +158,9 @@ app.use(auditMiddleware);
 import adminRoutes from './routes/adminRoutes';
 import groupsRoutes from './routes/groupsRoutes';
 import aiRoutes from './routes/aiRoutes';
+import aiJobsRoutes from './routes/aiJobs';
 import authRoutes from './routes/authRoutes';
 import { authMiddleware, requireDolibarrLogin } from './middleware/authMiddleware';
-
 // Middleware that skips auth for webhook paths (incoming bank notifications must be public)
 const bankingAuthMiddleware = (req: any, res: any, next: any) => {
     if (req.path.startsWith('/webhook/')) return next();
@@ -169,6 +169,9 @@ const bankingAuthMiddleware = (req: any, res: any, next: any) => {
 
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/ai', aiLimiter, aiRoutes);
+// #1011: heartbeat leve de jobs do assistente (GET /api/ai-jobs/:id/status). Os GETs
+// do aiLimiter são skipados (leves/frequentes), então só o limiter global os cobre.
+app.use('/api/ai-jobs', requireDolibarrLogin, aiJobsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', groupsRoutes); // grupos/direitos (sistemav2#820) — mesmo prefixo, paths distintos
 app.use('/api/auth', authLimiter, authRoutes);
@@ -214,6 +217,9 @@ app.use('/api/integration', integrationRoutes);
 import uiConfigRoutes from './routes/uiConfigRoutes';
 app.use('/api/ui-config', uiConfigRoutes);
 
+import userRoutes from './routes/userRoutes';
+app.use('/api/users', userRoutes); // /me usa whitelist — nunca devolve api_key (#1003)
+
 import dashboardRoutes from './routes/dashboardRoutes';
 app.use('/api/dashboard', dashboardRoutes);
 
@@ -223,6 +229,9 @@ app.use('/api/tasks', taskRoutes);
 import notificationRoutes from './routes/notificationRoutes';
 app.use('/api/notifications', notificationRoutes);
 
+import agentActionRoutes from './routes/agentActionRoutes';
+app.use('/api/agent-actions', agentActionRoutes);
+
 import systemEventsRoutes from './routes/systemEventsRoutes';
 app.use('/api/system-events', systemEventsRoutes);
 
@@ -231,84 +240,9 @@ app.use('/api/simulator', simulatorRoutes);
 
 app.use('/api/github', githubRoutes);
 
-// Health Check
-app.get('/health', async (req, res) => {
-    const health: Record<string, any> = {
-        status: 'ok',
-        server: 'CoolGroove Backend',
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
-        memory: {
-            used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-            total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
-            rss: Math.round(process.memoryUsage().rss / 1024 / 1024)
-        },
-        dependencies: {}
-    };
-
-    const checks: Promise<void>[] = [];
-
-    checks.push((async () => {
-        try {
-            const { dolibarrService } = require('./services/dolibarrService');
-            const isValid = await dolibarrService.validateApiKey(config.dolibarrKey);
-            health.dependencies.dolibarr = isValid ? 'ok' : 'error';
-        } catch {
-            health.dependencies.dolibarr = 'unavailable';
-        }
-    })());
-
-    checks.push((async () => {
-        try {
-            const { schedulerService } = require('./services/schedulerService');
-            health.dependencies.scheduler = schedulerService.isRunning ? 'ok' : 'stopped';
-        } catch {
-            health.dependencies.scheduler = 'unavailable';
-        }
-    })());
-
-    checks.push((async () => {
-        try {
-            const { interApiService } = require('./services/interApiService');
-            health.dependencies.banco_inter = interApiService.isReady() ? 'ok' : 'not_configured';
-        } catch {
-            health.dependencies.banco_inter = 'unavailable';
-        }
-    })());
-
-    checks.push((async () => {
-        try {
-            const { itauApiService } = require('./services/itauApiService');
-            health.dependencies.banco_itau = itauApiService.isReady() ? 'ok' : 'not_configured';
-        } catch {
-            health.dependencies.banco_itau = 'unavailable';
-        }
-    })());
-
-    checks.push((async () => {
-        try {
-            const { sessionService } = require('./services/legacy/sessionService');
-            const sessions = sessionService.getAllSessions();
-            if (sessions.length === 0) {
-                health.dependencies.whatsapp = 'not_configured';
-            } else {
-                // 'WORKING' = sessão conectada; qualquer outro estado (SCAN_QR_CODE, STOPPED…) = degradado
-                health.dependencies.whatsapp = sessions.some((s: any) => s.status === 'WORKING') ? 'ok' : 'degraded';
-            }
-        } catch {
-            health.dependencies.whatsapp = 'unavailable';
-        }
-    })());
-
-    await Promise.allSettled(checks);
-
-    const hasErrors = Object.values(health.dependencies).some((v: any) => v === 'error');
-    if (hasErrors) {
-        health.status = 'degraded';
-    }
-
-    res.json(health);
-});
+// Health Check (#1042) — verifica dependências externas via healthCheckService.
+import healthRoutes from './routes/health';
+app.use('/health', healthRoutes);
 
 // ===========================================
 // Global Error Handler (must be last)
@@ -332,41 +266,61 @@ const server = app.listen(Number(config.port), '0.0.0.0', () => {
 // Initialize Socket.io with the HTTP server
 socketService.init(server);
 
+// #1154 P3 item 22: quando o TaskRunner sobe este backend como PREVIEW (renderizar/screenshot de uma
+// tela p/ verificar), ele copia o .env de PRODUÇÃO. Sem isto, o preview rodaria os workers de fundo
+// contra a PROD real — dispararia crons, notificações e mensagens de WhatsApp, e até rodaria o PRÓPRIO
+// robô. PREVIEW_MODE=1 desliga todos os efeitos colaterais (o preview vira read-only).
+const IS_PREVIEW = process.env.PREVIEW_MODE === '1';
+if (IS_PREVIEW) log.warn('PREVIEW_MODE=1 — workers de fundo DESLIGADOS (scheduler/crons/TaskRunner/bancos/tunnel): preview read-only.');
+
 // Cloudflare tunnel automático (se CLOUDFLARE_TUNNEL_ENABLED=true) — URL pública dinâmica
-tunnelService.start();
+if (!IS_PREVIEW) tunnelService.start();
 
 // Initialize WhatsApp Service
 log.info('SessionService loaded');
 
 // Start Scheduler Worker (checks for pending messages every 30s)
-schedulerService.startWorker();
-log.info('SchedulerService worker started');
-
-// Start Event Scraper Worker (interval/auto-run vêm da config — scraperConfigStore)
 import { eventScraperService } from './services/eventScraperService';
-eventScraperService.startWorker();
-log.info('EventScraperService worker started (config-driven)');
-
-// Start Alert Cron (invoices, stock, tasks, tickets)
 import { alertCronService } from './services/alertCronService';
-alertCronService.start();
-log.info('AlertCronService started');
-
-// Reidrata o estado durável da delegação a partir do Dolibarr (#293) — best-effort, não bloqueia o boot.
 import { delegationService } from './services/delegationService';
-delegationService.hydrateFromDolibarr()
-    .then((n) => { if (n > 0) log.info(`DelegationService: ${n} delegação(ões) reidratada(s) do Dolibarr (#293)`); })
-    .catch(() => { /* best-effort */ });
-
-// Start TaskRunner polling (sync GitHub issues com label "opencode-task")
 import { taskRunnerService } from './services/taskRunnerService';
-taskRunnerService.startPolling();
+import { gcSchedulerService } from './services/gcSchedulerService';
+if (!IS_PREVIEW) {
+    schedulerService.startWorker();
+    log.info('SchedulerService worker started');
+
+    // Start Event Scraper Worker (interval/auto-run vêm da config — scraperConfigStore)
+    eventScraperService.startWorker();
+    log.info('EventScraperService worker started (config-driven)');
+
+    // Start Alert Cron (invoices, stock, tasks, tickets)
+    alertCronService.start();
+    log.info('AlertCronService started');
+
+    // Reidrata o estado durável da delegação a partir do Dolibarr (#293) — best-effort, não bloqueia o boot.
+    delegationService.hydrateFromDolibarr()
+        .then((n) => { if (n > 0) log.info(`DelegationService: ${n} delegação(ões) reidratada(s) do Dolibarr (#293)`); })
+        .catch(() => { /* best-effort */ });
+
+    // Start TaskRunner polling (sync GitHub issues com label "opencode-task")
+    taskRunnerService.startPolling();
+
+    // Start GC de Worktrees scheduler (issue #1112): cron diário do backend que dispara
+    // scripts/gc-worktrees.ts (subprocesso isolado, junction-safe). PREVIEW-SAFE (correção #1):
+    // vive DENTRO do bloco if (!IS_PREVIEW) — um backend de preview (PREVIEW_MODE=1) NUNCA roda GC
+    // de worktrees (pode estar rodando de dentro de uma worktree em uso e apagá-la-ia — incidente #1170).
+    // isPreviewBackend() (no próprio gcSchedulerService.start) é o portão determinístico/testável de
+    // defesa-em-profundidão. Config via env: GC_SCHEDULE_ENABLED / GC_SCHEDULE_TIME (default "03:00").
+    gcSchedulerService.start();
+    log.info('GcSchedulerService started (issue #1112)');
+}
 
 // Initialize Banking Services
 import { interApiService } from './services/interApiService';
 import { itauApiService } from './services/itauApiService';
 
 (async () => {
+    if (IS_PREVIEW) return; // #1154 P3 item 22: preview não conecta aos bancos
     try {
         await interApiService.initialize();
         log.info('Banco Inter API initialized');
@@ -397,11 +351,13 @@ import { agentConfigService } from './services/agentConfigService';
 const gracefulShutdown = async (signal: string) => {
     log.info(`${signal} received - starting graceful shutdown`);
 
-    // Safety Timeout: Force exit after 5 seconds if anything hangs
+    // Safety Timeout: força a saída se algo travar. 12s (era 5s): o client.destroy() do WhatsApp
+    // precisa fechar o Chrome inteiro e 5s cortava o destroy no meio → chrome ÓRFÃO segurando o
+    // perfil mesmo num shutdown "gracioso" (#896 — uma das fontes dos zumbis de 2026-07-07).
     setTimeout(() => {
         log.error('Shutdown timed out - forcing exit');
         process.exit(1);
-    }, 5000).unref();
+    }, 12000).unref();
 
     // 1. Close HTTP Server (Stops accepting new connections)
     server.close((err) => {
@@ -417,6 +373,9 @@ const gracefulShutdown = async (signal: string) => {
 
     // 3. Stop Alert Cron
     alertCronService.stop();
+
+    // Stop GC de Worktrees scheduler (#1112)
+    gcSchedulerService.stop();
 
     // 3. Destroy WhatsApp Clients (Releases Chrome processes & Ports)
     try {

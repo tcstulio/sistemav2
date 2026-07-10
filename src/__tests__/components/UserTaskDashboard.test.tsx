@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 
@@ -81,8 +81,10 @@ vi.mock('sonner', () => ({
 
 // ── import after mocks ─────────────────────────────────────────────────────
 import UserTaskDashboard from '../../components/Tasks/UserTaskDashboard';
-import { useTasks, useProjects, useUsers, useTaskContacts } from '../../hooks/dolibarr';
+import { useTasks, useProjects, useUsers, useTaskContacts, useProjectContacts, useTaskTimeLogs } from '../../hooks/dolibarr';
 import { toast } from 'sonner';
+import { format } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
 const mockOnNavigate = vi.fn();
 
@@ -451,6 +453,170 @@ describe('UserTaskDashboard', () => {
 
             expect(screen.getByText('ERRO_TAREFAS')).toBeInTheDocument();
             expect(screen.queryByText('ERRO_PROJETOS')).not.toBeInTheDocument();
+        });
+    });
+
+    // ── #1099 — Classes Tailwind literais nos filtros Me-mode ──────────
+    describe('#1099: filtros Me-mode com classes Tailwind literais (sem interpolação)', () => {
+        const openMeFilterModal = () => {
+            // viewMode default = 'me'; abre o modal de filtros pelo toggle mobile.
+            fireEvent.click(screen.getByText('Filtros'));
+        };
+
+        const getFilterButton = (label: string) =>
+            screen.getByText(label).closest('button') as HTMLButtonElement;
+
+        const getCircle = (btn: HTMLElement) =>
+            btn.querySelector('.w-6') as HTMLElement | null;
+
+        it('aplica classes literais azuis no filtro "Atribuído diretamente" ativo', () => {
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+            openMeFilterModal();
+
+            const btn = getFilterButton('Atribuído diretamente');
+            expect(btn.className).toContain('bg-blue-50');
+            expect(btn.className).toContain('border-blue-200');
+            expect(btn.className).toContain('text-blue-700');
+            expect(btn.className).toContain('dark:bg-blue-900/20');
+            const circle = getCircle(btn);
+            expect(circle?.className).toContain('bg-blue-500');
+        });
+
+        it('aplica classes literais âmbar no filtro "Membro da Equipe do Projeto" ativo', () => {
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+            openMeFilterModal();
+
+            const btn = getFilterButton('Membro da Equipe do Projeto');
+            expect(btn.className).toContain('bg-amber-50');
+            expect(btn.className).toContain('border-amber-200');
+            expect(btn.className).toContain('text-amber-700');
+            expect(btn.className).toContain('dark:border-amber-800');
+            const circle = getCircle(btn);
+            expect(circle?.className).toContain('bg-amber-500');
+        });
+
+        it('aplica classes literais roxas no filtro "Participante convidado" ativo', () => {
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+            openMeFilterModal();
+
+            const btn = getFilterButton('Participante convidado');
+            expect(btn.className).toContain('bg-purple-50');
+            expect(btn.className).toContain('border-purple-200');
+            expect(btn.className).toContain('text-purple-700');
+            expect(btn.className).toContain('ring-purple-200');
+            const circle = getCircle(btn);
+            expect(circle?.className).toContain('bg-purple-500');
+        });
+
+        it('não renderiza classes interpoladas (sem "${" nem "undefined")', () => {
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+            openMeFilterModal();
+
+            const btn = getFilterButton('Atribuído diretamente');
+            expect(btn.className).not.toContain('${');
+            expect(btn.className).not.toContain('undefined');
+            const circle = getCircle(btn);
+            expect(circle?.className).not.toContain('${');
+            expect(circle?.className).not.toContain('undefined');
+        });
+
+        it('ao desativar o filtro, troca para classes neutras (sem cor de tema)', () => {
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+            openMeFilterModal();
+
+            const btn = getFilterButton('Atribuído diretamente');
+            expect(btn.className).toContain('bg-blue-50');
+
+            fireEvent.click(btn);
+
+            expect(btn.className).not.toContain('bg-blue-50');
+            expect(btn.className).not.toContain('text-blue-700');
+            expect(btn.className).toContain('bg-white');
+            const circle = getCircle(btn);
+            expect(circle?.className).not.toContain('bg-blue-500');
+            expect(circle?.className).toContain('border-2');
+        });
+    });
+
+    // ── #1083 — unidade de data do prazo (ms x segundos) ─────────────────
+    describe('#1083: prazo da tarefa — data correta e status de atraso (ms)', () => {
+        beforeEach(() => {
+            vi.clearAllMocks();
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date('2024-06-15T12:00:00Z'));
+            // Limpa TODOS os hooks de dados (isError/error persistem entre suites
+            // pois vi.clearAllMocks() não remove implementações de mockReturnValue).
+            const clean = { data: [], isError: false, error: undefined, refetch: vi.fn() };
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({ ...clean, refetch: mockRefetchTasks });
+            (useProjects as ReturnType<typeof vi.fn>).mockReturnValue(clean);
+            (useUsers as ReturnType<typeof vi.fn>).mockReturnValue(clean);
+            (useTaskContacts as ReturnType<typeof vi.fn>).mockReturnValue(clean);
+            (useProjectContacts as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], refetch: vi.fn() });
+            (useTaskTimeLogs as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], refetch: vi.fn() });
+        });
+
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        const makeTask = (over: Record<string, unknown> = {}) => ({
+            id: 't1',
+            ref: 'TK-1',
+            label: 'Tarefa com prazo',
+            project_id: '1',
+            progress: 0,
+            status: 0,
+            fk_user_assign: 'user1',
+            ...over,
+        });
+
+        it('exibe a data correta do prazo (ms, sem multiplicar por 1000)', () => {
+            const dueMs = new Date('2024-06-20T12:00:00Z').getTime();
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({ data: [makeTask({ date_end: dueMs })], refetch: mockRefetchTasks });
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            // Antes do fix: new Date(dueMs * 1000) => ano ~50.000 (texto diferente)
+            const expected = format(new Date(dueMs), "d 'de' MMM", { locale: ptBR });
+            expect(screen.getByText(expected)).toBeInTheDocument();
+        });
+
+        it('marca como atrasado (vermelho) quando date_end (ms) já passou', () => {
+            const pastMs = new Date('2024-06-10T12:00:00Z').getTime(); // antes de "agora" (06-15)
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({ data: [makeTask({ id: 't2', date_end: pastMs })], refetch: mockRefetchTasks });
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            const expected = format(new Date(pastMs), "d 'de' MMM", { locale: ptBR });
+            const dateEl = screen.getByText(expected);
+            // A classe de atraso é aplicada no container do prazo (ancestral do span)
+            expect(dateEl.closest('[class*="text-red-600"]')).toBeTruthy();
+        });
+
+        it('marca como "vencendo breve" (laranja) quando o prazo está a 1 dia', () => {
+            const soonMs = new Date('2024-06-16T12:00:00Z').getTime(); // +1 dia (< 2 dias)
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({ data: [makeTask({ id: 't3', date_end: soonMs })], refetch: mockRefetchTasks });
+
+            render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            const expected = format(new Date(soonMs), "d 'de' MMM", { locale: ptBR });
+            const dateEl = screen.getByText(expected);
+            expect(dateEl.closest('[class*="text-orange-600"]')).toBeTruthy();
+        });
+
+        it('não marca como atrasado quando o prazo está distante no futuro', () => {
+            const futureMs = new Date('2024-07-20T12:00:00Z').getTime(); // > 2 dias
+            (useTasks as ReturnType<typeof vi.fn>).mockReturnValue({ data: [makeTask({ id: 't4', date_end: futureMs })], refetch: mockRefetchTasks });
+
+            const { container } = render(<UserTaskDashboard onNavigate={mockOnNavigate} />);
+
+            // O span do prazo existe e NÃO carrega classe de atraso
+            const expected = format(new Date(futureMs), "d 'de' MMM", { locale: ptBR });
+            const dateEl = screen.getByText(expected);
+            expect(dateEl.closest('[class*="text-red-600"]')).toBeNull();
+            expect(dateEl.closest('[class*="text-orange-600"]')).toBeNull();
+            // sanity: o container segue renderizado
+            expect(container).toBeTruthy();
         });
     });
 });

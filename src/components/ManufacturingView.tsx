@@ -16,6 +16,7 @@ import { ManufacturingOrderDetail } from './Manufacturing/details/ManufacturingO
 import { BOMDetail } from './Manufacturing/details/BOMDetail';
 import { logger } from '../utils/logger';
 import { notifyError } from '../utils/notifyError';
+import { getTabClasses } from '../utils/theme';
 
 const log = logger.child('ManufacturingView');
 
@@ -293,10 +294,10 @@ const ManufacturingView: React.FC<ManufacturingViewProps> = ({ onNavigate }) => 
                 </div>
 
                 <div className="flex gap-2 border-b border-slate-100 dark:border-slate-800">
-                    <button onClick={() => { setActiveTab('mo'); setSelectedBOM(null); }} className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 flex items-center gap-2 ${activeTab === 'mo' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+                    <button onClick={() => { setActiveTab('mo'); setSelectedBOM(null); }} className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 flex items-center gap-2 ${getTabClasses(config.themeColor, activeTab === 'mo')}`}>
                         <List size={16} /> Ordens de Produção
                     </button>
-                    <button onClick={() => { setActiveTab('bom'); setSelectedMO(null); }} className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 flex items-center gap-2 ${activeTab === 'bom' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+                    <button onClick={() => { setActiveTab('bom'); setSelectedMO(null); }} className={`pb-2 px-3 text-sm font-medium transition-colors border-b-2 flex items-center gap-2 ${getTabClasses(config.themeColor, activeTab === 'bom')}`}>
                         <Layers size={16} /> Listas de Materiais (BOM)
                     </button>
                 </div>

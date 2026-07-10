@@ -451,9 +451,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
         try {
             await DolibarrService.setPayment(config, selectedInvoiceForPay.id, paymentData);
             toast.success("Pagamento Registrado com Sucesso");
-            selectedInvoiceForPay.statut = '2';
-            selectedInvoiceForPay.paye = '1';
-            if (refreshData) refreshData();
+            if (refreshData) await refreshData();
             setIsPayModalOpen(false);
             setSelectedInvoiceForPay(null);
         } catch (err) {

@@ -36,6 +36,7 @@ vi.mock('../../services/uiConfigService', () => ({
         update: vi.fn((p: any) => p),
     },
 }));
+vi.mock('../../services/taskRunnerService', () => ({ taskRunnerService: { onMinMergeScoreLowered: vi.fn() } }));
 vi.mock('../../services/adminAuditService', () => ({ adminAuditService: { record: vi.fn() } }));
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }),

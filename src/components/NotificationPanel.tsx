@@ -2,7 +2,7 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppNotification, AppView } from '../types';
-import { X, Bell, CheckCircle, Clock, Filter, ExternalLink } from 'lucide-react';
+import { X, Bell, CheckCircle, Filter, ExternalLink } from 'lucide-react';
 import { formatTime } from '../utils/dateUtils';
 import { getNotificationIcon } from '../utils/notificationIcons';
 
@@ -144,9 +144,14 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
 
                                             {!note.read && (
                                                 <div className="flex justify-end mt-2">
-                                                    <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1 cursor-pointer">
-                                                        Revisar <Clock size={10} />
-                                                    </span>
+                                                    <button
+                                                        aria-label={`Marcar ${note.title} como lida`}
+                                                        title="Marcar como lida"
+                                                        onClick={(e) => { e.stopPropagation(); onMarkRead(note.id); }}
+                                                        className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                                                    >
+                                                        <CheckCircle size={11} /> Marcar como lida
+                                                    </button>
                                                 </div>
                                             )}
                                         </div>

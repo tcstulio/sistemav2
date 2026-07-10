@@ -36,10 +36,42 @@ describe('formatUtils', () => {
             expect(result).not.toBe('-');
         });
 
-        it('accepts custom currency parameter but ignores it (BRL default)', () => {
+        it('respects the custom currency parameter (different currencies differ)', () => {
             const resultBRL = formatCurrency(100, 'BRL');
             const resultUSD = formatCurrency(100, 'USD');
-            expect(resultBRL).toBe(resultUSD);
+            // Antes do fix o corpo hardcodava 'BRL' e ignorava o argumento;
+            // agora cada moeda deve produzir uma string distinta.
+            expect(resultBRL).not.toBe(resultUSD);
+        });
+
+        it('formats USD with US dollar symbol', () => {
+            const result = formatCurrency(1234.56, 'USD');
+            expect(result).toContain('1.234,56'); // pt-BR grouping
+            expect(result).toMatch(/US\$|US\$|USD|\$/i);
+        });
+
+        it('formats EUR with euro symbol', () => {
+            const result = formatCurrency(1234.56, 'EUR');
+            expect(result).toContain('1.234,56');
+            expect(result).toMatch(/€|EUR/i);
+        });
+
+        it('defaults to BRL when no currency is provided', () => {
+            const withDefault = formatCurrency(100);
+            const explicitBRL = formatCurrency(100, 'BRL');
+            expect(withDefault).toBe(explicitBRL);
+        });
+
+        it('never produces "NaN" for missing values (null/undefined)', () => {
+            expect(formatCurrency(null)).toBe('-');
+            expect(formatCurrency(undefined)).toBe('-');
+            expect(formatCurrency(null)).not.toContain('NaN');
+            expect(formatCurrency(undefined)).not.toContain('NaN');
+        });
+
+        it('falls back to BRL for an invalid currency code', () => {
+            const result = formatCurrency(100, 'NOT_A_CODE');
+            expect(result).toContain('R$');
         });
     });
 

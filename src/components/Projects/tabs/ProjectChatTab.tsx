@@ -1,6 +1,6 @@
 import React from 'react';
 import { Project } from '../../../types/projects';
-import { ChatInterface } from '../../Chat/ChatInterface';
+import { ChatInterface } from '../../chat/ChatInterface';
 
 interface ProjectChatTabProps {
     project: Project;

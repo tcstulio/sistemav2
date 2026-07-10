@@ -9,6 +9,7 @@ import { logger } from '../utils/logger';
 import { safeStorage } from '../utils/safeStorage';
 import { resolveScreenAccess, ScreenPermissions } from '../utils/screenPermissions';
 import { canDoAction } from '../utils/writePermissions';
+import { RIGHTS_MAP } from '../utils/screenAccess';
 import { getUiConfig } from '../services/uiConfigService';
 
 const log = logger.child('DolibarrContext');
@@ -86,74 +87,9 @@ export const DolibarrProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
     const currentUser = { ...user, rights: user.rights }; // rights já estreitado (não-undefined)
 
-    const rightsMap: Record<string, { module: string, perms: string[] }> = {
-      // CRM
-      'customers': { module: 'societe', perms: ['lire', 'read', 'client.voir'] },
-      'suppliers': { module: 'fournisseur', perms: ['lire', 'read', 'facture.lire'] },
-      'contacts': { module: 'contact', perms: ['lire', 'read'] },
-
-      // Sales / Finance
-      'proposals': { module: 'propale', perms: ['lire', 'read'] },
-      'supplier_proposals': { module: 'fournisseur', perms: ['lire', 'read'] },
-      'orders': { module: 'commande', perms: ['lire', 'read'] },
-      'invoices': { module: 'facture', perms: ['lire', 'read'] },
-      'payments': { module: 'facture', perms: ['lire', 'read'] },
-      'contracts': { module: 'contrat', perms: ['lire', 'read'] },
-      'supplier_orders': { module: 'fournisseur', perms: ['commande.lire'] },
-      'supplier_invoices': { module: 'fournisseur', perms: ['facture.lire'] },
-      'supplier_payments': { module: 'fournisseur', perms: ['facture.lire'] },
-
-      // Finance - Payments
-      'tax_payments': { module: 'tax', perms: ['charges.lire', 'read', 'lire'] },
-      'salary_payments': { module: 'salaries', perms: ['read', 'lire'] },
-      'expense_report_payments': { module: 'expensereport', perms: ['lire', 'read'] },
-
-      // Projects / Operations
-      'projects': { module: 'projet', perms: ['lire', 'read'] },
-      'tasks': { module: 'projet', perms: ['lire', 'read'] },
-      'interventions': { module: 'ficheinter', perms: ['lire', 'read'] },
-      'agenda': { module: 'agenda', perms: ['myevent.read', 'allactions.read'] },
-
-      // Stock / Product
-      'products': { module: 'produit', perms: ['lire', 'read'] },
-      'services': { module: 'service', perms: ['lire', 'read'] },
-      'inventory': { module: 'stock', perms: ['lire', 'read'] },
-      'shipments': { module: 'expedition', perms: ['lire', 'read'] },
-      'warehouses': { module: 'stock', perms: ['lire', 'read'] },
-      'movements': { module: 'stock', perms: ['mouvement.lire'] },
-      'manufacturing': { module: 'mrp', perms: ['read', 'lire'] },
-      'boms': { module: 'bom', perms: ['read', 'lire'] },
-
-      // HR / Admin
-      'users': { module: 'user', perms: ['user.lire', 'user.read', 'self.read'] },
-      'hr': { module: 'holiday', perms: ['read', 'lire'] },
-      'tickets': { module: 'ticket', perms: ['read', 'lire'] },
-      'bank_accounts': { module: 'banque', perms: ['lire', 'read'] },
-      'categories': { module: 'categorie', perms: ['lire', 'read'] },
-
-      // Communication & AI (Available to all authenticated users)
-      'whatsapp': { module: 'societe', perms: ['lire', 'read'] },
-      'email': { module: 'societe', perms: ['lire', 'read'] },
-      'chat': { module: 'societe', perms: ['lire', 'read'] },
-      'automation': { module: 'societe', perms: ['lire', 'read'] },
-
-      // Partnerships & Venues
-      'partnerships': { module: 'societe', perms: ['lire', 'read'] },
-      'venues': { module: 'societe', perms: ['lire', 'read'] },
-
-      // Reports & Analytics
-      'reports': { module: 'facture', perms: ['lire', 'read'] },
-      'monthly_report': { module: 'facture', perms: ['lire', 'read'] },
-
-      // System (Admin-only modules handled by admin override above)
-      'activity': { module: 'agenda', perms: ['myevent.read', 'allactions.read'] },
-      // Central de Eventos (#519): tela liberada a todos os autenticados — o conteúdo
-      // é filtrado por usuário no backend (admin vê tudo; demais só o que lhes concerne).
-      'system_events': { module: 'societe', perms: ['lire', 'read'] },
-      'development': { module: 'user', perms: ['user.lire'] }, // Admin-restricted in practice
-      'settings': { module: 'user', perms: ['self.read'] },
-      'simulator': { module: 'societe', perms: ['lire', 'read'] },
-    };
+    // FONTE CANÔNICA (src/utils/screenAccess.ts) — de-dup do adversarial: antes esta cópia inline do
+    // rightsMap podia DIVERGIR do screenAccess/permissionMatrix. A lógica de resolução abaixo é mantida.
+    const rightsMap = RIGHTS_MAP;
 
     const mapping = rightsMap[module];
     if (mapping) {

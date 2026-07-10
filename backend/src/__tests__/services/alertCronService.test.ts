@@ -15,9 +15,16 @@ const mockFinancialAnalysisStore = vi.hoisted(() => ({
 
 const mockRunSalesForecastAnalysis = vi.hoisted(() => vi.fn());
 
+// #1204 — mock do uiConfigService para controlar o kill-switch alertCronEnabled.
+const mockUiConfigService = vi.hoisted(() => ({
+    get: vi.fn(() => ({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: true } })),
+}));
+
 vi.mock('../../utils/logger', () => ({
     createLogger: () => loggerSpies,
 }));
+
+vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfigService }));
 
 vi.mock('../../services/dolibarr', () => ({
     dolibarrService: {},
@@ -33,7 +40,7 @@ vi.mock('../../services/notificationTemplates', () => ({
 }));
 
 vi.mock('../../services/delegationFollowUpService', () => ({
-    delegationFollowUpService: { runTick: vi.fn() },
+    delegationFollowUpService: { runTick: vi.fn().mockResolvedValue(undefined) },
 }));
 
 vi.mock('../../services/financialAnalysisStore', () => ({
@@ -177,6 +184,74 @@ describe('alertCronService — financial analysis automation (issue #491)', () =
             });
             expect(res).toEqual({ ran: true, status: 'error', reason: 'forecast failed' });
             expect(loggerSpies.error).toHaveBeenCalled();
+        });
+    });
+
+    // #1204 — Kill-switch global: com alertCronEnabled=false, cada sub-cron faz early-return
+    // e NÃO chama os checks (faturas/estoque/tickets). Religar retoma (config checada a cada tick).
+    describe('kill-switch da UI (#1204) — sub-crons', () => {
+        beforeEach(() => {
+            // default-on (não pausa) salvo quando o teste explicita o contrário
+            mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: true } });
+            // tick financeiro de 1min fica limpo durante avanços longos de timer (early-return sem throw)
+            mockFinancialAnalysisStore.getAutomationConfig.mockReturnValue({ enabled: false, schedule: { dayOfWeek: 0, hour: 0, minute: 0 } });
+        });
+
+        it('alertCronEnabled=false → os checks de faturas NÃO rodam no tick (early-return no callback)', async () => {
+            mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: false } });
+            const spyOverdue = vi.spyOn(alertCronService, 'checkOverdueInvoices').mockResolvedValue(undefined);
+            const spyUpcoming = vi.spyOn(alertCronService, 'checkUpcomingInvoices').mockResolvedValue(undefined);
+
+            alertCronService.start();
+            // dispara o setTimeout inicial (2min) que roda o callback imediatamente no boot
+            await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+
+            expect(spyOverdue).not.toHaveBeenCalled();
+            expect(spyUpcoming).not.toHaveBeenCalled();
+            expect(loggerSpies.info).toHaveBeenCalledWith('[alertCronService] pausado pela UI (alertCronEnabled=false)');
+        });
+
+        it('alertCronEnabled=false → o check de estoque NÃO roda no tick', async () => {
+            mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: false } });
+            const spyStock = vi.spyOn(alertCronService, 'checkLowStock').mockResolvedValue(undefined);
+
+            alertCronService.start();
+            await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+
+            expect(spyStock).not.toHaveBeenCalled();
+        });
+
+        it('alertCronEnabled=false → o check de tickets NÃO roda no tick', async () => {
+            mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: false } });
+            const spyTickets = vi.spyOn(alertCronService, 'checkStaleTickets').mockResolvedValue(undefined);
+
+            alertCronService.start();
+            await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+
+            expect(spyTickets).not.toHaveBeenCalled();
+        });
+
+        it('alertCronEnabled=true (default) → os checks rodam normalmente (não há early-return)', async () => {
+            const spyOverdue = vi.spyOn(alertCronService, 'checkOverdueInvoices').mockResolvedValue(undefined);
+
+            alertCronService.start();
+            await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+
+            expect(spyOverdue).toHaveBeenCalled();
+        });
+
+        it('religar o switch retoma os checks no próximo tick (sem restart)', async () => {
+            // tick 1: pausado → não roda
+            mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: false } });
+            const spyOverdue = vi.spyOn(alertCronService, 'checkOverdueInvoices').mockResolvedValue(undefined);
+            alertCronService.start();
+            await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+            expect(spyOverdue).not.toHaveBeenCalled();
+
+            // tick 2: religado → roda (intervalo de 24h)
+            mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: true } });
+            await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+            expect(spyOverdue).toHaveBeenCalled();
         });
     });
 });

@@ -120,6 +120,59 @@ export function invalidatePlannerCache(issueNumber?: number): void {
     else plannerCache.delete(issueNumber);
 }
 
+// --- Throttle de concorrência do Planner (Epic #1113 / spike #1117) -------------
+// `analyzeTask` é o ÚNICO gargalo por onde passam TODOS os call-sites de produção
+// (ver docs/MAPEAMENTO_PLANNER_THROTTLE_1117.md §5): o worker do `execChain`
+// (taskRunnerService.ts:893), o handler HTTP `POST /planner/analyze`
+// (taskRoutes.ts:281) e a auto-chamada recursiva de `reevaluateWaiting`
+// (taskPlannerService.ts:329). O `execChain` já serializa as execuções 1-por-vez,
+// MAS o handler HTTP (e o reevaluate) rodam FORA da cadeia e poderiam disparar
+// gh+LLM concorrentemente com uma execução em andamento.
+//
+// POR QUE NÃO dá p/ reaproveitar só o throttle do aiJobService: aquele (MAX=3)
+// limita apenas a chamada LLM. analyzeTask, ANTES do LLM, dispara dezenas de
+// subprocessos `gh` (listOpenPRs: pr list + 1 pr diff por PR aberto; e
+// getFileContextFromMain: 1 gh api por arquivo citado) — esses NÃO passam pelo
+// aiJobService e batem direto na API do GitHub/rate-limit. Este semáforo
+// module-level cobre o caminho caro INTEIRO (gh + LLM), qualquer que seja o
+// caller, sem precisar tocar cada call-site e sem introduzir Bull/redis.
+//
+// Cache hits NÃO passam por aqui: continuam retornando direto em `analyzeTask`
+// (antes do slot) para não serializar decisões baratas e determinísticas.
+let plannerMaxConcurrent = Math.max(1, Number(process.env.PLANNER_MAX_CONCURRENT) || 1);
+let plannerActive = 0;
+let plannerWaiters: Array<() => void> = [];
+
+/** Ajusta o grau de concorrência do Planner (>=1). Exportado p/ testes/config. */
+export function setPlannerMaxConcurrent(n: number): void {
+    plannerMaxConcurrent = Math.max(1, Math.floor(n));
+}
+
+/** Zera o estado do semáforo. Exportado p/ isolar suítes de teste entre si. */
+export function resetPlannerThrottle(): void {
+    plannerActive = 0;
+    plannerWaiters = [];
+}
+
+async function acquirePlannerSlot(): Promise<void> {
+    if (plannerActive < plannerMaxConcurrent) {
+        plannerActive++;
+        return;
+    }
+    // Fica em fila até um slot ser liberado; a liberação TRANSFERE o slot (não
+    // incrementa plannerActive de novo) — assim o limite N é respeitado.
+    await new Promise<void>((resolve) => plannerWaiters.push(resolve));
+}
+
+function releasePlannerSlot(): void {
+    const next = plannerWaiters.shift();
+    if (next) {
+        next(); // transferência do slot p/ o próximo waiter (plannerActive inalterado)
+    } else {
+        plannerActive = Math.max(0, plannerActive - 1);
+    }
+}
+
 export const taskPlannerService = {
     async analyzeTask(task: Task, opts?: { noCache?: boolean }): Promise<PlannerDecision> {
         const decision: PlannerDecision = {
@@ -148,6 +201,7 @@ export const taskPlannerService = {
             return d;
         };
 
+        await acquirePlannerSlot();
         try {
             const openPRs = await listOpenPRs();
             const issueBody = task.body || '';
@@ -212,6 +266,8 @@ export const taskPlannerService = {
         } catch (e: any) {
             log.error(`Planner error #${task.issueNumber}`, e.message);
             return decision;
+        } finally {
+            releasePlannerSlot();
         }
     },
 
