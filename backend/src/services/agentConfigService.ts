@@ -1,4 +1,5 @@
 import { createLogger } from '../utils/logger';
+import { agentPromptStore } from './agentPromptStore';
 
 const log = createLogger('AgentConfig');
 
@@ -205,9 +206,18 @@ class AgentConfigService {
     }
 
     getSystemPrompt(): string {
-        if (!this.profile) return '';
-        const { config, notePublic } = this.profile;
         const parts: string[] = [];
+
+        // Texto-base do Marciano, editável pelo admin na aba "Config IA" (#1005).
+        // É a fundação do prompt — tudo o que segue são complementos dinâmicos.
+        const basePrompt = agentPromptStore.getBasePrompt();
+        if (basePrompt) {
+            parts.push(basePrompt);
+        }
+
+        if (!this.profile) return parts.join('\n\n');
+
+        const { config, notePublic } = this.profile;
 
         if (notePublic) {
             parts.push(`INSTRUÇÕES DO AGENTE:\n${notePublic}`);
