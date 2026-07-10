@@ -174,7 +174,7 @@ function releasePlannerSlot(): void {
 }
 
 export const taskPlannerService = {
-    async analyzeTask(task: Task, opts?: { noCache?: boolean }): Promise<PlannerDecision> {
+    async analyzeTask(task: Task, opts?: { noCache?: boolean; preflightHint?: string }): Promise<PlannerDecision> {
         const decision: PlannerDecision = {
             action: 'go',
             reason: 'Sem conflitos detectados.',
@@ -236,7 +236,7 @@ export const taskPlannerService = {
 
             const fileContext = await getFileContextFromMain(issueBody);
             if (fileContext.length > 100 || issueBody.length > 50) {
-                const plannerPrompt = this.buildPlannerPrompt(task, fileContext, openPRs, decision.overlappingFiles);
+                const plannerPrompt = this.buildPlannerPrompt(task, fileContext, openPRs, decision.overlappingFiles, opts?.preflightHint);
                 const llmDecision = await this.queryLLM(plannerPrompt);
                 if (llmDecision) {
                     if (llmDecision.action) decision.action = llmDecision.action;
@@ -271,12 +271,13 @@ export const taskPlannerService = {
         }
     },
 
-    buildPlannerPrompt(task: Task, fileContext: string, openPRs: OpenPR[], overlappingFiles: string[]): string {
+    buildPlannerPrompt(task: Task, fileContext: string, openPRs: OpenPR[], overlappingFiles: string[], preflightHint?: string): string {
         const prSummary = openPRs.length > 0
             ? openPRs.map(pr => `PR #${pr.number} (${pr.headRefName}): ${pr.title}\n  Files: ${pr.files.slice(0, 15).join(', ')}`).join('\n')
             : 'Nenhum PR aberto.';
 
         return `You are a Task Queue Planner for a software project. Analyze whether this task should be executed.
+${preflightHint ? `\n## Pre-flight evidence (merged-PR similarity)\n${preflightHint}\n` : ''}
 
 ## Task (issue #${task.issueNumber}): ${task.title}
 ${task.body?.substring(0, 3000) || 'No description'}

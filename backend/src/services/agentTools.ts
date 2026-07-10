@@ -20,6 +20,7 @@ import { agentConfigService } from './agentConfigService';
 import { channelRouter } from './channelRouter';
 import { uiConfigService } from './uiConfigService';
 import { getWhatsappAllowlist, whatsappDestinationAllowed, socidOf } from '../utils/actionGuards';
+import { findSimilarIssue } from '../utils/issueDedup';
 import { isConfirmable, buildConfirmDeeplink } from './agentActionConfirm';
 import { notificationService } from './notificationService';
 
@@ -1300,15 +1301,13 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                     'issue', 'list',
                     '--repo', 'tcstulio/sistemav2',
                     '--state', 'open',
-                    '--limit', '30',
+                    '--limit', '100',
                     '--json', 'number,title'
                 ], { timeout: 15000 });
                 const existing: Array<{ number: number; title: string }> = JSON.parse(searchOut);
-                const normalized = title.toLowerCase().replace(/[^a-z0-9]/g, '');
-                const dupe = existing.find(e => {
-                    const eNorm = e.title.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    return eNorm === normalized || (eNorm.length > 20 && normalized.length > 20 && (eNorm.includes(normalized.substring(0, 20)) || normalized.includes(eNorm.substring(0, 20))));
-                });
+                // Dedup determinístico por tokens (#1279) — a heurística antiga (substring 20 chars)
+                // deixava passar variações triviais do mesmo título.
+                const dupe = findSimilarIssue(title, existing);
                 if (dupe) {
                     return `Já existe um issue aberto com título similar: #${dupe.number} "${dupe.title}". NÃO criei duplicata. Use add_github_issue_comment ou reference este issue existente.`;
                 }
@@ -1431,15 +1430,12 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                     'issue', 'list',
                     '--repo', 'tcstulio/sistemav2',
                     '--state', 'open',
-                    '--limit', '30',
+                    '--limit', '100',
                     '--json', 'number,title'
                 ], { timeout: 15000 });
                 const existing: Array<{ number: number; title: string }> = JSON.parse(searchOut);
-                const normalized = tTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
-                const dupe = existing.find(e => {
-                    const eNorm = e.title.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    return eNorm === normalized || (eNorm.length > 20 && normalized.length > 20 && (eNorm.includes(normalized.substring(0, 20)) || normalized.includes(eNorm.substring(0, 20))));
-                });
+                // Dedup determinístico por tokens (#1279) — mesma régua do create_github_issue.
+                const dupe = findSimilarIssue(tTitle, existing);
                 if (dupe) {
                     return `Já existe um issue aberto com título similar: #${dupe.number} "${dupe.title}". NÃO criei duplicata. Use start_opencode_task para executar a task existente.`;
                 }
