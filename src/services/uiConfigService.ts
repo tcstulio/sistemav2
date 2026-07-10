@@ -19,6 +19,27 @@ export interface TaskAutomationConfig {
     minMergeScore: number;
     /** Nota mínima do Judge p/ APROVAR uma task (default 9). Abaixo → revisão humana. #1125 */
     minApproveScore: number;
+    /** Máx. de rodadas de auto-fix do Judge (nota baixa) antes de escalar p/ revisão humana (default 3). #1154 */
+    maxJudgeRounds?: number;
+    /** Máx. de rodadas de self-heal de gate (regressão/veto/CI) antes de escalar (default 3). #1154 */
+    maxGateFixRounds?: number;
+    /** Teto de rodadas de opencode por task antes de escalar p/ revisão (default 20). #1154 item 23 */
+    maxRoundsPerTask?: number;
+    /** Teto global de rodadas de opencode por dia — segura novos dispatches ao atingir (default 200). #1154 item 23 */
+    dailyRoundBudget?: number;
+}
+
+// #1204 — Kill-switches globais das automações de fundo. Default true = nada muda.
+export interface AutomationSwitchesConfig {
+    schedulerEnabled: boolean;
+    alertCronEnabled: boolean;
+}
+
+// #1129 — Kill-switches perigosos expostos como toggles de admin (Integrações/Segurança).
+export interface FeatureSwitchesConfig {
+    dryRunMode: boolean;          // impede envio real de mensagens (anti-spam de incidente)
+    financialCommands: boolean;   // habilita /pagar e /pix (movimentam dinheiro real)
+    crmContextInjection: boolean; // injeta dados do cliente no LLM (privacidade)
 }
 
 export interface UiConfig {
@@ -33,6 +54,8 @@ export interface UiConfig {
     taskNotifications?: TaskNotificationsConfig;
     taskNotificationsExternalEnabled?: boolean;
     taskAutomation?: TaskAutomationConfig;
+    automationSwitches?: AutomationSwitchesConfig;
+    featureSwitches?: FeatureSwitchesConfig;
     version?: number; // concorrência otimista (Central de Permissões)
     appAccessGroupId?: string; // grupo Dolibarr usado p/ "Habilitar acesso ao app" (carrega o direito 342)
 }

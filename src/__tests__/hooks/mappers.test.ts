@@ -519,6 +519,27 @@ describe('Dolibarr Mappers', () => {
             expect(mappers.mapUser(rawAdminTrue as any).admin).toBe(true);
             expect(mappers.mapUser(rawAdminFalse as any).admin).toBe(0);
         });
+
+        it('mapeia phone_mobile do usuario (#1003)', () => {
+            const raw = { id: '1', login: 'john', phone_mobile: '+5511999990000' };
+            expect(mappers.mapUser(raw as any).phone_mobile).toBe('+5511999990000');
+        });
+
+        it('cai para user_mobile quando phone_mobile ausente/empty (#1003)', () => {
+            const rawEmpty = { id: '1', login: 'john', phone_mobile: '', user_mobile: '+551188888000' };
+            expect(mappers.mapUser(rawEmpty as any).phone_mobile).toBe('+551188888000');
+
+            const rawNull = { id: '2', login: 'jane', phone_mobile: null, user_mobile: '+551177777000' };
+            expect(mappers.mapUser(rawNull as any).phone_mobile).toBe('+551177777000');
+
+            const rawOnlyUserMobile = { id: '3', login: 'x', user_mobile: '+551166666000' };
+            expect(mappers.mapUser(rawOnlyUserMobile as any).phone_mobile).toBe('+551166666000');
+        });
+
+        it('prioriza phone_mobile sobre user_mobile (corrige ordem invertida) (#1003)', () => {
+            const raw = { id: '1', login: 'john', phone_mobile: '+5511999990000', user_mobile: '+551188888000' };
+            expect(mappers.mapUser(raw as any).phone_mobile).toBe('+5511999990000');
+        });
     });
 
     describe('Payment mappers', () => {

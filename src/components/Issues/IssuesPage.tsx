@@ -1,12 +1,22 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { GithubService, GitHubIssue, IssueStats } from '../../services/githubService';
 import { TaskService, Task } from '../../services/taskService';
-import { PrecheckBadge, PrecheckAnalysis, RejectedPrecheckBanner } from '../TaskCard';
+import { PrecheckBadge, PrecheckAnalysis, RejectedPrecheckBanner, TaskAutomationChips } from '../TaskCard';
+import { BoardHeader } from '../BoardHeader';
 import { PageLayout, PageHeader, Card, Button, Spinner, Tabs, Tab } from '../ui';
-import { AlertCircle, Bug, Sparkles, Shield, Wrench, TestTube, GitMerge, Loader2, Eye, CheckCircle, XCircle, RotateCcw, MessageSquare, Trash2, Pencil, Terminal, ExternalLink, Search, Tag, CircleDot, Clock, ThumbsUp, Star, Play, RefreshCw, ShieldOff, Plus, Filter, LayoutGrid, List, GripVertical } from 'lucide-react';
+import { AlertCircle, Bug, Sparkles, Shield, Wrench, TestTube, GitMerge, Loader2, Eye, CheckCircle, XCircle, RotateCcw, MessageSquare, Trash2, Pencil, Terminal, ExternalLink, Search, Tag, CircleDot, Clock, ThumbsUp, Star, Play, RefreshCw, ShieldOff, Plus, Filter, LayoutGrid, List, GripVertical, ChevronDown, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { useDolibarr } from '../../context/DolibarrContext';
 import { useConfirm } from '../../hooks/useConfirm';
+import { useOrgBranding } from '../../hooks/useOrgBranding';
+import { getUiConfig } from '../../services/uiConfigService';
+import {
+    resolveScoreThresholds, scoreTone, scoreTextClasses, scoreBadgeClasses,
+    scoreTooltip, phaseSuffix, resolveCardStatusDisplay, holdReasonLabel,
+    type ScoreThresholds,
+} from './taskBadge';
+import { isEpic, progressFromSubtasks, EpicProgressBar, type EpicProgress } from './epicAggregation';
+import { extractJudgeNegatives, deriveFeedbackHistory } from './feedbackDraft';
 import DiffViewer from '../TasksBoard/DiffViewer';
 import TaskConsole from '../TasksBoard/TaskConsole';
 import { DndContext, closestCorners, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
@@ -44,7 +54,10 @@ const TERMINAL_STATUSES = ['merged', 'rejected', 'rejected_precheck', 'cancelled
 const PIPELINE_COLUMNS = [
     { key: 'queue', label: 'Fila', statuses: ['pending'] },
     { key: 'active', label: 'Em Execução', statuses: ['running', 'fixing', 'cancelling'] },
-    { key: 'review', label: 'Revisão', statuses: ['reviewing', 'approved'] },
+    // #1175: "Aguardando você" separa reviewing (Judge escalou p/ revisão humana) de approved
+    // retido por piso (mergeHoldReason). O approved transitório (sem hold) fica aqui com chip
+    // "mergeando..." até virar merged.
+    { key: 'review', label: 'Aguardando você', statuses: ['reviewing', 'approved'] },
     { key: 'done', label: 'Concluído', statuses: ['merged', 'rejected', 'rejected_precheck'] },
     { key: 'failed', label: 'Falhadas', statuses: ['failed'] },
     { key: 'cancelled', label: 'Canceladas', statuses: ['cancelled'] },
@@ -68,6 +81,69 @@ const LABEL_ICONS: Record<string, React.ReactNode> = {
     security: <Shield size={12} />,
     testing: <TestTube size={12} />,
     opencode_task: <Wrench size={12} />,
+};
+
+// Filtro de período (#983): a página de issues/tasks acumulava milhares de itens
+// já concluídos. O período escopa o que é "concluído" por data — o trabalho ativo
+// (issues abertas / tasks em andamento) continua sempre visível. Padrão = "Hoje".
+// Os mesmos valores são enviados para o backend (filtro server-side de issues) e
+// usados client-side para escopar tasks terminais.
+//
+// "Hoje" vs "1 dia" (issue pede filtros de 1 dia, 5 dias, etc):
+// - today = dia de CALENDÁRIO (desde a meia-noite local) — "o que foi realizado no dia".
+// - '1'   = janela móvel das últimas 24h — difere de "Hoje" perto da virada da meia-noite
+//           (ex.: às 01h, "1 dia" inclui o trabalho desde ontem 01h; "Hoje" só o de depois
+//           da 00h de hoje). São coisas diferentes, por isso ambas as opções existem.
+type Period = 'today' | '1' | '5' | '7' | '30' | 'all';
+
+const PERIOD_OPTIONS: { value: Period; label: string }[] = [
+    { value: 'today', label: 'Hoje' },
+    { value: '1', label: '1 dia' },
+    { value: '5', label: '5 dias' },
+    { value: '7', label: '7 dias' },
+    { value: '30', label: '30 dias' },
+    { value: 'all', label: 'Tudo' },
+];
+
+const PERIOD_DAYS: Record<Period, number | null> = {
+    today: null, // null = "hoje" (dia de calendário, desde a meia-noite)
+    '1': 1,      // janela móvel de 24h (rolling window) — distinto de "Hoje"
+    '5': 5,
+    '7': 7,
+    '30': 30,
+    all: null,
+};
+
+/**
+ * Verdadeiro quando dateStr cai dentro do período selecionado (ou período = "Tudo").
+ *
+ * ─── CÓDIGO DUPLICADO (front/back) — MANTER EM SINCRONIA ───
+ * Esta função é uma CÓPIA intencional de `withinPeriod` em
+ * `backend/src/utils/issuePeriodFilter.ts`. NÃO há módulo compartilhado porque:
+ *  (1) frontend (ESM/Vite) e backend (CommonJS, rootDir=./src) são projetos TS
+ *      separados, sem workspace/monorepo — um `shared/` exigiria mudar rootDir do
+ *      backend e quebrar o build `tsc`;
+ *  (2) cada lado valida independentemente: o BACKEND é autoritativo (filtro
+ *      server-side de issues — defesa em profundidade, cliente não é confiável);
+ *      o FRONTEND é otimista (escopa tasks terminais p/ UX imediato, antes do
+ *      reload). Amb precisam funcionar sozinhos.
+ * INVARIANTE: ao mudar a semântica aqui, replique-a no backend (e vice-versa).
+ * O parâmetro `now` existe só p/ testes determinísticos (default = agora).
+ */
+const withinPeriod = (dateStr: string | null | undefined, period: Period, now: Date = new Date()): boolean => {
+    if (period === 'all') return true;
+    if (!dateStr) return false;
+    const ts = new Date(dateStr).getTime();
+    if (Number.isNaN(ts)) return false;
+    if (period === 'today') {
+        const midnight = new Date(now);
+        midnight.setHours(0, 0, 0, 0);
+        return ts >= midnight.getTime();
+    }
+    const days = PERIOD_DAYS[period];
+    if (days === null) return true;
+    const cutoff = now.getTime() - days * 24 * 60 * 60 * 1000;
+    return ts >= cutoff;
 };
 
 /** Modal com histórico completo de eventos de uma task do TaskRunner. */
@@ -175,6 +251,142 @@ const TaskHistoryModal: React.FC<{
     );
 };
 
+/**
+ * Modal de feedback estruturado (#1176). Substitui o input inline de 1 linha por uma
+ * experiência completa: crítica do Judge (com "usar os pontos do Judge"), histórico de
+ * feedbacks anteriores, aviso fixo de reabertura de ciclo e textarea generosa.
+ *
+ * O envio roteia para o endpoint existente POST /api/tasks/:n/fix via `onSubmit`.
+ */
+const FeedbackModal: React.FC<{
+    task: Task;
+    minApproveScore: number;
+    onClose: () => void;
+    onSubmit: (feedback: string) => void;
+}> = ({ task, minApproveScore, onClose, onSubmit }) => {
+    const [feedback, setFeedback] = useState('');
+    // Rascunho extraído da crítica do Judge (pontos negativos); vazio quando não há review.
+    const judgeNegatives = useMemo(() => extractJudgeNegatives(task.judgeReview), [task.judgeReview]);
+    // Histórico: prefere durableFeedback; sem ele, recua para os eventos feedback_received.
+    const history = useMemo(() => deriveFeedbackHistory(task), [task]);
+    const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
+
+    const handleSubmit = () => {
+        const trimmed = feedback.trim();
+        if (!trimmed) return;
+        onSubmit(trimmed);
+        onClose();
+    };
+
+    return (
+        <div
+            className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+            onClick={onClose}
+            data-testid="task-feedback-modal"
+        >
+            <div
+                className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl"
+                onClick={e => e.stopPropagation()}
+            >
+                {/* Header */}
+                <div className="flex items-start justify-between p-4 border-b border-slate-200 dark:border-slate-700 gap-3">
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                            <MessageSquare size={14} className="text-indigo-500 shrink-0" />
+                            <span className="text-xs font-mono text-slate-400">#{task.issueNumber}</span>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color} ${cfg.bg}`}>
+                                {cfg.icon} {cfg.label}
+                            </span>
+                        </div>
+                        <h3 className="text-sm font-semibold text-slate-800 dark:text-white line-clamp-2">{task.title}</h3>
+                    </div>
+                    <button
+                        onClick={onClose}
+                        className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+                        aria-label="Fechar feedback"
+                    >
+                        <XCircle size={18} />
+                    </button>
+                </div>
+
+                {/* Body */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {/* Aviso fixo: reabertura de ciclo */}
+                    <div
+                        className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-300"
+                        data-testid="feedback-reopen-warning"
+                    >
+                        <RotateCcw size={14} className="mt-0.5 shrink-0" />
+                        <span>
+                            Enviar feedback <strong>REABRE o ciclo</strong>: o robô re-trabalha e re-julga mirando ≥ {minApproveScore} (config).
+                        </span>
+                    </div>
+
+                    {/* Crítica do Judge + "usar os pontos do Judge" */}
+                    {task.judgeReview && (
+                        <div
+                            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 p-2.5"
+                            data-testid="feedback-judge-review"
+                        >
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                                <h4 className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1.5">
+                                    <Star size={11} /> Crítica do Judge
+                                </h4>
+                                {judgeNegatives && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setFeedback(judgeNegatives)}
+                                        className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-md bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors"
+                                        data-testid="use-judge-points"
+                                    >
+                                        <Sparkles size={11} /> Usar os pontos do Judge
+                                    </button>
+                                )}
+                            </div>
+                            <p className="text-xs text-slate-600 dark:text-slate-300 whitespace-pre-wrap break-words">{task.judgeReview}</p>
+                        </div>
+                    )}
+
+                    {/* Histórico de feedbacks anteriores */}
+                    {history.length > 0 && (
+                        <div data-testid="feedback-history">
+                            <h4 className="text-[10px] uppercase font-bold text-slate-400 mb-1">Feedbacks anteriores</h4>
+                            <ul className="space-y-1 max-h-40 overflow-y-auto">
+                                {history.map((fb, i) => (
+                                    <li key={i} className="text-xs text-amber-700 dark:text-amber-400 whitespace-pre-wrap break-words">• {fb}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+
+                    {/* Textarea generosa */}
+                    <div>
+                        <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block" htmlFor="feedback-textarea">Novo feedback</label>
+                        <textarea
+                            id="feedback-textarea"
+                            value={feedback}
+                            onChange={e => setFeedback(e.target.value)}
+                            rows={6}
+                            placeholder="Descreva o que precisa ser corrigido. Cite os pontos do Judge quando relevante..."
+                            className="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none resize-y"
+                            data-testid="feedback-textarea"
+                            autoFocus
+                        />
+                    </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex justify-end gap-2 p-4 border-t border-slate-200 dark:border-slate-700">
+                    <Button variant="ghost" size="sm" onClick={onClose}>Cancelar</Button>
+                    <Button variant="primary" size="sm" onClick={handleSubmit} disabled={!feedback.trim()} data-testid="feedback-submit">
+                        Enviar feedback
+                    </Button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const SortableMiniCard: React.FC<{
     task: Task;
     onAction: (action: string, task: Task, extra?: string) => void;
@@ -183,16 +395,22 @@ const SortableMiniCard: React.FC<{
     onDelete: (task: Task) => void;
     onConsole: (task: Task) => void;
     onHistory: (task: Task) => void;
+    onFeedback: (task: Task) => void;
+    onGotoEpic: (n: number) => void;
     isAdmin: boolean;
     queuePosition?: number;
     isDragOverlay?: boolean;
-}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, isAdmin, queuePosition, isDragOverlay }) => {
-    const [showFeedback, setShowFeedback] = useState(false);
-    const [feedback, setFeedback] = useState('');
-    const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
+    scoreThresholds: ScoreThresholds;
+    epicProgress?: EpicProgress;
+    highlighted?: boolean;
+}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, onFeedback, onGotoEpic, isAdmin, queuePosition, isDragOverlay, scoreThresholds, epicProgress, highlighted }) => {
+    const cfg = resolveCardStatusDisplay(task, STATUS_CONFIG);
     const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
     const canKill = ['running', 'fixing'].includes(task.status);
     const isSortable = task.status === 'pending';
+    const phSuffix = phaseSuffix(task);
+    const holdReason = holdReasonLabel(task);
+    const maxRoundsPerTask = useOrgBranding()?.taskAutomation?.maxRoundsPerTask;
 
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
         id: `task-${task.issueNumber}`,
@@ -211,10 +429,12 @@ const SortableMiniCard: React.FC<{
         <div
             ref={isSortable ? setNodeRef : undefined}
             style={style}
+            id={isEpic(task) ? `epic-card-${task.issueNumber}` : undefined}
+            data-testid={isEpic(task) ? `epic-card-${task.issueNumber}` : `task-card-${task.issueNumber}`}
             {...(isSortable ? attributes : {})}
             {...(isSortable ? listeners : {})}
             onClick={() => onHistory(task)}
-            className={`p-3 rounded-lg border cursor-pointer ${isActive ? 'border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-900/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'} transition-all hover:shadow-sm hover:border-indigo-300 dark:hover:border-indigo-700 ${isDragging ? 'ring-2 ring-indigo-400 shadow-lg' : ''}`}
+            className={`p-3 rounded-lg border cursor-pointer ${isActive ? 'border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-900/10' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50'} transition-all hover:shadow-sm hover:border-indigo-300 dark:hover:border-indigo-700 ${isDragging ? 'ring-2 ring-indigo-400 shadow-lg' : ''} ${highlighted ? 'ring-2 ring-indigo-400 shadow-lg' : ''}`}
         >
             <div className="flex items-center gap-2 mb-1 flex-wrap">
                 {isSortable && isAdmin && (
@@ -226,20 +446,51 @@ const SortableMiniCard: React.FC<{
                     <span className="flex items-center justify-center w-5 h-5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold">{queuePosition}</span>
                 )}
                 <span className="text-[10px] font-mono text-slate-400">#{task.issueNumber}</span>
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${cfg.color} ${cfg.bg}`}>
-                    {cfg.icon} {cfg.label}
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${cfg.color} ${cfg.bg}`} data-testid={`task-status-chip-${task.issueNumber}`}>
+                    {cfg.icon} {cfg.label}{phSuffix ? ` — ${phSuffix}` : ''}
                 </span>
+                {isEpic(task) && (
+                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300" data-testid={`epic-badge-${task.issueNumber}`}>
+                        <Sparkles size={9} /> Épica
+                    </span>
+                )}
+                {!isEpic(task) && task.parentEpic && (
+                    <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onGotoEpic(task.parentEpic!); }}
+                        title={`Ir para a épica #${task.parentEpic}`}
+                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-medium bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors"
+                        data-testid={`task-epic-link-${task.issueNumber}`}
+                    >
+                        ↳ #{task.parentEpic}
+                    </button>
+                )}
                 {outcomeTime && (
                     <span className="text-[9px] text-slate-400 ml-auto">{outcomeTime}</span>
                 )}
                 {task.judgeScore !== undefined && (
-                    <span className={`text-[9px] font-medium ${task.judgeScore >= 7 ? 'text-green-600' : 'text-amber-600'}`}>
+                    <span
+                        className={`text-[9px] font-medium ${scoreTextClasses(scoreTone(task.judgeScore, scoreThresholds))}`}
+                        title={scoreTooltip(task.judgeScore, scoreThresholds)}
+                        data-testid={`task-score-${task.issueNumber}`}
+                    >
                         <Star size={8} className="inline" /> {task.judgeScore}/10
                     </span>
                 )}
                 <PrecheckBadge report={task.precheckReport} compact />
+                <TaskAutomationChips task={task} maxRoundsPerTask={maxRoundsPerTask} />
             </div>
             <h4 className="text-xs font-medium text-slate-800 dark:text-white leading-tight mb-1 line-clamp-2">{task.title}</h4>
+            {isEpic(task) && epicProgress && (
+                <div className="mb-1" data-testid={`epic-progress-${task.issueNumber}`}>
+                    <EpicProgressBar progress={epicProgress} compact />
+                </div>
+            )}
+            {holdReason && (
+                <p className="text-[10px] text-amber-600 dark:text-amber-400 mb-1 line-clamp-2" data-testid={`task-hold-${task.issueNumber}`}>
+                    <Clock size={8} className="inline mr-0.5" /> {holdReason}
+                </p>
+            )}
             {task.planReason && (
                 <p className="text-[10px] text-indigo-500 dark:text-indigo-400 mb-1 line-clamp-2">{task.planReason}</p>
             )}
@@ -263,7 +514,7 @@ const SortableMiniCard: React.FC<{
                                     <button onClick={(e) => { e.stopPropagation(); onAction('merge', task); }} className="text-[10px] px-2 py-0.5 rounded bg-emerald-500 text-white hover:bg-emerald-600 transition-colors">
                                         <GitMerge size={10} className="inline mr-0.5" /> Merge
                                     </button>
-                                    <button onClick={(e) => { e.stopPropagation(); setShowFeedback(!showFeedback); }} className="text-[10px] px-1.5 py-0.5 rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+                                    <button onClick={(e) => { e.stopPropagation(); onFeedback(task); }} aria-label={`Feedback da task #${task.issueNumber}`} className="text-[10px] px-1.5 py-0.5 rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
                                         <MessageSquare size={10} />
                                     </button>
                                     <button onClick={(e) => { e.stopPropagation(); onAction('reject', task); }} className="text-[10px] px-1.5 py-0.5 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
@@ -305,19 +556,6 @@ const SortableMiniCard: React.FC<{
                     )}
                 </div>
             )}
-            {isAdmin && showFeedback && !isDragOverlay && (
-                <div className="mt-2 flex gap-1">
-                    <input
-                        type="text" value={feedback} onChange={e => setFeedback(e.target.value)}
-                        placeholder="Instrução..."
-                        className="flex-1 text-[10px] px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-1 focus:ring-indigo-500 outline-none"
-                        onKeyDown={e => { if (e.key === 'Enter' && feedback.trim()) { onAction('fix', task, feedback.trim()); setFeedback(''); setShowFeedback(false); } }}
-                    />
-                    <button onClick={() => { if (feedback.trim()) { onAction('fix', task, feedback.trim()); setFeedback(''); setShowFeedback(false); } }} disabled={!feedback.trim()} className="text-[10px] px-2 py-1 rounded bg-indigo-500 text-white disabled:opacity-50">
-                        OK
-                    </button>
-                </div>
-            )}
         </div>
     );
 };
@@ -330,16 +568,20 @@ const TaskListCard: React.FC<{
     onDelete: (task: Task) => void;
     onConsole: (task: Task) => void;
     onHistory: (task: Task) => void;
+    onFeedback: (task: Task) => void;
+    onGotoEpic: (n: number) => void;
     isAdmin: boolean;
     queuePosition?: number;
-}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, isAdmin, queuePosition }) => {
+    scoreThresholds: ScoreThresholds;
+}> = ({ task, onAction, onReview, onEdit, onDelete, onConsole, onHistory, onFeedback, onGotoEpic, isAdmin, queuePosition, scoreThresholds }) => {
     const [expanded, setExpanded] = useState(false);
-    const [feedback, setFeedback] = useState('');
-    const [showFeedback, setShowFeedback] = useState(false);
-    const cfg = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending;
+    const cfg = resolveCardStatusDisplay(task, STATUS_CONFIG);
     const isActive = ['running', 'fixing', 'cancelling'].includes(task.status);
     const canKill = ['running', 'fixing'].includes(task.status);
     const outcomeTime = formatOutcomeTime(task.status, task);
+    const phSuffix = phaseSuffix(task);
+    const holdReason = holdReasonLabel(task);
+    const maxRoundsPerTask = useOrgBranding()?.taskAutomation?.maxRoundsPerTask;
 
     return (
         <Card className="relative overflow-hidden cursor-pointer hover:border-indigo-200 dark:hover:border-indigo-700 transition-colors" onClick={() => onHistory(task)}>
@@ -353,28 +595,49 @@ const TaskListCard: React.FC<{
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="text-xs font-mono text-slate-400">#{task.issueNumber}</span>
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color} ${cfg.bg}`}>
-                            {cfg.icon} {cfg.label}
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color} ${cfg.bg}`} data-testid={`task-status-chip-${task.issueNumber}`}>
+                            {cfg.icon} {cfg.label}{phSuffix ? ` — ${phSuffix}` : ''}
                         </span>
+                        {!isEpic(task) && task.parentEpic && (
+                            <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); onGotoEpic(task.parentEpic!); }}
+                                title={`Ir para a épica #${task.parentEpic}`}
+                                className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 transition-colors"
+                                data-testid={`task-epic-link-${task.issueNumber}`}
+                            >
+                                ↳ épica #{task.parentEpic}
+                            </button>
+                        )}
                         {outcomeTime && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] text-slate-500 bg-slate-100 dark:bg-slate-800" data-testid="outcome-time">
                                 <Clock size={10} /> {outcomeTime}
                             </span>
                         )}
                         {task.judgeScore !== undefined && (
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${task.judgeScore >= 7 ? 'text-green-600 bg-green-50' : 'text-amber-600 bg-amber-50'}`}>
+                            <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${scoreBadgeClasses(scoreTone(task.judgeScore, scoreThresholds))}`}
+                                title={scoreTooltip(task.judgeScore, scoreThresholds)}
+                                data-testid={`task-score-${task.issueNumber}`}
+                            >
                                 <Star size={10} /> {task.judgeScore}/10
                             </span>
                         )}
                         {task.labels.filter(l => l !== 'opencode-task').map(l => (
                             <span key={l} className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">{l}</span>
                         ))}
+                        <TaskAutomationChips task={task} maxRoundsPerTask={maxRoundsPerTask} />
                     </div>
                     <h3 className="font-semibold text-sm text-slate-800 dark:text-white truncate flex items-center gap-1.5">
                         <span className="truncate">{task.title}</span>
                         <PrecheckBadge report={task.precheckReport} />
                     </h3>
                     {task.status === 'rejected_precheck' && <RejectedPrecheckBanner report={task.precheckReport} />}
+                    {holdReason && (
+                        <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5 line-clamp-2" data-testid={`task-hold-${task.issueNumber}`}>
+                            <Clock size={10} className="inline mr-0.5" /> {holdReason}
+                        </p>
+                    )}
                     {task.planReason && (
                         <p className="text-[10px] text-indigo-500 dark:text-indigo-400 mt-0.5 line-clamp-1">{task.planReason}</p>
                     )}
@@ -413,7 +676,7 @@ const TaskListCard: React.FC<{
                         {isAdmin && (
                             <>
                                 <Button variant="primary" size="sm" icon={<CheckCircle size={12} />} onClick={() => onAction('merge', task)}>Merge</Button>
-                                <Button variant="ghost" size="sm" icon={<MessageSquare size={12} />} onClick={() => setShowFeedback(!showFeedback)}>Corrigir</Button>
+                                <Button variant="ghost" size="sm" icon={<MessageSquare size={12} />} onClick={() => onFeedback(task)}>Corrigir</Button>
                                 <Button variant="ghost" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Refazer</Button>
                                 <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('reject', task)}>Rejeitar</Button>
                             </>
@@ -435,15 +698,6 @@ const TaskListCard: React.FC<{
                 {isAdmin && <Button variant="ghost" size="sm" icon={<Trash2 size={12} />} onClick={() => onDelete(task)} className="text-red-500" />}
             </div>
 
-            {isAdmin && showFeedback && (
-                <div className="mt-3 flex gap-2">
-                    <input type="text" value={feedback} onChange={e => setFeedback(e.target.value)} placeholder="Instrução adicional..."
-                        className="flex-1 text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
-                        onKeyDown={e => { if (e.key === 'Enter' && feedback.trim()) { onAction('fix', task, feedback.trim()); setFeedback(''); setShowFeedback(false); } }} />
-                    <Button variant="primary" size="sm" onClick={() => { if (feedback.trim()) { onAction('fix', task, feedback.trim()); setFeedback(''); setShowFeedback(false); } }} disabled={!feedback.trim()}>Enviar</Button>
-                </div>
-            )}
-
             {expanded && (
                 <div className="mt-3 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 space-y-2">
                     <div>
@@ -461,6 +715,115 @@ const TaskListCard: React.FC<{
                 </div>
             )}
         </Card>
+    );
+};
+
+/**
+ * Card de ÉPICA na visão de lista (#1178). Container expansível que mostra o progresso
+ * agregado (X/Y subtasks merged) e, ao expandir (chevron), lista as subtasks com status
+ * e link. É o "agrupamento visual completo" que a visão kanban não tem (lá as subtasks
+ * seguem o fluxo real pelas colunas).
+ *
+ * Renderizada como <div> (não <Card>) para podermos anexar id (alvo do scroll a partir do
+ * chip "↳ épica #N" das subtasks) e o estado de destaque (highlighted).
+ */
+const EpicListCard: React.FC<{
+    task: Task;
+    subtasks: Task[];
+    progress: EpicProgress;
+    onHistory: (task: Task) => void;
+    highlighted?: boolean;
+}> = ({ task, subtasks, progress, onHistory, highlighted }) => {
+    const [expanded, setExpanded] = useState(false);
+    const cfg = resolveCardStatusDisplay(task, STATUS_CONFIG);
+    const Chevron = expanded ? ChevronDown : ChevronRight;
+
+    return (
+        <div
+            id={`epic-card-${task.issueNumber}`}
+            data-testid={`epic-card-${task.issueNumber}`}
+            className={`relative bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800 rounded-xl shadow-sm overflow-hidden transition-all ${highlighted ? 'ring-2 ring-indigo-400 shadow-lg' : ''}`}
+        >
+            {/* Faixa lateral diferenciando a épica das tasks comuns. */}
+            <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-indigo-500 to-purple-500" />
+            <div className="p-4 pl-5">
+                <div className="flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300" data-testid={`epic-badge-${task.issueNumber}`}>
+                                <Sparkles size={10} /> Épica
+                            </span>
+                            <span className="text-xs font-mono text-slate-400">#{task.issueNumber}</span>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color} ${cfg.bg}`}>
+                                {cfg.icon} {cfg.label}
+                            </span>
+                            <span className="ml-auto text-[10px] font-mono text-slate-500 dark:text-slate-400" data-testid={`epic-progress-text-${task.issueNumber}`}>
+                                {progress.merged}/{progress.total} merged · {progress.percent}%
+                            </span>
+                        </div>
+                        <h3 className="font-semibold text-sm text-slate-800 dark:text-white truncate cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400" onClick={() => onHistory(task)} data-testid={`epic-title-${task.issueNumber}`}>
+                            {task.title}
+                        </h3>
+                        <div className="mt-2" data-testid={`epic-progress-${task.issueNumber}`}>
+                            <EpicProgressBar progress={progress} />
+                        </div>
+                        {/* Breakdown de fases — leitura rápida do andamento agregado. */}
+                        <div className="flex items-center gap-3 mt-1.5 text-[10px] text-slate-400 flex-wrap">
+                            <span>{progress.total} subtasks</span>
+                            {progress.pending > 0 && <span className="text-slate-500">{progress.pending} na fila</span>}
+                            {progress.inProgress > 0 && <span className="text-blue-500">{progress.inProgress} ativas</span>}
+                            {progress.failed > 0 && <span className="text-red-500">{progress.failed} com problema</span>}
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setExpanded(v => !v)}
+                        aria-expanded={expanded}
+                        aria-label={expanded ? `Recolher épica #${task.issueNumber}` : `Expandir épica #${task.issueNumber}`}
+                        data-testid={`epic-toggle-${task.issueNumber}`}
+                        className="shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    >
+                        <Chevron size={16} />
+                    </button>
+                </div>
+
+                {expanded && (
+                    <div className="mt-3 space-y-1" data-testid={`epic-subtasks-${task.issueNumber}`}>
+                        {subtasks.length === 0 ? (
+                            <p className="text-xs text-slate-400 px-1 py-2">Nenhuma subtask vinculada a esta épica.</p>
+                        ) : subtasks.map(s => {
+                            const scfg = resolveCardStatusDisplay(s, STATUS_CONFIG);
+                            return (
+                                <div
+                                    key={s.issueNumber}
+                                    className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                                    onClick={() => onHistory(s)}
+                                    data-testid={`epic-subtask-${task.issueNumber}-${s.issueNumber}`}
+                                >
+                                    <span className="text-slate-300 dark:text-slate-600 shrink-0">↳</span>
+                                    <span className="text-[10px] font-mono text-slate-400 shrink-0">#{s.issueNumber}</span>
+                                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-medium ${scfg.color} ${scfg.bg}`}>
+                                        {scfg.icon} {scfg.label}
+                                    </span>
+                                    <span className="text-xs text-slate-700 dark:text-slate-200 truncate flex-1">{s.title}</span>
+                                    {s.prUrl && (
+                                        <a
+                                            href={s.prUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={e => e.stopPropagation()}
+                                            className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline shrink-0"
+                                        >
+                                            PR #{s.prNumber} <ExternalLink size={8} className="inline" />
+                                        </a>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        </div>
     );
 };
 
@@ -531,12 +894,18 @@ const IssuesPage: React.FC = () => {
     const [issueFilter, setIssueFilter] = useState<'all' | 'open' | 'closed'>('all');
     const [labelFilter, setLabelFilter] = useState<string>('');
     const [searchQuery, setSearchQuery] = useState('');
+    // #983: filtro de período — padrão "Hoje" para mostrar o que foi realizado no dia
+    // e evitar o acúmulo de milhares de issues/tasks concluídas na lista.
+    const [period, setPeriod] = useState<Period>('today');
     const [issues, setIssues] = useState<GitHubIssue[]>([]);
     const [stats, setStats] = useState<IssueStats | null>(null);
     const [issuesLoading, setIssuesLoading] = useState(true);
 
     const [tasks, setTasks] = useState<Task[]>([]);
     const [tasksLoading, setTasksLoading] = useState(true);
+    // #1189: tick incrementado no mesmo refetch de 10s das tasks — alimenta o BoardHeader
+    // (barra de orçamento diário) sem criar polling próprio.
+    const [tasksTick, setTasksTick] = useState(0);
     const [taskViewMode, setTaskViewMode] = useState<'pipeline' | 'list'>('pipeline');
     const [taskTab, setTaskTab] = useState<'active' | 'done' | 'all'>('active');
     const [taskSearch, setTaskSearch] = useState('');
@@ -554,7 +923,17 @@ const IssuesPage: React.FC = () => {
     const [isDeleting, setIsDeleting] = useState(false);
     const [consoleTask, setConsoleTask] = useState<Task | null>(null);
     const [historyTask, setHistoryTask] = useState<Task | null>(null);
+    // #1176: task cujo modal de feedback está aberto (substitui o input inline de 1 linha).
+    const [feedbackTask, setFeedbackTask] = useState<Task | null>(null);
     const [labelingIssue, setLabelingIssue] = useState<number | null>(null);
+
+    // #1175: pisos REAIS de merge/approve (GET /api/ui-config). Score colorido contra o piso da
+    // config, não hardcoded. Fallback sensato (8/9) se a config não carregar.
+    const [scoreThresholds, setScoreThresholds] = useState<ScoreThresholds>(() => resolveScoreThresholds(null));
+
+    // #1178: épica destacada momentaneamente quando o usuário clica no chip "↳ épica #N" de uma
+    // subtask (scroll + anel). Limpa sozinho após um tempo para não ficar "preso".
+    const [highlightedEpic, setHighlightedEpic] = useState<number | null>(null);
 
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -562,7 +941,7 @@ const IssuesPage: React.FC = () => {
         setIssuesLoading(true);
         try {
             const [i, s] = await Promise.all([
-                GithubService.getIssues({ state: issueFilter, label: labelFilter || undefined, limit: 50 }),
+                GithubService.getIssues({ state: issueFilter, label: labelFilter || undefined, limit: 50, period }),
                 GithubService.getStats(),
             ]);
             setIssues(i);
@@ -575,7 +954,7 @@ const IssuesPage: React.FC = () => {
         } finally {
             setIssuesLoading(false);
         }
-    }, [issueFilter, labelFilter]);
+    }, [issueFilter, labelFilter, period]);
 
     const loadTasks = useCallback(async () => {
         try {
@@ -586,17 +965,43 @@ const IssuesPage: React.FC = () => {
     }, []);
 
     useEffect(() => { loadIssues(); }, [loadIssues]);
-    useEffect(() => { loadTasks(); const iv = setInterval(loadTasks, 10000); return () => clearInterval(iv); }, [loadTasks]);
+    useEffect(() => { loadTasks(); const iv = setInterval(() => { loadTasks(); setTasksTick((t) => t + 1); }, 10000); return () => clearInterval(iv); }, [loadTasks]);
+
+    // #1175: carrega os pisos de score uma vez (montagem). Em falha, mantém os defaults.
+    useEffect(() => {
+        let cancelled = false;
+        getUiConfig()
+            .then(cfg => {
+                if (!cancelled && cfg?.taskAutomation) {
+                    setScoreThresholds(resolveScoreThresholds(cfg.taskAutomation));
+                }
+            })
+            .catch(() => { /* mantém defaults defensivos */ });
+        return () => { cancelled = true; };
+    }, []);
 
     const filteredIssues = searchQuery
         ? issues.filter(i => i.title.toLowerCase().includes(searchQuery.toLowerCase()) || String(i.number).includes(searchQuery))
         : issues;
 
+    // Tasks ativas (não-terminais) são sempre exibidas; apenas as concluídas são escopadas
+    // pelo período (#983) para não acumular milhares de tasks antigas na tela.
+    //
+    // FALLBACK de data (#983, Judge P3): usamos `completedAt || updatedAt`.
+    // Nem toda task terminal tem `completedAt` preenchido — ex.: tasks `failed`/`cancelled`
+    // antigas, ou registros gravados antes do campo existir. Sem o fallback elas sumiriam
+    // indevidamente (data ausente => fora do período em qualquer recorte != "Tudo").
+    // `updatedAt` sempre existe e reflete o último toque da task, que é a melhor proxy de
+    // "quando terminou". Apenas quando AMBOS faltam o item é oculto (não há como datá-lo).
+    const periodFilteredTasks = useMemo(() => (
+        tasks.filter(t => TERMINAL_STATUSES.includes(t.status) ? withinPeriod(t.completedAt || t.updatedAt, period) : true)
+    ), [tasks, period]);
+
     const queueOrder = useMemo(() => {
-        return tasks
+        return periodFilteredTasks
             .filter(t => t.status === 'pending')
             .sort((a, b) => (a.queuePriority ?? 999) - (b.queuePriority ?? 999));
-    }, [tasks]);
+    }, [periodFilteredTasks]);
 
     const getQueuePosition = (task: Task): number | undefined => {
         if (task.status !== 'pending') return undefined;
@@ -605,7 +1010,7 @@ const IssuesPage: React.FC = () => {
     };
 
     const filteredTasks = useMemo(() => {
-        let result = tasks;
+        let result = periodFilteredTasks;
         if (taskTab === 'active') result = result.filter(t => !TERMINAL_STATUSES.includes(t.status));
         else if (taskTab === 'done') result = result.filter(t => TERMINAL_STATUSES.includes(t.status));
         if (statusFilter !== 'all') result = result.filter(t => t.status === statusFilter);
@@ -614,24 +1019,75 @@ const IssuesPage: React.FC = () => {
             result = result.filter(t => t.title.toLowerCase().includes(q) || t.body.toLowerCase().includes(q) || String(t.issueNumber).includes(q));
         }
         return result;
-    }, [tasks, taskTab, statusFilter, taskSearch]);
+    }, [periodFilteredTasks, taskTab, statusFilter, taskSearch]);
+
+    // #1178: agregação épica→subtasks. Calculada sobre o store COMPLETO (tasks), não sobre o
+    // período/filtros, para o progresso agregado ser sempre correto (critério de aceite:
+    // "contando apenas subtasks dela") — mesmo quando uma subtask terminal cai fora da janela
+    // de período visível. Memoizada: só recompute quando `tasks` mudar (ok para 300+ tasks).
+    const tasksByNumber = useMemo(() => {
+        const m = new Map<number, Task>();
+        for (const t of tasks) m.set(t.issueNumber, t);
+        return m;
+    }, [tasks]);
+
+    const subTasksByEpic = useMemo(() => {
+        const map = new Map<number, Task[]>();
+        for (const t of tasks) {
+            if (!isEpic(t)) continue;
+            const ids = t.subTasks && t.subTasks.length > 0 ? t.subTasks : null;
+            let subs: Task[];
+            if (ids) {
+                subs = [];
+                for (const id of ids) {
+                    const s = tasksByNumber.get(id);
+                    if (s) subs.push(s);
+                }
+            } else {
+                subs = tasks.filter(x => x.parentEpic === t.issueNumber);
+            }
+            map.set(t.issueNumber, subs);
+        }
+        return map;
+    }, [tasks, tasksByNumber]);
+
+    const epicProgressById = useMemo(() => {
+        const m = new Map<number, EpicProgress>();
+        for (const [n, subs] of subTasksByEpic) m.set(n, progressFromSubtasks(subs));
+        return m;
+    }, [subTasksByEpic]);
+
+    // #1178: rola até a épica e a destaca. Busca pelo id do card (epic-card-<n>) — funciona
+    // tanto na visão de lista (EpicListCard) quanto na kanban (mini-card de épica).
+    const gotoEpic = useCallback((n: number) => {
+        const el = document.getElementById(`epic-card-${n}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setHighlightedEpic(n);
+    }, []);
+
+    // Limpa o destaque após 2.5s (efeito de "pulse" no anel da épica).
+    useEffect(() => {
+        if (highlightedEpic == null) return;
+        const t = setTimeout(() => setHighlightedEpic(null), 2500);
+        return () => clearTimeout(t);
+    }, [highlightedEpic]);
 
     const statusCounts = useMemo(() => {
         const c: Record<string, number> = {};
-        for (const t of tasks) c[t.status] = (c[t.status] || 0) + 1;
+        for (const t of periodFilteredTasks) c[t.status] = (c[t.status] || 0) + 1;
         return c;
-    }, [tasks]);
+    }, [periodFilteredTasks]);
 
-    const hasActiveTask = tasks.some(t => ['running', 'fixing', 'cancelling'].includes(t.status));
+    const hasActiveTask = periodFilteredTasks.some(t => ['running', 'fixing', 'cancelling'].includes(t.status));
 
     const metrics = useMemo(() => {
-        const completed = tasks.filter(t => t.status === 'merged' && t.startedAt && t.completedAt);
+        const completed = periodFilteredTasks.filter(t => t.status === 'merged' && t.startedAt && t.completedAt);
         const totalMs = completed.reduce((s, t) => s + (new Date(t.completedAt!).getTime() - new Date(t.startedAt!).getTime()), 0);
         const avgMin = completed.length ? Math.round(totalMs / completed.length / 60000) : 0;
-        const totalRan = tasks.filter(t => TERMINAL_STATUSES.includes(t.status)).length;
+        const totalRan = periodFilteredTasks.filter(t => TERMINAL_STATUSES.includes(t.status)).length;
         const successRate = totalRan ? Math.round((completed.length / totalRan) * 100) : 0;
-        return { total: tasks.length, avgMin, successRate, pending: tasks.filter(t => t.status === 'pending').length, active: tasks.filter(t => ['running', 'fixing'].includes(t.status)).length };
-    }, [tasks]);
+        return { total: periodFilteredTasks.length, avgMin, successRate, pending: periodFilteredTasks.filter(t => t.status === 'pending').length, active: periodFilteredTasks.filter(t => ['running', 'fixing'].includes(t.status)).length };
+    }, [periodFilteredTasks]);
 
     const openReview = async (task: Task) => {
         setReviewTask(task); setDiffLoading(true);
@@ -639,18 +1095,36 @@ const IssuesPage: React.FC = () => {
         setDiffLoading(false);
     };
 
+    // #1154 P3 item 30: merge que RESPEITA os gates (piso/veto/regressão); se eles bloquearem, oferece
+    // FORÇAR conscientemente — e o backend grava a trilha (quem forçou + gates sobrepostos).
+    const mergeWithForcePrompt = async (issueNumber: number) => {
+        try {
+            await TaskService.merge(issueNumber);
+            toast.success('PR merged!');
+        } catch (mErr: any) {
+            const msg = mErr.response?.data?.error || mErr.message || '';
+            if (!/bloqueado/i.test(msg)) throw mErr; // erro real (não-gate) → propaga
+            if (await confirm({ title: `Forçar merge de #${issueNumber}?`, message: `${msg}\n\nForçar sobrepõe os gates e fica registrado na trilha.`, confirmText: 'Forçar merge', cancelText: 'Cancelar', danger: true })) {
+                await TaskService.merge(issueNumber, true);
+                toast.success('PR merged (forçado).');
+            }
+        }
+    };
+
     const handleTaskAction = async (action: string, task: Task, extra?: string) => {
         if (!isAdmin) { toast.error('Apenas administradores.'); return; }
         try {
             switch (action) {
                 case 'start': toast.info(`Iniciando #${task.issueNumber}...`); await TaskService.start(task.issueNumber); break;
-                case 'merge': await TaskService.merge(task.issueNumber); toast.success('PR merged!'); break;
+                case 'merge': await mergeWithForcePrompt(task.issueNumber); break;
                 case 'reject': await TaskService.reject(task.issueNumber); toast.info('Rejeitada'); break;
                 case 'redo': await TaskService.redo(task.issueNumber); toast.info('Refazendo...'); break;
                 case 'fix':
                     if (!extra) { toast.error('Informe a correção.'); return; }
                     toast.info('Enviando correção...');
                     await TaskService.fix(task.issueNumber, extra);
+                    // #1176: confirmação de que o ciclo foi reaberto (toast de confirmação do modal).
+                    toast.success('Feedback enviado — a task foi reaberta para correção.');
                     break;
                 case 'kill':
                     if (!(await confirm({ title: `Cancelar a task #${task.issueNumber}?`, message: 'O trabalho em andamento será perdido.', confirmText: 'Sim, cancelar', cancelText: 'Manter executando', danger: true }))) return;
@@ -737,11 +1211,34 @@ const IssuesPage: React.FC = () => {
     const openCount = filteredIssues.filter(i => i.state === 'OPEN').length;
     const closedCount = filteredIssues.length - openCount;
 
+    // #983: botões de período visíveis em todas as abas (exceto Estatísticas).
+    // Afeta issues (filtro server-side) e tasks terminais (filtro client-side).
+    const periodFilter = (
+        <div data-testid="period-filter" role="group" aria-label="Filtro de período" className="flex items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+            <span className="hidden sm:inline text-[10px] uppercase font-bold text-slate-400 px-1.5">Período</span>
+            {PERIOD_OPTIONS.map(opt => (
+                <button key={opt.value} type="button" onClick={() => setPeriod(opt.value)} title={`Mostrar concluídas: ${opt.label}`}
+                    aria-pressed={period === opt.value}
+                    className={`px-2.5 py-1 text-xs rounded-md transition-colors ${period === opt.value ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm font-semibold' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
+                    {opt.label}
+                </button>
+            ))}
+        </div>
+    );
+
+    const activePeriodLabel = PERIOD_OPTIONS.find(o => o.value === period)?.label;
+
     return (
         <PageLayout title="Issues & Tasks">
             <PageHeader
                 title="Issues & Tasks"
                 subtitle="GitHub issues, tasks automáticas e estatísticas do projeto"
+                actions={tab !== 'stats' ? (
+                    <div className="flex items-center gap-3 flex-wrap">
+                        <BoardHeader refreshSignal={tasksTick} />
+                        {periodFilter}
+                    </div>
+                ) : undefined}
                 tabs={
                     <Tabs value={tab} onChange={v => setTab(v as any)}>
                         <Tab value="issues">Issues ({issues.length})</Tab>
@@ -775,6 +1272,13 @@ const IssuesPage: React.FC = () => {
                             <option value="infra">Infra</option>
                         </select>
                     </div>
+
+                    {period !== 'all' && (
+                        <p className="text-[11px] text-slate-400 flex items-center gap-1 px-1" data-testid="period-hint-issues">
+                            <Clock size={11} />
+                            Mostrando o que foi realizado ({activePeriodLabel}). Issues abertas sempre aparecem.
+                        </p>
+                    )}
 
                     {issuesLoading ? <div className="flex justify-center py-12"><Spinner /></div> : (
                         <div className="space-y-1">
@@ -864,6 +1368,13 @@ const IssuesPage: React.FC = () => {
                         <Button variant="ghost" size="sm" icon={<RefreshCw size={14} />} onClick={loadTasks} />
                     </div>
 
+                    {period !== 'all' && (
+                        <p className="text-[11px] text-slate-400 flex items-center gap-1 px-1" data-testid="period-hint-tasks">
+                            <Clock size={11} />
+                            Mostrando concluídas ({activePeriodLabel}). Tasks em andamento sempre aparecem.
+                        </p>
+                    )}
+
                     {!isAdmin && (
                         <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-300">
                             <ShieldOff size={14} />
@@ -940,8 +1451,13 @@ const IssuesPage: React.FC = () => {
                                                             onDelete={setDeleteConfirm}
                                                             onConsole={setConsoleTask}
                                                             onHistory={setHistoryTask}
+                                                            onFeedback={setFeedbackTask}
+                                                            onGotoEpic={gotoEpic}
                                                             isAdmin={isAdmin}
                                                             queuePosition={getQueuePosition(task)}
+                                                            scoreThresholds={scoreThresholds}
+                                                            epicProgress={isEpic(task) ? epicProgressById.get(task.issueNumber) : undefined}
+                                                            highlighted={highlightedEpic === task.issueNumber}
                                                         />
                                                     ))}
                                                 </div>
@@ -964,7 +1480,18 @@ const IssuesPage: React.FC = () => {
                                 </Card>
                             )}
                             {filteredTasks.map(task => (
-                                <TaskListCard key={task.issueNumber} task={task} onAction={handleTaskAction} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} onHistory={setHistoryTask} isAdmin={isAdmin} queuePosition={getQueuePosition(task)} />
+                                isEpic(task) ? (
+                                    <EpicListCard
+                                        key={task.issueNumber}
+                                        task={task}
+                                        subtasks={subTasksByEpic.get(task.issueNumber) ?? []}
+                                        progress={epicProgressById.get(task.issueNumber) ?? progressFromSubtasks([])}
+                                        onHistory={setHistoryTask}
+                                        highlighted={highlightedEpic === task.issueNumber}
+                                    />
+                                ) : (
+                                    <TaskListCard key={task.issueNumber} task={task} onAction={handleTaskAction} onReview={openReview} onEdit={openEdit} onDelete={setDeleteConfirm} onConsole={setConsoleTask} onHistory={setHistoryTask} onFeedback={setFeedbackTask} onGotoEpic={gotoEpic} isAdmin={isAdmin} queuePosition={getQueuePosition(task)} scoreThresholds={scoreThresholds} />
+                                )
                             ))}
                         </div>
                     )}
@@ -1026,6 +1553,16 @@ const IssuesPage: React.FC = () => {
 
             {historyTask && <TaskHistoryModal task={historyTask} onClose={() => setHistoryTask(null)} />}
 
+            {/* #1176: modal de feedback estruturado (textarea + crítica do Judge + histórico + aviso). */}
+            {feedbackTask && (
+                <FeedbackModal
+                    task={feedbackTask}
+                    minApproveScore={scoreThresholds.minApproveScore}
+                    onClose={() => setFeedbackTask(null)}
+                    onSubmit={(feedback) => handleTaskAction('fix', feedbackTask, feedback)}
+                />
+            )}
+
             {reviewTask && (diffLoading ? (
                 <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">
                     <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 flex flex-col items-center gap-3"><Loader2 size={24} className="animate-spin text-indigo-500" /><p className="text-sm text-slate-500">Carregando diff...</p></div>
@@ -1033,7 +1570,7 @@ const IssuesPage: React.FC = () => {
             ) : (
                 <DiffViewer diff={diffText} issueNumber={reviewTask.issueNumber} judgeScore={reviewTask.judgeScore} judgeReview={reviewTask.judgeReview} visualScore={reviewTask.visualScore} visualReview={reviewTask.visualReview} screenVerify={reviewTask.screenVerify} prUrl={reviewTask.prUrl}
                     onClose={() => setReviewTask(null)}
-                    onMerge={async () => { if (!isAdmin) { toast.error('Apenas administradores.'); return; } await TaskService.merge(reviewTask.issueNumber); setReviewTask(null); toast.success('PR merged!'); loadTasks(); }}
+                    onMerge={async () => { if (!isAdmin) { toast.error('Apenas administradores.'); return; } try { await mergeWithForcePrompt(reviewTask.issueNumber); setReviewTask(null); loadTasks(); } catch (e: any) { toast.error(e.response?.data?.error || e.message); } }}
                     onFix={() => setReviewTask(null)}
                     onReject={async () => { if (!isAdmin) { toast.error('Apenas administradores.'); return; } await TaskService.reject(reviewTask.issueNumber); setReviewTask(null); toast.info('Rejeitada'); loadTasks(); }}
                 />

@@ -176,6 +176,58 @@ export async function killOpencodeOrphans(
 }
 
 /**
+ * Seleciona os chromes a matar por perfil (needle no --user-data-dir) — MODO ESTRITO, o INVERSO
+ * do killOpencodeOrphans: chrome é o navegador PESSOAL do usuário, então na dúvida NÃO mata.
+ * Só entra na lista quem tem CommandLine CONHECIDA contendo o needle do perfil; CommandLine
+ * vazia/indisponível NÃO mata (no opencode é o contrário — lá over-matar é seguro).
+ * Puro/testável.
+ */
+export function pickChromeProfileTargets(
+    pids: number[],
+    cls: Map<number, string> | null,
+    profileNeedle: string,
+): number[] {
+    if (!cls) return []; // WMI indisponível → sem discriminação → nada (estrito)
+    const targets: number[] = [];
+    for (const pid of pids) {
+        const cl = cls.get(pid);
+        if (cl && cl.includes(profileNeedle)) targets.push(pid);
+    }
+    return targets;
+}
+
+/**
+ * Mata SOMENTE os chromes cujo CommandLine contém o diretório de perfil dado (ex.:
+ * `.wwebjs_auth\session-v4_1747`). Defesa ATIVA contra chrome zumbi segurando o SingletonLock
+ * do perfil do WhatsApp (incidentes 2026-06-25 e 2026-07-07): no Windows o restart do nodemon
+ * NÃO entrega sinal (o gracefulShutdown nunca roda) e os chromes do puppeteer sobrevivem ao
+ * backend — o próximo boot falha o initialize() para sempre. Chamar ANTES de abrir a sessão:
+ * quem estiver segurando o perfil que VAMOS abrir é zumbi por definição.
+ * ESTRITO por design (falha de enum/WMI ou CommandLine vazia → não mata nada): over-kill aqui
+ * atingiria o navegador pessoal do usuário. Nunca lança.
+ */
+export async function killChromesByProfile(profileNeedle: string): Promise<{ killed: number[]; errors: string[] }> {
+    const errors: string[] = [];
+    let pids: number[] = [];
+    try {
+        pids = (await listPidsByName('chrome')).filter((p) => p !== process.pid);
+    } catch (e: any) {
+        return { killed: [], errors: [`enum falhou: ${String(e?.message || e).slice(0, 120)} — nada morto (estrito)`] };
+    }
+    if (!pids.length) return { killed: [], errors };
+    const cls = await tryGetCommandLines(pids);
+    if (!cls) return { killed: [], errors: ['CommandLine indisponível — nada morto (estrito)'] };
+    const targets = pickChromeProfileTargets(pids, cls, profileNeedle);
+    const killed: number[] = [];
+    for (const pid of targets) {
+        const r = await killTree(pid);
+        if (r.ok && !r.alreadyDead) killed.push(pid);
+        else if (!r.ok) errors.push(`pid ${pid}: ${r.signal}`);
+    }
+    return { killed, errors };
+}
+
+/**
  * Mata (árvore) TODOS os processos com o image name dado, SEM enumeração: `taskkill /F /T /IM`
  * no Windows, `pkill` no Unix. É o BACKSTOP para quando a varredura por enumeração
  * (Get-Process/WMI) FALHA sob carga — foi o que vimos no #335: órfãos acumulavam, o sistema

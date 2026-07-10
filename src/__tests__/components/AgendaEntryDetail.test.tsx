@@ -37,12 +37,17 @@ vi.mock('../../services/dbService', () => ({
     dbService: { get: (...args: any[]) => mockGet(...args) },
 }));
 
-const mockMapAgendaEvent = vi.hoisted(() => vi.fn());
+const { mockMapAgendaEvent, mockMapTask, mockMapProject, mockMapIntervention } = vi.hoisted(() => ({
+    mockMapAgendaEvent: vi.fn(),
+    mockMapTask: vi.fn(),
+    mockMapProject: vi.fn(),
+    mockMapIntervention: vi.fn(),
+}));
 vi.mock('../../hooks/dolibarr/mappers', () => ({
     mapAgendaEvent: (...args: any[]) => mockMapAgendaEvent(...args),
-    mapTask: vi.fn(),
-    mapProject: vi.fn(),
-    mapIntervention: vi.fn(),
+    mapTask: (...args: any[]) => mockMapTask(...args),
+    mapProject: (...args: any[]) => mockMapProject(...args),
+    mapIntervention: (...args: any[]) => mockMapIntervention(...args),
 }));
 
 vi.mock('../../hooks/useDolibarrLink', () => ({
@@ -213,5 +218,67 @@ describe('AgendaEntryDetail', () => {
         expect(confirmSpy).not.toHaveBeenCalled();
         alertSpy.mockRestore();
         confirmSpy.mockRestore();
+    });
+
+    // Renderers não-evento: garantem que a tipagem (Task/Project/Intervention)
+    // preserva o comportamento após a limpeza dos `any` (#997).
+    describe('Non-event renderers', () => {
+        it('renders task details (tsk- prefix)', async () => {
+            mockMapTask.mockReturnValue({
+                id: '10',
+                ref: 'TK010',
+                label: 'Instalar servidor',
+                project_id: '5',
+                description: 'Setup inicial',
+                date_start: 1700000000000,
+                date_end: 1700003600000,
+                progress: 100,
+                fk_user_assign: '2',
+            });
+            renderComponent({ initialItemId: 'tsk-10' });
+            await waitFor(() => {
+                expect(screen.getByText('Instalar servidor')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Agenda / Tarefa')).toBeInTheDocument();
+            expect(screen.getByText('100% Concluído')).toBeInTheDocument();
+        });
+
+        it('renders project deadline details (prj- prefix)', async () => {
+            mockMapProject.mockReturnValue({
+                id: '5',
+                ref: 'PJ005',
+                title: 'Migração ERP',
+                socid: '3',
+                statut: '1',
+                progress: 40,
+                date_end: 1700003600000,
+            });
+            renderComponent({ initialItemId: 'prj-5' });
+            await waitFor(() => {
+                expect(screen.getByText('Migração ERP')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Agenda / Projeto (Prazo)')).toBeInTheDocument();
+        });
+
+        it('renders intervention details incl. project link (int- prefix)', async () => {
+            mockMapIntervention.mockReturnValue({
+                id: '20',
+                ref: 'IN020',
+                socid: '3',
+                project_id: '5', // mapper normaliza o vínculo de projeto em project_id (#997)
+                date: 1700000000000,
+                date_creation: 1700000000000,
+                description: 'Manutenção preventiva',
+                statut: '1',
+            });
+            renderComponent({ initialItemId: 'int-20' });
+            await waitFor(() => {
+                expect(screen.getByText('IN020')).toBeInTheDocument();
+            });
+            expect(screen.getByText('Agenda / Intervenção')).toBeInTheDocument();
+            expect(screen.getByText('Manutenção preventiva')).toBeInTheDocument();
+            // o card de projeto vinculado usa project_id (não mais fk_projet)
+            expect(screen.getByText('Projeto Vinculado')).toBeInTheDocument();
+        });
     });
 });

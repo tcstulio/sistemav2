@@ -325,7 +325,7 @@ export const CustomerList: React.FC<CustomerListProps> = ({ onNavigate, initialI
         setIsSaving(true);
         try {
             await updateCustomer.mutateAsync({ id: selectedCustomer.id, data: editForm });
-            Object.assign(selectedCustomer, editForm);
+            setSelectedCustomer(prev => prev ? { ...prev, ...editForm } : prev);
             toast.success("Cliente atualizado com sucesso");
             setIsEditModalOpen(false);
         } catch (err: any) {

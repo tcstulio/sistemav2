@@ -33,6 +33,12 @@ vi.mock('../../services/socketService', () => ({
     },
 }));
 
+// #1204 — mock do uiConfigService para controlar o kill-switch schedulerEnabled a cada tick.
+const mockUiConfigService = vi.hoisted(() => ({
+    get: vi.fn(() => ({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: true } })),
+}));
+vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfigService }));
+
 import fs from 'fs';
 import { schedulerService } from '../../services/schedulerService';
 import { messageService } from '../../services/legacy/messageService';
@@ -626,6 +632,21 @@ describe('SchedulerService', () => {
         it('does nothing when stopping non-running worker', () => {
             schedulerService.stopWorker();
         });
+
+        it('isRunning is false before starting (#1166)', () => {
+            expect(schedulerService.isRunning).toBe(false);
+        });
+
+        it('isRunning is true after startWorker (#1166)', () => {
+            schedulerService.startWorker();
+            expect(schedulerService.isRunning).toBe(true);
+        });
+
+        it('isRunning is false after stopWorker (#1166)', () => {
+            schedulerService.startWorker();
+            schedulerService.stopWorker();
+            expect(schedulerService.isRunning).toBe(false);
+        });
     });
 
     describe('processQueue', () => {
@@ -821,6 +842,47 @@ describe('SchedulerService', () => {
             const csv = `\n\n11999999999\n\n`;
             const result = schedulerService.parseCSVContacts(csv);
             expect(result).toHaveLength(1);
+        });
+    });
+
+    describe('kill-switch da UI (#1204) — processQueue', () => {
+        beforeEach(() => {
+            // reset p/ default-on (não pausa)
+            mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: true } });
+        });
+
+        it('schedulerEnabled=false → mensagens agendadas NÃO saem no tick (early-return)', async () => {
+            mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: false, alertCronEnabled: true } });
+            // mensagem vencida (scheduledAt no passado) — sairia normalmente se o switch estivesse ON
+            schedulerService.scheduleMessage({ chatId: '5511@c.us', sessionId: 'sess1', message: 'Hello', scheduledAt: Date.now() - 1000 });
+            expect(schedulerService.getPending()).toHaveLength(1);
+
+            await schedulerService.processQueue();
+
+            // nada foi enviado
+            expect(messageService.sendText).not.toHaveBeenCalled();
+            expect(emailService.sendEmail).not.toHaveBeenCalled();
+            // a mensagem continua pending (não foi consumida)
+            expect(schedulerService.getPending()).toHaveLength(1);
+        });
+
+        it('schedulerEnabled=true (default) → mensagem agendada vencida é enviada normalmente', async () => {
+            schedulerService.scheduleMessage({ chatId: '5511@c.us', sessionId: 'sess1', message: 'Hello', scheduledAt: Date.now() - 1000 });
+            await schedulerService.processQueue();
+            expect(messageService.sendText).toHaveBeenCalledTimes(1);
+        });
+
+        it('religar o switch volta a processar sem restart (config checada a cada tick, sem cache)', async () => {
+            // tick 1: pausado → nada sai
+            mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: false, alertCronEnabled: true } });
+            schedulerService.scheduleMessage({ chatId: '5511@c.us', sessionId: 'sess1', message: 'Oi', scheduledAt: Date.now() - 1000 });
+            await schedulerService.processQueue();
+            expect(messageService.sendText).not.toHaveBeenCalled();
+
+            // tick 2: religado (sem restart/reinit) → agora processa
+            mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: true } });
+            await schedulerService.processQueue();
+            expect(messageService.sendText).toHaveBeenCalledTimes(1);
         });
     });
 });

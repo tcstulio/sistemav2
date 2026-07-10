@@ -9,6 +9,7 @@ import { AiService } from '../services/aiService';
 import { FinancialHealthWidget } from './Finance/FinancialHealthWidget';
 import { getDashboardArtifacts, saveSalesForecast } from '../services/dashboardArtifacts';
 import { formatDateOnly, formatDateTime } from '../utils/dateUtils';
+import { formatCurrency } from '../utils/formatUtils';
 import { logger } from '../utils/logger';
 import { useOrgBranding } from '../hooks/useOrgBranding';
 import { applyOrderVisibility, getUserPrefs, OrderVisibilityPrefs } from '../utils/orderVisibility';
@@ -97,15 +98,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     const [forecastError, setForecastError] = useState<string | null>(null);
     const [loadingForecast, setLoadingForecast] = useState(false);
     const [cashFlowMonths, setCashFlowMonths] = useState(12);
-
-    const formatCurrency = (value: number) => {
-        return new Intl.NumberFormat('pt-BR', {
-            style: 'currency',
-            currency: 'BRL',
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-        }).format(value);
-    };
 
     const CustomTooltip = ({ active, payload, label }: any) => {
         if (active && payload && payload.length) {

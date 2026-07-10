@@ -32,6 +32,11 @@ router.get('/quota-status', requireDolibarrLogin, (_req, res) => {
     res.json(taskRunnerService.getQuotaStatus());
 });
 
+// Orçamento diário de rodadas do Runner (#1189). Antes de /:issueNumber p/ não casar como número.
+router.get('/status', requireDolibarrLogin, (_req, res) => {
+    res.json(taskRunnerService.getDailyRoundsStatus());
+});
+
 router.get('/:issueNumber', requireDolibarrLogin, async (req, res) => {
     try {
         const task = taskRunnerService.getTask(Number(req.params.issueNumber));
@@ -230,8 +235,10 @@ router.post('/:issueNumber/approve-decomposition', requireDolibarrAdmin, async (
 
 router.post('/:issueNumber/merge', requireDolibarrAdmin, async (req, res) => {
     try {
-        // Admin verificado server-side aprovando manualmente: override humano do piso de score.
-        const task = await taskRunnerService.mergeTask(Number(req.params.issueNumber), { force: true });
+        // #1154 P3 item 30: force EXPLÍCITO (default false = respeita piso/veto/regressão). O admin só
+        // sobrepõe os gates marcando force:true conscientemente; a ação vai para a trilha com o ator.
+        const force = req.body?.force === true;
+        const task = await taskRunnerService.mergeTask(Number(req.params.issueNumber), { force, actor: 'admin (merge manual)' });
         res.json(task);
     } catch (error: any) {
         log.error('Merge task error', { error: error.message });

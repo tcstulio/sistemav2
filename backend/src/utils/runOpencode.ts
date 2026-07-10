@@ -157,7 +157,10 @@ export function runOpencode(
         }, 2000) : null;
 
         const killTimer = setTimeout(() => {
-            finish(new Error(`opencode timeout (${Math.round(timeoutMs / 1000)}s)`));
+            // #1154 P3 item 26: inclui o TAIL do stdout no erro — antes o timeout descartava todo o output
+            // acumulado, escondendo o que o opencode fazia quando travou (diagnóstico do #335).
+            const tail = (stdout || '').slice(-1500).trim();
+            finish(new Error(`opencode timeout (${Math.round(timeoutMs / 1000)}s)${tail ? ` — últimas linhas do output:\n${tail}` : ''}`));
             if (child.pid) killTree(child.pid).catch(() => { /* ignore */ });
             // Backstop: mata o opencode na FONTE do timeout p/ não virar órfão (causa do ciclo
             // vicioso no #335). taskkill /IM não enumera, então funciona mesmo sob carga.

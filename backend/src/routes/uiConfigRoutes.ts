@@ -7,9 +7,11 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { uiConfigService } from '../services/uiConfigService';
+import { taskRunnerService } from '../services/taskRunnerService';
 import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
 import { adminAuditService } from '../services/adminAuditService';
 import { createLogger } from '../utils/logger';
+import { resolveUserMobile } from '../utils/userMobile';
 import axios from 'axios';
 import { config as envConfig } from '../config/env';
 
@@ -69,9 +71,37 @@ const UpdateSchema = z.object({
         autoDecompose: z.boolean().optional(),
         minMergeScore: z.number().min(1).max(10).optional(),
         minApproveScore: z.number().min(1).max(10).optional(),
+        // #1154: rodadas/tetos de custo — validação de faixa fica no sanitizeTaskAutomation (clampa).
+        // Se não forem listados aqui o Zod ESTRIPA as chaves → o save do editor reseta p/ os defaults.
+        maxJudgeRounds: z.number().optional(),
+        maxGateFixRounds: z.number().optional(),
+        maxRoundsPerTask: z.number().optional(),
+        dailyRoundBudget: z.number().optional(),
+    }).optional(),
+    // #1207: governança de ações irreversíveis — só valida forma/tipos aqui; o sanitize real
+    // (clamp de threshold, filtragem de allowlist por dígitos, etc.) fica no service.
+    // Bug #1195: o Zod estripa chaves não listadas, então declarar os 4 campos explicitamente.
+    actionGovernance: z.object({
+        irreversibleRequiresApproval: z.boolean(),
+        adminBypassIrreversible: z.boolean(),
+        approvalValueThreshold: z.number().nullable(),
+        whatsappDestinationAllowlist: z.array(z.string()),
     }).optional(),
     // Grupo Dolibarr p/ "Habilitar acesso ao app" (sem isto o Zod descartaria o campo e o save não persistiria).
     appAccessGroupId: z.string().max(40).optional(),
+    // #1204: kill-switches de automações de fundo (schedulerService / alertCronService). O Zod precisa
+    // declarar o objeto p/ os flags sobreviverem ao .parse() e chegarem ao service (senão são estripados).
+    automationSwitches: z.object({
+        schedulerEnabled: z.boolean().optional(),
+        alertCronEnabled: z.boolean().optional(),
+    }).optional(),
+    // #1129: kill-switches perigosos (DRY_RUN / FINANCIAL_COMMANDS / CRM_CONTEXT). Zod declara o
+    // objeto p/ os 3 flags sobreviverem ao .parse() e chegarem intactos ao service.
+    featureSwitches: z.object({
+        dryRunMode: z.boolean().optional(),
+        financialCommands: z.boolean().optional(),
+        crmContextInjection: z.boolean().optional(),
+    }).optional(),
 });
 
 // Leitura: qualquer usuário logado (p/ renderizar branding/tema da org).
@@ -83,9 +113,37 @@ router.get('/', requireDolibarrLogin, (_req: Request, res: Response) => {
 router.put('/', requireDolibarrAdmin, (req: Request, res: Response) => {
     try {
         const data = UpdateSchema.parse(req.body);
+        // #1168: captura o piso de merge ANTES do save p/ detectar baixa e destravar holds de score
+        // de tasks 'approved' que estavam retidas (o mergeHoldReason persistia e o resumePendingMerges as pulava).
+        const prevMinMerge = (data.taskAutomation && typeof data.taskAutomation.minMergeScore === 'number')
+            ? uiConfigService.get().taskAutomation.minMergeScore
+            : undefined;
+        // #1129: captura o valor ANTES do save p/ detectar mudança no kill-switch financeiro (get()
+        // depois do update() devolveria o novo estado e a auditoria nunca dispararia).
+        const prevFinancial = uiConfigService.get().featureSwitches?.financialCommands;
         const updated = uiConfigService.update(data as any);
-        log.info('UI config da organização atualizado por admin');
+        // #1168: baixar o minMergeScore destrava tasks 'approved' retidas por score p/ re-avaliação.
+        // Holds por outros motivos (auto-merge off) são preservados pelo próprio método (mergeHoldKind !== 'score').
+        if (prevMinMerge !== undefined && updated.taskAutomation.minMergeScore < prevMinMerge) {
+            taskRunnerService.onMinMergeScoreLowered(prevMinMerge, updated.taskAutomation.minMergeScore);
+        }
+        // #1129: mudança no kill-switch de comandos financeiros (/pagar,/pix) gera trilha de auditoria
+        // explícita — movimenta dinheiro real, precisa registrar quem acionou em incidente.
         const adminUser = (req as any).user || {};
+        const nextFinancial = data.featureSwitches && typeof (data.featureSwitches as any).financialCommands === 'boolean'
+            ? updated.featureSwitches.financialCommands
+            : undefined;
+        if (nextFinancial !== undefined && nextFinancial !== prevFinancial) {
+            adminAuditService.record({
+                adminId: String(adminUser.id || 'unknown'),
+                adminLogin: String(adminUser.login || 'unknown'),
+                action: 'ui-config.feature-switches.financial',
+                target: 'financialCommands',
+                summary: `Comandos financeiros (/pagar,/pix) ${nextFinancial ? 'HABILITADOS' : 'DESABILITADOS'} por admin`,
+                changes: { financialCommands: { before: prevFinancial, after: nextFinancial } },
+            });
+        }
+        log.info('UI config da organização atualizado por admin');
         adminAuditService.record({
             adminId: String(adminUser.id || 'unknown'),
             adminLogin: String(adminUser.login || 'unknown'),
@@ -179,7 +237,7 @@ router.get('/admin/users-missing-phone', requireDolibarrAdmin, async (req: Reque
 
         const missing = allUsers
             .filter(u => {
-                const mobile = (u.phone_mobile || u.user_mobile || '').toString().trim();
+                const mobile = resolveUserMobile(u) || '';
                 return !mobile;
             })
             .map(u => ({

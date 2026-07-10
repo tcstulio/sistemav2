@@ -73,6 +73,16 @@ export interface Intervention {
 
 // Ticket is now defined in crm.ts - removed duplicate to avoid export conflict
 
+// #997 — Mapeamento do schema abstrato da issue para os campos concretos (Dolibarr):
+//   issue "id"         -> id            (presente)
+//   issue "title"      -> label         (título/assunto do evento)
+//   issue "dateStart"  -> date_start    (timestamp ms de início)
+//   issue "dateEnd"    -> date_end      (timestamp ms de fim)
+//   issue "description"-> description   (presente)
+//   issue "type"       -> type_code     (ex.: AC_RDV — código do tipo de evento)
+//   issue "attendees"  -> user_assigned (Dolibarr modela 1 usuário responsável por
+//                                        evento; o criador fica em fk_user_author.
+//                                        Não há array de attendees no modelo atual.)
 export interface AgendaEvent {
     id: string;
     ref: string;

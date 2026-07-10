@@ -3,8 +3,12 @@ import * as path from 'path';
 import { createLogger } from '../utils/logger';
 import { socketService } from './socketService';
 import { atomicWriteSync } from '../utils/atomicWrite';
+import { classifyTool, ActionDomain, ActionReversibility } from '../config/actionCatalog';
 
 const log = createLogger('AgentActivity');
+
+/** Origem do pedido que disparou a ação (robô-de-negócio F0.1). */
+export type RequestedVia = 'chat' | 'task' | 'cron' | 'system' | 'unknown';
 
 export interface AgentActivity {
     id: string;
@@ -18,6 +22,10 @@ export interface AgentActivity {
     result: 'success' | 'error';
     durationMs: number;
     createdAt: number;
+    // F0.1/F0.3 (#1234): dimensões de governança do robô-de-negócio (via catálogo de ações).
+    domain?: ActionDomain;
+    reversibility?: ActionReversibility;
+    requestedVia?: RequestedVia;
 }
 
 interface ActivityStore {
@@ -66,8 +74,12 @@ class AgentActivityService {
         result?: string;
         durationMs?: number;
         isError?: boolean;
+        requestedVia?: RequestedVia;
     }): AgentActivity {
-        const { tool, args = {}, result = '', durationMs = 0, isError = false, userId, userName } = params;
+        const { tool, args = {}, result = '', durationMs = 0, isError = false, userId, userName, requestedVia } = params;
+
+        // F0.1/F0.3 (#1234): classifica a ação p/ tagear domínio/reversibilidade na trilha.
+        const klass = classifyTool(tool);
 
         const activity: AgentActivity = {
             id: `act_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
@@ -81,6 +93,9 @@ class AgentActivityService {
             result: isError ? 'error' : 'success',
             durationMs,
             createdAt: Date.now(),
+            domain: klass.domain,
+            reversibility: klass.reversibility,
+            requestedVia: requestedVia || 'unknown',
         };
 
         this.data.activities.unshift(activity);
