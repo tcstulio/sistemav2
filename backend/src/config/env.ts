@@ -85,5 +85,10 @@ export const config = {
     itauWebhookSecret: process.env.ITAU_WEBHOOK_SECRET || '',
     itauContaCorrente: process.env.ITAU_CONTA_CORRENTE || '',
     itauAgencia: process.env.ITAU_AGENCIA || '',
+
+    // /health (#1042): se true (default), status "degraded" responde HTTP 503 (além de "down").
+    // Defina HEALTH_FAIL_ON_DEGRADED=false para responder 200 em degraded — útil quando LBs
+    // só devem retirar a instância totalmente "down".
+    healthFailOnDegraded: process.env.HEALTH_FAIL_ON_DEGRADED !== 'false',
 };
 

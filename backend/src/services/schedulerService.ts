@@ -167,6 +167,9 @@ class SchedulerService {
     // Rate limiting per session (account)
     private messagesSentPerSession: Map<string, number> = new Map();
     private lastMinuteReset: number = Date.now();
+    // #1042: timestamp (ms) da última execução do worker — usado pelo health check para
+    // detectar worker "stuck" (interval ativo mas sem ticks há > 5min).
+    private _lastRunAt: number | null = null;
 
     constructor() {
         this.data = {
@@ -333,7 +336,16 @@ class SchedulerService {
         return this.intervalId !== null;
     }
 
+    /** #1042: timestamp (ms) da última execução do worker, ou null se nunca rodou. */
+    get lastRunAt(): number | null {
+        return this._lastRunAt;
+    }
+
     async processQueue() {
+        // #1042: registra o tick ANTES de qualquer early-return (inclusive o kill-switch da UI)
+        // para que o health check reflita que o worker está vivo (mesmo que pausado por config).
+        this._lastRunAt = Date.now();
+
         // #1204 — Kill-switch da UI: pausa o envio de mensagens agendadas (WhatsApp/e-mail) sem
         // derrubar o backend. Checado a CADA tick (sem cache): religar o switch volta a processar
         // no próximo ciclo, sem restart.
