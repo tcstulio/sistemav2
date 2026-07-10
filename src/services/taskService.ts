@@ -108,6 +108,10 @@ export interface Task {
     // distinguir "Aguardando você" (precisa do humano) do approved transitório (mergeando...).
     mergeHoldReason?: string;
     mergeHoldKind?: 'score' | 'autoMergeOff';
+    // #1188: rodadas de opencode acumuladas na vida da task (teto de custo por task) e
+    // cooldown imposto pelo Planner (anti spin-loop). Opcionais — cards legados não os têm.
+    roundsUsed?: number;
+    planWaitUntil?: number;
 }
 
 export interface TaskEvent {

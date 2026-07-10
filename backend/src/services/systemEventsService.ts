@@ -96,6 +96,145 @@ function taskSeverity(type: string): 'info' | 'warn' | 'error' {
     return 'info';
 }
 
+// ---------------------------------------------------------------------------
+// Worker execution tracking (#1224)
+// ---------------------------------------------------------------------------
+/**
+ * DECISÃO DE DESIGN (#1224) — reaproveitar a fonte `scheduler` em vez de criar
+ * uma fonte nova `worker`.
+ *
+ * Motivo (critério: "qual delas a UI da Central já renderiza sem ajustes"): a UI
+ * (SystemEventsView → SOURCE_META em `src/utils/systemEventUtils.ts` e o tipo
+ * `SystemEventSource` em `src/services/systemEventsService.ts`) JÁ renderiza a
+ * fonte `scheduler` — chip, ícone (CalendarClock), cor e filtro — sem nenhuma
+ * alteração. A fonte `worker` NÃO existe na UI (não está no tipo union nem no
+ * SOURCE_META), então exigi-ria mudar: SystemEventSource (backend+frontend),
+ * ALL_SOURCES/NON_ADMIN_SOURCES, SOURCE_META e o array de chips — 3+ arquivos.
+ *
+ * Conclusão: as execuções de worker (robôs/CLIs como opencode/claude-cli) são
+ * mescladas no collector `collectScheduler`, normalizadas como SystemEvent com
+ * source='scheduler', label do worker em `type` (`worker_<source>`) e metadados
+ * enriquecidos. Visibilidade e cap seguem os da fonte scheduler (admin-only por
+ * ora). Por isso NÃO há ajuste em `src/` — a UI já cobre a fonte escolhida.
+ */
+export type WorkerExecutionStatus = 'running' | 'success' | 'error' | 'timeout';
+
+export interface WorkerExecutionRecord {
+    id: string;
+    source: string;                 // label lógico do worker (ex.: 'opencode', 'claude-cli')
+    status: WorkerExecutionStatus;
+    summary?: string;
+    error?: string;
+    startedAt: string;              // ISO — gerado internamente
+    endedAt?: string;               // ISO quando o ciclo termina (status !== 'running')
+    durationMs?: number;
+}
+
+/** Cap do ring-buffer de worker executions (~100, FIFO). Evita crescimento ilimitado em memória. */
+export const WORKER_RING_BUFFER_CAP = 100;
+
+/**
+ * Ring-buffer FIFO (cap WORKER_RING_BUFFER_CAP) para execuções de worker.
+ * Ao saturar, descarta as entradas mais antigas — garantindo teto de memória.
+ * É read-only para o aggregator: o collector `collectScheduler` só lê via list().
+ */
+class WorkerExecutionRingBuffer {
+    private buf: WorkerExecutionRecord[] = [];
+    private seq = 0;
+
+    /** Insere preservando o cap: ao exceder, descarta as mais antigas (FIFO). */
+    push(rec: Omit<WorkerExecutionRecord, 'id'>): WorkerExecutionRecord {
+        const full: WorkerExecutionRecord = { ...rec, id: `worker_${++this.seq}` };
+        this.buf.push(full);
+        if (this.buf.length > WORKER_RING_BUFFER_CAP) {
+            this.buf.splice(0, this.buf.length - WORKER_RING_BUFFER_CAP);
+        }
+        return full;
+    }
+
+    /** Snapshot das `limit` entradas mais recentes (cópia defensiva, read-only). */
+    list(limit?: number): WorkerExecutionRecord[] {
+        return typeof limit === 'number' && limit >= 0 ? this.buf.slice(-limit) : [...this.buf];
+    }
+
+    size(): number {
+        return this.buf.length;
+    }
+
+    /** Zera o buffer (uso principal: isolar testes / reset). */
+    clear(): void {
+        this.buf = [];
+    }
+}
+
+export const workerExecutions = new WorkerExecutionRingBuffer();
+
+function workerSeverity(status: WorkerExecutionStatus): 'info' | 'warn' | 'error' {
+    if (status === 'error') return 'error';
+    if (status === 'timeout') return 'warn';
+    return 'info';
+}
+
+/**
+ * Registra MANUALMENTE uma execução de worker no ring-buffer. `source` é o label
+ * lógico do worker (ex.: 'opencode'); o timestamp é gerado internamente (ISO).
+ * Retorna o registro criado (com id atribuído).
+ */
+export function recordWorkerExecution(
+    source: string,
+    status: WorkerExecutionStatus,
+    summary?: string,
+    error?: string,
+): WorkerExecutionRecord {
+    const iso = new Date().toISOString();
+    return workerExecutions.push({
+        source,
+        status,
+        summary,
+        error: status === 'error' || status === 'timeout' ? error : undefined,
+        startedAt: iso,
+        endedAt: status === 'running' ? undefined : iso,
+    });
+}
+
+/**
+ * Wrapper que rastreia AUTOMATICAMENTE o ciclo de vida de `fn`: captura o início
+ * (startedAt), executa, e ao fim registra sucesso ou erro (endedAt) com a duração
+ * — num único registro no ring-buffer. Timestamps gerados internamente. Re-rejeita
+ * o erro original (não engole exceções).
+ */
+export async function withExecutionTracking<T>(
+    source: string,
+    fn: () => Promise<T>,
+    summary?: string,
+): Promise<T> {
+    const startMs = Date.now();
+    const startedAt = new Date(startMs).toISOString();
+    try {
+        const result = await fn();
+        workerExecutions.push({
+            source,
+            status: 'success',
+            summary,
+            startedAt,
+            endedAt: new Date().toISOString(),
+            durationMs: Date.now() - startMs,
+        });
+        return result;
+    } catch (e: any) {
+        workerExecutions.push({
+            source,
+            status: 'error',
+            summary,
+            error: e?.message || String(e),
+            startedAt,
+            endedAt: new Date().toISOString(),
+            durationMs: Date.now() - startMs,
+        });
+        throw e;
+    }
+}
+
 class SystemEventsService {
     private async collectAudit(): Promise<SystemEvent[]> {
         return adminAuditService.list({ limit: PER_SOURCE_CAP }).flatMap((e) => {
@@ -259,7 +398,7 @@ class SystemEventsService {
     }
 
     private async collectScheduler(): Promise<SystemEvent[]> {
-        return schedulerService.getHistory({ limit: PER_SOURCE_CAP }).flatMap((m) => {
+        const schedEvents = schedulerService.getHistory({ limit: PER_SOURCE_CAP }).flatMap((m) => {
             const ts = toIso(m.scheduledAt || m.createdAt);
             if (!ts) return [];
             return [{
@@ -270,6 +409,30 @@ class SystemEventsService {
                 metadata: { chatId: m.chatId, sessionId: m.sessionId },
             }];
         });
+        // Worker executions reaproveitam a fonte 'scheduler' (ver JSDoc no topo do módulo, #1224).
+        const workerEvents: SystemEvent[] = workerExecutions.list(PER_SOURCE_CAP).map((w) => {
+            const ts = w.endedAt || w.startedAt;
+            return {
+                id: w.id,
+                timestamp: ts,
+                source: 'scheduler' as const,
+                actor: { id: 'worker', name: 'Worker' },
+                type: `worker_${w.source}`,
+                description: w.error
+                    ? `${w.summary || w.source} — ERRO: ${w.error}`
+                    : (w.summary || `Execução ${w.source} (${w.status})`),
+                status: w.status,
+                severity: workerSeverity(w.status),
+                metadata: {
+                    workerSource: w.source,
+                    startedAt: w.startedAt,
+                    endedAt: w.endedAt,
+                    durationMs: w.durationMs,
+                    ...(w.error ? { error: w.error } : {}),
+                },
+            };
+        });
+        return [...schedEvents, ...workerEvents];
     }
 
     private async collectApproval(): Promise<SystemEvent[]> {
