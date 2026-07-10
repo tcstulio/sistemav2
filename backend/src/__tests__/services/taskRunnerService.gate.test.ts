@@ -53,6 +53,7 @@ describe('taskRunnerService — gate determinístico + self-heal', () => {
     let svc: any;
 
     beforeEach(() => {
+        process.env.TASKRUNNER_GATE_FIX_MAX = '1'; // #963: testa o MECANISMO do teto num valor fixo (default real = 3)
         svc = taskRunnerService as any;
         svc.pendingExecs = 0;
         svc.execChain = Promise.resolve();
@@ -82,7 +83,7 @@ describe('taskRunnerService — gate determinístico + self-heal', () => {
         });
     });
 
-    afterEach(() => { vi.restoreAllMocks(); });
+    afterEach(() => { delete process.env.TASKRUNNER_GATE_FIX_MAX; vi.restoreAllMocks(); });
 
     // --- checkTestRegression: classifica reason corretamente ---
     it('checkTestRegression: net negativo → blocked reason=regression', async () => {
@@ -212,5 +213,29 @@ describe('taskRunnerService — gate determinístico + self-heal', () => {
         prDiff = diffWithTestDelta(3, 0);
         await svc.mergeTask(t.issueNumber);
         expect(t.status).toBe('merged');
+    });
+
+    // --- resumePendingMerges: CI retomável (Fase 0 item 5) — destrava merges interrompidos por restart ---
+    it('resumePendingMerges: re-dispara só p/ approved com PR; pula não-approved / sem-PR / in-flight', async () => {
+        const t1 = makeTask(20, { status: 'approved', prNumber: 9020 });
+        const t2 = makeTask(21, { status: 'reviewing', prNumber: 9021 }); // não-approved
+        const t3 = makeTask(22, { status: 'approved', prNumber: undefined }); // sem PR
+        const t4 = makeTask(23, { status: 'approved', prNumber: 9023 });      // já em merge
+        svc.store.tasks = { 20: t1, 21: t2, 22: t3, 23: t4 };
+        svc.mergeInFlight = new Set([23]);
+        svc.tryAutoMerge = vi.fn(async () => {});
+        await svc.resumePendingMerges();
+        expect(svc.tryAutoMerge).toHaveBeenCalledTimes(1);
+        expect(svc.tryAutoMerge).toHaveBeenCalledWith(t1);
+    });
+
+    it('resumePendingMerges: respeita autoMerge OFF (não re-dispara nada)', async () => {
+        const t1 = makeTask(24, { status: 'approved', prNumber: 9024 });
+        svc.store.tasks = { 24: t1 };
+        svc.mergeInFlight = new Set();
+        svc.getAutomationConfig = () => ({ autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8 });
+        svc.tryAutoMerge = vi.fn(async () => {});
+        await svc.resumePendingMerges();
+        expect(svc.tryAutoMerge).not.toHaveBeenCalled();
     });
 });

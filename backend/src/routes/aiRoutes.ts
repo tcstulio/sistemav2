@@ -45,6 +45,10 @@ import { z } from 'zod';
 
 // Schema
 const GenerateReplySchema = z.object({
+    // issue #1151: DTO mínimo do chat = { sessionId, message }. O `history` vindo do
+    // cliente passou a ser ignorado na montagem do contexto (o servidor é autoritativo);
+    // mantemos o campo aceito (opcional) só como hint de compat p/ clientes antigos.
+    message: z.string().optional(),
     history: z.array(z.object({
         role: z.enum(['user', 'model', 'system']),
         parts: z.string()
@@ -60,12 +64,63 @@ const AnalyzeSystemSchema = z.object({
     query: z.string()
 });
 
+// issue #1151: persiste a msg do usuário na sessão ANTES de enfileirar o job (e antes
+// de o agente rodar). Assim a ordem em chat_messages reflete a ordem de ENVIO, e o
+// contexto do LLM — lido do servidor via getMessages — já inclui a msg corrente. O
+// `history` enviado pelo cliente é ignorado na montagem do contexto (servidor autoritativo).
+// Chamada por ambas as rotas (síncrona e assíncrona); tolerante a erros de parse.
+function persistUserTurnIfChat(body: any): { sessionId?: string; userMessage?: string; hasImage: boolean } {
+    let parsed: z.infer<typeof GenerateReplySchema>;
+    try {
+        parsed = GenerateReplySchema.parse(body);
+    } catch {
+        return { hasImage: false };
+    }
+    const { sessionId, module, message, image, images, history } = parsed;
+    const allImages = (images && images.length) ? images : (image ? [image] : []);
+    if (!sessionId || module !== 'chat') {
+        return { hasImage: allImages.length > 0 };
+    }
+    // Novo DTO mínimo: `message`. Fallback (compat): última entrada user do history.
+    let userMessage = message;
+    if (!userMessage && Array.isArray(history) && history.length > 0) {
+        for (let i = history.length - 1; i >= 0; i--) {
+            if (history[i].role === 'user') { userMessage = history[i].parts; break; }
+        }
+    }
+    if (userMessage) {
+        try {
+            chatSessionService.addMessage(sessionId, {
+                role: 'user',
+                content: userMessage,
+                metadata: { hasImage: allImages.length > 0 }
+            });
+        } catch (sessionErr: any) {
+            log.warn('Failed to persist user message before enqueue', { error: sessionErr.message });
+        }
+    }
+    return { sessionId, userMessage, hasImage: allImages.length > 0 };
+}
+
 // Núcleo do chat: enriquece o contexto, roda o agente (com tool-calls) e salva a sessão.
 // Usado pela rota síncrona E pela assíncrona (job em background). Lança em erro; quem chama trata.
-async function runChatReply(body: any, user: any): Promise<{ reply: string; sessionId?: string; usage?: any; contextWindow?: any; model?: string; fellBack?: boolean }> {
+// `jobId` (#1011): quando chamado via job assíncrono, cada tool-call emitida pelo agente vira
+// um sinal de progresso (aiJobService.reportProgress) — atualiza o heartbeat p/ o cliente
+// detectar liveness via GET /api/ai-jobs/:id/status sem baixar o resultado parcial.
+async function runChatReply(body: any, user: any, jobId?: string): Promise<{ reply: string; sessionId?: string; usage?: any; contextWindow?: any; model?: string; fellBack?: boolean }> {
         const { history, context, image, images, module, sessionId } = GenerateReplySchema.parse(body);
         // #947: normaliza p/ array (aceita `images` novo OU `image` antigo).
         const allImages = (images && images.length) ? images : (image ? [image] : []);
+
+        // issue #1151: contexto do LLM vem do SERVIDOR (chatSessionService.getMessages),
+        // nunca do `history` do cliente. A msg do usuário já foi persistida antes do
+        // enqueue (persistUserTurnIfChat), então getMessages já a inclui. Para chamadas
+        // sem sessionId (legado/debug) mantemos o history do cliente como era.
+        const isChatSession = !!(sessionId && module === 'chat');
+        const serverMessages = isChatSession ? chatSessionService.getMessages(sessionId!) : [];
+        const llmHistory: Array<{ role: 'user' | 'model' | 'system'; parts: string }> = isChatSession
+            ? serverMessages.map(m => ({ role: m.role, parts: m.content }))
+            : (history as any || []);
 
         let enrichedContext = context || '';
         let permissionProfile: import('../services/userPermissionsService').UserPermissionProfile | null = null;
@@ -115,6 +170,10 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
         const toolCalls: Array<{ tool: string; args: Record<string, any>; result: string; duration: number }> = [];
         const toolListener = (tool: string, args: Record<string, any>, result: string, duration: number) => {
             toolCalls.push({ tool, args, result: result.slice(0, 2000), duration });
+            // #1011: cada tool-call = sinal de progresso -> atualiza o heartbeat do job.
+            if (jobId) {
+                try { aiJobService.reportProgress(jobId); } catch { /* best-effort */ }
+            }
             try {
                 agentActivityService.record({
                     userId: user?.id || dolibarrUserId || '',
@@ -124,31 +183,44 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
                     result: result.slice(0, 500),
                     durationMs: duration,
                     isError: result.toLowerCase().includes('error') || result.toLowerCase().includes('erro'),
+                    requestedVia: 'chat', // F0.1 (#1234): origem do pedido — o agente/chat é interativo
                 });
             } catch { /* ignore activity logging errors */ }
         };
 
-        const result = await runWithToolContext({
-            listener: sessionId && module === 'chat' ? toolListener : null,
-            userId: dolibarrUserId,
-            userLogin: user?.login || 'unknown',
-            isAdmin,
-            permissionProfile,
-        }, async () => {
-            return aiService.generateReply(history as any || [], enrichedContext, allImages.length ? allImages : undefined, module);
-        });
-
-        if (sessionId && module === 'chat') {
-            try {
-                const lastUserMsg = (history || []).filter((h: any) => h.role === 'user').pop();
-                if (lastUserMsg) {
-                    chatSessionService.addMessage(sessionId, {
-                        role: 'user',
-                        content: lastUserMsg.parts,
-                        metadata: { hasImage: allImages.length > 0 }
+        let result;
+        try {
+            result = await runWithToolContext({
+                listener: isChatSession ? toolListener : null,
+                userId: dolibarrUserId,
+                userLogin: user?.login || 'unknown',
+                isAdmin,
+                permissionProfile,
+            }, async () => {
+                return aiService.generateReply(llmHistory as any, enrichedContext, allImages.length ? allImages : undefined, module);
+            });
+        } catch (agentErr: any) {
+            // issue #1151: erro no job → persiste uma msg de erro na sessão para não
+            // deixar o turno mudo (o usuário já está gravado pelo persist pré-enqueue).
+            if (isChatSession) {
+                try {
+                    chatSessionService.addMessage(sessionId!, {
+                        role: 'model',
+                        content: `[Erro ao processar] ${agentErr?.message || 'Falha desconhecida'}`,
+                        metadata: { provider: 'auto', error: true }
                     });
+                } catch (sessionErr: any) {
+                    log.warn('Failed to persist error message in session', { error: sessionErr.message });
                 }
-                chatSessionService.addMessage(sessionId, {
+            }
+            throw agentErr;
+        }
+
+        // issue #1151: só persiste a RESPOSTA do assistente aqui. A msg do usuário já
+        // foi gravada antes do enqueue (ordem de ENVIO). Mantém metadata das tools usadas.
+        if (isChatSession) {
+            try {
+                chatSessionService.addMessage(sessionId!, {
                     role: 'model',
                     content: result.text,
                     metadata: { provider: 'auto', toolCalls: toolCalls.length > 0 ? toolCalls : undefined, usage: result.usage }
@@ -178,6 +250,8 @@ function mapAiError(error: any, res: any) {
 // em jobs longos via túnel — por isso o chat usa a versão assíncrona abaixo.
 router.post('/generate-reply', async (req, res) => {
     try {
+        // issue #1151: persiste a msg do usuário ANTES de rodar o agente.
+        persistUserTurnIfChat(req.body);
         const out = await runChatReply(req.body, (req as any).user);
         res.json(out);
     } catch (error: any) {
@@ -192,7 +266,13 @@ router.post('/generate-reply-async', (req, res) => {
         GenerateReplySchema.parse(req.body); // valida cedo → 400 imediato
         const user = (req as any).user;
         const body = req.body;
-        const jobId = aiJobService.enqueue(() => runChatReply(body, user), body?.module || 'chat');
+        // issue #1151: persiste a msg do usuário ANTES do enqueue (ordem = ordem de ENVIO),
+        // não após o job concluir. Assim msgs concorrentes não invertem ordem na tabela.
+        persistUserTurnIfChat(body);
+        // #1011: repassa o jobId ao runChatReply para que cada tool-call atualize o
+        // heartbeat. O closure lê `jobId` no microtask (após o assign abaixo retornar).
+        let jobId = '';
+        jobId = aiJobService.enqueue(() => runChatReply(body, user, jobId), body?.module || 'chat');
         res.status(202).json({ jobId, status: 'queued' });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -203,12 +283,18 @@ router.post('/generate-reply-async', (req, res) => {
 });
 
 // Polling do status/resultado de um job do assistente.
+// #1012: TTL persistido — job expirado devolve 404 { reason: 'expired' }; job vivo inclui
+// alive=true para o cliente distinguir do término normal.
 router.get('/jobs/:id', (req, res) => {
-    const job = aiJobService.get(req.params.id);
-    if (!job) return res.status(404).json({ error: 'Job não encontrado ou expirado.' });
-    if (job.status === 'done') return res.json({ status: 'done', ...(job.result || {}) });
-    if (job.status === 'error') return res.json({ status: 'error', error: job.error });
-    res.json({ status: job.status, queueAhead: job.queueAhead });
+    const lookup = aiJobService.get(req.params.id);
+    if (!lookup.ok) {
+        if (lookup.reason === 'expired') return res.status(404).json({ reason: 'expired' });
+        return res.status(404).json({ error: 'Job não encontrado.' });
+    }
+    const job = lookup.job;
+    if (job.status === 'done') return res.json({ status: 'done', alive: true, ...(job.result || {}) });
+    if (job.status === 'error') return res.json({ status: 'error', alive: true, error: job.error });
+    res.json({ status: job.status, alive: true, queueAhead: lookup.queueAhead });
 });
 
 // Resolve um deeplink de prefill (HITL #57 Peça 2/3): o frontend manda o token, o backend

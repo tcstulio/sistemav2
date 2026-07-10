@@ -2,7 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useInvoices, useSupplierInvoices, useCustomers, useSuppliers, useProjects } from '../hooks/dolibarr';
 import { ArrowUpRight, ArrowDownRight, Clock, AlertCircle, CheckCircle2, Search, Filter, Calendar, X, FileText, Briefcase, Building2 } from 'lucide-react';
-import { formatDateOnly } from '../utils/dateUtils';
+import { formatDateOnly, MS_PER_DAY } from '../utils/dateUtils';
+import { formatCurrency } from '../utils/formatUtils';
 import { PageLayout, PageHeader } from './ui';
 
 interface PendingPaymentsProps {
@@ -25,13 +26,6 @@ export const PendingPayments: React.FC<PendingPaymentsProps> = ({ onNavigate }) 
     const isOverdue = (date: number) => {
         const d = date < 100000000000 ? date * 1000 : date;
         return new Date(d) < new Date();
-    };
-
-    const formatCurrency = (value: number) => {
-        return new Intl.NumberFormat('pt-BR', {
-            style: 'currency',
-            currency: 'BRL'
-        }).format(value);
     };
 
     // Lookup helpers
@@ -59,7 +53,7 @@ export const PendingPayments: React.FC<PendingPaymentsProps> = ({ onNavigate }) 
         return invoicesData
             .filter(inv => inv.statut === '1') // Unpaid
             .map(inv => {
-                const dueDate = inv.date_lim_reglement || (inv.date + 30 * 24 * 60 * 60);
+                const dueDate = inv.date_lim_reglement || (inv.date + 30 * MS_PER_DAY);
                 const resolvedName = getCustomerName(inv.socid) || inv.soc_name || null;
                 return {
                     ...inv,
@@ -78,7 +72,7 @@ export const PendingPayments: React.FC<PendingPaymentsProps> = ({ onNavigate }) 
         return supplierInvoicesData
             .filter(inv => inv.statut === '1') // Unpaid
             .map(inv => {
-                const dueDate = inv.date_lim_reglement || (inv.date + 30 * 24 * 60 * 60);
+                const dueDate = inv.date_lim_reglement || (inv.date + 30 * MS_PER_DAY);
                 const resolvedName = getSupplierName(inv.socid) || inv.soc_name || null;
                 return {
                     ...inv,

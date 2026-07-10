@@ -18,7 +18,7 @@ async function ensureDir(): Promise<void> {
     }
 }
 
-async function capturePage(url: string, outputPath: string, options?: { darkMode?: boolean; width?: number; height?: number }): Promise<void> {
+async function capturePage(url: string, outputPath: string, options?: { darkMode?: boolean; width?: number; height?: number; auth?: boolean }): Promise<void> {
     let browser: Browser | undefined;
     try {
         browser = await chromium.launch({ headless: true });
@@ -26,6 +26,23 @@ async function capturePage(url: string, outputPath: string, options?: { darkMode
             viewport: { width: options?.width || 1440, height: options?.height || 900 },
             colorScheme: options?.darkMode ? 'dark' : 'light',
         });
+
+        // Autenticação (receita validada 2026-07-04): o app do Coolgroove lê a sessão de
+        // localStorage['coolgroove_config'] = { apiKey, url } e fala com o Dolibarr por header —
+        // SEM cookie. Sem semear isso, QUALQUER tela interna captura a landing de LOGIN (screenshot
+        // cego). addInitScript roda ANTES de todo script da página, então já está no 1º paint.
+        if (options?.auth) {
+            const apiKey = process.env.DOLIBARR_API_KEY;
+            const dolUrl = process.env.DOLIBARR_URL;
+            if (apiKey && dolUrl) {
+                await context.addInitScript((cfg) => {
+                    try { window.localStorage.setItem('coolgroove_config', JSON.stringify(cfg)); } catch { /* storage bloqueado */ }
+                }, { apiKey, url: dolUrl });
+            } else {
+                log.warn('capturePage: auth pedido mas DOLIBARR_API_KEY/DOLIBARR_URL ausentes no env — capturando SEM sessão (vai cair no login)');
+            }
+        }
+
         const page: Page = await context.newPage();
 
         await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
@@ -47,23 +64,23 @@ async function capturePage(url: string, outputPath: string, options?: { darkMode
 }
 
 export const screenshotService = {
-    async captureForTask(issueNumber: number, beforeUrl: string, afterUrl: string): Promise<ScreenshotResult> {
+    async captureForTask(issueNumber: number, beforeUrl: string, afterUrl: string, options?: { auth?: boolean }): Promise<ScreenshotResult> {
         await ensureDir();
 
         const beforePath = path.join(SCREENSHOTS_DIR, `${issueNumber}_before.png`);
         const afterPath = path.join(SCREENSHOTS_DIR, `${issueNumber}_after.png`);
 
-        log.info(`Capturing screenshots for task #${issueNumber}`);
+        log.info(`Capturing screenshots for task #${issueNumber}${options?.auth ? ' (autenticado)' : ''}`);
         log.info(`  BEFORE: ${beforeUrl}`);
         log.info(`  AFTER:  ${afterUrl}`);
 
-        await capturePage(beforeUrl, beforePath);
-        await capturePage(afterUrl, afterPath);
+        await capturePage(beforeUrl, beforePath, { auth: options?.auth });
+        await capturePage(afterUrl, afterPath, { auth: options?.auth });
 
         return { beforePath, afterPath };
     },
 
-    async captureSingle(url: string, label: string, options?: { darkMode?: boolean }): Promise<string> {
+    async captureSingle(url: string, label: string, options?: { darkMode?: boolean; auth?: boolean }): Promise<string> {
         await ensureDir();
         const outputPath = path.join(SCREENSHOTS_DIR, `${label}.png`);
         await capturePage(url, outputPath, options);

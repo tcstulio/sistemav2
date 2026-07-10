@@ -11,6 +11,7 @@ import { formatErrorsForAgent } from '../utils/errorStore';
 import { useLocation } from 'react-router-dom';
 import { formatViewContext } from '../config/viewRegistry';
 import { getAgentBootstrapConfig, AgentBootstrapConfig } from '../services/agentBootstrapService';
+import { getContextUsage } from '../utils/contextUsage';
 // Hooks removidos: Backend processa dados via ferramentas IA
 
 const log = logger.child('VirtualAssistant');
@@ -456,6 +457,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         (jobId) => safeStorage.setJSON(VA_PENDING_JOB_KEY, { jobId, at: Date.now() }),
       );
       const responseText = result.reply;
+      // #967: usa a janela recém-retornada pelo backend (evita closure stale do estado) p/ o cálculo.
+      const effectiveWindow = (result as any).contextWindow || contextWindow;
       if ((result as any).contextWindow) setContextWindow((result as any).contextWindow);
       if (result.sessionId && !sid) {
         setCurrentSessionId(result.sessionId);
@@ -467,8 +470,9 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         const newFellBack = (result as any).fellBack as boolean | undefined;
         setMessages(prev => {
           const updated: ChatMessage[] = [...prev, { role: 'model' as const, text: responseText, usage: newUsage, model: newModel, fellBack: newFellBack }];
-          const total = updated.reduce((sum, m) => sum + (m.usage?.totalTokens || 0), 0);
-          const pct = contextWindow > 0 ? (total / contextWindow) * 100 : 0;
+          // #967: o uso real de contexto é o do ÚLTIMO turno (cada chamada envia a conversa
+          // inteira); somar totalTokens de todas as mensagens inflacionava e gerava avisos falsos.
+          const { pct } = getContextUsage(updated, effectiveWindow);
           if (pct > 90) {
             return [...updated, { role: 'model' as const, text: '⚠️ Contexto acima de 90%. Considere iniciar uma nova conversa para manter a qualidade das respostas.', isError: true }];
           }
@@ -567,16 +571,17 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
               <Sparkles size={18} className="text-yellow-300" />
               <h3 className="font-semibold text-sm">Assistente Virtual</h3>
               {messages.length > 0 && (() => {
-                const total = messages.reduce((sum, m) => sum + (m.usage?.totalTokens || 0), 0);
-                const pct = contextWindow > 0 ? Math.min(100, Math.round((total / contextWindow) * 100)) : 0;
-                const barColor = pct > 90 ? 'bg-red-400' : pct > 70 ? 'bg-yellow-400' : 'bg-emerald-400';
+                // #967: uso real = último turno (soma de todas inflacionava o percentual).
+                const { total, pct } = getContextUsage(messages, contextWindow);
+                const roundedPct = Math.min(100, Math.round(pct));
+                const barColor = roundedPct > 90 ? 'bg-red-400' : roundedPct > 70 ? 'bg-yellow-400' : 'bg-emerald-400';
                 return total > 0 ? (
                   <div className="flex items-center gap-1.5">
                     <span className="text-[10px] text-white/70" title={`${total.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`}>
-                      {total.toLocaleString()} ({pct}%)
+                      {total.toLocaleString()} ({roundedPct}%)
                     </span>
                     <div className="w-12 h-1.5 bg-white/20 rounded-full overflow-hidden">
-                      <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+                      <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${roundedPct}%` }} />
                     </div>
                   </div>
                 ) : null;

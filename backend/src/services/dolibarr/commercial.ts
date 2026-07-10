@@ -64,6 +64,27 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
         }
     }
 
+    async getProposal(id: string): Promise<any | null> {
+        try {
+            const headers = this.getHeaders();
+            const url = `${this.baseUrl}proposals/${id}`;
+
+            const response = await axios.get(url, {
+                headers,
+                httpsAgent: this.httpsAgent,
+                validateStatus: (s) => s === 200 || s === 404
+            });
+
+            if (response.status === 200 && response.data) {
+                return response.data;
+            }
+            return null;
+        } catch (error: any) {
+            log.error(`GetProposal Error for ${id}`, error.message);
+            return null;
+        }
+    }
+
     async listInvoices(params: { status?: string, limit?: number } = {}): Promise<any[]> {
         try {
             const headers = this.getHeaders();

@@ -10,6 +10,105 @@ import { createLogger } from '../../utils/logger';
 
 const log = createLogger('DolibarrHR');
 
+/**
+ * Status de uma solicitação de licença/férias no Dolibarr (tabela llx_holiday.statut):
+ * 1=Draft, 2=Validated(à aprovar), 3=Approved, 4=Canceled, 5=Refused. (#986)
+ */
+export type LeaveStatus = '1' | '2' | '3' | '4' | '5';
+
+/**
+ * Solicitação de férias/licença (módulo "holiday" do Dolibarr).
+ * Contém APENAS campos de leave — nunca campos de ExpenseReport (#986).
+ * Espelha o LeaveRequest do frontend (src/types/hr.ts).
+ */
+export interface LeaveRequest {
+    id: string;
+    ref: string;
+    fk_user: string;
+    date_debut: number;
+    date_fin: number;
+    halfday?: string;
+    type?: string;
+    statut: LeaveStatus;
+    description?: string;
+    fk_validator?: string;
+    date_valid?: number;
+    fk_user_valid?: string;
+    date_refuse?: number;
+    fk_user_refuse?: string;
+    detail_refuse?: string;
+    detail_cancel?: string;
+    date_create?: number;
+    date_modification?: number;
+    duration?: number;
+}
+
+/**
+ * Converte um valor de data do Dolibarr em epoch毫 (number). Aceita:
+ *  - timestamp Unix em segundos (< 1e12) → multiplica por 1000
+ *  - timestamp Unix em milissegundos (>= 1e12) → retorna direto
+ *  - string de data ('YYYY-MM-DD' etc.) → new Date().getTime()
+ * Retorna 0 para valor ausente/inválido. (#986)
+ */
+function toLeaveTimestamp(value: unknown): number {
+    if (value === undefined || value === null || value === '') return 0;
+    if (typeof value === 'number') {
+        return value < 1e12 ? value * 1000 : value;
+    }
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (/^\d+$/.test(trimmed)) {
+            const num = Number(trimmed);
+            return num < 1e12 ? num * 1000 : num;
+        }
+        const d = new Date(value);
+        return isNaN(d.getTime()) ? 0 : d.getTime();
+    }
+    return 0;
+}
+
+/**
+ * Normaliza um objeto cru de /holidays para LeaveRequest (pick de campos, sem vazamento
+ * de campos de ExpenseReport). Aceita tanto `statut` quanto o alias `status`. (#986)
+ */
+function mapLeaveRequest(d: Record<string, any>): LeaveRequest {
+    return {
+        id: String(d.id ?? d.rowid ?? ''),
+        ref: String(d.ref ?? ''),
+        fk_user: String(d.fk_user ?? ''),
+        date_debut: toLeaveTimestamp(d.date_debut),
+        date_fin: toLeaveTimestamp(d.date_fin),
+        halfday: d.halfday != null ? String(d.halfday) : undefined,
+        type: d.fk_type != null ? String(d.fk_type) : (d.type != null ? String(d.type) : undefined),
+        statut: (String(d.statut ?? d.status ?? '')) as LeaveStatus,
+        description: d.description ?? undefined,
+        fk_validator: d.fk_validator != null ? String(d.fk_validator) : undefined,
+        date_valid: d.date_valid != null ? toLeaveTimestamp(d.date_valid) : undefined,
+        fk_user_valid: d.fk_user_valid != null ? String(d.fk_user_valid) : undefined,
+        date_refuse: d.date_refuse != null ? toLeaveTimestamp(d.date_refuse) : undefined,
+        fk_user_refuse: d.fk_user_refuse != null ? String(d.fk_user_refuse) : undefined,
+        detail_refuse: d.detail_refuse ?? undefined,
+        detail_cancel: d.detail_cancel ?? undefined,
+        date_create: d.date_create != null ? toLeaveTimestamp(d.date_create) : undefined,
+        date_modification: d.tms != null
+            ? toLeaveTimestamp(d.tms)
+            : (d.date_modification != null ? toLeaveTimestamp(d.date_modification) : undefined),
+        duration: d.duration != null ? Number(d.duration) : undefined,
+    };
+}
+
+/**
+ * Filtros de sqlfilters por status para /holidays (coluna `statut` da tabela
+ * llx_holiday: 1=Draft, 2=Validated, 3=Approved, 4=Canceled, 5=Refused). (#986)
+ */
+const LEAVE_STATUS_FILTERS: Record<string, string> = {
+    draft: "(t.statut:=:'1')",
+    pending: "(t.statut:=:'2')",
+    approved: "(t.statut:=:'3')",
+    canceled: "(t.statut:=:'4')",
+    refused: "(t.statut:=:'5')",
+};
+
 export class DolibarrHRService extends DolibarrServiceBase {
 
     async getUserById(id: string): Promise<any | null> {
@@ -217,20 +316,21 @@ export class DolibarrHRService extends DolibarrServiceBase {
         }
     }
 
-    async listLeaveRequests(status?: string): Promise<any[]> {
+    async listLeaveRequests(status?: string): Promise<LeaveRequest[]> {
         try {
             const headers = this.getHeaders();
             const url = `${this.baseUrl}holidays`;
             const params: any = { limit: 10 };
-            if (status === 'approved') params.sqlfilters = "(t.status:=:'3')";
-            if (status === 'pending') params.sqlfilters = "(t.status:=:'2')";
+            const filter = status ? LEAVE_STATUS_FILTERS[status] : undefined;
+            if (filter) params.sqlfilters = filter;
             const response = await axios.get(url, {
                 headers,
                 params,
                 httpsAgent: this.httpsAgent,
                 validateStatus: (s) => s === 200
             });
-            return Array.isArray(response.data) ? response.data : [];
+            const raw = Array.isArray(response.data) ? response.data : [];
+            return raw.map(mapLeaveRequest);
         } catch (error) {
             log.error('listLeaveRequests Error', error);
             return [];

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ChatSidebar } from '../../components/Chat/ChatSidebar';
+import { ChatSidebar } from '../../components/chat/ChatSidebar';
 
 vi.mock('react-router-dom', () => ({
     useNavigate: () => vi.fn(),

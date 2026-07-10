@@ -13,7 +13,13 @@ const mockSvc = vi.hoisted(() => ({
     create: vi.fn(() => ({ id: 'n1' })),
 }));
 
+// Governança A1: a rota /send passa a consultar a trava (uiConfig) e a permissão do chamador.
+const mockUiConfig = vi.hoisted(() => ({ get: vi.fn(() => ({ taskNotificationsExternalEnabled: false } as any)) }));
+const mockPerms = vi.hoisted(() => ({ getProfile: vi.fn(async () => ({ agent: { canSendWhatsapp: false, canSendEmail: false } } as any)) }));
+
 vi.mock('../../services/notificationService', () => ({ notificationService: mockSvc }));
+vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfig }));
+vi.mock('../../services/userPermissionsService', () => ({ userPermissionsService: mockPerms }));
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrLogin: (req: any, _res: any, next: any) => { req.user = { id: 'u1', login: 'u1' }; next(); },
 }));
@@ -89,5 +95,67 @@ describe('notificationRoutes — scope derivado (#531)', () => {
         const res = await request(app).get('/api/notifications');
         expect(res.status).toBe(200);
         expect(res.body.notifications[0].scope).toBe('system');
+    });
+});
+
+describe('notificationRoutes — governança do /send (Fase A: canais externos)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUiConfig.get.mockReturnValue({ taskNotificationsExternalEnabled: false } as any);
+        mockPerms.getProfile.mockResolvedValue({ agent: { canSendWhatsapp: false, canSendEmail: false } } as any);
+    });
+
+    it('in-app segue livre: não checa trava nem permissão', async () => {
+        const res = await request(app).post('/api/notifications/send')
+            .send({ title: 'T', message: 'M', channels: ['in-app'] });
+        expect(res.status).toBe(200);
+        expect(mockSvc.create).toHaveBeenCalled();
+        expect(mockPerms.getProfile).not.toHaveBeenCalled();
+    });
+
+    it('WhatsApp com a trava DESLIGADA → 403 (não cria)', async () => {
+        const res = await request(app).post('/api/notifications/send')
+            .send({ title: 'T', message: 'M', channels: ['whatsapp'], recipientPhone: '5511999998888' });
+        expect(res.status).toBe(403);
+        expect(mockSvc.create).not.toHaveBeenCalled();
+    });
+
+    it('WhatsApp com trava LIGADA mas sem permissão do chamador → 403', async () => {
+        mockUiConfig.get.mockReturnValue({ taskNotificationsExternalEnabled: true } as any);
+        mockPerms.getProfile.mockResolvedValue({ agent: { canSendWhatsapp: false, canSendEmail: false } } as any);
+        const res = await request(app).post('/api/notifications/send')
+            .send({ title: 'T', message: 'M', channels: ['whatsapp'], recipientPhone: '5511999998888' });
+        expect(res.status).toBe(403);
+        expect(mockSvc.create).not.toHaveBeenCalled();
+    });
+
+    it('WhatsApp com trava LIGADA + permissão + allowlist vazia → 200 (comportamento atual preservado)', async () => {
+        mockUiConfig.get.mockReturnValue({ taskNotificationsExternalEnabled: true } as any);
+        mockPerms.getProfile.mockResolvedValue({ agent: { canSendWhatsapp: true, canSendEmail: false } } as any);
+        const res = await request(app).post('/api/notifications/send')
+            .send({ title: 'T', message: 'M', channels: ['whatsapp'], recipientPhone: '5511999998888' });
+        expect(res.status).toBe(200);
+        expect(mockSvc.create).toHaveBeenCalled();
+    });
+
+    it('WhatsApp com allowlist configurada e destino FORA → 403', async () => {
+        mockUiConfig.get.mockReturnValue({
+            taskNotificationsExternalEnabled: true,
+            actionGovernance: { whatsappDestinationAllowlist: ['5511111111111'] },
+        } as any);
+        mockPerms.getProfile.mockResolvedValue({ agent: { canSendWhatsapp: true, canSendEmail: false } } as any);
+        const res = await request(app).post('/api/notifications/send')
+            .send({ title: 'T', message: 'M', channels: ['whatsapp'], recipientPhone: '5511999998888' });
+        expect(res.status).toBe(403);
+        expect(mockSvc.create).not.toHaveBeenCalled();
+    });
+
+    it('e-mail com trava LIGADA + permissão de e-mail → 200', async () => {
+        mockUiConfig.get.mockReturnValue({ taskNotificationsExternalEnabled: true } as any);
+        mockPerms.getProfile.mockResolvedValue({ agent: { canSendWhatsapp: false, canSendEmail: true } } as any);
+        const res = await request(app).post('/api/notifications/send')
+            .send({ title: 'T', message: 'M', channels: ['email'], recipientEmail: 'x@y.com' });
+        expect(res.status).toBe(200);
+        expect(mockSvc.create).toHaveBeenCalled();
     });
 });

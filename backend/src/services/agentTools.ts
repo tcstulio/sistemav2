@@ -6,6 +6,7 @@ import { AsyncLocalStorage } from 'async_hooks';
 import { dolibarrService } from './dolibarrService';
 import { ScraperService } from './scraperService';
 import { isValidExternalUrl } from '../utils/urlValidation';
+import { resolveUserMobile } from '../utils/userMobile';
 import { logger } from '../utils/logger';
 import { signDeeplink } from '../utils/deeplinkToken';
 import { minimaxService } from './minimaxService';
@@ -17,6 +18,10 @@ import * as path from 'path';
 import { getRecentLogs } from '../utils/logger';
 import { agentConfigService } from './agentConfigService';
 import { channelRouter } from './channelRouter';
+import { uiConfigService } from './uiConfigService';
+import { getWhatsappAllowlist, whatsappDestinationAllowed, socidOf } from '../utils/actionGuards';
+import { isConfirmable, buildConfirmDeeplink } from './agentActionConfirm';
+import { notificationService } from './notificationService';
 
 const execFileAsync = promisify(execFile);
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
@@ -97,7 +102,7 @@ export const TOOLS_PROMPT = `
         12. list_shipments(search: string) - Lista envios/expedições.
         13. list_supplier_invoices(status: 'unpaid'|'paid') - Lista faturas de fornecedor.
         14. list_expense_reports(status: 'approved'|'paid') - Lista relatórios de despesas.
-        15. list_users(search: string) - Lista usuários/funcionários.
+        15. list_users(search: string) - Lista usuários/funcionários (mostra o [id] e o 📱 celular). Use o [id] como "recipient" no notify_person.
         16. list_warehouses() - Lista estoques/armazéns.
         17. list_tasks(projectId: string) - Lista tarefas de um projeto.
         18. list_user_tasks(userId?: string) - Lista as tarefas atribuídas a um usuário. Omita userId para listar as tarefas do PRÓPRIO usuário logado ("minhas tarefas").
@@ -216,7 +221,7 @@ export const TOOLS_PROMPT = `
 
         FERRAMENTAS DE NOTIFICAÇÃO:
         105. notify_team(message, priority?) - Manda uma notificação in-app pra toda a equipe. Use quando faz algo que os outros precisam saber (criou fatura, validou pedido, etc.).
-        106. notify_person(name, phone?, email?, message, channels?) - Manda notificação pra uma pessoa específica (cliente, fornecedor, membro da equipe). channels = array com "whatsapp" e/ou "email" e/ou "in-app". Precisa de phone pra WhatsApp, email pra email.
+        106. notify_person(name, phone?, email?, message, channels?, recipient?) - Manda notificação pra uma pessoa específica (cliente, fornecedor, membro da equipe). channels = array com "whatsapp" e/ou "email" e/ou "in-app". Para USUÁRIO do sistema, passe "recipient" = [id] do list_users: o telefone/email é resolvido automaticamente do cadastro (não precisa saber o número). Para cliente/externo, informe phone/email direto. in-app exige recipient (id).
         107. send_whatsapp(phone, message) - Manda WhatsApp direto pra qualquer número. phone = número com código país (ex.: "5511999999999").
 
         FERRAMENTA DE GESTÃO DO PROJETO:
@@ -247,6 +252,7 @@ export const TOOLS_PROMPT = `
         7. **NUNCA crie issues em sequência sobre o mesmo tema** — se criou uma issue sobre "delete intervenção", NÃO crie outra sobre "excluir intervenção" ou "apagar intervenção". Uma issue por problema.
         8. **Se o usuário não pediu explicitamente para criar uma issue, NÃO crie** — apenas informe o problema e pergunte se deseja registrar.
         9. **NUNCA assuma que algo está quebrado sem evidência** — um erro de API pode ser temporário; uma tela que você não viu pode funcionar normalmente. Quando em dúvida, use ask_user.
+        10. **CRIAÇÃO EM MASSA NÃO GASTA ITERAÇÕES** — prepare_create_proposal/prepare_create_invoice/prepare_create_order aceitam "lines" (array de itens) e prepare_batch_create cria até 50 registros de uma vez, tudo numa ÚNICA chamada. NUNCA faça uma chamada por item: monte o "lines"/"items" completo (ache todos os IDs de produtos primeiro com list_products) e envie de uma vez. Assim uma cotação/proposta com 10 produtos custa 1 chamada de criação, não 10 — evita esgotar o limite de iterações.
 
         EXEMPLOS DE FORMATO (OBRIGATÓRIO usar EXATAMENTE este formato JSON):
         User: "Quais faturas estão em aberto?"
@@ -261,6 +267,12 @@ export const TOOLS_PROMPT = `
         Assistant: { "tool": "list_github_issues", "args": { "state": "open", "limit": 20 } }
 
         IMPORTANTE: Use SEMPRE o formato {"tool": "nome_exato", "args": {...}}. NÃO use <tool_call:> ou outros formatos.
+
+        REGRA CRÍTICA — NUNCA "anuncie e pare": se você VAI usar uma ferramenta, emita o JSON dela
+        AGORA, na MESMA resposta (só o JSON, sem texto antes). É PROIBIDO dizer coisas como "vou
+        verificar os logs:", "deixa eu investigar...", "vou começar checando o código..." e encerrar
+        sem o JSON — isso trava a tarefa, pois o sistema NÃO continua sozinho após uma resposta em
+        texto. Ou você chama a ferramenta imediatamente (JSON), ou já responde direto ao usuário.
 
         SOBRE VOCÊ:
         - Você é o assistente virtual do CoolGroove (sistemav2), um ERP baseado em Dolibarr.
@@ -714,6 +726,42 @@ function computeLinesTotal(lines: any): number {
     }, 0);
 }
 
+/** Contato resolvido de um usuário do sistema (para notify_person em canais externos). */
+export interface ResolvedUserContact { userId: string; phone: string; email: string; displayName: string; }
+
+/**
+ * Resolve o contato de um USUÁRIO do sistema a partir do userId (preferido, inequívoco) ou do
+ * nome (best-effort). O telefone vem só de campos MÓVEIS (user_mobile||phone_mobile) — nunca do
+ * fixo (office_phone), que quebraria o WhatsApp. Nome ambíguo (>1 match) ou inexistente NÃO
+ * adivinha: devolve erro pedindo o userId. É a base do "avise o fulano no WhatsApp" sem o LLM
+ * precisar saber o número de cor.
+ */
+export async function resolveUserContact(opts: { userId?: string; name?: string }): Promise<ResolvedUserContact | { error: string }> {
+    let user: any = null;
+    const uid = opts.userId ? String(opts.userId).trim() : '';
+    const name = opts.name ? String(opts.name).trim() : '';
+    if (uid) {
+        user = await dolibarrService.getUserById(uid);
+        if (!user) return { error: `Usuário id ${uid} não encontrado.` };
+    } else if (name) {
+        const matches = await dolibarrService.listUsers(name);
+        if (!matches || matches.length === 0) {
+            return { error: `Nenhum usuário do sistema encontrado com o nome "${name}". Use list_users para achar o id e passe-o em "recipient".` };
+        }
+        if (matches.length > 1) {
+            const list = matches.slice(0, 5).map((m: any) => `${(m.firstname || '')} ${(m.lastname || '')}`.trim() + ` [id ${m.id}]`).join('; ');
+            return { error: `Mais de um usuário corresponde a "${name}": ${list}. Informe o userId exato em "recipient".` };
+        }
+        user = matches[0];
+    } else {
+        return { error: 'Informe "recipient" (id do usuário) ou "name".' };
+    }
+    const phone = String(resolveUserMobile(user) || '').replace(/\D/g, '');
+    const email = String(user.email || '').trim();
+    const displayName = `${(user.firstname || '')} ${(user.lastname || '')}`.trim() || user.login || String(user.id);
+    return { userId: String(user.id), phone, email, displayName };
+}
+
 export async function executeTool(tool: string, args: any = {}): Promise<string> {
     const resolvedTool = TOOL_ALIASES[tool] || tool;
     log.info(`Tool Call: ${tool}${resolvedTool !== tool ? ` -> ${resolvedTool}` : ''}`, args);
@@ -753,6 +801,21 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             }
         }
 
+        // Gate por entidade nos validate_* (fecha a brecha real): o `permKey` acima nunca barra
+        // esses tools porque `canValidate` é ARRAY (`![]` é sempre false), e o getEntityFromTool
+        // só cobre prepare_create_/prepare_edit_ — então validate_* ficava SEM trava por entidade.
+        // Sem isto, um não-admin (o agente é aberto a qualquer logado) validava — nº fiscal,
+        // ~irreversível — qualquer fatura/pedido/proposta via a chave master. Espelha canCreate/Edit.
+        const validateMatch = resolvedTool.match(/^validate_(invoice|order|proposal)$/);
+        if (validateMatch) {
+            const vEntity = validateMatch[1];
+            const canV = ctx.permissionProfile.agent.canValidate;
+            if (!canV.includes(vEntity) && !canV.includes('all')) {
+                log.warn(`Permission denied: user=${ctx.userLogin} cannot validate ${vEntity}`);
+                return `Você não tem permissão para validar ${vEntity}. Solicite ao administrador.`;
+            }
+        }
+
         // Caps configuráveis pelo admin (opt-in: default null/[] = sem efeito).
         const agent = ctx.permissionProfile.agent;
 
@@ -761,6 +824,24 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
             && !agent.restrictedCustomers.includes(String(args.socid))) {
             log.warn(`Permission denied: user=${ctx.userLogin} cliente ${args.socid} fora da allowlist`);
             return `Você não tem permissão para agir sobre o cliente ${args.socid}. Solicite ao administrador.`;
+        }
+        // Escopo por cliente também nos validate_* (o socid NÃO vem nos args — busca na entidade).
+        // Fecha a brecha A2: a checagem acima parecia proteger validate_*, mas nunca pegava (sem
+        // socid nos args). Fail-closed: com allowlist configurada, bloqueia se não confirmar o
+        // cliente. Só roda quando há id (senão o handler dá a mensagem "informe o ID") e apenas
+        // com allowlist não-vazia (default = sem fetch extra, sem mudança de comportamento).
+        if (agent.restrictedCustomers?.length > 0 && /^validate_(invoice|order|proposal)$/.test(resolvedTool)) {
+            const entId = String(args?.invoice_id ?? args?.order_id ?? args?.proposal_id ?? args?.id ?? '').trim();
+            if (entId) {
+                const entity = resolvedTool === 'validate_invoice' ? await dolibarrService.getInvoice(entId)
+                    : resolvedTool === 'validate_order' ? await dolibarrService.getOrder(entId)
+                    : await dolibarrService.getProposal(entId);
+                const entSocid = socidOf(entity);
+                if (entSocid == null || !agent.restrictedCustomers.includes(entSocid)) {
+                    log.warn(`Permission denied: user=${ctx.userLogin} ${resolvedTool} cliente ${entSocid ?? '?'} fora da allowlist`);
+                    return `Você não tem permissão para validar esta entidade: o cliente (${entSocid ?? 'desconhecido'}) está fora da sua allowlist. Solicite ao administrador.`;
+                }
+            }
         }
         // Allowlist de projeto.
         const projectId = args?.project_id ?? args?.fk_project;
@@ -782,6 +863,23 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
         }
     }
 
+    // HITL (robô-de-negócio §8.1): ação irreversível confirmável NÃO executa direto quando o dial
+    // exige aprovação — devolve o deeplink de confirmação; a execução ocorre com a chave do humano
+    // que confirmar (/confirm-action, RBAC real). DORMENTE por default (irreversibleRequiresApproval
+    // = false) → validate_* executa como hoje. adminBypassIrreversible (default true) isenta o admin.
+    if (isConfirmable(resolvedTool)) {
+        const gov = uiConfigService.get().actionGovernance;
+        const gated = !!gov?.irreversibleRequiresApproval && !(ctx.isAdmin && gov?.adminBypassIrreversible);
+        if (gated) {
+            const link = buildConfirmDeeplink(resolvedTool, args, ctx.userId || '');
+            log.info(`HITL: ${resolvedTool} desviado p/ confirmação humana (ator=${ctx.userLogin})`);
+            return `⚠️ Esta ação tem efeito irreversível e exige CONFIRMAÇÃO HUMANA. Revise e confirme na tela: ${link}`;
+        }
+    }
+
+    // #954: executeToolInner LANÇA em params inválidos/HTTP 5xx. Não engolimos aqui (mantém o
+    // contrato testado); quem trata é o loop do agente (catch por-chamada injeta o erro e CONTINUA
+    // em vez de abortar o turno — ver LocalProvider.generateReply e GoogleProvider).
     const t0 = Date.now();
     const result = await executeToolInner(resolvedTool, args);
     const listener = ctx.listener || DEFAULT_TOOL_CONTEXT.listener;
@@ -999,9 +1097,11 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             const users = await dolibarrService.listUsers(args?.search);
             if (users.length === 0) return 'Nenhum usuário encontrado.';
             return '<h3>👥 Usuários</h3><ul>' +
-                users.map((u: any) =>
-                    `<li><a href="/hr/${u.id}" class="text-blue-600 underline font-semibold">${u.lastname} ${u.firstname}</a> — ${u.email || ''} ${u.job ? '(' + u.job + ')' : ''}</li>`
-                ).join('') + '</ul>';
+                users.map((u: any) => {
+                    const mobile = resolveUserMobile(u);
+                    return `<li><a href="/hr/${u.id}" class="text-blue-600 underline font-semibold">${u.lastname} ${u.firstname}</a> [id ${u.id}] — ${u.email || ''} ${u.job ? '(' + u.job + ')' : ''}${mobile ? ' | 📱 ' + mobile : ''}</li>`;
+                }).join('') +
+                '</ul>';
         }
         case 'list_warehouses': {
             const warehouses = await dolibarrService.listWarehouses();
@@ -1106,9 +1206,11 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             const leaves = await dolibarrService.listLeaveRequests(args?.status);
             if (leaves.length === 0) return 'Nenhuma solicitação de férias encontrada.';
             return '<h3>🏖️ Solicitações de Férias</h3><ul>' +
-                leaves.map((l: any) =>
-                    `<li><a href="/hr/leaves" class="text-blue-600 underline font-semibold">${l.ref}</a> — ${l.date_debut || ''}</li>`
-                ).join('') + '</ul>';
+                leaves.map((l: any) => {
+                    const ts = l.date_debut;
+                    const debut = ts ? new Date(ts < 1e12 ? ts * 1000 : ts).toLocaleDateString('pt-BR') : '';
+                    return `<li><a href="/hr/leaves" class="text-blue-600 underline font-semibold">${l.ref}</a> — ${debut}</li>`;
+                }).join('') + '</ul>';
         }
         case 'list_boms': {
             const boms = await dolibarrService.listBOMs(args?.search);
@@ -1441,7 +1543,6 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             const msg = String(args?.message || '').trim();
             if (!msg) return 'Informe a mensagem (parâmetro "message").';
             try {
-                const { notificationService } = require('./notificationService');
                 await notificationService.notifyTeam({
                     event: 'agent.action',
                     title: 'Mensagem do Marciano',
@@ -1457,26 +1558,56 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
 
         case 'notify_person': {
             const pName = String(args?.name || '').trim();
-            const pPhone = args?.phone ? String(args.phone).replace(/\D/g, '') : '';
-            const pEmail = args?.email ? String(args.email).trim() : '';
+            let pPhone = args?.phone ? String(args.phone).replace(/\D/g, '') : '';
+            let pEmail = args?.email ? String(args.email).trim() : '';
             const pMsg = String(args?.message || '').trim();
             const pChannels = Array.isArray(args?.channels) ? args.channels : ['in-app'];
+            const npCtx = getToolContext();
+            let pRecipient = args?.recipient ? String(args.recipient).trim() : undefined;
 
             if (!pName) return 'Informe o nome da pessoa (parâmetro "name").';
             if (!pMsg) return 'Informe a mensagem (parâmetro "message").';
-            if (pChannels.includes('whatsapp') && !pPhone) return 'Para WhatsApp, informe o telefone (parâmetro "phone").';
-            if (pChannels.includes('email') && !pEmail) return 'Para email, informe o email (parâmetro "email").';
+
+            // NOVO: resolve o contato do USUÁRIO do sistema para canais EXTERNOS quando o telefone/
+            // email não veio, a partir de recipient (userId) ou do name. NÃO roda para in-app puro —
+            // preserva o #1004 (auto-notificação cai no usuário logado, sem lookup no Dolibarr).
+            const wantsWhats = pChannels.includes('whatsapp');
+            const wantsEmail = pChannels.includes('email');
+            if (((wantsWhats && !pPhone) || (wantsEmail && !pEmail)) && (pRecipient || pName)) {
+                const resolved = await resolveUserContact({ userId: pRecipient, name: pRecipient ? undefined : pName });
+                if ('error' in resolved) return resolved.error;
+                if (!pRecipient) pRecipient = resolved.userId;
+                if (wantsWhats && !pPhone) pPhone = resolved.phone;
+                if (wantsEmail && !pEmail) pEmail = resolved.email;
+            }
+
+            if (wantsWhats && !pPhone) return `Não há WhatsApp cadastrado para ${pName}. Cadastre o celular do usuário (perfil) ou informe o telefone em "phone".`;
+            if (wantsEmail && !pEmail) return `Não há email cadastrado para ${pName}. Informe o email em "email".`;
+
+            // #1154 Fase A (governança): a allowlist de destino incide no número FINAL (resolvido do
+            // cadastro OU informado). Vazia = permite tudo (opt-in). Aplicada após a resolução.
+            if (wantsWhats && !whatsappDestinationAllowed(pPhone, getWhatsappAllowlist(uiConfigService.get()))) {
+                return `Destino de WhatsApp ${pPhone} não está na allowlist configurada pelo admin.`;
+            }
+
+            // #1004: in-app → recipient explícito/resolvido; sem ele, cai no usuário logado (caixa
+            // "Minhas"). Se ainda assim não houver destinatário, NÃO vira broadcast implícito.
+            if (!pRecipient) pRecipient = npCtx.userId || undefined;
+            if (pChannels.includes('in-app') && !pRecipient) {
+                return 'Não foi possível resolver o destinatário in-app. Informe o parâmetro "recipient" (id do usuário) ou canais externos (whatsapp/email) com os respectivos dados de contato.';
+            }
 
             try {
-                const { notificationService } = require('./notificationService');
                 await notificationService.notifyPerson({
                     event: 'custom',
                     title: `Mensagem para ${pName}`,
                     message: pMsg,
                     channels: pChannels,
+                    recipient: pRecipient,
                     recipientName: pName,
                     recipientPhone: pPhone,
                     recipientEmail: pEmail,
+                    senderId: npCtx.userId,
                     senderName: 'Marciano',
                 });
                 const sent = pChannels.join(', ');
@@ -1491,6 +1622,11 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             const waMsg = String(args?.message || '').trim();
             if (!waPhone) return 'Informe o telefone (parâmetro "phone", ex.: 5511999999999).';
             if (!waMsg) return 'Informe a mensagem (parâmetro "message").';
+            // #1154 Fase A (governança): allowlist de destino OPT-IN. Vazia (default) = permite tudo —
+            // preserva o WhatsApp p/ cliente (feature testada). Só restringe quando o admin configura.
+            if (!whatsappDestinationAllowed(waPhone, getWhatsappAllowlist(uiConfigService.get()))) {
+                return `Destino ${waPhone} não está na allowlist de WhatsApp configurada pelo admin. Inclua-o na configuração ou use um número autorizado.`;
+            }
             try {
                 const chatId = waPhone.includes('@c.us') ? waPhone : `${waPhone}@c.us`;
                 const result = await channelRouter.sendWhatsApp(chatId, waMsg);

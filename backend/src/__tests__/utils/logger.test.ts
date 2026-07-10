@@ -18,7 +18,7 @@ vi.mock('pino', () => ({
     default: (...args: any[]) => pinoMock(...args),
 }));
 
-import { createLogger, logger } from '../../utils/logger';
+import { createLogger, logger, getRecentLogs, getRecentLogEntries, clearLogBuffer } from '../../utils/logger';
 
 describe('createLogger', () => {
     beforeEach(() => {
@@ -125,6 +125,89 @@ describe('child', () => {
             msg: '[RootChild] orphan',
             context: 'RootChild',
         });
+    });
+});
+
+describe('in-memory log buffer', () => {
+    beforeEach(() => {
+        clearLogBuffer();
+    });
+
+    it('getRecentLogEntries retorna entradas estruturadas (timestamp ISO, level, message, meta)', () => {
+        logger.info('hello', { k: 'v' });
+
+        const entries = getRecentLogEntries(50);
+
+        expect(entries).toHaveLength(1);
+        expect(entries[0].level).toBe('info');
+        expect(entries[0].message).toBe('hello');
+        expect(entries[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+        expect(entries[0].meta).toEqual({ k: 'v' });
+    });
+
+    it('getRecentLogEntries preserva o contexto no message', () => {
+        const ctx = createLogger('Ctx');
+        ctx.warn('doing work');
+
+        const entries = getRecentLogEntries(50);
+
+        expect(entries[0].level).toBe('warn');
+        expect(entries[0].message).toBe('[Ctx] doing work');
+    });
+
+    it('entries sem data não possuem meta', () => {
+        logger.info('plain');
+
+        const entries = getRecentLogEntries(50);
+
+        expect(entries[0].meta).toBeUndefined();
+    });
+
+    it('getRecentLogs retorna strings formatadas (compatibilidade com agentTools)', () => {
+        logger.error('boom', { code: 'X' });
+
+        const lines = getRecentLogs(50);
+
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[ERROR\] boom \{"code":"X"\}$/);
+    });
+
+    it('getRecentLogs preserva o formato de data string data (não JSON-stringify)', () => {
+        logger.info('msg', 'raw-string-data');
+
+        const lines = getRecentLogs(50);
+
+        expect(lines[0]).toMatch(/\[INFO\] msg raw-string-data$/);
+    });
+
+    it('filtra por nível retornando o subset correto', () => {
+        logger.info('i');
+        logger.warn('w');
+        logger.error('e');
+
+        const errors = getRecentLogEntries(50).filter((e) => e.level === 'error');
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0].message).toBe('e');
+    });
+
+    it('limita a N linhas (mais recentes)', () => {
+        for (let i = 0; i < 5; i++) logger.info(`m${i}`);
+
+        const entries = getRecentLogEntries(3);
+
+        expect(entries).toHaveLength(3);
+        expect(entries[2].message).toBe('m4');
+    });
+
+    it('buffer é limitado a MAX_LOG_BUFFER entradas (FIFO)', () => {
+        for (let i = 0; i < 501; i++) logger.info(`m${i}`);
+
+        const entries = getRecentLogEntries(1000);
+
+        expect(entries).toHaveLength(500);
+        expect(entries[0].message).toBe('m1');
+        expect(entries[499].message).toBe('m500');
     });
 });
 

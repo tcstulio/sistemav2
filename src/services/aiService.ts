@@ -458,21 +458,13 @@ export const AiService = {
             let dataContext = `[SISTEMA] Data atual: ${dateStr}. Hora: ${timeStr}. Use ferramentas para buscar dados específicos.`;
             if (pageContext) dataContext += '\n' + pageContext;
 
-            // Map frontend history to backend format (text -> parts)
-            const backendHistory = history.map(m => ({
-                role: m.role as 'user' | 'model' | 'system',
-                parts: m.text
-            }));
-
-            // Append current message
-            backendHistory.push({ role: 'user', parts: msg });
-
-            // Assíncrono: enfileira o job e faz POLLING do resultado. Não segura a conexão,
-            // então jobs longos não caem no timeout de borda (524) do túnel. O agente roda
-            // em background até concluir, demore o que demorar.
+            // issue #1151: o servidor agora é a fonte autoritativa do histórico (lê da
+            // sessão via chatSessionService.getMessages). O cliente envia apenas
+            // { sessionId, message } — NÃO envia mais `history`. O `history` local só
+            // continua existindo como estado de UI; o backend o ignora no contexto do LLM.
             const images = Array.isArray(userImages) ? userImages : (userImages ? [userImages] : []);
             const start = await axios.post(`${API_URL}/generate-reply-async`, {
-                history: backendHistory,
+                message: msg,
                 context: dataContext,
                 image: images[0],          // compat: 1ª imagem no campo antigo
                 images: images.length ? images : undefined,

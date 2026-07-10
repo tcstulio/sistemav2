@@ -61,6 +61,33 @@ export function extractToolCall(text: string): { tool: string; args: any } | nul
     return null;
 }
 
+// #955: extrai TODAS as tool-calls de um texto (o MiniMax M3 emite várias de uma vez).
+// Varre todos os objetos {"tool":...} / {"name":...} de nível superior e parseia cada um.
+export function extractToolCalls(text: string, max = 16): { tool: string; args: any }[] {
+    const calls: { tool: string; args: any }[] = [];
+    if (!text) return calls;
+    const re = /\{\s*"(?:tool|name)"\s*:/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) && calls.length < max) {
+        const start = m.index;
+        let depth = 0;
+        for (let i = start; i < text.length; i++) {
+            if (text[i] === '{') depth++;
+            else if (text[i] === '}') depth--;
+            if (depth === 0) {
+                try {
+                    const parsed = JSON.parse(text.slice(start, i + 1));
+                    const tool = parsed.tool || parsed.name;
+                    if (tool) calls.push({ tool, args: parsed.args || parsed.arguments || {} });
+                } catch { /* ignora bloco inválido */ }
+                re.lastIndex = i + 1;
+                break;
+            }
+        }
+    }
+    return calls;
+}
+
 // --- Interfaces ---
 
 export interface ChatMessage {
@@ -105,6 +132,118 @@ function getContextWindow(model?: string): number {
         if (key.includes(k.replace(/[.\-]/g, ''))) return v;
     }
     return 128000;
+}
+
+// #956: estimativa barata de tokens (~4 chars/token para PT-BR/JSON misto). Usada para PODAR
+// o contexto ANTES de enviá-lo; o valor real chega em usage.prompt_tokens (guarda de orçamento).
+export function estimateTokens(text: string): number {
+    return Math.ceil((text || '').length / 4);
+}
+
+// #956: poda de contexto — blocos [TOOL RESULT ...]/[ERRO NA FERRAMENTA ...] antigos são
+// truncados a um sumário curto, preservando os `keepRecent` mais recentes inteiros. Impede
+// que o currentContext infle indefinidamente (evidência: 6 list tools → 135K tokens) e estoure
+// a janela do modelo. Retorna o contexto, possivelmente podado. Função PURA (testável).
+export function pruneContext(context: string, budgetChars: number, keepRecent = 2): string {
+    if (!context || context.length <= budgetChars) return context;
+    // Corta apenas nos blocos de DADOS (results/erros); o contexto base e os nudges [SISTEMA]
+    // (pequenos) seguem junto do "head" e não são tocados.
+    const markerRe = /\n\n\[(?:TOOL RESULT|ERRO NA FERRAMENTA)[^\]]*\]/g;
+    const cuts: number[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = markerRe.exec(context))) cuts.push(m.index);
+    if (!cuts.length) return context; // sem blocos podáveis -> devolve intacto
+    const head = context.slice(0, cuts[0]);
+    const blocks: string[] = [];
+    for (let i = 0; i < cuts.length; i++) {
+        blocks.push(context.slice(cuts[i], i + 1 < cuts.length ? cuts[i + 1] : context.length));
+    }
+    const protectedCount = Math.max(0, Math.min(keepRecent, blocks.length));
+    const oldBlocks = blocks.slice(0, blocks.length - protectedCount);
+    const recentBlocks = blocks.slice(blocks.length - protectedCount);
+
+    const summarize = (block: string, maxChars: number): string => {
+        const flat = block.replace(/\s+/g, ' ').trim();
+        if (flat.length <= maxChars) return block;
+        return flat.slice(0, maxChars) + ` … [poda de contexto: bloco de ${block.length} caracteres resumido]\n`;
+    };
+
+    // 1º passo: sumariza SÓ os antigos (preserva os recentes p/ a tarefa em andamento).
+    const summarizedOld = oldBlocks.map(b => summarize(b, 400));
+    let result = head + summarizedOld.join('') + recentBlocks.join('');
+    if (result.length <= budgetChars) return result;
+    // 2º passo: ainda estourando -> sumariza também os recentes (com folga maior).
+    const summarizedRecent = recentBlocks.map(b => summarize(b, 800));
+    return head + summarizedOld.join('') + summarizedRecent.join('');
+}
+
+// #957: stringificação DETERMINÍSTICA de um valor (ordena as chaves dos objetos, recursivo).
+// O JSON.stringify padrão depende da ordem de inserção -> args {b:2,a:1} e {a:1,b:2} viravam
+// assinaturas diferentes e quebravam o dedup. Arrays preservam a ordem (faz parte da semântica).
+export function stableStringify(value: any): string {
+    return JSON.stringify(value, (_k, v) => {
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+            return Object.keys(v).sort().reduce((acc: any, k) => { acc[k] = v[k]; return acc; }, {});
+        }
+        return v;
+    });
+}
+
+// #957: assinatura canônica de uma tool-call para dedup no loop do agente. Normaliza a ordem
+// das chaves dos args via stableStringify. Função PURA (testável).
+export function toolCallSignature(tool: string, args: any): string {
+    return `${tool}:${stableStringify(args ?? {})}`;
+}
+
+// #957/#955: teto de quantas vezes o gate de conclusão cutuca um "anuncia e para" antes de
+// desistir e forçar síntese. Substitui o "dispara no máximo 1x" do nudge lexical #954.
+export const MAX_CONCLUSION_NUDGES = 2;
+
+// #957/#955: detector ESTRUTURAL de "anuncia e para" — substitui a regex lexical estreita do
+// nudge #954. Um turno SEM tool-call é um anúncio NÃO-finalizado quando é curto, dominado por
+// uma intenção de ação futura em 1ª pessoa OU termina com sinal de "continua" (":", reticências,
+// seta), e NÃO entrega substância de resposta (pergunta ao usuário, valores, texto longo).
+// Robusto aos modos reais de falha que a regex #954 perdia (ex.: "Vou disparar as 6 ferramentas…:").
+export function looksLikeUnfinishedAnnouncement(text: string): boolean {
+    const t = (text || '').trim();
+    if (!t) return false;
+    const lower = t.toLowerCase();
+    const short = t.length < 280;
+    const trailingCue = /(:|\.\.\.|…|->)$/.test(t);
+    const intentionCue = /\b(vou|vamos|deixa eu|deixa-me|me deixe|permita-me|irei|pretendo|preciso|estou a|estou indo|estou verificando|agora vou|depois vou|logo vou|em seguida|let me|i'?ll|i will|i'?m going to|we'?ll|we will|gonna)\b/.test(lower);
+    const hasQuestion = /\?/.test(t);
+    const hasSubstance = t.length > 600 || /\d{2,}/.test(t) || /(r\$|usd|\beur\b|\brs\b)/.test(lower);
+    if (hasQuestion || hasSubstance) return false;
+    if (intentionCue && short) return true;
+    if (trailingCue && short) return true;
+    return false;
+}
+
+// #957/#955: gate de conclusão estruturado — decide o destino de um turno que NÃO emitiu
+// tool-call. Substitui o nudge lexical #954: em vez de casar verbo+reticências, avalia se a
+// resposta é uma entrega real (conclui) ou um anúncio não-finalizado (cutuca; sem orçamento,
+// força síntese em vez de devolver o anúncio cru). Função PURA (testável).
+export interface ConclusionGateInput {
+    reply: string;
+    nudgedCount: number; // quantas vezes o gate já cutucou neste turno
+    iteration: number;   // iteração atual (0-based)
+    maxIterations: number;
+}
+export type ConclusionGateAction = 'conclude' | 'nudge' | 'synthesize';
+export interface ConclusionGateResult { action: ConclusionGateAction; reason: string; }
+
+export function evaluateConclusionGate(inp: ConclusionGateInput): ConclusionGateResult {
+    const { reply, nudgedCount, iteration, maxIterations } = inp;
+    const text = (reply || '').trim();
+    if (!looksLikeUnfinishedAnnouncement(text)) {
+        return { action: 'conclude', reason: 'substantive-answer' };
+    }
+    // Anúncio não-finalizado: cutuca se ainda há orçamento de nudge E uma próxima iteração útil
+    // (na iteração final o nudge não teria vez -> vai direto à síntese). O teto MAX_ITERATIONS
+    // (#956) continua sendo o guarda de terminação.
+    const canNudge = nudgedCount < MAX_CONCLUSION_NUDGES && iteration < maxIterations - 1;
+    if (canNudge) return { action: 'nudge', reason: 'announce-without-action' };
+    return { action: 'synthesize', reason: 'announce-no-nudge-budget' };
 }
 
 interface AIProvider {
@@ -245,10 +384,14 @@ class GoogleProvider implements AIProvider {
                 try {
                     log.info(`Tool Call: ${toolCall.tool}`, toolCall.args);
 
-                    const callSig = `${toolCall.tool}:${JSON.stringify(toolCall.args || {})}`;
+                    const callSig = toolCallSignature(toolCall.tool, toolCall.args || {});
                     if (seenToolCalls.has(callSig)) {
-                        log.warn(`GoogleProvider: tool call duplicada bloqueada: ${callSig}`);
-                        break;
+                        // #957: duplicata não aborta o turno — avisa o modelo e segue (deixa
+                        // variar os parâmetros ou concluir). O teto MAX_ITERATIONS garante término.
+                        log.warn(`GoogleProvider: tool call duplicada ignorada (turno continua): ${callSig}`);
+                        currentContext += `\n\n[SISTEMA] Você já chamou ${toolCall.tool} com esses mesmos argumentos. Varie os parâmetros ou responda ao usuário com o que já tem.`;
+                        iterations++;
+                        continue;
                     }
                     seenToolCalls.add(callSig);
 
@@ -979,18 +1122,41 @@ export class LocalProvider implements AIProvider {
         let currentHistory = [...conversationHistory];
         let currentContext = context;
         let iterations = 0;
-        const MAX_ITERATIONS = 5;
+        // #956: teto de iterações (25-40; default 30) — NÃO infinito (risco de loop). Junto
+        // com o orçamento de tokens abaixo, garante que tarefas multi-lookup (cotação = achar
+        // cliente + buscar N produtos + montar proposta) completem sem cair na síntese que
+        // proíbe ferramentas. Criação em massa (prepare_create_proposal(lines)/prepare_batch_create)
+        // colapsa N escritas em 1 call — reforçado no prompt — então 30 cobre cenários pesados.
+        const MAX_ITERATIONS = Math.min(Math.max(config.agentMaxIterations ?? 30, 1), 40);
+        // Orçamento de contexto (#956): PARAR ANTES de estourar a janela do modelo, não num nº
+        // mágico de passos. budget = fração da janela; o resto cobre a resposta final + margem.
+        const contextBudgetTokens = Math.floor(ctxWindow * (config.agentContextBudgetPct ?? 0.72));
+        // currentContext (a parte que mais cresce — TOOL RESULTs) fica limitada a ~metade do
+        // orçamento em caracteres; system prompt (tools) + histórico usam o resto.
+        const contextCharBudget = Math.floor(contextBudgetTokens * 0.5 * 4);
         const seenToolCalls = new Set<string>();
+        let nudgedCount = 0; // #957/#955: gate de conclusão conta quantos nudges já aplicou.
+        // #959: modelos de raciocínio (MiniMax M3, GLM) vazam <think>...</think>/<reasoning> no
+        // content. Remove esses blocos SÓ para exibição/narração — a extração de tool-call usa o cru.
+        const stripReasoning = (t?: string) => (t || '')
+            .replace(/<think>[\s\S]*?<\/think>/gi, '')
+            .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
+            .trim();
         const accUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
         // Track which model actually responded and whether fallback was used.
         let lastModelUsed: string = options?.model || this.modelName;
         let lastFellBack = false;
+        // #956: tamanho real (em tokens) do último prompt enviado — sinal de ground truth p/ o
+        // guarda de orçamento. budgetExhausted marca se saímos do loop por orçamento (síntese).
+        let lastPromptTokens = 0;
+        let budgetExhausted = false;
 
         const accumulate = (usage: any) => {
             if (!usage) return;
             accUsage.promptTokens += usage.prompt_tokens || 0;
             accUsage.completionTokens += usage.completion_tokens || 0;
             accUsage.totalTokens += usage.total_tokens || 0;
+            if (usage.prompt_tokens) lastPromptTokens = usage.prompt_tokens;
         };
 
         // #934/#947: o modelo de texto (glm-5.x) não é multimodal — a imagem era IGNORADA.
@@ -1014,6 +1180,14 @@ export class LocalProvider implements AIProvider {
         }
 
         while (iterations < MAX_ITERATIONS) {
+            // #956: guarda de orçamento — se a última chamada já esgotou o orçamento de tokens,
+            // outra iteração arrisca estourar a janela do modelo. Interrompe e sintetiza com o
+            // que já coletamos (o currentContext é podado a cada passo, então cabe na síntese).
+            if (lastPromptTokens && lastPromptTokens >= contextBudgetTokens) {
+                budgetExhausted = true;
+                log.warn(`Agente: orçamento de contexto atingido (${lastPromptTokens} >= ${contextBudgetTokens} tokens) — sintetizando com os dados coletados.`);
+                break;
+            }
             const agentPrompt = agentConfigService.getSystemPrompt();
             let messages = [
                 { role: 'system', content: `Você é o Marciano — agente IA do CoolGroove (ERP Dolibarr). Use Português. ${agentPrompt ? '\n' + agentPrompt : ''}\n\nCONTEXTO: ${currentContext}\n\n${toolsPrompt}` },
@@ -1034,35 +1208,86 @@ export class LocalProvider implements AIProvider {
 
                 accumulate(data.usage);
 
-                const reply = data.choices[0].message.content;
+                const message = data.choices[0].message;
+                const rawContent = message.content || '';
+                const reply = stripReasoning(rawContent);
+                // #955: modelos como o MiniMax M3 emitem VÁRIAS tool-calls de uma vez. Executa
+                // todas na mesma iteração (honra o estilo do modelo e alivia o teto). Fallback:
+                // single (cobre <tool_call:...> do GLM) e reasoning_content (GLM põe a chamada lá).
+                let toolCalls = extractToolCalls(rawContent);
+                if (!toolCalls.length) {
+                    const single = extractToolCall(rawContent) || extractToolCall(message.reasoning_content || '');
+                    if (single) toolCalls = [single];
+                }
 
-                const toolCall = extractToolCall(reply);
-
-                if (toolCall) {
-                    try {
-                        log.info(`Local LLM Tool Call: ${toolCall.tool}`, toolCall.args);
-
-                        const callSig = `${toolCall.tool}:${JSON.stringify(toolCall.args || {})}`;
-                        if (seenToolCalls.has(callSig)) break;
-                        seenToolCalls.add(callSig);
-
-                        const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
-
-                        if (String(toolCall.tool).startsWith('prepare_')) {
-                            return { text: toolResult, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
+                if (toolCalls.length) {
+                    let ranAny = false;
+                    const duplicates: string[] = [];
+                    for (const tc of toolCalls) {
+                        const callSig = toolCallSignature(tc.tool, tc.args || {});
+                        if (seenToolCalls.has(callSig)) {
+                            duplicates.push(tc.tool);
+                            continue; // #957: pula a duplicata (não aborta o turno)
                         }
-
-                        currentContext += `\n\n[TOOL RESULT]: ${toolResult}`;
+                        seenToolCalls.add(callSig);
+                        log.info(`Local LLM Tool Call: ${tc.tool}`, tc.args);
+                        try {
+                            const toolResult = await executeTool(tc.tool, tc.args || {});
+                            // prepare_* (HITL) devolve deeplink e encerra o turno p/ o usuário confirmar.
+                            if (String(tc.tool).startsWith('prepare_')) {
+                                return { text: toolResult, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
+                            }
+                            currentContext += `\n\n[TOOL RESULT ${tc.tool}]: ${toolResult}`;
+                            // #956: poda de contexto — mantém o currentContext dentro do orçamento
+                            // (TOOL RESULTs antigos viram sumário; os recentes ficam inteiros).
+                            currentContext = pruneContext(currentContext, contextCharBudget, 2);
+                            ranAny = true;
+                        } catch (e: any) {
+                            if (e.name === 'AskUserInterrupt') {
+                                return { text: e.question, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
+                            }
+                            // erro de tool não aborta o turno — injeta e segue.
+                            const detail = e?.message || String(e);
+                            log.warn(`Local LLM Tool Error (injeta e continua): ${detail}`);
+                            currentContext += `\n\n[ERRO NA FERRAMENTA ${tc.tool}]: ${detail}. Corrija os parâmetros ou responda ao usuário com o que já tem.`;
+                            currentContext = pruneContext(currentContext, contextCharBudget, 2);
+                            ranAny = true;
+                        }
+                    }
+                    if (ranAny) {
                         iterations++;
                         continue;
-
-                    } catch (e: any) {
-                        if (e.name === 'AskUserInterrupt') {
-                            return { text: e.question, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
-                        }
-                        log.error("Local LLM Tool Error", e);
-                        return { text: reply, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                     }
+                    // #957: TODAS as chamadas eram duplicatas -> sem progresso novo. Em vez de
+                    // encerrar o turno (break -> síntese prematura), injeta um AVISO nomeando a
+                    // ferramenta repetida e dá ao modelo outra chance de variar os parâmetros ou
+                    // concluir. O teto MAX_ITERATIONS (#956) garante a terminação do loop.
+                    const dupList = Array.from(new Set(duplicates)).join(', ') || 'a ferramenta';
+                    currentContext += `\n\n[SISTEMA] Você já chamou ${dupList} com esses mesmos argumentos. Varie os parâmetros (ex.: outro termo de busca, outro filtro) ou, se já tem dados suficientes, responda ao usuário com o que já coletou.`;
+                    iterations++;
+                    continue;
+                }
+
+                // #957/#955: gate de conclusão ESTRUTURADO substitui o nudge lexical #954 (que só
+                // casava verbo+reticências, disparava 1x e nunca na última iteração). O gate decide
+                // o destino de um turno sem tool-call: entregar a resposta (conclude), cutucar para
+                // o modelo agir/responder (nudge), ou forçar síntese quando não há mais orçamento.
+                const gate = evaluateConclusionGate({
+                    reply,
+                    nudgedCount,
+                    iteration: iterations,
+                    maxIterations: MAX_ITERATIONS,
+                });
+                if (gate.action === 'nudge') {
+                    nudgedCount++;
+                    currentContext += `\n\n[SISTEMA] Sua resposta anterior apenas ANUNCIOU uma ação ("${reply.slice(0, 160).replace(/\s+/g, ' ')}") mas NÃO executou ferramenta nem entregou uma resposta final. Decida AGORA: (a) se precisa de dados, emita o JSON {"tool":"nome","args":{...}} — nada de texto antes; (b) se já tem o suficiente, responda DIRETAMENTE ao usuário, sem apenas anunciar.`;
+                    iterations++;
+                    continue;
+                }
+                if (gate.action === 'synthesize') {
+                    // Anúncio sem orçamento de nudge: não devolve o cru -> força síntese a partir
+                    // dos dados coletados (bloco após o while).
+                    break;
                 }
 
                 return { text: reply, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
@@ -1082,7 +1307,7 @@ export class LocalProvider implements AIProvider {
             const finalMessages = [
                 {
                     role: 'system',
-                    content: `Você é um assistente ERP. Responda em Português ao usuário usando SOMENTE os dados coletados abaixo. NÃO chame ferramentas e NÃO retorne JSON. Se os dados não respondem ao pedido, diga isso de forma clara e objetiva e sugira o que falta (ex.: especificar um projeto, cliente ou período).\n\nDADOS COLETADOS:\n${currentContext}`,
+                    content: `Você é um assistente ERP. Responda em Português ao usuário usando SOMENTE os dados coletados abaixo. NÃO chame ferramentas e NÃO retorne JSON. Se os dados não respondem ao pedido, diga isso de forma clara e objetiva e sugira o que falta (ex.: especificar um projeto, cliente ou período).${budgetExhausted ? '\n\n[O orçamento de contexto foi atingido; use SOMENTE os dados abaixo. Se não bastarem para completar o pedido, diga o que faltou coletar.]' : ''}\n\nDADOS COLETADOS:\n${currentContext}`,
                 },
                 ...currentHistory.map(msg => ({
                     role: msg.role === 'model' ? 'assistant' : msg.role,
@@ -1094,7 +1319,10 @@ export class LocalProvider implements AIProvider {
             }
             const { data: finalData, modelUsed: finalModel, fellBack: finalFellBack } = await this.postChatCompletion(finalMessages, 0.3, options);
             accumulate(finalData?.usage);
-            const finalText = finalData?.choices?.[0]?.message?.content;
+            let finalText = stripReasoning(finalData?.choices?.[0]?.message?.content || '');
+            // #955: se a síntese vier como tool-calls cruas (o M3 às vezes ignora o "sem
+            // ferramentas"), não despeja JSON no usuário → cai na mensagem de fallback abaixo.
+            if (finalText && extractToolCalls(finalText).length) finalText = '';
             if (finalText) return { text: finalText, usage: accUsage, contextWindow: ctxWindow, model: finalModel, fellBack: finalFellBack };
         } catch (e: any) {
             log.error('Local LLM final-answer fallback error', e?.message || e);
@@ -1758,6 +1986,20 @@ export const aiService = {
             }
         }
         return provider.extractReceiptData(imageBase64, module);
+    },
+
+    // Descrição livre de imagem (OCR + o que a imagem mostra), via provider com visão (GLM-4.6V).
+    // Usado pelo TaskRunner p/ o coder entender um alvo indicado por imagem na issue. null se sem visão.
+    describeImage: async (imageBase64: string, userHint?: string): Promise<string | null> => {
+        let provider: any = getProvider();
+        const canVision = providerSupportsVision(provider)
+            || (typeof provider.supportsVision === 'function' && provider.supportsVision());
+        if (!canVision) {
+            const mm = getMultimodalProvider();
+            if (mm) provider = mm;
+        }
+        if (typeof provider.describeImage !== 'function') return null;
+        return provider.describeImage(imageBase64, userHint);
     },
 
     extractCustomerInfo: async (text: string, module: string = 'chat') => {

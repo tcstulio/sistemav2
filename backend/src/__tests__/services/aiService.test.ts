@@ -102,7 +102,7 @@ vi.mock('../../services/scraperService', () => ({
     },
 }));
 
-import { aiService, LocalProvider, aggregateInvoicesToMonthlySeries } from '../../services/aiService';
+import { aiService, LocalProvider, aggregateInvoicesToMonthlySeries, estimateTokens, pruneContext, toolCallSignature, stableStringify, evaluateConclusionGate, looksLikeUnfinishedAnnouncement, MAX_CONCLUSION_NUDGES } from '../../services/aiService';
 import { GoogleGenAI } from '@google/genai';
 import { dolibarrService } from '../../services/dolibarrService';
 import { ScraperService } from '../../services/scraperService';
@@ -620,6 +620,77 @@ describe('AiService', () => {
             expect(result.model).toBe('MiniMax-M3');
             expect(result.fellBack).toBe(true);
         });
+
+        // ── #956: orçamento de contexto + poda de TOOL RESULTs ──────────────────────────────
+
+        it('generateReply (#956): poda TOOL RESULTs antigos e mantém os recentes inteiros', async () => {
+            // list_products formata o array em HTML (~5K chars p/ 40 itens). 3 buscas -> 3 blocos
+            // (~15K) excedem o orçamento do llama3 (11796 chars); 2 recentes (~10K) cabem inteiros.
+            let prodCall = 0;
+            (dolibarrService.listProducts as any).mockImplementation(async () => {
+                prodCall++;
+                const n = prodCall;
+                return Array.from({ length: 40 }, (_, i) => ({
+                    id: i, ref: `PROD${n}-${i}`, label: 'X'.repeat(30), price: 10,
+                }));
+            });
+
+            let call = 0;
+            const terms = ['p1', 'p2', 'p3'];
+            (axios.post as any).mockImplementation(async () => {
+                call++;
+                if (call <= 3) {
+                    // 3 buscas DISTINTAS (args diferentes) -> 3 execuções (não dedupado).
+                    return { data: { choices: [{ message: { content: `{"tool":"list_products","args":{"search":"${terms[call - 1]}"}}` } }] } };
+                }
+                return { data: { choices: [{ message: { content: 'Proposta montada com os produtos.' } }] } };
+            });
+
+            const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+            const result = await provider.generateReply([{ role: 'user', parts: 'cotacao com varios produtos' } as any], 'ctx');
+            expect(result.text).toBe('Proposta montada com os produtos.');
+
+            // A última chamada (que devolveu a resposta final) usou o currentContext PODADO.
+            const lastMessages = (axios.post as any).mock.calls.at(-1)[1].messages;
+            const sys = lastMessages[0].content;
+            // bloco antigo (PROD1) foi resumido -> último item (PROD1-39) sumiu e há marcador de poda.
+            expect(sys).toContain('poda de contexto');
+            expect(sys).not.toContain('PROD1-39');
+            // blocos recentes (PROD2/PROD3) seguem inteiros -> último item ainda presente.
+            expect(sys).toContain('PROD2-39');
+            expect(sys).toContain('PROD3-39');
+        });
+
+        it('generateReply (#956): interrompe por ORÇAMENTO de contexto e sintetiza (não estoura a janela)', async () => {
+            // llama3: ctxWindow 8192 -> contextBudgetTokens = floor(8192*0.72) = 5898.
+            // call 1 devolve prompt_tokens=6000 (>5898) + tool call -> na 2ª iteração o guarda dispara.
+            (dolibarrService.listUsers as any).mockResolvedValue([]);
+
+            let call = 0;
+            (axios.post as any).mockImplementation(async () => {
+                call++;
+                if (call === 1) {
+                    return {
+                        data: {
+                            choices: [{ message: { content: '{"tool":"list_users","args":{"search":"x"}}' } }],
+                            usage: { prompt_tokens: 6000, completion_tokens: 5, total_tokens: 6005 },
+                        },
+                    };
+                }
+                // síntese final (proíbe ferramentas)
+                return { data: { choices: [{ message: { content: 'Resumo parcial com o que coletei.' } }] } };
+            });
+
+            const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+            const result = await provider.generateReply([{ role: 'user', parts: 'alguma coisa' } as any], 'ctx');
+            expect(result.text).toBe('Resumo parcial com o que coletei.');
+
+            // Só 2 chamadas ao LLM: 1 (tool) + 1 (síntese). Não houve loop nem estouro.
+            expect((axios.post as any).mock.calls.length).toBe(2);
+            // A síntese foi avisada do orçamento esgotado (path budgetExhausted).
+            const synthMessages = (axios.post as any).mock.calls.at(-1)[1].messages;
+            expect(synthMessages[0].content).toContain('orçamento de contexto foi atingido');
+        });
     });
 
     // ── #719/#727: postChatCompletion — fallback, backoff, não-recuperável, deadline ──────────────
@@ -796,5 +867,260 @@ describe('aggregateInvoicesToMonthlySeries (#915)', () => {
     it('retorna [] para lista vazia/nula', () => {
         expect(aggregateInvoicesToMonthlySeries([])).toEqual([]);
         expect(aggregateInvoicesToMonthlySeries(null as any)).toEqual([]);
+    });
+});
+
+// ── #956: helpers de orçamento de contexto (pura) ────────────────────────────────────
+describe('estimateTokens (#956)', () => {
+    it('estima ~4 chars/token', () => {
+        expect(estimateTokens('')).toBe(0);
+        expect(estimateTokens('abcd')).toBe(1);
+        expect(estimateTokens('abcdefgh')).toBe(2); // 8 chars / 4
+    });
+
+    it('tolera null/undefined sem quebrar', () => {
+        expect(estimateTokens(undefined as any)).toBe(0);
+    });
+});
+
+describe('pruneContext (#956)', () => {
+    it('devolve intacto quando abaixo do orçamento', () => {
+        const ctx = 'contexto pequeno\n\n[TOOL RESULT x]: ok';
+        expect(pruneContext(ctx, 1000)).toBe(ctx);
+    });
+
+    it('devolve intacto quando acima do orçamento mas sem blocos podáveis', () => {
+        const big = 'x'.repeat(2000); // > orçamento, mas nenhum [TOOL RESULT]
+        expect(pruneContext(big, 500)).toBe(big);
+    });
+
+    it('trunca blocos antigos e preserva os recentes inteiros', () => {
+        const head = 'BASE';
+        const b1 = `\n\n[TOOL RESULT list_products]: ${'A'.repeat(5000)}`;
+        const b2 = `\n\n[TOOL RESULT list_invoices]: ${'B'.repeat(5000)}`;
+        const b3 = `\n\n[TOOL RESULT list_orders]: ${'C'.repeat(5000)}`;
+        const ctx = head + b1 + b2 + b3; // ~15K chars > budget 11796
+        const out = pruneContext(ctx, 11796, 2);
+
+        expect(out).toContain('poda de contexto');          // b1 (antigo) foi resumido
+        expect(out).not.toContain('A'.repeat(5000));        // b1 perdeu a run cheia
+        expect(out).toContain('B'.repeat(5000));            // b2 (recente) intacto
+        expect(out).toContain('C'.repeat(5000));            // b3 (recente) intacto
+        expect(out.length).toBeLessThan(ctx.length);        // encolheu
+    });
+
+    it('sumariza o único bloco quando ele sozinho excede o orçamento', () => {
+        const ctx = `H\n\n[TOOL RESULT x]: ${'Z'.repeat(2000)}`;
+        const out = pruneContext(ctx, 500, 2);
+        expect(out).toContain('poda de contexto');
+        expect(out).not.toContain('Z'.repeat(2000));
+    });
+
+    it('também poda blocos [ERRO NA FERRAMENTA ...]', () => {
+        const ctx = `H\n\n[ERRO NA FERRAMENTA x]: ${'E'.repeat(5000)}\n\n[TOOL RESULT y]: ${'T'.repeat(5000)}`;
+        // budget 6000: cabe o bloco recente (TOOL RESULT) inteiro, mas não os dois -> o ERRO é podado.
+        const out = pruneContext(ctx, 6000, 1);
+        expect(out).toContain('poda de contexto');          // o erro (antigo) foi resumido
+        expect(out).not.toContain('E'.repeat(5000));        // erro truncado
+        expect(out).toContain('T'.repeat(5000));            // último bloco (recente) intacto
+    });
+});
+
+// ── #957: assinatura canônica de tool-call (normaliza ordem das chaves) ───────────────
+describe('toolCallSignature / stableStringify (#957)', () => {
+    it('gera assinatura tool:args', () => {
+        expect(toolCallSignature('list_users', { search: 'marcus' })).toBe('list_users:{"search":"marcus"}');
+    });
+
+    it('ordem de chaves DIFERENTE produz a MESMA assinatura (normalização)', () => {
+        const a = toolCallSignature('list_products', { search: 'x', limit: 10 });
+        const b = toolCallSignature('list_products', { limit: 10, search: 'x' });
+        expect(a).toBe(b);
+    });
+
+    it('normaliza recursivamente objetos aninhados', () => {
+        const a = toolCallSignature('t', { filter: { b: 2, a: 1 } });
+        const b = toolCallSignature('t', { filter: { a: 1, b: 2 } });
+        expect(a).toBe(b);
+    });
+
+    it('PRESERVA a ordem de arrays (faz parte da semântica do args)', () => {
+        expect(toolCallSignature('t', { ids: [1, 2] })).not.toBe(toolCallSignature('t', { ids: [2, 1] }));
+    });
+
+    it('args distintos geram assinaturas distintas', () => {
+        expect(toolCallSignature('t', { a: 1 })).not.toBe(toolCallSignature('t', { a: 2 }));
+    });
+
+    it('tolera null/undefined nos args', () => {
+        expect(toolCallSignature('t', null)).toBe(toolCallSignature('t', undefined));
+        expect(typeof toolCallSignature('t', undefined)).toBe('string');
+    });
+
+    it('stableStringify é determinístico e ordena chaves de nível superior', () => {
+        expect(stableStringify({ b: 2, a: 1, c: { z: 9, y: 8 } })).toBe('{"a":1,"b":2,"c":{"y":8,"z":9}}');
+    });
+});
+
+// ── #957/#955: detector estrutural "anuncia e para" (substitui regex lexical #954) ────
+describe('looksLikeUnfinishedAnnouncement (#957/#955)', () => {
+    it('detecta anúncio com verbo + reticências', () => {
+        expect(looksLikeUnfinishedAnnouncement('Vou verificar os logs...')).toBe(true);
+    });
+
+    it('detecta o caso que a regex #954 PERDIA: "Vou disparar as 6 ferramentas…:"', () => {
+        expect(looksLikeUnfinishedAnnouncement('Vou disparar as 6 ferramentas…:')).toBe(true);
+    });
+
+    it('detecta intenção em inglês terminando com ":"', () => {
+        expect(looksLikeUnfinishedAnnouncement('Let me check the logs:')).toBe(true);
+    });
+
+    it('detecta somente o sinal de continuação (":") em texto curto', () => {
+        expect(looksLikeUnfinishedAnnouncement('Os resultados foram:')).toBe(true);
+    });
+
+    it('NÃO marca resposta com substância (valores) como anúncio', () => {
+        expect(looksLikeUnfinishedAnnouncement('O cliente tem R$ 1.500,00 em aberto.')).toBe(false);
+    });
+
+    it('NÃO marca resposta com pergunta ao usuário como anúncio', () => {
+        expect(looksLikeUnfinishedAnnouncement('Qual projeto você quer consultar?')).toBe(false);
+    });
+
+    it('NÃO marca resposta longa e detalhada como anúncio', () => {
+        expect(looksLikeUnfinishedAnnouncement('Resposta detalhada. ' + 'x'.repeat(700))).toBe(false);
+    });
+
+    it('string vazia não é anúncio', () => {
+        expect(looksLikeUnfinishedAnnouncement('')).toBe(false);
+    });
+});
+
+// ── #957/#955: gate de conclusão estruturado ─────────────────────────────────────────
+describe('evaluateConclusionGate (#957/#955)', () => {
+    const base = { nudgedCount: 0, iteration: 0, maxIterations: 30 };
+
+    it('resposta substantiva -> conclude', () => {
+        expect(evaluateConclusionGate({ ...base, reply: 'O saldo do cliente é R$ 2.000,00.' }).action).toBe('conclude');
+    });
+
+    it('anúncio com orçamento de nudge -> nudge', () => {
+        expect(evaluateConclusionGate({ ...base, reply: 'Vou verificar os logs...' }).action).toBe('nudge');
+    });
+
+    it('anúncio após esgotar o teto de nudges -> synthesize (não devolve cru)', () => {
+        const r = evaluateConclusionGate({ ...base, reply: 'Vou verificar...', nudgedCount: MAX_CONCLUSION_NUDGES });
+        expect(r.action).toBe('synthesize');
+    });
+
+    it('anúncio na última iteração útil -> synthesize', () => {
+        const r = evaluateConclusionGate({ ...base, reply: 'Deixa eu checar:', nudgedCount: 0, iteration: 29, maxIterations: 30 });
+        expect(r.action).toBe('synthesize');
+    });
+
+    it('pode cutucar mais de 1 vez (não tem o limite de 1x do #954)', () => {
+        // 1º nudge consumiu 1; ainda há orçamento para um 2º.
+        expect(evaluateConclusionGate({ ...base, reply: 'Vou verificar...', nudgedCount: 1 }).action).toBe('nudge');
+    });
+
+    it('resposta vazia -> conclude', () => {
+        expect(evaluateConclusionGate({ reply: '', nudgedCount: 0, iteration: 0, maxIterations: 30 }).action).toBe('conclude');
+    });
+});
+
+// ── #957: integração no loop do LocalProvider (agente Marciano) ──────────────────────
+describe('LocalProvider.generateReply (#957) — seenToolCalls + gate de conclusão', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        aiService.setConfig('local', 'http://localhost:11434/v1', undefined, 'llama3');
+    });
+
+    it('re-chamada legítima (mesma tool+args) NÃO encerra o turno silenciosamente: avisa e continua', async () => {
+        (dolibarrService.listUsers as any).mockResolvedValue([]);
+
+        let call = 0;
+        (axios.post as any).mockImplementation(async () => {
+            call++;
+            if (call === 1) return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"search":"marcus"}}' } }] } };
+            if (call === 2) {
+                // modelo repete a MESMA chamada (args idênticos) -> duplicata.
+                return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"search":"marcus"}}' } }] } };
+            }
+            if (call === 3) {
+                // modelo atende ao aviso e VARIA os parâmetros -> executa de novo (progresso).
+                return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"search":"marcus oliveira"}}' } }] } };
+            }
+            return { data: { choices: [{ message: { content: 'Marcus Oliveira encontrado.' } }] } };
+        });
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'ache o marcus' } as any], 'ctx');
+
+        // Concluiu com a resposta final (não caiu em síntese prematura nem em "Max iterations").
+        expect(result.text).toBe('Marcus Oliveira encontrado.');
+
+        // O aviso de duplicata foi injetado e aproveitado na chamada seguinte (prova continue, não break).
+        const promptCall3 = (axios.post as any).mock.calls[2][1].messages[0].content;
+        expect(promptCall3).toContain('já chamou list_users');
+    });
+
+    it('seenToolCalls normaliza ordem de chaves: args equivalentes contam como duplicata', async () => {
+        (dolibarrService.listUsers as any).mockResolvedValue([]);
+        let call = 0;
+        (axios.post as any).mockImplementation(async () => {
+            call++;
+            if (call === 1) return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"search":"x","limit":5}}' } }] } };
+            if (call === 2) {
+                // MESMA semântica, ordem de chaves diferente -> antes NÃO era dedupado (#957 corrige).
+                return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"limit":5,"search":"x"}}' } }] } };
+            }
+            return { data: { choices: [{ message: { content: 'Concluído com os dados.' } }] } };
+        });
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'busca x' } as any], 'ctx');
+
+        expect(result.text).toBe('Concluído com os dados.');
+        // list_users foi executado SÓ na 1ª chamada (a 2ª foi reconhecida como duplicata normalizada).
+        expect((dolibarrService.listUsers as any).mock.calls.length).toBe(1);
+        const promptCall3 = (axios.post as any).mock.calls[2][1].messages[0].content;
+        expect(promptCall3).toContain('já chamou list_users');
+    });
+
+    it('gate de conclusão cutuca o caso "Vou disparar as 6 ferramentas…:" que a regex #954 perdia', async () => {
+        (dolibarrService.listUsers as any).mockResolvedValue([]);
+        let call = 0;
+        (axios.post as any).mockImplementation(async () => {
+            call++;
+            if (call === 1) return { data: { choices: [{ message: { content: 'Vou disparar as 6 ferramentas…:' } }] } };
+            if (call === 2) return { data: { choices: [{ message: { content: '{"tool":"list_users","args":{"search":"x"}}' } }] } };
+            return { data: { choices: [{ message: { content: 'Pronto, concluí o levantamento.' } }] } };
+        });
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'levanta tudo' } as any], 'ctx');
+
+        expect(result.text).toBe('Pronto, concluí o levantamento.');
+        // O gate injetou o nudge estruturado (não a regex #954) — visível no prompt da 2ª chamada.
+        const promptCall2 = (axios.post as any).mock.calls[1][1].messages[0].content;
+        expect(promptCall2).toContain('ANUNCIOU uma ação');
+    });
+
+    it('gate esgota o orçamento de nudges -> força síntese (não devolve o anúncio cru)', async () => {
+        (dolibarrService.listUsers as any).mockResolvedValue([]);
+        let call = 0;
+        (axios.post as any).mockImplementation(async () => {
+            call++;
+            if (call <= 3) return { data: { choices: [{ message: { content: 'Vou verificar de novo…' } }] } }; // insiste no anúncio
+            return { data: { choices: [{ message: { content: 'Resumo sintético do que foi coletado.' } }] } };    // síntese
+        });
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'qualquer coisa' } as any], 'ctx');
+
+        // Não devolveu o anúncio cru; foi para a síntese.
+        expect(result.text).toBe('Resumo sintético do que foi coletado.');
+        expect(result.text).not.toContain('Vou verificar');
     });
 });

@@ -29,12 +29,13 @@ export interface IssueStats {
 }
 
 export const GithubService = {
-    getIssues: async (params?: { state?: string; label?: string; limit?: number }): Promise<GitHubIssue[]> => {
+    getIssues: async (params?: { state?: string; label?: string; limit?: number; period?: string }): Promise<GitHubIssue[]> => {
         try {
             const q = new URLSearchParams();
             if (params?.state) q.set('state', params.state);
             if (params?.label) q.set('label', params.label);
             if (params?.limit) q.set('limit', String(params.limit));
+            if (params?.period) q.set('period', params.period);
             const qs = q.toString();
             const url = `/api/github/issues${qs ? '?' + qs : ''}`;
             const res = await axios.get(url, getAuthHeaders());

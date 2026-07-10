@@ -56,6 +56,15 @@ export const config = {
     llmPrimaryTimeoutMs: parseInt(process.env.LLM_PRIMARY_TIMEOUT_MS || '180000', 10),
     llmRetryDeadlineMs: parseInt(process.env.LLM_RETRY_DEADLINE_MS || '60000', 10),
 
+    // Orçamento do agente Marciano (#956): teto de iterações + fração da janela do modelo
+    // usada como orçamento de contexto. Substitui o teto fixo mágico (era 5/10) por um
+    // limite que PARA ANTES de estourar a janela de contexto (evidência: 6 list tools →
+    // 135K tokens, perto do limite de 200K). Faixa recomendada p/ iterações: 25-40.
+    // AGENT_CONTEXT_BUDGET_PCT: fração da janela reservada p/ o prompt (default 0.72); o
+    // restante cobre a resposta final + margem de segurança.
+    agentMaxIterations: parseInt(process.env.AGENT_MAX_ITERATIONS || '30', 10),
+    agentContextBudgetPct: parseFloat(process.env.AGENT_CONTEXT_BUDGET_PCT || '0.72'),
+
 
     // Banco Inter
     interClientId: process.env.INTER_CLIENT_ID || '',

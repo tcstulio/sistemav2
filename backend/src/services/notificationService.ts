@@ -181,7 +181,7 @@ class NotificationService {
         }
 
         this.save();
-        log.info(`Notification created: [${notification.event}] ${notification.title} → ${channels.join(',')}`);
+        log.info(`Notification created: [${notification.event}] ${notification.title} → ${channels.join(',')} (from=${notification.senderId || 'system'}, to=${notification.recipient || 'broadcast'})`);
         return notification;
     }
 
@@ -203,11 +203,14 @@ class NotificationService {
         socketService.emit('notification', {
             id: notification.id,
             type: notification.event,
+            event: notification.event,
             title: notification.title,
             message: notification.message,
             priority: notification.priority,
             linkTo: notification.linkTo,
+            senderId: notification.senderId,
             senderName: notification.senderName,
+            recipient: notification.recipient,
             createdAt: notification.createdAt,
         });
     }
@@ -254,14 +257,30 @@ class NotificationService {
         title: string;
         message: string;
         channels: NotificationChannel[];
+        recipient?: string;
         recipientName?: string;
         recipientPhone?: string;
         recipientEmail?: string;
+        senderId?: string;
         senderName?: string;
         entityType?: string;
         entityId?: string;
     }): Promise<Notification> {
-        return this.create(params);
+        const notification = await this.create(params);
+        // #1004: garante a persistência em disco ANTES de retornar. A ferramenta notify_person
+        // devolve uma confirmação ao usuário; sem o flush, uma reinicialização rápida (ex.: nodemon)
+        // poderia perder a notificação antes do debounce (1s) gravar — parecendo "não chegou".
+        await this.flush();
+        return notification;
+    }
+
+    /** Força a gravação pendente em disco (flush do debounce de save). */
+    async flush(): Promise<void> {
+        if (this.saveTimeout) {
+            clearTimeout(this.saveTimeout);
+            this.saveTimeout = null;
+        }
+        await this.performSave();
     }
 
     /** A notificação é visível para este usuário? (regra única reusada na listagem e no isolamento) */

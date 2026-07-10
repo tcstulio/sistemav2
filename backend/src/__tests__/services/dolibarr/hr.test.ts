@@ -27,7 +27,7 @@ vi.mock('../../../config/env', () => ({
     },
 }));
 
-import { DolibarrHRService } from '../../../services/dolibarr/hr';
+import { DolibarrHRService, LeaveRequest } from '../../../services/dolibarr/hr';
 
 describe('DolibarrHRService', () => {
     let service: DolibarrHRService;
@@ -153,24 +153,63 @@ describe('DolibarrHRService', () => {
 
     describe('listLeaveRequests', () => {
         it('returns leave requests list', async () => {
-            const leaves = [{ id: 1 }];
-            mockAxios.get.mockResolvedValue({ status: 200, data: leaves });
+            mockAxios.get.mockResolvedValue({ status: 200, data: [{ id: 1 }] });
             const result = await service.listLeaveRequests();
-            expect(result).toEqual(leaves);
+            expect(result).toHaveLength(1);
+            expect(result[0].id).toBe('1');
+            // type-level assertion: o retorno é LeaveRequest[] (#986)
+            const _typed: LeaveRequest[] = result;
+            expect(_typed).toBe(result);
+        });
+
+        it('queries the holidays endpoint (never expensereports)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: [] });
+            await service.listLeaveRequests();
+            const url = mockAxios.get.mock.calls[0][0] as string;
+            expect(url).toContain('/holidays');
+            expect(url).not.toContain('expensereports');
         });
 
         it('filters by approved status', async () => {
             mockAxios.get.mockResolvedValue({ status: 200, data: [] });
             await service.listLeaveRequests('approved');
             const params = mockAxios.get.mock.calls[0][1].params;
-            expect(params.sqlfilters).toBe("(t.status:=:'3')");
+            expect(params.sqlfilters).toBe("(t.statut:=:'3')");
         });
 
         it('filters by pending status', async () => {
             mockAxios.get.mockResolvedValue({ status: 200, data: [] });
             await service.listLeaveRequests('pending');
             const params = mockAxios.get.mock.calls[0][1].params;
-            expect(params.sqlfilters).toBe("(t.status:=:'2')");
+            expect(params.sqlfilters).toBe("(t.statut:=:'2')");
+        });
+
+        it('filters by draft status', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: [] });
+            await service.listLeaveRequests('draft');
+            const params = mockAxios.get.mock.calls[0][1].params;
+            expect(params.sqlfilters).toBe("(t.statut:=:'1')");
+        });
+
+        it('filters by canceled status', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: [] });
+            await service.listLeaveRequests('canceled');
+            const params = mockAxios.get.mock.calls[0][1].params;
+            expect(params.sqlfilters).toBe("(t.statut:=:'4')");
+        });
+
+        it('filters by refused status', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: [] });
+            await service.listLeaveRequests('refused');
+            const params = mockAxios.get.mock.calls[0][1].params;
+            expect(params.sqlfilters).toBe("(t.statut:=:'5')");
+        });
+
+        it('does not set sqlfilters for unknown status', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: [] });
+            await service.listLeaveRequests('unknown');
+            const params = mockAxios.get.mock.calls[0][1].params;
+            expect(params.sqlfilters).toBeUndefined();
         });
 
         it('does not set sqlfilters without status', async () => {
@@ -178,6 +217,61 @@ describe('DolibarrHRService', () => {
             await service.listLeaveRequests();
             const params = mockAxios.get.mock.calls[0][1].params;
             expect(params.sqlfilters).toBeUndefined();
+        });
+
+        it('maps raw holiday into LeaveRequest shape (timestamps normalized to ms epoch)', async () => {
+            const raw = {
+                id: 42, ref: 'LV2024', fk_user: 7, date_debut: '1609459200',
+                date_fin: '1609545600', fk_type: '2', statut: '3',
+                description: 'Ferias', fk_validator: 9, date_create: '1609200000',
+            };
+            mockAxios.get.mockResolvedValue({ status: 200, data: [raw] });
+            const result = await service.listLeaveRequests();
+            expect(result[0]).toEqual({
+                id: '42', ref: 'LV2024', fk_user: '7',
+                date_debut: 1609459200000, date_fin: 1609545600000,
+                halfday: undefined, type: '2', statut: '3',
+                description: 'Ferias', fk_validator: '9',
+                date_valid: undefined, fk_user_valid: undefined,
+                date_refuse: undefined, fk_user_refuse: undefined,
+                detail_refuse: undefined, detail_cancel: undefined,
+                date_create: 1609200000000, date_modification: undefined, duration: undefined,
+            });
+        });
+
+        it('normalizes date strings and maps tms to date_modification', async () => {
+            // Dolibarr pode retornar datas como string 'YYYY-MM-DD' (não apenas timestamps).
+            // parseInt('2024-01-10') = 2024 (errado); toLeaveTimestamp resolve corretamente. (#986)
+            const raw = {
+                id: 1, fk_user: 2, statut: '3',
+                date_debut: '2024-01-10',
+                date_fin: '2024-01-15',
+                tms: '1700000000',
+            };
+            mockAxios.get.mockResolvedValue({ status: 200, data: [raw] });
+            const [row] = await service.listLeaveRequests();
+            expect(row.date_debut).toBe(new Date('2024-01-10').getTime());
+            expect(row.date_fin).toBe(new Date('2024-01-15').getTime());
+            expect(row.date_modification).toBe(1700000000000);
+        });
+
+        it('treats the `status` alias as `statut`', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: [{ id: 1, fk_user: 2, status: 3 }] });
+            const [row] = await service.listLeaveRequests();
+            expect(row.statut).toBe('3');
+        });
+
+        it('does not leak ExpenseReport fields into the result', async () => {
+            // Simula resposta cru do holiday trazendo campos alheios (ex: de ExpenseReport).
+            const raw = {
+                id: 1, ref: 'LV1', fk_user: 1, statut: '2',
+                total_ttc: 99.5, fk_user_author: 5, date_paye: 123,
+            };
+            mockAxios.get.mockResolvedValue({ status: 200, data: [raw] });
+            const result = await service.listLeaveRequests();
+            expect(result[0]).not.toHaveProperty('total_ttc');
+            expect(result[0]).not.toHaveProperty('fk_user_author');
+            expect(result[0]).not.toHaveProperty('date_paye');
         });
 
         it('returns empty array when response is not array', async () => {

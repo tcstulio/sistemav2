@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { ProjectChatTab } from '../../components/Projects/tabs/ProjectChatTab';
 import { Project } from '../../types/projects';
 
-vi.mock('../../components/Chat/ChatInterface', () => ({
+vi.mock('../../components/chat/ChatInterface', () => ({
     ChatInterface: (props: any) => (
         <div data-testid="chat-interface" data-height={props.height} data-element-id={props.elementId}>
             {props.title}

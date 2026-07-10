@@ -131,6 +131,22 @@ describe('NotificationPanel', () => {
         expect(mockOnNavigate).toHaveBeenCalledWith('email', '100');
     });
 
+    it('#1004 — oferece botão "Marcar como lida" por item não-lido (marca sem navegar)', () => {
+        renderPanel();
+        const markButtons = screen.getAllByRole('button', { name: /marcar .* como lida/i });
+        // ids '1' e '2' estão não-lidos; a '3' está lida → 2 botões
+        expect(markButtons).toHaveLength(2);
+        fireEvent.click(markButtons[0]);
+        expect(mockOnMarkRead).toHaveBeenCalledWith('1');
+        expect(mockOnNavigate).not.toHaveBeenCalled();
+    });
+
+    it('#1004 — não renderiza botão "Marcar como lida" para item já lido', () => {
+        // Apenas a notificação '3' (lida)
+        renderPanel([mockNotifications[2]]);
+        expect(screen.queryAllByRole('button', { name: /marcar .* como lida/i })).toHaveLength(0);
+    });
+
     it('shows unread indicator for unread notifications', () => {
         renderPanel();
         const unreadNote = screen.getByText('Novo email').closest('.rounded-lg');

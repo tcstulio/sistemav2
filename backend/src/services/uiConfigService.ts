@@ -80,6 +80,42 @@ export interface TaskAutomationConfig {
     autoMerge: boolean;
     autoDecompose: boolean;
     minMergeScore: number;
+    /** Piso de nota do Judge (0-10) p/ APROVAR uma task (default 9). Abaixo dele → revisão humana. #1125 */
+    minApproveScore: number;
+    /** Máx. de rodadas de AUTO-FIX do Judge (score baixo) antes de escalar p/ revisão humana (default 3, 1-10). #1154 */
+    maxJudgeRounds: number;
+    /** Máx. de rodadas de SELF-HEAL de gate (regressão de testes / veto do Juiz / CI vermelha) antes de escalar (default 3, 1-10). #1154 */
+    maxGateFixRounds: number;
+    /** Teto de rodadas de opencode POR TASK antes de escalar p/ revisão humana (default 20, 1-100). #1154 item 23 */
+    maxRoundsPerTask: number;
+    /** Teto GLOBAL de rodadas de opencode POR DIA — atingido, segura novos dispatches até a virada do dia (default 200, 10-5000). #1154 item 23 */
+    dailyRoundBudget: number;
+}
+
+export interface ActionGovernanceConfig {
+    irreversibleRequiresApproval: boolean;
+    adminBypassIrreversible: boolean;
+    approvalValueThreshold: number | null;
+    whatsappDestinationAllowlist: string[];
+}
+
+// #1204 — Kill-switches globais das automações de fundo na UI. Permitem pausar o scheduler
+// de mensagens (WhatsApp/e-mail agendados) e/ou os alertas cron (faturas/estoque/tickets/
+// análise financeira) SEM derrubar o backend. Default true = nada muda. Cada serviço checa
+// a config a CADA tick (sem cache) — religar o switch retoma no próximo ciclo, sem restart.
+export interface AutomationSwitchesConfig {
+    schedulerEnabled: boolean;
+    alertCronEnabled: boolean;
+}
+
+// #1129 — Kill-switches perigosos expostos como toggles de admin (Integrações/Segurança).
+// Mesmo padrão do TASKRUNNER_AUTOSTART: env-como-fallback + toggle de UI lido em runtime.
+// dryRunMode/financialCommands default OFF (secure-default); crmContextInjection default ON
+// (preserva o comportamento histórico de injeção de contexto no LLM).
+export interface FeatureSwitchesConfig {
+    dryRunMode: boolean;          // impede envio real de mensagens (anti-spam de incidente)
+    financialCommands: boolean;   // habilita /pagar e /pix (movimentam dinheiro real)
+    crmContextInjection: boolean; // injeta dados do cliente no LLM (privacidade)
 }
 
 export interface UiConfig {
@@ -94,6 +130,9 @@ export interface UiConfig {
     taskNotifications: TaskNotificationsConfig;
     taskNotificationsExternalEnabled: boolean;
     taskAutomation: TaskAutomationConfig;
+    actionGovernance: ActionGovernanceConfig;
+    automationSwitches: AutomationSwitchesConfig;
+    featureSwitches: FeatureSwitchesConfig;
     // Concorrência otimista (#central-permissões): incrementa a cada save. A Central envia
     // o version que leu; o backend rejeita (409) se mudou no meio — evita last-write-wins.
     version: number;
@@ -107,13 +146,16 @@ export interface UiConfig {
 export const UI_CONFIG_LIMITS = { maxEntities: 500, maxIdsPerRule: 200, maxIdLen: 80 };
 
 // Entrada de update: branding parcial + prefs/permissões/páginas parciais (sanitizadas em update()).
-export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions' | 'customPages' | 'taskNotifications'>> & {
+export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions' | 'customPages' | 'taskNotifications' | 'actionGovernance' | 'automationSwitches' | 'featureSwitches'>> & {
     menu?: Partial<OrderVisibilityPrefs>;
     dashboard?: Partial<OrderVisibilityPrefs>;
     screenPermissions?: unknown;
     customPages?: unknown;
     taskNotifications?: unknown;
     taskAutomation?: unknown;
+    actionGovernance?: unknown;
+    automationSwitches?: unknown;
+    featureSwitches?: unknown;
 };
 
 // Padrão aprovado: Responsável leva a cobrança; Interveniente acompanha; Criador é avisado do desfecho.
@@ -138,7 +180,10 @@ const DEFAULTS: UiConfig = {
     customPages: [],
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
     taskNotificationsExternalEnabled: false,
-    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8 },
+    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200 },
+    actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [] },
+    automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
+    featureSwitches: { dryRunMode: false, financialCommands: false, crmContextInjection: true },
     version: 0,
 };
 
@@ -281,12 +326,80 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
     const d = DEFAULTS.taskAutomation;
     if (!v || typeof v !== 'object') return { ...d };
     const a = v as Record<string, unknown>;
-    const minScore = typeof a.minMergeScore === 'number' ? Math.max(1, Math.min(10, Math.round(a.minMergeScore))) : d.minMergeScore;
+    // #1154 P3 item 29: piso SANE de 5 (antes aceitava 1) — aprovar/mergear automaticamente com nota < 5/10
+    // nunca é intencional; é secure-default contra um valor perigoso digitado por engano.
+    const SCORE_FLOOR = 5;
+    const minScore = typeof a.minMergeScore === 'number' ? Math.max(SCORE_FLOOR, Math.min(10, Math.round(a.minMergeScore))) : d.minMergeScore;
+    const minApprove = typeof a.minApproveScore === 'number' ? Math.max(SCORE_FLOOR, Math.min(10, Math.round(a.minApproveScore))) : d.minApproveScore;
+    // #1154: rodadas de correção configuráveis (1-10). Clamp defensivo — 0 travaria o loop, >10 é custo sem retorno.
+    const maxJudge = typeof a.maxJudgeRounds === 'number' ? Math.max(1, Math.min(10, Math.round(a.maxJudgeRounds))) : d.maxJudgeRounds;
+    const maxGate = typeof a.maxGateFixRounds === 'number' ? Math.max(1, Math.min(10, Math.round(a.maxGateFixRounds))) : d.maxGateFixRounds;
+    // #1154 item 23: tetos de custo. Por-task clampa 1..100; diário 10..5000 (defensivo).
+    const maxPerTask = typeof a.maxRoundsPerTask === 'number' ? Math.max(1, Math.min(100, Math.round(a.maxRoundsPerTask))) : d.maxRoundsPerTask;
+    const dailyBudget = typeof a.dailyRoundBudget === 'number' ? Math.max(10, Math.min(5000, Math.round(a.dailyRoundBudget))) : d.dailyRoundBudget;
     return {
         autoPlay: a.autoPlay === true,
         autoMerge: a.autoMerge === true,
         autoDecompose: a.autoDecompose === true,
         minMergeScore: minScore,
+        minApproveScore: minApprove,
+        maxJudgeRounds: maxJudge,
+        maxGateFixRounds: maxGate,
+        maxRoundsPerTask: maxPerTask,
+        dailyRoundBudget: dailyBudget,
+    };
+}
+
+// Exportado p/ teste unitário direto (mesmo espírito das demais sanitize).
+export function sanitizeActionGovernance(v: unknown): ActionGovernanceConfig {
+    const d = DEFAULTS.actionGovernance;
+    if (!v || typeof v !== 'object') return { ...d };
+    const a = v as Record<string, unknown>;
+    // Booleanos: NUNCA coerção implícita — só valor explicitamente booleano é aceito; resto cai no default.
+    const irreversibleRequiresApproval = typeof a.irreversibleRequiresApproval === 'boolean'
+        ? a.irreversibleRequiresApproval
+        : d.irreversibleRequiresApproval;
+    // adminBypassIrreversible default é true (permissivo).
+    const adminBypassIrreversible = typeof a.adminBypassIrreversible === 'boolean'
+        ? a.adminBypassIrreversible
+        : d.adminBypassIrreversible;
+    // Threshold: finito e >= 0, arredondado; negativo/NaN/null vira null (permissivo).
+    const rawThreshold = a.approvalValueThreshold;
+    const approvalValueThreshold = (Number.isFinite(rawThreshold) && (rawThreshold as number) >= 0)
+        ? Math.round(rawThreshold as number)
+        : null;
+    // Allowlist: cada item vira só dígitos; descarta quem não ficar em 8..15 dígitos.
+    const rawAllowlist = a.whatsappDestinationAllowlist;
+    const whatsappDestinationAllowlist: string[] = Array.isArray(rawAllowlist)
+        ? rawAllowlist
+            .map((item) => (typeof item === 'string' ? item.replace(/\D/g, '') : ''))
+            .filter((digits) => digits.length >= 8 && digits.length <= 15)
+        : [];
+    return { irreversibleRequiresApproval, adminBypassIrreversible, approvalValueThreshold, whatsappDestinationAllowlist };
+}
+
+// Exportado p/ teste unitário direto (mesmo espírito das demais sanitize).
+export function sanitizeAutomationSwitches(v: unknown): AutomationSwitchesConfig {
+    const d = DEFAULTS.automationSwitches;
+    if (!v || typeof v !== 'object') return { ...d };
+    const a = v as Record<string, unknown>;
+    // Booleanos: só valor explicitamente booleano é aceito; ausente/inválido cai no default (secure-default true).
+    return {
+        schedulerEnabled: typeof a.schedulerEnabled === 'boolean' ? a.schedulerEnabled : d.schedulerEnabled,
+        alertCronEnabled: typeof a.alertCronEnabled === 'boolean' ? a.alertCronEnabled : d.alertCronEnabled,
+    };
+}
+
+// Exportado p/ teste unitário direto. Booleanos: só valor explicitamente booleano é aceito;
+// ausente/inválido cai no default do respectivo flag (dryRun/financial OFF, crmContext ON).
+export function sanitizeFeatureSwitches(v: unknown): FeatureSwitchesConfig {
+    const d = DEFAULTS.featureSwitches;
+    if (!v || typeof v !== 'object') return { ...d };
+    const a = v as Record<string, unknown>;
+    return {
+        dryRunMode: typeof a.dryRunMode === 'boolean' ? a.dryRunMode : d.dryRunMode,
+        financialCommands: typeof a.financialCommands === 'boolean' ? a.financialCommands : d.financialCommands,
+        crmContextInjection: typeof a.crmContextInjection === 'boolean' ? a.crmContextInjection : d.crmContextInjection,
     };
 }
 
@@ -325,6 +438,9 @@ export class UiConfigService {
                     taskNotifications: sanitizeTaskNotifications(parsed.taskNotifications),
                     taskNotificationsExternalEnabled: parsed.taskNotificationsExternalEnabled === true,
                     taskAutomation: sanitizeTaskAutomation(parsed.taskAutomation),
+                    actionGovernance: sanitizeActionGovernance(parsed.actionGovernance),
+                    automationSwitches: sanitizeAutomationSwitches(parsed.automationSwitches),
+                    featureSwitches: sanitizeFeatureSwitches(parsed.featureSwitches),
                     version: typeof parsed.version === 'number' ? parsed.version : 0,
                 };
             }
@@ -376,6 +492,15 @@ export class UiConfigService {
         }
         if (partial.taskAutomation !== undefined) {
             next.taskAutomation = sanitizeTaskAutomation(partial.taskAutomation);
+        }
+        if (partial.actionGovernance !== undefined) {
+            next.actionGovernance = sanitizeActionGovernance(partial.actionGovernance);
+        }
+        if (partial.automationSwitches !== undefined) {
+            next.automationSwitches = sanitizeAutomationSwitches(partial.automationSwitches);
+        }
+        if (partial.featureSwitches !== undefined) {
+            next.featureSwitches = sanitizeFeatureSwitches(partial.featureSwitches);
         }
         if (typeof partial.appAccessGroupId === 'string') {
             const v = partial.appAccessGroupId.trim().slice(0, 40);

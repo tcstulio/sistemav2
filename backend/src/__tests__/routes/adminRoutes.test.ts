@@ -91,6 +91,11 @@ const mockLlmHealthService = vi.hoisted(() => ({
     })),
 }));
 
+const mockLlmCallLogService = vi.hoisted(() => ({
+    summary: vi.fn(() => ({ total: 0, errors: 0, fallbacks: 0, avgLatencyMs: 0, byModel: {}, byProvider: {} })),
+    list: vi.fn(() => []),
+}));
+
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrAdmin: mockRequireDolibarrAdmin,
 }));
@@ -135,19 +140,39 @@ vi.mock('../../services/llmHealthService', () => ({
     llmHealthService: mockLlmHealthService,
 }));
 
+vi.mock('../../services/llmCallLogService', () => ({
+    llmCallLogService: mockLlmCallLogService,
+}));
+
 vi.mock('../../services/legacy/sessionService', () => ({
     sessionService: mockSessionService,
 }));
 
-vi.mock('../../utils/logger', () => ({
-    createLogger: () => ({
-        debug: vi.fn(),
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn(),
-        fatal: vi.fn(),
-    }),
+const mockPinoInstance = vi.hoisted(() => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
 }));
+
+vi.mock('pino', () => ({
+    default: () => mockPinoInstance,
+}));
+
+vi.mock('../../utils/logger', async (importActual) => {
+    const actual = await importActual<typeof import('../../utils/logger')>();
+    return {
+        ...actual,
+        createLogger: () => ({
+            debug: vi.fn(),
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn(),
+            fatal: vi.fn(),
+        }),
+    };
+});
 
 // importActual preserva as demais funções de os (hostname, cpus, etc.) que o Node/Express
 // usam internamente ao montar a resposta; sobrescreve só as 4 que o handler /status usa.
@@ -178,6 +203,7 @@ vi.mock('../../config/env', () => ({
 }));
 
 import adminRoutes from '../../routes/adminRoutes';
+import { logger, clearLogBuffer } from '../../utils/logger';
 
 function createApp() {
     const app = express();
@@ -363,11 +389,83 @@ describe('adminRoutes', () => {
     });
 
     describe('GET /api/admin/logs', () => {
+        beforeEach(() => {
+            clearLogBuffer();
+        });
+
         it('returns 200 with logs array', async () => {
             const res = await request(app).get('/api/admin/logs');
 
             expect(res.status).toBe(200);
             expect(Array.isArray(res.body)).toBe(true);
+        });
+
+        it('retorna entradas reais geradas via logger (timestamp ISO, level, message, meta)', async () => {
+            logger.info('Backend started', { pid: 123 });
+            logger.warn('Low memory');
+            logger.error('DB down', { code: 'ECONNREFUSED' });
+
+            const res = await request(app).get('/api/admin/logs?lines=200');
+
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveLength(3);
+            expect(res.body[0]).toMatchObject({ level: 'info', message: 'Backend started', meta: { pid: 123 } });
+            expect(res.body[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+            expect(res.body[1]).toMatchObject({ level: 'warn', message: 'Low memory', meta: null });
+            expect(res.body[2]).toMatchObject({ level: 'error', message: 'DB down', meta: { code: 'ECONNREFUSED' } });
+        });
+
+        it('filtra por nível retornando apenas o subset correto', async () => {
+            logger.info('info entry');
+            logger.warn('warn entry');
+            logger.error('error entry');
+            logger.error('error entry 2');
+
+            const res = await request(app).get('/api/admin/logs?lines=200&level=error');
+
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveLength(2);
+            expect(res.body.every((e: any) => e.level === 'error')).toBe(true);
+        });
+
+        it('filtra por nível de forma case-insensitive', async () => {
+            logger.info('info entry');
+            logger.warn('warn entry');
+
+            const res = await request(app).get('/api/admin/logs?level=WARN');
+
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveLength(1);
+            expect(res.body[0].level).toBe('warn');
+        });
+
+        it('respeita ?lines limitando às entradas mais recentes', async () => {
+            for (let i = 0; i < 10; i++) logger.info(`entry ${i}`);
+
+            const res = await request(app).get('/api/admin/logs?lines=3');
+
+            expect(res.status).toBe(200);
+            expect(res.body).toHaveLength(3);
+            expect(res.body[2].message).toBe('entry 9');
+        });
+
+        it('level inexistente retorna array vazio', async () => {
+            logger.info('info entry');
+
+            const res = await request(app).get('/api/admin/logs?level=nonexistent');
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual([]);
+        });
+
+        it('é protegido por requireDolibarrAdmin (403 quando não-admin)', async () => {
+            mockRequireDolibarrAdmin.mockImplementationOnce((_req: any, res: any) =>
+                res.status(403).json({ error: 'admin required' }),
+            );
+
+            const res = await request(app).get('/api/admin/logs');
+
+            expect(res.status).toBe(403);
         });
     });
 
@@ -554,6 +652,24 @@ describe('adminRoutes', () => {
             expect(res.status).toBe(200);
             expect(res.body.modules['chat']).toBeDefined();
             expect(mockLlmHealthService.getStatusByModule).toHaveBeenCalledWith('chat');
+        });
+    });
+
+    describe('GET /api/admin/llm-calls (smoke — sem regressão do /logs)', () => {
+        it('retorna 200 com entries', async () => {
+            const res = await request(app).get('/api/admin/llm-calls?limit=10');
+
+            expect(res.status).toBe(200);
+            expect(Array.isArray(res.body.entries)).toBe(true);
+            expect(mockLlmCallLogService.list).toHaveBeenCalled();
+        });
+
+        it('retorna summary quando ?summary=true', async () => {
+            const res = await request(app).get('/api/admin/llm-calls?summary=true');
+
+            expect(res.status).toBe(200);
+            expect(res.body.summary).toBeDefined();
+            expect(mockLlmCallLogService.summary).toHaveBeenCalled();
         });
     });
 });

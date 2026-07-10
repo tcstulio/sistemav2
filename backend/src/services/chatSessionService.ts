@@ -24,6 +24,9 @@ export interface ChatSessionMessage {
             completionTokens: number;
             totalTokens: number;
         };
+        // issue #1151: marca msgs de erro persistidas quando o job do assistente falha
+        // (para a sessão não ficar "muda" — turno preservado).
+        error?: boolean;
     };
 }
 
@@ -137,6 +140,13 @@ class ChatSessionService {
 
         this.save();
         return chatMsg;
+    }
+
+    // issue #1151: fonte autoritativa do contexto do LLM. Retorna cópia das mensagens
+    // da sessão (ordem de ENVIO/persistência), nunca a referência interna.
+    getMessages(sessionId: string): ChatSessionMessage[] {
+        const session = this.data.sessions.find(s => s.id === sessionId);
+        return session ? session.messages.map(m => ({ ...m })) : [];
     }
 
     getSession(id: string): ChatSession | undefined {

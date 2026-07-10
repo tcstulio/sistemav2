@@ -21,6 +21,7 @@
     "test:debug": "playwright test --debug",
     "test:visual": "playwright test -c playwright.visual.config.ts",
     "test:visual:update": "playwright test -c playwright.visual.config.ts --update-snapshots",
+    "test:render": "playwright test tests/render --project=chromium --project=\"Mobile Chrome\"",
     "test:e2e:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-local.ps1",
     "playwright:codegen": "playwright codegen",
     "scrape": "npx tsx scripts/web-scraper.ts",
@@ -28,7 +29,9 @@
     "browser": "npx tsx scripts/interactive-browser.ts",
     "test:ui-full": "npx tsx scripts/comprehensive-ui-test.ts",
     "test:coolgroove": "npx tsx scripts/coolgroove-complete-test.ts",
-    "explore:pages": "npx tsx scripts/explore-all-pages.ts"
+    "explore:pages": "npx tsx scripts/explore-all-pages.ts",
+    "gc:worktrees": "npx tsx scripts/gc-worktrees.ts",
+    "gc:worktrees:dry": "npx tsx scripts/gc-worktrees.ts --dry-run"
   },
   "dependencies": {
     "@capacitor/android": "^8.0.0",

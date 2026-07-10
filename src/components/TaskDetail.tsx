@@ -9,7 +9,7 @@ import { LinkedObjects } from './common/LinkedObjects';
 import { useDolibarrLink } from '../hooks/useDolibarrLink';
 import { useTaskTimeLogs, useUsers, useTaskContacts, useTasks, useProducts, useWarehouses } from '../hooks/dolibarr';
 import { DolibarrService } from '../services/dolibarrService';
-import { ChatInterface } from './Chat/ChatInterface';
+import { ChatInterface } from './chat/ChatInterface';
 import { TaskContactsManager } from './Tasks/TaskContactsManager';
 import { DelegationPanel } from './Tasks/DelegationPanel';
 import { DelegationDocPanel } from './Tasks/DelegationDocPanel';

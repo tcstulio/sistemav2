@@ -54,6 +54,7 @@ export class DolibarrService extends DolibarrServiceBase {
     closeProposal = (proposalId: string, data: CloseProposalModel, userKey?: string) => this.commercial.closeProposal(proposalId, data, userKey);
     getInvoice = (id: string) => this.commercial.getInvoice(id);
     getOrder = (id: string) => this.commercial.getOrder(id);
+    getProposal = (id: string) => this.commercial.getProposal(id);
     listInvoices = (params?: { status?: string, limit?: number }) => this.commercial.listInvoices(params);
     listOrders = (params?: { status?: string, search?: string, limit?: number }) => this.commercial.listOrders(params);
     listProposals = (params?: { status?: string, search?: string, limit?: number }) => this.commercial.listProposals(params);
@@ -162,7 +163,7 @@ export { DolibarrCommercialService } from './commercial';
 export { DolibarrPaymentsService } from './payments';
 export { DolibarrProductsService } from './products';
 export { DolibarrOperationsService } from './operations';
-export { DolibarrHRService } from './hr';
+export { DolibarrHRService, LeaveRequest } from './hr';
 export { DolibarrManufacturingService } from './manufacturing';
 export { DolibarrSuppliersService } from './suppliers';
 export { DolibarrPartnershipsService, VenuePartnership } from './partnerships';

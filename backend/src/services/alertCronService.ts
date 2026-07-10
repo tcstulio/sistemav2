@@ -5,6 +5,7 @@ import { renderTemplate } from './notificationTemplates';
 import { delegationFollowUpService } from './delegationFollowUpService';
 import { financialAnalysisStore } from './financialAnalysisStore';
 import { runSalesForecastAnalysis } from './analyzeService';
+import { uiConfigService } from './uiConfigService';
 
 const log = createLogger('AlertCron');
 
@@ -25,6 +26,8 @@ class AlertCronService {
         this.running = true;
 
         this.schedule(24 * 60 * 60 * 1000, () => {
+            // #1204 — Kill-switch da UI: checado a cada tick (sem cache); religar retoma sem restart.
+            if (this.alertCronPausedByUi()) return;
             this.checkOverdueInvoices().catch(e => log.error('checkOverdueInvoices', e));
             this.checkUpcomingInvoices().catch(e => log.error('checkUpcomingInvoices', e));
             // Motor de acompanhamento de delegações (Fase 1d): lembra/cobra/escala/reporta por regras.
@@ -32,10 +35,12 @@ class AlertCronService {
         });
 
         this.schedule(6 * 60 * 60 * 1000, () => {
+            if (this.alertCronPausedByUi()) return;
             this.checkLowStock().catch(e => log.error('checkLowStock', e));
         });
 
         this.schedule(4 * 60 * 60 * 1000, () => {
+            if (this.alertCronPausedByUi()) return;
             this.checkStaleTickets().catch(e => log.error('checkStaleTickets', e));
         });
 
@@ -44,11 +49,24 @@ class AlertCronService {
         // mecanismo setInterval existente — sem node-cron. Resiliente a restarts e a
         // mudanças de config (dia/hora), pois a config é relida a cada tick.
         this.schedule(60 * 1000, () => {
+            if (this.alertCronPausedByUi()) return;
             this.checkFinancialAnalysisAutomation().catch(e => log.error('financialAnalysisAutomation', e));
         });
 
         log.info('AlertCronService started (24h invoices, 6h stock, 4h tickets)');
         log.info('[alertCronService] Financial analysis automation scheduled');
+    }
+
+    /**
+     * #1204 — Kill-switch global dos alertas cron. Lê a config da UI a cada chamada (sem cache)
+     * e loga claramente quando pausado. Retorna true quando os sub-crons devem fazer early-return.
+     */
+    private alertCronPausedByUi(): boolean {
+        if (!uiConfigService.get().automationSwitches.alertCronEnabled) {
+            log.info('[alertCronService] pausado pela UI (alertCronEnabled=false)');
+            return true;
+        }
+        return false;
     }
 
     stop() {

@@ -403,8 +403,8 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                                             <div key={line.id || idx} className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800 text-sm">
                                                 <div className="flex-1 text-slate-800 dark:text-white font-medium">{line.desc || '—'}</div>
                                                 <div className="flex items-center gap-4 shrink-0 text-slate-600 dark:text-slate-400">
-                                                    <span>Qtd: <span className="font-semibold text-slate-800 dark:text-white">{line.qty}</span></span>
-                                                    <span>Preço: <span className="font-semibold text-slate-800 dark:text-white">{formatCurrency(line.price)}</span></span>
+                                                    <span>Qtd: <span className="font-semibold text-slate-800 dark:text-white">{Number(line.qty) || 0}</span></span>
+                                                    <span>Preço: <span className="font-semibold text-slate-800 dark:text-white">{formatCurrency(Number(line.price) || 0)}</span></span>
                                                     {(line.date_start || line.date_end) && (
                                                         <span className="text-xs text-slate-500">
                                                             {line.date_start ? formatDateOnly(line.date_start) : '?'}
@@ -416,7 +416,7 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
                                         ))}
                                         <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
                                             <span className="text-sm font-bold text-slate-800 dark:text-white">
-                                                Total: {formatCurrency(selectedContract.lines.reduce((sum, l) => sum + (l.price * l.qty), 0))}
+                                                Total: {formatCurrency(selectedContract.lines.reduce((sum, l) => sum + ((Number(l.price) || 0) * (Number(l.qty) || 0)), 0))}
                                             </span>
                                         </div>
                                     </div>
