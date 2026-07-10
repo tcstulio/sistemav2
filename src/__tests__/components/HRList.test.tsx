@@ -5,6 +5,7 @@ import HRList from '../../components/HRList';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import * as HRAdmin from '../../services/api/hrAdmin';
 import { useDolibarr } from '../../context/DolibarrContext';
+import * as CoreApi from '../../services/api/core';
 
 vi.mock('../../context/DolibarrContext', () => ({
     useDolibarr: vi.fn(() => ({
@@ -47,6 +48,10 @@ vi.mock('../../services/api/hrAdmin', () => ({
     deleteGroup: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../../services/api/core', () => ({
+    deleteUser: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Mock GroupsTab with a visible delete button
 vi.mock('../../components/HR/tabs/GroupsTab', () => ({
     GroupsTab: ({ groups, onDeleteGroup }: any) => (
@@ -65,14 +70,34 @@ vi.mock('../../components/HR/tabs/GroupsTab', () => ({
 }));
 
 // Stub all other heavy child components
-vi.mock('../../components/HR/tabs/TeamTab', () => ({ TeamTab: () => <div data-testid="team-tab" /> }));
+vi.mock('../../components/HR/tabs/TeamTab', () => ({
+    TeamTab: ({ users, onSelectUser }: any) => (
+        <div data-testid="team-tab">
+            {users.map((u: any) => (
+                <button key={u.id} data-testid={`select-user-${u.id}`} onClick={() => onSelectUser(u)}>
+                    Select {u.firstname}
+                </button>
+            ))}
+        </div>
+    ),
+}));
 vi.mock('../../components/HR/tabs/HierarchyTab', () => ({ HierarchyTab: () => <div /> }));
 vi.mock('../../components/HR/tabs/ExpensesTab', () => ({ ExpensesTab: () => <div /> }));
 vi.mock('../../components/HR/tabs/LeavesTab', () => ({ LeavesTab: () => <div /> }));
 vi.mock('../../components/HR/tabs/RecruitmentJobsList', () => ({ RecruitmentJobsList: () => <div /> }));
 vi.mock('../../components/HR/tabs/RecruitmentCandidatesList', () => ({ RecruitmentCandidatesList: () => <div /> }));
 vi.mock('../../components/HR/tabs/WorkloadTab', () => ({ WorkloadTab: () => <div /> }));
-vi.mock('../../components/HR/UserDetail', () => ({ UserDetail: () => <div /> }));
+vi.mock('../../components/HR/UserDetail', () => ({
+    UserDetail: ({ user, onDeleteUser }: any) => (
+        <div data-testid="user-detail">
+            {onDeleteUser && (
+                <button data-testid={`delete-user-${user.id}`} onClick={() => onDeleteUser(user.id)}>
+                    Delete {user.firstname}
+                </button>
+            )}
+        </div>
+    ),
+}));
 vi.mock('../../components/HR/GroupDetail', () => ({ GroupDetail: () => <div /> }));
 vi.mock('../../components/HR/modals/UserModal', () => ({ UserModal: () => null }));
 vi.mock('../../components/HR/modals/JobModal', () => ({ JobModal: () => null }));
@@ -250,5 +275,45 @@ describe('HRList — classes Tailwind literais por tema (#1094)', () => {
         const btn = screen.getByRole('button', { name: /novo membro/i });
         expect(btn.className).toContain('bg-indigo-600');
         expect(btn.className).not.toContain('undefined');
+    });
+});
+
+describe('HRList — real user delete (#1088)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('deletes a user via the real API when confirmed', async () => {
+        const user = userEvent.setup();
+        renderWithProvider();
+
+        // Select the first user in the Team tab
+        await user.click(await screen.findByTestId('select-user-u1'));
+
+        // Click delete in the detail panel
+        await user.click(await screen.findByTestId('delete-user-u1'));
+
+        // In-app confirm dialog
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByText('Confirmar'));
+
+        await waitFor(() => {
+            expect(CoreApi.deleteUser).toHaveBeenCalledWith(expect.anything(), 'u1');
+        });
+    });
+
+    it('does NOT call the API when the user cancels', async () => {
+        const user = userEvent.setup();
+        renderWithProvider();
+
+        await user.click(await screen.findByTestId('select-user-u1'));
+        await user.click(await screen.findByTestId('delete-user-u1'));
+
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByText('Cancelar'));
+
+        await waitFor(() => {
+            expect(CoreApi.deleteUser).not.toHaveBeenCalled();
+        });
     });
 });

@@ -30,7 +30,7 @@ interface UserDetailProps {
     config: DolibarrConfig;
     onClose: () => void;
     onEditUser: () => void;
-    onDeleteUser: (id: string) => void;
+    onDeleteUser?: (id: string) => void;
     onNavigate?: (view: AppView, id: string) => void;
     allUsers?: DolibarrUser[];
     expenseReportLines?: ExpenseReportLine[];
@@ -123,7 +123,9 @@ export const UserDetail: React.FC<UserDetailProps> = ({
                 </div>
                 <div className="flex items-center gap-2">
                     <button onClick={onEditUser} className="p-2 text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 transition-colors" title="Editar Usuário"><Edit2 size={18} /></button>
-                    <button onClick={() => onDeleteUser(user.id)} className="p-2 text-slate-500 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400 transition-colors" title="Excluir Usuário"><Trash2 size={18} /></button>
+                    {onDeleteUser && (
+                        <button onClick={() => onDeleteUser(user.id)} className="p-2 text-slate-500 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400 transition-colors" title="Excluir Usuário"><Trash2 size={18} /></button>
+                    )}
                     <button onClick={onClose} className="hidden lg:block p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><X size={20} /></button>
                 </div>
             </div>
