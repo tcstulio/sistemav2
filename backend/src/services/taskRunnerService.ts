@@ -22,6 +22,7 @@ import { screenshotService } from './screenshotService';
 import { screenVerifyService } from './screenVerifyService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
 import { formatJudgeComment } from './judgeComment';
+import { findSimilarIssue } from '../utils/issueDedup';
 
 const log = logger.child('TaskRunner');
 const execFileAsync = promisify(execFile);
@@ -972,6 +973,68 @@ class TaskRunnerService {
         }
     }
 
+    /**
+     * Pre-flight "já implementado?" (#1279) — roda ANTES do Planner/opencode no worker da fila.
+     *
+     * (a) Determinístico: busca PRs MERGEADOS que referenciam a issue no corpo ("Closes #N" etc.).
+     *     Achou → a issue já foi entregue (o robô só não viu porque a issue segue aberta — ex.:
+     *     referência sem keyword, fechamento manual desfeito, ou levas duplicadas): marca a task
+     *     como merged, comenta e fecha a issue. Zero LLM.
+     * (b) Evidência p/ o Planner: PRs mergeados recentes com TÍTULO similar não provam entrega
+     *     (outra leva pode ter mudado escopo) — viram um HINT textual anexado ao prompt do
+     *     Planner, que decide alreadyResolved com contexto de fato.
+     */
+    private async preflightAlreadyDone(task: Task): Promise<{ done: boolean; hint: string }> {
+        // (a) PR mergeado apontando a issue no corpo/título — "#N" literal na busca do GitHub.
+        const { stdout } = await gh([
+            'pr', 'list', '--repo', REPO, '--state', 'merged',
+            '--search', `#${task.issueNumber} in:body`,
+            '--json', 'number,title,mergedAt', '--limit', '10',
+        ], { timeout: 15000 });
+        const merged: Array<{ number: number; title: string; mergedAt: string }> = JSON.parse(stdout || '[]');
+        // Falso positivo comum: PR menciona "#N" de passagem (ex.: "relacionado ao #N"). Exigir a
+        // keyword de fechamento no corpo custaria 1 gh view por PR — a âncora barata é o padrão do
+        // próprio robô e dos nossos PRs: "Closes #N"/"Fixes #N" no INÍCIO do corpo. Confere só nos top 3.
+        for (const pr of merged.slice(0, 3)) {
+            try {
+                const { stdout: bodyOut } = await gh(['pr', 'view', String(pr.number), '--repo', REPO, '--json', 'body'], { timeout: 10000 });
+                const body = String(JSON.parse(bodyOut || '{}').body || '');
+                if (new RegExp(`(closes|fixes|resolves)\\s+#${task.issueNumber}\\b`, 'i').test(body)) {
+                    task.status = 'merged';
+                    task.prNumber = task.prNumber || pr.number;
+                    task.completedAt = task.completedAt || new Date().toISOString();
+                    task.updatedAt = new Date().toISOString();
+                    this.recordEvent(task, 'pr_merged', `Pre-flight: PR #${pr.number} (mergeado) já fecha esta issue — execução dispensada.`, { preflight: true, pr: pr.number });
+                    this.save();
+                    this.emitStatus(task);
+                    gh(['issue', 'close', String(task.issueNumber), '--repo', REPO, '--comment',
+                        `**Task Runner (pre-flight):** trabalho já entregue pelo PR #${pr.number} (mergeado). Execução dispensada — fechando a issue.`,
+                    ], { timeout: 15000 }).catch(() => {});
+                    return { done: true, hint: '' };
+                }
+            } catch { /* PR sem body legível → ignora */ }
+        }
+
+        // (b) Título similar em PRs mergeados dos últimos 14 dias → hint (não veredito).
+        try {
+            const { stdout: recentOut } = await gh([
+                'pr', 'list', '--repo', REPO, '--state', 'merged',
+                '--json', 'number,title,mergedAt', '--limit', '50',
+            ], { timeout: 15000 });
+            const recent: Array<{ number: number; title: string; mergedAt: string }> = JSON.parse(recentOut || '[]');
+            const cutoff = Date.now() - 14 * 86400_000;
+            const candidates = recent.filter(p => new Date(p.mergedAt).getTime() > cutoff);
+            const similar = findSimilarIssue(task.title, candidates.map(p => ({ number: p.number, title: p.title })), 0.7);
+            if (similar) {
+                return {
+                    done: false,
+                    hint: `ATENÇÃO: o PR #${similar.number} ("${similar.title}"), JÁ MERGEADO nos últimos 14 dias, tem título muito similar a esta issue (similaridade ${similar.score.toFixed(2)}). Verifique com atenção se o main já contém esta entrega antes de decidir — se sim, alreadyResolved=true.`,
+                };
+            }
+        } catch { /* best effort */ }
+        return { done: false, hint: '' };
+    }
+
     private scheduleExec(task: Task, branch: string, activeStatus: TaskStatus = 'running'): void {
         task.mergeHoldReason = undefined; // #1154 P1 item 10: novo exec (fix/redo/feedback) tira a task do hold de merge
         task.mergeHoldKind = undefined;   // #1168: limpa também a classificação do hold
@@ -998,10 +1061,22 @@ class TaskRunnerService {
                     this.recordEvent(task, 'task_killed', 'Execução abortada: task cancelada enquanto aguardava na fila.', { abortedQueued: 'cancelled' });
                     return;
                 }
+                // Pre-flight "já implementado?" (#1279): ANTES de gastar Planner+opencode.
+                // (a) determinístico: PR MERGEADO com "Closes #N" → task merged, sem execução;
+                // (b) evidência: PRs mergeados com título similar viram hint p/ o Planner decidir
+                //     alreadyResolved com base em fato (não só nos snippets do main).
+                let preflightHint = '';
+                try {
+                    const pf = await this.preflightAlreadyDone(task);
+                    if (pf.done) return;
+                    preflightHint = pf.hint;
+                } catch (pfErr: any) {
+                    log.warn(`Pre-flight #${task.issueNumber} falhou (segue normal): ${pfErr?.message || pfErr}`);
+                }
                 const { taskPlannerService } = require('./taskPlannerService');
                 this.recordEvent(task, 'planner_started', 'Planner: analisando viabilidade...');
                 this.emitLog(task.issueNumber, 'info', 'Planner: analisando viabilidade da task...');
-                const decision = await taskPlannerService.analyzeTask(task);
+                const decision = await taskPlannerService.analyzeTask(task, preflightHint ? { preflightHint } : undefined);
 
                 task.queuePriority = decision.priority;
                 task.planReason = decision.reason;
@@ -3526,8 +3601,24 @@ Return ONLY a JSON:
         plan.approvedAt = new Date().toISOString();
         const subTaskNumbers: number[] = [];
 
+        // Dedup determinístico (#1279): decompor a MESMA épica 2x (retry, re-plano, leva nova do
+        // mesmo plano) criava issues duplicadas que o robô re-executava — a régua de similaridade
+        // barra a sub-issue cujo título já existe aberto (adota a existente no lugar de criar).
+        let openIssues: Array<{ number: number; title: string }> = [];
+        try {
+            openIssues = await this.listIssues('open');
+        } catch { /* sem lista → segue sem dedup (best effort) */ }
+
         for (let i = 0; i < plan.subTasks.length; i++) {
             const st = plan.subTasks[i];
+            const dupe = findSimilarIssue(st.title, openIssues);
+            if (dupe) {
+                this.recordEvent(task, 'planner_decision', `Decomposição: sub-task "${st.title}" NÃO criada — issue aberta similar já existe (#${dupe.number} "${dupe.title}", score ${dupe.score.toFixed(2)}). Adotada a existente.`, { dedup: dupe.number });
+                if (!subTaskNumbers.includes(dupe.number)) subTaskNumbers.push(dupe.number);
+                const existing = this.store.tasks[dupe.number];
+                if (existing && !existing.parentEpic) existing.parentEpic = issueNumber;
+                continue;
+            }
             const dependsNote = st.dependsOn.length > 0
                 ? `\n\nDepende de: ${st.dependsOn.map(d => `sub-task ${d + 1}`).join(', ')}`
                 : '';
