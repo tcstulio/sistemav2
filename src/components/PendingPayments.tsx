@@ -3,6 +3,7 @@ import { useDolibarr } from '../context/DolibarrContext';
 import { useInvoices, useSupplierInvoices, useCustomers, useSuppliers, useProjects } from '../hooks/dolibarr';
 import { ArrowUpRight, ArrowDownRight, Clock, AlertCircle, CheckCircle2, Search, Filter, Calendar, X, FileText, Briefcase, Building2 } from 'lucide-react';
 import { formatDateOnly, MS_PER_DAY } from '../utils/dateUtils';
+import { formatCurrency } from '../utils/formatUtils';
 import { PageLayout, PageHeader } from './ui';
 
 interface PendingPaymentsProps {
@@ -25,13 +26,6 @@ export const PendingPayments: React.FC<PendingPaymentsProps> = ({ onNavigate }) 
     const isOverdue = (date: number) => {
         const d = date < 100000000000 ? date * 1000 : date;
         return new Date(d) < new Date();
-    };
-
-    const formatCurrency = (value: number) => {
-        return new Intl.NumberFormat('pt-BR', {
-            style: 'currency',
-            currency: 'BRL'
-        }).format(value);
     };
 
     // Lookup helpers
