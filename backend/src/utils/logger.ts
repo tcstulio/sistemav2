@@ -21,18 +21,45 @@ const pinoInstance = pino({
           }),
 });
 
-const MAX_LOG_BUFFER = 500;
-const logBuffer: string[] = [];
+export const MAX_LOG_BUFFER = 500;
+
+export interface LogEntry {
+    timestamp: string;
+    level: string;
+    message: string;
+    meta?: unknown;
+}
+
+const logBuffer: LogEntry[] = [];
 
 function pushToBuffer(level: string, msg: string, data?: unknown) {
-    const ts = new Date().toISOString().replace('T', ' ').substring(0, 19);
-    const entry = `${ts} [${level.toUpperCase()}] ${msg}${data ? ' ' + (typeof data === 'string' ? data : JSON.stringify(data).substring(0, 300)) : ''}`;
+    const entry: LogEntry = {
+        timestamp: new Date().toISOString(),
+        level,
+        message: msg,
+    };
+    if (data !== undefined) entry.meta = data;
     logBuffer.push(entry);
     if (logBuffer.length > MAX_LOG_BUFFER) logBuffer.shift();
 }
 
+function formatEntry(entry: LogEntry): string {
+    const ts = entry.timestamp.replace('T', ' ').substring(0, 19);
+    const meta = entry.meta;
+    const metaStr = meta ? ' ' + (typeof meta === 'string' ? meta : JSON.stringify(meta).substring(0, 300)) : '';
+    return `${ts} [${entry.level.toUpperCase()}] ${entry.message}${metaStr}`;
+}
+
 export function getRecentLogs(lines: number = 50): string[] {
-    return logBuffer.slice(-lines);
+    return logBuffer.slice(-lines).map(formatEntry);
+}
+
+export function getRecentLogEntries(lines: number = 50): LogEntry[] {
+    return logBuffer.slice(-lines).map((entry) => ({ ...entry }));
+}
+
+export function clearLogBuffer(): void {
+    logBuffer.length = 0;
 }
 
 class Logger {

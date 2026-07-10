@@ -10,11 +10,14 @@ import { getUiConfig, updateUiConfig } from '../services/uiConfigService';
 import { setOrgBranding } from '../hooks/useOrgBranding';
 import { useConfirm } from '../hooks/useConfirm';
 import { notifyError } from '../utils/notifyError';
+import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { MenuConfigEditor } from './admin/MenuConfigEditor';
 import { DashboardConfigEditor } from './admin/DashboardConfigEditor';
 import { ScreenPermissionsEditor } from './admin/ScreenPermissionsEditor';
 import { NotificationConfigEditor } from './admin/NotificationConfigEditor';
 import { TaskAutomationEditor } from './admin/TaskAutomationEditor';
+import { BackgroundAutomationSwitches } from './admin/BackgroundAutomationSwitches';
+import { SecurityFeatureSwitches } from './admin/SecurityFeatureSwitches';
 import { GovernanceEditor } from './admin/GovernanceEditor';
 import { AgentBootstrapEditor } from './admin/AgentBootstrapEditor';
 import { PageLayout, PageHeader, Card, Button, Input, Modal } from './ui';
@@ -287,7 +290,7 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
                                     {localConfig.currentUser?.note_public && (
                                         <div className="mt-2 text-sm">
                                             <span className="text-slate-500 font-medium">Notas Públicas:</span>
-                                            <div className="p-2 mt-1 bg-slate-50 dark:bg-slate-900 rounded border border-slate-100 dark:border-slate-800" dangerouslySetInnerHTML={{ __html: localConfig.currentUser.note_public }} />
+                                            <div className="p-2 mt-1 bg-slate-50 dark:bg-slate-900 rounded border border-slate-100 dark:border-slate-800" dangerouslySetInnerHTML={{ __html: sanitizeHtml(localConfig.currentUser.note_public) }} />
                                         </div>
                                     )}
                                 </div>
@@ -402,6 +405,12 @@ const Settings: React.FC<SettingsProps> = ({ config, onSave }) => {
 
                 {/* Automacoes do TaskRunner (#351) — so admin */}
                 {isAdmin && settingsTab === 'admin' && <TaskAutomationEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
+
+                {/* Kill-switches de automações de fundo (#1204) — so admin */}
+                {isAdmin && settingsTab === 'admin' && <BackgroundAutomationSwitches isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
+
+                {/* Kill-switches perigosos: DRY_RUN / FINANCIAL_COMMANDS / CRM_CONTEXT (#1129) — so admin */}
+                {isAdmin && settingsTab === 'admin' && <SecurityFeatureSwitches isAdmin={isAdmin} themeColor={localConfig.themeColor} />}
 
                 {/* Governanca de acoes do agente (HITL de irreversiveis) — so admin */}
                 {isAdmin && settingsTab === 'admin' && <GovernanceEditor isAdmin={isAdmin} themeColor={localConfig.themeColor} />}

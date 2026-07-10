@@ -104,7 +104,10 @@ function persistUserTurnIfChat(body: any): { sessionId?: string; userMessage?: s
 
 // Núcleo do chat: enriquece o contexto, roda o agente (com tool-calls) e salva a sessão.
 // Usado pela rota síncrona E pela assíncrona (job em background). Lança em erro; quem chama trata.
-async function runChatReply(body: any, user: any): Promise<{ reply: string; sessionId?: string; usage?: any; contextWindow?: any; model?: string; fellBack?: boolean }> {
+// `jobId` (#1011): quando chamado via job assíncrono, cada tool-call emitida pelo agente vira
+// um sinal de progresso (aiJobService.reportProgress) — atualiza o heartbeat p/ o cliente
+// detectar liveness via GET /api/ai-jobs/:id/status sem baixar o resultado parcial.
+async function runChatReply(body: any, user: any, jobId?: string): Promise<{ reply: string; sessionId?: string; usage?: any; contextWindow?: any; model?: string; fellBack?: boolean }> {
         const { history, context, image, images, module, sessionId } = GenerateReplySchema.parse(body);
         // #947: normaliza p/ array (aceita `images` novo OU `image` antigo).
         const allImages = (images && images.length) ? images : (image ? [image] : []);
@@ -167,6 +170,10 @@ async function runChatReply(body: any, user: any): Promise<{ reply: string; sess
         const toolCalls: Array<{ tool: string; args: Record<string, any>; result: string; duration: number }> = [];
         const toolListener = (tool: string, args: Record<string, any>, result: string, duration: number) => {
             toolCalls.push({ tool, args, result: result.slice(0, 2000), duration });
+            // #1011: cada tool-call = sinal de progresso -> atualiza o heartbeat do job.
+            if (jobId) {
+                try { aiJobService.reportProgress(jobId); } catch { /* best-effort */ }
+            }
             try {
                 agentActivityService.record({
                     userId: user?.id || dolibarrUserId || '',
@@ -262,7 +269,10 @@ router.post('/generate-reply-async', (req, res) => {
         // issue #1151: persiste a msg do usuário ANTES do enqueue (ordem = ordem de ENVIO),
         // não após o job concluir. Assim msgs concorrentes não invertem ordem na tabela.
         persistUserTurnIfChat(body);
-        const jobId = aiJobService.enqueue(() => runChatReply(body, user), body?.module || 'chat');
+        // #1011: repassa o jobId ao runChatReply para que cada tool-call atualize o
+        // heartbeat. O closure lê `jobId` no microtask (após o assign abaixo retornar).
+        let jobId = '';
+        jobId = aiJobService.enqueue(() => runChatReply(body, user, jobId), body?.module || 'chat');
         res.status(202).json({ jobId, status: 'queued' });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -273,12 +283,18 @@ router.post('/generate-reply-async', (req, res) => {
 });
 
 // Polling do status/resultado de um job do assistente.
+// #1012: TTL persistido — job expirado devolve 404 { reason: 'expired' }; job vivo inclui
+// alive=true para o cliente distinguir do término normal.
 router.get('/jobs/:id', (req, res) => {
-    const job = aiJobService.get(req.params.id);
-    if (!job) return res.status(404).json({ error: 'Job não encontrado ou expirado.' });
-    if (job.status === 'done') return res.json({ status: 'done', ...(job.result || {}) });
-    if (job.status === 'error') return res.json({ status: 'error', error: job.error });
-    res.json({ status: job.status, queueAhead: job.queueAhead });
+    const lookup = aiJobService.get(req.params.id);
+    if (!lookup.ok) {
+        if (lookup.reason === 'expired') return res.status(404).json({ reason: 'expired' });
+        return res.status(404).json({ error: 'Job não encontrado.' });
+    }
+    const job = lookup.job;
+    if (job.status === 'done') return res.json({ status: 'done', alive: true, ...(job.result || {}) });
+    if (job.status === 'error') return res.json({ status: 'error', alive: true, error: job.error });
+    res.json({ status: job.status, alive: true, queueAhead: lookup.queueAhead });
 });
 
 // Resolve um deeplink de prefill (HITL #57 Peça 2/3): o frontend manda o token, o backend

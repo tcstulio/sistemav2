@@ -5,6 +5,7 @@ import { ConfirmProvider } from '../../hooks/useConfirm';
 import InvoiceList from '../../components/InvoiceList';
 import { cloneInvoice } from '../../services/api/commercial';
 import { DolibarrService } from '../../services/dolibarrService';
+import { useDolibarr } from '../../context/DolibarrContext';
 import { useInvoices, useProjects } from '../../hooks/dolibarr';
 import { useInvoiceMutations } from '../../hooks/useMutations';
 import { formatCurrency } from '../../utils/formatUtils';
@@ -57,6 +58,7 @@ vi.mock('../../hooks/dolibarr', () => ({
     useUsers: vi.fn(() => ({ data: [] })),
     usePayments: vi.fn(() => ({ data: [] })),
     usePaymentInvoiceLinks: vi.fn(() => ({ data: [] })),
+    useBankAccounts: vi.fn(() => ({ data: [] })),
 }));
 
 vi.mock('../../hooks/usePrefill', () => ({
@@ -90,6 +92,7 @@ vi.mock('../../services/dolibarrService', () => ({
         deleteInvoiceLine: vi.fn().mockResolvedValue({}),
         updateInvoiceLine: vi.fn().mockResolvedValue({}),
         addInvoiceLine: vi.fn().mockResolvedValue({}),
+        setPayment: vi.fn().mockResolvedValue({}),
     },
 }));
 
@@ -667,5 +670,93 @@ describe('InvoiceList — paginação aplicada (#826)', () => {
             expect(next.disabled).toBe(true);
             expect(prev.disabled).toBe(false);
         });
+    });
+});
+
+// ── #1095: registro de pagamento não deve mutar diretamente o objeto do ──────
+//    estado/cache (selectedInvoiceForPay.statut = '2' / .paye = '1'). A UI deve
+//    reidratar via refreshData, mantendo o objeto original intacto.
+describe('InvoiceList — Registro de pagamento sem mutar o cache (#1095)', () => {
+    let payableInvoice: any;
+    let mockRefresh: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        payableInvoice = {
+            id: 'invPay',
+            ref: 'FA-PAY-0001',
+            socid: 'cust1',
+            date: 1700000000,
+            total_ttc: 1500,
+            statut: '1',
+            paye: '0',
+            type: '0',
+            project_id: null,
+            order_id: null,
+        };
+        mockRefresh = vi.fn().mockResolvedValue(undefined);
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: mockConfig,
+            canAccess: () => true,
+            canDo: () => true,
+            refreshData: mockRefresh,
+        } as any);
+        vi.mocked(useInvoices).mockReturnValue({
+            data: [payableInvoice],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+        vi.mocked(DolibarrService.setPayment as any).mockResolvedValue({});
+    });
+
+    it('registra pagamento chamando setPayment + refreshData e NÃO muta o objeto do cache', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        // Abre o detalhe da fatura não paga (statut '1')
+        await user.click(await screen.findByRole('button', { name: 'Abrir fatura FA-PAY-0001' }));
+
+        // Abre o modal de pagamento
+        const pagarBtn = await screen.findByRole('button', { name: /^Pagar$/ });
+        await user.click(pagarBtn);
+
+        // Confirma o recebimento (valores padrão: total + Transferência)
+        const confirmBtn = await screen.findByRole('button', { name: 'Confirmar Recebimento' });
+        await user.click(confirmBtn);
+
+        await waitFor(() => {
+            expect(DolibarrService.setPayment).toHaveBeenCalledWith(
+                mockConfig,
+                'invPay',
+                expect.objectContaining({ amount: 1500, payment_mode_id: '2' })
+            );
+            expect(toastMock.success).toHaveBeenCalledWith('Pagamento Registrado com Sucesso');
+            expect(mockRefresh).toHaveBeenCalled();
+        });
+
+        // CRÍTICO (#1095): o objeto original do cache/estado NÃO foi mutado.
+        // Antes do fix o código fazia `selectedInvoiceForPay.statut = '2'; .paye = '1'`.
+        expect(payableInvoice.statut).toBe('1');
+        expect(payableInvoice.paye).toBe('0');
+    });
+
+    it('em caso de falha no setPayment, NÃO muta o cache nem chama refreshData', async () => {
+        vi.mocked(DolibarrService.setPayment as any).mockRejectedValue(new Error('Dolibarr indisponível'));
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        await user.click(await screen.findByRole('button', { name: 'Abrir fatura FA-PAY-0001' }));
+        await user.click(await screen.findByRole('button', { name: /^Pagar$/ }));
+        await user.click(await screen.findByRole('button', { name: 'Confirmar Recebimento' }));
+
+        await waitFor(() => {
+            expect(toastMock.error).toHaveBeenCalledWith('Falha ao registrar pagamento');
+        });
+        expect(mockRefresh).not.toHaveBeenCalled();
+
+        // Estado/cache preservado — sem mutação direta.
+        expect(payableInvoice.statut).toBe('1');
+        expect(payableInvoice.paye).toBe('0');
     });
 });

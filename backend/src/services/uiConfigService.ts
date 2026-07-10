@@ -99,6 +99,25 @@ export interface ActionGovernanceConfig {
     whatsappDestinationAllowlist: string[];
 }
 
+// #1204 — Kill-switches globais das automações de fundo na UI. Permitem pausar o scheduler
+// de mensagens (WhatsApp/e-mail agendados) e/ou os alertas cron (faturas/estoque/tickets/
+// análise financeira) SEM derrubar o backend. Default true = nada muda. Cada serviço checa
+// a config a CADA tick (sem cache) — religar o switch retoma no próximo ciclo, sem restart.
+export interface AutomationSwitchesConfig {
+    schedulerEnabled: boolean;
+    alertCronEnabled: boolean;
+}
+
+// #1129 — Kill-switches perigosos expostos como toggles de admin (Integrações/Segurança).
+// Mesmo padrão do TASKRUNNER_AUTOSTART: env-como-fallback + toggle de UI lido em runtime.
+// dryRunMode/financialCommands default OFF (secure-default); crmContextInjection default ON
+// (preserva o comportamento histórico de injeção de contexto no LLM).
+export interface FeatureSwitchesConfig {
+    dryRunMode: boolean;          // impede envio real de mensagens (anti-spam de incidente)
+    financialCommands: boolean;   // habilita /pagar e /pix (movimentam dinheiro real)
+    crmContextInjection: boolean; // injeta dados do cliente no LLM (privacidade)
+}
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
@@ -112,6 +131,8 @@ export interface UiConfig {
     taskNotificationsExternalEnabled: boolean;
     taskAutomation: TaskAutomationConfig;
     actionGovernance: ActionGovernanceConfig;
+    automationSwitches: AutomationSwitchesConfig;
+    featureSwitches: FeatureSwitchesConfig;
     // Concorrência otimista (#central-permissões): incrementa a cada save. A Central envia
     // o version que leu; o backend rejeita (409) se mudou no meio — evita last-write-wins.
     version: number;
@@ -125,7 +146,7 @@ export interface UiConfig {
 export const UI_CONFIG_LIMITS = { maxEntities: 500, maxIdsPerRule: 200, maxIdLen: 80 };
 
 // Entrada de update: branding parcial + prefs/permissões/páginas parciais (sanitizadas em update()).
-export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions' | 'customPages' | 'taskNotifications' | 'actionGovernance'>> & {
+export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions' | 'customPages' | 'taskNotifications' | 'actionGovernance' | 'automationSwitches' | 'featureSwitches'>> & {
     menu?: Partial<OrderVisibilityPrefs>;
     dashboard?: Partial<OrderVisibilityPrefs>;
     screenPermissions?: unknown;
@@ -133,6 +154,8 @@ export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'scre
     taskNotifications?: unknown;
     taskAutomation?: unknown;
     actionGovernance?: unknown;
+    automationSwitches?: unknown;
+    featureSwitches?: unknown;
 };
 
 // Padrão aprovado: Responsável leva a cobrança; Interveniente acompanha; Criador é avisado do desfecho.
@@ -159,6 +182,8 @@ const DEFAULTS: UiConfig = {
     taskNotificationsExternalEnabled: false,
     taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200 },
     actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [] },
+    automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
+    featureSwitches: { dryRunMode: false, financialCommands: false, crmContextInjection: true },
     version: 0,
 };
 
@@ -353,6 +378,31 @@ export function sanitizeActionGovernance(v: unknown): ActionGovernanceConfig {
     return { irreversibleRequiresApproval, adminBypassIrreversible, approvalValueThreshold, whatsappDestinationAllowlist };
 }
 
+// Exportado p/ teste unitário direto (mesmo espírito das demais sanitize).
+export function sanitizeAutomationSwitches(v: unknown): AutomationSwitchesConfig {
+    const d = DEFAULTS.automationSwitches;
+    if (!v || typeof v !== 'object') return { ...d };
+    const a = v as Record<string, unknown>;
+    // Booleanos: só valor explicitamente booleano é aceito; ausente/inválido cai no default (secure-default true).
+    return {
+        schedulerEnabled: typeof a.schedulerEnabled === 'boolean' ? a.schedulerEnabled : d.schedulerEnabled,
+        alertCronEnabled: typeof a.alertCronEnabled === 'boolean' ? a.alertCronEnabled : d.alertCronEnabled,
+    };
+}
+
+// Exportado p/ teste unitário direto. Booleanos: só valor explicitamente booleano é aceito;
+// ausente/inválido cai no default do respectivo flag (dryRun/financial OFF, crmContext ON).
+export function sanitizeFeatureSwitches(v: unknown): FeatureSwitchesConfig {
+    const d = DEFAULTS.featureSwitches;
+    if (!v || typeof v !== 'object') return { ...d };
+    const a = v as Record<string, unknown>;
+    return {
+        dryRunMode: typeof a.dryRunMode === 'boolean' ? a.dryRunMode : d.dryRunMode,
+        financialCommands: typeof a.financialCommands === 'boolean' ? a.financialCommands : d.financialCommands,
+        crmContextInjection: typeof a.crmContextInjection === 'boolean' ? a.crmContextInjection : d.crmContextInjection,
+    };
+}
+
 // Allowlist das cores do Tailwind usadas no tema (evita injeção de classe arbitrária).
 export const ALLOWED_THEME_COLORS = [
     'slate', 'gray', 'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald',
@@ -389,6 +439,8 @@ export class UiConfigService {
                     taskNotificationsExternalEnabled: parsed.taskNotificationsExternalEnabled === true,
                     taskAutomation: sanitizeTaskAutomation(parsed.taskAutomation),
                     actionGovernance: sanitizeActionGovernance(parsed.actionGovernance),
+                    automationSwitches: sanitizeAutomationSwitches(parsed.automationSwitches),
+                    featureSwitches: sanitizeFeatureSwitches(parsed.featureSwitches),
                     version: typeof parsed.version === 'number' ? parsed.version : 0,
                 };
             }
@@ -443,6 +495,12 @@ export class UiConfigService {
         }
         if (partial.actionGovernance !== undefined) {
             next.actionGovernance = sanitizeActionGovernance(partial.actionGovernance);
+        }
+        if (partial.automationSwitches !== undefined) {
+            next.automationSwitches = sanitizeAutomationSwitches(partial.automationSwitches);
+        }
+        if (partial.featureSwitches !== undefined) {
+            next.featureSwitches = sanitizeFeatureSwitches(partial.featureSwitches);
         }
         if (typeof partial.appAccessGroupId === 'string') {
             const v = partial.appAccessGroupId.trim().slice(0, 40);

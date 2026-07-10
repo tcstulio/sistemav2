@@ -1,6 +1,6 @@
 import express from 'express';
 import os from 'os';
-import { createLogger } from '../utils/logger';
+import { createLogger, getRecentLogEntries, MAX_LOG_BUFFER } from '../utils/logger';
 // import { wahaService } from '../services/wahaService'; // DEPRECATED
 import { sessionService } from '../services/legacy/sessionService'; // UPDATED to legacy path
 import { configService } from '../services/configService';
@@ -356,14 +356,25 @@ router.post('/config/llm', async (req, res) => {
     }
 });
 
-// Mock logs endpoint - in real scenario, read from 'server.log'
 router.get('/logs', (req, res) => {
-    // TODO: Implement real file logging
-    res.json([
-        { level: 'info', message: 'Backend started successfully', timestamp: Date.now() - 100000 },
-        { level: 'info', message: 'Health check passed', timestamp: Date.now() - 50000 },
-        { level: 'warn', message: 'Sample warning log for admin panel', timestamp: Date.now() }
-    ]);
+    const requestedLines = Number(req.query.lines);
+    const lines = Number.isFinite(requestedLines) && requestedLines > 0
+        ? Math.min(Math.trunc(requestedLines), MAX_LOG_BUFFER)
+        : MAX_LOG_BUFFER;
+
+    const level = typeof req.query.level === 'string' ? req.query.level.toLowerCase() : '';
+
+    let entries = getRecentLogEntries(lines);
+    if (level) {
+        entries = entries.filter((e) => e.level === level);
+    }
+
+    res.json(entries.map((e) => ({
+        timestamp: e.timestamp,
+        level: e.level,
+        message: e.message,
+        meta: e.meta ?? null,
+    })));
 });
 
 // --- Advanced LLM Configuration Endpoints ---
