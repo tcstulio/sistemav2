@@ -20,6 +20,7 @@ import { agentConfigService } from './agentConfigService';
 import { channelRouter } from './channelRouter';
 import { uiConfigService } from './uiConfigService';
 import { getWhatsappAllowlist, whatsappDestinationAllowed, socidOf } from '../utils/actionGuards';
+import { isConfirmable, buildConfirmDeeplink } from './agentActionConfirm';
 import { notificationService } from './notificationService';
 
 const execFileAsync = promisify(execFile);
@@ -859,6 +860,20 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
                 log.warn(`Permission denied: user=${ctx.userLogin} valor ${total} > limite ${amountLimit} (${resolvedTool})`);
                 return `Valor (R$ ${total.toFixed(2)}) excede o limite permitido (R$ ${amountLimit.toFixed(2)}). Solicite a um administrador.`;
             }
+        }
+    }
+
+    // HITL (robô-de-negócio §8.1): ação irreversível confirmável NÃO executa direto quando o dial
+    // exige aprovação — devolve o deeplink de confirmação; a execução ocorre com a chave do humano
+    // que confirmar (/confirm-action, RBAC real). DORMENTE por default (irreversibleRequiresApproval
+    // = false) → validate_* executa como hoje. adminBypassIrreversible (default true) isenta o admin.
+    if (isConfirmable(resolvedTool)) {
+        const gov = uiConfigService.get().actionGovernance;
+        const gated = !!gov?.irreversibleRequiresApproval && !(ctx.isAdmin && gov?.adminBypassIrreversible);
+        if (gated) {
+            const link = buildConfirmDeeplink(resolvedTool, args, ctx.userId || '');
+            log.info(`HITL: ${resolvedTool} desviado p/ confirmação humana (ator=${ctx.userLogin})`);
+            return `⚠️ Esta ação tem efeito irreversível e exige CONFIRMAÇÃO HUMANA. Revise e confirme na tela: ${link}`;
         }
     }
 

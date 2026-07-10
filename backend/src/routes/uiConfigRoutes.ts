@@ -89,6 +89,19 @@ const UpdateSchema = z.object({
     }).optional(),
     // Grupo Dolibarr p/ "Habilitar acesso ao app" (sem isto o Zod descartaria o campo e o save não persistiria).
     appAccessGroupId: z.string().max(40).optional(),
+    // #1204: kill-switches de automações de fundo (schedulerService / alertCronService). O Zod precisa
+    // declarar o objeto p/ os flags sobreviverem ao .parse() e chegarem ao service (senão são estripados).
+    automationSwitches: z.object({
+        schedulerEnabled: z.boolean().optional(),
+        alertCronEnabled: z.boolean().optional(),
+    }).optional(),
+    // #1129: kill-switches perigosos (DRY_RUN / FINANCIAL_COMMANDS / CRM_CONTEXT). Zod declara o
+    // objeto p/ os 3 flags sobreviverem ao .parse() e chegarem intactos ao service.
+    featureSwitches: z.object({
+        dryRunMode: z.boolean().optional(),
+        financialCommands: z.boolean().optional(),
+        crmContextInjection: z.boolean().optional(),
+    }).optional(),
 });
 
 // Leitura: qualquer usuário logado (p/ renderizar branding/tema da org).
@@ -105,14 +118,32 @@ router.put('/', requireDolibarrAdmin, (req: Request, res: Response) => {
         const prevMinMerge = (data.taskAutomation && typeof data.taskAutomation.minMergeScore === 'number')
             ? uiConfigService.get().taskAutomation.minMergeScore
             : undefined;
+        // #1129: captura o valor ANTES do save p/ detectar mudança no kill-switch financeiro (get()
+        // depois do update() devolveria o novo estado e a auditoria nunca dispararia).
+        const prevFinancial = uiConfigService.get().featureSwitches?.financialCommands;
         const updated = uiConfigService.update(data as any);
         // #1168: baixar o minMergeScore destrava tasks 'approved' retidas por score p/ re-avaliação.
         // Holds por outros motivos (auto-merge off) são preservados pelo próprio método (mergeHoldKind !== 'score').
         if (prevMinMerge !== undefined && updated.taskAutomation.minMergeScore < prevMinMerge) {
             taskRunnerService.onMinMergeScoreLowered(prevMinMerge, updated.taskAutomation.minMergeScore);
         }
-        log.info('UI config da organização atualizado por admin');
+        // #1129: mudança no kill-switch de comandos financeiros (/pagar,/pix) gera trilha de auditoria
+        // explícita — movimenta dinheiro real, precisa registrar quem acionou em incidente.
         const adminUser = (req as any).user || {};
+        const nextFinancial = data.featureSwitches && typeof (data.featureSwitches as any).financialCommands === 'boolean'
+            ? updated.featureSwitches.financialCommands
+            : undefined;
+        if (nextFinancial !== undefined && nextFinancial !== prevFinancial) {
+            adminAuditService.record({
+                adminId: String(adminUser.id || 'unknown'),
+                adminLogin: String(adminUser.login || 'unknown'),
+                action: 'ui-config.feature-switches.financial',
+                target: 'financialCommands',
+                summary: `Comandos financeiros (/pagar,/pix) ${nextFinancial ? 'HABILITADOS' : 'DESABILITADOS'} por admin`,
+                changes: { financialCommands: { before: prevFinancial, after: nextFinancial } },
+            });
+        }
+        log.info('UI config da organização atualizado por admin');
         adminAuditService.record({
             adminId: String(adminUser.id || 'unknown'),
             adminLogin: String(adminUser.login || 'unknown'),

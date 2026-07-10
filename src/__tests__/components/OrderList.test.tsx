@@ -638,3 +638,196 @@ describe('OrderList — Excluir envio com confirmação (#855)', () => {
         confirmSpy.mockRestore();
     });
 });
+
+// ─────────────────────────────────────────────
+// 8. Envios isolados por pedido (#1085)
+// ─────────────────────────────────────────────
+describe('OrderList — Envios isolados por pedido (#1085)', () => {
+    const orderFixture = {
+        id: 'ord1',
+        ref: 'CO2501-SHIP',
+        socid: 'cust1',
+        date: 1700000000,
+        total_ttc: 1200,
+        statut: '1' as const,
+        project_id: undefined as string | undefined,
+        fk_user_author: 'user1',
+        fk_user_valid: undefined as string | undefined,
+    };
+
+    const ownShipment = {
+        id: 'ship-own',
+        ref: 'EXP-OWN',
+        fk_commande: 'ord1',
+        socid: 'cust1',
+        status: '1',
+        date_creation: 1700000000,
+        tracking_number: undefined as string | undefined,
+    };
+
+    // Envio de OUTRO pedido do mesmo cliente — não deve aparecer
+    const otherShipment = {
+        id: 'ship-other',
+        ref: 'EXP-OTHER',
+        fk_commande: 'ord2',
+        socid: 'cust1',
+        status: '1',
+        date_creation: 1700000000,
+        tracking_number: undefined as string | undefined,
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useOrders).mockReturnValue({
+            data: [orderFixture],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+        vi.mocked(useShipments).mockReturnValue({ data: [ownShipment, otherShipment] } as any);
+    });
+
+    it('badge da aba Envios conta apenas os envios do pedido aberto', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('CO2501-SHIP');
+        await user.click(card);
+
+        await waitFor(() => {
+            const enviosTab = screen.getByRole('button', { name: /Envios/ });
+            expect(enviosTab.textContent).toMatch(/Envios\s*\(1\)/);
+        });
+    });
+
+    it('aba Envios lista apenas o envio do próprio pedido, não de outros pedidos do cliente', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('CO2501-SHIP');
+        await user.click(card);
+
+        const enviosTab = await screen.findByRole('button', { name: /Envios/ });
+        await user.click(enviosTab);
+
+        // Envio do próprio pedido aparece
+        await screen.findByText('EXP-OWN');
+        // Envio de outro pedido do mesmo cliente NÃO aparece
+        expect(screen.queryByText('EXP-OTHER')).toBeNull();
+    });
+});
+
+// ─────────────────────────────────────────────
+// 9. Total por linha correto para qty>1 (#1085)
+// ─────────────────────────────────────────────
+describe('OrderList — Total por linha para qty>1 (#1085)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.spyOn(window, 'confirm').mockImplementation(() => false);
+    });
+
+    it('exibe o total da linha (total_ht) e não o preço unitário', async () => {
+        vi.mocked(useOrders).mockReturnValue({
+            data: [
+                {
+                    ...defaultOrder,
+                    id: 'ord-line',
+                    ref: 'CO2501-LINE',
+                    total_ttc: 999,
+                    lines: [{ id: 'l1', desc: 'Produto Q3', qty: 3, price: 50, subprice: 50, total_ht: 150 }],
+                },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('CO2501-LINE');
+        await user.click(card);
+
+        // Total da linha = 150 (3 x 50), não o unitário 50
+        await screen.findByText('R$ 150,00');
+        expect(screen.queryByText('R$ 50,00')).toBeNull();
+    });
+
+    it('calcula total como qty*price quando total_ht está ausente', async () => {
+        vi.mocked(useOrders).mockReturnValue({
+            data: [
+                {
+                    ...defaultOrder,
+                    id: 'ord-line2',
+                    ref: 'CO2501-LINE2',
+                    total_ttc: 999,
+                    lines: [{ id: 'l1', desc: 'Produto Q4', qty: 4, price: 25, subprice: 25 }],
+                },
+            ],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('CO2501-LINE2');
+        await user.click(card);
+
+        // Total da linha = 100 (4 x 25), não o unitário 25
+        await screen.findByText('R$ 100,00');
+        expect(screen.queryByText('R$ 25,00')).toBeNull();
+    });
+});
+
+// ─────────────────────────────────────────────
+// 10. Botão Novo reseta estado de edição (#1085)
+// ─────────────────────────────────────────────
+describe('OrderList — Botão Novo reseta edição residual (#1085)', () => {
+    const draftOrderWithLines = {
+        id: 'ord-reset',
+        ref: 'CO2501-RESET',
+        socid: 'cust1',
+        date: 1700000000,
+        total_ttc: 500,
+        statut: '0' as const,
+        project_id: undefined as string | undefined,
+        fk_user_author: 'user1',
+        fk_user_valid: undefined as string | undefined,
+        lines: [{ id: 'line1', desc: 'Item Existente', qty: 2, price: 100, subprice: 100 }],
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useOrders).mockReturnValue({
+            data: [draftOrderWithLines],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+    });
+
+    it('clicar em Novo após editar reabre em modo criação com formulário limpo (não edição residual)', async () => {
+        const user = userEvent.setup();
+        renderComponent();
+
+        const card = await screen.findByText('CO2501-RESET');
+        await user.click(card);
+
+        const editarBtn = await screen.findByRole('button', { name: /Editar/i });
+        await user.click(editarBtn);
+
+        // Modal aberto em modo edição com o item existente pré-carregado
+        await screen.findByText('Editar Pedido');
+        expect(screen.getByDisplayValue('Item Existente')).toBeTruthy();
+
+        // Clicar em "Novo" deve resetar editOrderId/newOrder e reabrir em modo criação
+        const novoBtn = screen.getByRole('button', { name: /^Novo$/i });
+        await user.click(novoBtn);
+
+        await waitFor(() => {
+            expect(screen.getByText('Novo Pedido (Rascunho)')).toBeTruthy();
+        });
+        expect(screen.queryByText('Editar Pedido')).toBeNull();
+        // Formulário limpo: nenhum item residual do pedido editado
+        expect(screen.getByText('Nenhum item adicionado.')).toBeTruthy();
+        expect(screen.queryByDisplayValue('Item Existente')).toBeNull();
+    });
+});

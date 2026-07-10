@@ -1083,3 +1083,48 @@ describe('aiRoutes', () => {
         });
     });
 });
+
+// =====================================================
+// #1011: heartbeat do job — cada tool-call do agente vira reportProgress(jobId),
+// atualizando lastHeartbeat p/ o cliente detectar liveness via GET /api/ai-jobs/:id/status.
+// =====================================================
+describe('#1011: heartbeat do job via reportProgress (tool-call = progresso)', () => {
+    let app: express.Application;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        // Garante estado "feliz" (outros describes usam mockRejectedValue que persiste).
+        mockAiService.generateReply.mockResolvedValue({ text: 'Generated reply text' });
+        app = createApp();
+    });
+
+    it('cada tool-call do job assíncrono dispara reportProgress(jobId)', async () => {
+        const { aiJobService } = await import('../../services/aiJobService');
+        const spy = vi.spyOn(aiJobService, 'reportProgress');
+
+        const res = await request(app)
+            .post('/api/generate-reply-async')
+            .send({ sessionId: 'sess_hb', message: 'olá', module: 'chat' });
+
+        expect(res.status).toBe(202);
+        await waitForJob(app, res.body.jobId);
+
+        // o listener de tool-calls (mockado p/ disparar 1x) chamou reportProgress(jobId).
+        expect(spy).toHaveBeenCalledWith(res.body.jobId);
+        spy.mockRestore();
+    });
+
+    it('rota síncrona (sem jobId) não atualiza heartbeat (jobId ausente)', async () => {
+        const { aiJobService } = await import('../../services/aiJobService');
+        const spy = vi.spyOn(aiJobService, 'reportProgress');
+
+        await request(app)
+            .post('/api/generate-reply')
+            .send({ sessionId: 'sess_sync_hb', message: 'olá', module: 'chat' });
+
+        // mesmo com listener ativo (chat session), o jobId é undefined no path síncrono
+        // -> o guard `if (jobId)` bloqueia reportProgress.
+        expect(spy).not.toHaveBeenCalled();
+        spy.mockRestore();
+    });
+});

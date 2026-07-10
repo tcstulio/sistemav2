@@ -113,7 +113,7 @@ const OrderDetail: React.FC<{
         };
 
         const currentOrderShipments = useMemo(() => {
-            return shipments.filter(s => String(s.fk_commande) === String(order.id) || String(s.socid) === String(order.socid));
+            return shipments.filter(s => String(s.fk_commande) === String(order.id));
         }, [order, shipments]);
 
         const currentOrderInvoices = useMemo(() => {
@@ -252,7 +252,7 @@ const OrderDetail: React.FC<{
                                                             <div className="font-medium text-slate-800 dark:text-white text-sm">{line.desc || line.label}</div>
                                                             <div className="text-xs text-slate-500">Qtd: {line.qty}</div>
                                                         </div>
-                                                        <div className="text-right font-medium text-slate-800 dark:text-white">{formatCurrency(line.price)}</div>
+                                                        <div className="text-right font-medium text-slate-800 dark:text-white">{formatCurrency(line.total_ht ?? (Number(line.qty) * Number(line.price)))}</div>
                                                     </div>
                                                 ))
                                             ) : (
@@ -391,6 +391,13 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
     });
 
     const closeOrderModal = () => { setIsCreateModalOpen(false); setEditOrderId(undefined); setExistingLines([]); };
+
+    const handleOpenCreate = () => {
+        setEditOrderId(undefined);
+        setExistingLines([]);
+        setNewOrder({ socid: '', date: new Date().toISOString().split('T')[0], items: [] });
+        setIsCreateModalOpen(true);
+    };
 
     const handleAddOrderItem = () => setNewOrder(prev => ({ ...prev, items: [...prev.items, { productId: '', desc: '', qty: 1, price: 0 }] }));
     const handleUpdateOrderItem = (idx: number, field: 'desc' | 'qty' | 'price', value: string | number) => {
@@ -800,7 +807,7 @@ const OrderList: React.FC<OrderListProps> = ({ onNavigate, initialItemId, onRefr
                         <div className="flex items-center gap-2">
                             <ListToolbar controls={controls} searchPlaceholder="Buscar pedido ou cliente..." />
                             {canDo('create', 'orders') && (
-                            <Button icon={<FilePlus size={18} />} onClick={() => setIsCreateModalOpen(true)}>
+                            <Button icon={<FilePlus size={18} />} onClick={handleOpenCreate}>
                                 Novo
                             </Button>
                             )}

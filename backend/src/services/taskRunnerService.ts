@@ -223,6 +223,9 @@ export interface TaskMetrics {
 // falso relato, baixa evidência) e alimentam badges na UI.
 export type PrecheckVerdict = 'ok' | 'duplicate' | 'already_resolved' | 'false_report' | 'low_evidence';
 
+// #1015: ação sugerida pelo serviço de pre-check (taskPreCheck.analyzeTask).
+export type PrecheckSuggestedAction = 'proceed' | 'ask_user' | 'reject';
+
 export interface PrecheckEvidence {
     type: 'similar_issue' | 'commit' | 'pr' | 'log' | string;
     reference?: string;
@@ -236,6 +239,9 @@ export interface PrecheckReport {
     evidence?: PrecheckEvidence[];
     originalIssueNumber?: number;
     originalUrl?: string;
+    // #1015: confiança da análise (0-1) e ação recomendada para o orquestrador/UI.
+    confidence?: number;
+    suggestedAction?: PrecheckSuggestedAction;
 }
 
 export interface Task {
