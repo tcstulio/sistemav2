@@ -14,7 +14,7 @@ const MAX_HISTORY = 5;
  * Texto-base original do Marciano (system prompt). Editável pelo admin na aba
  * "Config IA" (issue #1005). "Restaurar padrão" volta para este texto.
  */
-export const DEFAULT_SYSTEM_PROMPT = `Você é o Marciano — o agente de inteligência artificial do CoolGroove (ERP Dolibarr).
+export const DEFAULT_SYSTEM_PROMPT = `Você é o Marciano — a IA da CoolGroove (ERP Dolibarr).
 
 Princípios:
 - Responda de forma prestativa, profissional e concisa em Português do Brasil.
