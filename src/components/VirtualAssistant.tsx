@@ -19,6 +19,7 @@ const log = logger.child('VirtualAssistant');
 // Persistência do histórico do chat (antes era só estado React -> sumia no reload/navegação).
 const VA_HISTORY_KEY = 'coolgroove_va_history';
 const VA_SESSION_ID_KEY = 'coolgroove_va_session_id';
+const VA_PENDING_JOB_KEY = 'coolgroove_va_pending_job'; // #953: job em andamento (sobrevive ao F5)
 const MAX_STORED_MESSAGES = 50;
 const WELCOME_MESSAGE: ChatMessage = { role: 'model', text: 'Olá! Sou seu Assistente Virtual. Posso analisar documentos e responder perguntas sobre seus dados.' };
 
@@ -196,6 +197,35 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         }
       }).catch(() => { /* fallback to localStorage */ });
     }
+  }, []);
+
+  // #953: se a página recarregou com um job em andamento, RETOMA o polling — a resposta do
+  // agente (que o backend guarda ~30min) não se perde. Antes: o jobId vivia só no estado,
+  // recarregar matava o polling e a resposta nunca chegava.
+  useEffect(() => {
+    const pending = safeStorage.getJSON<{ jobId: string } | null>(VA_PENDING_JOB_KEY, null);
+    if (!pending?.jobId) return;
+    setIsLoading(true);
+    AiService.resumeChatJob(pending.jobId)
+      .then((result: any) => {
+        if (result?.contextWindow) setContextWindow(result.contextWindow);
+        const responseText = result?.reply;
+        if (responseText) {
+          setMessages(prev => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === 'model' && last.text === responseText) return prev; // já veio
+            return [...prev, { role: 'model', text: responseText, usage: result.usage, model: result.model, fellBack: result.fellBack }];
+          });
+        }
+      })
+      .catch(() => {
+        setMessages(prev => [...prev, { role: 'model', text: '⚠️ A resposta anterior foi interrompida ao recarregar a página. Envie a pergunta novamente, se precisar.', isError: true }]);
+      })
+      .finally(() => {
+        setIsLoading(false);
+        safeStorage.removeItem(VA_PENDING_JOB_KEY);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadSessions = async () => {
@@ -420,7 +450,12 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
 
       const pageContext = `${formatViewContext(location.pathname, location.search || undefined)}\n${formatErrorsForAgent()}${pdfContext}`;
 
-      const result = await AiService.chatWithData(userMsg, relevantHistory, userImages.map(im => im.data), sid || undefined, pageContext);
+      const result = await AiService.chatWithData(
+        userMsg, relevantHistory, userImages.map(im => im.data), sid || undefined, pageContext,
+        // #953: persiste o jobId assim que enfileira → se recarregar a página, o effect de
+        // montagem retoma o polling e a resposta não se perde.
+        (jobId) => safeStorage.setJSON(VA_PENDING_JOB_KEY, { jobId, at: Date.now() }),
+      );
       const responseText = result.reply;
       // #967: usa a janela recém-retornada pelo backend (evita closure stale do estado) p/ o cálculo.
       const effectiveWindow = (result as any).contextWindow || contextWindow;
@@ -453,6 +488,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
       setMessages(prev => [...prev, { role: 'model', text: "Desculpe, encontrei um erro ao processar sua solicitação.", isError: true }]);
     } finally {
       setIsLoading(false);
+      safeStorage.removeItem(VA_PENDING_JOB_KEY); // #953: job concluído (ou erro) → não retomar
     }
   };
 

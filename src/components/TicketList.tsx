@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { usePrefill } from '../hooks/usePrefill';
+import { useConfirm } from '../hooks/useConfirm';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 import { toast } from 'sonner';
 import { Ticket, ThirdParty, DolibarrUser, DolibarrConfig, AppView, AgendaEvent, Project } from '../types';
@@ -52,6 +53,7 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
     const { data: projectsData } = useProjects(config);
     const projects = projectsData || [];
     const { data: interventions = [] } = useInterventions(config);
+    const confirm = useConfirm();
 
     if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
@@ -319,6 +321,14 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
     // #615: Status change actions (resolve/reopen)
     const handleCloseTicket = async () => {
         if (!selectedTicket || isChangingStatus) return;
+        // #993: ação destrutiva (fechar/resolver chamado) exige confirmação via Dialog
+        // (useConfirm), não confirm() nativo. O fluxo só prossegue após o usuário confirmar.
+        const ok = await confirm({
+            title: 'Resolver chamado',
+            message: `Marcar o chamado ${selectedTicket.ref} como resolvido?`,
+            confirmText: 'Sim, resolver',
+        });
+        if (!ok) return;
         setIsChangingStatus(true);
         try {
             await DolibarrService.closeTicket(config, selectedTicket.id);
@@ -328,7 +338,9 @@ const TicketList: React.FC<TicketListProps> = ({ onNavigate, onRefresh, initialI
         } catch (e) {
             log.error("Failed to close ticket", e);
             toast.error('Falha ao resolver o chamado.');
-        } finally { setIsChangingStatus(false); }
+        } finally {
+            setIsChangingStatus(false);
+        }
     };
 
     const handleReopenTicket = async () => {

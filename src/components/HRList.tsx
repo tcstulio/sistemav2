@@ -25,10 +25,12 @@ import { ExpenseScannerModal } from './HR/modals/ExpenseScannerModal';
 import { ExpenseDetailModal } from './HR/modals/ExpenseDetailModal';
 import { GroupModal } from './HR/modals/GroupModal';
 import * as HRAdmin from '../services/api/hrAdmin';
+import { deleteUser } from '../services/api/core';
 import { useDolibarr } from '../context/DolibarrContext';
 import { useUsers, useExpenseReports, useLeaveRequests, useJobPositions, useCandidates, useTasks, useTickets, useProjects, useGroups, useExpenseReportLines, useExpenseReportPayments } from '../hooks/dolibarr';
 import { useConfirm } from '../hooks/useConfirm';
 import { notifyError } from '../utils/notifyError';
+import { getTabClasses, getThemeClass } from '../utils/theme';
 
 
 interface HRListProps {
@@ -354,9 +356,12 @@ const HRList: React.FC<HRListProps> = ({
     };
 
     const handleDeleteUser = async (id: string) => {
-        if (!(await confirm('Tem certeza que deseja excluir este usuário?'))) return;
+        if (!(await confirm({ message: 'Tem certeza que deseja excluir este usuário? Esta ação não pode ser desfeita.', danger: true }))) return;
         try {
-            toast.info('Funcionalidade de exclusão pendente de implementação na API.');
+            await deleteUser(config, id);
+            toast.success('Usuário excluído com sucesso.');
+            setSelectedUser(null);
+            onRefresh?.();
         } catch (e) { notifyError('Excluir usuário', e); }
     };
 
@@ -432,38 +437,38 @@ const HRList: React.FC<HRListProps> = ({
 
                 <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800">
                     <div className="flex gap-2 overflow-x-auto">
-                        <button onClick={() => handleTabChange('team')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'team' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}><UserCheck size={16} /> Equipe ({users.length})</button>
-                        <button onClick={() => handleTabChange('groups')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'groups' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}><Users size={16} /> Grupos</button>
-                        <button onClick={() => handleTabChange('hierarchy')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'hierarchy' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}><Network size={16} /> Hierarquia</button>
-                        <button onClick={() => handleTabChange('leaves')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'leaves' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}><Plane size={16} /> Licenças</button>
-                        <button onClick={() => handleTabChange('workload')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'workload' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}><BarChart3 size={16} /> Relatório de Tempo</button>
-                        <button onClick={() => handleTabChange('expenses')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'expenses' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}><Banknote size={16} /> Despesas</button>
-                        <button onClick={() => handleTabChange('recruitment')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'recruitment' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}><Briefcase size={16} /> Recrutamento</button>
+                        <button onClick={() => handleTabChange('team')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${getTabClasses(config.themeColor, activeTab === 'team')}`}><UserCheck size={16} /> Equipe ({users.length})</button>
+                        <button onClick={() => handleTabChange('groups')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${getTabClasses(config.themeColor, activeTab === 'groups')}`}><Users size={16} /> Grupos</button>
+                        <button onClick={() => handleTabChange('hierarchy')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${getTabClasses(config.themeColor, activeTab === 'hierarchy')}`}><Network size={16} /> Hierarquia</button>
+                        <button onClick={() => handleTabChange('leaves')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${getTabClasses(config.themeColor, activeTab === 'leaves')}`}><Plane size={16} /> Licenças</button>
+                        <button onClick={() => handleTabChange('workload')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${getTabClasses(config.themeColor, activeTab === 'workload')}`}><BarChart3 size={16} /> Relatório de Tempo</button>
+                        <button onClick={() => handleTabChange('expenses')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${getTabClasses(config.themeColor, activeTab === 'expenses')}`}><Banknote size={16} /> Despesas</button>
+                        <button onClick={() => handleTabChange('recruitment')} className={`flex items-center gap-2 pb-2 px-3 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${getTabClasses(config.themeColor, activeTab === 'recruitment')}`}><Briefcase size={16} /> Recrutamento</button>
                     </div>
                     <div className="flex gap-2 mb-1.5">
                         {activeTab === 'team' && (
-                            <button onClick={openCreateUserModal} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white text-xs font-bold shadow-sm transition-all`}><Plus size={14} /> Novo Membro</button>
+                            <button onClick={openCreateUserModal} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${getThemeClass(config.themeColor, 'primaryButton')} text-xs font-bold shadow-sm transition-all`}><Plus size={14} /> Novo Membro</button>
                         )}
                         {activeTab === 'groups' && (
                             <button onClick={() => {
                                 setGroupToEdit(null); // Create mode
                                 setIsGroupModalOpen(true);
-                            }} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white text-xs font-bold shadow-sm transition-all`}><Plus size={14} /> Novo Grupo</button>
+                            }} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${getThemeClass(config.themeColor, 'primaryButton')} text-xs font-bold shadow-sm transition-all`}><Plus size={14} /> Novo Grupo</button>
                         )}
                         {activeTab === 'expenses' && (
                             <>
                                 <button onClick={openCreateExpense} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all"><Plus size={14} /> Nova Despesa</button>
-                                <button onClick={() => setIsScannerOpen(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white text-xs font-bold shadow-sm transition-all`}><Scan size={14} /> Escanear Recibo</button>
+                                <button onClick={() => setIsScannerOpen(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${getThemeClass(config.themeColor, 'primaryButton')} text-xs font-bold shadow-sm transition-all`}><Scan size={14} /> Escanear Recibo</button>
                             </>
                         )}
                         {activeTab === 'leaves' && (
-                            <button onClick={() => setIsLeaveModalOpen(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white text-xs font-bold shadow-sm transition-all`}><Plus size={14} /> Solicitar Licença</button>
+                            <button onClick={() => setIsLeaveModalOpen(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${getThemeClass(config.themeColor, 'primaryButton')} text-xs font-bold shadow-sm transition-all`}><Plus size={14} /> Solicitar Licença</button>
                         )}
                         {activeTab === 'recruitment' && (
                             <>
                                 <button onClick={() => setViewingCandidates('ALL')} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold shadow-sm transition-all border border-slate-200 dark:border-slate-700"><Users size={14} /> Todos Candidatos</button>
                                 <button onClick={openCreateCandidate} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all"><Plus size={14} /> Novo Candidato</button>
-                                <button onClick={() => setIsJobModalOpen(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-${config.themeColor}-600 hover:bg-${config.themeColor}-700 text-white text-xs font-bold shadow-sm transition-all`}><Plus size={14} /> Nova Posição</button>
+                                <button onClick={() => setIsJobModalOpen(true)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${getThemeClass(config.themeColor, 'primaryButton')} text-xs font-bold shadow-sm transition-all`}><Plus size={14} /> Nova Posição</button>
                             </>
                         )}
                     </div>

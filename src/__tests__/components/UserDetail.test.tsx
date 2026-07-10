@@ -99,3 +99,16 @@ describe('UserDetail — Currency standardization (#642)', () => {
         expect(container.textContent).toContain('R$');
     });
 });
+
+describe('UserDetail — Excluir Usuário (#1088)', () => {
+    it('renders the delete button when onDeleteUser is provided', () => {
+        render(<UserDetail {...baseProps} />);
+        expect(screen.getByTitle('Excluir Usuário')).toBeInTheDocument();
+    });
+
+    it('hides the delete button (and the no-op confirm flow) when there is no backend handler', () => {
+        const { onDeleteUser, ...propsWithoutDelete } = baseProps;
+        render(<UserDetail {...(propsWithoutDelete as any)} />);
+        expect(screen.queryByTitle('Excluir Usuário')).not.toBeInTheDocument();
+    });
+});

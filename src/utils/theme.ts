@@ -754,9 +754,63 @@ export function getCardClasses(color: ThemeColor | string, isSelected: boolean):
     return isSelected ? theme.activeCard : theme.inactiveCard;
 }
 
+/**
+ * Tab active classes (border-b-2 underline tabs).
+ *
+ * Literal classes per color so the Tailwind v4 JIT scanner emits them at build
+ * time — template-string interpolation like `border-${color}-600` is NOT detected
+ * by the scanner, so the classes never reach the final CSS. This is the shared,
+ * centralized version of the pattern first introduced in WarehouseList (#564).
+ */
+export const TAB_ACTIVE_CLASSES: Record<ThemeColor, string> = {
+    slate: 'border-slate-600 text-slate-600 dark:border-slate-400 dark:text-slate-400',
+    gray: 'border-gray-600 text-gray-600 dark:border-gray-400 dark:text-gray-400',
+    zinc: 'border-zinc-600 text-zinc-600 dark:border-zinc-400 dark:text-zinc-400',
+    neutral: 'border-neutral-600 text-neutral-600 dark:border-neutral-400 dark:text-neutral-400',
+    stone: 'border-stone-600 text-stone-600 dark:border-stone-400 dark:text-stone-400',
+    red: 'border-red-600 text-red-600 dark:border-red-400 dark:text-red-400',
+    orange: 'border-orange-600 text-orange-600 dark:border-orange-400 dark:text-orange-400',
+    amber: 'border-amber-600 text-amber-600 dark:border-amber-400 dark:text-amber-400',
+    yellow: 'border-yellow-600 text-yellow-600 dark:border-yellow-400 dark:text-yellow-400',
+    lime: 'border-lime-600 text-lime-600 dark:border-lime-400 dark:text-lime-400',
+    green: 'border-green-600 text-green-600 dark:border-green-400 dark:text-green-400',
+    emerald: 'border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400',
+    teal: 'border-teal-600 text-teal-600 dark:border-teal-400 dark:text-teal-400',
+    cyan: 'border-cyan-600 text-cyan-600 dark:border-cyan-400 dark:text-cyan-400',
+    sky: 'border-sky-600 text-sky-600 dark:border-sky-400 dark:text-sky-400',
+    blue: 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400',
+    indigo: 'border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400',
+    violet: 'border-violet-600 text-violet-600 dark:border-violet-400 dark:text-violet-400',
+    purple: 'border-purple-600 text-purple-600 dark:border-purple-400 dark:text-purple-400',
+    fuchsia: 'border-fuchsia-600 text-fuchsia-600 dark:border-fuchsia-400 dark:text-fuchsia-400',
+    pink: 'border-pink-600 text-pink-600 dark:border-pink-400 dark:text-pink-400',
+    rose: 'border-rose-600 text-rose-600 dark:border-rose-400 dark:text-rose-400',
+};
+
+/** Inactive tab classes (neutral underline, shared across all tabs). */
+export const TAB_INACTIVE_CLASSES = 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200';
+
+/**
+ * Returns the Tailwind classes for a tab given its active state and theme color.
+ * Uses the literal `TAB_ACTIVE_CLASSES` map so Tailwind v4 emits the CSS at build
+ * time. Unknown colors fall back to indigo (same convention as `getThemeClasses`).
+ *
+ * @param color - The theme color (any string; unknown values fall back to indigo)
+ * @param isActive - Whether the tab is currently active
+ * @returns Active tab classes when active, otherwise `TAB_INACTIVE_CLASSES`
+ */
+export function getTabClasses(color: ThemeColor | string, isActive: boolean): string {
+    if (!isActive) return TAB_INACTIVE_CLASSES;
+    const validColor = (color in TAB_ACTIVE_CLASSES) ? color as ThemeColor : 'indigo';
+    return TAB_ACTIVE_CLASSES[validColor];
+}
+
 // Default export for convenience
 export default {
     getThemeClasses,
     getThemeClass,
     getCardClasses,
+    getTabClasses,
+    TAB_ACTIVE_CLASSES,
+    TAB_INACTIVE_CLASSES,
 };
