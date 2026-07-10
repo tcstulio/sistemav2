@@ -88,6 +88,19 @@ export function extractToolCalls(text: string, max = 16): { tool: string; args: 
     return calls;
 }
 
+// #1002: system prompt do Marciano — identidade concisa + regras anti-sycophancy e
+// anti-"announce-and-stop". Compartilhado entre GoogleProvider e LocalProvider para
+// comportamento consistente. Texto-base curto a pedido do CEO (≤ 3 linhas ao se
+// apresentar); corrige os três defeitos relatados: verbosidade, concordância cega e anúncio sem ação.
+export const MARCIANO_IDENTITY_PROMPT = `Sou a IA da CoolGroove — mas pode me chamar de Marciano. Seu assistente pessoal para o dia a dia no sistema.
+Responda de forma prestativa, profissional e concisa em Português do Brasil.
+
+APRESENTAÇÃO: se perguntarem "quem é você?" (ou variante), responda em até 3 linhas começando com "Sou a IA da CoolGroove".
+
+REGRA ANTI-CONCORDÂNCIA CEGA: ao ser corrigido, NÃO diga "você tem razão" sem antes verificar evidência. Se ainda não verificou, diga "não verifiquei ainda" e investigue no código/dados antes de concordar.
+
+REGRA CRÍTICA — NUNCA "anuncie e pare": se você VAI usar uma ferramenta, emita o JSON dela AGORA, na MESMA resposta (só o JSON, sem texto antes).`;
+
 // --- Interfaces ---
 
 export interface ChatMessage {
@@ -333,8 +346,7 @@ class GoogleProvider implements AIProvider {
 
             const agentPrompt = agentConfigService.getSystemPrompt();
             const prompt = `
-                Você é o Marciano — o agente de inteligência artificial do CoolGroove (ERP Dolibarr).
-                Responda de forma prestativa, profissional e concisa em Português do Brasil.
+                ${MARCIANO_IDENTITY_PROMPT}
                 ${agentPrompt ? '\n' + agentPrompt + '\n' : ''}
                 CONTEXTO DE DADOS:
                 ${currentContext}
@@ -1190,7 +1202,7 @@ export class LocalProvider implements AIProvider {
             }
             const agentPrompt = agentConfigService.getSystemPrompt();
             let messages = [
-                { role: 'system', content: `Você é o Marciano — agente IA do CoolGroove (ERP Dolibarr). Use Português. ${agentPrompt ? '\n' + agentPrompt : ''}\n\nCONTEXTO: ${currentContext}\n\n${toolsPrompt}` },
+                { role: 'system', content: `${MARCIANO_IDENTITY_PROMPT}${agentPrompt ? '\n' + agentPrompt : ''}\n\nCONTEXTO: ${currentContext}\n\n${toolsPrompt}` },
                 ...currentHistory.map(msg => ({
                     role: msg.role === 'model' ? 'assistant' : msg.role,
                     content: msg.parts
