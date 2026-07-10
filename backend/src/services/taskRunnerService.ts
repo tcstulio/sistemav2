@@ -21,6 +21,7 @@ import { previewPortsFor } from '../utils/previewPorts';
 import { screenshotService } from './screenshotService';
 import { screenVerifyService } from './screenVerifyService';
 import { recordUsage, getUsageForTask } from './taskUsageTracker';
+import { formatJudgeComment } from './judgeComment';
 
 const log = logger.child('TaskRunner');
 const execFileAsync = promisify(execFile);
@@ -222,6 +223,9 @@ export interface TaskMetrics {
 // falso relato, baixa evidência) e alimentam badges na UI.
 export type PrecheckVerdict = 'ok' | 'duplicate' | 'already_resolved' | 'false_report' | 'low_evidence';
 
+// #1015: ação sugerida pelo serviço de pre-check (taskPreCheck.analyzeTask).
+export type PrecheckSuggestedAction = 'proceed' | 'ask_user' | 'reject';
+
 export interface PrecheckEvidence {
     type: 'similar_issue' | 'commit' | 'pr' | 'log' | string;
     reference?: string;
@@ -235,6 +239,9 @@ export interface PrecheckReport {
     evidence?: PrecheckEvidence[];
     originalIssueNumber?: number;
     originalUrl?: string;
+    // #1015: confiança da análise (0-1) e ação recomendada para o orquestrador/UI.
+    confidence?: number;
+    suggestedAction?: PrecheckSuggestedAction;
 }
 
 export interface Task {
@@ -251,6 +258,9 @@ export interface Task {
     judgeReview?: string;
     judgeAttempts?: number;
     judgeApproved?: boolean; // VALOR 2: veto do Juiz (approved=false bloqueia auto-merge; nunca aprova sozinho)
+    // #1203 (Fase D2): anti-spam do comentário do Judge no PR — qual judgeAttempts já recebeu
+    // comentário (no máx. 1 por rodada; não re-posta no resume).
+    _judgeCommentedAttempt?: number;
     // Self-heal de gate: quando um gate DETERMINÍSTICO bloqueia o merge (regressão de testes / veto),
     // em vez de só estacionar, realimentamos o coder UMA vez com uma correção derivada do próprio gate.
     gateFixAttempts?: number;     // teto (default 3, #963 Fase A), SEPARADO de judgeAttempts (não se multiplicam)
@@ -1153,6 +1163,19 @@ class TaskRunnerService {
     /** Estado de cota de LLM (esgotada? desde quando? motivo?) + hold de pico — p/ UI. */
     getQuotaStatus() {
         return { ...quotaStatus(), peakHold: this.isPeakHold() };
+    }
+
+    /**
+     * Orçamento DIÁRIO de rodadas de opencode (#1154 item 23 / #1189): quantas rodadas já
+     * foram consumidas hoje (contador que reseta na virada do dia) e qual o teto configurado.
+     * Expõe o valor REAL do estado interno p/ a barra de orçamento no BoardHeader — sem mock.
+     */
+    getDailyRoundsStatus(): { dailyRoundsUsed: number; dailyRoundBudget: number } {
+        const { dailyRoundBudget } = this.getAutomationConfig();
+        return {
+            dailyRoundsUsed: this.dailyRoundsToday(),
+            dailyRoundBudget: typeof dailyRoundBudget === 'number' && dailyRoundBudget > 0 ? dailyRoundBudget : 200,
+        };
     }
 
     /**
@@ -2504,6 +2527,11 @@ Return ONLY a JSON:
                     attempt: task.judgeAttempts,
                 });
 
+                // #1203 (Fase D2): espelha o racional do Judge (score/resumo/missing/attempt) como
+                // comentário no PR do GitHub — best-effort (falha não bloqueia), 1 por rodada (não
+                // re-posta no resume). Quem revisa pelo GitHub vê POR QUE foi aprovado/segurado.
+                this.postJudgeComment(task, result).catch((e: any) => log.warn(`postJudgeComment não-tratado: ${e?.message || e}`));
+
                 // #1125: piso de APROVAÇÃO configurável (default 9). Antes eram 8/6 HARDCODED que ignoravam
                 // a config — o robô aprovava com nota abaixo da que o admin pedia. Agora: tenta até >=
                 // minApproveScore (ou esgota 3 tentativas) e só marca 'approved' se atingir o piso; senão,
@@ -2600,6 +2628,45 @@ Return ONLY a JSON:
             this.tryAutoMerge(task).catch((e: any) => {
                 log.warn(`Auto-merge falhou para #${task.issueNumber}: ${e?.message || e}`);
             });
+        }
+    }
+
+    /**
+     * Espelha o racional do Judge como comentário no PR do GitHub (#1203 / Fase D2): score,
+     * veredito (approved), resumo TRUNCADO (~1500 chars), missing_coverage e a tentativa.
+     *
+     * - BEST-EFFORT: falha no `gh pr comment` NUNCA bloqueia o pipeline (try/catch + log).
+     * - Anti-spam: no MÁXIMO 1 comentário por rodada de julgamento (judgeAttempts). Marca qual
+     *   tentativa já foi comentada (_judgeCommentedAttempt) — o resume (re-run do mesmo attempt)
+     *   não re-posta.
+     * - Segurança: o review é sobre o diff público; o formatador trunca defensivamente.
+     */
+    private async postJudgeComment(
+        task: Task,
+        result: { score: number; approved?: boolean; review?: string; missing_coverage?: string[] },
+    ): Promise<void> {
+        if (!task.prNumber) return;
+        const attempt = task.judgeAttempts ?? 0;
+        // Anti-spam: 1 comentário por rodada. Resume não re-posta o mesmo attempt.
+        if (task._judgeCommentedAttempt === attempt) return;
+        // Marca ANTES do post: mesmo que o gh falhe, esta rodada não re-posta (best-effort, sem spam).
+        task._judgeCommentedAttempt = attempt;
+        try { this.save(); } catch { /* save best-effort */ }
+        try {
+            const body = formatJudgeComment({
+                score: result.score,
+                approved: result.approved,
+                review: result.review,
+                missingCoverage: result.missing_coverage,
+                attempt,
+                issueNumber: task.issueNumber,
+            });
+            await gh(['pr', 'comment', String(task.prNumber), '--repo', REPO, '--body', body], { timeout: 30000 });
+            this.emitLog(task.issueNumber, 'info', `Judge: comentário com score/resumo postado no PR #${task.prNumber} (tentativa ${attempt}).`);
+            log.info(`Comentário do Judge postado no PR #${task.prNumber} (tentativa ${attempt}, task #${task.issueNumber}).`);
+        } catch (e: any) {
+            // BEST-EFFORT: comentário falhar NÃO afeta o fluxo do TaskRunner — apenas loga.
+            log.warn(`Comentário do Judge falhou (best-effort) no PR #${task.prNumber}: ${e?.message || e}`);
         }
     }
 
@@ -3083,19 +3150,25 @@ Return ONLY a JSON:
      * ficava 'approved'/'reviewing' para sempre e a épica-pai nunca completava. Best-effort no pollSync.
      */
     private async reconcileManualMerges(): Promise<void> {
+        // #1191: inclui 'failed' — uma task marcada failed (ex.: rodada vazia do bug #1190) cujo PR
+        // DEPOIS é mergeado à mão ficava failed para sempre, embora o trabalho estivesse na main. O
+        // merge posterior é evidência de que o failed era espúrio ou o humano terminou à mão.
+        // 'rejected'/'cancelled' NÃO entram: rejeição/cancelamento é decisão explícita — deixar fora
+        // por segurança (um merge posterior do PR é caso raro; se necessário, tratar com log separado).
         const candidates = Object.values(this.store.tasks)
-            .filter((t) => (t.status === 'approved' || t.status === 'reviewing') && t.prNumber && !this.mergeInFlight.has(t.issueNumber))
+            .filter((t) => (t.status === 'approved' || t.status === 'reviewing' || t.status === 'failed') && t.prNumber && !this.mergeInFlight.has(t.issueNumber))
             .slice(0, 20); // teto por ciclo (evita rajada de gh se houver muitas)
         for (const task of candidates) {
             try {
                 const { stdout } = await gh(['pr', 'view', String(task.prNumber), '--repo', REPO, '--json', 'state,merged'], { timeout: 20000 });
                 const j = JSON.parse(stdout);
                 if (j.merged === true || j.state === 'MERGED') {
+                    const prevStatus = task.status;
                     task.status = 'merged';
                     task.completedAt = new Date().toISOString();
                     task.updatedAt = task.completedAt;
                     this.finalizeTaskMetrics(task);
-                    this.recordEvent(task, 'pr_merged', `PR #${task.prNumber} detectado como mergeado manualmente — task reconciliada p/ 'merged'.`, { prNumber: task.prNumber, reconciledManual: true });
+                    this.recordEvent(task, 'pr_merged', `PR #${task.prNumber} mergeado — task reconciliada de ${prevStatus}→merged.`, { prNumber: task.prNumber, reconciledManual: true, previousStatus: prevStatus });
                     this.save();
                     this.emitStatus(task);
                     this.checkEpicCompletion(task);

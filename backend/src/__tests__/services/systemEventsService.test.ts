@@ -23,7 +23,14 @@ vi.mock('../../services/taskRunnerService', () => ({ taskRunnerService: m.task }
 vi.mock('../../services/dolibarr', () => ({ dolibarrService: m.doli }));
 vi.mock('../../utils/logger', () => ({ createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 
-import { systemEventsService, getAllowedSources } from '../../services/systemEventsService';
+import {
+    systemEventsService,
+    getAllowedSources,
+    recordWorkerExecution,
+    withExecutionTracking,
+    workerExecutions,
+    WORKER_RING_BUFFER_CAP,
+} from '../../services/systemEventsService';
 
 const T = (iso: string) => new Date(iso).getTime();
 const ADMIN = { id: '1', login: 'admin', name: 'Admin', isAdmin: true };
@@ -35,6 +42,8 @@ describe('systemEventsService', () => {
         // micro-cache do índice de tarefa→usuários e de nomes persistem entre testes; zera p/ isolar.
         (systemEventsService as any).taskUserIndexCache = null;
         (systemEventsService as any).userNameCache = null;
+        // ring-buffer de worker é singleton de módulo; zera p/ isolar cada teste (#1224).
+        workerExecutions.clear();
         // listUsers vazio por padrão → resolução de nome cai em '#id'/'Sistema' (fallback legível).
         m.doli.listUsers.mockReturnValue([]);
         m.audit.list.mockReturnValue([{ id: 'a1', ts: T('2026-06-18T10:00:00Z'), adminId: '1', adminLogin: 'admin', action: 'user.update', target: '9', summary: 'mudou perm' }]);
@@ -237,6 +246,141 @@ describe('systemEventsService', () => {
         it('em todas as fontes, nenhum evento expõe "unknown" como actor.name', async () => {
             const r = await systemEventsService.query({ user: ADMIN });
             expect(r.events.every(e => e.actor.name !== 'unknown')).toBe(true);
+        });
+    });
+
+    describe('worker execution tracking (#1224)', () => {
+        it('recordWorkerExecution: insere e fica recuperável via list()', () => {
+            const rec = recordWorkerExecution('opencode', 'success', 'concluído');
+            expect(rec.id).toMatch(/^worker_\d+$/);
+            expect(rec.source).toBe('opencode');
+            expect(rec.status).toBe('success');
+            expect(rec.summary).toBe('concluído');
+            const all = workerExecutions.list();
+            expect(all).toHaveLength(1);
+            expect(all[0]).toEqual(rec);
+        });
+
+        it('timestamp é gerado internamente (ISO), respeitando o "agora"', () => {
+            const before = Date.now();
+            const rec = recordWorkerExecution('claude-cli', 'running');
+            const after = Date.now();
+            const ts = Date.parse(rec.startedAt);
+            expect(ts).toBeGreaterThanOrEqual(before);
+            expect(ts).toBeLessThanOrEqual(after);
+            expect(rec.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
+        });
+
+        it('status running não preenche endedAt; status terminal preenche endedAt', () => {
+            const running = recordWorkerExecution('x', 'running');
+            expect(running.endedAt).toBeUndefined();
+            const done = recordWorkerExecution('x', 'success');
+            expect(done.endedAt).toBeDefined();
+            const err = recordWorkerExecution('x', 'error', 'boom', 'detalhe');
+            expect(err.endedAt).toBeDefined();
+            expect(err.error).toBe('detalhe');
+            const to = recordWorkerExecution('x', 'timeout', 'lento', 'deadline');
+            expect(to.error).toBe('deadline');
+        });
+
+        it('ring-buffer respeita o cap por overflow (FIFO descarta as mais antigas)', () => {
+            const N = WORKER_RING_BUFFER_CAP + 25; // excede em 25
+            for (let i = 0; i < N; i++) {
+                recordWorkerExecution('src', 'success', `job-${i}`);
+            }
+            expect(workerExecutions.size()).toBe(WORKER_RING_BUFFER_CAP);
+            const all = workerExecutions.list();
+            // as mais antigas (job-0..job-(N-cap-1)) foram descartadas; restam job-(N-cap)..job-(N-1)
+            expect(all).toHaveLength(WORKER_RING_BUFFER_CAP);
+            expect(all[0].summary).toBe(`job-${N - WORKER_RING_BUFFER_CAP}`);
+            expect(all[all.length - 1].summary).toBe(`job-${N - 1}`);
+        });
+
+        it('recuperação: após overflow, list() devolve as mais recentes íntegras (sem corromper)', () => {
+            for (let i = 0; i < WORKER_RING_BUFFER_CAP + 5; i++) {
+                recordWorkerExecution('r', 'success');
+            }
+            const all = workerExecutions.list();
+            expect(all).toHaveLength(WORKER_RING_BUFFER_CAP);
+            // ids únicos e sequenciais (nenhum duplicado/corrompido pelo overflow)
+            const ids = new Set(all.map(r => r.id));
+            expect(ids.size).toBe(WORKER_RING_BUFFER_CAP);
+            // ordenação respeita a inserção (FIFO)
+            for (let i = 1; i < all.length; i++) {
+                expect(all[i].id > all[i - 1].id).toBe(true);
+            }
+        });
+
+        it('list(limit) retorna só as `limit` mais recentes', () => {
+            for (let i = 0; i < 10; i++) recordWorkerExecution('s', 'success', `j${i}`);
+            const last3 = workerExecutions.list(3);
+            expect(last3).toHaveLength(3);
+            expect(last3[0].summary).toBe('j7');
+            expect(last3[2].summary).toBe('j9');
+        });
+
+        it('clear zera o buffer', () => {
+            recordWorkerExecution('s', 'success');
+            expect(workerExecutions.size()).toBe(1);
+            workerExecutions.clear();
+            expect(workerExecutions.size()).toBe(0);
+            expect(workerExecutions.list()).toEqual([]);
+        });
+
+        it('withExecutionTracking: registra sucesso ao concluir sem erro', async () => {
+            const val = await withExecutionTracking('opencode', async () => 42, 'calc');
+            expect(val).toBe(42);
+            const all = workerExecutions.list();
+            expect(all).toHaveLength(1);
+            expect(all[0].status).toBe('success');
+            expect(all[0].source).toBe('opencode');
+            expect(all[0].summary).toBe('calc');
+            expect(all[0].endedAt).toBeDefined();
+            expect(all[0].durationMs).toBeGreaterThanOrEqual(0);
+            expect(all[0].error).toBeUndefined();
+        });
+
+        it('withExecutionTracking: registra erro e re-rejeita (não engole a exceção)', async () => {
+            const fn = async () => { throw new Error('kaboom'); };
+            await expect(withExecutionTracking('claude-cli', fn, 'falhou')).rejects.toThrow('kaboom');
+            const all = workerExecutions.list();
+            expect(all).toHaveLength(1);
+            expect(all[0].status).toBe('error');
+            expect(all[0].error).toBe('kaboom');
+            expect(all[0].endedAt).toBeDefined();
+        });
+
+        it('aggregator: execuções de worker aparecem sob a fonte scheduler (mescladas, #1224)', async () => {
+            recordWorkerExecution('opencode', 'success', 'build ok');
+            recordWorkerExecution('claude-cli', 'error', 'build fail', 'exit 1');
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['scheduler'] });
+            const workers = r.events.filter(e => e.type.startsWith('worker_'));
+            expect(workers).toHaveLength(2);
+            // decisão #1224: source reaproveitada = scheduler (não 'worker')
+            expect(workers.every(e => e.source === 'scheduler')).toBe(true);
+            const err = workers.find(e => e.type === 'worker_claude-cli')!;
+            expect(err.severity).toBe('error');
+            expect(err.metadata?.error).toBe('exit 1');
+            expect(err.metadata?.workerSource).toBe('claude-cli');
+            expect(err.description).toContain('exit 1');
+            const ok = workers.find(e => e.type === 'worker_opencode')!;
+            expect(ok.description).toContain('build ok');
+            expect(ok.actor.name).toBe('Worker');
+            expect(ok.severity).toBe('info');
+        });
+
+        it('aggregator: o feed scheduler original permanece junto com os workers', async () => {
+            // scheduler mock (beforeEach) retorna 1 evento s1
+            recordWorkerExecution('opencode', 'success', 'x');
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['scheduler'] });
+            expect(r.events.find(e => e.id === 'sched_s1')).toBeDefined();
+            expect(r.events.find(e => e.id.startsWith('worker_'))).toBeDefined();
+        });
+
+        it('aggregator: sem worker executions, o feed scheduler é idêntico ao de antes', async () => {
+            const r = await systemEventsService.query({ user: ADMIN, sources: ['scheduler'] });
+            expect(r.events).toHaveLength(1);
+            expect(r.events[0].actor.name).toBe('Agendador');
         });
     });
 });
