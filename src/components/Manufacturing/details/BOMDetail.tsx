@@ -3,6 +3,7 @@ import { BOM, DolibarrConfig, Product } from '../../../types';
 import { ArrowLeft, X, Hammer, Layers, Coins, Package, Pencil, Trash2 } from 'lucide-react';
 import { getProductName, getProductPrice } from '../utils';
 import { formatCurrency } from '../../../utils/formatUtils';
+import { getTabClasses } from '../../../utils/theme';
 
 interface BOMDetailProps {
     bom: BOM;
@@ -90,8 +91,8 @@ export const BOMDetail: React.FC<BOMDetailProps> = ({
 
             {/* Tabs */}
             <div className="flex border-b border-slate-100 dark:border-slate-800 px-4 overflow-x-auto flex-none bg-slate-50 dark:bg-slate-800/30">
-                <button onClick={() => setBomDetailTab('overview')} className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${bomDetailTab === 'overview' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>Visão Geral</button>
-                <button onClick={() => setBomDetailTab('components')} className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${bomDetailTab === 'components' ? `border-${config.themeColor}-600 text-${config.themeColor}-600 dark:text-${config.themeColor}-400 dark:border-${config.themeColor}-400` : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>Componentes & Árvore</button>
+                <button onClick={() => setBomDetailTab('overview')} className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${getTabClasses(config.themeColor, bomDetailTab === 'overview')}`}>Visão Geral</button>
+                <button onClick={() => setBomDetailTab('components')} className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${getTabClasses(config.themeColor, bomDetailTab === 'components')}`}>Componentes & Árvore</button>
             </div>
 
             {/* Content */}

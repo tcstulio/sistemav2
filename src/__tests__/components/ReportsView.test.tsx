@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import ReportsView from '../../components/ReportsView';
 import { useInvoices, useCustomers } from '../../hooks/dolibarr';
+import { useDolibarr } from '../../context/DolibarrContext';
 import { formatCurrency } from '../../utils/formatUtils';
 
 vi.mock('../../context/DolibarrContext', () => ({
@@ -202,5 +203,74 @@ describe('ReportsView — Top 5 Clientes responsivo (#562)', () => {
             expect(span.textContent).toMatch(/^ID: \d+$/);
             expect(span.getAttribute('title')).toMatch(/^ID: \d+$/);
         });
+    });
+});
+
+describe('ReportsView — classes Tailwind literais por tema (#1094)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useInvoices).mockReturnValue({ data: [], isLoading: false } as any);
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: { apiUrl: 'http://test', apiKey: 'key', themeColor: 'indigo' },
+        } as any);
+    });
+
+    const setThemeColor = (themeColor: string) => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: { apiUrl: 'http://test', apiKey: 'key', themeColor },
+        } as any);
+    };
+
+    const headerIcon = () => {
+        const h2 = screen.getByText('Relatórios');
+        return h2.querySelector('svg') as SVGElement;
+    };
+
+    const exportButton = () =>
+        screen.getByRole('button', { name: /exportar csv/i });
+
+    it('o ícone do cabeçalho usa a classe literal text-indigo-600 (tema indigo)', () => {
+        renderWithRouter(<ReportsView />);
+        const icon = headerIcon();
+        expect(icon.getAttribute('class')).toContain('text-indigo-600');
+        expect(icon.getAttribute('class')).not.toContain('${');
+        expect(icon.getAttribute('class')).not.toContain('undefined');
+    });
+
+    it('o botão Exportar CSV usa classes literais do botão primário (indigo)', () => {
+        renderWithRouter(<ReportsView />);
+        const btn = exportButton();
+        expect(btn.className).toContain('bg-indigo-600');
+        expect(btn.className).toContain('hover:bg-indigo-700');
+        expect(btn.className).toContain('text-white');
+        expect(btn.className).not.toContain('${');
+        expect(btn.className).not.toContain('undefined');
+    });
+
+    it('aplica a cor correta para tema diferente (emerald) no ícone e no botão', () => {
+        setThemeColor('emerald');
+        renderWithRouter(<ReportsView />);
+
+        const icon = headerIcon();
+        expect(icon.getAttribute('class')).toContain('text-emerald-600');
+        expect(icon.getAttribute('class')).not.toContain('text-indigo-600');
+
+        const btn = exportButton();
+        expect(btn.className).toContain('bg-emerald-600');
+        expect(btn.className).toContain('hover:bg-emerald-700');
+        expect(btn.className).not.toContain('bg-indigo-600');
+    });
+
+    it('cor de tema desconhecida cai no fallback indigo (ícone + botão)', () => {
+        setThemeColor('cor-que-nao-existe');
+        renderWithRouter(<ReportsView />);
+
+        const icon = headerIcon();
+        expect(icon.getAttribute('class')).toContain('text-indigo-600');
+        expect(icon.getAttribute('class')).not.toContain('undefined');
+
+        const btn = exportButton();
+        expect(btn.className).toContain('bg-indigo-600');
+        expect(btn.className).not.toContain('undefined');
     });
 });
