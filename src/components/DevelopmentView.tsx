@@ -7,13 +7,15 @@ import { AuditTab } from './DevelopmentConsole/AuditTab';
 import { ConsoleLogsTab } from './DevelopmentConsole/ConsoleLogsTab';
 import { PermissionsTab } from './DevelopmentConsole/PermissionsTab';
 import { LlmSettingsTab } from './DevelopmentConsole/LlmSettingsTab';
+import { AgentConfigEditor } from './development/AgentConfigEditor';
 
 const isDevMode = () => {
     return import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEV_CONSOLE === 'true';
 };
 
 const DevelopmentView: React.FC = () => {
-    const { config } = useDolibarr();
+    const { config, currentUser } = useDolibarr();
+    const isAdmin = currentUser?.admin === 1;
 
     if (!isDevMode()) {
         return (
@@ -86,7 +88,15 @@ const DevelopmentView: React.FC = () => {
 
                 {activeTab === 'permissions' && <PermissionsTab />}
 
-                {activeTab === 'llm' && <LlmSettingsTab />}
+                {activeTab === 'llm' && (
+                    <div className="h-full overflow-y-auto bg-slate-50 dark:bg-slate-950">
+                        {/* Editor do system prompt do Marciano (#1005) */}
+                        <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
+                            <AgentConfigEditor isAdmin={isAdmin} />
+                        </div>
+                        <LlmSettingsTab />
+                    </div>
+                )}
             </div>
         </div>
     );

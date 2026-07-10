@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ExternalLink } from 'lucide-react';
-import type { PrecheckReport, PrecheckVerdict } from '../services/taskService';
+import type { PrecheckReport, PrecheckVerdict, Task } from '../services/taskService';
 
 /**
  * TaskCard — superfície visual do pre-check de tasks do TaskRunner (issue #972 / #1017).
@@ -290,3 +290,122 @@ export const RejectedPrecheckBanner: React.FC<RejectedPrecheckBannerProps> = ({ 
 };
 
 export default PrecheckBadge;
+
+/**
+ * Teto de proporção a partir da qual o chip de rodadas passa a âmbar (70%). #1188
+ */
+export const ROUNDS_AMBER_RATIO = 0.7;
+
+const CHIP_BASE =
+    'inline-flex items-center gap-1 leading-none font-semibold rounded-full border text-[11px] px-2 py-0.5';
+
+const ROUNDS_NEUTRAL_CLASSES =
+    'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700';
+const ROUNDS_AMBER_CLASSES =
+    'text-amber-600 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800';
+const ROUNDS_RED_CLASSES =
+    'text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800';
+const COOLDOWN_CLASSES =
+    'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700';
+
+interface RoundsChipProps {
+    /** Rodadas de opencode acumuladas na task (task.roundsUsed). Ausente/null → omite. */
+    roundsUsed?: number | null;
+    /** Teto de rodadas/task — vem de useOrgBranding().taskAutomation?.maxRoundsPerTask. */
+    maxRoundsPerTask?: number | null;
+}
+
+/**
+ * Chip de rodadas (🔄 roundsUsed/maxRoundsPerTask) — issue #1188.
+ *
+ * Apresentação pura (sem fetch de config): o pai repassa `maxRoundsPerTask` lido da
+ * ui-config. Omite silenciosamente (sem warnings) quando `roundsUsed` ou
+ * `maxRoundsPerTask` estão ausentes/inválidos (cards/configs legados).
+ *
+ * Cores:
+ *  - vermelho quando `roundsUsed > maxRoundsPerTask` (robô extrapolou o teto);
+ *  - âmbar quando a proporção `roundsUsed/maxRoundsPerTask >= 0.7`;
+ *  - neutro caso contrário.
+ */
+export const RoundsChip: React.FC<RoundsChipProps> = ({ roundsUsed, maxRoundsPerTask }) => {
+    if (roundsUsed === undefined || roundsUsed === null) return null;
+    if (
+        typeof maxRoundsPerTask !== 'number' ||
+        !Number.isFinite(maxRoundsPerTask) ||
+        maxRoundsPerTask <= 0
+    ) {
+        return null;
+    }
+    const ratio = roundsUsed / maxRoundsPerTask;
+    const over = roundsUsed > maxRoundsPerTask;
+    const classes = over ? ROUNDS_RED_CLASSES : ratio >= ROUNDS_AMBER_RATIO ? ROUNDS_AMBER_CLASSES : ROUNDS_NEUTRAL_CLASSES;
+
+    return (
+        <span
+            data-testid="task-rounds-chip"
+            title={`Rodadas de opencode: ${roundsUsed}/${maxRoundsPerTask}`}
+            className={`${CHIP_BASE} ${classes}`}
+        >
+            <span aria-hidden="true">🔄</span>
+            <span>
+                {roundsUsed}/{maxRoundsPerTask}
+            </span>
+        </span>
+    );
+};
+
+interface PlanCooldownChipProps {
+    /** Status da task — só renderiza quando 'pending'. */
+    status?: Task['status'];
+    /** epoch ms até quando a task fica fora da fila (task.planWaitUntil). */
+    planWaitUntil?: number | null;
+    /** Instante de referência (testes). Default: Date.now(). */
+    now?: number;
+}
+
+/**
+ * Chip de cooldown do Planner (⏳ aguardando Planner (Xmin)) — issue #1188.
+ *
+ * Só aparece quando `status === 'pending'` E `planWaitUntil` é um timestamp futuro.
+ * `Xmin` = `Math.max(1, Math.ceil((planWaitUntil - now) / 60000))` (mínimo 1). Quando
+ * `planWaitUntil <= now`, o chip some no próximo render (o board já tem refetch periódico).
+ */
+export const PlanCooldownChip: React.FC<PlanCooldownChipProps> = ({ status, planWaitUntil, now }) => {
+    if (status !== 'pending') return null;
+    if (typeof planWaitUntil !== 'number' || !Number.isFinite(planWaitUntil)) return null;
+    const currentNow = now ?? Date.now();
+    if (planWaitUntil <= currentNow) return null;
+    const minutes = Math.max(1, Math.ceil((planWaitUntil - currentNow) / 60000));
+
+    return (
+        <span
+            data-testid="task-cooldown-chip"
+            title={`Planner em cooldown — retoma em ~${minutes}min`}
+            className={`${CHIP_BASE} ${COOLDOWN_CLASSES}`}
+        >
+            <span aria-hidden="true">⏳</span>
+            <span>aguardando Planner ({minutes}min)</span>
+        </span>
+    );
+};
+
+interface TaskAutomationChipsProps {
+    task: Task;
+    /** Teto de rodadas/task — vem de useOrgBranding().taskAutomation?.maxRoundsPerTask. */
+    maxRoundsPerTask?: number | null;
+    /** Instante de referência para o cooldown (testes). Default: Date.now(). */
+    now?: number;
+}
+
+/**
+ * Composite que renderiza os chips de automação do TaskCard (issue #1188): rodadas +
+ * cooldown do Planner. Pensado para ser drop-in no card de tarefa — cada chip decide
+ * isoladamente se aparece, então cards legados (sem `roundsUsed`/`planWaitUntil`) ficam
+ * idênticos ao comportamento atual (zero regressão visual).
+ */
+export const TaskAutomationChips: React.FC<TaskAutomationChipsProps> = ({ task, maxRoundsPerTask, now }) => (
+    <>
+        <RoundsChip roundsUsed={task.roundsUsed} maxRoundsPerTask={maxRoundsPerTask} />
+        <PlanCooldownChip status={task.status} planWaitUntil={task.planWaitUntil} now={now} />
+    </>
+);

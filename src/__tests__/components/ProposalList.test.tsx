@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import fs from 'node:fs';
+import path from 'node:path';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import ProposalList from '../../components/ProposalList';
 import { DolibarrService } from '../../services/dolibarrService';
@@ -69,6 +71,7 @@ vi.mock('../../services/dolibarrService', () => ({
         downloadDocument: vi.fn(),
         createProposal: vi.fn(),
         updateProposal: vi.fn(),
+        closeProposal: vi.fn(),
     },
 }));
 
@@ -374,5 +377,100 @@ describe('ProposalList — Edit date conversion (#626)', () => {
         const dateInput = await screen.findByDisplayValue('2024-06-10') as HTMLInputElement;
         expect(dateInput).toBeTruthy();
         expect(dateInput.type).toBe('date');
+    });
+});
+
+// ── #993: substituir alert/confirm por toasts sonner e Dialog de confirmação ──────
+describe('ProposalList — UX de feedback e confirmação (#993)', () => {
+    const proposalSource = fs.readFileSync(
+        path.resolve(__dirname, '../../components/ProposalList.tsx'),
+        'utf-8'
+    );
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.spyOn(window, 'alert').mockImplementation(() => {});
+        vi.spyOn(window, 'confirm').mockImplementation(() => false);
+        // Garante proposta aberta (statut '1') para exibir Assinar/Recusar
+        vi.mocked(useProposals).mockReturnValue({
+            data: [defaultProposal],
+            isRefetching: false,
+            refetch: mockRefetch,
+        } as any);
+    });
+
+    it('o código-fonte não usa window.confirm nem window.alert nativos', () => {
+        expect(proposalSource).not.toMatch(/window\.confirm/);
+        expect(proposalSource).not.toMatch(/window\.alert/);
+        // Feedback via sonner
+        expect(proposalSource).toMatch(/from 'sonner'/);
+    });
+
+    it('assinar proposta fecha com status 2 e mostra toast.success, sem confirm/alert nativos', async () => {
+        vi.mocked(DolibarrService.closeProposal).mockResolvedValue({} as any);
+        const user = userEvent.setup();
+        renderComponent();
+
+        // Abre o detail view
+        await user.click(await screen.findByText('PR2501-0001'));
+
+        // Assinar / Aceitar não é destrutivo → dispara direto (sem Dialog)
+        await user.click(await screen.findByText('Assinar / Aceitar'));
+
+        await waitFor(() => {
+            expect(DolibarrService.closeProposal).toHaveBeenCalledWith(mockConfig, 'prop1', 2);
+            expect(toastMock.success).toHaveBeenCalledWith('Proposta Assinada!');
+            expect(mockRefetch).toHaveBeenCalled();
+        });
+        expect(window.confirm).not.toHaveBeenCalled();
+        expect(window.alert).not.toHaveBeenCalled();
+    });
+
+    it('recusar proposta abre Dialog de confirmação (não executa antes do confirm)', async () => {
+        vi.mocked(DolibarrService.closeProposal).mockResolvedValue({} as any);
+        const user = userEvent.setup();
+        renderComponent();
+
+        await user.click(await screen.findByText('PR2501-0001'));
+
+        // Clica na ação destrutiva "Recusar"
+        await user.click(await screen.findByText('Recusar'));
+
+        // Dialog modal aparece (ação destrutiva usa Dialog)
+        const dialog = await screen.findByRole('dialog');
+        expect(dialog).toBeTruthy();
+
+        // Ainda NÃO chamou closeProposal (precisa confirmar)
+        expect(DolibarrService.closeProposal).not.toHaveBeenCalled();
+
+        // Confirma no Dialog
+        await user.click(within(dialog).getByText('Sim, recusar'));
+
+        await waitFor(() => {
+            expect(DolibarrService.closeProposal).toHaveBeenCalledWith(mockConfig, 'prop1', 3);
+            expect(toastMock.success).toHaveBeenCalledWith('Proposta Recusada.');
+            expect(mockRefetch).toHaveBeenCalled();
+        });
+        expect(window.confirm).not.toHaveBeenCalled();
+        expect(window.alert).not.toHaveBeenCalled();
+    });
+
+    it('cancelar o Dialog de recusa não chama closeProposal nem mostra toast', async () => {
+        vi.mocked(DolibarrService.closeProposal).mockResolvedValue({} as any);
+        const user = userEvent.setup();
+        renderComponent();
+
+        await user.click(await screen.findByText('PR2501-0001'));
+        await user.click(await screen.findByText('Recusar'));
+
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByText('Cancelar'));
+
+        await waitFor(() => {
+            expect(DolibarrService.closeProposal).not.toHaveBeenCalled();
+        });
+        expect(toastMock.success).not.toHaveBeenCalled();
+        expect(window.confirm).not.toHaveBeenCalled();
+        expect(window.alert).not.toHaveBeenCalled();
     });
 });

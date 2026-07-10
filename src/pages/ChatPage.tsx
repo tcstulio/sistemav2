@@ -1,8 +1,8 @@
 
 import React from 'react';
 import { useParams } from 'react-router-dom';
-import { ChatInterface } from '../components/Chat/ChatInterface';
-import { ChatLayout } from '../components/Chat/ChatLayout';
+import { ChatInterface } from '../components/chat/ChatInterface';
+import { ChatLayout } from '../components/chat/ChatLayout';
 import { MessageSquare } from 'lucide-react';
 import { useUsers, useProjects } from '../hooks/dolibarr';
 import { useDolibarr } from '../context/DolibarrContext';

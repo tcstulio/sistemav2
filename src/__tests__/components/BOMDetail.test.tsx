@@ -114,3 +114,83 @@ describe('BOMDetail — Currency standardization (#642)', () => {
         expect(container.textContent).toContain('R$');
     });
 });
+
+describe('BOMDetail — classes Tailwind literais por tema (#1094)', () => {
+    const configWith = (themeColor: string): DolibarrConfig => ({
+        apiUrl: 'https://api.example.com',
+        apiKey: 'key',
+        themeColor: themeColor as DolibarrConfig['themeColor'],
+        darkMode: false,
+        apiLimit: 0,
+    });
+
+    const tabButton = (label: string) =>
+        screen.getByText(label).closest('button') as HTMLElement;
+
+    it('a aba ativa (Visão Geral) usa classes literais da cor de tema (indigo)', () => {
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={configWith('indigo')} onClose={vi.fn()} />
+        );
+
+        const overview = tabButton('Visão Geral');
+        expect(overview.className).toContain('border-indigo-600');
+        expect(overview.className).toContain('text-indigo-600');
+        expect(overview.className).toContain('dark:border-indigo-400');
+        expect(overview.className).toContain('dark:text-indigo-400');
+        // Nenhuma classe interpolada
+        expect(overview.className).not.toContain('${');
+        expect(overview.className).not.toContain('undefined');
+    });
+
+    it('a aba inativa usa classes neutras (sem cor de tema)', () => {
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={configWith('indigo')} onClose={vi.fn()} />
+        );
+
+        const components = tabButton('Componentes & Árvore');
+        expect(components.className).toContain('border-transparent');
+        expect(components.className).not.toContain('border-indigo-600');
+        expect(components.className).not.toContain('text-indigo-600');
+    });
+
+    it('trocar de aba move as classes ativas para "Componentes & Árvore"', () => {
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={configWith('indigo')} onClose={vi.fn()} />
+        );
+
+        const overviewBefore = tabButton('Visão Geral');
+        const componentsBefore = tabButton('Componentes & Árvore');
+        expect(overviewBefore.className).toContain('border-indigo-600');
+        expect(componentsBefore.className).not.toContain('border-indigo-600');
+
+        fireEvent.click(componentsBefore);
+
+        const overviewAfter = tabButton('Visão Geral');
+        const componentsAfter = tabButton('Componentes & Árvore');
+        expect(componentsAfter.className).toContain('border-indigo-600');
+        expect(componentsAfter.className).toContain('text-indigo-600');
+        expect(overviewAfter.className).not.toContain('border-indigo-600');
+    });
+
+    it('aplica a cor correta para tema diferente (emerald)', () => {
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={configWith('emerald')} onClose={vi.fn()} />
+        );
+
+        const overview = tabButton('Visão Geral');
+        expect(overview.className).toContain('border-emerald-600');
+        expect(overview.className).toContain('text-emerald-600');
+        expect(overview.className).toContain('dark:border-emerald-400');
+        expect(overview.className).not.toContain('border-indigo-600');
+    });
+
+    it('cor de tema desconhecida cai no fallback indigo', () => {
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={configWith('cor-inexistente')} onClose={vi.fn()} />
+        );
+
+        const overview = tabButton('Visão Geral');
+        expect(overview.className).toContain('border-indigo-600');
+        expect(overview.className).not.toContain('undefined');
+    });
+});

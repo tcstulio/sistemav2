@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
-import { ChatLayout } from '../../components/Chat/ChatLayout';
+import { ChatLayout } from '../../components/chat/ChatLayout';
 
 vi.mock('react-router-dom', () => ({
     useNavigate: () => vi.fn(),
@@ -8,7 +8,7 @@ vi.mock('react-router-dom', () => ({
     Outlet: () => <div data-testid="router-outlet" />,
 }));
 
-vi.mock('../../components/Chat/ChatSidebar', () => ({
+vi.mock('../../components/chat/ChatSidebar', () => ({
     ChatSidebar: () => <div data-testid="chat-sidebar" />,
 }));
 

@@ -232,6 +232,9 @@ app.use('/api/notifications', notificationRoutes);
 import agentActionRoutes from './routes/agentActionRoutes';
 app.use('/api/agent-actions', agentActionRoutes);
 
+import agentConfigRoutes from './routes/agentConfigRoutes';
+app.use('/api/agent', agentConfigRoutes); // Config IA — system prompt do Marciano (#1005)
+
 import systemEventsRoutes from './routes/systemEventsRoutes';
 app.use('/api/system-events', systemEventsRoutes);
 
@@ -240,84 +243,9 @@ app.use('/api/simulator', simulatorRoutes);
 
 app.use('/api/github', githubRoutes);
 
-// Health Check
-app.get('/health', async (req, res) => {
-    const health: Record<string, any> = {
-        status: 'ok',
-        server: 'CoolGroove Backend',
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
-        memory: {
-            used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-            total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
-            rss: Math.round(process.memoryUsage().rss / 1024 / 1024)
-        },
-        dependencies: {}
-    };
-
-    const checks: Promise<void>[] = [];
-
-    checks.push((async () => {
-        try {
-            const { dolibarrService } = require('./services/dolibarrService');
-            const isValid = await dolibarrService.validateApiKey(config.dolibarrKey);
-            health.dependencies.dolibarr = isValid ? 'ok' : 'error';
-        } catch {
-            health.dependencies.dolibarr = 'unavailable';
-        }
-    })());
-
-    checks.push((async () => {
-        try {
-            const { schedulerService } = require('./services/schedulerService');
-            health.dependencies.scheduler = schedulerService.isRunning ? 'ok' : 'stopped';
-        } catch {
-            health.dependencies.scheduler = 'unavailable';
-        }
-    })());
-
-    checks.push((async () => {
-        try {
-            const { interApiService } = require('./services/interApiService');
-            health.dependencies.banco_inter = interApiService.isReady() ? 'ok' : 'not_configured';
-        } catch {
-            health.dependencies.banco_inter = 'unavailable';
-        }
-    })());
-
-    checks.push((async () => {
-        try {
-            const { itauApiService } = require('./services/itauApiService');
-            health.dependencies.banco_itau = itauApiService.isReady() ? 'ok' : 'not_configured';
-        } catch {
-            health.dependencies.banco_itau = 'unavailable';
-        }
-    })());
-
-    checks.push((async () => {
-        try {
-            const { sessionService } = require('./services/legacy/sessionService');
-            const sessions = sessionService.getAllSessions();
-            if (sessions.length === 0) {
-                health.dependencies.whatsapp = 'not_configured';
-            } else {
-                // 'WORKING' = sessão conectada; qualquer outro estado (SCAN_QR_CODE, STOPPED…) = degradado
-                health.dependencies.whatsapp = sessions.some((s: any) => s.status === 'WORKING') ? 'ok' : 'degraded';
-            }
-        } catch {
-            health.dependencies.whatsapp = 'unavailable';
-        }
-    })());
-
-    await Promise.allSettled(checks);
-
-    const hasErrors = Object.values(health.dependencies).some((v: any) => v === 'error');
-    if (hasErrors) {
-        health.status = 'degraded';
-    }
-
-    res.json(health);
-});
+// Health Check (#1042) — verifica dependências externas via healthCheckService.
+import healthRoutes from './routes/health';
+app.use('/health', healthRoutes);
 
 // ===========================================
 // Global Error Handler (must be last)

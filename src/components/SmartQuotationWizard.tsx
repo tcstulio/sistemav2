@@ -20,6 +20,8 @@ import {
 import { toast } from 'sonner';
 import { useProducts, useSuppliers } from '../hooks/dolibarr';
 import * as CommercialService from '../services/api/commercial';
+import * as InventoryService from '../services/api/inventory';
+import { generateSupplierRequests, ParsedItem, PriceOffer } from '../services/quotationWizard';
 import { logger } from '../utils/logger';
 
 const log = logger.child('SmartQuotationWizard');
@@ -31,39 +33,6 @@ interface WizardStep {
     title: string;
     description: string;
     icon: any;
-}
-
-interface ParsedItem {
-    id: string; // Temporary ID
-    rawText: string;
-    productName: string;
-    qty: number;
-    spec: string;
-    matchedProduct?: any; // If found in Dolibarr
-    isNew: boolean;
-    productDraft?: {
-        ref: string;
-        label: string;
-        description: string;
-        price: number;
-    };
-}
-
-interface PriceOffer {
-    id: string;
-    itemId: string;
-    source: string; // "Amazon", "Kabum", "Manual"
-    supplierName: string;
-    price: number;
-    link: string;
-    selected: boolean;
-    matchedSupplier?: any; // If found in Dolibarr
-    isNewSupplier: boolean;
-    supplierDraft?: {
-        name: string;
-        email?: string;
-        address?: string;
-    };
 }
 
 const STEPS: WizardStep[] = [
@@ -219,61 +188,21 @@ export const SmartQuotationWizard: React.FC = () => {
     };
 
     const handleGenerate = async () => {
+        if (!config) {
+            toast.error("Configuração do Dolibarr não disponível.");
+            return;
+        }
         setLoading(true);
         const toastId = toast.loading("Gerando solicitações...");
         try {
-            // 1. Create New Products
-            for (const item of parsedItems) {
-                if (item.isNew && item.productDraft) {
-                    // Call API to create product (Mocking the call for now or needing correct endpoint)
-                    // We need a createProduct function in commercial.ts or similar
-                    // Assuming products are created or we skip for prototype
-                }
-            }
-
-            // 2. Create New Suppliers & Proposals
-            // Group offers by Supplier Name
-            const offersBySupplier = priceOffers.filter(o => o.selected).reduce((acc, offer) => {
-                if (!acc[offer.supplierName]) acc[offer.supplierName] = [];
-                acc[offer.supplierName].push(offer);
-                return acc;
-            }, {} as Record<string, PriceOffer[]>);
-
-            for (const [supplierName, offers] of Object.entries(offersBySupplier)) {
-                let supplierId = offers[0].matchedSupplier?.id;
-
-                // Create Supplier if new
-                if (!supplierId && offers[0].isNewSupplier && offers[0].supplierDraft) {
-                    // Need createThirdParty API
-                    // For prototype, we'll skip real creation and log
-                    log.debug("Creating supplier", { supplierName });
-                    // Simulate ID
-                    supplierId = "NEW_" + Date.now();
-                }
-
-                if (supplierId) {
-                    // Create Proposal
-                    // Use CommercialService.createSupplierProposal (which we just added?)
-                    // Wait, we added createSupplierProposal in commercial.ts? Yes.
-
-                    /* 
-                    await CommercialService.createSupplierProposal(config, {
-                        socid: supplierId,
-                        date: Date.now() / 1000,
-                        lines: offers.map(o => ({
-                            qty: parsedItems.find(i => i.id === o.itemId)?.qty || 1,
-                            subprice: o.price,
-                            description: `Cotação via Wizard: ${o.source}`
-                        }))
-                    });
-                    */
-                }
-            }
-
-            toast.success("Solicitações geradas com sucesso!", { id: toastId });
-            // Redirect to list
-            // navigate('/supplier_proposals');
-
+            const selectedOffers = priceOffers.filter(o => o.selected);
+            const result = await generateSupplierRequests(config, parsedItems, selectedOffers, {
+                createProduct: InventoryService.createProduct,
+                createThirdParty: CommercialService.createThirdParty,
+                createSupplierProposal: CommercialService.createSupplierProposal,
+                addSupplierProposalLine: CommercialService.addSupplierProposalLine,
+            });
+            toast.success(`${result.proposalsCreated} solicitação(ões) gerada(s) com sucesso!`, { id: toastId });
         } catch (e) {
             log.error("Failed to generate proposals", e);
             toast.error("Erro ao gerar solicitações.", { id: toastId });
