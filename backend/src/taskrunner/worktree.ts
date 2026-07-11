@@ -13,7 +13,7 @@ export interface WorktreeSnapshot {
     round: number;
     sha: string;
     message: string;
-    /** Branch dedicada onde o checkpoint WIP foi criado (isolada do principal). */
+    /** Branch ativo onde o checkpoint WIP foi criado (inalterado pela chamada). */
     branch: string;
 }
 
@@ -69,20 +69,16 @@ function git(cwd: string, args: string[]): string {
 /**
  * Persiste o estado do worktree entre rodadas criando um commit WIP nomeado
  * `wip-round-{n}` (com `--allow-empty`, p/ sempre gerar checkpoint recuperável)
- * numa branch dedicada `wip-round-{n}` — isolada do branch principal.
+ * no branch ativo atual — sem trocar nem criar branch.
  *
- * Antes do commit, faz `git checkout -B wip-round-{n}` a partir do HEAD atual,
- * de forma que o checkpoint NUNCA caia no histórico de `main`/`master`, mesmo
- * se o worktree estiver compartilhando branch com o repo principal. O worktree
- * permanece na branch WIP após o snapshot (semântica de checkpoint: o trabalho
- * continua dali). Retorna o SHA do commit criado.
+ * O commit é feito no branch em que o worktree se encontra, preservando-o
+ * (não há `checkout`). Retorna o SHA do commit criado e o branch ativo.
  */
 export function snapshotWorktree(worktreePath: string, round: number): WorktreeSnapshot {
     const message = `wip-round-${round}`;
-    const branch = `wip-round-${round}`;
-    git(worktreePath, ['checkout', '-B', branch]);
     git(worktreePath, ['add', '-A']);
     git(worktreePath, ['commit', '--allow-empty', '-m', message]);
     const sha = git(worktreePath, ['rev-parse', 'HEAD']);
+    const branch = git(worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD']);
     return { round, sha, message, branch };
 }

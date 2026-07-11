@@ -141,6 +141,7 @@ describe('snapshotWorktree (#1054)', () => {
     it('cria commit WIP wip-round-{n} e retorna o SHA', () => {
         vi.mocked(execFileSync).mockImplementation((_file: any, args: any) => {
             const a = args as string[];
+            if (a[0] === 'rev-parse' && a.includes('--abbrev-ref')) return 'main\n';
             if (a[0] === 'rev-parse') return 'abc123commitsha\n';
             return '';
         });
@@ -150,19 +151,21 @@ describe('snapshotWorktree (#1054)', () => {
         expect(snap.sha).toBe('abc123commitsha');
         expect(snap.message).toBe('wip-round-1');
         expect(snap.round).toBe(1);
+        expect(snap.branch).toBe('main');
 
         const calls = vi.mocked(execFileSync).mock.calls as unknown as [string, string[], { cwd: string }][];
         const argLists = calls.map((c) => c[1]);
         expect(argLists).toContainEqual(['add', '-A']);
         expect(argLists).toContainEqual(['commit', '--allow-empty', '-m', 'wip-round-1']);
         expect(argLists).toContainEqual(['rev-parse', 'HEAD']);
+        expect(argLists).toContainEqual(['rev-parse', '--abbrev-ref', 'HEAD']);
     });
 
     it('todas as chamadas git rodam com cwd = worktreePath', () => {
         vi.mocked(execFileSync).mockReturnValue('sha\n');
         snapshotWorktree('C:/wt/xyz', 2);
         const calls = vi.mocked(execFileSync).mock.calls as unknown as [string, string[], { cwd: string }][];
-        // checkout(-B) + add + commit + rev-parse = 4 chamadas
+        // add + commit + rev-parse HEAD + rev-parse --abbrev-ref HEAD = 4 chamadas
         expect(calls.length).toBe(4);
         expect(calls.every((c) => c[2].cwd === 'C:/wt/xyz')).toBe(true);
     });
@@ -183,10 +186,11 @@ describe('snapshotWorktree (#1054)', () => {
         expect(snap.message).toBe('wip-round-7');
     });
 
-    it('cria branch dedicada wip-round-{n} antes do commit (não polui o branch principal)', () => {
+    it('preserva o branch ativo — não troca nem cria branch (issue #1262 caso 5)', () => {
         vi.mocked(execFileSync).mockImplementation((_file: any, args: any) => {
             const a = args as string[];
-            if (a[0] === 'rev-parse') return 'sha-isolated\n';
+            if (a[0] === 'rev-parse' && a.includes('--abbrev-ref')) return 'feature-branch\n';
+            if (a[0] === 'rev-parse') return 'sha-preserved\n';
             return '';
         });
 
@@ -194,16 +198,19 @@ describe('snapshotWorktree (#1054)', () => {
         const calls = vi.mocked(execFileSync).mock.calls as unknown as [string, string[], { cwd: string }][];
         const argLists = calls.map((c) => c[1]);
 
-        // Cria/muda para branch dedicada wip-round-4 → main permanece intacto.
-        expect(argLists).toContainEqual(['checkout', '-B', 'wip-round-4']);
-        expect(snap.branch).toBe('wip-round-4');
-        expect(snap.sha).toBe('sha-isolated');
+        // NENHUMA chamada de checkout — o branch ativo permanece o mesmo.
+        expect(argLists.some((a) => a[0] === 'checkout')).toBe(false);
 
-        // O commit só pode acontecer DEPOIS do checkout para a branch isolada.
-        const checkoutIdx = argLists.findIndex((a) => a[0] === 'checkout');
+        // O branch reportado vem de rev-parse --abbrev-ref HEAD.
+        expect(argLists).toContainEqual(['rev-parse', '--abbrev-ref', 'HEAD']);
+        expect(snap.branch).toBe('feature-branch');
+        expect(snap.sha).toBe('sha-preserved');
+
+        // rev-parse --abbrev-ref HEAD vem DEPOIS do commit (captura o branch pós-commit).
         const commitIdx = argLists.findIndex((a) => a[0] === 'commit');
-        expect(checkoutIdx).toBeGreaterThanOrEqual(0);
-        expect(commitIdx).toBeGreaterThan(checkoutIdx);
+        const branchIdx = argLists.findIndex((a) => a[0] === 'rev-parse' && a.includes('--abbrev-ref'));
+        expect(commitIdx).toBeGreaterThanOrEqual(0);
+        expect(branchIdx).toBeGreaterThan(commitIdx);
     });
 });
 

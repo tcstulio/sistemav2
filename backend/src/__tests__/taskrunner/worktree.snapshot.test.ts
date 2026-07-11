@@ -26,6 +26,10 @@ describe('snapshotWorktree #1262 — git real', () => {
         git(dir, 'config', 'user.email', 'test@example.com');
         git(dir, 'config', 'user.name', 'Test');
         await writeFile(join(dir, 'hello.txt'), 'world\n');
+        // Commit inicial para que HEAD exista antes de snapshotWorktree —
+        // permite capturar `git rev-parse --abbrev-ref HEAD` antes da chamada.
+        git(dir, 'add', '-A');
+        git(dir, 'commit', '-m', 'init');
     });
 
     afterEach(async () => {
@@ -34,17 +38,36 @@ describe('snapshotWorktree #1262 — git real', () => {
         await rm(dir, { recursive: true, force: true });
     });
 
-    it('#5 cria commit WIP wip-round-1 e o branch ativo permanece consistente', () => {
+    it('#5 cria commit WIP wip-round-1 e o branch ativo permanece o mesmo após a chamada', () => {
+        // Captura o branch ANTES da chamada (issue #1262 caso 5).
+        const before = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
+
         const snap = snapshotWorktree(dir, 1);
 
         // Existe commit com mensagem wip-round-1.
         const log = git(dir, 'log', '--oneline');
         expect(log).toContain('wip-round-1');
 
-        // O branch ativo (git rev-parse --abbrev-ref HEAD) é o mesmo reportado
-        // por snapshotWorktree — o worktree permanece na branch WIP após o snapshot.
-        const branch = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
-        expect(branch).toBe(snap.branch);
-        expect(branch).toBe('wip-round-1');
+        // Captura o branch DEPOIS da chamada.
+        const after = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
+
+        // O branch ativo permanece o mesmo antes e depois (requisito literal do issue).
+        expect(after).toBe(before);
+
+        // E é consistente com o que snapshotWorktree reporta.
+        expect(after).toBe(snap.branch);
+    });
+
+    it('#5b snapshot com round diferente ainda preserva o branch ativo', () => {
+        const before = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
+
+        const snap = snapshotWorktree(dir, 42);
+
+        const log = git(dir, 'log', '--oneline');
+        expect(log).toContain('wip-round-42');
+
+        const after = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
+        expect(after).toBe(before);
+        expect(snap.branch).toBe(before);
     });
 });
