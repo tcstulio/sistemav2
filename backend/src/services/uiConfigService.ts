@@ -579,6 +579,14 @@ export class UiConfigService {
         return { ...this.data };
     }
 
+    getTicketStaleHours(): number {
+        return this.data.notificationPolicy.staleHours;
+    }
+
+    getInvoiceDueHorizonDays(): number {
+        return this.data.notificationPolicy.invoiceDueHorizonDays;
+    }
+
     /** Aplica apenas campos válidos (sanitiza tamanho e valida a cor). Retorna a config final. */
     update(partial: UiConfigUpdate): UiConfig {
         const next: UiConfig = { ...this.data };

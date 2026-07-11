@@ -18,6 +18,8 @@ const mockRunSalesForecastAnalysis = vi.hoisted(() => vi.fn());
 // #1204 — mock do uiConfigService para controlar o kill-switch alertCronEnabled.
 const mockUiConfigService = vi.hoisted(() => ({
     get: vi.fn(() => ({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: true } })),
+    getTicketStaleHours: vi.fn(() => 24),
+    getInvoiceDueHorizonDays: vi.fn(() => 3),
 }));
 
 vi.mock('../../utils/logger', () => ({
@@ -252,6 +254,126 @@ describe('alertCronService — financial analysis automation (issue #491)', () =
             mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: true } });
             await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
             expect(spyOverdue).toHaveBeenCalled();
+        });
+    });
+});
+
+// #1292 — ticketStaleHours e invoiceDueHorizonDays lidos do UiConfig a cada tick (sem restart).
+describe('alertCronService — limiares do UiConfig (#1292)', () => {
+    let alertCronService: any;
+    let dolibarrService: any;
+
+    beforeEach(async () => {
+        vi.clearAllMocks();
+        vi.resetModules();
+        vi.useFakeTimers();
+        vi.clearAllTimers();
+        vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));
+
+        const mod = await import('../../services/alertCronService');
+        alertCronService = mod.alertCronService;
+        const dol = await import('../../services/dolibarr');
+        dolibarrService = dol.dolibarrService;
+
+        mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: true } });
+        mockUiConfigService.getTicketStaleHours.mockReturnValue(24);
+        mockUiConfigService.getInvoiceDueHorizonDays.mockReturnValue(3);
+    });
+
+    afterEach(() => {
+        try { alertCronService.stop(); } catch { /* noop */ }
+        vi.useRealTimers();
+    });
+
+    describe('checkStaleTickets — ticketStaleHours', () => {
+        const buildStaleTicket = (ageHours: number) => {
+            const nowSec = Math.floor(Date.now() / 1000);
+            return {
+                id: 'T100', rowid: 'T100', track_id: 'TK100', ref: 'TK100',
+                subject: 'Ticket parado',
+                fk_statut: '0',
+                datec: nowSec - ageHours * 3600,
+            };
+        };
+
+        it('ticket com datec = now-25h É sinalizado como stale quando ticketStaleHours=24', async () => {
+            dolibarrService.listTickets = vi.fn().mockResolvedValue([buildStaleTicket(25)]);
+            const notifySpy = vi.spyOn(alertCronService, 'notify');
+
+            await alertCronService.checkStaleTickets();
+
+            expect(notifySpy).toHaveBeenCalledTimes(1);
+            expect(notifySpy.mock.calls[0][1]).toContain('+24h');
+            expect(mockUiConfigService.getTicketStaleHours).toHaveBeenCalled();
+        });
+
+        it('ticket com datec = now-25h NÃO é sinalizado como stale quando ticketStaleHours=48', async () => {
+            dolibarrService.listTickets = vi.fn().mockResolvedValue([buildStaleTicket(25)]);
+            mockUiConfigService.getTicketStaleHours.mockReturnValue(48);
+            const notifySpy = vi.spyOn(alertCronService, 'notify');
+
+            await alertCronService.checkStaleTickets();
+
+            expect(notifySpy).not.toHaveBeenCalled();
+        });
+
+        it('ticket com exatamente staleHours NÃO é sinalizado (limiar exclusivo: > staleHours)', async () => {
+            dolibarrService.listTickets = vi.fn().mockResolvedValue([buildStaleTicket(24)]);
+            const notifySpy = vi.spyOn(alertCronService, 'notify');
+
+            await alertCronService.checkStaleTickets();
+
+            expect(notifySpy).not.toHaveBeenCalled();
+        });
+
+        it('alterar ticketStaleHours na UI vale no próximo ciclo (sem restart)', async () => {
+            const ticket = buildStaleTicket(25);
+            const notifySpy = vi.spyOn(alertCronService, 'notify');
+
+            // Ciclo 1: staleHours=48 → 25h não é stale → não alerta
+            mockUiConfigService.getTicketStaleHours.mockReturnValue(48);
+            dolibarrService.listTickets = vi.fn().mockResolvedValue([ticket]);
+            await alertCronService.checkStaleTickets();
+            expect(notifySpy).not.toHaveBeenCalled();
+
+            // Ciclo 2: admin reduz staleHours para 24 → mesmo ticket agora é sinalizado
+            mockUiConfigService.getTicketStaleHours.mockReturnValue(24);
+            dolibarrService.listTickets = vi.fn().mockResolvedValue([ticket]);
+            await alertCronService.checkStaleTickets();
+            expect(notifySpy).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('checkUpcomingInvoices — invoiceDueHorizonDays', () => {
+        const buildInvoice = (offsetDays: number) => {
+            const nowSec = Math.floor(Date.now() / 1000);
+            return {
+                id: 'INV1', rowid: 'INV1', ref: 'INV-001',
+                total_ttc: '250.00',
+                date_limite: nowSec + offsetDays * 86400,
+            };
+        };
+
+        it('fatura com vencimento em hoje+2d É sinalizada quando invoiceDueHorizonDays=3', async () => {
+            dolibarrService.listInvoices = vi.fn().mockResolvedValue([buildInvoice(2)]);
+            mockUiConfigService.getInvoiceDueHorizonDays.mockReturnValue(3);
+            const notifySpy = vi.spyOn(alertCronService, 'notify');
+
+            await alertCronService.checkUpcomingInvoices();
+
+            expect(notifySpy).toHaveBeenCalledTimes(1);
+            expect(notifySpy.mock.calls[0][1]).toContain('3 dias');
+            expect(mockUiConfigService.getInvoiceDueHorizonDays).toHaveBeenCalled();
+        });
+
+        it('fatura com vencimento em hoje+2d NÃO é sinalizada quando invoiceDueHorizonDays=1', async () => {
+            dolibarrService.listInvoices = vi.fn().mockResolvedValue([buildInvoice(2)]);
+            mockUiConfigService.getInvoiceDueHorizonDays.mockReturnValue(1);
+            const notifySpy = vi.spyOn(alertCronService, 'notify');
+
+            await alertCronService.checkUpcomingInvoices();
+
+            expect(notifySpy).not.toHaveBeenCalled();
         });
     });
 });
