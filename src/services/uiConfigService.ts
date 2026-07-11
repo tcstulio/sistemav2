@@ -42,6 +42,32 @@ export interface FeatureSwitchesConfig {
     crmContextInjection: boolean; // injeta dados do cliente no LLM (privacidade)
 }
 
+// ---- Política de notificações (#1293): cadência de cobrança, quiet-hours por canal, alertas ----
+export type QuietHoursChannel = 'whatsapp' | 'email' | 'in-app';
+
+export interface QuietHoursRule {
+    enabled: boolean;
+    startHHmm: string;   // "HH:mm" (24h)
+    endHHmm: string;     // "HH:mm" (24h); endHHmm < startHHmm = janela que cruza a meia-noite
+    weekdaysOnly: boolean;
+}
+
+export type QuietHoursConfig = Record<QuietHoursChannel, QuietHoursRule>;
+
+export interface CobrancaCadenceConfig {
+    reminderDaysBefore: number;
+    recobrancaIntervalDays: number;
+    escalateAfterCobrancas: number;
+    prazoDeAceiteDays: number;
+}
+
+export interface NotificationPolicyConfig {
+    cobrancaCadence: CobrancaCadenceConfig;
+    quietHours: QuietHoursConfig;
+    staleHours: number;            // ticket stale threshold (horas)
+    invoiceDueHorizonDays: number; // fatura a vencer (dias)
+}
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
@@ -56,6 +82,7 @@ export interface UiConfig {
     taskAutomation?: TaskAutomationConfig;
     automationSwitches?: AutomationSwitchesConfig;
     featureSwitches?: FeatureSwitchesConfig;
+    notificationPolicy?: NotificationPolicyConfig;
     version?: number; // concorrência otimista (Central de Permissões)
     appAccessGroupId?: string; // grupo Dolibarr usado p/ "Habilitar acesso ao app" (carrega o direito 342)
 }

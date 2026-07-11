@@ -102,6 +102,38 @@ const UpdateSchema = z.object({
         financialCommands: z.boolean().optional(),
         crmContextInjection: z.boolean().optional(),
     }).optional(),
+    // #1293: política de notificações (cadência/quiet-hours/alertas). Sanitização final (clamp de
+    // faixas, validação de HH:mm) fica no service; o Zod só declara a forma p/ os campos sobreviverem.
+    notificationPolicy: z.object({
+        cobrancaCadence: z.object({
+            reminderDaysBefore: z.number().optional(),
+            recobrancaIntervalDays: z.number().optional(),
+            escalateAfterCobrancas: z.number().optional(),
+            prazoDeAceiteDays: z.number().optional(),
+        }).optional(),
+        quietHours: z.object({
+            whatsapp: z.object({
+                enabled: z.boolean().optional(),
+                startHHmm: z.string().optional(),
+                endHHmm: z.string().optional(),
+                weekdaysOnly: z.boolean().optional(),
+            }).optional(),
+            email: z.object({
+                enabled: z.boolean().optional(),
+                startHHmm: z.string().optional(),
+                endHHmm: z.string().optional(),
+                weekdaysOnly: z.boolean().optional(),
+            }).optional(),
+            'in-app': z.object({
+                enabled: z.boolean().optional(),
+                startHHmm: z.string().optional(),
+                endHHmm: z.string().optional(),
+                weekdaysOnly: z.boolean().optional(),
+            }).optional(),
+        }).optional(),
+        staleHours: z.number().optional(),
+        invoiceDueHorizonDays: z.number().optional(),
+    }).optional(),
 });
 
 // Leitura: qualquer usuário logado (p/ renderizar branding/tema da org).
