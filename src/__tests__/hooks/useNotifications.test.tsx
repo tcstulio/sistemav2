@@ -246,25 +246,25 @@ describe('useNotificationActions', () => {
         const { result } = renderHook(() => useNotificationActions());
         const ok = await result.current('markRead', '42');
         expect(ok).toBe(true);
-        expect(fetchMock).toHaveBeenCalledWith('/api/notifications/42/read', { method: 'PUT' });
+        expect(fetchMock).toHaveBeenCalledWith('/api/notifications/42/read', { method: 'PUT', credentials: 'include' });
     });
 
     it('markAllRead chama PUT /api/notifications/read-all', async () => {
         const { result } = renderHook(() => useNotificationActions());
         await result.current('markAllRead');
-        expect(fetchMock).toHaveBeenCalledWith('/api/notifications/read-all', { method: 'PUT' });
+        expect(fetchMock).toHaveBeenCalledWith('/api/notifications/read-all', { method: 'PUT', credentials: 'include' });
     });
 
     it('dismiss chama DELETE /api/notifications/:id', async () => {
         const { result } = renderHook(() => useNotificationActions());
         await result.current('dismiss', '7');
-        expect(fetchMock).toHaveBeenCalledWith('/api/notifications/7', { method: 'DELETE' });
+        expect(fetchMock).toHaveBeenCalledWith('/api/notifications/7', { method: 'DELETE', credentials: 'include' });
     });
 
     it('clearAll chama DELETE /api/notifications', async () => {
         const { result } = renderHook(() => useNotificationActions());
         await result.current('clearAll');
-        expect(fetchMock).toHaveBeenCalledWith('/api/notifications', { method: 'DELETE' });
+        expect(fetchMock).toHaveBeenCalledWith('/api/notifications', { method: 'DELETE', credentials: 'include' });
     });
 
     it('retorna false quando o servidor responde não-ok', async () => {

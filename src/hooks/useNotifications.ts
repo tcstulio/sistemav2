@@ -210,14 +210,18 @@ export const useNotificationActions = () => {
     return useCallback(async (action: 'markRead' | 'markAllRead' | 'clearAll' | 'dismiss', id?: string): Promise<boolean> => {
         try {
             let res: Response | undefined;
+            // #1315: credentials:'include' em TODAS as ações (PUT/DELETE), igual ao GET do feed.
+            // Sem isso, via túnel Cloudflare (cross-origin) o cookie dolapikey não é enviado e a
+            // rota requireDolibarrLogin devolve 401 — "marcar como lida" parecia não funcionar.
+            const auth = { credentials: 'include' as RequestCredentials };
             if (action === 'markRead' && id) {
-                res = await fetch(`${API}/api/notifications/${id}/read`, { method: 'PUT' });
+                res = await fetch(`${API}/api/notifications/${id}/read`, { method: 'PUT', ...auth });
             } else if (action === 'markAllRead') {
-                res = await fetch(`${API}/api/notifications/read-all`, { method: 'PUT' });
+                res = await fetch(`${API}/api/notifications/read-all`, { method: 'PUT', ...auth });
             } else if (action === 'clearAll') {
-                res = await fetch(`${API}/api/notifications`, { method: 'DELETE' });
+                res = await fetch(`${API}/api/notifications`, { method: 'DELETE', ...auth });
             } else if (action === 'dismiss' && id) {
-                res = await fetch(`${API}/api/notifications/${id}`, { method: 'DELETE' });
+                res = await fetch(`${API}/api/notifications/${id}`, { method: 'DELETE', ...auth });
             }
             if (res && !res.ok) {
                 log.error(`Notification action ${action} falhou: HTTP ${res.status}`);
