@@ -85,20 +85,27 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
         }
     }
 
-    async listInvoices(params: { status?: string, limit?: number } = {}): Promise<any[]> {
+    async listInvoices(params: { status?: string, search?: string, limit?: number } = {}): Promise<any[]> {
         try {
             const headers = this.getHeaders();
             const url = `${this.baseUrl}invoices`;
-            let sqlfilters = '';
+            const sqlfiltersParts: string[] = [];
 
-            if (params.status === 'unpaid') sqlfilters = '(t.paye:=:0) and (t.fk_statut:>:0)';
-            if (params.status === 'paid') sqlfilters = '(t.paye:=:1)';
-            if (params.status === 'draft') sqlfilters = '(t.fk_statut:=:0)';
+            if (params.status === 'unpaid') sqlfiltersParts.push('(t.paye:=:0) and (t.fk_statut:>:0)');
+            if (params.status === 'paid') sqlfiltersParts.push('(t.paye:=:1)');
+            if (params.status === 'draft') sqlfiltersParts.push('(t.fk_statut:=:0)');
+
+            // #1340: sem este filtro, uma busca por texto (ex.: ref de proposta) caía num LISTAGEM
+            // GLOBAL das faturas mais recentes — a tool `search` do agente as rotulava como
+            // "resultado do termo", enganando o modelo. Busca por ref/ref_client (como listOrders).
+            if (params.search) {
+                sqlfiltersParts.push(`((${buildLikeFilter('t.ref', params.search)}) or (${buildLikeFilter('t.ref_client', params.search)}))`);
+            }
 
             const response = await axios.get(url, {
                 headers,
                 params: {
-                    sqlfilters: sqlfilters || undefined,
+                    sqlfilters: sqlfiltersParts.length > 0 ? sqlfiltersParts.join(' and ') : undefined,
                     limit: params.limit || 5,
                     sortfield: 't.datef',
                     sortorder: 'DESC'
