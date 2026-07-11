@@ -172,6 +172,11 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const bootstrapAttemptedRef = useRef(false);
+  // #1153: cacheia a Promise de criação de sessão em andamento. Previne race
+  // condition onde dois renders quase simultâneos (StrictMode em dev, cliques
+  // rápidos no botão 'nova conversa') disparam createChatSession() em paralelo
+  // e criam 2 sessões para o mesmo usuário.
+  const sessionCreationRef = useRef<Promise<string | null> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
@@ -235,6 +240,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   };
 
   const switchSession = async (sessionId: string) => {
+    // #1153: descarta criação em andamento ao trocar para sessão existente.
+    sessionCreationRef.current = null;
     const session = await AiService.getChatSession(sessionId);
     if (session?.messages?.length) {
       const restored: ChatMessage[] = session.messages
@@ -250,6 +257,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   };
 
   const startNewSession = () => {
+    // #1153: descarta Promise de criação em andamento — não reaproveitar ref stale.
+    sessionCreationRef.current = null;
     setMessages([WELCOME_MESSAGE]);
     setCurrentSessionId(null);
     safeStorage.removeItem(VA_SESSION_ID_KEY);
@@ -273,6 +282,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     if (currentSessionId) {
       await AiService.deleteChatSession(currentSessionId);
     }
+    // #1153: descarta Promise de criação em andamento.
+    sessionCreationRef.current = null;
     setMessages([WELCOME_MESSAGE]);
     safeStorage.removeItem(VA_HISTORY_KEY);
     safeStorage.removeItem(VA_SESSION_ID_KEY);
@@ -358,6 +369,30 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     reader.readAsDataURL(file);
   };
 
+  // #1153: Garante uma ÚNICA sessão em criações concorrentes. Se já existe
+  // (state), retorna imediatamente. Se há criação em andamento (ref), todas as
+  // chamadas aguardam a mesma Promise — createChatSession() roda 1x só. Após
+  // resolver, copia o sessionId para o state e limpa a ref.
+  const ensureSessionId = (firstMessage?: string): Promise<string | null> => {
+    if (currentSessionId) return Promise.resolve(currentSessionId);
+    sessionCreationRef.current ??= (async () => {
+      try {
+        const session = await AiService.createChatSession(firstMessage);
+        const sid = session?.id ?? null;
+        if (sid) {
+          setCurrentSessionId(sid);
+          safeStorage.setItem(VA_SESSION_ID_KEY, sid);
+        }
+        return sid;
+      } catch {
+        return null;
+      } finally {
+        sessionCreationRef.current = null;
+      }
+    })();
+    return sessionCreationRef.current;
+  };
+
   // Sessão automática (#300): reúne o resumo do dia via agente e exibe como abertura.
   const handleBootstrap = async () => {
     // Config do admin (#300 item 3): se desligada, mantém a saudação estática.
@@ -366,15 +401,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
 
     setIsLoading(true);
     try {
-      let sid = currentSessionId;
-      if (!sid) {
-        const session = await AiService.createChatSession('Resumo inicial');
-        if (session) {
-          sid = session.id;
-          setCurrentSessionId(sid);
-          safeStorage.setItem(VA_SESSION_ID_KEY, sid);
-        }
-      }
+      const sid = await ensureSessionId('Resumo inicial');
       const pageContext = formatViewContext(location.pathname, location.search || undefined);
       const result = await AiService.chatWithData(buildBootstrapPrompt(cfg), [], undefined, sid || undefined, pageContext);
       if ((result as any)?.contextWindow) setContextWindow((result as any).contextWindow);
@@ -438,15 +465,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         pdfContext = `\n\n[CONTEXTO DO PDF "${userPdf.name}"]: ${pdfAnalysis}`;
       }
 
-      let sid = currentSessionId;
-      if (!sid) {
-        const session = await AiService.createChatSession(userMsg);
-        if (session) {
-          sid = session.id;
-          setCurrentSessionId(sid);
-          safeStorage.setItem(VA_SESSION_ID_KEY, sid);
-        }
-      }
+      const sid = await ensureSessionId(userMsg);
 
       const pageContext = `${formatViewContext(location.pathname, location.search || undefined)}\n${formatErrorsForAgent()}${pdfContext}`;
 
