@@ -160,4 +160,51 @@ describe('ItauSettingsTab — salvamento real de credenciais (#988)', () => {
         const { container } = renderWithProvider(<ItauSettingsTab />);
         expect(container.textContent?.toLowerCase()).not.toContain('.env');
     });
+
+    it('faz upload de certificados mTLS (.crt + .key) via API real', async () => {
+        itauHook.uploadCertificates.mockResolvedValue({ uploaded: ['itau.crt', 'itau.key'] });
+        const user = userEvent.setup();
+        const { container } = renderWithProvider(<ItauSettingsTab />);
+
+        const fileInputs = container.querySelectorAll('input[type="file"]');
+        const certInput = fileInputs[0] as HTMLInputElement;
+        const keyInput = fileInputs[1] as HTMLInputElement;
+
+        const certFile = new File(['cert-content'], 'itau.crt', { type: 'application/x-x509-ca-cert' });
+        const keyFile = new File(['key-content'], 'itau.key', { type: 'application/octet-stream' });
+
+        await user.upload(certInput, certFile);
+        await user.upload(keyInput, keyFile);
+        await user.click(screen.getByRole('button', { name: /Enviar Certificados/i }));
+
+        await waitFor(() => {
+            expect(itauHook.uploadCertificates).toHaveBeenCalledWith([certFile, keyFile]);
+        });
+        expect(screen.getByText(/Certificados enviados/)).toBeInTheDocument();
+    });
+
+    it('salva credenciais com contaCorrente e agencia (Itaú)', async () => {
+        const user = userEvent.setup();
+        renderWithProvider(<ItauSettingsTab />);
+
+        await user.type(screen.getByPlaceholderText('Seu Client ID do Itaú'), 'cid-456');
+        await user.type(screen.getByPlaceholderText('Seu Client Secret'), 'secret-789');
+        await user.type(screen.getByPlaceholderText('0000'), '0001');
+        await user.type(screen.getByPlaceholderText('00000-0'), '12345-6');
+        await user.click(screen.getByRole('button', { name: /Salvar Credenciais/i }));
+
+        await waitFor(() => {
+            expect(bankingService.saveBankingCredentials).toHaveBeenCalledWith(
+                'itau',
+                expect.objectContaining({
+                    clientId: 'cid-456',
+                    clientSecret: 'secret-789',
+                    contaCorrente: '12345-6',
+                    agencia: '0001',
+                    environment: 'sandbox',
+                }),
+            );
+        });
+        expect(toastMock.success).toHaveBeenCalled();
+    });
 });

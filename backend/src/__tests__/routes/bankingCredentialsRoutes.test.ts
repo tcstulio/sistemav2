@@ -167,4 +167,75 @@ describe('bankingCredentialsRoutes (#988)', () => {
             expect(mockStore.clearCredentials).not.toHaveBeenCalled();
         });
     });
+
+    // ── Rotas per-bank (issue #988 spec: POST /banking/itau/credentials etc.) ───
+
+    describe('POST /api/banking/itau/credentials (per-bank)', () => {
+        it('salva credenciais Itaú sem bank no body (bank vem da URL)', async () => {
+            const res = await request(app)
+                .post('/api/banking/itau/credentials')
+                .send({ clientId: 'itau-cid', clientSecret: 'itau-sec', environment: 'production', contaCorrente: '12345', agencia: '0001' });
+
+            expect(res.status).toBe(200);
+            expect(mockStore.setCredentials).toHaveBeenCalledWith(
+                'itau',
+                expect.objectContaining({ clientId: 'itau-cid', clientSecret: 'itau-sec', sandbox: false, contaCorrente: '12345', agencia: '0001' }),
+                undefined,
+            );
+            expect(mockItau.reloadCredentials).toHaveBeenCalled();
+        });
+    });
+
+    describe('POST /api/banking/inter/credentials (per-bank)', () => {
+        it('salva credenciais Inter sem bank no body (bank vem da URL)', async () => {
+            const res = await request(app)
+                .post('/api/banking/inter/credentials')
+                .send({ clientId: 'inter-cid', clientSecret: 'inter-sec', environment: 'sandbox' });
+
+            expect(res.status).toBe(200);
+            expect(mockStore.setCredentials).toHaveBeenCalledWith(
+                'inter',
+                expect.objectContaining({ clientId: 'inter-cid', clientSecret: 'inter-sec', sandbox: true }),
+                undefined,
+            );
+            expect(mockInter.reloadCredentials).toHaveBeenCalled();
+        });
+    });
+
+    describe('GET /api/banking/:bank/credentials/status (per-bank)', () => {
+        it('retorna status do Itaú via rota per-bank', async () => {
+            mockStore.getStatus.mockReturnValue({ configured: true, hasClientId: true, hasClientSecret: true, environment: 'production' });
+
+            const res = await request(app).get('/api/banking/itau/credentials/status');
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({ configured: true });
+            expect(mockStore.getStatus).toHaveBeenCalledWith('itau');
+        });
+
+        it('retorna status do Inter via rota per-bank', async () => {
+            const res = await request(app).get('/api/banking/inter/credentials/status');
+
+            expect(res.status).toBe(200);
+            expect(mockStore.getStatus).toHaveBeenCalledWith('inter');
+        });
+    });
+
+    describe('DELETE /api/banking/:bank/credentials (per-bank)', () => {
+        it('remove credenciais Itaú via rota per-bank e recarrega o service', async () => {
+            const res = await request(app).delete('/api/banking/itau/credentials');
+
+            expect(res.status).toBe(200);
+            expect(mockStore.clearCredentials).toHaveBeenCalledWith('itau');
+            expect(mockItau.reloadCredentials).toHaveBeenCalled();
+        });
+
+        it('remove credenciais Inter via rota per-bank e recarrega o service', async () => {
+            const res = await request(app).delete('/api/banking/inter/credentials');
+
+            expect(res.status).toBe(200);
+            expect(mockStore.clearCredentials).toHaveBeenCalledWith('inter');
+            expect(mockInter.reloadCredentials).toHaveBeenCalled();
+        });
+    });
 });
