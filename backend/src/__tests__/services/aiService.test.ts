@@ -1298,3 +1298,71 @@ describe('GoogleProvider.generateReply (#1002) — system prompt do Marciano no 
         expect(promptText).not.toContain('agente de inteligência artificial');
     });
 });
+
+describe('LocalProvider.generateReply (#1332) — trava anti-alucinação de escrita', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        aiService.setConfig('local', 'http://localhost:11434/v1', undefined, 'llama3');
+    });
+
+    it('afirmação de sucesso de ESCRITA sem tool no turno → retry; modelo corrige e a correção é entregue', async () => {
+        let call = 0;
+        (axios.post as any).mockImplementation(async () => {
+            call++;
+            if (call === 1) {
+                // O caso real do incidente: afirma validação sem ter chamado NADA.
+                return { data: { choices: [{ message: { content: 'Proposta 303 validada com sucesso. ✅ Status atualizado para Validada.' } }] } };
+            }
+            // Após a instrução dura, o modelo se corrige honestamente.
+            return { data: { choices: [{ message: { content: 'Na verdade eu NÃO realizei a validação — preciso chamar a ferramenta. Deseja que eu prossiga?' } }] } };
+        });
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'valide a proposta 303' } as any], 'ctx');
+
+        expect(result.text).toContain('NÃO realizei');
+        // A instrução dura foi injetada no prompt da 2ª chamada.
+        const prompt2 = (axios.post as any).mock.calls[1][1].messages[0].content;
+        expect(prompt2).toContain('VIOLAÇÃO DETECTADA');
+    });
+
+    it('modelo INSISTE na alucinação → entrega com disclaimer prefixado (fail-safe honesto)', async () => {
+        (axios.post as any).mockImplementation(async () => ({
+            data: { choices: [{ message: { content: 'Pedido criado com sucesso! ✅' } }] },
+        }));
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'crie o pedido' } as any], 'ctx');
+
+        expect(result.text).toContain('nenhuma ação foi executada no sistema');
+        expect(result.text).toContain('Pedido criado com sucesso');
+    });
+
+    it('tool de LEITURA no turno NÃO legitima a afirmação de escrita (list_* não conta como "fez")', async () => {
+        (dolibarrService.listProposals as any).mockResolvedValue([{ id: '303', ref: 'PROV303' }]);
+        let call = 0;
+        (axios.post as any).mockImplementation(async () => {
+            call++;
+            if (call === 1) return { data: { choices: [{ message: { content: '{"tool":"list_proposals","args":{"search":"303"}}' } }] } };
+            if (call === 2) return { data: { choices: [{ message: { content: 'Proposta 303 validada com sucesso ✅' } }] } };
+            return { data: { choices: [{ message: { content: 'Não validei a proposta — apenas a encontrei. Confirma que devo validar?' } }] } };
+        });
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'valide a 303' } as any], 'ctx');
+
+        expect(result.text).toContain('apenas a encontrei');
+    });
+
+    it('resposta normal sem afirmação de escrita passa direto (zero regressão)', async () => {
+        (axios.post as any).mockImplementation(async () => ({
+            data: { choices: [{ message: { content: 'Encontrei 3 propostas abertas do cliente X.' } }] },
+        }));
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'lista propostas' } as any], 'ctx');
+
+        expect(result.text).toBe('Encontrei 3 propostas abertas do cliente X.');
+        expect((axios.post as any).mock.calls.length).toBe(1);
+    });
+});

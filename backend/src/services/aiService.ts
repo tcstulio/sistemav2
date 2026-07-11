@@ -7,8 +7,11 @@ import path from 'path';
 import { ScraperService } from './scraperService';
 import { logger } from '../utils/logger';
 import { isValidExternalUrl } from '../utils/urlValidation';
-import { TOOLS_PROMPT, executeTool } from './agentTools';
+import { TOOLS_PROMPT, executeTool, getToolContext } from './agentTools';
 import { agentConfigService } from './agentConfigService';
+import { classifyTool } from '../config/actionCatalog';
+import { claimsWriteSuccess, WRITE_CLAIM_RETRY_INSTRUCTION, WRITE_CLAIM_DISCLAIMER } from '../utils/writeClaimGuard';
+import { agentActivityService } from './agentActivityService';
 // #1316: system prompt do Marciano centralizado em config/agentSystemPrompt.ts.
 import { MARCIANO_IDENTITY_PROMPT } from '../config/agentSystemPrompt';
 export { MARCIANO_IDENTITY_PROMPT };
@@ -1142,12 +1145,36 @@ export class LocalProvider implements AIProvider {
         const contextCharBudget = Math.floor(contextBudgetTokens * 0.5 * 4);
         const seenToolCalls = new Set<string>();
         let nudgedCount = 0; // #957/#955: gate de conclusão conta quantos nudges já aplicou.
+        // #1332: trava anti-alucinação de escrita — rastreia se ALGUMA tool MUTANTE (classifyTool
+        // ≠ read) executou COM SUCESSO neste turno, e quantos retries a trava já usou.
+        let mutantToolRan = false;
+        let writeClaimRetries = 0;
         // #959: modelos de raciocínio (MiniMax M3, GLM) vazam <think>...</think>/<reasoning> no
         // content. Remove esses blocos SÓ para exibição/narração — a extração de tool-call usa o cru.
         const stripReasoning = (t?: string) => (t || '')
             .replace(/<think>[\s\S]*?<\/think>/gi, '')
             .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
             .trim();
+        // #1332: aplica a trava numa resposta final candidata. Retorna a instrução de retry
+        // (para injetar e continuar o loop) ou o texto liberado/prefixado para entrega.
+        const guardWriteClaim = (text: string): { deliver?: string; retry?: boolean } => {
+            if (mutantToolRan || !claimsWriteSuccess(text)) return { deliver: text };
+            if (writeClaimRetries < 1) {
+                writeClaimRetries++;
+                log.warn('#1332: resposta afirma sucesso de ESCRITA sem tool mutante no turno — retry com instrução dura.');
+                return { retry: true };
+            }
+            log.error('#1332: modelo INSISTIU no sucesso alucinado — entregando com disclaimer.');
+            try {
+                const ctx = getToolContext();
+                agentActivityService.record({
+                    userId: ctx.userId || 'desconhecido', userName: ctx.userLogin || 'desconhecido',
+                    tool: 'write_claim_guard', args: { retries: writeClaimRetries },
+                    result: text.slice(0, 200), isError: true, requestedVia: 'chat',
+                });
+            } catch { /* trilha é best-effort */ }
+            return { deliver: WRITE_CLAIM_DISCLAIMER + text };
+        };
         const accUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
         // Track which model actually responded and whether fallback was used.
         let lastModelUsed: string = options?.model || this.modelName;
@@ -1243,6 +1270,11 @@ export class LocalProvider implements AIProvider {
                             if (String(tc.tool).startsWith('prepare_')) {
                                 return { text: toolResult, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                             }
+                            // #1332: tool MUTANTE executada com sucesso legitima afirmações de escrita.
+                            // (deeplink de confirmação HITL NÃO conta: nada foi executado ainda.)
+                            if (classifyTool(tc.tool).reversibility !== 'read' && !/confirm-action\?token=/.test(String(toolResult))) {
+                                mutantToolRan = true;
+                            }
                             currentContext += `\n\n[TOOL RESULT ${tc.tool}]: ${toolResult}`;
                             // #956: poda de contexto — mantém o currentContext dentro do orçamento
                             // (TOOL RESULTs antigos viram sumário; os recentes ficam inteiros).
@@ -1296,7 +1328,15 @@ export class LocalProvider implements AIProvider {
                     break;
                 }
 
-                return { text: reply, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
+                // #1332: trava anti-alucinação — afirmação de escrita sem tool mutante no turno
+                // não é entregue: 1 retry com instrução dura; persistindo, disclaimer prefixado.
+                const guarded = guardWriteClaim(reply);
+                if (guarded.retry) {
+                    currentContext += `\n\n${WRITE_CLAIM_RETRY_INSTRUCTION}`;
+                    iterations++;
+                    continue;
+                }
+                return { text: guarded.deliver!, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
 
             } catch (error: any) {
                 const detail = error?.response
@@ -1329,7 +1369,15 @@ export class LocalProvider implements AIProvider {
             // #955: se a síntese vier como tool-calls cruas (o M3 às vezes ignora o "sem
             // ferramentas"), não despeja JSON no usuário → cai na mensagem de fallback abaixo.
             if (finalText && extractToolCalls(finalText).length) finalText = '';
-            if (finalText) return { text: finalText, usage: accUsage, contextWindow: ctxWindow, model: finalModel, fellBack: finalFellBack };
+            if (finalText) {
+                // #1332: a síntese NÃO executa ferramentas — se ela afirmar escrita sem tool
+                // mutante no turno, prefixa o disclaimer direto (não há retry aqui).
+                if (!mutantToolRan && claimsWriteSuccess(finalText)) {
+                    log.error('#1332: síntese final afirma sucesso de escrita sem tool mutante — disclaimer prefixado.');
+                    finalText = WRITE_CLAIM_DISCLAIMER + finalText;
+                }
+                return { text: finalText, usage: accUsage, contextWindow: ctxWindow, model: finalModel, fellBack: finalFellBack };
+            }
         } catch (e: any) {
             log.error('Local LLM final-answer fallback error', e?.message || e);
         }
