@@ -7,11 +7,10 @@ import path from 'path';
 import { ScraperService } from './scraperService';
 import { logger } from '../utils/logger';
 import { isValidExternalUrl } from '../utils/urlValidation';
-import { TOOLS_PROMPT, executeTool, getToolContext } from './agentTools';
+import { TOOLS_PROMPT, executeTool } from './agentTools';
 import { agentConfigService } from './agentConfigService';
 import { classifyTool } from '../config/actionCatalog';
 import { claimsWriteSuccess, WRITE_CLAIM_RETRY_INSTRUCTION, WRITE_CLAIM_DISCLAIMER } from '../utils/writeClaimGuard';
-import { agentActivityService } from './agentActivityService';
 // #1316: system prompt do Marciano centralizado em config/agentSystemPrompt.ts.
 import { MARCIANO_IDENTITY_PROMPT } from '../config/agentSystemPrompt';
 export { MARCIANO_IDENTITY_PROMPT };
@@ -1165,7 +1164,12 @@ export class LocalProvider implements AIProvider {
                 return { retry: true };
             }
             log.error('#1332: modelo INSISTIU no sucesso alucinado — entregando com disclaimer.');
+            // Trilha na Central via import TARDIO (require): agentActivityService importa
+            // socketService→(cadeia)→dolibarrService, que explode em suítes de teste com env
+            // mockado sem dolibarrUrl. Em runtime real o módulo já está carregado (custo zero).
             try {
+                const { getToolContext } = require('./agentTools');
+                const { agentActivityService } = require('./agentActivityService');
                 const ctx = getToolContext();
                 agentActivityService.record({
                     userId: ctx.userId || 'desconhecido', userName: ctx.userLogin || 'desconhecido',
