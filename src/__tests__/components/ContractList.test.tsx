@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import ContractList from '../../components/ContractList';
 import { ConfirmProvider } from '../../hooks/useConfirm';
 import { DolibarrService } from '../../services/dolibarrService';
+import { useDolibarr } from '../../context/DolibarrContext';
 
 // --- Mock sonner so we can assert toast calls ---
 const { toastMock } = vi.hoisted(() => ({
@@ -396,6 +397,48 @@ describe('ContractList', () => {
             const totalEl = await screen.findByText(/Total:/i);
             expect(totalEl.textContent).not.toMatch(/NaN/);
             expect(totalEl).toHaveTextContent(/400,00/);
+        });
+    });
+
+    describe('Rules of Hooks — early return apos todos os hooks (#1104)', () => {
+        it('renderiza null quando config é null (todos os hooks ainda executam)', () => {
+            vi.mocked(useDolibarr).mockReturnValue({
+                config: null,
+                canAccess: () => true,
+                canDo: () => true,
+            } as any);
+
+            const { container } = renderList();
+            expect(container.firstChild).toBeNull();
+        });
+
+        it('sobrevive a transicao config null → set sem quebrar a ordem de hooks', async () => {
+            vi.mocked(useDolibarr).mockReturnValue({
+                config: null,
+                canAccess: () => true,
+                canDo: () => true,
+            } as any);
+
+            const { container, rerender } = renderList();
+            expect(container.firstChild).toBeNull();
+
+            vi.mocked(useDolibarr).mockReturnValue({
+                config: { baseUrl: 'http://test', apiKey: 'key', currentUser: { id: '1' } },
+                canAccess: () => true,
+                canDo: () => true,
+            } as any);
+
+            rerender(
+                <MemoryRouter>
+                    <ConfirmProvider>
+                        <ContractList />
+                    </ConfirmProvider>
+                </MemoryRouter>
+            );
+
+            await waitFor(() => {
+                expect(screen.getByText('CTR-001')).toBeInTheDocument();
+            });
         });
     });
 });

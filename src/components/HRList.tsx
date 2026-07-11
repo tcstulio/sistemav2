@@ -71,8 +71,6 @@ const HRList: React.FC<HRListProps> = ({
 
     const confirm = useConfirm();
 
-    if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
-
     const [activeTab, setActiveTab] = useState<'team' | 'groups' | 'hierarchy' | 'workload' | 'expenses' | 'leaves' | 'recruitment'>('team');
     const [searchTerm, setSearchTerm] = useState('');
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'default', direction: 'desc' });
@@ -289,6 +287,8 @@ const HRList: React.FC<HRListProps> = ({
             }
         }
     }, [initialItemId, users, prefill]);
+
+    if (!config) return <div className="p-8 text-center">Carregando configuração...</div>;
 
     const handleTabChange = (tab: typeof activeTab) => {
         setActiveTab(tab);

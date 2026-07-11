@@ -317,3 +317,58 @@ describe('HRList — real user delete (#1088)', () => {
         });
     });
 });
+
+describe('HRList — Rules of Hooks (#1104)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: {
+                apiUrl: 'http://test/api',
+                apiKey: 'key',
+                themeColor: 'indigo',
+                darkMode: false,
+            },
+            currentUser: { id: 'u1', login: 'admin' },
+        } as any);
+    });
+
+    it('mostra "Carregando configuracao..." quando config é null (hooks ainda executam)', () => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: null,
+            currentUser: { id: 'u1', login: 'admin' },
+        } as any);
+
+        renderWithProvider();
+        expect(screen.getByText('Carregando configuração...')).toBeInTheDocument();
+    });
+
+    it('sobrevive a transicao config null → set sem quebrar a ordem de hooks', async () => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: null,
+            currentUser: { id: 'u1', login: 'admin' },
+        } as any);
+
+        const { rerender } = renderWithProvider();
+        expect(screen.getByText('Carregando configuração...')).toBeInTheDocument();
+
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: {
+                apiUrl: 'http://test/api',
+                apiKey: 'key',
+                themeColor: 'indigo',
+                darkMode: false,
+            },
+            currentUser: { id: 'u1', login: 'admin' },
+        } as any);
+
+        rerender(
+            <ConfirmProvider>
+                <HRList />
+            </ConfirmProvider>
+        );
+
+        await waitFor(() => {
+            expect(screen.getByText('RH e Equipe')).toBeInTheDocument();
+        });
+    });
+});

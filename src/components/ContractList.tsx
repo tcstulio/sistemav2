@@ -43,8 +43,6 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
     const { data: invoicesData } = useInvoices(config);
     const invoices = invoicesData || [];
 
-    if (!config) return null;
-
     const confirm = useConfirm();
     const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'draft' | 'closed'>('all');
     const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
@@ -151,6 +149,8 @@ const ContractList: React.FC<ContractListProps> = ({ onNavigate, onRefresh }) =>
             (selectedContract.project_id && String(inv.project_id) === String(selectedContract.project_id))
         );
     }, [selectedContract, invoices]);
+
+    if (!config) return null;
 
     const handleSubmitContract = async (e: React.FormEvent) => {
         e.preventDefault();
