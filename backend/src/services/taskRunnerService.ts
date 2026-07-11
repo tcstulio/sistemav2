@@ -695,7 +695,7 @@ class TaskRunnerService {
                 '--repo', REPO,
                 '--label', 'opencode-task',
                 '--state', state,
-                '--limit', '100',
+                '--limit', '500',
                 '--json', 'number,title,body,labels,createdAt,state,closedAt'
             ], { timeout: 15000 });
             return JSON.parse(stdout);
@@ -819,11 +819,16 @@ class TaskRunnerService {
                 }
 
                 const state = stateByNum.get(num);
-                // Issue fora da lista: se não for terminal, tenta depois
-                if (state === undefined && !isTerminal) continue;
-
-                // Issue ainda aberta e task não terminal: garante coerencia local
-                if (state !== 'CLOSED' && !isTerminal) {
+                // Issue FORA da janela do listIssues (#1304): antes isto sempre pulava, deixando tasks
+                // não-terminais (ex.: 'reviewing') presas para sempre quando o backlog de issues com label
+                // 'opencode-task' passava do limit da janela. Agora, se a task tem PR, cai no fallback
+                // deterministico (gh pr view) abaixo — a reconciliação deixa de depender de a issue caber
+                // na janela do list.
+                if (state === undefined && !isTerminal) {
+                    if (!task.prNumber && (!task.prHistory || task.prHistory.length === 0)) continue;
+                    // tem PR: cai no bloco de checagem de PR abaixo
+                } else if (state !== 'CLOSED' && !isTerminal) {
+                    // Issue ainda aberta e task não terminal: garante coerencia local
                     if (task.status === 'pending' && task.startedAt) {
                         task.startedAt = undefined;
                         reconciled.push(num);
