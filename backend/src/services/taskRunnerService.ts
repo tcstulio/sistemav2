@@ -4168,6 +4168,22 @@ The first element should be the task to execute first.`;
         if (fsExtra.existsSync(mainEnvPath)) {
             let envContent = fsExtra.readFileSync(mainEnvPath, 'utf8');
             envContent = envContent.replace(/^PORT=.*$/m, `PORT=${backendPort}`);
+            // #1169 (fase 2 do item 22): as rotas de API do preview NÃO podem falar com a PROD —
+            // o .env copiado tem DOLIBARR_URL/API_KEY reais e um POST disparado numa tela de
+            // preview ESCREVERIA na produção. Se o sandbox local estiver configurado
+            // (PREVIEW_DOLIBARR_URL/KEY no .env principal — stack do docker-compose.e2e.yml),
+            // sobrescreve o destino. Sem sandbox configurado, mantém o comportamento atual
+            // (PREVIEW_MODE=1 já desligou os workers de fundo — fase 1, #1163).
+            const sandboxUrl = process.env.PREVIEW_DOLIBARR_URL;
+            const sandboxKey = process.env.PREVIEW_DOLIBARR_KEY;
+            if (sandboxUrl && sandboxKey) {
+                envContent = envContent
+                    .replace(/^DOLIBARR_URL=.*$/m, `DOLIBARR_URL=${sandboxUrl}`)
+                    .replace(/^DOLIBARR_API_KEY=.*$/m, `DOLIBARR_API_KEY=${sandboxKey}`);
+                log.info(`Preview #${issueNumber}: Dolibarr apontado para o SANDBOX (${sandboxUrl}).`);
+            } else {
+                log.warn(`Preview #${issueNumber}: PREVIEW_DOLIBARR_URL/KEY não configurados — as rotas de API do preview ainda apontam para o Dolibarr de PRODUÇÃO (workers de fundo desligados, mas um POST manual escreve na prod). Configure o sandbox (docker-compose.e2e.yml) p/ isolamento total.`);
+            }
             // #1154 P3 item 22: sinaliza o backend de preview p/ NÃO subir os workers de fundo (crons,
             // notificações, WhatsApp, o próprio TaskRunner, bancos) — senão rodariam contra a PROD real.
             envContent += `\nVITE_API_URL=http://localhost:${backendPort}\nPREVIEW_MODE=1\n`;
