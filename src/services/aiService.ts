@@ -75,23 +75,89 @@ export interface FinancialAnalysisAutomationConfig {
 }
 
 const API_URL = '/api/ai';
+const AI_JOBS_URL = '/api/ai-jobs'; // #1011: endpoint de heartbeat leve (:id/status)
 
-// #953: faz polling de um job de chat até done/error. Extraído p/ que a resposta seja
+// #1013: o cliente estende o polling enquanto o backend sinaliza que o job está vivo,
+// em vez de cortar no teto fixo de 20min (que matava jobs longos >20min mesmo com o
+// agente ainda trabalhando). Cada sinal "alive" alonga o prazo; um teto absoluto de 40min
+// (2x o teto original) evita loop infinito.
+const POLL_MS = 2500;
+const POLL_BASE_WAIT_MS = 20 * 60 * 1000;   // prazo inicial (igual ao comportamento original)
+const POLL_EXTENSION_MS = 10 * 60 * 1000;   // +10min a cada sinal de "alive"
+const POLL_ABSOLUTE_CAP_MS = 40 * 60 * 1000; // salvaguarda final (2x o teto original)
+const MAX_CONSECUTIVE_5XX = 5;               // 5xx repetido = servidor caído → timeout
+
+/** #1013: progresso do polling reportado à UI (indicador "Processando... Xs"). */
+export interface ChatJobProgress {
+    /** epoch ms do último sinal de vida conhecido (do heartbeat ou do próprio poll). */
+    lastHeartbeat: number;
+    /** progresso 0..100 reportado pelo agente, quando disponível. */
+    progressPct?: number;
+}
+
+// #1011/#1013: consulta o heartbeat leve do job (GET /api/ai-jobs/:id/status). Retorna
+// { alive, lastHeartbeatMs, progressPct } ou { alive: false } se indisponível/expirado.
+// Usado quando o endpoint principal do job devolve 404 (job evictado da memória sob
+// pressão / 429): se o backend ainda reporta o job como vivo, NÃO declaramos timeout.
+async function checkJobHeartbeat(jobId: string): Promise<{ alive: boolean; lastHeartbeatMs?: number; progressPct?: number }> {
+    try {
+        const st = await axios.get(`${AI_JOBS_URL}/${jobId}/status`, getAuthHeaders());
+        const data: any = st.data;
+        if (data?.alive) {
+            const hbMs = data.lastHeartbeat ? new Date(data.lastHeartbeat).getTime() : Date.now();
+            return { alive: true, lastHeartbeatMs: hbMs, progressPct: data.progressPct };
+        }
+        return { alive: false };
+    } catch {
+        // 404 { reason: 'not_found'|'expired' } ou erro de rede → job não está vivo.
+        return { alive: false };
+    }
+}
+
+// #953/#1013: faz polling de um job de chat até done/error. Extraído p/ que a resposta seja
 // RECUPERÁVEL após um F5 (o backend guarda o resultado ~30min): o componente persiste o
 // jobId ao enfileirar e chama resumeChatJob(jobId) ao remontar, evitando perder a resposta.
-async function pollChatJob(jobId: string): Promise<any> {
-    const POLL_MS = 2500;
-    const MAX_WAIT_MS = 20 * 60 * 1000; // generoso; o job conclui em background
+//
+// Estratégia de timeout (#1013): o prazo começa em 20min (como antes). Cada sinal "alive"
+// — seja do endpoint principal (status running/queued com alive:true) ou do heartbeat
+// /status quando o job deu 404 — alonga o prazo em +10min, até o teto absoluto de 40min.
+// Assim um job que roda 25min com o backend saudável NÃO é cortado; só declaramos timeout
+// quando o backend para de reportar vida (alive:false / 404 no heartbeat / 5xx repetido)
+// ou ao atingir o teto absoluto. `onProgress` notifica a UI do lastHeartbeat p/ o indicador.
+async function pollChatJob(jobId: string, onProgress?: (p: ChatJobProgress) => void): Promise<any> {
     const startedAt = Date.now();
-    while (Date.now() - startedAt < MAX_WAIT_MS) {
+    const absoluteDeadline = startedAt + POLL_ABSOLUTE_CAP_MS;
+    let deadline = startedAt + POLL_BASE_WAIT_MS; // prazo macio (alongado por sinais "alive")
+    let lastHeartbeat = startedAt;
+    let consecutive5xx = 0;
+
+    while (Date.now() < Math.min(deadline, absoluteDeadline)) {
         await new Promise((r) => setTimeout(r, POLL_MS));
         let job: any;
         try {
             const st = await axios.get(`${API_URL}/jobs/${jobId}`, getAuthHeaders());
             job = st.data;
+            consecutive5xx = 0;
         } catch (pollErr: any) {
-            if (pollErr?.response?.status === 404) {
+            const status = pollErr?.response?.status;
+            // #1013: job sumiu do endpoint principal — checa liveness via heartbeat /status.
+            if (status === 404) {
+                const hb = await checkJobHeartbeat(jobId);
+                if (hb.alive) {
+                    // Backend ainda processa: NÃO declara timeout — alonga prazo e segue.
+                    lastHeartbeat = hb.lastHeartbeatMs ?? Date.now();
+                    deadline = Math.min(deadline + POLL_EXTENSION_MS, absoluteDeadline);
+                    onProgress?.({ lastHeartbeat, progressPct: hb.progressPct });
+                    continue;
+                }
                 throw new Error('O processamento foi interrompido (job expirado). Tente novamente.');
+            }
+            // #1013: 5xx repetido = servidor indisponível → timeout (não fica em loop eterno).
+            if (status && status >= 500) {
+                if (++consecutive5xx >= MAX_CONSECUTIVE_5XX) {
+                    throw new Error('Tempo limite do assistente excedido (servidor indisponível).');
+                }
+                continue; // transitório — tenta de novo no próximo ciclo
             }
             throw pollErr;
         }
@@ -101,9 +167,14 @@ async function pollChatJob(jobId: string): Promise<any> {
         if (job.status === 'error') {
             throw new Error(job.error || 'O assistente falhou ao processar.');
         }
-        // queued/running → segue o polling
+        // queued/running → job vivo: alonga o prazo (cap 40min) e notifica a UI.
+        if (job.alive) {
+            lastHeartbeat = Date.now();
+            deadline = Math.min(deadline + POLL_EXTENSION_MS, absoluteDeadline);
+        }
+        onProgress?.({ lastHeartbeat, progressPct: job.progressPct });
     }
-    throw new Error('Tempo limite do assistente excedido (20 min).');
+    throw new Error('Tempo limite do assistente excedido (40 min).');
 }
 
 export const AiService = {
@@ -449,7 +520,8 @@ export const AiService = {
 
     // #947: userImages aceita 1+ imagens (base64 puro, sem prefixo data URL).
     // #953: onJobStarted recebe o jobId assim que enfileirado (p/ persistir e retomar após F5).
-    chatWithData: async (msg: string, history: ChatMessage[], userImages?: string | string[], sessionId?: string, pageContext?: string, onJobStarted?: (jobId: string) => void) => {
+    // #1013: onProgress recebe o lastHeartbeat do polling p/ o indicador "Processando... Xs".
+    chatWithData: async (msg: string, history: ChatMessage[], userImages?: string | string[], sessionId?: string, pageContext?: string, onJobStarted?: (jobId: string) => void, onProgress?: (p: ChatJobProgress) => void) => {
         try {
             const now = new Date();
             const dateStr = now.toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -476,7 +548,7 @@ export const AiService = {
             if (!jobId) throw new Error('Falha ao enfileirar o job do assistente.');
             onJobStarted?.(jobId); // #953: componente persiste o jobId p/ retomar após F5
 
-            return await pollChatJob(jobId);
+            return await pollChatJob(jobId, onProgress);
 
         } catch (error: any) {
             handleAiError('Chat', error);
@@ -486,7 +558,8 @@ export const AiService = {
 
     // #953: retoma um job já enfileirado (após F5). Não trata o erro aqui — o chamador
     // decide (mostrar a resposta OU limpar o job pendente se expirou).
-    resumeChatJob: (jobId: string) => pollChatJob(jobId),
+    // #1013: onProgress repassa o lastHeartbeat do polling p/ a UI.
+    resumeChatJob: (jobId: string, onProgress?: (p: ChatJobProgress) => void) => pollChatJob(jobId, onProgress),
 
     createChatSession: async (firstMessage?: string): Promise<ChatSessionInfo | null> => {
         try {
