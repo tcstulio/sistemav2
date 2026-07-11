@@ -1,20 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent, screen } from '@testing-library/react';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 import { BOMDetail } from '../../components/Manufacturing/details/BOMDetail';
 import { BOM, DolibarrConfig, Product } from '../../types';
 import { formatCurrency } from '../../utils/formatUtils';
-import { TAB_ACTIVE_CLASSES } from '../../utils/theme';
-
-// ---------------------------------------------------------------------------
-// Static source analysis for #1300 — read BOMDetail.tsx to verify zero
-// dynamic color-class interpolation at the source level (criterion a).
-// ---------------------------------------------------------------------------
-const __testDir = dirname(fileURLToPath(import.meta.url));
-const BOM_DETAIL_PATH = resolve(__testDir, '../../components/Manufacturing/details/BOMDetail.tsx');
-const BOM_DETAIL_SOURCE = readFileSync(BOM_DETAIL_PATH, 'utf-8');
+import { TAB_ACTIVE_CLASSES, ThemeColor } from '../../utils/theme';
 
 const config: DolibarrConfig = {
     apiUrl: 'https://api.example.com',
@@ -229,42 +218,88 @@ describe('BOMDetail — classes Tailwind literais por tema (#1094)', () => {
 // ===========================================================================
 // #1300 — Zero interpolação dinâmica de classe de cor (epic #1096)
 //
-// O código de produção já foi corrigido pelo PR #1258 (issue #1094).
-// Esta suíte "trava" o comportamento esperado e previne regressões,
-// cobrindo os critérios de aceite (a), (b) e (c) da issue #1300.
+// Testes comportamentais: validam o DOM RENDERizado pelo componente (não
+// leitura de fonte via readFileSync). Assim os testes sobrevivem a refactors
+// de estrutura de arquivo e validam o comportamento real do usuário.
 // ===========================================================================
 describe('BOMDetail (#1300) — classes Tailwind estáticas (zero interpolação dinâmica)', () => {
-    // Detecta construção de classe de cor por interpolação:
-    // `border-${...}`, `bg-${...}`, `text-${...}`, `hover:bg-${...}`, etc.
-    // Esses padrões não são detectados pelo JIT scanner do Tailwind v4.
-    const COLOR_INTERPOLATION_RE =
-        /(?:hover:|dark:|focus:|group-hover:|active:)?(?:border|bg|text|ring|ring-offset|from|to|via|outline|fill|stroke|divide|placeholder|accent|caret|decoration)-\$\{/;
-
-    // --- Critério (a): zero interpolação de classe de cor ---
-
-    it('criterio (a): código-fonte não contém interpolação de classe de cor via template string', () => {
-        expect(BOM_DETAIL_SOURCE).not.toMatch(COLOR_INTERPOLATION_RE);
+    const configWith = (themeColor: string): DolibarrConfig => ({
+        apiUrl: 'https://api.example.com',
+        apiKey: 'key',
+        themeColor: themeColor as DolibarrConfig['themeColor'],
+        darkMode: false,
+        apiLimit: 0,
     });
 
-    it('criterio (a): todas as interpolações ${ no arquivo são chamadas de getTabClasses (não de cor)', () => {
-        const interpolations = BOM_DETAIL_SOURCE.match(/\$\{[^}]*\}/g) ?? [];
-        expect(interpolations.length).toBeGreaterThan(0);
-        interpolations.forEach((interp) => {
-            expect(interp).not.toMatch(COLOR_INTERPOLATION_RE);
-        });
+    const tabButton = (label: string) =>
+        screen.getByText(label).closest('button') as HTMLElement;
+
+    const ALL_COLORS: ThemeColor[] = [
+        'slate', 'gray', 'zinc', 'neutral', 'stone',
+        'red', 'orange', 'amber', 'yellow', 'lime',
+        'green', 'emerald', 'teal', 'cyan', 'sky',
+        'blue', 'indigo', 'violet', 'purple', 'fuchsia',
+        'pink', 'rose',
+    ];
+
+    // --- Critério (a): zero interpolação de classe de cor ---
+    // Verificado via DOM renderizado: nenhuma className deve conter "${"
+    // (artefato de template literal não-resolvido) ou "undefined".
+
+    it('criterio (a): aba ativa (Visão Geral) não tem artefatos de interpolação no DOM', () => {
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={config} onClose={vi.fn()} />
+        );
+        const overview = tabButton('Visão Geral');
+        expect(overview.className).not.toContain('${');
+        expect(overview.className).not.toContain('undefined');
+    });
+
+    it('criterio (a): aba inativa (Componentes) não tem artefatos de interpolação no DOM', () => {
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={config} onClose={vi.fn()} />
+        );
+        const components = tabButton('Componentes & Árvore');
+        expect(components.className).not.toContain('${');
+        expect(components.className).not.toContain('undefined');
+    });
+
+    it.each(ALL_COLORS)('criterio (a)/(b): tema "%s" renderiza classes de cor literais no DOM', (color) => {
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={configWith(color)} onClose={vi.fn()} />
+        );
+        const overview = tabButton('Visão Geral');
+        expect(overview.className).toContain(`border-${color}-600`);
+        expect(overview.className).toContain(`text-${color}-600`);
+        expect(overview.className).toContain(`dark:border-${color}-400`);
+        expect(overview.className).toContain(`dark:text-${color}-400`);
+        expect(overview.className).not.toContain('${');
+        expect(overview.className).not.toContain('undefined');
     });
 
     // --- Critério (b): mapa segue Record<ThemeColor, string> ---
 
-    it('criterio (b): importa getTabClasses do helper compartilhado utils/theme', () => {
-        expect(BOM_DETAIL_SOURCE).toContain("from '../../../utils/theme'");
-        expect(BOM_DETAIL_SOURCE).toContain('getTabClasses');
+    it('criterio (b): TAB_ACTIVE_CLASSES exporta classes literais completas para todas as cores', () => {
+        ALL_COLORS.forEach((color) => {
+            const classes = TAB_ACTIVE_CLASSES[color];
+            expect(classes).toBeTruthy();
+            expect(classes).toContain(`border-${color}-600`);
+            expect(classes).toContain(`text-${color}-600`);
+            expect(classes).toContain(`dark:border-${color}-400`);
+            expect(classes).toContain(`dark:text-${color}-400`);
+            expect(classes).not.toContain('${');
+        });
     });
 
-    it('criterio (b): TAB_ACTIVE_CLASSES usa apenas classes literais (sem interpolação)', () => {
-        expect(TAB_ACTIVE_CLASSES.indigo).toBe('border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400');
-        expect(TAB_ACTIVE_CLASSES.emerald).toBe('border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400');
-        Object.values(TAB_ACTIVE_CLASSES).forEach((v) => expect(v).not.toContain('${'));
+    it('criterio (b): fallback de cor desconhecida usa indigo', () => {
+        render(
+            <BOMDetail bom={bom} products={[finalProduct, componentProduct]} config={configWith('cor-inexistente')} onClose={vi.fn()} />
+        );
+        const overview = tabButton('Visão Geral');
+        expect(overview.className).toContain('border-indigo-600');
+        expect(overview.className).toContain('text-indigo-600');
+        expect(overview.className).not.toContain('undefined');
+        expect(overview.className).not.toContain('${');
     });
 
     // --- Critério (c): renderização sem regressão em edge cases ---
@@ -283,5 +318,149 @@ describe('BOMDetail (#1300) — classes Tailwind estáticas (zero interpolação
         );
         fireEvent.click(screen.getByText('Componentes & Árvore'));
         expect(screen.getByText('Nenhum componente definido.')).toBeInTheDocument();
+    });
+});
+
+// ===========================================================================
+// #1300 — Renderização theme-aware em elementos não-tab
+//
+// Valida comportamento renderizado (DOM) para confirmar que badges, ícones,
+// bordas e nós da árvore usam as classes literais corretas do mapa
+// Record<ThemeColor, string> em utils/theme.ts (getThemeClasses), sem
+// interpolação dinâmica de classe de cor. Cobre critérios (c) e (f).
+// ===========================================================================
+describe('BOMDetail (#1300) — renderização theme-aware em elementos não-tab', () => {
+    const configWith = (themeColor: string): DolibarrConfig => ({
+        apiUrl: 'https://api.example.com',
+        apiKey: 'key',
+        themeColor: themeColor as DolibarrConfig['themeColor'],
+        darkMode: false,
+        apiLimit: 0,
+    });
+
+    const products = [finalProduct, componentProduct];
+
+    const versionBadge = () => screen.getByText(/V1/).closest('button') as HTMLElement;
+
+    const iconContainer = (container: HTMLElement) =>
+        container.querySelector('.lucide-layers')?.parentElement as HTMLElement;
+
+    it('badge de versão (V1) renderiza classes do tema indigo', () => {
+        render(<BOMDetail bom={bom} products={products} config={configWith('indigo')} onClose={vi.fn()} />);
+        const badge = versionBadge();
+        expect(badge.className).toContain('bg-indigo-100');
+        expect(badge.className).toContain('text-indigo-700');
+        expect(badge.className).not.toContain('${');
+    });
+
+    it('badge de versão respeita tema emerald', () => {
+        render(<BOMDetail bom={bom} products={products} config={configWith('emerald')} onClose={vi.fn()} />);
+        const badge = versionBadge();
+        expect(badge.className).toContain('bg-emerald-100');
+        expect(badge.className).toContain('text-emerald-700');
+        expect(badge.className).not.toContain('bg-indigo-100');
+    });
+
+    it('container de ícone na visão geral usa classes do tema (indigo)', () => {
+        const { container } = render(<BOMDetail bom={bom} products={products} config={configWith('indigo')} onClose={vi.fn()} />);
+        const iconBox = iconContainer(container);
+        expect(iconBox.className).toContain('bg-indigo-100');
+        expect(iconBox.className).toContain('text-indigo-600');
+        expect(iconBox.className).not.toContain('${');
+    });
+
+    it('container de ícone respeita tema blue', () => {
+        const { container } = render(<BOMDetail bom={bom} products={products} config={configWith('blue')} onClose={vi.fn()} />);
+        const iconBox = iconContainer(container);
+        expect(iconBox.className).toContain('bg-blue-100');
+        expect(iconBox.className).toContain('text-blue-600');
+        expect(iconBox.className).not.toContain('bg-indigo-100');
+    });
+
+    it('árvore de componentes: elementos do nó pai usam classes do tema (indigo)', () => {
+        const { container } = render(<BOMDetail bom={bom} products={products} config={configWith('indigo')} onClose={vi.fn()} />);
+        fireEvent.click(screen.getByText('Componentes & Árvore'));
+
+        const label = screen.getAllByText('Produto Final').find(
+            el => el.className.includes('uppercase')
+        ) as HTMLElement;
+        expect(label.className).toContain('text-indigo-700');
+        expect(label.className).not.toContain('${');
+
+        const box = label.parentElement as HTMLElement;
+        expect(box.className).toContain('bg-indigo-50');
+        expect(box.className).toContain('border-indigo-200');
+
+        const wrapper = box.parentElement as HTMLElement;
+        const dot = wrapper.querySelector('[class*="rounded-full"]') as HTMLElement;
+        expect(dot.className).toContain('bg-indigo-500');
+
+        const headerIcon = container.querySelector('.lucide-layers') as HTMLElement;
+        expect(headerIcon.getAttribute('class')).toContain('text-indigo-500');
+    });
+
+    it('árvore de componentes: elementos do nó pai respeitam tema emerald', () => {
+        render(<BOMDetail bom={bom} products={products} config={configWith('emerald')} onClose={vi.fn()} />);
+        fireEvent.click(screen.getByText('Componentes & Árvore'));
+
+        const label = screen.getAllByText('Produto Final').find(
+            el => el.className.includes('uppercase')
+        ) as HTMLElement;
+        expect(label.className).toContain('text-emerald-700');
+        expect(label.className).not.toContain('text-indigo-700');
+
+        const box = label.parentElement as HTMLElement;
+        expect(box.className).toContain('bg-emerald-50');
+        expect(box.className).toContain('border-emerald-200');
+
+        const wrapper = box.parentElement as HTMLElement;
+        const dot = wrapper.querySelector('[class*="rounded-full"]') as HTMLElement;
+        expect(dot.className).toContain('bg-emerald-500');
+    });
+
+    it('cor de tema desconhecida cai no fallback indigo em todos os elementos', () => {
+        const { container } = render(<BOMDetail bom={bom} products={products} config={configWith('cor-inexistente')} onClose={vi.fn()} />);
+
+        const badge = versionBadge();
+        expect(badge.className).toContain('bg-indigo-100');
+        expect(badge.className).not.toContain('undefined');
+
+        const iconBox = iconContainer(container);
+        expect(iconBox.className).toContain('bg-indigo-100');
+        expect(iconBox.className).not.toContain('undefined');
+
+        fireEvent.click(screen.getByText('Componentes & Árvore'));
+        const label = screen.getAllByText('Produto Final').find(
+            el => el.className.includes('uppercase')
+        ) as HTMLElement;
+        expect(label.className).toContain('text-indigo-700');
+        expect(label.className).not.toContain('undefined');
+    });
+
+    it('nenhum elemento renderizado contém ${ ou undefined na className', () => {
+        const { container } = render(<BOMDetail bom={bom} products={products} config={configWith('indigo')} onClose={vi.fn()} />);
+        fireEvent.click(screen.getByText('Componentes & Árvore'));
+
+        const allElements = container.querySelectorAll('*');
+        allElements.forEach(el => {
+            const cn = el.getAttribute('class');
+            if (cn) {
+                expect(cn).not.toContain('${');
+                expect(cn).not.toContain('undefined');
+            }
+        });
+    });
+
+    it('troca de tema altera classes em tempo real (re-render)', () => {
+        const { rerender } = render(<BOMDetail bom={bom} products={products} config={configWith('indigo')} onClose={vi.fn()} />);
+
+        const badgeBefore = versionBadge();
+        expect(badgeBefore.className).toContain('bg-indigo-100');
+
+        rerender(<BOMDetail bom={bom} products={products} config={configWith('rose')} onClose={vi.fn()} />);
+
+        const badgeAfter = versionBadge();
+        expect(badgeAfter.className).toContain('bg-rose-100');
+        expect(badgeAfter.className).not.toContain('bg-indigo-100');
     });
 });
