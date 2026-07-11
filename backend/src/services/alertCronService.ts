@@ -200,13 +200,14 @@ class AlertCronService {
         try {
             const invoices = await dolibarrService.listInvoices({ status: 'unpaid', limit: 100 });
             const now = new Date();
-            const in3Days = (now.getTime() + 3 * 24 * 60 * 60 * 1000) / 1000;
+            const horizonDays = uiConfigService.getInvoiceDueHorizonDays();
+            const horizon = (now.getTime() + horizonDays * 24 * 60 * 60 * 1000) / 1000;
             const today = now.getTime() / 1000;
 
             const upcoming = invoices.filter((inv: any) => {
                 const deadline = inv.date_limite || inv.date_validity;
                 if (!deadline) return false;
-                return deadline > today && deadline <= in3Days;
+                return deadline > today && deadline <= horizon;
             });
 
             if (upcoming.length === 0) return;
@@ -225,7 +226,7 @@ class AlertCronService {
 
             await this.notify(
                 'invoice.overdue',
-                `${upcoming.length} fatura(s) vencendo em até 3 dias`,
+                `${upcoming.length} fatura(s) vencendo em até ${horizonDays} dias`,
                 message,
                 'invoice',
                 upcoming.map((inv: any) => String(inv.id || inv.rowid)).join(','),
@@ -287,7 +288,7 @@ class AlertCronService {
             if (!tickets || tickets.length === 0) return;
 
             const now = Date.now() / 1000;
-            const staleHours = 24;
+            const staleHours = uiConfigService.getTicketStaleHours();
 
             const stale = tickets.filter((t: any) => {
                 const created = t.datec || t.date_creation;
@@ -318,7 +319,7 @@ class AlertCronService {
 
             await this.notify(
                 'ticket.created',
-                `${newAlerts.length} ticket(s) sem resposta há +24h`,
+                `${newAlerts.length} ticket(s) sem resposta há +${staleHours}h`,
                 message,
                 'ticket',
                 newAlerts.map((t: any) => String(t.id || t.rowid)).join(','),
