@@ -158,6 +158,30 @@ describe('DolibarrCommercialService', () => {
             );
         });
 
+        it('filtra por texto (ref/ref_client) — #1340: sem isto o search retornava dump global', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: [] });
+            await service.listInvoices({ search: 'PROV303' });
+            const passed = (mockAxios.get as any).mock.calls[0][1].params.sqlfilters as string;
+            expect(passed).toContain('t.ref');
+            expect(passed).toContain('t.ref_client');
+            expect(passed).toContain('PROV303');
+        });
+
+        it('combina status + busca de texto com AND', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: [] });
+            await service.listInvoices({ status: 'unpaid', search: 'X' });
+            const passed = (mockAxios.get as any).mock.calls[0][1].params.sqlfilters as string;
+            expect(passed).toContain('t.paye:=:0');
+            expect(passed).toContain('t.ref');
+            expect(passed).toContain(' and ');
+        });
+
+        it('SEM busca nem status → sqlfilters undefined (não injeta filtro fantasma)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 200, data: [] });
+            await service.listInvoices({});
+            expect((mockAxios.get as any).mock.calls[0][1].params.sqlfilters).toBeUndefined();
+        });
+
         it('uses custom limit', async () => {
             mockAxios.get.mockResolvedValue({ status: 200, data: [] });
             await service.listInvoices({ limit: 20 });

@@ -899,7 +899,10 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 dolibarrService.searchThirdParty(q).catch(() => []),
                 dolibarrService.listProjects({ search: q }).catch(() => []),
                 dolibarrService.listTasks().catch(() => []),
-                dolibarrService.listInvoices({}).catch(() => []),
+                // #1340: passa a query — antes era listInvoices({}), que devolvia as faturas mais
+                // RECENTES do sistema inteiro (sem relação com o termo) sob o cabeçalho "Resultados
+                // para X", induzindo o modelo a associá-las falsamente à entidade buscada.
+                dolibarrService.listInvoices({ search: q }).catch(() => []),
                 dolibarrService.listOrders({ search: q }).catch(() => []),
                 dolibarrService.listProposals({ search: q }).catch(() => []),
             ]);
@@ -970,7 +973,10 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             }
 
             if (parts.length === 0) return `Nenhum resultado encontrado para "${q}".`;
-            return `Resultados para "<strong>${q}</strong>":<br/><br/>${parts.join('<br/>')}`;
+            // #1340: cada seção casa o TERMO por ref/nome — NÃO implica vínculo entre as entidades
+            // (ex.: uma fatura e uma proposta que casam "X" podem ser de clientes diferentes). Deixa
+            // isso explícito p/ o modelo não inferir relações que não existem.
+            return `Resultados da busca por "<strong>${q}</strong>" (itens cujo nome/ref casa o termo — NÃO necessariamente relacionados entre si):<br/><br/>${parts.join('<br/>')}`;
         }
         case 'web_search': {
             if (!args?.query || String(args.query).trim() === '') {
