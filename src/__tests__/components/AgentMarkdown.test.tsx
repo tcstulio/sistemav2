@@ -85,3 +85,34 @@ describe('AgentMarkdown — HTML cru de tool convertido para link seguro (#chat-
         expect(document.querySelector('script')).toBeNull();
     });
 });
+
+describe('AgentMarkdown — deeplink de confirmação HITL vira BOTÃO curto (#1358)', () => {
+    const bigToken = 'eyJ' + 'x'.repeat(380); // token HMAC ~400 chars
+    const confirmUrl = `/confirm-action?token=${bigToken}`;
+
+    it('markdown cujo TEXTO é a própria URL gigante vira botão "Revisar e confirmar" (não texto cru)', () => {
+        const navigate = vi.fn();
+        // o caso real: o modelo usou a URL como texto do link → [/confirm-action?token=...](/confirm-action?token=...)
+        render(<AgentMarkdown text={`[${confirmUrl}](${confirmUrl})`} navigate={navigate} />);
+        const btn = screen.getByRole('button');
+        expect(btn.textContent).toMatch(/Revisar e confirmar/);
+        // o token gigante NÃO aparece renderizado
+        expect(screen.queryByText(new RegExp(bigToken.slice(0, 30)))).toBeNull();
+        fireEvent.click(btn);
+        expect(navigate).toHaveBeenCalledWith(confirmUrl);
+    });
+
+    it('se o modelo deu um texto decente, o botão respeita esse texto', () => {
+        render(<AgentMarkdown text={`[Confirmar validação da PROV303](${confirmUrl})`} navigate={vi.fn()} />);
+        expect(screen.getByRole('button').textContent).toMatch(/Confirmar validação da PROV303/);
+    });
+
+    it('confirm-action em HTML cru (<a href>) também vira botão, não link gigante', () => {
+        const navigate = vi.fn();
+        render(<AgentMarkdown text={`<a href="${confirmUrl}">${confirmUrl}</a>`} navigate={navigate} />);
+        const btn = screen.getByRole('button');
+        expect(btn.textContent).toMatch(/Revisar e confirmar/);
+        fireEvent.click(btn);
+        expect(navigate).toHaveBeenCalledWith(confirmUrl);
+    });
+});
