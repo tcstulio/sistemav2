@@ -8,7 +8,7 @@ import { atomicWriteSync } from '../../utils/atomicWrite';
 const mockedFs = vi.mocked(fs);
 const mockedWrite = vi.mocked(atomicWriteSync);
 
-import { UiConfigService, sanitizeActionGovernance, sanitizeFeatureSwitches } from '../../services/uiConfigService';
+import { UiConfigService, sanitizeActionGovernance, sanitizeFeatureSwitches, sanitizeNotificationPolicy } from '../../services/uiConfigService';
 
 describe('uiConfigService', () => {
     beforeEach(() => {
@@ -345,5 +345,111 @@ describe('sanitizeActionGovernance', () => {
         const out = svc.update({ companyName: 'Novo' });
         expect(out.actionGovernance.irreversibleRequiresApproval).toBe(true);
         expect(out.actionGovernance.approvalValueThreshold).toBe(500);
+    });
+});
+
+// #1293 — política de notificações (cadência / quiet-hours / alertas).
+describe('sanitizeNotificationPolicy', () => {
+    const DEFAULTS = {
+        cobrancaCadence: { reminderDaysBefore: 1, recobrancaIntervalDays: 2, escalateAfterCobrancas: 3, prazoDeAceiteDays: 1 },
+        quietHours: {
+            whatsapp: { enabled: false, startHHmm: '22:00', endHHmm: '07:00', weekdaysOnly: false },
+            email: { enabled: false, startHHmm: '22:00', endHHmm: '07:00', weekdaysOnly: false },
+            'in-app': { enabled: false, startHHmm: '22:00', endHHmm: '07:00', weekdaysOnly: false },
+        },
+        staleHours: 24,
+        invoiceDueHorizonDays: 3,
+    };
+
+    it('input ausente/inválido → defaults completos', () => {
+        expect(sanitizeNotificationPolicy(undefined)).toEqual(DEFAULTS);
+        expect(sanitizeNotificationPolicy(null)).toEqual(DEFAULTS);
+        expect(sanitizeNotificationPolicy('lixo')).toEqual(DEFAULTS);
+        expect(sanitizeNotificationPolicy({})).toEqual(DEFAULTS);
+    });
+
+    it('clampa cadência para as faixas sane (nega vira piso/0, recobranca/escala com piso 1)', () => {
+        const out = sanitizeNotificationPolicy({
+            cobrancaCadence: { reminderDaysBefore: -3, recobrancaIntervalDays: 0, escalateAfterCobrancas: 99, prazoDeAceiteDays: -1 },
+        });
+        expect(out.cobrancaCadence).toEqual({ reminderDaysBefore: 0, recobrancaIntervalDays: 1, escalateAfterCobrancas: 30, prazoDeAceiteDays: 0 });
+    });
+
+    it('arredonda valores fracionados da cadência', () => {
+        const out = sanitizeNotificationPolicy({ cobrancaCadence: { reminderDaysBefore: 2.7, recobrancaIntervalDays: 3.2 } });
+        expect(out.cobrancaCadence.reminderDaysBefore).toBe(3);
+        expect(out.cobrancaCadence.recobrancaIntervalDays).toBe(3);
+    });
+
+    it('clampa staleHours (1..720) e invoiceDueHorizonDays (0..365)', () => {
+        const out = sanitizeNotificationPolicy({ staleHours: 0, invoiceDueHorizonDays: 9999 });
+        expect(out.staleHours).toBe(1);
+        expect(out.invoiceDueHorizonDays).toBe(365);
+        const out2 = sanitizeNotificationPolicy({ staleHours: 48.4 });
+        expect(out2.staleHours).toBe(48);
+    });
+
+    it('valida HH:mm: malformado vira default, válido é preservado', () => {
+        const out = sanitizeNotificationPolicy({
+            quietHours: {
+                whatsapp: { enabled: true, startHHmm: '99:99', endHHmm: '07:00', weekdaysOnly: true },
+                email: { enabled: true, startHHmm: '20:30', endHHmm: '06:15' },
+            },
+        });
+        expect(out.quietHours.whatsapp.startHHmm).toBe('22:00'); // inválido → default
+        expect(out.quietHours.whatsapp.weekdaysOnly).toBe(true);
+        expect(out.quietHours.email.startHHmm).toBe('20:30');
+        expect(out.quietHours.email.endHHmm).toBe('06:15');
+    });
+
+    it('preserva crossing midnight (end < start) sem rejeitar', () => {
+        const out = sanitizeNotificationPolicy({ quietHours: { 'in-app': { enabled: true, startHHmm: '22:00', endHHmm: '07:00' } } });
+        expect(out.quietHours['in-app'].startHHmm).toBe('22:00');
+        expect(out.quietHours['in-app'].endHHmm).toBe('07:00');
+    });
+
+    it('boolean não-boolean cai no default', () => {
+        const out = sanitizeNotificationPolicy({ quietHours: { whatsapp: { enabled: 'sim', weekdaysOnly: 1 } } });
+        expect(out.quietHours.whatsapp.enabled).toBe(false);
+        expect(out.quietHours.whatsapp.weekdaysOnly).toBe(false);
+    });
+
+    it('load() preenche defaults quando o arquivo não tem o bloco', () => {
+        mockedFs.existsSync.mockReturnValue(true);
+        mockedFs.readFileSync.mockReturnValue(JSON.stringify({ companyName: 'X' }) as any);
+        const svc = new UiConfigService('ui.json');
+        expect(svc.get().notificationPolicy).toEqual(DEFAULTS);
+    });
+
+    it('update() aplica sanitize e persiste (round-trip)', () => {
+        const svc = new UiConfigService('ui.json');
+        const out = svc.update({
+            notificationPolicy: {
+                cobrancaCadence: { reminderDaysBefore: 5, recobrancaIntervalDays: 4 },
+                quietHours: { whatsapp: { enabled: true, startHHmm: '21:00', endHHmm: '06:00' } },
+                staleHours: 48,
+                invoiceDueHorizonDays: 7,
+            },
+        } as any);
+        expect(out.notificationPolicy).toEqual({
+            cobrancaCadence: { reminderDaysBefore: 5, recobrancaIntervalDays: 4, escalateAfterCobrancas: 3, prazoDeAceiteDays: 1 },
+            quietHours: {
+                whatsapp: { enabled: true, startHHmm: '21:00', endHHmm: '06:00', weekdaysOnly: false },
+                email: { enabled: false, startHHmm: '22:00', endHHmm: '07:00', weekdaysOnly: false },
+                'in-app': { enabled: false, startHHmm: '22:00', endHHmm: '07:00', weekdaysOnly: false },
+            },
+            staleHours: 48,
+            invoiceDueHorizonDays: 7,
+        });
+        expect(mockedWrite).toHaveBeenCalled();
+        const written = mockedWrite.mock.calls[mockedWrite.mock.calls.length - 1][1] as any;
+        expect(written.notificationPolicy.cobrancaCadence.reminderDaysBefore).toBe(5);
+    });
+
+    it('update() preserva notificationPolicy quando ausente do partial', () => {
+        const svc = new UiConfigService('ui.json');
+        svc.update({ notificationPolicy: { staleHours: 48 } } as any);
+        const out = svc.update({ companyName: 'Novo' });
+        expect(out.notificationPolicy.staleHours).toBe(48);
     });
 });

@@ -323,4 +323,43 @@ describe('uiConfigRoutes', () => {
         expect(res.status).toBe(400);
         expect(mockUiConfigService.update).not.toHaveBeenCalled();
     });
+
+    // #1293: política de notificações (cadência/quiet-hours/alertas) — o Zod precisa declarar o
+    // objeto p/ os campos sobreviverem ao .parse() e chegarem intactos no service (round-trip).
+    it('#1293: PUT com notificationPolicy propaga o bloco inteiro pro service intacto', async () => {
+        const policy = {
+            cobrancaCadence: { reminderDaysBefore: 5, recobrancaIntervalDays: 4, escalateAfterCobrancas: 6, prazoDeAceiteDays: 2 },
+            quietHours: {
+                whatsapp: { enabled: true, startHHmm: '21:00', endHHmm: '06:00', weekdaysOnly: true },
+                email: { enabled: false, startHHmm: '22:00', endHHmm: '07:00', weekdaysOnly: false },
+                'in-app': { enabled: false, startHHmm: '22:00', endHHmm: '07:00', weekdaysOnly: false },
+            },
+            staleHours: 48,
+            invoiceDueHorizonDays: 7,
+        };
+        mockUiConfigService.update.mockReturnValueOnce({ notificationPolicy: policy });
+        const res = await request(app).put('/api/ui-config').send({ notificationPolicy: policy });
+        expect(res.status).toBe(200);
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ notificationPolicy: policy });
+        const sent = mockUiConfigService.update.mock.calls[0][0].notificationPolicy;
+        expect(sent).toEqual(policy);
+        expect(sent.cobrancaCadence.reminderDaysBefore).toBe(5);
+        expect(sent.quietHours.whatsapp.enabled).toBe(true);
+        expect(res.body.notificationPolicy).toEqual(policy);
+    });
+
+    it('#1293: PUT só com staleHours chega intacto (não estripado pelo Zod)', async () => {
+        mockUiConfigService.update.mockReturnValueOnce({ notificationPolicy: { staleHours: 72 } });
+        const res = await request(app).put('/api/ui-config').send({ notificationPolicy: { staleHours: 72 } });
+        expect(res.status).toBe(200);
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ notificationPolicy: { staleHours: 72 } });
+    });
+
+    it('#1293: PUT com tipo errado em notificationPolicy.cobrancaCadence retorna 400', async () => {
+        const res = await request(app).put('/api/ui-config').send({
+            notificationPolicy: { cobrancaCadence: { reminderDaysBefore: 'cinco' } },
+        });
+        expect(res.status).toBe(400);
+        expect(mockUiConfigService.update).not.toHaveBeenCalled();
+    });
 });
