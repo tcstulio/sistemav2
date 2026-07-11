@@ -1795,20 +1795,55 @@ const getMultimodalProvider = (): AIProvider | null => {
 };
 
 /**
- * Executa `exec(provider)` percorrendo a cadeia de fallback do módulo.
+ * Estado acumulado que sobrevive à troca de provider dentro de runWithChain (#1010).
+ * - messages: array de mensagens já construído (inclui tool-results) — não reinicia.
+ * - seenToolCalls: IDs/signaturas de tool_calls já executadas — evita reexecução.
+ * - context: progresso parcial de raciocínio/contexto acumulado.
+ *
+ * Objeto mutável e compartilhado por referência entre as tentativas de provider:
+ * mutações feitas antes de uma falha persistem para o próximo.
+ */
+export interface ChainState {
+    messages: any[];
+    seenToolCalls: Set<string>;
+    context: string;
+}
+
+/** Opções de runWithChain (#1010): semente de estado para retomar uma cadeia. */
+export interface RunWithChainOptions {
+    initialState?: Partial<ChainState>;
+}
+
+/**
+ * Executa `exec(provider, state)` percorrendo a cadeia de fallback do módulo.
  * Pula providers indisponíveis (em cooldown no LlmHealthService).
  * Em erro de cota/infra registra no LlmHealthService e tenta o próximo.
  * Sucesso registra recordSuccess e retorna o resultado.
  * Se todos falharem, lança o último erro.
  * Registra `chain` e `activeIndex` no llmCallLogService ao encerrar.
  *
+ * #1010: ao trocar de provider, NÃO reinicia a cadeia do zero — reaproveita o
+ * estado acumulado (`state`) construído nas tentativas anteriores (messages,
+ * seenToolCalls, contexto parcial). O mesmo objeto mutável é passado a cada
+ * provider, então mutações feitas antes de uma falha persistem para o próximo,
+ * garantindo que ferramentas já chamadas não sejam reexecutadas. Callers que
+ * ignoram o 2º arg continuam funcionando (backward compatible).
+ *
  * NUNCA modifica postChatCompletion — é uma camada ACIMA do provider.
  */
 async function runWithChain<T>(
     moduleName: string,
-    exec: (provider: string) => Promise<T>,
+    exec: (provider: string, state: ChainState) => Promise<T>,
+    opts?: RunWithChainOptions,
 ): Promise<T> {
     const chain = _configService.getFallbackChain(moduleName);
+    // #1010: estado acumulado, levado entre trocas de provider. Objeto mutável
+    // compartilhado por referência — mutações antes de uma falha persistem.
+    const state: ChainState = {
+        messages: opts?.initialState?.messages ? [...opts.initialState.messages] : [],
+        seenToolCalls: opts?.initialState?.seenToolCalls ?? new Set<string>(),
+        context: opts?.initialState?.context ?? '',
+    };
     let lastErr: any;
     let activeIndex = -1;
 
@@ -1818,8 +1853,9 @@ async function runWithChain<T>(
             log.warn(`runWithChain[${moduleName}]: provider '${provider}' em cooldown — pulando.`);
             continue;
         }
+        log.debug(`runWithChain[${moduleName}]: tentando provider '${provider}' (messages.length=${state.messages.length}, seenToolCalls=${state.seenToolCalls.size}).`);
         try {
-            const result = await exec(provider);
+            const result = await exec(provider, state);
             llmHealthService.recordSuccess(provider);
             activeIndex = i;
             // Registra encerramento da cadeia (aditivo ao log individual do provider)
@@ -1847,7 +1883,9 @@ async function runWithChain<T>(
                 llmHealthService.recordTransientError(provider, err);
             }
             lastErr = err;
-            log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${detail.slice(0, 120)}] — tentando próximo.`);
+            // #1010: preserva o estado acumulado (messages/seenToolCalls/contexto)
+            // para o próximo provider — NÃO reinicia a cadeia do zero.
+            log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${detail.slice(0, 120)}] — tentando próximo (preservando ${state.messages.length} mensagens, ${state.seenToolCalls.size} tool_call(s) já vista(s)).`);
         }
     }
 
