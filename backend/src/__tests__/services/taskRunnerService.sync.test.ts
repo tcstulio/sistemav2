@@ -28,6 +28,8 @@ import type { Task } from '../../services/taskRunnerService';
 // Mapa de respostas do `gh pr view --json state,merged` por número de PR.
 // true = PR mergeado; false = não mergeado (OPEN/CLOSED).
 let mergedPrs = new Map<number, boolean>();
+// PRs cujo `gh pr view` deve devolver ERRO (timeout, rede, PR inexistente, etc).
+let prErrorPrs = new Set<number>();
 // Issues que o `gh issue list` devolve (simula a "janela" do listIssues).
 let issueWindow: { number: number; state: string }[] = [];
 
@@ -50,6 +52,7 @@ describe('#1304 — syncWithGitHub: fallback deterministico p/ issues fora da ja
         svc.store = { tasks: {} };
 
         mergedPrs = new Map();
+        prErrorPrs = new Set();
         issueWindow = [];
 
         vi.mocked(execFile).mockImplementation((file: string, args: any[], opts: any, cb: any) => {
@@ -62,6 +65,10 @@ describe('#1304 — syncWithGitHub: fallback deterministico p/ issues fora da ja
                     stdout = JSON.stringify(issueWindow);
                 } else if (a[0] === 'pr' && a[1] === 'view') {
                     const prNum = Number(a[2]);
+                    if (prErrorPrs.has(prNum)) {
+                        setImmediate(() => cb(new Error('network error'), { stdout: '', stderr: '' }));
+                        return undefined as any;
+                    }
                     const merged = mergedPrs.get(prNum) === true;
                     stdout = JSON.stringify({ state: merged ? 'MERGED' : 'OPEN', merged });
                 } else {
@@ -144,5 +151,42 @@ describe('#1304 — syncWithGitHub: fallback deterministico p/ issues fora da ja
         await svc.syncWithGitHub();
 
         expect(t.status).toBe('reviewing');
+    });
+
+    it('gh pr view falha (erro de rede/timeout/PR inexistente) fora da janela → task permanece no status atual', async () => {
+        const t = makeTask(1083, { status: 'reviewing', prNumber: 60 });
+        svc.store.tasks[1083] = t;
+        issueWindow = [];
+        prErrorPrs.add(60);
+
+        const res = await svc.syncWithGitHub();
+
+        expect(t.status).toBe('reviewing');
+        expect(t.completedAt).toBeFalsy();
+        expect(res.reconciled).not.toContain(1083);
+    });
+
+    it('task failed (terminal) + issue fora da janela + PR merged → reconciliada para merged', async () => {
+        const t = makeTask(1088, { status: 'failed', prNumber: 70 });
+        svc.store.tasks[1088] = t;
+        issueWindow = [];
+        mergedPrs.set(70, true);
+
+        const res = await svc.syncWithGitHub();
+
+        expect(t.status).toBe('merged');
+        expect(t.events.some((e: any) => e.type === 'pr_merged')).toBe(true);
+        expect(res.reconciled).toContain(1088);
+    });
+
+    it('task rejected (terminal) + issue fora da janela + PR não merged → permanece rejected', async () => {
+        const t = makeTask(1114, { status: 'rejected', prNumber: 71 });
+        svc.store.tasks[1114] = t;
+        issueWindow = [];
+        mergedPrs.set(71, false);
+
+        await svc.syncWithGitHub();
+
+        expect(t.status).toBe('rejected');
     });
 });
