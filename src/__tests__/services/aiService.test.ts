@@ -398,6 +398,177 @@ describe('AiService', () => {
         });
     });
 
+    // #1013: o cliente estende o polling enquanto o backend sinaliza job vivo, em vez de
+    // cortar no teto fixo de 20min. Teto absoluto de 40min evita loop infinito.
+    describe('pollChatJob — extensão por heartbeat (#1013)', () => {
+        const job404 = (() => {
+            const err: any = new Error('Not Found');
+            err.response = { status: 404, data: { reason: 'not_found' } };
+            return err;
+        })();
+        const serverErr = (status = 503) => {
+            const err: any = new Error('Server Error');
+            err.response = { status, data: {} };
+            return err;
+        };
+
+        beforeEach(() => {
+            mockAxios.post.mockResolvedValue({ data: { jobId: 'job-1013' } });
+        });
+
+        it('NÃO declara timeout aos 20min quando o backend segue vivo (cenário #1)', async () => {
+            vi.useFakeTimers();
+            try {
+                let deliverDone = false;
+                mockAxios.get.mockImplementation(async () => {
+                    if (deliverDone) return { data: { status: 'done', reply: 'final', sessionId: 's1', alive: true } };
+                    return { data: { status: 'running', alive: true } };
+                });
+
+                let resolved = false;
+                let rejection: unknown = null;
+                const promise = AiService.chatWithData('q', []).then(
+                    (r) => { resolved = true; return r; },
+                    (e) => { rejection = e; },
+                );
+
+                // Passa do antigo teto de 20min com o job sempre vivo/running.
+                await vi.advanceTimersByTimeAsync(21 * 60 * 1000);
+
+                // Antes do fix o polling estouraria timeout aos 20min.
+                expect(rejection).toBeNull();
+                expect(resolved).toBe(false); // ainda processando
+
+                deliverDone = true;
+                await vi.advanceTimersByTimeAsync(2500);
+                const result = await promise;
+
+                expect(resolved).toBe(true);
+                expect(result.reply).toBe('final');
+            } finally {
+                vi.useRealTimers();
+            }
+        }, 20000);
+
+        it('declara timeout quando o job dá 404 e o heartbeat retorna alive:false (cenário #2)', async () => {
+            vi.useFakeTimers();
+            try {
+                mockAxios.get.mockImplementation(async () => { throw job404; });
+
+                // handler síncrono p/ evitar "unhandled rejection" entre o reject e o assert.
+                const settled = AiService.resumeChatJob('job-1013').then(() => null, (e: any) => e);
+                await vi.advanceTimersByTimeAsync(2500);
+                const err = await settled;
+
+                expect(err).toBeInstanceOf(Error);
+                expect(String(err?.message || '')).toMatch(/interrompido|excedido/i);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('estende o polling quando o job dá 404 mas o heartbeat retorna alive:true', async () => {
+            vi.useFakeTimers();
+            try {
+                let deliverDone = false;
+                mockAxios.get.mockImplementation(async (url: string) => {
+                    if (url.includes('/status')) {
+                        return { data: { alive: true, lastHeartbeat: new Date().toISOString(), progressPct: 42 } };
+                    }
+                    if (deliverDone) return { data: { status: 'done', reply: 'recuperado', sessionId: 's2', alive: true } };
+                    throw job404;
+                });
+
+                const progress: number[] = [];
+                const promise = AiService.resumeChatJob('job-1013', (p) => progress.push(p.lastHeartbeat));
+
+                await vi.advanceTimersByTimeAsync(2500);  // 404 -> heartbeat alive -> estende
+                await vi.advanceTimersByTimeAsync(5000);  // mais ciclos 404+alive
+                expect(progress.length).toBeGreaterThan(0);
+
+                deliverDone = true;
+                await vi.advanceTimersByTimeAsync(2500);
+                const result = await promise;
+
+                expect(result.reply).toBe('recuperado');
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('declara timeout após 5xx repetido no endpoint do job', async () => {
+            vi.useFakeTimers();
+            try {
+                mockAxios.get.mockRejectedValue(serverErr(503));
+
+                const settled = AiService.resumeChatJob('job-1013').then(() => null, (e: any) => e);
+                await vi.advanceTimersByTimeAsync(5 * 2500);
+                const err = await settled;
+
+                expect(err).toBeInstanceOf(Error);
+                expect(String(err?.message || '')).toMatch(/servidor indisponível|excedido/i);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('invoca onProgress com lastHeartbeat durante o polling', async () => {
+            vi.useFakeTimers();
+            try {
+                let polls = 0;
+                mockAxios.get.mockImplementation(async () => {
+                    polls++;
+                    if (polls <= 2) return { data: { status: 'running', alive: true } };
+                    return { data: { status: 'done', reply: 'ok', sessionId: 's3', alive: true } };
+                });
+
+                const heartbeats: number[] = [];
+                const promise = AiService.resumeChatJob('job-1013', (p) => heartbeats.push(p.lastHeartbeat));
+                await vi.advanceTimersByTimeAsync(3 * 2500);
+                await promise;
+
+                expect(heartbeats.length).toBeGreaterThanOrEqual(1);
+                expect(typeof heartbeats[0]).toBe('number');
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('respeita o teto absoluto de 40min mesmo com alive:true contínuo', async () => {
+            vi.useFakeTimers();
+            try {
+                mockAxios.get.mockResolvedValue({ data: { status: 'running', alive: true } });
+
+                const settled = AiService.resumeChatJob('job-1013').then(() => null, (e: any) => e);
+                await vi.advanceTimersByTimeAsync(41 * 60 * 1000);
+                const err = await settled;
+
+                expect(err).toBeInstanceOf(Error);
+                expect(String(err?.message || '')).toMatch(/40 min/);
+            } finally {
+                vi.useRealTimers();
+            }
+        }, 30000);
+
+        it('jobs rápidos (<20min) continuam funcionando como hoje (sem regressão)', async () => {
+            vi.useFakeTimers();
+            try {
+                mockAxios.post.mockResolvedValue({ data: { jobId: 'fast' } });
+                mockAxios.get.mockResolvedValue({ data: { status: 'done', reply: 'rapido', sessionId: 's', alive: true } });
+
+                const promise = AiService.chatWithData('oi', []);
+                await vi.advanceTimersByTimeAsync(2500);
+                const result = await promise;
+
+                expect(result.reply).toBe('rapido');
+                // #1013: jobs que NÃO dão 404 nunca consultam o heartbeat /status.
+                expect(mockAxios.get).not.toHaveBeenCalledWith(expect.stringContaining('/ai-jobs/'), expect.any(Object));
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+    });
+
     describe('analyzeSystemLogs', () => {
         it('analyzes system logs', async () => {
             const analysis = [{ type: 'error', count: 5 }];

@@ -483,3 +483,40 @@ describe('VirtualAssistant — race condition na criação de sessão (#1153)', 
         expect(AiService.createChatSession).not.toHaveBeenCalled();
     });
 });
+
+// #1013: enquanto o agente processa, a UI mostra um indicador de progresso baseado no
+// lastHeartbeat repassado via onProgress: "Processando… (Xs desde último update)".
+describe('VirtualAssistant — indicador de progresso por heartbeat (#1013)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('exibe "Processando… (Xs desde último update)" durante o processamento e some ao concluir', async () => {
+        let resolveChat!: (v: any) => void;
+        mockChatWithData.mockImplementation((...args: any[]) => {
+            // 7º argumento (index 6) = onProgress — repassa um heartbeat 4s atrás.
+            const onProgress = args[6];
+            if (typeof onProgress === 'function') {
+                onProgress({ lastHeartbeat: Date.now() - 4000 });
+            }
+            return new Promise((res) => { resolveChat = res; });
+        });
+
+        renderAndOpen([]);
+
+        const input = screen.getByRole('textbox');
+        fireEvent.change(input, { target: { value: 'pergunta' } });
+        fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+        await waitFor(() => {
+            expect(screen.getByText(/Processando.*desde.*último update/i)).toBeInTheDocument();
+        }, { timeout: 3000 });
+
+        // Conclui o job => indicador desaparece.
+        resolveChat({ reply: 'pronto', sessionId: 'sess-1' });
+
+        await waitFor(() => {
+            expect(screen.queryByText(/Processando.*desde.*último update/i)).toBeNull();
+        }, { timeout: 3000 });
+    });
+});
