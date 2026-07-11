@@ -210,18 +210,21 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
         }
     }
 
+    // #1358: o endpoint /validate do Dolibarr EXIGE `notrigger` (integer) no body — sem ele,
+    // retorna 400 "Invalid value specified for `notrigger`. Expecting integer value" e a
+    // validação falha (confirmado ao vivo). notrigger=0 = dispara os triggers normais do ERP.
     async validateInvoice(invoiceId: string, userKey?: string): Promise<any> {
         const url = `${this.baseUrl}invoices/${invoiceId}/validate`;
-        return this.requestWithAuth('POST', url, {}, userKey || this.apiKey);
+        return this.requestWithAuth('POST', url, { notrigger: 0 }, userKey || this.apiKey);
     }
 
     async validateOrder(orderId: string, userKey?: string): Promise<any> {
         const url = `${this.baseUrl}orders/${orderId}/validate`;
-        return this.requestWithAuth('POST', url, {}, userKey || this.apiKey);
+        return this.requestWithAuth('POST', url, { notrigger: 0 }, userKey || this.apiKey);
     }
 
     async validateProposal(proposalId: string, userKey?: string): Promise<any> {
         const url = `${this.baseUrl}proposals/${proposalId}/validate`;
-        return this.requestWithAuth('POST', url, {}, userKey || this.apiKey);
+        return this.requestWithAuth('POST', url, { notrigger: 0 }, userKey || this.apiKey);
     }
 }

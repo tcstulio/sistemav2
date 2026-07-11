@@ -65,6 +65,26 @@ describe('DolibarrCommercialService', () => {
         });
     });
 
+    // #1358: o /validate do Dolibarr exige notrigger:int no body — sem ele, HTTP 400.
+    describe('validate* — envia notrigger no body (#1358)', () => {
+        for (const [method, id] of [['validateInvoice', '50'], ['validateOrder', '11'], ['validateProposal', '303']] as const) {
+            it(`${method} POSTa { notrigger: 0 } (senão o Dolibarr rejeita)`, async () => {
+                mockAxios.mockResolvedValue({ data: { id } });
+                await (service as any)[method](id, 'user-key');
+                const cfg = mockAxios.mock.calls[0][0];
+                expect(cfg.method).toBe('POST');
+                expect(cfg.url).toContain('/validate');
+                expect(cfg.data).toEqual({ notrigger: 0 });
+                expect(cfg.headers.DOLAPIKEY).toBe('user-key');
+            });
+        }
+        it('valida com a apiKey do sistema quando sem userKey (autoria via HITL cai no fallback)', async () => {
+            mockAxios.mockResolvedValue({ data: { id: '303' } });
+            await service.validateProposal('303');
+            expect(mockAxios.mock.calls[0][0].headers.DOLAPIKEY).toBe('test-api-key-1234567890');
+        });
+    });
+
     describe('getInvoice', () => {
         it('returns invoice data when found', async () => {
             mockAxios.get.mockResolvedValue({ status: 200, data: { id: 1, ref: 'INV001' } });
