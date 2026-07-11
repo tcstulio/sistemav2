@@ -31,11 +31,12 @@ export const DEFAULT_ACTION_CLASS: ActionClass = { domain: 'business', reversibi
  * por prefixo não captura o risco corretamente.
  */
 const OVERRIDES: Record<string, ActionClass> = {
-    // Efeito irreversível no ERP (numeração fiscal etc.) — hoje disparam DIRETO (gap de HITL, §8.1).
+    // Efeito irreversível no ERP (numeração fiscal etc.) — no registry HITL (agentActionConfirm):
+    // com o dial ligado, o gate desvia p/ /confirm-action em vez de executar direto.
     validate_invoice: { domain: 'business', reversibility: 'irreversible', requiresHITL: true },
     validate_order: { domain: 'business', reversibility: 'irreversible', requiresHITL: true },
     validate_proposal: { domain: 'business', reversibility: 'irreversible', requiresHITL: true },
-    // Comunicação externa — mensagem enviada não se desfaz.
+    // Comunicação externa — mensagem enviada não se desfaz. No registry HITL desde a Fase 2.
     send_whatsapp: { domain: 'business', reversibility: 'irreversible', requiresHITL: true },
     // Notificações internas (in-app/equipe) — reversíveis; o canal externo já é gateado à parte (Fase A).
     notify_person: { domain: 'business', reversibility: 'reversible', requiresHITL: false },
