@@ -29,6 +29,27 @@ describe('menuRegistry', () => {
         }
     });
 
+    describe('item approvals (#1283)', () => {
+        it('is registered in the SISTEMA group with path /approvals and label Aprovações', () => {
+            const group = MENU_REGISTRY.find(g => g.id === 'system')!;
+            const item = group.items.find(i => i.id === 'approvals');
+            expect(item).toBeTruthy();
+            expect(item!.path).toBe('/approvals');
+            expect(item!.label).toBe('Aprovações');
+        });
+
+        it('is positioned right after system_events (próximo a Central de Eventos)', () => {
+            const group = MENU_REGISTRY.find(g => g.id === 'system')!;
+            const idx = group.items.findIndex(i => i.id === 'system_events');
+            expect(idx).toBeGreaterThan(-1);
+            expect(group.items[idx + 1].id).toBe('approvals');
+        });
+
+        it('is present in the flattened list', () => {
+            expect(MENU_REGISTRY_ITEMS.some(i => i.id === 'approvals')).toBe(true);
+        });
+    });
+
     describe('integration with applyOrderVisibility', () => {
         const group = MENU_REGISTRY.find(g => g.title === 'AGENTE IA')!;
 

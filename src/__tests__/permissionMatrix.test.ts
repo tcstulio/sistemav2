@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { canAccessScreen } from '../utils/screenAccess';
+import { canAccessScreen, RIGHTS_MAP } from '../utils/screenAccess';
 import { deriveScreenMatrix, visibleScreens, WRITE_ACTIONS } from '../utils/permissionMatrix';
 
 // Identidades de exemplo (mesmo shape de user.rights / getGroupRights).
@@ -68,6 +68,34 @@ describe('superset de telas (de-dup #1073)', () => {
     it('settings segue o perm aninhado user.self.read', () => {
         expect(canAccessScreen(USER_SELF, 'settings')).toBe(true);
         expect(canAccessScreen(FREELA, 'settings')).toBe(false);
+    });
+});
+
+// #1283 — /approvals é admin-only: não mapeada em RIGHTS_MAP, então não-admins caem no
+// secure-default (sem rights => não vê). Admin bypassa tudo. Assim o item some do menu e a
+// rota direta é bloqueada pelo guard do ViewWrapper (canAccess('approvals') === false).
+describe('approvals é admin-only (#1283)', () => {
+    const COMERCIAL = { admin: 0, rights: { societe: { lire: '1' } } };
+    const SUPRIMENTOS = { admin: 0, rights: { fournisseur: { lire: '1' } } };
+
+    it('admin vê approvals', () => {
+        expect(canAccessScreen(ADMIN, 'approvals')).toBe(true);
+    });
+
+    it('não-admin sem rights NÃO vê approvals (secure-default)', () => {
+        expect(canAccessScreen(FREELA, 'approvals')).toBe(false);
+    });
+
+    it('não-admin com rights de outros módulos também NÃO vê approvals', () => {
+        expect(canAccessScreen(FINANCEIRO, 'approvals')).toBe(false);
+        expect(canAccessScreen(COMERCIAL, 'approvals')).toBe(false);
+        expect(canAccessScreen(SUPRIMENTOS, 'approvals')).toBe(false);
+    });
+
+    it('approvals não está mapeado em RIGHTS_MAP (admin-only por secure-default, não por módulo)', () => {
+        // Se alguém mapear approvals a um módulo+perm, não-admins com esse perm passariam a ver —
+        // quebrando o critério admin-only. Este teste guarda essa intenção.
+        expect(RIGHTS_MAP['approvals']).toBeUndefined();
     });
 });
 
