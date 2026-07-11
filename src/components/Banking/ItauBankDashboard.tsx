@@ -118,14 +118,20 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
         const cliente = customers.find(c => c.id === clienteId);
         if (cliente) {
             log.info(`Preenchendo endereço do boleto a partir do cliente #${clienteId}`);
+            const logradouro = cliente.address || '';
+            const cidade = cliente.town || '';
+            const cep = cliente.zip || '';
+            if (!logradouro || !cidade || !cep) {
+                log.warn(`Cliente #${clienteId} possui endereço incompleto (address/town/zip ausentes). Preencha os campos restantes manualmente antes de emitir o boleto.`);
+            }
             setBoletoForm(prev => ({
                 ...prev,
                 clienteId,
                 pagadorNome: cliente.name || prev.pagadorNome,
                 pagadorCpfCnpj: cliente.idprof1 || prev.pagadorCpfCnpj,
-                pagadorLogradouro: cliente.address || '',
-                pagadorCidade: cliente.town || '',
-                pagadorCep: cliente.zip || '',
+                pagadorLogradouro: logradouro,
+                pagadorCidade: cidade,
+                pagadorCep: cep,
             }));
         } else {
             setBoletoForm(prev => ({ ...prev, clienteId }));
