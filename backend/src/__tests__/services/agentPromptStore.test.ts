@@ -101,3 +101,28 @@ describe('agentPromptStore', () => {
         expect(snap.systemPrompt).toBe('texto com espaços');
     });
 });
+
+// #1316: a apresentação inicial do DEFAULT_SYSTEM_PROMPT não pode mencionar
+// "sistemav2" nem "ERP Dolibarr".
+describe('DEFAULT_SYSTEM_PROMPT — apresentação inicial (#1316)', () => {
+    it('não menciona "sistemav2"', () => {
+        expect(DEFAULT_SYSTEM_PROMPT.toLowerCase()).not.toContain('sistemav2');
+    });
+
+    it('não menciona "ERP Dolibarr" na linha de abertura', () => {
+        const opening = DEFAULT_SYSTEM_PROMPT.split('\n')[0].toLowerCase();
+        expect(opening).not.toContain('erp dolibarr');
+        expect(opening).not.toContain('dolibarr');
+    });
+
+    it('continua identificando o Marciano e a Coolgroove', () => {
+        expect(DEFAULT_SYSTEM_PROMPT).toContain('Marciano');
+        expect(DEFAULT_SYSTEM_PROMPT).toContain('Coolgroove');
+    });
+
+    it('é igual ao prompt retornado por restoreDefault', () => {
+        agentPromptStore.update('temporário', ACTOR, true);
+        const snap = agentPromptStore.restoreDefault(ACTOR, true);
+        expect(snap.systemPrompt).toBe(DEFAULT_SYSTEM_PROMPT);
+    });
+});

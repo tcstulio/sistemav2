@@ -1129,12 +1129,12 @@ describe('LocalProvider.generateReply (#957) — seenToolCalls + gate de conclus
 describe('MARCIANO_IDENTITY_PROMPT (#1002)', () => {
     it('abre com a apresentação concisa exata pedida pelo usuário (1ª linha)', () => {
         const firstLine = MARCIANO_IDENTITY_PROMPT.split('\n')[0];
-        expect(MARCIANO_IDENTITY_PROMPT.startsWith('Sou a IA da CoolGroove')).toBe(true);
-        expect(firstLine).toBe('Sou a IA da CoolGroove — mas pode me chamar de Marciano. Seu assistente pessoal para o dia a dia no sistema.');
+        expect(MARCIANO_IDENTITY_PROMPT.startsWith('Sou a IA da Coolgroove')).toBe(true);
+        expect(firstLine).toBe('Sou a IA da Coolgroove — mas pode me chamar de Marciano. Seu assistente pessoal para o dia a dia no sistema.');
     });
 
-    it('orienta apresentação concisa começando com "Sou a IA da CoolGroove" (≤ 3 linhas)', () => {
-        expect(MARCIANO_IDENTITY_PROMPT).toContain('Sou a IA da CoolGroove');
+    it('orienta apresentação concisa começando com "Sou a IA da Coolgroove" (≤ 3 linhas)', () => {
+        expect(MARCIANO_IDENTITY_PROMPT).toContain('Sou a IA da Coolgroove');
         expect(MARCIANO_IDENTITY_PROMPT.toLowerCase()).toContain('3 linhas');
     });
 
@@ -1146,8 +1146,9 @@ describe('MARCIANO_IDENTITY_PROMPT (#1002)', () => {
     it('proíbe concordância cega sem evidência (anti-sycophancy)', () => {
         expect(MARCIANO_IDENTITY_PROMPT.toLowerCase()).toContain('você tem razão');
         expect(MARCIANO_IDENTITY_PROMPT.toLowerCase()).toContain('verificar evidência');
-        // instrui a investigar quando não tem certeza
-        expect(MARCIANO_IDENTITY_PROMPT.toLowerCase()).toContain('não verifiquei ainda');
+        // #1316: instrui a investigar quando não tem certeza
+        expect(MARCIANO_IDENTITY_PROMPT.toLowerCase()).toContain('ainda não verifiquei');
+        expect(MARCIANO_IDENTITY_PROMPT.toLowerCase()).toContain('deixa eu investigar');
     });
 
     it('proíbe "anunciar e parar": ferramenta deve vir como JSON na mesma resposta', () => {
@@ -1160,6 +1161,59 @@ describe('MARCIANO_IDENTITY_PROMPT (#1002)', () => {
     it('mantém Português do Brasil como idioma e o nome "Marciano"', () => {
         expect(MARCIANO_IDENTITY_PROMPT).toMatch(/Português do Brasil/i);
         expect(MARCIANO_IDENTITY_PROMPT).toContain('Marciano');
+    });
+});
+
+// ── #1316: reforço anti-concordância cega, anti-"anuncia-para" + exemplos certo/errado ──
+describe('MARCIANO_IDENTITY_PROMPT (#1316)', () => {
+    it('a apresentação inicial não menciona "sistemav2" nem "ERP Dolibarr"', () => {
+        // Critério de aceite: a saudação que o agente efetivamente diz ao usuário
+        // (a 1ª linha / frase de abertura) não pode citar sistemav2 nem ERP Dolibarr.
+        const greeting = MARCIANO_IDENTITY_PROMPT.split('\n')[0].toLowerCase();
+        expect(greeting).not.toContain('sistemav2');
+        expect(greeting).not.toContain('erp dolibarr');
+        expect(greeting).not.toContain('dolibarr');
+    });
+
+    it('a 1ª linha continua sendo a frase de abertura exata', () => {
+        const firstLine = MARCIANO_IDENTITY_PROMPT.split('\n')[0];
+        expect(firstLine).toBe('Sou a IA da Coolgroove — mas pode me chamar de Marciano. Seu assistente pessoal para o dia a dia no sistema.');
+    });
+
+    it('anti-concordância cega prefere "ainda não verifiquei, deixa eu investigar"', () => {
+        const lower = MARCIANO_IDENTITY_PROMPT.toLowerCase();
+        expect(lower).toContain('ainda não verifiquei');
+        expect(lower).toContain('deixa eu investigar');
+        // Continua proibindo concordar sem evidência (#1002 preservado).
+        expect(lower).toContain('você tem razão');
+        expect(lower).toContain('verificar evidência');
+    });
+
+    it('proíbe explicitamente "vou pesquisar/deixa eu checar" e encerrar sem tool call', () => {
+        const lower = MARCIANO_IDENTITY_PROMPT.toLowerCase();
+        expect(lower).toContain('vou pesquisar');
+        expect(lower).toContain('deixa eu checar');
+        expect(lower).toContain('sem a tool call');
+    });
+
+    it('traz exemplo explícito do formato ERRADO (anuncia e para)', () => {
+        const lower = MARCIANO_IDENTITY_PROMPT.toLowerCase();
+        expect(lower).toContain('exemplo errado');
+        expect(lower).toContain('deixa eu checar as faturas');
+    });
+
+    it('traz exemplo explícito do formato CERTO (JSON na mesma resposta)', () => {
+        const lower = MARCIANO_IDENTITY_PROMPT.toLowerCase();
+        expect(lower).toContain('exemplo certo');
+        expect(lower).toContain('"tool":"list_invoices"');
+        expect(lower).toContain('"socid":"123"');
+    });
+
+    it('continua exigindo só o JSON, sem texto antes (#1002 preservado)', () => {
+        const lower = MARCIANO_IDENTITY_PROMPT.toLowerCase();
+        expect(lower).toContain('só o json');
+        expect(lower).toContain('mesma resposta');
+        expect(lower).toContain('anuncie e pare');
     });
 });
 
@@ -1181,7 +1235,7 @@ describe('LocalProvider.generateReply (#1002) — system prompt do Marciano no l
 
         const sys = (axios.post as any).mock.calls[0][1].messages[0].content;
         // Identidade + 3 regras (#1002) presentes no prompt enviado ao modelo.
-        expect(sys).toContain('Sou a IA da CoolGroove');
+        expect(sys).toContain('Sou a IA da Coolgroove');
         expect(sys.toLowerCase()).toContain('verificar evidência');
         expect(sys.toLowerCase()).toContain('anuncie e pare');
         // Comportamento intacto: contexto e ferramentas seguem presentes.
@@ -1199,6 +1253,20 @@ describe('LocalProvider.generateReply (#1002) — system prompt do Marciano no l
         const sys = (axios.post as any).mock.calls[0][1].messages[0].content;
         // O cabeçalho antigo era "Você é o Marciano — agente IA do CoolGroove (ERP Dolibarr). Use Português."
         expect(sys).not.toContain('Você é o Marciano — agente IA do CoolGroove');
+    });
+
+    it('envia também os exemplos certo/errado e a proibição de anúncio sem tool (#1316)', async () => {
+        (axios.post as any).mockResolvedValue({
+            data: { choices: [{ message: { content: 'ok' } }], usage: {} },
+        });
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        await provider.generateReply([{ role: 'user', parts: 'deixa eu checar as faturas' } as any], 'ctx');
+
+        const sys = ((axios.post as any).mock.calls[0][1].messages[0].content as string).toLowerCase();
+        expect(sys).toContain('exemplo certo');
+        expect(sys).toContain('exemplo errado');
+        expect(sys).toContain('vou pesquisar');
+        expect(sys).toContain('deixa eu investigar');
     });
 });
 
@@ -1222,7 +1290,7 @@ describe('GoogleProvider.generateReply (#1002) — system prompt do Marciano no 
             ? callArg.contents
             : (callArg.contents?.[0]?.parts?.[0]?.text || '');
         // Identidade + regras (#1002) presentes no prompt enviado ao modelo.
-        expect(promptText).toContain('Sou a IA da CoolGroove');
+        expect(promptText).toContain('Sou a IA da Coolgroove');
         expect(promptText).toContain('Marciano');
         expect(promptText).toContain('você tem razão');
         expect(promptText).toContain('anuncie e pare');

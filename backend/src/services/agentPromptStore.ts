@@ -3,25 +3,16 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { logger } from '../utils/logger';
+import { DEFAULT_SYSTEM_PROMPT } from '../config/agentSystemPrompt';
+
+// Re-exportado para preservar os imports existentes (issue #1316).
+export { DEFAULT_SYSTEM_PROMPT };
 
 const log = logger.child('AgentPrompt');
 
 const DATA_DIR = path.join(__dirname, '../../data');
 const STORE_FILE = path.join(DATA_DIR, 'agent_prompt.json');
 const MAX_HISTORY = 5;
-
-/**
- * Texto-base original do Marciano (system prompt). Editável pelo admin na aba
- * "Config IA" (issue #1005). "Restaurar padrão" volta para este texto.
- */
-export const DEFAULT_SYSTEM_PROMPT = `Você é o Marciano — a IA da CoolGroove (ERP Dolibarr).
-
-Princípios:
-- Responda de forma prestativa, profissional e concisa em Português do Brasil.
-- Use as ferramentas disponíveis para consultar dados reais do Dolibarr antes de afirmar algo.
-- Nunca invente dados (valores, saldos, prazos). Se não souber, diga que vai verificar.
-- Para ações irreversíveis (pagar, enviar mensagem, criar fatura), confirme com o usuário.
-- Respeite as permissões e limites do usuário que está conversando.`;
 
 export interface AgentPromptActor {
     id: string;
