@@ -12,6 +12,7 @@ import { useLocation } from 'react-router-dom';
 import { formatViewContext } from '../config/viewRegistry';
 import { getAgentBootstrapConfig, AgentBootstrapConfig } from '../services/agentBootstrapService';
 import { getContextUsage } from '../utils/contextUsage';
+import { AgentMarkdown } from './ui/AgentMarkdown';
 // Hooks removidos: Backend processa dados via ferramentas IA
 
 const log = logger.child('VirtualAssistant');
@@ -47,60 +48,9 @@ const buildBootstrapPrompt = (cfg: AgentBootstrapConfig): string => {
   return lines.join('\n');
 };
 
-// Deeplinks internos do agente (ex.: /tickets/new?prefill=<token>) e URLs http(s).
-const INTERNAL_DEEPLINK = /\/[A-Za-z0-9_\-/]+\?prefill=[A-Za-z0-9._-]+/g;
-const ABSOLUTE_URL = /https?:\/\/[^\s)]+/g;
-
-// Torna links clicáveis na resposta do agente: deeplink interno navega in-app (React Router);
-// URL http(s) abre em nova aba. Caso contrário, renderiza texto puro.
-const renderMessageContent = (text: string, navigate: (to: string) => void): React.ReactNode => {
-    if (!text) return text;
-    type Match = { start: number; end: number; value: string; kind: 'internal' | 'url' };
-    const matches: Match[] = [];
-    let m: RegExpExecArray | null;
-
-    const internal = new RegExp(INTERNAL_DEEPLINK);
-    while ((m = internal.exec(text)) !== null) {
-        matches.push({ start: m.index, end: m.index + m[0].length, value: m[0], kind: 'internal' });
-    }
-    const url = new RegExp(ABSOLUTE_URL);
-    while ((m = url.exec(text)) !== null) {
-        const hit = m;
-        const overlap = matches.some(x => hit.index < x.end && (hit.index + hit[0].length) > x.start);
-        if (!overlap) matches.push({ start: hit.index, end: hit.index + hit[0].length, value: hit[0], kind: 'url' });
-    }
-    if (matches.length === 0) return text;
-    matches.sort((a, b) => a.start - b.start);
-
-    const nodes: React.ReactNode[] = [];
-    let cursor = 0;
-    matches.forEach((mt, i) => {
-        if (mt.start > cursor) nodes.push(text.slice(cursor, mt.start));
-        if (mt.kind === 'internal') {
-            nodes.push(
-                <button
-                    key={`l${i}`}
-                    type="button"
-                    onClick={() => navigate(mt.value)}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 my-0.5 rounded-md bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors"
-                >
-                    Revisar e criar ↗
-                </button>
-            );
-        } else {
-            nodes.push(
-                <a key={`l${i}`} href={mt.value} target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 underline break-all">
-                    {mt.value}
-                </a>
-            );
-        }
-        cursor = mt.end;
-    });
-    if (cursor < text.length) nodes.push(text.slice(cursor));
-    return nodes;
-};
-
-// (Sem props — o componente é self-contained.)
+// A renderização da resposta do agente (markdown + links clicáveis + tabelas) foi extraída
+// para o componente compartilhado ./ui/AgentMarkdown. O renderMessageContent antigo (regex de
+// deeplink/URL, com TODO o resto em texto puro) deixava markdown e links `[x](/rel)` sem render.
 
 // #947: normaliza QUALQUER imagem para um JPEG pequeno e exibível.
 // - HEIC/HEIF (padrão do iPhone): o navegador não decodifica no <img>/canvas (exceto Safari)
@@ -711,7 +661,7 @@ const VirtualAssistant: React.FC = () => {
                         ))}
                       </div>
                     )}
-                    {msg.role === 'model' ? renderMessageContent(msg.text, navigate) : msg.text}
+                    {msg.role === 'model' ? <AgentMarkdown text={msg.text} navigate={navigate} /> : msg.text}
                     {msg.role === 'model' && !msg.isError && msg.text && (
                       <div className="flex items-center gap-2 mt-1 pt-1 border-t border-slate-100 dark:border-slate-700/50 flex-wrap">
                         <button
