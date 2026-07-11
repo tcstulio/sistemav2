@@ -1,8 +1,20 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent, screen } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { BOMDetail } from '../../components/Manufacturing/details/BOMDetail';
 import { BOM, DolibarrConfig, Product } from '../../types';
 import { formatCurrency } from '../../utils/formatUtils';
+import { TAB_ACTIVE_CLASSES } from '../../utils/theme';
+
+// ---------------------------------------------------------------------------
+// Static source analysis for #1300 — read BOMDetail.tsx to verify zero
+// dynamic color-class interpolation at the source level (criterion a).
+// ---------------------------------------------------------------------------
+const __testDir = dirname(fileURLToPath(import.meta.url));
+const BOM_DETAIL_PATH = resolve(__testDir, '../../components/Manufacturing/details/BOMDetail.tsx');
+const BOM_DETAIL_SOURCE = readFileSync(BOM_DETAIL_PATH, 'utf-8');
 
 const config: DolibarrConfig = {
     apiUrl: 'https://api.example.com',
@@ -42,6 +54,25 @@ const bom: BOM = {
     lines: [
         { id: 'l1', parent_id: 'bom1', fk_product: '2', qty: 2, cost_price: 50, efficiency: 1 },
     ],
+};
+
+const bomNoLines: BOM = {
+    id: 'bom2',
+    ref: 'BOM002',
+    label: 'Receita Vazia',
+    status: '1',
+    qty: 1,
+    product_id: '1',
+    lines: [],
+};
+
+const bomUndefinedLines: BOM = {
+    id: 'bom3',
+    ref: 'BOM003',
+    label: 'Receita Sem Lines',
+    status: '1',
+    qty: 1,
+    product_id: '1',
 };
 
 describe('BOMDetail — Delete (#585)', () => {
@@ -192,5 +223,65 @@ describe('BOMDetail — classes Tailwind literais por tema (#1094)', () => {
         const overview = tabButton('Visão Geral');
         expect(overview.className).toContain('border-indigo-600');
         expect(overview.className).not.toContain('undefined');
+    });
+});
+
+// ===========================================================================
+// #1300 — Zero interpolação dinâmica de classe de cor (epic #1096)
+//
+// O código de produção já foi corrigido pelo PR #1258 (issue #1094).
+// Esta suíte "trava" o comportamento esperado e previne regressões,
+// cobrindo os critérios de aceite (a), (b) e (c) da issue #1300.
+// ===========================================================================
+describe('BOMDetail (#1300) — classes Tailwind estáticas (zero interpolação dinâmica)', () => {
+    // Detecta construção de classe de cor por interpolação:
+    // `border-${...}`, `bg-${...}`, `text-${...}`, `hover:bg-${...}`, etc.
+    // Esses padrões não são detectados pelo JIT scanner do Tailwind v4.
+    const COLOR_INTERPOLATION_RE =
+        /(?:hover:|dark:|focus:|group-hover:|active:)?(?:border|bg|text|ring|ring-offset|from|to|via|outline|fill|stroke|divide|placeholder|accent|caret|decoration)-\$\{/;
+
+    // --- Critério (a): zero interpolação de classe de cor ---
+
+    it('criterio (a): código-fonte não contém interpolação de classe de cor via template string', () => {
+        expect(BOM_DETAIL_SOURCE).not.toMatch(COLOR_INTERPOLATION_RE);
+    });
+
+    it('criterio (a): todas as interpolações ${ no arquivo são chamadas de getTabClasses (não de cor)', () => {
+        const interpolations = BOM_DETAIL_SOURCE.match(/\$\{[^}]*\}/g) ?? [];
+        expect(interpolations.length).toBeGreaterThan(0);
+        interpolations.forEach((interp) => {
+            expect(interp).not.toMatch(COLOR_INTERPOLATION_RE);
+        });
+    });
+
+    // --- Critério (b): mapa segue Record<ThemeColor, string> ---
+
+    it('criterio (b): importa getTabClasses do helper compartilhado utils/theme', () => {
+        expect(BOM_DETAIL_SOURCE).toContain("from '../../../utils/theme'");
+        expect(BOM_DETAIL_SOURCE).toContain('getTabClasses');
+    });
+
+    it('criterio (b): TAB_ACTIVE_CLASSES usa apenas classes literais (sem interpolação)', () => {
+        expect(TAB_ACTIVE_CLASSES.indigo).toBe('border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400');
+        expect(TAB_ACTIVE_CLASSES.emerald).toBe('border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400');
+        Object.values(TAB_ACTIVE_CLASSES).forEach((v) => expect(v).not.toContain('${'));
+    });
+
+    // --- Critério (c): renderização sem regressão em edge cases ---
+
+    it('criterio (c): renderiza BOM com linhas vazias sem erros', () => {
+        render(
+            <BOMDetail bom={bomNoLines} products={[finalProduct, componentProduct]} config={config} onClose={vi.fn()} />
+        );
+        fireEvent.click(screen.getByText('Componentes & Árvore'));
+        expect(screen.getByText('Nenhum componente definido.')).toBeInTheDocument();
+    });
+
+    it('criterio (c): renderiza BOM sem propriedade lines (undefined) sem erros', () => {
+        render(
+            <BOMDetail bom={bomUndefinedLines} products={[finalProduct, componentProduct]} config={config} onClose={vi.fn()} />
+        );
+        fireEvent.click(screen.getByText('Componentes & Árvore'));
+        expect(screen.getByText('Nenhum componente definido.')).toBeInTheDocument();
     });
 });
