@@ -49,6 +49,15 @@ const OPENCODE_TIMEOUT_MS = (Number(process.env.TASKRUNNER_OPENCODE_TIMEOUT_MIN)
 // por round, senão o watchdog mata antes de a task longa terminar.
 const MAX_TASK_WALL_MS = (Number(process.env.TASKRUNNER_MAX_TASK_WALL_MIN) || 180) * 60 * 1000;
 
+// Fallback de MODELO do opencode (diretriz do dono, 2026-07-11: "o plano do MiniMax também é
+// contratado — precisamos do opencode com o MiniMax também"). O run normal usa o modelo default
+// do opencode (~/.config/opencode: zai-coding-plan/glm-5.2); quando o run FALHA por cota/429
+// (isQuotaError), re-roda UMA vez com o modelo de fallback via `--model`. Requer o provider
+// `minimax` configurado no opencode.json global (auth = chave da ASSINATURA, a mesma
+// MINIMAX_MEDIA_KEY do backend — a MINIMAX_API_KEY PaaS dá "insufficient balance 1008").
+// TASKRUNNER_OPENCODE_FALLBACK_MODEL="" desliga.
+const OPENCODE_FALLBACK_MODEL = process.env.TASKRUNNER_OPENCODE_FALLBACK_MODEL ?? 'minimax/MiniMax-M3';
+
 // Gate por DELTA (Fase 0 item 2-3): ON por padrão; TASKRUNNER_DELTA_GATE=0 volta ao gate estrito antigo.
 // Só reprova por erro de tsc NOVO em arquivo que a task TOCOU (+ global novo). Ver gateDelta.ts.
 const DELTA_GATE = process.env.TASKRUNNER_DELTA_GATE !== '0';
@@ -1428,12 +1437,29 @@ class TaskRunnerService {
         this.accountRound(task); // #1154 item 23: conta a rodada (por task + por dia) p/ os tetos de custo
         const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`, [], task);
         this.cleanStaleLocks(gone);
+        const basePrompt = `Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo.`;
         try {
-            return await runOpencode(
-                `opencode run "Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo."`,
-                WT_ROOT, task, OPENCODE_TIMEOUT_MS,
-                (sample) => { task.cpuMemSamples?.push(sample); },
-            );
+            try {
+                return await runOpencode(
+                    `opencode run "${basePrompt}"`,
+                    WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+                    (sample) => { task.cpuMemSamples?.push(sample); },
+                );
+            } catch (e: any) {
+                // Fallback GLM→MiniMax do CODER: só p/ falha de COTA/429 (mesmo critério do chat).
+                // Timeout/kill/erro de código NÃO caem aqui — retry cego só desperdiçaria rodada.
+                const msg = e?.message || String(e);
+                if (!OPENCODE_FALLBACK_MODEL || task.killRequested || !isQuotaError(msg)) throw e;
+                this.recordEvent(task, 'attempt_started', `Cota do modelo primário esgotada — re-rodando o opencode com fallback ${OPENCODE_FALLBACK_MODEL}.`, { fallbackModel: OPENCODE_FALLBACK_MODEL });
+                this.emitLog(task.issueNumber, 'warn', `Opencode: cota/429 no modelo primário — fallback para ${OPENCODE_FALLBACK_MODEL}.`);
+                const goneMid = await this.sweepOrphanedOpencode(`fallback-run #${task.issueNumber}`, [], task);
+                this.cleanStaleLocks(goneMid);
+                return await runOpencode(
+                    `opencode run --model ${OPENCODE_FALLBACK_MODEL} "${basePrompt}"`,
+                    WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+                    (sample) => { task.cpuMemSamples?.push(sample); },
+                );
+            }
         } finally {
             // O timeout-kill (killTree do bash) pode falhar e deixar o opencode ÓRFÃO VIVO — ele
             // segura CPU/disco e faz o `git status` seguinte estourar o timeout de 15s (foi a
