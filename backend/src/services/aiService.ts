@@ -9,6 +9,9 @@ import { logger } from '../utils/logger';
 import { isValidExternalUrl } from '../utils/urlValidation';
 import { TOOLS_PROMPT, executeTool } from './agentTools';
 import { agentConfigService } from './agentConfigService';
+// #1316: system prompt do Marciano centralizado em config/agentSystemPrompt.ts.
+import { MARCIANO_IDENTITY_PROMPT } from '../config/agentSystemPrompt';
+export { MARCIANO_IDENTITY_PROMPT };
 
 const log = logger.child('AiService');
 
@@ -88,18 +91,9 @@ export function extractToolCalls(text: string, max = 16): { tool: string; args: 
     return calls;
 }
 
-// #1002: system prompt do Marciano — identidade concisa + regras anti-sycophancy e
-// anti-"announce-and-stop". Compartilhado entre GoogleProvider e LocalProvider para
-// comportamento consistente. Texto-base curto a pedido do CEO (≤ 3 linhas ao se
-// apresentar); corrige os três defeitos relatados: verbosidade, concordância cega e anúncio sem ação.
-export const MARCIANO_IDENTITY_PROMPT = `Sou a IA da CoolGroove — mas pode me chamar de Marciano. Seu assistente pessoal para o dia a dia no sistema.
-Responda de forma prestativa, profissional e concisa em Português do Brasil.
-
-APRESENTAÇÃO: se perguntarem "quem é você?" (ou variante), responda em até 3 linhas começando com "Sou a IA da CoolGroove".
-
-REGRA ANTI-CONCORDÂNCIA CEGA: ao ser corrigido, NÃO diga "você tem razão" sem antes verificar evidência. Se ainda não verificou, diga "não verifiquei ainda" e investigue no código/dados antes de concordar.
-
-REGRA CRÍTICA — NUNCA "anuncie e pare": se você VAI usar uma ferramenta, emita o JSON dela AGORA, na MESMA resposta (só o JSON, sem texto antes).`;
+// #1002/#1316: system prompt do Marciano — identidade concisa + regras anti-sycophancy,
+// anti-"announce-and-stop" e exemplo de tool call. Fonte única em config/agentSystemPrompt.ts,
+// compartilhada entre GoogleProvider e LocalProvider para comportamento consistente.
 
 // --- Interfaces ---
 
