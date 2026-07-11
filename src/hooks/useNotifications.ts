@@ -10,6 +10,26 @@ const log = logger.child('Notifications');
 
 const API = config.API_BASE_URL;
 
+// #1315: intervalo de polling. Garante que uma notificação criada via notify_person
+// apareça (em até 30s) mesmo quando o websocket está indisponível (ex.: túnel Cloudflare
+// ou app cross-origin), cumprindo o critério de aceite da issue.
+const NOTIFICATION_POLL_INTERVAL_MS = 30_000;
+
+/**
+ * Faz o merge do feed do servidor com o estado local. O servidor é a fonte da verdade
+ * (ordem, leitura, deleções), mas preservamos uma marcação "lida" otimista local que o
+ * servidor ainda não refletiu — evita piscar o badge de volta a "não-lida" entre o clique
+ * do usuário e o próximo ciclo de polling.
+ */
+function mergeNotifications(server: AppNotification[], prev: AppNotification[]): AppNotification[] {
+    const prevById = new Map(prev.map(n => [n.id, n]));
+    return server.map(s => {
+        const local = prevById.get(s.id);
+        if (local && local.read && !s.read) return { ...s, read: true };
+        return s;
+    });
+}
+
 function backendToAppNotification(raw: any): AppNotification {
     return {
         id: raw.id || String(Date.now()),
@@ -68,6 +88,7 @@ export const useNotifications = (
 
     useEffect(() => {
         let cancelled = false;
+        let timer: ReturnType<typeof setInterval> | null = null;
 
         const fetchNotifications = async () => {
             try {
@@ -78,14 +99,30 @@ export const useNotifications = (
                 const data = await res.json();
                 if (cancelled) return;
                 const notes = (data.notifications || []).map(backendToAppNotification);
-                setNotifications(notes);
+                setNotifications(prev => mergeNotifications(notes, prev));
             } catch (e) {
                 log.error('Failed to fetch notifications', e);
             }
         };
 
         fetchNotifications();
-        return () => { cancelled = true; };
+
+        // #1315: polling a cada 30s. Backstop de entrega quando o socket cai/atrasa — assim uma
+        // notificação criada via notify_person aparece no sino em até 30s, sem depender de reload.
+        timer = setInterval(fetchNotifications, NOTIFICATION_POLL_INTERVAL_MS);
+
+        // Reforça a atualização imediata quando a aba volta a ficar visível, em vez de aguardar
+        // até o próximo tick de 30s (o setInterval não dispara enquanto a aba está em background).
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') fetchNotifications();
+        };
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            cancelled = true;
+            if (timer) clearInterval(timer);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
     }, [setNotifications]);
 
     useEffect(() => {
