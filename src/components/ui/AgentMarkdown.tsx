@@ -18,10 +18,22 @@ import remarkGfm from 'remark-gfm';
  * Tailwind Typography (`prose` não faz efeito), então cada elemento leva sua classe.
  */
 
-const PREFILL_RE = /[?&]prefill=/;
+// Deeplinks de AÇÃO (viram botão, não link cru): criação/edição (?prefill=) e confirmação HITL
+// (/confirm-action?token=…). O token HMAC tem ~400 chars — se renderizado como texto do link,
+// estoura o layout na horizontal (o modelo às vezes usa a própria URL como texto). Botão resolve.
+const ACTION_DEEPLINK_RE = /[?&]prefill=|^\/confirm-action\?token=/;
 
 function isInternalPath(href: string): boolean {
     return href.startsWith('/') && !href.startsWith('//');
+}
+
+/** Rótulo curto p/ o botão de ação — evita despejar a URL/token gigante como texto visível. */
+function actionLabel(href: string, childText: string): string {
+    // Se o modelo deu um texto DECENTE (não a própria URL, não vazio, curto), respeita-o.
+    const clean = childText.trim();
+    const looksLikeUrl = clean.startsWith('/') || clean.startsWith('http') || clean.length > 40;
+    if (clean && !looksLikeUrl) return clean;
+    return /confirm-action/.test(href) ? 'Revisar e confirmar' : 'Revisar e criar';
 }
 
 /**
@@ -56,15 +68,17 @@ export const AgentMarkdown: React.FC<AgentMarkdownProps> = ({ text, navigate }) 
                 components={{
                     a: ({ href, children }) => {
                         const to = String(href || '');
-                        if (isInternalPath(to) && PREFILL_RE.test(to)) {
-                            // Deeplink de criação → botão de ação (mesma semântica do #966).
+                        if (isInternalPath(to) && ACTION_DEEPLINK_RE.test(to)) {
+                            // Deeplink de ação (criação/edição/confirmação HITL) → botão com rótulo
+                            // curto (o token pode ter 400 chars; nunca renderizar como texto cru).
+                            const childText = React.Children.toArray(children).filter(c => typeof c === 'string').join('');
                             return (
                                 <button
                                     type="button"
                                     onClick={() => navigate(to)}
                                     className="inline-flex items-center gap-1 px-2 py-0.5 my-0.5 rounded-md bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors"
                                 >
-                                    {children || 'Revisar e criar'} ↗
+                                    {actionLabel(to, childText)} ↗
                                 </button>
                             );
                         }
