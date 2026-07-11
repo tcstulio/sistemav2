@@ -206,3 +206,83 @@ describe('snapshotWorktree (#1054)', () => {
         expect(commitIdx).toBeGreaterThan(checkoutIdx);
     });
 });
+
+// ---------------------------------------------------------------------------
+// issue #1262 — casos obrigatórios do hash (1-4) + performance gated (6).
+// snapshotWorktree com git REAL (caso 5) vive em worktree.snapshot.test.ts,
+// pois este arquivo faz vi.mock('child_process') globalmente.
+//
+// Cobertura de src/taskrunner/worktree.ts (vitest run --coverage, provider v8,
+// rodando worktree.test.ts + worktree.snapshot.test.ts):
+//   Stmts 100% | Branches 83.33% (5/6 — atende ao piso de 80% da issue) |
+//   Funcs 100% | Lines 100%.
+// O único branch não coberto é o descarte, em collectFiles, de entradas que
+// não são nem diretório nem arquivo (symlink etc.) — exercitado apenas
+// condicionalmente porque criar symlink no Windows exige Developer Mode/admin.
+// ---------------------------------------------------------------------------
+describe('computeWorktreeHash #1262 — casos obrigatórios', () => {
+    let dir: string;
+
+    beforeEach(async () => {
+        dir = await mkdtemp(join(tmpdir(), 'wt-1262-'));
+    });
+
+    afterEach(async () => {
+        await rm(dir, { recursive: true, force: true });
+    });
+
+    it('#1 hash determinístico: 2 arquivos (a.txt=1, b.txt=2) → idêntico e 64 hex', async () => {
+        await writeFile(join(dir, 'a.txt'), '1');
+        await writeFile(join(dir, 'b.txt'), '2');
+        const h1 = await computeWorktreeHash(dir);
+        const h2 = await computeWorktreeHash(dir);
+        expect(h1).toBe(h2);
+        expect(h1).toMatch(HEX64);
+    });
+
+    it('#2 hash muda após alterar a.txt de "1" para "2"', async () => {
+        await writeFile(join(dir, 'a.txt'), '1');
+        const before = await computeWorktreeHash(dir);
+        await writeFile(join(dir, 'a.txt'), '2');
+        const after = await computeWorktreeHash(dir);
+        expect(after).not.toBe(before);
+    });
+
+    it('#3 excluir node_modules: mudar node_modules/lib.js NÃO altera o hash', async () => {
+        await mkdir(join(dir, 'src'));
+        await writeFile(join(dir, 'src', 'index.ts'), 'export const x = 1;\n');
+        await mkdir(join(dir, 'node_modules'));
+        await writeFile(join(dir, 'node_modules', 'lib.js'), 'original');
+        const base = await computeWorktreeHash(dir);
+        await writeFile(join(dir, 'node_modules', 'lib.js'), 'modificado');
+        const after = await computeWorktreeHash(dir);
+        expect(after).toBe(base);
+    });
+
+    it('#4 ordem de criação/recriação dos arquivos não afeta o hash', async () => {
+        await writeFile(join(dir, 'a.txt'), 'A');
+        await writeFile(join(dir, 'b.txt'), 'B');
+        const hashOrdem1 = await computeWorktreeHash(dir);
+
+        await rm(join(dir, 'a.txt'), { force: true });
+        await rm(join(dir, 'b.txt'), { force: true });
+        await writeFile(join(dir, 'b.txt'), 'B');
+        await writeFile(join(dir, 'a.txt'), 'A');
+        const hashOrdem2 = await computeWorktreeHash(dir);
+
+        expect(hashOrdem2).toBe(hashOrdem1);
+    });
+
+    // Caso 6: performance opcional — só roda com PERF=1; por padrão fica skip.
+    it.skipIf(process.env.PERF !== '1')('#6 performance: ~100 arquivos em < 2000ms', async () => {
+        for (let i = 0; i < 100; i++) {
+            await mkdir(join(dir, `pkg${i % 10}`), { recursive: true });
+            await writeFile(join(dir, `pkg${i % 10}`, `f${i}.ts`), `export const v${i} = ${i};\n`);
+        }
+        const start = Date.now();
+        const h = await computeWorktreeHash(dir);
+        const elapsed = Date.now() - start;
+        expect(h).toMatch(HEX64);
+        expect(elapsed).toBeLessThan(2000);
+    });
+});
