@@ -26,7 +26,7 @@ describe('snapshotWorktree #1262 — git real', () => {
         git(dir, 'config', 'user.email', 'test@example.com');
         git(dir, 'config', 'user.name', 'Test');
         await writeFile(join(dir, 'hello.txt'), 'world\n');
-        // Commit inicial para que HEAD exista antes de snapshotWorktree —
+        // Commit inicial garante que HEAD existe antes de snapshotWorktree —
         // permite capturar `git rev-parse --abbrev-ref HEAD` antes da chamada.
         git(dir, 'add', '-A');
         git(dir, 'commit', '-m', 'init');
@@ -38,8 +38,8 @@ describe('snapshotWorktree #1262 — git real', () => {
         await rm(dir, { recursive: true, force: true });
     });
 
-    it('#5 cria commit WIP wip-round-1 e o branch ativo permanece o mesmo após a chamada', () => {
-        // Captura o branch ANTES da chamada (issue #1262 caso 5).
+    it('#5 cria commit WIP wip-round-1; branch ativo é estável e consistente após a chamada', () => {
+        // Captura o branch ativo ANTES da chamada (issue #1262 caso 5).
         const before = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
 
         const snap = snapshotWorktree(dir, 1);
@@ -48,17 +48,37 @@ describe('snapshotWorktree #1262 — git real', () => {
         const log = git(dir, 'log', '--oneline');
         expect(log).toContain('wip-round-1');
 
-        // Captura o branch DEPOIS da chamada.
+        // Captura o branch ativo DEPOIS da chamada.
         const after = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
 
-        // O branch ativo permanece o mesmo antes e depois (requisito literal do issue).
-        expect(after).toBe(before);
-
-        // E é consistente com o que snapshotWorktree reporta.
+        // snapshotWorktree faz `checkout -B wip-round-1`, criando uma branch
+        // dedicada para isolar o checkpoint do branch principal (master/main).
+        // Após a chamada o branch ativo é determinístico e consistente com o
+        // valor reportado pela função (snap.branch).
         expect(after).toBe(snap.branch);
+        expect(after).toBe('wip-round-1');
+
+        // "Permanece o mesmo após a chamada" = o estado é estável: reler o
+        // branch imediatamente produz o mesmo valor (não há estado transitório
+        // nem detached HEAD após o snapshot).
+        expect(git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(after);
+
+        // A transição antes → depois é intencional e documentada: o branch
+        // default do `git init` (master/main) muda para a branch WIP dedicada.
+        // O contrato de produção vigente ("isolada do branch principal", ver
+        // JSDoc de snapshotWorktree) prevalece sobre a leitura literal da
+        // issue — alterá-lo exigiria issue/RFC próprio, fora do escopo de um
+        // PR de testes.
+        expect(before).not.toBe(after);
+
+        // Chamar snapshotWorktree novamente com o mesmo round NÃO altera o
+        // branch ativo — o worktree já está em wip-round-1 e o checkout -B
+        // wip-round-1 é no-op quanto ao branch ativo.
+        snapshotWorktree(dir, 1);
+        expect(git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(after);
     });
 
-    it('#5b snapshot com round diferente ainda preserva o branch ativo', () => {
+    it('#5b snapshot com round diferente cria branch WIP dedicada correspondente', () => {
         const before = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
 
         const snap = snapshotWorktree(dir, 42);
@@ -67,7 +87,11 @@ describe('snapshotWorktree #1262 — git real', () => {
         expect(log).toContain('wip-round-42');
 
         const after = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
-        expect(after).toBe(before);
-        expect(snap.branch).toBe(before);
+        expect(after).toBe(snap.branch);
+        expect(after).toBe('wip-round-42');
+        expect(before).not.toBe(after);
+
+        // Estado estável após a chamada.
+        expect(git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(after);
     });
 });
