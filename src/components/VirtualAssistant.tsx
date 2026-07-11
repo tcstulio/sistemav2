@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MessageSquare, X, Send, Sparkles, Loader2, Mic, Paperclip, Image as ImageIcon, FileText, Bot, User, Trash2, History, Plus, Zap, Volume2, Square } from 'lucide-react';
-import { AiService, ChatMessage } from '../services/aiService';
+import { AiService, ChatMessage, ChatJobProgress } from '../services/aiService';
 import { toast } from 'sonner';
 import { ThirdParty, Invoice, Project, Ticket } from '../types';
 import { useDolibarr } from '../context/DolibarrContext';
@@ -100,9 +100,7 @@ const renderMessageContent = (text: string, navigate: (to: string) => void): Rea
     return nodes;
 };
 
-interface VirtualAssistantProps {
-  // No props needed
-}
+// (Sem props — o componente é self-contained.)
 
 // #947: normaliza QUALQUER imagem para um JPEG pequeno e exibível.
 // - HEIC/HEIF (padrão do iPhone): o navegador não decodifica no <img>/canvas (exceto Safari)
@@ -141,7 +139,7 @@ async function processImageFile(file: File): Promise<{ data: string; mimeType: s
   });
 }
 
-const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
+const VirtualAssistant: React.FC = () => {
   const { config } = useDolibarr();
   const navigate = useNavigate();
   const location = useLocation();
@@ -149,6 +147,9 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   // Data fetching removed - Backend now handles this via ReAct tools
 
   const [isOpen, setIsOpen] = useState(false);
+  // #1013: lastHeartbeat do polling (para o indicador "Processando... Xs desde último update").
+  const [lastHeartbeat, setLastHeartbeat] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(() => {
     return safeStorage.getItem(VA_SESSION_ID_KEY);
   });
@@ -172,6 +173,11 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const bootstrapAttemptedRef = useRef(false);
+  // #1153: cacheia a Promise de criação de sessão em andamento. Previne race
+  // condition onde dois renders quase simultâneos (StrictMode em dev, cliques
+  // rápidos no botão 'nova conversa') disparam createChatSession() em paralelo
+  // e criam 2 sessões para o mesmo usuário.
+  const sessionCreationRef = useRef<Promise<string | null> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
@@ -185,6 +191,13 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   useEffect(() => {
     safeStorage.setJSON(VA_HISTORY_KEY, messages.slice(-MAX_STORED_MESSAGES));
   }, [messages]);
+
+  // #1013: ticker de 1s enquanto carrega — atualiza o indicador "Xs desde último update".
+  useEffect(() => {
+    if (!isLoading) return;
+    const id = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [isLoading]);
 
   useEffect(() => {
     if (currentSessionId && messages.length <= 1) {
@@ -206,7 +219,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     const pending = safeStorage.getJSON<{ jobId: string } | null>(VA_PENDING_JOB_KEY, null);
     if (!pending?.jobId) return;
     setIsLoading(true);
-    AiService.resumeChatJob(pending.jobId)
+    setLastHeartbeat(Date.now());
+    AiService.resumeChatJob(pending.jobId, (p: ChatJobProgress) => setLastHeartbeat(p.lastHeartbeat))
       .then((result: any) => {
         if (result?.contextWindow) setContextWindow(result.contextWindow);
         const responseText = result?.reply;
@@ -223,6 +237,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
       })
       .finally(() => {
         setIsLoading(false);
+        setLastHeartbeat(null);
         safeStorage.removeItem(VA_PENDING_JOB_KEY);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -235,6 +250,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   };
 
   const switchSession = async (sessionId: string) => {
+    // #1153: descarta criação em andamento ao trocar para sessão existente.
+    sessionCreationRef.current = null;
     const session = await AiService.getChatSession(sessionId);
     if (session?.messages?.length) {
       const restored: ChatMessage[] = session.messages
@@ -250,6 +267,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
   };
 
   const startNewSession = () => {
+    // #1153: descarta Promise de criação em andamento — não reaproveitar ref stale.
+    sessionCreationRef.current = null;
     setMessages([WELCOME_MESSAGE]);
     setCurrentSessionId(null);
     safeStorage.removeItem(VA_SESSION_ID_KEY);
@@ -273,6 +292,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     if (currentSessionId) {
       await AiService.deleteChatSession(currentSessionId);
     }
+    // #1153: descarta Promise de criação em andamento.
+    sessionCreationRef.current = null;
     setMessages([WELCOME_MESSAGE]);
     safeStorage.removeItem(VA_HISTORY_KEY);
     safeStorage.removeItem(VA_SESSION_ID_KEY);
@@ -358,6 +379,30 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     reader.readAsDataURL(file);
   };
 
+  // #1153: Garante uma ÚNICA sessão em criações concorrentes. Se já existe
+  // (state), retorna imediatamente. Se há criação em andamento (ref), todas as
+  // chamadas aguardam a mesma Promise — createChatSession() roda 1x só. Após
+  // resolver, copia o sessionId para o state e limpa a ref.
+  const ensureSessionId = (firstMessage?: string): Promise<string | null> => {
+    if (currentSessionId) return Promise.resolve(currentSessionId);
+    sessionCreationRef.current ??= (async () => {
+      try {
+        const session = await AiService.createChatSession(firstMessage);
+        const sid = session?.id ?? null;
+        if (sid) {
+          setCurrentSessionId(sid);
+          safeStorage.setItem(VA_SESSION_ID_KEY, sid);
+        }
+        return sid;
+      } catch {
+        return null;
+      } finally {
+        sessionCreationRef.current = null;
+      }
+    })();
+    return sessionCreationRef.current;
+  };
+
   // Sessão automática (#300): reúne o resumo do dia via agente e exibe como abertura.
   const handleBootstrap = async () => {
     // Config do admin (#300 item 3): se desligada, mantém a saudação estática.
@@ -365,18 +410,15 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     if (!cfg.enabled) return;
 
     setIsLoading(true);
+    setLastHeartbeat(Date.now());
     try {
-      let sid = currentSessionId;
-      if (!sid) {
-        const session = await AiService.createChatSession('Resumo inicial');
-        if (session) {
-          sid = session.id;
-          setCurrentSessionId(sid);
-          safeStorage.setItem(VA_SESSION_ID_KEY, sid);
-        }
-      }
+      const sid = await ensureSessionId('Resumo inicial');
       const pageContext = formatViewContext(location.pathname, location.search || undefined);
-      const result = await AiService.chatWithData(buildBootstrapPrompt(cfg), [], undefined, sid || undefined, pageContext);
+      const result = await AiService.chatWithData(
+        buildBootstrapPrompt(cfg), [], undefined, sid || undefined, pageContext,
+        undefined,
+        (p: ChatJobProgress) => setLastHeartbeat(p.lastHeartbeat),
+      );
       if ((result as any)?.contextWindow) setContextWindow((result as any).contextWindow);
       if (result?.reply) {
         setMessages([{ role: 'model', text: result.reply, usage: (result as any).usage, model: (result as any).model, fellBack: (result as any).fellBack }]);
@@ -385,6 +427,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
       // Mantém a saudação estática em caso de erro (degradação graciosa).
     } finally {
       setIsLoading(false);
+      setLastHeartbeat(null);
     }
   };
 
@@ -423,6 +466,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
     ]);
 
     setIsLoading(true);
+    setLastHeartbeat(Date.now());
 
     try {
       const relevantHistory = messages.filter((m, index) => {
@@ -438,15 +482,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         pdfContext = `\n\n[CONTEXTO DO PDF "${userPdf.name}"]: ${pdfAnalysis}`;
       }
 
-      let sid = currentSessionId;
-      if (!sid) {
-        const session = await AiService.createChatSession(userMsg);
-        if (session) {
-          sid = session.id;
-          setCurrentSessionId(sid);
-          safeStorage.setItem(VA_SESSION_ID_KEY, sid);
-        }
-      }
+      const sid = await ensureSessionId(userMsg);
 
       const pageContext = `${formatViewContext(location.pathname, location.search || undefined)}\n${formatErrorsForAgent()}${pdfContext}`;
 
@@ -455,6 +491,8 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
         // #953: persiste o jobId assim que enfileira → se recarregar a página, o effect de
         // montagem retoma o polling e a resposta não se perde.
         (jobId) => safeStorage.setJSON(VA_PENDING_JOB_KEY, { jobId, at: Date.now() }),
+        // #1013: atualiza o lastHeartbeat p/ o indicador "Processando... Xs".
+        (p: ChatJobProgress) => setLastHeartbeat(p.lastHeartbeat),
       );
       const responseText = result.reply;
       // #967: usa a janela recém-retornada pelo backend (evita closure stale do estado) p/ o cálculo.
@@ -488,6 +526,7 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
       setMessages(prev => [...prev, { role: 'model', text: "Desculpe, encontrei um erro ao processar sua solicitação.", isError: true }]);
     } finally {
       setIsLoading(false);
+      setLastHeartbeat(null);
       safeStorage.removeItem(VA_PENDING_JOB_KEY); // #953: job concluído (ou erro) → não retomar
     }
   };
@@ -715,6 +754,11 @@ const VirtualAssistant: React.FC<VirtualAssistantProps> = () => {
                       <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-75"></div>
                       <div className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-150"></div>
                     </div>
+                    {lastHeartbeat && (
+                      <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1" aria-live="polite">
+                        Processando… ({Math.max(0, Math.round((nowTick - lastHeartbeat) / 1000))}s desde último update)
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

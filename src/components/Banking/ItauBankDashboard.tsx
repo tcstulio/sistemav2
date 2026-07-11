@@ -20,6 +20,8 @@ import {
     Plus
 } from 'lucide-react';
 import { useItauBank, TransacaoItau, PixRecebidoItau, BoletoItau } from '../../hooks/useItauBank';
+import { useDolibarr } from '../../context/DolibarrContext';
+import { useCustomers } from '../../hooks/dolibarr';
 import { formatDateOnly, formatDateTime } from '../../utils/dateUtils';
 import { formatCurrency } from '../../utils/formatUtils';
 import { logger } from '../../utils/logger';
@@ -64,11 +66,15 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
         dataFinal: dateRange.dataFim,
     });
 
+    const { config } = useDolibarr();
+    const { data: customers = [] } = useCustomers(config || null, !!config);
+
     // Dialogs
     const [pixDialog, setPixDialog] = useState(false);
     const [boletoDialog, setBoletoDialog] = useState(false);
     const [pixForm, setPixForm] = useState({ valor: '', chave: '', descricao: '' });
     const [boletoForm, setBoletoForm] = useState({
+        clienteId: '',
         valorTitulo: '',
         dataVencimento: '',
         pagadorNome: '',
@@ -108,6 +114,33 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
         }
     };
 
+    const handleClienteChange = (clienteId: string) => {
+        const cliente = customers.find(c => c.id === clienteId);
+        if (cliente) {
+            log.info(`Preenchendo endereço do boleto a partir do cliente #${clienteId}`);
+            setBoletoForm(prev => ({
+                ...prev,
+                clienteId,
+                pagadorNome: cliente.name || prev.pagadorNome,
+                pagadorCpfCnpj: cliente.idprof1 || prev.pagadorCpfCnpj,
+                pagadorLogradouro: cliente.address || '',
+                pagadorCidade: cliente.town || '',
+                pagadorCep: cliente.zip || '',
+            }));
+        } else {
+            setBoletoForm(prev => ({ ...prev, clienteId }));
+        }
+    };
+
+    const enderecoIncompleto = useMemo(() => {
+        const cepDigits = boletoForm.pagadorCep.replace(/\D/g, '');
+        return !boletoForm.pagadorLogradouro.trim() ||
+            !boletoForm.pagadorBairro.trim() ||
+            !boletoForm.pagadorCidade.trim() ||
+            !boletoForm.pagadorUf.trim() ||
+            cepDigits.length !== 8;
+    }, [boletoForm.pagadorLogradouro, boletoForm.pagadorBairro, boletoForm.pagadorCidade, boletoForm.pagadorUf, boletoForm.pagadorCep]);
+
     const handleEmitirBoleto = async () => {
         try {
             await emitirBoleto({
@@ -127,11 +160,11 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                             cnpj: boletoForm.pagadorCpfCnpj.replace(/\D/g, '').length > 11 ? boletoForm.pagadorCpfCnpj.replace(/\D/g, '') : undefined,
                         },
                         endereco: {
-                            nome_logradouro: boletoForm.pagadorLogradouro || 'Não informado',
-                            nome_bairro: boletoForm.pagadorBairro || 'Não informado',
-                            nome_cidade: boletoForm.pagadorCidade || 'Não informado',
-                            sigla_UF: boletoForm.pagadorUf || 'SP',
-                            numero_CEP: boletoForm.pagadorCep.replace(/\D/g, '') || '00000000',
+                            nome_logradouro: boletoForm.pagadorLogradouro,
+                            nome_bairro: boletoForm.pagadorBairro,
+                            nome_cidade: boletoForm.pagadorCidade,
+                            sigla_UF: boletoForm.pagadorUf.toUpperCase(),
+                            numero_CEP: boletoForm.pagadorCep.replace(/\D/g, ''),
                         },
                     },
                     dados_individuais_boleto: [{
@@ -141,7 +174,7 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                 },
             });
             setBoletoDialog(false);
-            setBoletoForm({ valorTitulo: '', dataVencimento: '', pagadorNome: '', pagadorCpfCnpj: '', pagadorLogradouro: '', pagadorBairro: '', pagadorCidade: '', pagadorUf: '', pagadorCep: '' });
+            setBoletoForm({ clienteId: '', valorTitulo: '', dataVencimento: '', pagadorNome: '', pagadorCpfCnpj: '', pagadorLogradouro: '', pagadorBairro: '', pagadorCidade: '', pagadorUf: '', pagadorCep: '' });
             boletosQuery.refetch();
         } catch (error) {
             log.error('Erro ao emitir boleto:', error);
@@ -527,52 +560,74 @@ export function ItauBankDashboard({ onOpenSettings }: ItauBankDashboardProps) {
                             </button>
                         </div>
                         <div className="space-y-4">
+                            <div>
+                                <label htmlFor="boleto-cliente" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cliente (Dolibarr)</label>
+                                <select
+                                    id="boleto-cliente"
+                                    value={boletoForm.clienteId}
+                                    onChange={(e) => handleClienteChange(e.target.value)}
+                                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white"
+                                >
+                                    <option value="">Selecione um cliente para preencher automaticamente...</option>
+                                    {customers.map(c => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                </select>
+                            </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Valor (R$)</label>
-                                    <input type="number" step="0.01" value={boletoForm.valorTitulo} onChange={(e) => setBoletoForm(prev => ({ ...prev, valorTitulo: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
+                                    <label htmlFor="boleto-valor" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Valor (R$)</label>
+                                    <input id="boleto-valor" type="number" step="0.01" value={boletoForm.valorTitulo} onChange={(e) => setBoletoForm(prev => ({ ...prev, valorTitulo: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Vencimento</label>
-                                    <input type="date" value={boletoForm.dataVencimento} onChange={(e) => setBoletoForm(prev => ({ ...prev, dataVencimento: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
+                                    <label htmlFor="boleto-vencimento" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Vencimento</label>
+                                    <input id="boleto-vencimento" type="date" value={boletoForm.dataVencimento} onChange={(e) => setBoletoForm(prev => ({ ...prev, dataVencimento: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
                                 </div>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome do Pagador</label>
-                                <input type="text" value={boletoForm.pagadorNome} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorNome: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
+                                <label htmlFor="boleto-nome" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Nome do Pagador</label>
+                                <input id="boleto-nome" type="text" value={boletoForm.pagadorNome} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorNome: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">CPF/CNPJ</label>
-                                <input type="text" value={boletoForm.pagadorCpfCnpj} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorCpfCnpj: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
+                                <label htmlFor="boleto-cpfcnpj" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">CPF/CNPJ</label>
+                                <input id="boleto-cpfcnpj" type="text" value={boletoForm.pagadorCpfCnpj} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorCpfCnpj: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
                             </div>
                         </div>
                         <div className="grid grid-cols-2 gap-3 mt-3">
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Logradouro</label>
-                                <input type="text" value={boletoForm.pagadorLogradouro} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorLogradouro: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" placeholder="Rua, número" />
+                                <label htmlFor="boleto-logradouro" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Logradouro</label>
+                                <input id="boleto-logradouro" type="text" value={boletoForm.pagadorLogradouro} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorLogradouro: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" placeholder="Rua, número" />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Bairro</label>
-                                <input type="text" value={boletoForm.pagadorBairro} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorBairro: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
+                                <label htmlFor="boleto-bairro" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Bairro</label>
+                                <input id="boleto-bairro" type="text" value={boletoForm.pagadorBairro} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorBairro: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cidade</label>
-                                <input type="text" value={boletoForm.pagadorCidade} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorCidade: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
+                                <label htmlFor="boleto-cidade" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Cidade</label>
+                                <input id="boleto-cidade" type="text" value={boletoForm.pagadorCidade} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorCidade: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" />
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">UF</label>
-                                    <input type="text" maxLength={2} value={boletoForm.pagadorUf} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorUf: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" placeholder="SP" />
+                                    <label htmlFor="boleto-uf" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">UF</label>
+                                    <input id="boleto-uf" type="text" maxLength={2} value={boletoForm.pagadorUf} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorUf: e.target.value.toUpperCase() }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" placeholder="SP" />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">CEP</label>
-                                    <input type="text" value={boletoForm.pagadorCep} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorCep: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" placeholder="00000000" />
+                                    <label htmlFor="boleto-cep" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">CEP</label>
+                                    <input id="boleto-cep" type="text" value={boletoForm.pagadorCep} onChange={(e) => setBoletoForm(prev => ({ ...prev, pagadorCep: e.target.value }))} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-800 dark:text-white" placeholder="Ex: 01310100" />
                                 </div>
                             </div>
                         </div>
+                        {enderecoIncompleto && (
+                            <div className="flex items-start gap-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+                                <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                                <p className="text-sm text-yellow-700 dark:text-yellow-400">
+                                    Endereço do pagador incompleto. Preencha todos os campos de endereço (logradouro, bairro, cidade, UF e CEP) antes de emitir o boleto.
+                                </p>
+                            </div>
+                        )}
                         <div className="flex justify-end gap-2 mt-6">
                             <button onClick={() => setBoletoDialog(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
-                            <button onClick={handleEmitirBoleto} disabled={emitirBoletoLoading} className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50">
+                            <button onClick={handleEmitirBoleto} disabled={emitirBoletoLoading || enderecoIncompleto} className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50">
                                 {emitirBoletoLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                                 Emitir Boleto
                             </button>

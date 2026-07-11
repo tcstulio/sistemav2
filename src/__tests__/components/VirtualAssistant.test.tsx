@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { ChatMessage } from '../../services/aiService';
+import { AiService } from '../../services/aiService';
 
 // ── hoisted mocks (antes do hoist de vi.mock) ────────────────────────────────
 
@@ -60,6 +61,7 @@ vi.mock('../../services/aiService', () => ({
     AiService: {
         chatWithData: (...args: any[]) => mockChatWithData(...args),
         getChatSessions: vi.fn().mockResolvedValue([]),
+        getChatSession: vi.fn().mockResolvedValue(null),
         createChatSession: vi.fn().mockResolvedValue({ id: 'sess-1' }),
         deleteChatSession: vi.fn().mockResolvedValue(true),
         deleteAllChatSessions: vi.fn().mockResolvedValue(true),
@@ -287,6 +289,234 @@ describe('VirtualAssistant — uso real do contexto (#967)', () => {
 
         await waitFor(() => {
             expect(screen.getByText(/Contexto acima de 90%/)).toBeInTheDocument();
+        }, { timeout: 3000 });
+    });
+});
+
+// #1153: race condition na criação de sessão. Dois renders quase simultâneos
+// (StrictMode em dev, cliques rápidos) podiam disparar createChatSession() em
+// paralelo e criar 2 sessões. Agora um useRef cacheia a Promise em andamento.
+describe('VirtualAssistant — race condition na criação de sessão (#1153)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockChatWithData.mockResolvedValue({
+            reply: 'ok',
+            sessionId: null,
+            usage: undefined,
+            model: undefined,
+            fellBack: false,
+        });
+        vi.mocked(AiService.createChatSession).mockResolvedValue({ id: 'sess-1' } as any);
+    });
+
+    it('cria exatamente 1 sessão no primeiro envio e reusa nas mensagens seguintes', async () => {
+        renderAndOpen([]);
+        const input = screen.getByRole('textbox');
+
+        fireEvent.change(input, { target: { value: 'primeira msg' } });
+        fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+        await waitFor(() => {
+            expect(AiService.createChatSession).toHaveBeenCalledTimes(1);
+        });
+
+        // Aguarda a resposta chegar
+        await waitFor(() => {
+            expect(screen.getByText('ok')).toBeInTheDocument();
+        }, { timeout: 3000 });
+
+        // Segunda mensagem: NÃO deve criar nova sessão (reusa sess-1)
+        fireEvent.change(input, { target: { value: 'segunda msg' } });
+        fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+        await waitFor(() => {
+            expect(screen.getAllByText('ok').length).toBeGreaterThanOrEqual(2);
+        }, { timeout: 3000 });
+
+        expect(AiService.createChatSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('startNewSession permite criar uma nova sessão posterior sem reaproveitar ref stale', async () => {
+        renderAndOpen([]);
+        const input = screen.getByRole('textbox');
+
+        // Primeira conversa → cria sess-1
+        fireEvent.change(input, { target: { value: 'msg1' } });
+        fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+        await waitFor(() => {
+            expect(AiService.createChatSession).toHaveBeenCalledTimes(1);
+        });
+
+        // Aguarda resposta
+        await waitFor(() => {
+            expect(screen.getByText('ok')).toBeInTheDocument();
+        }, { timeout: 3000 });
+
+        // Clica em "Nova conversa" (botão com title="Nova conversa")
+        fireEvent.click(screen.getByTitle('Nova conversa'));
+
+        // Nova conversa → segunda sessão criada
+        vi.mocked(AiService.createChatSession).mockResolvedValue({ id: 'sess-2' } as any);
+        fireEvent.change(input, { target: { value: 'msg2' } });
+        fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+        await waitFor(() => {
+            expect(AiService.createChatSession).toHaveBeenCalledTimes(2);
+        }, { timeout: 3000 });
+    });
+
+    it('não cria sessão duplicada quando createChatSession é lento (ref deduplica)', async () => {
+        // Simula createChatSession lento: só resolve quando chamarmos resolveFn
+        let resolveFn!: (v: any) => void;
+        const slowPromise = new Promise<any>(r => { resolveFn = r; });
+        vi.mocked(AiService.createChatSession).mockImplementation(() => slowPromise);
+
+        renderAndOpen([]);
+        const input = screen.getByRole('textbox');
+
+        // Envia primeira mensagem — dispara createChatSession
+        fireEvent.change(input, { target: { value: 'msg1' } });
+        fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+        // createChatSession foi chamado exatamente 1x
+        await waitFor(() => {
+            expect(AiService.createChatSession).toHaveBeenCalledTimes(1);
+        });
+
+        // resolve a criação — a ref é limpa no finally
+        resolveFn({ id: 'sess-slow' });
+
+        // Aguarda o state atualizar com o novo sessionId
+        await waitFor(() => {
+            expect(screen.getByText('ok')).toBeInTheDocument();
+        }, { timeout: 3000 });
+
+        // Mesmo após resolver, createChatSession foi chamado apenas 1x
+        expect(AiService.createChatSession).toHaveBeenCalledTimes(1);
+    });
+
+    // Critério de aceite #1: "5 cliques rápidos → exatamente 1 sessão criada".
+    // Simula concorrência real: createChatSession demora a resolver e múltiplos
+    // Enter disparam antes da Promise resolver — a ref deduplica todas.
+    it('5 envios rápidos (Enter) criam exatamente 1 sessão, não 5', async () => {
+        let resolveCreate!: (v: any) => void;
+        vi.mocked(AiService.createChatSession).mockReturnValueOnce(
+            new Promise<any>(r => { resolveCreate = r; })
+        );
+
+        renderAndOpen([]);
+        const input = screen.getByRole('textbox');
+        fireEvent.change(input, { target: { value: 'Oi' } });
+
+        // 5 Enter síncronos antes do re-render atualizar isLoading
+        for (let i = 0; i < 5; i++) {
+            fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+        }
+
+        // Antes de resolver: createChatSession chamado exatamente 1x (deduplicado pela ref)
+        expect(AiService.createChatSession).toHaveBeenCalledTimes(1);
+
+        resolveCreate({ id: 'sess-1' });
+
+        await waitFor(() => {
+            expect(mockChatWithData).toHaveBeenCalled();
+        }, { timeout: 3000 });
+    });
+
+    // Critério de aceite: duplo clique rápido no botão Enviar.
+    it('2 cliques rápidos no botão enviar criam exatamente 1 sessão', async () => {
+        let resolveCreate!: (v: any) => void;
+        vi.mocked(AiService.createChatSession).mockReturnValueOnce(
+            new Promise<any>(r => { resolveCreate = r; })
+        );
+
+        renderAndOpen([]);
+        const input = screen.getByRole('textbox');
+        fireEvent.change(input, { target: { value: 'Oi' } });
+
+        const sendBtn = screen.getByTitle('Enviar');
+        fireEvent.click(sendBtn);
+        fireEvent.click(sendBtn);
+
+        expect(AiService.createChatSession).toHaveBeenCalledTimes(1);
+
+        resolveCreate({ id: 'sess-1' });
+
+        await waitFor(() => {
+            expect(mockChatWithData).toHaveBeenCalled();
+        }, { timeout: 3000 });
+    });
+
+    // Critério de aceite #1: 5 cliques rápidos em 'nova conversa' + envio → 1 sessão.
+    it('5 cliques rápidos em "nova conversa" + envio criam exatamente 1 sessão', async () => {
+        renderAndOpen([]);
+
+        const newSessionBtn = screen.getByTitle('Nova conversa');
+        for (let i = 0; i < 5; i++) fireEvent.click(newSessionBtn);
+
+        const input = screen.getByRole('textbox');
+        fireEvent.change(input, { target: { value: 'olá' } });
+        fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+        await waitFor(() => {
+            expect(AiService.createChatSession).toHaveBeenCalledTimes(1);
+        });
+        expect(AiService.createChatSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('fluxo normal: sessão existente selecionada não cria nova sessão', async () => {
+        // Pré-carrega com sessionId já definido no storage
+        mockSafeStorage.getItem.mockReturnValue('sess-existing' as any);
+
+        renderAndOpen([]);
+        const input = screen.getByRole('textbox');
+
+        fireEvent.change(input, { target: { value: 'msg em sessão existente' } });
+        fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+        await waitFor(() => {
+            expect(screen.getByText('ok')).toBeInTheDocument();
+        }, { timeout: 3000 });
+
+        // Não deve criar nova sessão — currentSessionId já existe
+        expect(AiService.createChatSession).not.toHaveBeenCalled();
+    });
+});
+
+// #1013: enquanto o agente processa, a UI mostra um indicador de progresso baseado no
+// lastHeartbeat repassado via onProgress: "Processando… (Xs desde último update)".
+describe('VirtualAssistant — indicador de progresso por heartbeat (#1013)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('exibe "Processando… (Xs desde último update)" durante o processamento e some ao concluir', async () => {
+        let resolveChat!: (v: any) => void;
+        mockChatWithData.mockImplementation((...args: any[]) => {
+            // 7º argumento (index 6) = onProgress — repassa um heartbeat 4s atrás.
+            const onProgress = args[6];
+            if (typeof onProgress === 'function') {
+                onProgress({ lastHeartbeat: Date.now() - 4000 });
+            }
+            return new Promise((res) => { resolveChat = res; });
+        });
+
+        renderAndOpen([]);
+
+        const input = screen.getByRole('textbox');
+        fireEvent.change(input, { target: { value: 'pergunta' } });
+        fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+        await waitFor(() => {
+            expect(screen.getByText(/Processando.*desde.*último update/i)).toBeInTheDocument();
+        }, { timeout: 3000 });
+
+        // Conclui o job => indicador desaparece.
+        resolveChat({ reply: 'pronto', sessionId: 'sess-1' });
+
+        await waitFor(() => {
+            expect(screen.queryByText(/Processando.*desde.*último update/i)).toBeNull();
         }, { timeout: 3000 });
     });
 });
