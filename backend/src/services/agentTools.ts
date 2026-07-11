@@ -890,6 +890,37 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
     return result;
 }
 
+/**
+ * Erro de ferramenta INEXISTENTE (#1355). Diferente de uma string de retorno: LANÇADO para
+ * o loop do agente re-injetar como instrução e o modelo se AUTO-CORRIGIR na próxima iteração
+ * (em vez de a string "Ferramenta desconhecida" cair como resposta final na tela do usuário).
+ * A `name` distingue de erros de execução comuns; a message já carrega a sugestão.
+ */
+export class UnknownToolError extends Error {
+    constructor(message: string) { super(message); this.name = 'UnknownToolError'; }
+}
+
+/**
+ * Dado um nome de ferramenta ALUCINADO pelo modelo, sugere a(s) real(is) por RAIZ SEMÂNTICA
+ * (não por lista de aliases fixa — cobre variações futuras). Ex.: prepare_validate_proposal /
+ * approve_proposal / confirm_proposal → "validate_proposal". Devolve '' se nada casar.
+ */
+function suggestTool(tool: string): string {
+    const t = tool.toLowerCase();
+    const entOf = (s: string) =>
+        /invoice|fatura/.test(s) ? 'invoice' : /order|pedido/.test(s) ? 'order' : /proposal|proposta|cota/.test(s) ? 'proposal' : '';
+    // Validar/aprovar/confirmar/finalizar um documento → validate_<entidade> (NÃO tem prefixo prepare_).
+    if (/valid|aprov|approve|confirm|finaliz/.test(t)) {
+        const e = entOf(t);
+        return e ? `A ferramenta correta é "validate_${e}" (validar NÃO usa prefixo prepare_).` : 'As ferramentas de validação são: validate_invoice, validate_order, validate_proposal (sem prefixo prepare_).';
+    }
+    // Criar/editar → prepare_create_*/prepare_edit_* (geram tela de revisão HITL).
+    if (/creat|criar|nov[ao]/.test(t)) return 'Para CRIAR use prepare_create_<entidade> (ex.: prepare_create_proposal, prepare_create_invoice).';
+    if (/edit|alter|atualiz|update/.test(t)) return 'Para EDITAR use prepare_edit_<entidade> (ex.: prepare_edit_proposal).';
+    if (/enviar|send|mensag|whats/.test(t)) return 'Para enviar WhatsApp use send_whatsapp; para notificar use notify_person/notify_team.';
+    return '';
+}
+
 async function executeToolInner(tool: string, args: any): Promise<string> {
     switch (tool) {
         case 'search': {
@@ -2025,7 +2056,11 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             if (batchMsg !== null) return batchMsg;
             const deeplinkMsg = tryPrepareDeeplink(tool, args);
             if (deeplinkMsg !== null) return deeplinkMsg;
-            return `Ferramenta desconhecida: ${tool}`;
+            // #1355: LANÇA (não retorna string) — o loop do agente re-injeta como instrução p/ o
+            // modelo corrigir o nome, em vez de cuspir "Ferramenta desconhecida" na tela. A raiz do
+            // bug: o modelo alucina prepare_validate_proposal (55 tools prepare_* vs 3 validate_*).
+            const hint = suggestTool(tool);
+            throw new UnknownToolError(`A ferramenta "${tool}" não existe.${hint ? ' ' + hint : ''} Chame a ferramenta correta agora (só o JSON).`);
         }
     }
 }

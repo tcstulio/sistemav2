@@ -1366,3 +1366,46 @@ describe('LocalProvider.generateReply (#1332) — trava anti-alucinação de esc
         expect((axios.post as any).mock.calls.length).toBe(1);
     });
 });
+
+describe('LocalProvider.generateReply (#1355) — auto-correção de ferramenta inexistente', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        aiService.setConfig('local', 'http://localhost:11434/v1', undefined, 'llama3');
+    });
+
+    it('modelo alucina prepare_validate_proposal → recebe a dica e se corrige (NÃO cospe erro na tela)', async () => {
+        let call = 0;
+        (axios.post as any).mockImplementation(async () => {
+            call++;
+            if (call === 1) {
+                // o caso REAL: nome inventado que começa com prepare_
+                return { data: { choices: [{ message: { content: '{"tool":"prepare_validate_proposal","args":{"proposal_id":"303"}}' } }] } };
+            }
+            // após a dica re-injetada, o modelo responde (aqui, uma confirmação textual)
+            return { data: { choices: [{ message: { content: 'Certo — vou usar validate_proposal. Confirma que quer validar a 303?' } }] } };
+        });
+
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        const result = await provider.generateReply([{ role: 'user', parts: 'valide a proposta 303' } as any], 'ctx');
+
+        // a resposta final NÃO é "Ferramenta desconhecida" cru
+        expect(result.text).not.toMatch(/Ferramenta desconhecida|não existe/i);
+        expect(result.text).toMatch(/validate_proposal|validar/i);
+        // a dica foi injetada no prompt da 2ª chamada (prova do re-loop, não do return direto)
+        const prompt2 = (axios.post as any).mock.calls[1][1].messages[0].content;
+        expect(prompt2).toMatch(/ERRO NA FERRAMENTA prepare_validate_proposal/);
+        expect(prompt2).toMatch(/validate_proposal/);
+    });
+
+    it('houve 2 iterações (o loop NÃO encerrou no 1º nome errado)', async () => {
+        let call = 0;
+        (axios.post as any).mockImplementation(async () => {
+            call++;
+            if (call === 1) return { data: { choices: [{ message: { content: '{"tool":"approve_proposal","args":{"id":"1"}}' } }] } };
+            return { data: { choices: [{ message: { content: 'ok' } }] } };
+        });
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        await provider.generateReply([{ role: 'user', parts: 'aprove' } as any], 'ctx');
+        expect((axios.post as any).mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+});

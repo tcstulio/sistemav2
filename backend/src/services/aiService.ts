@@ -405,7 +405,8 @@ class GoogleProvider implements AIProvider {
 
                     const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
-                    if (String(toolCall.tool).startsWith('prepare_')) {
+                    // #1355: encerra o turno SÓ com deeplink real (?prefill=) — ver LocalProvider.
+                    if (String(toolCall.tool).startsWith('prepare_') && /\?prefill=/.test(String(toolResult))) {
                         return { text: toolResult, usage: accUsage, contextWindow: ctxWindow };
                     }
 
@@ -1271,7 +1272,11 @@ export class LocalProvider implements AIProvider {
                         try {
                             const toolResult = await executeTool(tc.tool, tc.args || {});
                             // prepare_* (HITL) devolve deeplink e encerra o turno p/ o usuário confirmar.
-                            if (String(tc.tool).startsWith('prepare_')) {
+                            // #1355: encerrar SÓ quando o resultado é DE FATO um deeplink (?prefill=).
+                            // Antes, qualquer string de uma tool prepare_* saía direto p/ o usuário — então
+                            // um nome alucinado (prepare_validate_proposal, que nem gera deeplink) cuspia o
+                            // erro cru na tela em vez de o modelo se corrigir.
+                            if (String(tc.tool).startsWith('prepare_') && /\?prefill=/.test(String(toolResult))) {
                                 return { text: toolResult, usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
                             }
                             // #1332: tool MUTANTE executada com sucesso legitima afirmações de escrita.
