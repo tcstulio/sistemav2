@@ -13,7 +13,8 @@ const API = config.API_BASE_URL;
 // #1315: intervalo de polling. Garante que uma notificação criada via notify_person
 // apareça (em até 30s) mesmo quando o websocket está indisponível (ex.: túnel Cloudflare
 // ou app cross-origin), cumprindo o critério de aceite da issue.
-const NOTIFICATION_POLL_INTERVAL_MS = 30_000;
+// Exportado para que os testes referenciem o mesmo valor em vez de hardcodear 30_000.
+export const NOTIFICATION_POLL_INTERVAL_MS = 30_000;
 
 /**
  * Faz o merge do feed do servidor com o estado local. O servidor é a fonte da verdade

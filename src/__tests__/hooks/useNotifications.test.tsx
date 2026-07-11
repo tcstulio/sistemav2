@@ -49,7 +49,7 @@ vi.mock('@capacitor/push-notifications', () => ({
     },
 }));
 
-import { useNotifications, useNotificationActions } from '../../hooks/useNotifications';
+import { useNotifications, useNotificationActions, NOTIFICATION_POLL_INTERVAL_MS } from '../../hooks/useNotifications';
 
 // --- Helpers ----------------------------------------------------------------
 
@@ -118,10 +118,10 @@ describe('useNotifications (#1315)', () => {
         await flushMicrotasks();
         expect(fetchMock).toHaveBeenCalledTimes(1);
 
-        await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(NOTIFICATION_POLL_INTERVAL_MS); });
         expect(fetchMock).toHaveBeenCalledTimes(2);
 
-        await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(NOTIFICATION_POLL_INTERVAL_MS); });
         expect(fetchMock).toHaveBeenCalledTimes(3);
     });
 
@@ -131,7 +131,7 @@ describe('useNotifications (#1315)', () => {
         renderHook(() => useNotifications(setNotifications, () => {}));
         await flushMicrotasks();
 
-        await act(async () => { await vi.advanceTimersByTimeAsync(29_999); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(NOTIFICATION_POLL_INTERVAL_MS - 1); });
         expect(fetchMock).toHaveBeenCalledTimes(1); // ainda não
     });
 
@@ -157,7 +157,7 @@ describe('useNotifications (#1315)', () => {
 
         // Próximo ciclo de polling traz uma notificação nova
         fetchMock.mockResolvedValueOnce(okRes({ notifications: [rawNotif('n1')] }));
-        await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(NOTIFICATION_POLL_INTERVAL_MS); });
 
         const updater = setNotifications.mock.calls.at(-1)![0] as NotifUpdater;
         const result = updater([]);
@@ -172,7 +172,7 @@ describe('useNotifications (#1315)', () => {
         renderHook(() => useNotifications(setNotifications, () => {}));
         await flushMicrotasks();
 
-        await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(NOTIFICATION_POLL_INTERVAL_MS); });
 
         const updater = setNotifications.mock.calls.at(-1)![0] as NotifUpdater;
         // Estado local: usuário já marcou como lida (otimista)
