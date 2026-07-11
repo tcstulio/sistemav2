@@ -118,6 +118,33 @@ export interface FeatureSwitchesConfig {
     crmContextInjection: boolean; // injeta dados do cliente no LLM (privacidade)
 }
 
+// ---- Política de notificações (#1293): cadência de cobrança, quiet-hours por canal e horizontes
+// de alerta. 4 blocos: cobrancaCadence, quietHours, staleHours, invoiceDueHorizonDays. ----
+export type QuietHoursChannel = 'whatsapp' | 'email' | 'in-app';
+
+export interface QuietHoursRule {
+    enabled: boolean;
+    startHHmm: string;   // "HH:mm" (24h)
+    endHHmm: string;     // "HH:mm" (24h); endHHmm < startHHmm = janela que cruza a meia-noite
+    weekdaysOnly: boolean;
+}
+
+export type QuietHoursConfig = Record<QuietHoursChannel, QuietHoursRule>;
+
+export interface CobrancaCadenceConfig {
+    reminderDaysBefore: number;     // janela do lembrete antes do prazo (dias)
+    recobrancaIntervalDays: number; // intervalo entre re-cobranças (dias)
+    escalateAfterCobrancas: number; // nº de cobranças sem progresso antes de escalar
+    prazoDeAceiteDays: number;      // prazo (dias) p/ o responsável aceitar antes de escalar
+}
+
+export interface NotificationPolicyConfig {
+    cobrancaCadence: CobrancaCadenceConfig;
+    quietHours: QuietHoursConfig;
+    staleHours: number;            // ticket stale threshold (horas) — alerta de ticket parado
+    invoiceDueHorizonDays: number; // fatura a vencer (dias) — horizonte do alerta de vencimento
+}
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
@@ -133,6 +160,7 @@ export interface UiConfig {
     actionGovernance: ActionGovernanceConfig;
     automationSwitches: AutomationSwitchesConfig;
     featureSwitches: FeatureSwitchesConfig;
+    notificationPolicy: NotificationPolicyConfig;
     // Concorrência otimista (#central-permissões): incrementa a cada save. A Central envia
     // o version que leu; o backend rejeita (409) se mudou no meio — evita last-write-wins.
     version: number;
@@ -146,7 +174,7 @@ export interface UiConfig {
 export const UI_CONFIG_LIMITS = { maxEntities: 500, maxIdsPerRule: 200, maxIdLen: 80 };
 
 // Entrada de update: branding parcial + prefs/permissões/páginas parciais (sanitizadas em update()).
-export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions' | 'customPages' | 'taskNotifications' | 'actionGovernance' | 'automationSwitches' | 'featureSwitches'>> & {
+export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'screenPermissions' | 'customPages' | 'taskNotifications' | 'actionGovernance' | 'automationSwitches' | 'featureSwitches' | 'notificationPolicy'>> & {
     menu?: Partial<OrderVisibilityPrefs>;
     dashboard?: Partial<OrderVisibilityPrefs>;
     screenPermissions?: unknown;
@@ -156,6 +184,7 @@ export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'scre
     actionGovernance?: unknown;
     automationSwitches?: unknown;
     featureSwitches?: unknown;
+    notificationPolicy?: unknown;
 };
 
 // Padrão aprovado: Responsável leva a cobrança; Interveniente acompanha; Criador é avisado do desfecho.
@@ -169,6 +198,92 @@ const DEFAULT_TASK_NOTIFICATIONS: TaskNotificationsConfig = {
     completed:         { responsavel: [],                              interveniente: ['in-app'], criador: ['in-app'] },
     comment:           { responsavel: ['in-app'],                      interveniente: ['in-app'], criador: [] },
 };
+
+// ---- Política de notificações (#1293) ----
+// Cadência espelha DEFAULT_CADENCE do delegationFollowUpLogic (1/2/3/1). Quiet-hours padrão
+// DESLIGADO p/ todos os canais (não silenciar nada por padrão). staleHours=24 e invoiceDueHorizon=3
+// acompanham os limiares históricos do alertCronService (ticket parado +24h, fatura vencendo em 3 dias).
+export const DEFAULT_COBRANCA_CADENCE: CobrancaCadenceConfig = {
+    reminderDaysBefore: 1,
+    recobrancaIntervalDays: 2,
+    escalateAfterCobrancas: 3,
+    prazoDeAceiteDays: 1,
+};
+
+function defaultQuietHours(): QuietHoursConfig {
+    const rule = (): QuietHoursRule => ({ enabled: false, startHHmm: '22:00', endHHmm: '07:00', weekdaysOnly: false });
+    return { whatsapp: rule(), email: rule(), 'in-app': rule() };
+}
+
+export const DEFAULT_NOTIFICATION_POLICY: NotificationPolicyConfig = {
+    cobrancaCadence: { ...DEFAULT_COBRANCA_CADENCE },
+    quietHours: defaultQuietHours(),
+    staleHours: 24,
+    invoiceDueHorizonDays: 3,
+};
+
+const HHMM_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+function sanitizeHHmm(v: unknown, dflt: string): string {
+    return typeof v === 'string' && HHMM_RE.test(v) ? v : dflt;
+}
+
+function intIn(v: unknown, min: number, max: number, dflt: number): number {
+    const n = typeof v === 'number' ? v : NaN;
+    if (!Number.isFinite(n)) return dflt;
+    return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+export const QUIET_HOURS_CHANNELS: readonly QuietHoursChannel[] = ['whatsapp', 'email', 'in-app'];
+
+// Exportado p/ teste unitário direto (mesmo espírito das demais sanitize).
+export function sanitizeCobrancaCadence(v: unknown): CobrancaCadenceConfig {
+    const d = DEFAULT_COBRANCA_CADENCE;
+    const c = (v && typeof v === 'object') ? v as Record<string, unknown> : {};
+    return {
+        reminderDaysBefore: intIn(c.reminderDaysBefore, 0, 90, d.reminderDaysBefore),
+        recobrancaIntervalDays: intIn(c.recobrancaIntervalDays, 1, 90, d.recobrancaIntervalDays),
+        escalateAfterCobrancas: intIn(c.escalateAfterCobrancas, 1, 30, d.escalateAfterCobrancas),
+        prazoDeAceiteDays: intIn(c.prazoDeAceiteDays, 0, 90, d.prazoDeAceiteDays),
+    };
+}
+
+// Exportado p/ teste unitário direto (mesmo espírito das demais sanitize).
+export function sanitizeQuietHours(v: unknown): QuietHoursConfig {
+    const d = DEFAULT_NOTIFICATION_POLICY.quietHours;
+    const src = (v && typeof v === 'object') ? v as Record<string, unknown> : {};
+    const out = {} as QuietHoursConfig;
+    for (const ch of QUIET_HOURS_CHANNELS) {
+        const r = (src[ch] && typeof src[ch] === 'object') ? src[ch] as Record<string, unknown> : {};
+        out[ch] = {
+            enabled: typeof r.enabled === 'boolean' ? r.enabled : d[ch].enabled,
+            startHHmm: sanitizeHHmm(r.startHHmm, d[ch].startHHmm),
+            endHHmm: sanitizeHHmm(r.endHHmm, d[ch].endHHmm),
+            weekdaysOnly: typeof r.weekdaysOnly === 'boolean' ? r.weekdaysOnly : d[ch].weekdaysOnly,
+        };
+    }
+    return out;
+}
+
+// Exportado p/ teste unitário direto (mesmo espírito das demais sanitize).
+export function sanitizeNotificationPolicy(v: unknown): NotificationPolicyConfig {
+    const d = DEFAULT_NOTIFICATION_POLICY;
+    if (!v || typeof v !== 'object') {
+        return {
+            cobrancaCadence: { ...d.cobrancaCadence },
+            quietHours: sanitizeQuietHours(d),
+            staleHours: d.staleHours,
+            invoiceDueHorizonDays: d.invoiceDueHorizonDays,
+        };
+    }
+    const p = v as Record<string, unknown>;
+    return {
+        cobrancaCadence: sanitizeCobrancaCadence(p.cobrancaCadence),
+        quietHours: sanitizeQuietHours(p.quietHours),
+        staleHours: intIn(p.staleHours, 1, 720, d.staleHours),
+        invoiceDueHorizonDays: intIn(p.invoiceDueHorizonDays, 0, 365, d.invoiceDueHorizonDays),
+    };
+}
 
 const DEFAULTS: UiConfig = {
     companyName: 'CoolGroove',
@@ -184,6 +299,12 @@ const DEFAULTS: UiConfig = {
     actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [] },
     automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
     featureSwitches: { dryRunMode: false, financialCommands: false, crmContextInjection: true },
+    notificationPolicy: {
+        cobrancaCadence: { ...DEFAULT_COBRANCA_CADENCE },
+        quietHours: defaultQuietHours(),
+        staleHours: 24,
+        invoiceDueHorizonDays: 3,
+    },
     version: 0,
 };
 
@@ -441,6 +562,7 @@ export class UiConfigService {
                     actionGovernance: sanitizeActionGovernance(parsed.actionGovernance),
                     automationSwitches: sanitizeAutomationSwitches(parsed.automationSwitches),
                     featureSwitches: sanitizeFeatureSwitches(parsed.featureSwitches),
+                    notificationPolicy: sanitizeNotificationPolicy(parsed.notificationPolicy),
                     version: typeof parsed.version === 'number' ? parsed.version : 0,
                 };
             }
@@ -501,6 +623,9 @@ export class UiConfigService {
         }
         if (partial.featureSwitches !== undefined) {
             next.featureSwitches = sanitizeFeatureSwitches(partial.featureSwitches);
+        }
+        if (partial.notificationPolicy !== undefined) {
+            next.notificationPolicy = sanitizeNotificationPolicy(partial.notificationPolicy);
         }
         if (typeof partial.appAccessGroupId === 'string') {
             const v = partial.appAccessGroupId.trim().slice(0, 40);

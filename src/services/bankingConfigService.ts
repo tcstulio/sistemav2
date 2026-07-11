@@ -40,3 +40,9 @@ export async function getBankingCredentialsStatus(bank: BankId): Promise<BankCre
     const { data } = await axios.get(`${API_URL}/status`, { params: { bank }, ...getAuthHeaders() });
     return data as BankCredStatus;
 }
+
+/** Remove as credenciais de um banco (volta ao fallback do .env). */
+export async function deleteBankingCredentials(bank: BankId): Promise<BankCredStatus> {
+    const { data } = await axios.delete(`${API_URL}/${bank}`, getAuthHeaders());
+    return data as BankCredStatus;
+}
