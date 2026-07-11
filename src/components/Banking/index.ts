@@ -1,4 +1,5 @@
 export { default as BankStatementImport } from './BankStatementImport';
+export { default as ApprovalDashboard } from './ApprovalDashboard';
 export { default as CashFlowChart } from './CashFlowChart';
 export { default as BankingInsightsPanel } from './BankingInsightsPanel';
 export { default as InterSettingsTab } from './InterSettingsTab';
