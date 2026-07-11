@@ -10,8 +10,11 @@
  * Reusa o `deeplinkToken` (mesmo mecanismo dos `prepare_*`). Registry define o conjunto de ações
  * HITL-executáveis (v1 = validate_*); novas ações (ex.: send_whatsapp) entram aqui, não ad-hoc.
  */
+import fs from 'fs';
+import path from 'path';
 import { signDeeplink, verifyDeeplink } from '../utils/deeplinkToken';
 import { dolibarrService } from './dolibarrService';
+import { atomicWriteSync } from '../utils/atomicWrite';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('AgentActionConfirm');
@@ -57,11 +60,53 @@ export function isConfirmable(action: string): boolean {
     return Object.prototype.hasOwnProperty.call(REGISTRY, action);
 }
 
-// Anti-replay: jti consumidos (memória, expira junto do token). v1 = validate (~idempotente); ao
-// adicionar send_whatsapp (não-idempotente) migrar p/ store persistido.
+// Anti-replay: jti consumidos, PERSISTIDOS em disco (Fase 1 do roadmap de governança).
+// Em memória (versão anterior) um restart do backend dentro do TTL de 30min esquecia os jti
+// consumidos — o mesmo deeplink podia re-executar uma ação irreversível. O volume é baixíssimo
+// (confirmações humanas), então arquivo JSON + atomicWriteSync (mesmo padrão do approvalService)
+// basta; entradas expiram junto do token (exp do HMAC), então o arquivo se auto-limita.
+const CONSUMED_PATH = path.join(__dirname, '../../data/consumed_confirmations.json');
 const consumed = new Map<string, number>();
+
+function loadConsumed(): void {
+    try {
+        if (!fs.existsSync(CONSUMED_PATH)) return;
+        const raw = JSON.parse(fs.readFileSync(CONSUMED_PATH, 'utf-8'));
+        const now = Math.floor(Date.now() / 1000);
+        if (raw && typeof raw === 'object') {
+            for (const [jti, exp] of Object.entries(raw)) {
+                if (typeof exp === 'number' && exp >= now) consumed.set(jti, exp);
+            }
+        }
+        log.info(`Anti-replay: ${consumed.size} confirmação(ões) consumida(s) carregada(s) do disco.`);
+    } catch (e: any) {
+        // Arquivo corrompido → começa vazio, mas AVISA: a janela de replay reabre até os tokens expirarem.
+        log.error(`Anti-replay: falha ao carregar ${CONSUMED_PATH} (${e?.message}) — iniciando vazio.`);
+    }
+}
+
+function persistConsumed(): void {
+    try {
+        atomicWriteSync(CONSUMED_PATH, Object.fromEntries(consumed));
+    } catch (e: any) {
+        // Não-fatal por design: o Map em memória segue valendo p/ ESTE processo; o risco volta a
+        // ser só o de restart (estado anterior). Logar alto para não virar falha silenciosa.
+        log.error(`Anti-replay: falha ao persistir ${CONSUMED_PATH}: ${e?.message}`);
+    }
+}
+
 function cleanupConsumed(now: number) {
-    for (const [j, exp] of consumed) if (exp < now) consumed.delete(j);
+    let dirty = false;
+    for (const [j, exp] of consumed) if (exp < now) { consumed.delete(j); dirty = true; }
+    if (dirty) persistConsumed();
+}
+
+loadConsumed();
+
+/** SÓ TESTES: zera o estado em memória e recarrega do disco — simula um restart do processo. */
+export function __reloadConsumedForTests(): void {
+    consumed.clear();
+    loadConsumed();
 }
 
 /** Gera o deeplink de confirmação para uma ação. */
@@ -91,6 +136,7 @@ export async function executeConfirm(token: string, userKey: string): Promise<{ 
     cleanupConsumed(now);
     if (consumed.has(jti)) return { ok: false, error: 'Esta confirmação já foi usada.' };
     consumed.set(jti, p.exp); // marca ANTES de executar (evita corrida de duplo-clique)
+    persistConsumed();        // ... e PERSISTE antes de executar: crash pós-execução não reabre o replay
 
     try {
         const result = await REGISTRY[action].execute(args, userKey);
@@ -98,6 +144,7 @@ export async function executeConfirm(token: string, userKey: string): Promise<{ 
         return { ok: true, action, result };
     } catch (e: any) {
         consumed.delete(jti); // erro real (ex.: RBAC 403, HTTP 5xx) → libera p/ nova tentativa
+        persistConsumed();
         return { ok: false, error: e?.message || String(e) };
     }
 }
