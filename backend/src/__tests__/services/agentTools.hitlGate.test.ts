@@ -66,4 +66,23 @@ describe('agentTools — gate HITL de validate_* (dial-driven, dormente)', () =>
         expect(mockDolibarr.validateInvoice).not.toHaveBeenCalled();
         expect(out).toMatch(/confirm-action/);
     });
+
+    // Fase 2: com send_whatsapp no registry, o MESMO gate passa a desviá-lo (nenhuma mudança
+    // no gate em si — isConfirmable('send_whatsapp') virou true).
+    it('dial ON: send_whatsapp NÃO envia — devolve deeplink de confirmação', async () => {
+        mockUiConfig.get.mockReturnValue(govOnBypass as any);
+        const p = profile([]);
+        p.agent.canSendWhatsapp = true;
+        const out = await runWithToolContext({ permissionProfile: p, isAdmin: false },
+            () => executeTool('send_whatsapp', { phone: '5511999990000', message: 'oi' }));
+        expect(out).toMatch(/\/confirm-action\?token=/);
+    });
+
+    it('dial OFF: send_whatsapp segue o caminho direto de hoje (sem deeplink)', async () => {
+        const p = profile([]);
+        p.agent.canSendWhatsapp = true;
+        const out = await runWithToolContext({ permissionProfile: p, isAdmin: false },
+            () => executeTool('send_whatsapp', { phone: '5511999990000', message: 'oi' }));
+        expect(out).not.toMatch(/confirm-action/);
+    });
 });

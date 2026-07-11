@@ -26,6 +26,16 @@ vi.mock('../../utils/atomicWrite', () => ({
     atomicWriteSync: vi.fn((p: string, data: any) => { fakeDisk.files.set(String(p), JSON.stringify(data)); }),
 }));
 
+// Fase 2: send_whatsapp no registry — mocka o transporte e a config da allowlist.
+const mockChannelRouter = vi.hoisted(() => ({
+    sendWhatsApp: vi.fn(async (_chatId: string, _msg: string) => ({ success: true })),
+}));
+vi.mock('../../services/channelRouter', () => ({ channelRouter: mockChannelRouter }));
+const mockUiConfig = vi.hoisted(() => ({
+    get: vi.fn(() => ({ actionGovernance: { whatsappDestinationAllowlist: [] as string[] } })),
+}));
+vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfig }));
+
 import { isConfirmable, buildConfirmDeeplink, describeConfirm, executeConfirm, __reloadConsumedForTests } from '../../services/agentActionConfirm';
 
 const tokenFrom = (link: string) => decodeURIComponent(link.split('token=')[1]);
@@ -33,12 +43,13 @@ const tokenFrom = (link: string) => decodeURIComponent(link.split('token=')[1]);
 describe('agentActionConfirm — HITL de ação irreversível (§8.1)', () => {
     beforeEach(() => vi.clearAllMocks());
 
-    it('isConfirmable: só validate_* (v1)', () => {
+    it('isConfirmable: validate_* + send_whatsapp (Fase 2)', () => {
         expect(isConfirmable('validate_invoice')).toBe(true);
         expect(isConfirmable('validate_order')).toBe(true);
         expect(isConfirmable('validate_proposal')).toBe(true);
-        expect(isConfirmable('send_whatsapp')).toBe(false);
+        expect(isConfirmable('send_whatsapp')).toBe(true);
         expect(isConfirmable('list_invoices')).toBe(false);
+        expect(isConfirmable('notify_person')).toBe(false);
     });
 
     it('build → describe: descreve a ação SEM executar', () => {
@@ -147,5 +158,74 @@ describe('anti-replay PERSISTIDO (Fase 1 — sobrevive a restart)', () => {
         const link = buildConfirmDeeplink('validate_proposal', { proposal_id: '8' }, '42');
         const r = await executeConfirm(tokenFrom(link), 'k');
         expect(r.ok).toBe(true); // ação executou; só a persistência falhou (logada)
+    });
+});
+
+describe('send_whatsapp no registry (Fase 2)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        fakeDisk.files.clear();
+        __reloadConsumedForTests();
+        mockUiConfig.get.mockReturnValue({ actionGovernance: { whatsappDestinationAllowlist: [] } });
+        mockChannelRouter.sendWhatsApp.mockResolvedValue({ success: true });
+    });
+
+    it('describe: mostra destino e preview da mensagem SEM enviar', () => {
+        const link = buildConfirmDeeplink('send_whatsapp', { phone: '+55 (11) 99999-0000', message: 'Olá, segue a cotação.' }, '42');
+        const d = describeConfirm(tokenFrom(link));
+        expect(d).toMatchObject({ ok: true, action: 'send_whatsapp', entityType: 'whatsapp', entityId: '5511999990000' });
+        expect((d as any).summary).toContain('5511999990000');
+        expect((d as any).summary).toContain('Olá, segue a cotação.');
+        expect(mockChannelRouter.sendWhatsApp).not.toHaveBeenCalled();
+    });
+
+    it('execute: envia via channelRouter com chatId normalizado (@c.us)', async () => {
+        const link = buildConfirmDeeplink('send_whatsapp', { phone: '5511999990000', message: 'msg confirmada' }, '42');
+        const r = await executeConfirm(tokenFrom(link), 'user-key-ignorada');
+        expect(r).toMatchObject({ ok: true, action: 'send_whatsapp' });
+        expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledWith('5511999990000@c.us', 'msg confirmada');
+    });
+
+    it('anti-replay vale p/ send_whatsapp: mesma confirmação NÃO envia 2x (nem após restart)', async () => {
+        const link = buildConfirmDeeplink('send_whatsapp', { phone: '5511999990000', message: 'não duplicar' }, '42');
+        const t = tokenFrom(link);
+        expect((await executeConfirm(t, 'k')).ok).toBe(true);
+        __reloadConsumedForTests(); // restart do backend
+        const replay = await executeConfirm(t, 'k');
+        expect(replay.ok).toBe(false);
+        expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledTimes(1);
+    });
+
+    it('allowlist é re-checada NA CONFIRMAÇÃO: destino removido após gerar o link é bloqueado', async () => {
+        const link = buildConfirmDeeplink('send_whatsapp', { phone: '5511999990000', message: 'oi' }, '42');
+        // Entre o deeplink e o clique, o admin restringiu a allowlist a OUTRO número.
+        mockUiConfig.get.mockReturnValue({ actionGovernance: { whatsappDestinationAllowlist: ['5599888887777'] } });
+        const r = await executeConfirm(tokenFrom(link), 'k');
+        expect(r.ok).toBe(false);
+        expect((r as any).error).toMatch(/allowlist/i);
+        expect(mockChannelRouter.sendWhatsApp).not.toHaveBeenCalled();
+        // e o jti foi liberado (erro real) — corrigida a allowlist, pode confirmar de novo
+        mockUiConfig.get.mockReturnValue({ actionGovernance: { whatsappDestinationAllowlist: [] } });
+        expect((await executeConfirm(tokenFrom(link), 'k')).ok).toBe(true);
+    });
+
+    it('falha do transporte (sessão caída) devolve erro e LIBERA p/ nova tentativa', async () => {
+        mockChannelRouter.sendWhatsApp.mockResolvedValueOnce({ success: false, error: 'sessão desconectada' });
+        const link = buildConfirmDeeplink('send_whatsapp', { phone: '5511999990000', message: 'oi' }, '42');
+        const t = tokenFrom(link);
+        const r1 = await executeConfirm(t, 'k');
+        expect(r1.ok).toBe(false);
+        expect((r1 as any).error).toMatch(/sessão desconectada/);
+        const r2 = await executeConfirm(t, 'k'); // transporte voltou
+        expect(r2.ok).toBe(true);
+        expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledTimes(2);
+    });
+
+    it('args inválidos (sem phone / sem message) falham sem chamar o transporte', async () => {
+        const l1 = buildConfirmDeeplink('send_whatsapp', { message: 'sem destino' }, '42');
+        expect((await executeConfirm(tokenFrom(l1), 'k')).ok).toBe(false);
+        const l2 = buildConfirmDeeplink('send_whatsapp', { phone: '5511999990000' }, '42');
+        expect((await executeConfirm(tokenFrom(l2), 'k')).ok).toBe(false);
+        expect(mockChannelRouter.sendWhatsApp).not.toHaveBeenCalled();
     });
 });

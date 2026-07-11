@@ -14,6 +14,9 @@ import fs from 'fs';
 import path from 'path';
 import { signDeeplink, verifyDeeplink } from '../utils/deeplinkToken';
 import { dolibarrService } from './dolibarrService';
+import { channelRouter } from './channelRouter';
+import { uiConfigService } from './uiConfigService';
+import { getWhatsappAllowlist, whatsappDestinationAllowed } from '../utils/actionGuards';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { createLogger } from '../utils/logger';
 
@@ -39,7 +42,7 @@ function idOf(args: any): string {
     return String(args?.invoice_id ?? args?.order_id ?? args?.proposal_id ?? args?.id ?? '').trim();
 }
 
-/** Registry de ações HITL-executáveis. v1 = validate_* (efeito irreversível, RBAC-limpo com a chave do user). */
+/** Registry de ações HITL-executáveis: validate_* (RBAC com a chave do user) + send_whatsapp (Fase 2). */
 const REGISTRY: Record<string, ConfirmableAction> = {
     validate_invoice: {
         describe: (a) => ({ title: 'Validar fatura', summary: `Validar (confirmar) a fatura #${idOf(a)}. Efeito irreversível — atribui numeração fiscal.`, entityType: 'invoice', entityId: idOf(a) }),
@@ -52,6 +55,37 @@ const REGISTRY: Record<string, ConfirmableAction> = {
     validate_proposal: {
         describe: (a) => ({ title: 'Validar proposta', summary: `Validar (confirmar) a proposta #${idOf(a)}. Efeito irreversível.`, entityType: 'proposal', entityId: idOf(a) }),
         execute: (a, key) => dolibarrService.validateProposal(idOf(a), key),
+    },
+    // Fase 2 (governança): comunicação externa — mensagem enviada não se desfaz. O catálogo
+    // (actionCatalog.ts) já marcava requiresHITL; agora o gate consegue de fato desviar.
+    // Diferente dos validate_*, NÃO usa chave Dolibarr (envio sai pela sessão do sistema via
+    // channelRouter) — a autoria do humano fica no actorUserId do token; `key` é ignorada.
+    send_whatsapp: {
+        describe: (a) => {
+            const phone = String(a?.phone || '').replace(/\D/g, '');
+            const msg = String(a?.message || '').trim();
+            return {
+                title: 'Enviar WhatsApp',
+                summary: `Enviar WhatsApp para ${phone || '(sem destino)'}: "${msg.substring(0, 200)}${msg.length > 200 ? '…' : ''}". Efeito irreversível — a mensagem não pode ser desfeita após o envio.`,
+                entityType: 'whatsapp',
+                entityId: phone,
+            };
+        },
+        execute: async (a) => {
+            const phone = String(a?.phone || '').replace(/\D/g, '');
+            const msg = String(a?.message || '').trim();
+            if (!phone) throw new Error('Destino (phone) ausente na confirmação.');
+            if (!msg) throw new Error('Mensagem vazia na confirmação.');
+            // Re-checa a allowlist NO MOMENTO da confirmação (não só quando o token foi gerado):
+            // entre o deeplink e o clique passam até 30min — o admin pode ter restringido o destino.
+            if (!whatsappDestinationAllowed(phone, getWhatsappAllowlist(uiConfigService.get()))) {
+                throw new Error(`Destino ${phone} não está mais na allowlist de WhatsApp configurada pelo admin.`);
+            }
+            const chatId = phone.includes('@c.us') ? phone : `${phone}@c.us`;
+            const result = await channelRouter.sendWhatsApp(chatId, msg);
+            if (!result.success) throw new Error(result.error || 'Falha ao enviar WhatsApp.');
+            return { sentTo: phone, preview: msg.substring(0, 80) };
+        },
     },
 };
 
