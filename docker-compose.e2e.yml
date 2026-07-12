@@ -48,7 +48,9 @@ services:
       DOLI_INSTALL_AUTO: "1"
       # Chave CERTA é DOLI_ENABLE_MODULES (nomes SEM prefixo `mod`); `DOLI_MODULES` é ignorada.
       # Ficheinter/Contrat entram porque o app usa /interventions e contratos.
-      DOLI_ENABLE_MODULES: "Api,Societe,Facture,Projet,Contrat,Ficheinter"
+      # Product/Propal/Commande adicionados p/ o piloto de cotação (Fase 4): cotação = proposta
+      # (Propal) com produtos (Product); pedido (Commande) é o passo seguinte natural.
+      DOLI_ENABLE_MODULES: "Api,Societe,Facture,Projet,Contrat,Ficheinter,Product,Propale,Commande"
       # Sem estes o install NÃO ativa os módulos (causa provável do shakeout de 1ª vez).
       DOLI_COMPANY_NAME: "E2E Sandbox"
       DOLI_COMPANY_COUNTRYCODE: "BR"
