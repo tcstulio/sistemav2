@@ -56,6 +56,23 @@ const REGISTRY: Record<string, ConfirmableAction> = {
         describe: (a) => ({ title: 'Validar proposta', summary: `Validar (confirmar) a proposta #${idOf(a)}. Efeito irreversível.`, entityType: 'proposal', entityId: idOf(a) }),
         execute: (a, key) => dolibarrService.validateProposal(idOf(a), key),
     },
+    // Exclui uma proposta — mas SÓ se for RASCUNHO. O Dolibarr NÃO tem defesa-em-profundidade
+    // (verificado: DELETE de uma proposta validada retorna 200 "deleted"); este guard é a ÚNICA
+    // proteção contra apagar um documento real. WHITELIST estrita: deleta só se o status for
+    // provadamente 0 (rascunho). `String(status) !== '0'` recusa 1/"1"/2/null/undefined/''/NaN
+    // (NÃO usar `!status` nem `Number(status)!==0`: `!1===false` e `Number(null)===0` deletariam
+    // uma não-rascunho). Fetch falho / proposta ausente ⇒ `p` null ⇒ recusa (fail-closed).
+    delete_proposal: {
+        describe: (a) => ({ title: 'Excluir rascunho de proposta', summary: `Excluir o RASCUNHO da proposta #${idOf(a)}. Efeito irreversível — só rascunhos (não validadas).`, entityType: 'proposal', entityId: idOf(a) }),
+        execute: async (a, key) => {
+            const id = idOf(a);
+            const p = await dolibarrService.getProposal(id);
+            if (String(p?.status) !== '0') {
+                throw new Error(`Só rascunhos podem ser excluídos pelo agente. A proposta #${id} não é um rascunho (status=${p?.status ?? 'desconhecido'}) — exclua manualmente se realmente necessário.`);
+            }
+            return dolibarrService.deleteProposal(id, key);
+        },
+    },
     // Fase 2 (governança): comunicação externa — mensagem enviada não se desfaz. O catálogo
     // (actionCatalog.ts) já marcava requiresHITL; agora o gate consegue de fato desviar.
     // Diferente dos validate_*, NÃO usa chave Dolibarr (envio sai pela sessão do sistema via

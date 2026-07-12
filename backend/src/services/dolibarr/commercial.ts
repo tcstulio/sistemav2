@@ -227,4 +227,13 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
         const url = `${this.baseUrl}proposals/${proposalId}/validate`;
         return this.requestWithAuth('POST', url, { notrigger: 0 }, userKey || this.apiKey);
     }
+
+    // Exclui uma proposta. IRREVERSÍVEL — o Dolibarr NÃO trava a exclusão de uma proposta
+    // validada (verificado: DELETE de status=1 retorna 200 "deleted"). A trava de "só rascunho"
+    // é responsabilidade do chamador (agentActionConfirm.delete_proposal). Roda com a chave do
+    // usuário que confirma (RBAC decide se ele pode excluir).
+    async deleteProposal(proposalId: string, userKey?: string): Promise<any> {
+        const url = `${this.baseUrl}proposals/${proposalId}`;
+        return this.requestWithAuth('DELETE', url, undefined, userKey || this.apiKey);
+    }
 }

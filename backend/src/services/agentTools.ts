@@ -195,6 +195,7 @@ export const TOOLS_PROMPT = `
         108. validate_invoice(invoice_id) - Valida (confirma) uma fatura de venda em rascunho. invoice_id = id da fatura (ache com list_invoices). Muda status de rascunho para validada.
         109. validate_order(order_id) - Valida (confirma) um pedido de venda em rascunho. order_id = id do pedido (ache com list_orders). Muda status de rascunho para validado.
         110. validate_proposal(proposal_id) - Valida (confirma) uma proposta comercial em rascunho. proposal_id = id da proposta (ache com list_proposals). Muda status de rascunho para validada.
+        110b. delete_proposal(proposal_id) - EXCLUI uma proposta que está em RASCUNHO (status 0). Só rascunhos podem ser excluídos; validadas são recusadas. Pede confirmação humana (irreversível). Use para limpar rascunhos de teste que você mesmo criou.
 
         FERRAMENTAS DE DOCUMENTO (PDF):
         111. get_document_pdf(entity_type, entity_id) - Obtém o PDF de um documento Dolibarr e retorna como base64. entity_type: 'invoice', 'order', 'proposal', 'supplier_order', 'supplier_invoice', 'intervention', 'contract', 'shipment'. entity_id = id do documento (ache com list_invoices, list_orders, etc.). Retorna o PDF em base64 para download ou envio.
@@ -660,6 +661,7 @@ const WRITE_TOOLS: Record<string, string> = {
     validate_invoice: 'canValidate',
     validate_order: 'canValidate',
     validate_proposal: 'canValidate',
+    delete_proposal: 'canValidate', // não há canDelete; delete de rascunho é ação irreversível (como validate). HITL + RBAC do Dolibarr são os backstops.
     notify_team: 'canSendEmail',
     notify_person: 'canSendEmail',
     send_whatsapp: 'canSendWhatsapp',
@@ -686,7 +688,7 @@ function getWritePermissionKey(tool: string): string | null {
 
 // Ferramentas que escrevem ou têm efeito externo — bloqueadas em contexto read-only.
 const MUTATING_TOOLS = new Set([
-    'validate_invoice', 'validate_order', 'validate_proposal',
+    'validate_invoice', 'validate_order', 'validate_proposal', 'delete_proposal',
     'notify_team', 'notify_person', 'send_whatsapp',
     'create_github_issue', 'create_bug_report',
     'create_opencode_task', 'start_opencode_task', 'merge_opencode_task',
