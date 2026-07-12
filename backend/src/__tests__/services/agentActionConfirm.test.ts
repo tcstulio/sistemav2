@@ -5,6 +5,8 @@ const mockDolibarr = vi.hoisted(() => ({
     validateInvoice: vi.fn(async (id: string, key: string) => ({ id, validatedWith: key })),
     validateOrder: vi.fn(async (id: string, key: string) => ({ id, validatedWith: key })),
     validateProposal: vi.fn(async (id: string, key: string) => ({ id, validatedWith: key })),
+    getProposal: vi.fn(async (_id: string) => ({ id: _id, status: 0 })), // default: rascunho
+    deleteProposal: vi.fn(async (id: string, key: string) => ({ id, deletedWith: key })),
 }));
 vi.mock('../../services/dolibarrService', () => ({ dolibarrService: mockDolibarr }));
 
@@ -47,6 +49,7 @@ describe('agentActionConfirm — HITL de ação irreversível (§8.1)', () => {
         expect(isConfirmable('validate_invoice')).toBe(true);
         expect(isConfirmable('validate_order')).toBe(true);
         expect(isConfirmable('validate_proposal')).toBe(true);
+        expect(isConfirmable('delete_proposal')).toBe(true);
         expect(isConfirmable('send_whatsapp')).toBe(true);
         expect(isConfirmable('list_invoices')).toBe(false);
         expect(isConfirmable('notify_person')).toBe(false);
@@ -227,5 +230,76 @@ describe('send_whatsapp no registry (Fase 2)', () => {
         const l2 = buildConfirmDeeplink('send_whatsapp', { phone: '5511999990000' }, '42');
         expect((await executeConfirm(tokenFrom(l2), 'k')).ok).toBe(false);
         expect(mockChannelRouter.sendWhatsApp).not.toHaveBeenCalled();
+    });
+});
+
+// #1378 — guard de delete: o Dolibarr NÃO tem defesa-em-profundidade (apaga validada), então
+// este guard é a ÚNICA proteção. Semântica WHITELIST: deleta só se status for provadamente 0.
+describe('delete_proposal — guard "só rascunho" (§1378, única proteção)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        fakeDisk.files.clear();
+        __reloadConsumedForTests();
+        mockDolibarr.getProposal.mockResolvedValue({ id: 'x', status: 0 });
+        mockDolibarr.deleteProposal.mockResolvedValue({ id: 'x', deleted: true });
+    });
+
+    it('status 0 (rascunho) → DELETA com a chave do usuário (RBAC)', async () => {
+        mockDolibarr.getProposal.mockResolvedValueOnce({ id: '5', status: 0 });
+        const link = buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42');
+        const r = await executeConfirm(tokenFrom(link), 'user-key-abc');
+        expect(r).toMatchObject({ ok: true, action: 'delete_proposal' });
+        expect(mockDolibarr.deleteProposal).toHaveBeenCalledWith('5', 'user-key-abc');
+    });
+
+    it('status "0" (string) → DELETA (robusto a tipo)', async () => {
+        mockDolibarr.getProposal.mockResolvedValueOnce({ id: '5', status: '0' });
+        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), 'k');
+        expect(r.ok).toBe(true);
+        expect(mockDolibarr.deleteProposal).toHaveBeenCalledTimes(1);
+    });
+
+    it('status 1 (validada) → RECUSA, NÃO deleta', async () => {
+        mockDolibarr.getProposal.mockResolvedValueOnce({ id: '5', status: 1 });
+        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), 'k');
+        expect(r.ok).toBe(false);
+        expect((r as any).error).toMatch(/rascunho/i);
+        expect(mockDolibarr.deleteProposal).not.toHaveBeenCalled();
+    });
+
+    it('status "1" (string) → RECUSA (não cai em coerção)', async () => {
+        mockDolibarr.getProposal.mockResolvedValueOnce({ id: '5', status: '1' });
+        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), 'k');
+        expect(r.ok).toBe(false);
+        expect(mockDolibarr.deleteProposal).not.toHaveBeenCalled();
+    });
+
+    it('status 2 (assinada/outra) → RECUSA (whitelist, não blacklist)', async () => {
+        mockDolibarr.getProposal.mockResolvedValueOnce({ id: '5', status: 2 });
+        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), 'k');
+        expect(r.ok).toBe(false);
+        expect(mockDolibarr.deleteProposal).not.toHaveBeenCalled();
+    });
+
+    it('status null → RECUSA (o furo do Number(null)===0)', async () => {
+        mockDolibarr.getProposal.mockResolvedValueOnce({ id: '5', status: null });
+        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), 'k');
+        expect(r.ok).toBe(false);
+        expect(mockDolibarr.deleteProposal).not.toHaveBeenCalled();
+    });
+
+    it('proposta ausente / fetch falhou (getProposal → null) → RECUSA (fail-closed)', async () => {
+        mockDolibarr.getProposal.mockResolvedValueOnce(null);
+        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), 'k');
+        expect(r.ok).toBe(false);
+        expect(mockDolibarr.deleteProposal).not.toHaveBeenCalled();
+    });
+
+    it('describe: NÃO busca nem deleta (só descreve)', () => {
+        const link = buildConfirmDeeplink('delete_proposal', { proposal_id: '9' }, '42');
+        const d = describeConfirm(tokenFrom(link));
+        expect(d).toMatchObject({ ok: true, action: 'delete_proposal', entityType: 'proposal', entityId: '9' });
+        expect(mockDolibarr.getProposal).not.toHaveBeenCalled();
+        expect(mockDolibarr.deleteProposal).not.toHaveBeenCalled();
     });
 });

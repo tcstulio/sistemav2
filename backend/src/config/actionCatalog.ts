@@ -36,6 +36,9 @@ const OVERRIDES: Record<string, ActionClass> = {
     validate_invoice: { domain: 'business', reversibility: 'irreversible', requiresHITL: true },
     validate_order: { domain: 'business', reversibility: 'irreversible', requiresHITL: true },
     validate_proposal: { domain: 'business', reversibility: 'irreversible', requiresHITL: true },
+    // Exclusão de proposta — irreversível e SEM defesa-em-profundidade no Dolibarr (o guard de
+    // "só rascunho" em agentActionConfirm.delete_proposal é a única proteção). No registry HITL.
+    delete_proposal: { domain: 'business', reversibility: 'irreversible', requiresHITL: true },
     // Comunicação externa — mensagem enviada não se desfaz. No registry HITL desde a Fase 2.
     send_whatsapp: { domain: 'business', reversibility: 'irreversible', requiresHITL: true },
     // Notificações internas (in-app/equipe) — reversíveis; o canal externo já é gateado à parte (Fase A).

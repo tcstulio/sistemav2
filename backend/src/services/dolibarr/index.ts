@@ -62,6 +62,7 @@ export class DolibarrService extends DolibarrServiceBase {
     validateInvoice = (invoiceId: string, userKey?: string) => this.commercial.validateInvoice(invoiceId, userKey);
     validateOrder = (orderId: string, userKey?: string) => this.commercial.validateOrder(orderId, userKey);
     validateProposal = (proposalId: string, userKey?: string) => this.commercial.validateProposal(proposalId, userKey);
+    deleteProposal = (proposalId: string, userKey?: string) => this.commercial.deleteProposal(proposalId, userKey);
 
     // === Payments ===
     addPayment = (invoiceId: string, data: AddPaymentModel, userKey?: string) => this.payments.addPayment(invoiceId, data, userKey);
