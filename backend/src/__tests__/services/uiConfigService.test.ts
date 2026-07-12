@@ -230,12 +230,21 @@ describe('sanitizeActionGovernance', () => {
         adminBypassIrreversible: true,
         approvalValueThreshold: null,
         whatsappDestinationAllowlist: [],
+        businessActionsEnabled: true,
     };
 
     it('input ausente → defaults permissivos completos', () => {
         expect(sanitizeActionGovernance(undefined)).toEqual(PERMISSIVE_DEFAULTS);
         expect(sanitizeActionGovernance(null)).toEqual(PERMISSIVE_DEFAULTS);
         expect(sanitizeActionGovernance({})).toEqual(PERMISSIVE_DEFAULTS);
+    });
+
+    it('businessActionsEnabled (#1370): só booleano explícito; default true', () => {
+        expect(sanitizeActionGovernance({ businessActionsEnabled: false }).businessActionsEnabled).toBe(false);
+        expect(sanitizeActionGovernance({ businessActionsEnabled: true }).businessActionsEnabled).toBe(true);
+        // não-booleano cai no default permissivo (true)
+        expect(sanitizeActionGovernance({ businessActionsEnabled: 'no' as any }).businessActionsEnabled).toBe(true);
+        expect(sanitizeActionGovernance({ businessActionsEnabled: 0 as any }).businessActionsEnabled).toBe(true);
     });
 
     it('threshold negativo → null', () => {
@@ -327,6 +336,7 @@ describe('sanitizeActionGovernance', () => {
             adminBypassIrreversible: true,       // default
             approvalValueThreshold: null,
             whatsappDestinationAllowlist: ['5511988887777'], // só o válido
+            businessActionsEnabled: true,        // default
         });
         expect(mockedWrite).toHaveBeenCalled();
         // grava exatamente o saneado (não o input cru)
@@ -336,6 +346,7 @@ describe('sanitizeActionGovernance', () => {
             adminBypassIrreversible: true,
             approvalValueThreshold: null,
             whatsappDestinationAllowlist: ['5511988887777'],
+            businessActionsEnabled: true,
         });
     });
 

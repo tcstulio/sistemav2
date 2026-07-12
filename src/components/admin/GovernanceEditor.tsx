@@ -12,8 +12,9 @@ interface ActionGovernance {
     adminBypassIrreversible: boolean;
     approvalValueThreshold: number | null;
     whatsappDestinationAllowlist: string[];
+    businessActionsEnabled: boolean;
 }
-const DEFAULTS: ActionGovernance = { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [] };
+const DEFAULTS: ActionGovernance = { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [], businessActionsEnabled: true };
 
 export interface GovernanceEditorProps { isAdmin: boolean; themeColor?: string; }
 
@@ -109,6 +110,21 @@ export const GovernanceEditor: React.FC<GovernanceEditorProps> = ({ isAdmin, the
                                 </p>
                             </div>
                             <Toggle checked={config.adminBypassIrreversible} onChange={(v) => setConfig({ ...config, adminBypassIrreversible: v })} />
+                        </div>
+
+                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                            <div>
+                                <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+                                    <ShieldAlert size={18} className={config.businessActionsEnabled ? 'text-emerald-500' : 'text-red-500'} />
+                                    Ações de negócio habilitadas (kill-switch)
+                                </div>
+                                <p className="text-xs text-slate-400 mt-1">
+                                    {config.businessActionsEnabled
+                                        ? 'Ativo (normal) — o agente pode executar ações de negócio (cotação, fatura, validação…).'
+                                        : '⛔ DESLIGADO — nenhuma ação de negócio do agente é executada (freio de emergência). Ações de leitura e de código seguem normais.'}
+                                </p>
+                            </div>
+                            <Toggle checked={config.businessActionsEnabled} onChange={(v) => setConfig({ ...config, businessActionsEnabled: v })} />
                         </div>
                     </div>
 

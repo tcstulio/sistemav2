@@ -22,6 +22,7 @@ import { uiConfigService } from './uiConfigService';
 import { getWhatsappAllowlist, whatsappDestinationAllowed, socidOf } from '../utils/actionGuards';
 import { findSimilarIssue } from '../utils/issueDedup';
 import { isConfirmable, buildConfirmDeeplink } from './agentActionConfirm';
+import { classifyTool } from '../config/actionCatalog';
 import { notificationService } from './notificationService';
 
 const execFileAsync = promisify(execFile);
@@ -864,16 +865,34 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
         }
     }
 
+    const gov = uiConfigService.get().actionGovernance;
+
+    // Kill-switch por domínio (#1370): o admin desliga TODA ação de negócio num clique (incidente,
+    // manutenção, robô-de-negócio fora de controle). Vale inclusive p/ admin — é freio de emergência,
+    // não gestão de permissão. Só afeta domínio 'business' (cotação/fatura/validação/etc.); read/code
+    // seguem. classifyTool é a fonte única (actionCatalog); tool não catalogada = business (fail-safe).
+    if (gov?.businessActionsEnabled === false && classifyTool(resolvedTool).domain === 'business') {
+        log.warn(`Kill-switch: ação de negócio "${resolvedTool}" recusada (businessActionsEnabled=false; ator=${ctx.userLogin})`);
+        return `As ações de negócio estão temporariamente DESLIGADAS pelo administrador (kill-switch). "${resolvedTool}" não pode ser executada agora.`;
+    }
+
     // HITL (robô-de-negócio §8.1): ação irreversível confirmável NÃO executa direto quando o dial
     // exige aprovação — devolve o deeplink de confirmação; a execução ocorre com a chave do humano
     // que confirmar (/confirm-action, RBAC real). DORMENTE por default (irreversibleRequiresApproval
     // = false) → validate_* executa como hoje. adminBypassIrreversible (default true) isenta o admin.
     if (isConfirmable(resolvedTool)) {
-        const gov = uiConfigService.get().actionGovernance;
-        const gated = !!gov?.irreversibleRequiresApproval && !(ctx.isAdmin && gov?.adminBypassIrreversible);
+        // #1370: teto de valor do DIAL (approvalValueThreshold) — antes declarado/sanitizado mas NUNCA
+        // lido (config-teatro da auditoria #1124). Agora: ação de negócio com total >= teto SEMPRE passa
+        // por humano, mesmo com o dial off ou admin-bypass on. É o freio por VALOR, ortogonal ao por-usuário
+        // (agent.maxInvoiceAmount, acima). Total vem de total_ttc ou da soma das linhas (mesmo helper).
+        const threshold = gov?.approvalValueThreshold;
+        const total = args?.total_ttc != null ? Number(args.total_ttc) : computeLinesTotal(args?.lines);
+        const overThreshold = threshold != null && Number.isFinite(total) && total >= threshold;
+        const gated = overThreshold || (!!gov?.irreversibleRequiresApproval && !(ctx.isAdmin && gov?.adminBypassIrreversible));
         if (gated) {
             const link = buildConfirmDeeplink(resolvedTool, args, ctx.userId || '');
-            log.info(`HITL: ${resolvedTool} desviado p/ confirmação humana (ator=${ctx.userLogin})`);
+            const motivo = overThreshold ? `valor R$ ${total.toFixed(2)} >= teto R$ ${threshold}` : 'ação irreversível';
+            log.info(`HITL: ${resolvedTool} desviado p/ confirmação humana (${motivo}; ator=${ctx.userLogin})`);
             return `⚠️ Esta ação tem efeito irreversível e exige CONFIRMAÇÃO HUMANA. Revise e confirme na tela: ${link}`;
         }
     }

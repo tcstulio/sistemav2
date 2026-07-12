@@ -97,6 +97,9 @@ export interface ActionGovernanceConfig {
     adminBypassIrreversible: boolean;
     approvalValueThreshold: number | null;
     whatsappDestinationAllowlist: string[];
+    /** Kill-switch por domínio (#1370): false = recusa TODA tool de domínio 'business' (cotação,
+     * fatura, validação…). Default true (não altera comportamento). O admin desliga num clique. */
+    businessActionsEnabled: boolean;
 }
 
 // #1204 — Kill-switches globais das automações de fundo na UI. Permitem pausar o scheduler
@@ -296,7 +299,7 @@ const DEFAULTS: UiConfig = {
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
     taskNotificationsExternalEnabled: false,
     taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200 },
-    actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [] },
+    actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [], businessActionsEnabled: true },
     automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
     featureSwitches: { dryRunMode: false, financialCommands: false, crmContextInjection: true },
     notificationPolicy: {
@@ -496,7 +499,11 @@ export function sanitizeActionGovernance(v: unknown): ActionGovernanceConfig {
             .map((item) => (typeof item === 'string' ? item.replace(/\D/g, '') : ''))
             .filter((digits) => digits.length >= 8 && digits.length <= 15)
         : [];
-    return { irreversibleRequiresApproval, adminBypassIrreversible, approvalValueThreshold, whatsappDestinationAllowlist };
+    // Kill-switch (#1370): só booleano explícito; default true (permissivo, não quebra nada).
+    const businessActionsEnabled = typeof a.businessActionsEnabled === 'boolean'
+        ? a.businessActionsEnabled
+        : d.businessActionsEnabled;
+    return { irreversibleRequiresApproval, adminBypassIrreversible, approvalValueThreshold, whatsappDestinationAllowlist, businessActionsEnabled };
 }
 
 // Exportado p/ teste unitário direto (mesmo espírito das demais sanitize).

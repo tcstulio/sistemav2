@@ -2,9 +2,9 @@
  * Catálogo de ações do agente (robô-de-negócio F0 — issue #1234 / plano §8.4).
  *
  * Classifica cada tool por DOMÍNIO, REVERSIBILIDADE e se exige HITL. É a fonte única que
- * alimenta: a trilha de atividade (tag domain/reversible), o futuro kill-switch por domínio
- * (`businessActionsEnabled`), a decisão de HITL (irreversível ⇒ deeplink-confirmar) e é a
- * semente do "catálogo de ações" da F4.
+ * alimenta: a trilha de atividade (tag domain/reversible), o kill-switch por domínio
+ * (`businessActionsEnabled` — #1370, gate em agentTools), a decisão de HITL (irreversível ⇒
+ * deeplink-confirmar) e é a semente do "catálogo de ações" da F4.
  *
  * PRINCÍPIO (fail-safe): tool NÃO classificada é tratada como `business/irreversible/requiresHITL`
  * — o desconhecido é o mais restrito, nunca o mais livre. Classificar reduz atrito; esquecer não abre furo.
