@@ -86,8 +86,40 @@ const QUEUE_CHECK_INTERVAL_MS = 60 * 1000;
 // fora da fila por este cooldown; o pollSync re-avalia depois (default 2min).
 const PLAN_WAIT_COOLDOWN_MS = (Number(process.env.TASKRUNNER_WAIT_COOLDOWN_MIN) || 2) * 60 * 1000;
 
-function git(args: string[], opts?: { timeout?: number; cwd?: string }) {
-    return execFileAsync('git', args, { cwd: opts?.cwd || REPO_ROOT, timeout: opts?.timeout, maxBuffer: BIG });
+export async function git(args: string[], opts?: { timeout?: number; cwd?: string }) {
+    try {
+        return await execFileAsync('git', args, { cwd: opts?.cwd || REPO_ROOT, timeout: opts?.timeout, maxBuffer: BIG });
+    } catch (e: any) {
+        // #1357: o execFileAsync rejeita com message genérica ("Command failed: git ...") e o
+        // stderr/exitCode ficam em props separadas que NÃO aparecem no erro propagado à task —
+        // por isso 50 falhas de git fetch viraram "erro seco" sem diagnóstico. Enriquece a message.
+        const stderr = String(e?.stderr || '').trim();
+        const code = e?.code ?? e?.exitCode;
+        const detail = [stderr && `stderr: ${stderr.slice(-500)}`, code != null && `exit=${code}`].filter(Boolean).join(' | ');
+        if (detail) e.message = `${e.message} — ${detail}`;
+        throw e;
+    }
+}
+
+// #1357: `git fetch` é IDEMPOTENTE — uma falha transitória (rede/lock/contenção pós-restart, a
+// rajada que matou 50 tasks) não deve matar a task. Re-tenta com backoff. Só p/ fetch; checkout/
+// reset NÃO são idempotentes e seguem em `git()` direto.
+export async function gitFetchWithRetry(args: string[], opts?: { timeout?: number; cwd?: string }, tries = 3): Promise<{ stdout: string; stderr: string }> {
+    let lastErr: any;
+    for (let attempt = 1; attempt <= tries; attempt++) {
+        try {
+            return await git(args, opts);
+        } catch (e: any) {
+            lastErr = e;
+            if (attempt < tries) {
+                const backoffMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
+                log.warn(`git ${args.join(' ')} falhou (tentativa ${attempt}/${tries}) — retry em ${backoffMs}ms: ${e?.message || e}`);
+                await new Promise((r) => setTimeout(r, backoffMs));
+            }
+        }
+    }
+    log.error(`git ${args.join(' ')} falhou após ${tries} tentativas: ${lastErr?.message || lastErr}`);
+    throw lastErr;
 }
 
 function gh(args: string[], opts?: { timeout?: number; cwd?: string }) {
@@ -1522,7 +1554,7 @@ class TaskRunnerService {
         await this.ensureDiskSpace(ctxTask);
         const gone = await this.sweepOrphanedOpencode('ensureWorktree');
         this.cleanStaleLocks(gone);
-        await git(['fetch', 'origin', 'main'], { timeout: 60000 });
+        await gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 60000 });
         // Recria o worktree se NÃO existir OU se o diretório existir mas não for um worktree git
         // VÁLIDO (ex.: .git apagado após reescrita de histórico/limpeza órfã). Sem isto, o `if
         // existsSync` antigo pulava o `worktree add` e o `reset --hard` abaixo falhava com
@@ -1556,7 +1588,7 @@ class TaskRunnerService {
             try {
                 const { stdout } = await git(['ls-remote', '--heads', 'origin', branch], { timeout: 30000 });
                 if (stdout.trim()) {
-                    await git(['fetch', 'origin', branch], { timeout: 60000 });
+                    await gitFetchWithRetry(['fetch', 'origin', branch], { timeout: 60000 });
                     base = `origin/${branch}`;
                     log.info(`ensureWorktree: preservando trabalho da branch ${branch} (correção incremental)`);
                 }
@@ -3379,7 +3411,7 @@ Return ONLY a JSON:
             await this.withWorktreeLock(`auto-merge #${issueNumber}`, async () => {
                 if (task.branch) {
                     this.recordEvent(task, 'task_started', 'Auto-merge: rebaseando com main...');
-                    await git(['fetch', 'origin', 'main'], { timeout: 30000 });
+                    await gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 30000 });
                     await git(['checkout', task.branch], { timeout: 15000, cwd: WT_ROOT });
                     try {
                         await git(['rebase', 'origin/main'], { timeout: 60000, cwd: WT_ROOT });
@@ -4134,7 +4166,7 @@ The first element should be the task to execute first.`;
     // O backend de dev permanece no código que subiu até um restart manual — de propósito (zero
     // restart-surpresa durante um lote de tasks).
     private refreshOriginMain(task: Task): void {
-        git(['fetch', 'origin', 'main'], { timeout: 60000 })
+        gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 60000 })
             .then(() => {
                 log.info(`origin/main atualizado (fetch) após merge #${task.issueNumber} — backend NÃO reinicia`);
                 this.recordEvent(task, 'task_completed', `origin/main atualizado (fetch); backend de dev não reinicia (fix #16)`);
