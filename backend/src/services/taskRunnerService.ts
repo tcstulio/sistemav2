@@ -4287,17 +4287,21 @@ The first element should be the task to execute first.`;
             // (PREVIEW_MODE=1 já desligou os workers de fundo — fase 1, #1163).
             const sandboxUrl = process.env.PREVIEW_DOLIBARR_URL;
             const sandboxKey = process.env.PREVIEW_DOLIBARR_KEY;
-            if (sandboxUrl && sandboxKey) {
+            const sandboxActive = !!(sandboxUrl && sandboxKey);
+            if (sandboxActive) {
                 envContent = envContent
                     .replace(/^DOLIBARR_URL=.*$/m, `DOLIBARR_URL=${sandboxUrl}`)
                     .replace(/^DOLIBARR_API_KEY=.*$/m, `DOLIBARR_API_KEY=${sandboxKey}`);
                 log.info(`Preview #${issueNumber}: Dolibarr apontado para o SANDBOX (${sandboxUrl}).`);
             } else {
-                log.warn(`Preview #${issueNumber}: PREVIEW_DOLIBARR_URL/KEY não configurados — as rotas de API do preview ainda apontam para o Dolibarr de PRODUÇÃO (workers de fundo desligados, mas um POST manual escreve na prod). Configure o sandbox (docker-compose.e2e.yml) p/ isolamento total.`);
+                // #1377 fail-CLOSED: sem sandbox, o preview NÃO cai mais pra prod. PREVIEW_SANDBOX_ACTIVE=0
+                // faz o backend de preview BLOQUEAR (503) escritas em /api/dolibarr — leituras seguem.
+                log.warn(`Preview #${issueNumber}: PREVIEW_DOLIBARR_URL/KEY não configurados — preview FAIL-CLOSED: escritas (POST/PUT/DELETE) em /api/dolibarr serão BLOQUEADAS (503) para não tocar a produção. Configure o sandbox (docker-compose.e2e.yml) p/ escrita isolada.`);
             }
             // #1154 P3 item 22: sinaliza o backend de preview p/ NÃO subir os workers de fundo (crons,
             // notificações, WhatsApp, o próprio TaskRunner, bancos) — senão rodariam contra a PROD real.
-            envContent += `\nVITE_API_URL=http://localhost:${backendPort}\nPREVIEW_MODE=1\n`;
+            // #1377: PREVIEW_SANDBOX_ACTIVE=1 só quando o Dolibarr aponta pro sandbox (libera escrita isolada).
+            envContent += `\nVITE_API_URL=http://localhost:${backendPort}\nPREVIEW_MODE=1\nPREVIEW_SANDBOX_ACTIVE=${sandboxActive ? '1' : '0'}\n`;
             fsExtra.writeFileSync(previewEnvPath, envContent);
         } else {
             const envContent = `PORT=${backendPort}\nVITE_API_URL=http://localhost:${backendPort}\nPREVIEW_MODE=1\n`;

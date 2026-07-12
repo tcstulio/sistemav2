@@ -181,6 +181,10 @@ import { tunnelService } from './services/tunnelService';
 app.get('/api/tunnel/url', (_req, res) => res.json(tunnelService.getStatus()));
 
 import dolibarrRoutes from './routes/dolibarrRoutes';
+// #1377 fail-CLOSED: num backend de PREVIEW sem sandbox ativo, BLOQUEIA escritas no proxy Dolibarr
+// (senão um POST manual na tela de preview escreveria na PRODUÇÃO). Leituras seguem. Ver o módulo.
+import { previewWriteGuard } from './middleware/previewWriteGuard';
+app.use('/api/dolibarr', previewWriteGuard);
 app.use('/api/dolibarr', dolibarrRoutes);
 
 app.use('/api/scheduler', schedulerLimiter, schedulerRoutes);
