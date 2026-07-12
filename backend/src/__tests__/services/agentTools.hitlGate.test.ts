@@ -86,3 +86,59 @@ describe('agentTools — gate HITL de validate_* (dial-driven, dormente)', () =>
         expect(out).not.toMatch(/confirm-action/);
     });
 });
+
+describe('agentTools — kill-switch de negócio (#1370)', () => {
+    beforeEach(() => { vi.clearAllMocks(); });
+
+    it('businessActionsEnabled=false RECUSA ação de negócio (validate_proposal) — inclusive admin', async () => {
+        mockUiConfig.get.mockReturnValue({ actionGovernance: { businessActionsEnabled: false } } as any);
+        const out = await runWithToolContext({ permissionProfile: profile(['proposal']), isAdmin: true },
+            () => executeTool('validate_proposal', { proposal_id: '303' }));
+        expect(out).toMatch(/DESLIGADAS|kill-switch/i);
+        expect(mockDolibarr.validateProposal).not.toHaveBeenCalled();
+    });
+
+    it('businessActionsEnabled undefined (default) NÃO recusa — permissivo', async () => {
+        mockUiConfig.get.mockReturnValue({ actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true } } as any);
+        const out = await runWithToolContext({ permissionProfile: profile(['proposal']), isAdmin: true },
+            () => executeTool('validate_proposal', { proposal_id: '303' }));
+        expect(out).not.toMatch(/DESLIGADAS|kill-switch/i);
+        expect(mockDolibarr.validateProposal).toHaveBeenCalled();
+    });
+
+    it('kill-switch NÃO afeta ferramenta de LEITURA (domínio read)', async () => {
+        mockUiConfig.get.mockReturnValue({ actionGovernance: { businessActionsEnabled: false } } as any);
+        const out = await runWithToolContext({ permissionProfile: profile([]), isAdmin: true },
+            () => executeTool('list_invoices', {}).catch((e) => String(e)));
+        // list_invoices é read — não é recusada pelo kill-switch (pode falhar por outra razão no mock, mas não pela mensagem de kill-switch)
+        expect(out).not.toMatch(/DESLIGADAS pelo administrador/i);
+    });
+});
+
+describe('agentTools — teto de valor do dial força HITL (#1370, approvalValueThreshold)', () => {
+    beforeEach(() => { vi.clearAllMocks(); });
+
+    it('total >= threshold força deeplink MESMO com dial off + admin', async () => {
+        mockUiConfig.get.mockReturnValue({ actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: 1000 } } as any);
+        const out = await runWithToolContext({ permissionProfile: profile(['invoice']), isAdmin: true },
+            () => executeTool('validate_invoice', { invoice_id: '9', total_ttc: 5000 }));
+        expect(out).toMatch(/\/confirm-action\?token=/);
+        expect(mockDolibarr.validateInvoice).not.toHaveBeenCalled();
+    });
+
+    it('total < threshold segue o caminho normal (executa)', async () => {
+        mockUiConfig.get.mockReturnValue({ actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: 1000 } } as any);
+        const out = await runWithToolContext({ permissionProfile: profile(['invoice']), isAdmin: true },
+            () => executeTool('validate_invoice', { invoice_id: '9', total_ttc: 200 }));
+        expect(out).not.toMatch(/confirm-action/);
+        expect(mockDolibarr.validateInvoice).toHaveBeenCalled();
+    });
+
+    it('threshold null (default) não força nada', async () => {
+        mockUiConfig.get.mockReturnValue({ actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null } } as any);
+        const out = await runWithToolContext({ permissionProfile: profile(['invoice']), isAdmin: true },
+            () => executeTool('validate_invoice', { invoice_id: '9', total_ttc: 999999 }));
+        expect(out).not.toMatch(/confirm-action/);
+        expect(mockDolibarr.validateInvoice).toHaveBeenCalled();
+    });
+});
