@@ -57,6 +57,28 @@ const MAX_TASK_WALL_MS = (Number(process.env.TASKRUNNER_MAX_TASK_WALL_MIN) || 18
 // MINIMAX_MEDIA_KEY do backend — a MINIMAX_API_KEY PaaS dá "insufficient balance 1008").
 // TASKRUNNER_OPENCODE_FALLBACK_MODEL="" desliga.
 const OPENCODE_FALLBACK_MODEL = process.env.TASKRUNNER_OPENCODE_FALLBACK_MODEL ?? 'minimax/MiniMax-M3';
+// Modelo PRIMÁRIO do opencode. Vazio = usa o default do opencode (~/.config/opencode). Sob LIMITE
+// SEMANAL o provider primário (GLM) PENDURA até o timeout de 30min em vez de devolver 429 — a task
+// morre sem o fallback disparar (o hang não é 429). Apontar aqui p/ o MiniMax direto durante a
+// janela GLM-morto evita queimar 30min/task no primário pendurado. Revert (env vazio) quando o GLM voltar.
+const OPENCODE_PRIMARY_MODEL = (process.env.TASKRUNNER_OPENCODE_PRIMARY_MODEL || '').trim();
+
+/**
+ * Decide se uma falha do opencode no modelo PRIMÁRIO deve re-rodar com o modelo de fallback.
+ * Cobre 429/cota (isQuotaError) E o timeout/hang do próprio opencode — sob limite semanal o provider
+ * PENDURA até o timeout de 1800s em vez de 429, e um hang é tão "infra temporária" quanto um 429 (era
+ * a causa raiz das 153 falhas: o timeout não batia em nenhum QUOTA_MARKER). NÃO cobre kill
+ * (cancelamento), ausência de modelo de fallback, nem o caso primário-JÁ-É-o-fallback (re-rodar o
+ * mesmo modelo desperdiçaria rodada).
+ */
+export function shouldFallbackOpencode(
+    errMsg: string,
+    opts: { hasFallbackModel: boolean; killRequested: boolean; primaryIsFallback: boolean },
+): boolean {
+    if (!opts.hasFallbackModel || opts.killRequested || opts.primaryIsFallback) return false;
+    const isTimeout = /opencode timeout/i.test(String(errMsg || ''));
+    return isTimeout || isQuotaError(errMsg);
+}
 
 // Gate por DELTA (Fase 0 item 2-3): ON por padrão; TASKRUNNER_DELTA_GATE=0 volta ao gate estrito antigo.
 // Só reprova por erro de tsc NOVO em arquivo que a task TOCOU (+ global novo). Ver gateDelta.ts.
@@ -1489,20 +1511,29 @@ class TaskRunnerService {
         const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`, [], task);
         this.cleanStaleLocks(gone);
         const basePrompt = `Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo.`;
+        // Comando do run PRIMÁRIO: usa --model só se TASKRUNNER_OPENCODE_PRIMARY_MODEL estiver setado
+        // (senão, o default do opencode). Durante a janela GLM-morto, aponte-o p/ o MiniMax direto.
+        const primaryCmd = OPENCODE_PRIMARY_MODEL
+            ? `opencode run --model ${OPENCODE_PRIMARY_MODEL} "${basePrompt}"`
+            : `opencode run "${basePrompt}"`;
+        const primaryIsFallback = !!OPENCODE_PRIMARY_MODEL && OPENCODE_PRIMARY_MODEL === OPENCODE_FALLBACK_MODEL;
         try {
             try {
                 return await runOpencode(
-                    `opencode run "${basePrompt}"`,
+                    primaryCmd,
                     WT_ROOT, task, OPENCODE_TIMEOUT_MS,
                     (sample) => { task.cpuMemSamples?.push(sample); },
                 );
             } catch (e: any) {
-                // Fallback GLM→MiniMax do CODER: só p/ falha de COTA/429 (mesmo critério do chat).
-                // Timeout/kill/erro de código NÃO caem aqui — retry cego só desperdiçaria rodada.
+                // Fallback GLM→MiniMax do CODER: para COTA/429 OU timeout/hang do opencode. Sob limite
+                // semanal o primário PENDURA até o timeout em vez de 429 — tratar o hang como infra
+                // temporária (era a causa das 153 falhas). Kill/erro de código NÃO caem aqui.
                 const msg = e?.message || String(e);
-                if (!OPENCODE_FALLBACK_MODEL || task.killRequested || !isQuotaError(msg)) throw e;
-                this.recordEvent(task, 'attempt_started', `Cota do modelo primário esgotada — re-rodando o opencode com fallback ${OPENCODE_FALLBACK_MODEL}.`, { fallbackModel: OPENCODE_FALLBACK_MODEL });
-                this.emitLog(task.issueNumber, 'warn', `Opencode: cota/429 no modelo primário — fallback para ${OPENCODE_FALLBACK_MODEL}.`);
+                if (!shouldFallbackOpencode(msg, { hasFallbackModel: !!OPENCODE_FALLBACK_MODEL, killRequested: !!task.killRequested, primaryIsFallback })) throw e;
+                const isTimeout = /opencode timeout/i.test(msg);
+                const cause = isTimeout ? 'Timeout/hang do modelo primário' : 'Cota do modelo primário esgotada';
+                this.recordEvent(task, 'attempt_started', `${cause} — re-rodando o opencode com fallback ${OPENCODE_FALLBACK_MODEL}.`, { fallbackModel: OPENCODE_FALLBACK_MODEL });
+                this.emitLog(task.issueNumber, 'warn', `Opencode: ${isTimeout ? 'timeout/hang' : 'cota/429'} no modelo primário — fallback para ${OPENCODE_FALLBACK_MODEL}.`);
                 const goneMid = await this.sweepOrphanedOpencode(`fallback-run #${task.issueNumber}`, [], task);
                 this.cleanStaleLocks(goneMid);
                 return await runOpencode(
