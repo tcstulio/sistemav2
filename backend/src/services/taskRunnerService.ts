@@ -101,24 +101,43 @@ export async function git(args: string[], opts?: { timeout?: number; cwd?: strin
     }
 }
 
-// #1357: `git fetch` é IDEMPOTENTE — uma falha transitória (rede/lock/contenção pós-restart, a
-// rajada que matou 50 tasks) não deve matar a task. Re-tenta com backoff. Só p/ fetch; checkout/
-// reset NÃO são idempotentes e seguem em `git()` direto.
-export async function gitFetchWithRetry(args: string[], opts?: { timeout?: number; cwd?: string }, tries = 3): Promise<{ stdout: string; stderr: string }> {
+// #1357: erros PERMANENTES não devem ser re-tentados (desperdício + retry sob lock atrasa o
+// watchdog): repo inválido, auth, e o index.lock (que retry NÃO resolve — precisa limpar o lock).
+// Só re-tenta o que é plausivelmente TRANSITÓRIO (rede/contenção/timeout).
+function isTransientGitError(e: any): boolean {
+    const m = String(e?.stderr || e?.message || '').toLowerCase();
+    if (/not a git repository|authentication failed|could not read|permission denied|index\.lock|no space left/.test(m)) return false;
+    return true;
+}
+
+// #1357: `git fetch` é IDEMPOTENTE — uma falha transitória (rede/contenção pós-restart, a rajada
+// que matou 50 tasks) não deve matar a task. Re-tenta com backoff. Só p/ fetch; checkout/reset NÃO
+// são idempotentes e seguem em `git()` direto. Respeita `shouldAbort` (killRequested da task) —
+// retry sob o worktreeLock não pode continuar depois de a task ser cancelada (revisão adversarial).
+export async function gitFetchWithRetry(
+    args: string[],
+    opts?: { timeout?: number; cwd?: string },
+    tries = 3,
+    shouldAbort?: () => boolean,
+): Promise<{ stdout: string; stderr: string }> {
     let lastErr: any;
     for (let attempt = 1; attempt <= tries; attempt++) {
+        if (shouldAbort?.()) throw new Error(`git ${args.join(' ')} abortado (task cancelada)`);
         try {
             return await git(args, opts);
         } catch (e: any) {
             lastErr = e;
-            if (attempt < tries) {
-                const backoffMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
-                log.warn(`git ${args.join(' ')} falhou (tentativa ${attempt}/${tries}) — retry em ${backoffMs}ms: ${e?.message || e}`);
-                await new Promise((r) => setTimeout(r, backoffMs));
+            const isLast = attempt >= tries;
+            if (isLast || !isTransientGitError(e) || shouldAbort?.()) {
+                if (!isLast && !isTransientGitError(e)) log.warn(`git ${args.join(' ')}: erro permanente, sem retry: ${e?.message || e}`);
+                break;
             }
+            const backoffMs = 1000 * 2 ** (attempt - 1); // 1s, 2s, 4s
+            log.warn(`git ${args.join(' ')} falhou (tentativa ${attempt}/${tries}) — retry em ${backoffMs}ms: ${e?.message || e}`);
+            await new Promise((r) => setTimeout(r, backoffMs));
         }
     }
-    log.error(`git ${args.join(' ')} falhou após ${tries} tentativas: ${lastErr?.message || lastErr}`);
+    log.error(`git ${args.join(' ')} falhou após ${tries} tentativa(s): ${lastErr?.message || lastErr}`);
     throw lastErr;
 }
 
@@ -1551,10 +1570,11 @@ class TaskRunnerService {
         // Guard de disco (#1111): falha rápido com erro claro se o volume do WT_ROOT estiver cheio,
         // ANTES de qualquer `worktree add`/fetch/checkout que penduraria silenciosamente.
         const ctxTask = this.currentExecTask;
+        const abortIfKilled = () => !!ctxTask?.killRequested;
         await this.ensureDiskSpace(ctxTask);
         const gone = await this.sweepOrphanedOpencode('ensureWorktree');
         this.cleanStaleLocks(gone);
-        await gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 60000 });
+        await gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 60000 }, 3, abortIfKilled);
         // Recria o worktree se NÃO existir OU se o diretório existir mas não for um worktree git
         // VÁLIDO (ex.: .git apagado após reescrita de histórico/limpeza órfã). Sem isto, o `if
         // existsSync` antigo pulava o `worktree add` e o `reset --hard` abaixo falhava com
@@ -1588,7 +1608,7 @@ class TaskRunnerService {
             try {
                 const { stdout } = await git(['ls-remote', '--heads', 'origin', branch], { timeout: 30000 });
                 if (stdout.trim()) {
-                    await gitFetchWithRetry(['fetch', 'origin', branch], { timeout: 60000 });
+                    await gitFetchWithRetry(['fetch', 'origin', branch], { timeout: 60000 }, 3, abortIfKilled);
                     base = `origin/${branch}`;
                     log.info(`ensureWorktree: preservando trabalho da branch ${branch} (correção incremental)`);
                 }
@@ -3411,7 +3431,7 @@ Return ONLY a JSON:
             await this.withWorktreeLock(`auto-merge #${issueNumber}`, async () => {
                 if (task.branch) {
                     this.recordEvent(task, 'task_started', 'Auto-merge: rebaseando com main...');
-                    await gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 30000 });
+                    await gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 30000 }, 3, () => !!task.killRequested);
                     await git(['checkout', task.branch], { timeout: 15000, cwd: WT_ROOT });
                     try {
                         await git(['rebase', 'origin/main'], { timeout: 60000, cwd: WT_ROOT });
@@ -4166,7 +4186,9 @@ The first element should be the task to execute first.`;
     // O backend de dev permanece no código que subiu até um restart manual — de propósito (zero
     // restart-surpresa durante um lote de tasks).
     private refreshOriginMain(task: Task): void {
-        gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 60000 })
+        // 1 tentativa só: é fire-and-forget PÓS-merge (a task já concluiu), não-fatal — não vale
+        // segurar um retry de ~187s em background (poderia vazar timer num restart). #1357.
+        gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 60000 }, 1)
             .then(() => {
                 log.info(`origin/main atualizado (fetch) após merge #${task.issueNumber} — backend NÃO reinicia`);
                 this.recordEvent(task, 'task_completed', `origin/main atualizado (fetch); backend de dev não reinicia (fix #16)`);

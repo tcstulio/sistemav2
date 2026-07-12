@@ -89,4 +89,38 @@ describe('#1357 — gitFetchWithRetry: retry com backoff', () => {
         await expect(gitFetchWithRetry(['fetch', 'origin', 'main'])).resolves.toMatchObject({ stdout: 'ok' });
         expect(vi.mocked(execFile).mock.calls.length).toBe(1);
     });
+
+    // Revisão adversarial: não re-tentar erro PERMANENTE (desperdício + retry sob lock atrasa watchdog).
+    it('erro permanente (index.lock) NÃO re-tenta — falha na 1ª', async () => {
+        const err: any = new Error('Command failed'); err.stderr = 'fatal: Unable to create index.lock: File exists'; err.code = 128;
+        queueExecFile([{ err }]);
+        await expect(gitFetchWithRetry(['fetch', 'origin', 'main'], undefined, 3)).rejects.toThrow(/index\.lock/);
+        expect(vi.mocked(execFile).mock.calls.length).toBe(1);
+    });
+
+    it('erro permanente (auth) NÃO re-tenta', async () => {
+        const err: any = new Error('Command failed'); err.stderr = 'fatal: Authentication failed'; err.code = 128;
+        queueExecFile([{ err }]);
+        await expect(gitFetchWithRetry(['fetch', 'origin', 'main'], undefined, 3)).rejects.toThrow(/Authentication/);
+        expect(vi.mocked(execFile).mock.calls.length).toBe(1);
+    });
+
+    it('shouldAbort=true antes da 1ª → aborta sem chamar git (task cancelada)', async () => {
+        queueExecFile([{ stdout: 'nunca' }]);
+        await expect(gitFetchWithRetry(['fetch', 'origin', 'main'], undefined, 3, () => true)).rejects.toThrow(/abortado/);
+        expect(vi.mocked(execFile).mock.calls.length).toBe(0);
+    });
+
+    it('shouldAbort vira true entre tentativas → para o retry (não segue sob lock após kill)', async () => {
+        vi.useFakeTimers();
+        const err: any = new Error('Command failed'); err.stderr = 'timeout'; err.code = 128;
+        queueExecFile([{ err }]);
+        let killed = false;
+        const p = gitFetchWithRetry(['fetch', 'origin', 'main'], undefined, 3, () => killed);
+        killed = true; // watchdog cancela a task após a 1ª falha
+        const assertion = expect(p).rejects.toBeTruthy();
+        await vi.runAllTimersAsync();
+        await assertion;
+        expect(vi.mocked(execFile).mock.calls.length).toBe(1); // não seguiu p/ a 2ª
+    });
 });
