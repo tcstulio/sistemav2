@@ -30,7 +30,7 @@ export const DEFAULT_ACTION_CLASS: ActionClass = { domain: 'business', reversibi
  * Overrides explícitos — efeito DIRETO (não-deeplink) e ferramentas de código, onde o padrão
  * por prefixo não captura o risco corretamente.
  */
-const OVERRIDES: Record<string, ActionClass> = {
+export const ACTION_OVERRIDES: Record<string, ActionClass> = {
     // Efeito irreversível no ERP (numeração fiscal etc.) — no registry HITL (agentActionConfirm):
     // com o dial ligado, o gate desvia p/ /confirm-action em vez de executar direto.
     validate_invoice: { domain: 'business', reversibility: 'irreversible', requiresHITL: true },
@@ -57,7 +57,7 @@ const OVERRIDES: Record<string, ActionClass> = {
  * Classifica uma tool. Precedência: override explícito → padrão por prefixo → default seguro.
  */
 export function classifyTool(tool: string): ActionClass {
-    if (OVERRIDES[tool]) return OVERRIDES[tool];
+    if (ACTION_OVERRIDES[tool]) return ACTION_OVERRIDES[tool];
 
     // Leitura (sempre livre).
     if (/^(list_|get_|search_|read_|check_)/.test(tool)) {
