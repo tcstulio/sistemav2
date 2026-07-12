@@ -71,9 +71,12 @@ describe('agentSystemPrompt (issue #1316)', () => {
             expect(DEFAULT_SYSTEM_PROMPT.trim().length).toBeGreaterThan(0);
         });
 
-        it('mantém orientações de segurança pré-existentes (ações irreversíveis)', () => {
+        it('orienta ação irreversível com HITL embutido (#1360): chama a tool direto, tela confirma', () => {
             expect(DEFAULT_SYSTEM_PROMPT).toContain('irreversíveis');
-            expect(DEFAULT_SYSTEM_PROMPT).toContain('confirme com o usuário');
+            // a redação antiga ("confirme com o usuário antes") foi trocada — ela fazia o modelo
+            // pedir "ok" em texto e travar o fluxo, em vez de chamar a tool (que já tem HITL).
+            expect(DEFAULT_SYSTEM_PROMPT).not.toContain('confirme com o usuário antes');
+            expect(DEFAULT_SYSTEM_PROMPT).toContain('CHAME A FERRAMENTA DIRETAMENTE');
         });
 
         it('mantém orientação de não inventar dados', () => {
@@ -113,5 +116,18 @@ describe('MARCIANO_IDENTITY_PROMPT (issue #1316)', () => {
         expect(lower).toContain('anuncie e pare');
         expect(lower).toContain('mesma resposta');
         expect(lower).toContain('só o json');
+    });
+});
+
+describe('MARCIANO_IDENTITY_PROMPT — ação irreversível não pede ok em texto (#1360)', () => {
+    it('instrui a chamar validate_*/prepare_* direto (a tela confirma), sem pedir "ok"', () => {
+        const lower = MARCIANO_IDENTITY_PROMPT.toLowerCase();
+        expect(lower).toContain('já');
+        expect(lower).toContain('validate_proposal');
+        expect(lower).toMatch(/tela.*confirma|confirma.*tela/);
+        // exemplo concreto do caso real (aprovar a 303)
+        expect(lower).toContain('"tool":"validate_proposal"');
+        // e nomeia o anti-padrão (pedir ok em texto)
+        expect(lower).toMatch(/me dê o ok|posso prosseguir|não pergunte/);
     });
 });
