@@ -284,6 +284,18 @@ describe('HRList — classes Tailwind literais por tema (#1094)', () => {
 describe('HRList — real user delete (#1088)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        // #1416 — restaura o mock default com canDo permissivo. Blocos anteriores
+        // (ex: #1094 Tailwind) sobrescrevem o return do useDolibarr SEM canDo.
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: {
+                apiUrl: 'http://test/api',
+                apiKey: 'key',
+                themeColor: 'indigo',
+                darkMode: false,
+            },
+            currentUser: { id: 'u1', login: 'admin' },
+            canDo: vi.fn(() => true),
+        } as any);
     });
 
     it('deletes a user via the real API when confirmed', async () => {
