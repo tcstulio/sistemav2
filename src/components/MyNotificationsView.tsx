@@ -25,8 +25,9 @@ interface MyNotificationsViewProps {
 
 const MyNotificationsView: React.FC<MyNotificationsViewProps> = ({ onNavigate }) => {
     const { notifications, setNotifications, currentUser } = useDolibarr();
+    // DolibarrUser.id é string (types/common.ts) — passado direto para classifyScope
+    // preservando a assinatura original userId: string | undefined.
     const userId = currentUser?.id || currentUser?.login;
-    const currentUserId = userId !== undefined && userId !== null && userId !== '' ? Number(userId) : null;
 
     const doAction = useNotificationActions();
 
@@ -35,13 +36,13 @@ const MyNotificationsView: React.FC<MyNotificationsViewProps> = ({ onNavigate })
     const [isMarkingAll, setIsMarkingAll] = useState(false);
 
     const personalNotifs = useMemo(
-        () => notifications.filter(n => classifyScope(n, currentUserId) === 'personal'),
-        [notifications, currentUserId]
+        () => notifications.filter(n => classifyScope(n, userId) === 'personal'),
+        [notifications, userId]
     );
 
     const systemNotifs = useMemo(
-        () => notifications.filter(n => classifyScope(n, currentUserId) === 'system'),
-        [notifications, currentUserId]
+        () => notifications.filter(n => classifyScope(n, userId) === 'system'),
+        [notifications, userId]
     );
 
     const baseList = activeTab === 'personal' ? personalNotifs : systemNotifs;
