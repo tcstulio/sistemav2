@@ -16,6 +16,9 @@ vi.mock('../../context/DolibarrContext', () => ({
             darkMode: false,
         },
         currentUser: { id: 'u1', login: 'admin' },
+        // #1416 — canDo default permissive (igual ao admin real) p/ os testes
+        // existentes não quebrarem. Os testes de gating sobrescrevem esse mock.
+        canDo: vi.fn(() => true),
     })),
 }));
 
@@ -369,6 +372,79 @@ describe('HRList — Rules of Hooks (#1104)', () => {
 
         await waitFor(() => {
             expect(screen.getByText('RH e Equipe')).toBeInTheDocument();
+        });
+    });
+});
+
+describe('HRList — delete-user gated by canDo (#1416)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    // Helper: configura o mock de useDolibarr com canDo parametrizável.
+    const setCanDo = (map: Record<string, boolean>) => {
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: {
+                apiUrl: 'http://test/api',
+                apiKey: 'key',
+                themeColor: 'indigo',
+                darkMode: false,
+            },
+            currentUser: { id: 'u1', login: 'admin' },
+            canDo: vi.fn((action: string, screen: string) => !!map[`${screen}.${action}`]),
+        } as any);
+    };
+
+    it('NÃO chama a API quando canDo(delete, users) é false (gate defensivo)', async () => {
+        setCanDo({}); // sem nenhuma permissão
+        const user = userEvent.setup();
+        renderWithProvider();
+
+        // Seleciona o usuário e tenta excluir
+        await user.click(await screen.findByTestId('select-user-u1'));
+        await user.click(await screen.findByTestId('delete-user-u1'));
+
+        // O confirm nem aparece (gate já bloqueia antes) — mas o mais importante:
+        // a API NÃO é chamada.
+        await waitFor(() => {
+            expect(CoreApi.deleteUser).not.toHaveBeenCalled();
+        });
+    });
+
+    it('chama a API normalmente quando canDo(delete, users) é true', async () => {
+        setCanDo({ 'users.delete': true });
+        const user = userEvent.setup();
+        renderWithProvider();
+
+        await user.click(await screen.findByTestId('select-user-u1'));
+        await user.click(await screen.findByTestId('delete-user-u1'));
+
+        // Confirm in-app aparece
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByText('Confirmar'));
+
+        await waitFor(() => {
+            expect(CoreApi.deleteUser).toHaveBeenCalledWith(expect.anything(), 'u1');
+        });
+    });
+
+    it('admin (canDo permissivo) pode excluir como antes', async () => {
+        // Admin sempre passa — espelha o default seguro do canDoAction
+        setCanDo({
+            'users.delete': true,
+            'users.create': true,
+            'users.edit': true,
+        });
+        const user = userEvent.setup();
+        renderWithProvider();
+
+        await user.click(await screen.findByTestId('select-user-u1'));
+        await user.click(await screen.findByTestId('delete-user-u1'));
+        const dialog = await screen.findByRole('dialog');
+        await user.click(within(dialog).getByText('Confirmar'));
+
+        await waitFor(() => {
+            expect(CoreApi.deleteUser).toHaveBeenCalledWith(expect.anything(), 'u1');
         });
     });
 });
