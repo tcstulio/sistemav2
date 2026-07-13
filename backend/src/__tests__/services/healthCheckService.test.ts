@@ -70,8 +70,11 @@ describe('healthCheckService - computeOverallStatus', () => {
         expect(computeOverallStatus({ ...base, dolibarr: { status: 'down' } })).toBe('down');
     });
 
-    it('retorna "down" quando WhatsApp (crítico) está down', () => {
-        expect(computeOverallStatus({ ...base, whatsapp: { status: 'down' } })).toBe('down');
+    it('retorna "degraded" (NÃO "down") quando WhatsApp está down — #1415 não-crítico', () => {
+        // #1415: WhatsApp desconectado é recorrente na operação e flapear /health 200↔503
+        // quebra uptime monitor + smoke test. Cai p/ 'degraded' (o body checks.whatsapp
+        // ainda mostra o problema real), mas o agregado não é mais 'down'.
+        expect(computeOverallStatus({ ...base, whatsapp: { status: 'down', error: 'disconnected' } })).toBe('degraded');
     });
 
     it('retorna "degraded" quando scheduler está stuck (não crítico)', () => {
@@ -107,6 +110,33 @@ describe('healthCheckService - computeOverallStatus', () => {
                 scheduler: { status: 'ok' },
             }),
         ).toBe('down');
+    });
+
+    it('WhatsApp degraded sozinho NÃO vira "down" (#1415: não-crítico)', () => {
+        // WhatsApp desconectado é o cenário operacional mais comum — não pode forçar
+        // /health em 503 (uptime monitor flapa) nem aggregate "down". Vira degraded.
+        expect(
+            computeOverallStatus({
+                dolibarr: { status: 'ok' },
+                whatsapp: { status: 'degraded', session: 'disconnected' },
+                bancoInter: { status: 'ok' },
+                bancoItau: { status: 'ok' },
+                scheduler: { status: 'ok' },
+            }),
+        ).toBe('degraded');
+    });
+
+    it('WhatsApp not_configured com tudo o resto ok → "ok" (#1415)', () => {
+        // Se o usuário nem configurou WhatsApp, não há degradação — segue ok.
+        expect(
+            computeOverallStatus({
+                dolibarr: { status: 'ok' },
+                whatsapp: { status: 'not_configured' },
+                bancoInter: { status: 'ok' },
+                bancoItau: { status: 'ok' },
+                scheduler: { status: 'ok' },
+            }),
+        ).toBe('ok');
     });
 });
 

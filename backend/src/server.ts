@@ -15,6 +15,7 @@ import schedulerRoutes from './routes/schedulerRoutes';
 import githubRoutes from './routes/githubRoutes';
 import { sessionService } from './services/legacy/sessionService';
 import { schedulerService } from './services/schedulerService';
+import { healthLimiter } from './middleware/healthRateLimiter';
 
 const app = express();
 
@@ -94,8 +95,14 @@ const globalLimiter = rateLimit({
     message: { error: 'Too many requests. Please try again later.' },
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => req.path === '/health' // Skip health checks
 });
+
+// /health rate limiter (#1415) — endpoint é PÚBLICO e isento de auth (atrás de túnel Cloudflare
+// que serve uptime monitor externo). Sem limite, um scraper/monitor abusivo fan-out em checks
+// externos (Dolibarr, isReady() dos bancos, sessionService do WhatsApp) a cada hit, derrubando
+// latência do backend e/ou disparando rate-limit do próprio Dolibarr. 60 req/min por IP é
+// generoso p/ monitor típico (1/s) + UI do app em polling eventual, mas trava abuso real.
+// Config/constantes em middleware/healthRateLimiter.ts (também usado pelos testes).
 
 // Strict limiter for AI endpoints (expensive operations).
 // Só limita os POSTs caros (generate-reply*, analyze): os GETs em /ai/* são leves e
@@ -247,9 +254,10 @@ app.use('/api/simulator', simulatorRoutes);
 
 app.use('/api/github', githubRoutes);
 
-// Health Check (#1042) — verifica dependências externas via healthCheckService.
+// Health Check (#1042, #1415) — verifica dependências externas via healthCheckService.
+// Rate-limit dedicado (healthLimiter) impede fan-out abusivo de chamadas externas a cada hit.
 import healthRoutes from './routes/health';
-app.use('/health', healthRoutes);
+app.use('/health', healthLimiter, healthRoutes);
 
 // ===========================================
 // Global Error Handler (must be last)

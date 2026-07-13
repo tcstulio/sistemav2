@@ -1,12 +1,19 @@
 /**
- * Health Route (#1042)
+ * Health Route (#1042, #1415)
  *
- * GET /health — verifica o status real de todas as dependências críticas via
- * healthCheckService. Retorna HTTP 200 quando tudo OK, 503 quando algum check
- * crítico está down ou (configurável) quando o status é degradado.
+ * GET /health — verifica o status real de todas as dependências via healthCheckService.
  *
- * HEALTH_FAIL_ON_DEGRADED (default "true"): quando "false", status "degraded"
- * responde 200 em vez de 503 — útil para ambientes onde somente down deve alertar.
+ * Semântica de status (#1415):
+ *  - 'down' → 503 (dependência crítica — hoje apenas Dolibarr — está fora).
+ *  - 'degraded' → 200 por padrão (uptime monitor não deve flapear por WhatsApp caído,
+ *    bancos não-configurados, scheduler stuck etc.; o body `checks.*` ainda reflete
+ *    cada dependência individualmente).
+ *  - HEALTH_FAIL_ON_DEGRADED=true reverte o default: faz 'degraded' voltar a 503
+ *    (útil p/ pipelines CI rígidos ou ambientes que preferem alerta conservador).
+ *  - 'ok' → 200.
+ *
+ * Backward compat (#1415): o campo `dependencies` é mantido como alias de `checks`
+ * para não quebrar consumidores/tests legados que ainda esperam a chave antiga.
  */
 import { Router } from 'express';
 import { checkAll } from '../services/healthCheckService';
@@ -16,7 +23,7 @@ const router = Router();
 router.get('/', async (_req, res) => {
     const report = await checkAll();
 
-    const failOnDegraded = process.env.HEALTH_FAIL_ON_DEGRADED !== 'false';
+    const failOnDegraded = process.env.HEALTH_FAIL_ON_DEGRADED === 'true';
     let httpStatus = 200;
     if (report.status === 'down') {
         httpStatus = 503;
@@ -29,6 +36,7 @@ router.get('/', async (_req, res) => {
         server: 'CoolGroove Backend',
         uptime: process.uptime(),
         checks: report.checks,
+        dependencies: report.checks,
         timestamp: report.timestamp,
         memory: {
             used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
