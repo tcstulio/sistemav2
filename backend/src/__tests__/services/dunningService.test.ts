@@ -310,4 +310,20 @@ describe('dunningService — blast-radius zero (#1400)', () => {
         }
         expect(allMatches.length).toBeGreaterThanOrEqual(0); // sanity
     });
+
+    it('grep literal sobre o source REAL retorna ZERO matches (critério #1402)', async () => {
+        // O setup global mocka `fs` retornando Buffer.from('test'). Para verificar
+        // o arquivo-fonte de verdade, importamos o módulo real dinamicamente.
+        const realFs = await vi.importActual<typeof import('fs')>('fs');
+        const file = path.join(__dirname, '../../services/dunningService.ts');
+        const raw = realFs.readFileSync(file, 'utf-8');
+        const src = typeof raw === 'string' ? raw : raw.toString();
+
+        // Critério de aceite literal da issue #1402:
+        //   grep -E '<3 ids>' backend/src/services/dunningService.ts
+        //   → ZERO matches, sem qualquer strip/qualificação.
+        const re = /send_whatsapp|notify_person|send_email/g;
+        const matches = src.match(re);
+        expect(matches, `grep literal achou matches no source: ${JSON.stringify(matches)}`).toBeNull();
+    });
 });
