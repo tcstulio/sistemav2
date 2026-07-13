@@ -235,14 +235,18 @@ const defaultDeps: HealthCheckDeps = {
 // =====================================
 
 /**
- * Calcula o status agregado:
- *  - Dolibarr/WhatsApp down (críticos) → 'down'
- *  - qualquer outro check down/stuck/degraded → 'degraded'
- *  - caso contrário → 'ok'
+ * Calcula o status agregado (#1415):
+ *  - Apenas Dolibarr é CRÍTICO — é o backend de dados; sem ele o app não funciona.
+ *  - WhatsApp é NÃO-CRÍTICO: cair/resetar é recorrente na operação (sessão default
+ *    desconecta toda hora), e flapear /health entre 200/503 quebra uptime monitor e
+ *    smoke test sem indicar um problema de fato. Vai p/ 'degraded' (o body mostra o
+ *    status real do WhatsApp via `checks.whatsapp`), mas o agregado NÃO vira 'down'.
+ *  - Qualquer outro check down/stuck/degraded → 'degraded'.
+ *  - Caso contrário → 'ok'.
  *  not_configured NÃO conta como falha (dependência opcional/desligada).
  */
 export function computeOverallStatus(checks: HealthChecks): OverallStatus {
-    const criticalDown = checks.dolibarr.status === 'down' || checks.whatsapp.status === 'down';
+    const criticalDown = checks.dolibarr.status === 'down';
     if (criticalDown) return 'down';
 
     const issueStatuses: DependencyStatus[] = ['down', 'stuck', 'degraded'];

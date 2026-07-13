@@ -69,6 +69,21 @@ describe('GET /health', () => {
         expect(typeof res.body.uptime).toBe('number');
     });
 
+    it('mantém "dependencies" como alias de "checks" (#1415) — não quebra consumidores legados', async () => {
+        // O smoke.spec.ts e outros consumidores antigos esperam `body.dependencies`.
+        // A rota agora expõe ambos os campos apontando para o MESMO objeto.
+        mockCheckAll.mockResolvedValue(report('ok'));
+        const res = await request(app).get('/health');
+
+        expect(res.body).toHaveProperty('checks');
+        expect(res.body).toHaveProperty('dependencies');
+        expect(res.body.dependencies).toEqual(res.body.checks);
+        // Spot-check: cada chave das checks deve aparecer em dependencies
+        expect(res.body.dependencies.dolibarr).toEqual(res.body.checks.dolibarr);
+        expect(res.body.dependencies.whatsapp).toEqual(res.body.checks.whatsapp);
+        expect(res.body.dependencies.scheduler).toEqual(res.body.checks.scheduler);
+    });
+
     it('responde 503 quando status === "down"', async () => {
         mockCheckAll.mockResolvedValue(report('down'));
         const res = await request(app).get('/health');
@@ -76,14 +91,29 @@ describe('GET /health', () => {
         expect(res.body.status).toBe('down');
     });
 
-    it('responde 503 quando status === "degraded" e HEALTH_FAIL_ON_DEGRADED não é "false" (default)', async () => {
+    it('responde 200 quando status === "degraded" no default (#1415: HEALTH_FAIL_ON_DEGRADED não definido)', async () => {
+        // #1415: default agora é "degraded → 200" para não flapear uptime monitor / smoke
+        // quando uma dependência não-crítica (WhatsApp, banco opcional, scheduler) cai.
         delete process.env.HEALTH_FAIL_ON_DEGRADED;
         mockCheckAll.mockResolvedValue(report('degraded'));
         const res = await request(app).get('/health');
-        expect(res.status).toBe(503);
+        expect(res.status).toBe(200);
+        expect(res.body.status).toBe('degraded');
     });
 
-    it('responde 200 quando status === "degraded" e HEALTH_FAIL_ON_DEGRADED=false', async () => {
+    it('responde 503 quando status === "degraded" e HEALTH_FAIL_ON_DEGRADED=true (override explícito)', async () => {
+        // Escape hatch: ambientes que preferem alerta conservador (CI rígido) podem
+        // forçar 503 em degraded com HEALTH_FAIL_ON_DEGRADED=true.
+        process.env.HEALTH_FAIL_ON_DEGRADED = 'true';
+        mockCheckAll.mockResolvedValue(report('degraded'));
+        const res = await request(app).get('/health');
+        expect(res.status).toBe(503);
+        expect(res.body.status).toBe('degraded');
+    });
+
+    it('"false" continua equivalendo a default (200 em degraded) — aceito por compat (#1415)', async () => {
+        // Antes: HEALTH_FAIL_ON_DEGRADED !== 'false' → fail. Agora: === 'true' → fail.
+        // "false" continua significando "não falhe em degraded" (200).
         process.env.HEALTH_FAIL_ON_DEGRADED = 'false';
         mockCheckAll.mockResolvedValue(report('degraded'));
         const res = await request(app).get('/health');
@@ -91,12 +121,18 @@ describe('GET /health', () => {
         expect(res.body.status).toBe('degraded');
     });
 
-    it('propaga o report mesmo quando um check está down (bancoItau)', async () => {
+    it('propaga o report mesmo quando um check está down (bancoItau) (#1415: HTTP=200, body intacto)', async () => {
+        // #1415: o agregado está 'degraded' (apenas bancoItau down, não-crítico) → HTTP 200.
+        // A asserção central é que o body carrega o status REAL da dependência (down/timeout)
+        // mesmo com HTTP 200, pra que um monitor que parsear o body ainda acuse o problema.
         const degraded = report('degraded');
         degraded.checks.bancoItau = { status: 'down', error: 'timeout' };
         mockCheckAll.mockResolvedValue(degraded);
         const res = await request(app).get('/health');
-        expect(res.status).toBe(503);
+        expect(res.status).toBe(200);
+        expect(res.body.status).toBe('degraded');
         expect(res.body.checks.bancoItau).toEqual({ status: 'down', error: 'timeout' });
+        // Alias também reflete o status real
+        expect(res.body.dependencies.bancoItau).toEqual({ status: 'down', error: 'timeout' });
     });
 });
