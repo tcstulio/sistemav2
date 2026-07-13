@@ -86,128 +86,119 @@ export class DolibarrCommercialService extends DolibarrServiceBase {
     }
 
     async listInvoices(params: { status?: string, search?: string, limit?: number } = {}): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}invoices`;
-            const sqlfiltersParts: string[] = [];
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}invoices`;
+        const sqlfiltersParts: string[] = [];
 
-            if (params.status === 'unpaid') sqlfiltersParts.push('(t.paye:=:0) and (t.fk_statut:>:0)');
-            if (params.status === 'paid') sqlfiltersParts.push('(t.paye:=:1)');
-            if (params.status === 'draft') sqlfiltersParts.push('(t.fk_statut:=:0)');
+        if (params.status === 'unpaid') sqlfiltersParts.push('(t.paye:=:0) and (t.fk_statut:>:0)');
+        if (params.status === 'paid') sqlfiltersParts.push('(t.paye:=:1)');
+        if (params.status === 'draft') sqlfiltersParts.push('(t.fk_statut:=:0)');
 
-            // #1340: sem este filtro, uma busca por texto (ex.: ref de proposta) caía num LISTAGEM
-            // GLOBAL das faturas mais recentes — a tool `search` do agente as rotulava como
-            // "resultado do termo", enganando o modelo. Busca por ref/ref_client (como listOrders).
-            if (params.search) {
-                sqlfiltersParts.push(`((${buildLikeFilter('t.ref', params.search)}) or (${buildLikeFilter('t.ref_client', params.search)}))`);
-            }
-
-            const response = await axios.get(url, {
-                headers,
-                params: {
-                    sqlfilters: sqlfiltersParts.length > 0 ? sqlfiltersParts.join(' and ') : undefined,
-                    limit: params.limit || 5,
-                    sortfield: 't.datef',
-                    sortorder: 'DESC'
-                },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listInvoices Error', error);
-            return [];
+        // #1340: sem este filtro, uma busca por texto (ex.: ref de proposta) caía num LISTAGEM
+        // GLOBAL das faturas mais recentes — a tool `search` do agente as rotulava como
+        // "resultado do termo", enganando o modelo. Busca por ref/ref_client (como listOrders).
+        if (params.search) {
+            sqlfiltersParts.push(`((${buildLikeFilter('t.ref', params.search)}) or (${buildLikeFilter('t.ref_client', params.search)}))`);
         }
+
+        // #1349: Dolibarr devolve 404 quando não há faturas para o filtro → tratamos como []
+        // legitimamente. 5xx/401/403/timeout/rede NÃO são silenciados: devem propagar para que
+        // prepare_create_* não confunda "erro" com "não existe" e crie duplicatas.
+        const response = await axios.get(url, {
+            headers,
+            params: {
+                sqlfilters: sqlfiltersParts.length > 0 ? sqlfiltersParts.join(' and ') : undefined,
+                limit: params.limit || 5,
+                sortfield: 't.datef',
+                sortorder: 'DESC'
+            },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
+
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 
     async listOrders(params: { status?: string, search?: string, limit?: number } = {}): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}orders`;
-            let sqlfiltersParts = [];
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}orders`;
+        const sqlfiltersParts: string[] = [];
 
-            if (params.status === 'draft') sqlfiltersParts.push('(t.fk_statut:=:0)');
-            if (params.status === 'validated') sqlfiltersParts.push('(t.fk_statut:=:1)');
-            if (params.status === 'processed') sqlfiltersParts.push('(t.fk_statut:>=:2)');
+        if (params.status === 'draft') sqlfiltersParts.push('(t.fk_statut:=:0)');
+        if (params.status === 'validated') sqlfiltersParts.push('(t.fk_statut:=:1)');
+        if (params.status === 'processed') sqlfiltersParts.push('(t.fk_statut:>=:2)');
 
-            if (params.search) {
-                sqlfiltersParts.push(`((${buildLikeFilter('t.ref', params.search)}) or (${buildLikeFilter('t.ref_client', params.search)}))`);
-            }
-
-            const response = await axios.get(url, {
-                headers,
-                params: {
-                    sqlfilters: sqlfiltersParts.length > 0 ? sqlfiltersParts.join(' and ') : undefined,
-                    limit: params.limit || 5,
-                    sortfield: 't.date_commande',
-                    sortorder: 'DESC'
-                },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listOrders Error', error);
-            return [];
+        if (params.search) {
+            sqlfiltersParts.push(`((${buildLikeFilter('t.ref', params.search)}) or (${buildLikeFilter('t.ref_client', params.search)}))`);
         }
+
+        // #1349: idem listInvoices — 404 = "sem pedidos"; erros reais devem propagar.
+        const response = await axios.get(url, {
+            headers,
+            params: {
+                sqlfilters: sqlfiltersParts.length > 0 ? sqlfiltersParts.join(' and ') : undefined,
+                limit: params.limit || 5,
+                sortfield: 't.date_commande',
+                sortorder: 'DESC'
+            },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
+
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 
     async listProposals(params: { status?: string, search?: string, limit?: number } = {}): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}proposals`;
-            let sqlfilters = undefined;
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}proposals`;
+        let sqlfilters: string | undefined = undefined;
 
-            if (params.status === 'draft') sqlfilters = '(t.fk_statut:=:0)';
-            if (params.status === 'open') sqlfilters = '(t.fk_statut:=:1)';
-            if (params.status === 'signed') sqlfilters = '(t.fk_statut:=:2)';
+        if (params.status === 'draft') sqlfilters = '(t.fk_statut:=:0)';
+        if (params.status === 'open') sqlfilters = '(t.fk_statut:=:1)';
+        if (params.status === 'signed') sqlfilters = '(t.fk_statut:=:2)';
 
-            if (params.search) {
-                const searchFilter = `((${buildLikeFilter('t.ref', params.search)}) or (${buildLikeFilter('t.ref_client', params.search)}))`;
-                sqlfilters = sqlfilters ? `(${sqlfilters}) and ${searchFilter}` : searchFilter;
-            }
-
-            const response = await axios.get(url, {
-                headers,
-                params: {
-                    sqlfilters,
-                    limit: params.limit || 5,
-                    sortfield: 't.datep',
-                    sortorder: 'DESC'
-                },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listProposals Error', error);
-            return [];
+        if (params.search) {
+            const searchFilter = `((${buildLikeFilter('t.ref', params.search)}) or (${buildLikeFilter('t.ref_client', params.search)}))`;
+            sqlfilters = sqlfilters ? `(${sqlfilters}) and ${searchFilter}` : searchFilter;
         }
+
+        // #1349: idem listInvoices. Atenção especial: listProposals alimenta prepare_create_*
+        // → erro real NÃO pode virar "vazio" silencioso (risco de duplicata).
+        const response = await axios.get(url, {
+            headers,
+            params: {
+                sqlfilters,
+                limit: params.limit || 5,
+                sortfield: 't.datep',
+                sortorder: 'DESC'
+            },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
+
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 
     async listContracts(search?: string): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}contracts`;
-            let sqlfilters = undefined;
-            if (search) {
-                sqlfilters = `(${buildLikeFilter('t.ref', search)})`;
-            }
-
-            const response = await axios.get(url, {
-                headers,
-                params: { sqlfilters, limit: 5, sortfield: 't.date_contrat', sortorder: 'DESC' },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listContracts Error', error);
-            return [];
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}contracts`;
+        let sqlfilters: string | undefined = undefined;
+        if (search) {
+            sqlfilters = `(${buildLikeFilter('t.ref', search)})`;
         }
+
+        // #1349: idem listInvoices — 404 = "sem contratos"; erros reais devem propagar.
+        const response = await axios.get(url, {
+            headers,
+            params: { sqlfilters, limit: 5, sortfield: 't.date_contrat', sortorder: 'DESC' },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 
     // #1358: o endpoint /validate do Dolibarr EXIGE `notrigger` (integer) no body — sem ele,
