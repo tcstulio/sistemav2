@@ -1661,8 +1661,14 @@ class TaskRunnerService {
                     || fs.statSync(lock).mtimeMs > fs.statSync(marker).mtimeMs;
             } catch { stale = true; }
             if (stale) {
-                log.info(`ensureWorktree: deps desatualizadas em ${dir} — rodando npm ci`);
-                await sh('npm ci', dir, 600000);
+                // `npm install` (NÃO `npm ci`): a CI deste repo usa `npm install` de propósito
+                // (lockfile gerado em dev Windows; deps opcionais por-plataforma quebram `npm ci`).
+                // Usar `npm ci` aqui fazia o AMBIENTE do robô ser MAIS ESTRITO que o próprio gate
+                // (CI verde) — um PR com lockfile drift passava na CI e depois matava TODA task no
+                // setup ("Missing: pg from lock file", #1379). `npm install` reconcilia o drift,
+                // igual à CI. Ver a issue de drift.
+                log.info(`ensureWorktree: deps desatualizadas em ${dir} — rodando npm install`);
+                await sh('npm install --no-audit --no-fund', dir, 600000);
                 try { fs.writeFileSync(marker, new Date().toISOString()); } catch { /* ignore */ }
             }
         };
