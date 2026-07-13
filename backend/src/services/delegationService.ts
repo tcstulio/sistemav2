@@ -14,6 +14,7 @@ import { atomicWriteSync } from '../utils/atomicWrite';
 import { createLogger } from '../utils/logger';
 import { AceiteState, dayIndex, DEFAULT_CADENCE } from './delegationFollowUpLogic';
 import { dolibarrService } from './dolibarr';
+import { uiConfigService } from './uiConfigService';
 
 const log = createLogger('Delegation');
 
@@ -139,7 +140,16 @@ export class DelegationService {
     /** Solicita o aceite: marca pending com um prazo (day index). nowMs injetável p/ teste. */
     requestAcceptance(taskId: string, opts: { nowMs?: number; prazoDeAceiteDays?: number; by?: string } = {}): DelegationRecord {
         const nowMs = opts.nowMs ?? Date.now();
-        const dias = opts.prazoDeAceiteDays ?? DEFAULT_CADENCE.prazoDeAceiteDays;
+        // #1397 (Dial 1): lê `prazoDeAceiteDays` da config de UI (cobrança de cadência) antes de
+        // cair no DEFAULT_CADENCE — assim o admin consegue ajustar o prazo na Central sem deploy.
+        let dias = opts.prazoDeAceiteDays;
+        if (dias === undefined) {
+            try {
+                dias = uiConfigService.getCobrancaCadence().prazoDeAceiteDays;
+            } catch {
+                dias = DEFAULT_CADENCE.prazoDeAceiteDays;
+            }
+        }
         const deadlineDay = dayIndex(nowMs) + dias;
         return this.upsert(taskId, {
             aceite: { status: 'pending', deadlineDay, requestedAt: new Date(nowMs).toISOString(), by: opts.by },

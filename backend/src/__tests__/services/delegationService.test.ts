@@ -6,7 +6,14 @@ const mockDoli = vi.hoisted(() => ({
     setTaskDelegationState: vi.fn().mockResolvedValue(true),
     listDelegationStates: vi.fn().mockResolvedValue([]),
 }));
+// #1397 (Dial 1) — motor lê o dial. Default na cadência DEFAULT_CADENCE (prazoDeAceiteDays=1).
+const mockUiConfig = vi.hoisted(() => ({
+    getCobrancaCadence: vi.fn(() => ({
+        reminderDaysBefore: 1, recobrancaIntervalDays: 2, escalateAfterCobrancas: 3, prazoDeAceiteDays: 1,
+    })),
+}));
 vi.mock('../../services/dolibarr', () => ({ dolibarrService: mockDoli }));
+vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfig }));
 vi.mock('../../utils/atomicWrite', () => ({ atomicWriteSync: vi.fn() }));
 vi.mock('../../utils/logger', () => ({ createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) }));
 
@@ -17,7 +24,12 @@ const STORE = path.join(__dirname, '__delegation_store_unit_test__.json');
 const newSvc = () => new DelegationService(STORE);
 
 describe('DelegationService', () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockUiConfig.getCobrancaCadence.mockReturnValue({
+            reminderDaysBefore: 1, recobrancaIntervalDays: 2, escalateAfterCobrancas: 3, prazoDeAceiteDays: 1,
+        });
+    });
 
     it('get retorna undefined para tarefa desconhecida; getAceite idem', () => {
         const svc = newSvc();
@@ -93,5 +105,28 @@ describe('DelegationService', () => {
         const n = await svc.hydrateFromDolibarr();
         expect(n).toBe(0);
         expect(svc.get('88')).toBeUndefined();
+    });
+
+    // #1397 — ENFORCEMENT TEST (Dial 1): mudar prazoDeAceiteDays da cadência MUDA o deadlineDay.
+    // Sem este teste, o PR é teatro (a UI mostra o dial, mas o motor ignora).
+    it('Dial 1 — requestAcceptance consome prazoDeAceiteDays do uiConfigService (cadência)', () => {
+        // Cadência default (1 dia) → deadlineDay = hoje + 1
+        mockUiConfig.getCobrancaCadence.mockReturnValue({
+            reminderDaysBefore: 1, recobrancaIntervalDays: 2, escalateAfterCobrancas: 3, prazoDeAceiteDays: 1,
+        });
+        const svc = newSvc();
+        const recA = svc.requestAcceptance('50', { nowMs: noon(10) });
+        expect(recA.aceite?.deadlineDay).toBe(11);
+
+        // Cadência com prazoDeAceiteDays=5 → deadlineDay = hoje + 5 (sem passar prazoDeAceiteDays na chamada)
+        mockUiConfig.getCobrancaCadence.mockReturnValue({
+            reminderDaysBefore: 1, recobrancaIntervalDays: 2, escalateAfterCobrancas: 3, prazoDeAceiteDays: 5,
+        });
+        const recB = svc.requestAcceptance('60', { nowMs: noon(10) });
+        expect(recB.aceite?.deadlineDay).toBe(15);
+
+        // Opt-in na chamada continua tendo precedência sobre o dial
+        const recC = svc.requestAcceptance('70', { nowMs: noon(10), prazoDeAceiteDays: 0 });
+        expect(recC.aceite?.deadlineDay).toBe(10);
     });
 });

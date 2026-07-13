@@ -205,6 +205,19 @@ class AgentConfigService {
         return limit === null || amount <= limit;
     }
 
+    /**
+     * #1397 (Dial 3) — teto de iterações da conversa declarado na config do agente. Antes NUNCA
+     * era lido (o motor usava `env.AGENT_MAX_ITERATIONS`). Agora o caller consome este valor
+     * (com fallback p/ o default da config quando o perfil ainda não foi hidratado). Caller
+     * deve fazer o clamp p/ a faixa recomendada (1..40) — a config pode ter sido editada fora.
+     */
+    getMaxToolCallsPerConversation(): number {
+        if (this.profile?.config.maxToolCallsPerConversation) {
+            return this.profile.config.maxToolCallsPerConversation;
+        }
+        return DEFAULT_CONFIG.maxToolCallsPerConversation;
+    }
+
     getSystemPrompt(): string {
         const parts: string[] = [];
 

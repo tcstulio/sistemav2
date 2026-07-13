@@ -20,6 +20,7 @@ import { delegationService } from './delegationService';
 import { delegationEventsService, DelegationEventType } from './delegationEventsService';
 import { resolveRoleUsers, RoleUsers } from './taskNotificationLogic';
 import { decideFollowUp, Cadence, DEFAULT_CADENCE, TaskTracking, FollowUpEvent } from './delegationFollowUpLogic';
+import { uiConfigService } from './uiConfigService';
 
 // Evento do motor -> tipo no log da delegação (linha do tempo). by=sistema (undefined).
 const EVENT_TO_LOG: Record<FollowUpEvent, DelegationEventType> = {
@@ -114,6 +115,24 @@ export class DelegationFollowUpService {
     async runTick(nowMs: number = Date.now()): Promise<TickResult> {
         const result: TickResult = { tasks: 0, baselines: 0, acceptance_pending: 0, acceptance_overdue: 0, deadline_reminder: 0, overdue: 0, stalled: 0, completed: 0 };
         try {
+            // #1397 (Dial 1): cadência lida da config de UI a cada tick (sem cache) — assim a
+            // alteração de `notificationPolicy.cobrancaCadence` na Central passa a valer no próximo
+            // tick, sem restart. Cai no `this.cadence` (default DEFAULT_CADENCE) se a config
+            // ainda não foi hidratada.
+            const liveCadence = (() => {
+                try {
+                    const cfg = uiConfigService.getCobrancaCadence();
+                    return {
+                        reminderDaysBefore: cfg.reminderDaysBefore,
+                        recobrancaIntervalDays: cfg.recobrancaIntervalDays,
+                        escalateAfterCobrancas: cfg.escalateAfterCobrancas,
+                        prazoDeAceiteDays: cfg.prazoDeAceiteDays,
+                    };
+                } catch {
+                    return this.cadence;
+                }
+            })();
+
             const tasks = await dolibarrService.listTasksFull();
             if (!tasks || tasks.length === 0) return result;
             result.tasks = tasks.length;
@@ -131,7 +150,7 @@ export class DelegationFollowUpService {
                 const id = String(task.id);
                 const prev = this.store[id];
                 const aceite = delegationService.getAceite(id);
-                const { event, tracking } = decideFollowUp(task, prev, nowMs, this.cadence, aceite);
+                const { event, tracking } = decideFollowUp(task, prev, nowMs, liveCadence, aceite);
                 this.store[id] = tracking;
 
                 if (!prev) {

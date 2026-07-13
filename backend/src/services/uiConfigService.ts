@@ -231,6 +231,25 @@ function sanitizeHHmm(v: unknown, dflt: string): string {
     return typeof v === 'string' && HHMM_RE.test(v) ? v : dflt;
 }
 
+/**
+ * #1397 (Dial 2) — checa se o instante `at` (hora:minuto local) cai entre `startHHmm` e
+ * `endHHmm` (inclusive). Janela que cruza meia-noite (ex.: 22:00 → 07:00) é tratada —
+ * `end <= start` é interpretado como "de start até a meia-noite + de meia-noite até end".
+ * Função PURA (testável).
+ */
+export function isHHmmWithin(at: Date, startHHmm: string, endHHmm: string): boolean {
+    const sm = HHMM_RE.exec(startHHmm);
+    const em = HHMM_RE.exec(endHHmm);
+    if (!sm || !em) return false;
+    const start = parseInt(sm[1], 10) * 60 + parseInt(sm[2], 10);
+    const end = parseInt(em[1], 10) * 60 + parseInt(em[2], 10);
+    const cur = at.getHours() * 60 + at.getMinutes();
+    if (start === end) return false; // janela vazia (sem início ou fim) → nunca silencia
+    if (start < end) return cur >= start && cur < end;
+    // cruza meia-noite: silenciado de start..(24h) U 0..end
+    return cur >= start || cur < end;
+}
+
 function intIn(v: unknown, min: number, max: number, dflt: number): number {
     const n = typeof v === 'number' ? v : NaN;
     if (!Number.isFinite(n)) return dflt;
@@ -592,6 +611,39 @@ export class UiConfigService {
 
     getInvoiceDueHorizonDays(): number {
         return this.data.notificationPolicy.invoiceDueHorizonDays;
+    }
+
+    /** #1397 — dial 1: cadência de cobrança lida pelo motor de delegações. */
+    getCobrancaCadence(): CobrancaCadenceConfig {
+        return { ...this.data.notificationPolicy.cobrancaCadence };
+    }
+
+    /** #1397 — dial 2: política de quiet-hours por canal. */
+    getQuietHours(): QuietHoursConfig {
+        const qh = this.data.notificationPolicy.quietHours;
+        // cópia profunda por canal: o caller pode mutar livremente sem afetar o store.
+        return {
+            whatsapp: { ...qh.whatsapp },
+            email: { ...qh.email },
+            'in-app': { ...qh['in-app'] },
+        };
+    }
+
+    /**
+     * #1397 (Dial 2): checa se o instante `at` cai na janela de quiet-hours do canal.
+     * Janela que cruza meia-noite (end < start) é tratada. `at` é injetável p/ teste.
+     * `weekdaysOnly` pula sábado/domingo. Canal 'in-app' nunca é silenciado (in-app não é
+     * "envio externo" — é notificação dentro do app, sem custo p/ o usuário).
+     */
+    isInQuietHours(channel: QuietHoursChannel, at: Date = new Date()): boolean {
+        if (channel === 'in-app') return false; // in-app não é silenciado (não incomoda fora de horário)
+        const rule = this.data.notificationPolicy.quietHours[channel];
+        if (!rule || !rule.enabled) return false;
+        if (rule.weekdaysOnly) {
+            const dow = at.getDay();
+            if (dow === 0 || dow === 6) return false;
+        }
+        return isHHmmWithin(at, rule.startHHmm, rule.endHHmm);
     }
 
     /** Aplica apenas campos válidos (sanitiza tamanho e valida a cor). Retorna a config final. */

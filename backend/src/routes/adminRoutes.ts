@@ -564,7 +564,22 @@ router.post('/config/features/provider', (req, res) => {
     res.json({
         success: true,
         provider: channelRouter.getWhatsAppProvider(),
-        note: 'Runtime change only. Set WHATSAPP_PROVIDER in .env to persist.'
+        note: 'Persistido em data/channel_router.json (sobrevive a restart).',
+    });
+});
+
+// #1397 (Dial 5) — setter runtime para a sessão default do channelRouter. Antes o canal só
+// aceitava 'default' (constante imutável); agora a sessão primária é configurável e persiste.
+router.post('/config/features/default-session', (req, res) => {
+    const { sessionId } = req.body || {};
+    if (typeof sessionId !== 'string' || !sessionId.trim()) {
+        return res.status(400).json({ error: 'sessionId (string não-vazia) é obrigatório.' });
+    }
+    channelRouter.setDefaultSessionId(sessionId.trim());
+    res.json({
+        success: true,
+        defaultSessionId: channelRouter.getDefaultSessionId(),
+        note: 'Persistido em data/channel_router.json (sobrevive a restart).',
     });
 });
 

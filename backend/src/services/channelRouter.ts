@@ -14,6 +14,10 @@ import { messageService as legacyMessageService } from './legacy/messageService'
 import { sessionService } from './legacy/sessionService';
 import { emailService } from './emailService';
 import { createLogger } from '../utils/logger';
+import { uiConfigService, QuietHoursChannel } from './uiConfigService';
+import fs from 'fs';
+import path from 'path';
+import { atomicWriteSync } from '../utils/atomicWrite';
 
 const log = createLogger('ChannelRouter');
 
@@ -56,10 +60,59 @@ export interface ChannelStatus {
 class ChannelRouter {
     private whatsAppProvider: WhatsAppProvider;
     private defaultSessionId: string = 'default';
+    // #1397 (Dials 5 e 6) — store durável em `data/channel_router.json` para que
+    // `setWhatsAppProvider` e `setDefaultSessionId` (chamados pelas rotas admin/integration)
+    // NÃO se percam no restart. Antes as rotas só mudavam em memória (config-teatro da
+    // auditoria #1124).
+    private readonly storePath: string;
 
-    constructor() {
+    constructor(storePath?: string) {
+        this.storePath = storePath || path.join(__dirname, '../../data/channel_router.json');
+        // Hidrata do .env como fallback; o rehidrata do store sobrescreve se o arquivo existe.
         this.whatsAppProvider = FEATURES.WHATSAPP_PROVIDER;
-        log.info(`Initialized with WhatsApp provider: ${this.whatsAppProvider}`);
+        this.defaultSessionId = 'default';
+        this.loadPersisted();
+        log.info(`Initialized with WhatsApp provider: ${this.whatsAppProvider} (defaultSession=${this.defaultSessionId})`);
+    }
+
+    /**
+     * Carrega o estado persistido (whatsAppProvider + defaultSessionId) do disco. Arquivo
+     * corrompido → ignora (cai no fallback do env). Exportado p/ teste determinístico.
+     */
+    private loadPersisted(): { whatsAppProvider?: WhatsAppProvider; defaultSessionId?: string } {
+        try {
+            const dir = path.dirname(this.storePath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            if (!fs.existsSync(this.storePath)) return {};
+            const parsed = JSON.parse(fs.readFileSync(this.storePath, 'utf-8'));
+            if (parsed && typeof parsed === 'object') {
+                if (parsed.whatsAppProvider === 'legacy' || parsed.whatsAppProvider === 'moltbot') {
+                    this.whatsAppProvider = parsed.whatsAppProvider;
+                }
+                if (typeof parsed.defaultSessionId === 'string' && parsed.defaultSessionId.trim()) {
+                    this.defaultSessionId = parsed.defaultSessionId;
+                }
+                return parsed;
+            }
+            return {};
+        } catch (e: any) {
+            log.warn(`Falha ao carregar ${this.storePath}: ${e?.message || e} — usando defaults`);
+            return {};
+        }
+    }
+
+    /** Persiste o estado atual no disco (atomicWriteSync p/ não corromper em crash). */
+    private persist(): void {
+        try {
+            const dir = path.dirname(this.storePath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            atomicWriteSync(this.storePath, {
+                whatsAppProvider: this.whatsAppProvider,
+                defaultSessionId: this.defaultSessionId,
+            });
+        } catch (e: any) {
+            log.error(`Falha ao persistir ${this.storePath}: ${e?.message || e}`);
+        }
     }
 
     // ========================================
@@ -67,11 +120,12 @@ class ChannelRouter {
     // ========================================
 
     /**
-     * Set WhatsApp provider
+     * Set WhatsApp provider — também PERSISTE em disco (#1397 Dial 6).
      */
     setWhatsAppProvider(provider: WhatsAppProvider): void {
         this.whatsAppProvider = provider;
-        log.info(`WhatsApp provider changed to: ${provider}`);
+        this.persist();
+        log.info(`WhatsApp provider changed to: ${provider} (persistido em ${this.storePath})`);
     }
 
     /**
@@ -82,10 +136,22 @@ class ChannelRouter {
     }
 
     /**
-     * Set default session ID
+     * Set default session ID (#1397 Dial 5) — também PERSISTE em disco.
+     * Rejeita string vazia/whitespace (preserva o valor anterior).
      */
     setDefaultSessionId(sessionId: string): void {
-        this.defaultSessionId = sessionId;
+        const trimmed = String(sessionId || '').trim();
+        if (!trimmed) return; // ignora vazio — setter só valida em runtime
+        this.defaultSessionId = trimmed;
+        this.persist();
+        log.info(`Default session changed to: ${trimmed} (persistido)`);
+    }
+
+    /**
+     * Get current default session ID (#1397 Dial 5).
+     */
+    getDefaultSessionId(): string {
+        return this.defaultSessionId;
     }
 
     /**
@@ -166,6 +232,17 @@ class ChannelRouter {
                 success: true,
                 messageId: `dry-run-${Date.now()}`,
                 provider: 'dry-run'
+            };
+        }
+
+        // #1397 (Dial 2) — quiet-hours do canal whatsapp. Se o canal está silenciado AGORA,
+        // NÃO envia (devolve erro explícito para o caller decidir reagendar/logar).
+        if (this.isChannelSilenced('whatsapp')) {
+            log.info(`WhatsApp silenciado por quiet-hours (recipient=${recipient})`);
+            return {
+                success: false,
+                error: 'Canal WhatsApp em quiet-hours (silenciado pelo dial notificationPolicy.quietHours).',
+                provider: this.whatsAppProvider,
             };
         }
 
@@ -316,6 +393,16 @@ class ChannelRouter {
             return { success: true, messageId: `dry-run-${Date.now()}`, provider: 'dry-run' };
         }
 
+        // #1397 (Dial 2) — quiet-hours do canal email.
+        if (this.isChannelSilenced('email')) {
+            log.info(`Email silenciado por quiet-hours (recipient=${recipient})`);
+            return {
+                success: false,
+                error: 'Canal email em quiet-hours (silenciado pelo dial notificationPolicy.quietHours).',
+                provider: 'email',
+            };
+        }
+
         try {
             await emailService.sendEmail(accountId || 'default', recipient, subject, body);
             return {
@@ -325,6 +412,18 @@ class ChannelRouter {
             };
         } catch (error: any) {
             return { success: false, error: error.message, provider: 'email' };
+        }
+    }
+
+    /**
+     * #1397 (Dial 2) — checa quiet-hours do canal (injetável p/ teste).
+     * Retorna true se o canal deve ser silenciado NESTE instante.
+     */
+    isChannelSilenced(channel: QuietHoursChannel, at?: Date): boolean {
+        try {
+            return uiConfigService.isInQuietHours(channel, at);
+        } catch {
+            return false;
         }
     }
 

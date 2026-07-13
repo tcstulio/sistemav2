@@ -785,6 +785,16 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
         log.warn(`Read-only context blocked mutating tool: ${resolvedTool}`);
         return `A ferramenta "${resolvedTool}" não está disponível neste contexto (somente leitura).`;
     }
+
+    // #1397 (Dial 4): admin lista tools que SEMPRE exigem confirmação humana (mesmo não-admin
+    // e mesmo dial `irreversibleRequiresApproval` desligado). Antes declarado/sanitizado em
+    // agentConfigService mas NUNCA lido (config-teatro da auditoria #1124). Agora: se o tool
+    // está em `requireConfirmationFor`, desvia p/ HITL com o mesmo deeplink do irreversible.
+    if (isConfirmable(resolvedTool) && agentConfigService.requiresConfirmation(resolvedTool)) {
+        const link = buildConfirmDeeplink(resolvedTool, args, ctx.userId || '');
+        log.info(`HITL (dial requireConfirmationFor): ${resolvedTool} desviado p/ confirmação humana (ator=${ctx.userLogin})`);
+        return `⚠️ Esta ação exige CONFIRMAÇÃO HUMANA pelo dial requireConfirmationFor do agente. Revise e confirme na tela: ${link}`;
+    }
     if (ctx.permissionProfile && !ctx.isAdmin) {
         const permKey = getWritePermissionKey(resolvedTool);
         if (permKey && !ctx.permissionProfile.agent[permKey as keyof typeof ctx.permissionProfile.agent]) {

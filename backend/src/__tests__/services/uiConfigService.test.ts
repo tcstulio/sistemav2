@@ -464,3 +464,56 @@ describe('sanitizeNotificationPolicy', () => {
         expect(out.notificationPolicy.staleHours).toBe(48);
     });
 });
+
+// #1397 (Dial 2) — ENFORCEMENT TEST: o motor CONSOME o dial. Sem este teste, o PR é teatro.
+describe('UiConfigService.isInQuietHours (#1397)', () => {
+    const at = (h: number, m = 0) => new Date(2026, 6, 13, h, m, 0); // segunda 13/jul/2026 (dow=1)
+
+    it('canal desabilitado → nunca silencia', () => {
+        const svc = new UiConfigService('ui.json');
+        svc.update({ notificationPolicy: { quietHours: { whatsapp: { enabled: false, startHHmm: '22:00', endHHmm: '07:00' } } } } as any);
+        expect(svc.isInQuietHours('whatsapp', at(23))).toBe(false);
+        expect(svc.isInQuietHours('whatsapp', at(3))).toBe(false);
+    });
+
+    it('canal habilitado dentro da janela → silencia', () => {
+        const svc = new UiConfigService('ui.json');
+        svc.update({ notificationPolicy: { quietHours: { whatsapp: { enabled: true, startHHmm: '22:00', endHHmm: '07:00' } } } } as any);
+        expect(svc.isInQuietHours('whatsapp', at(23))).toBe(true);
+        expect(svc.isInQuietHours('whatsapp', at(3))).toBe(true);
+    });
+
+    it('canal habilitado fora da janela → não silencia', () => {
+        const svc = new UiConfigService('ui.json');
+        svc.update({ notificationPolicy: { quietHours: { whatsapp: { enabled: true, startHHmm: '22:00', endHHmm: '07:00' } } } } as any);
+        expect(svc.isInQuietHours('whatsapp', at(12))).toBe(false);
+        expect(svc.isInQuietHours('whatsapp', at(21, 59))).toBe(false);
+        expect(svc.isInQuietHours('whatsapp', at(7))).toBe(false);
+    });
+
+    it('canal in-app nunca é silenciado (não incomoda fora de horário)', () => {
+        const svc = new UiConfigService('ui.json');
+        svc.update({ notificationPolicy: { quietHours: { 'in-app': { enabled: true, startHHmm: '00:00', endHHmm: '23:59' } } } } as any);
+        expect(svc.isInQuietHours('in-app', at(3))).toBe(false);
+    });
+
+    it('weekdaysOnly: sábado/domingo fora da janela de silêncio', () => {
+        const svc = new UiConfigService('ui.json');
+        svc.update({ notificationPolicy: { quietHours: { whatsapp: { enabled: true, startHHmm: '22:00', endHHmm: '07:00', weekdaysOnly: true } } } } as any);
+        const saturday = new Date(2026, 6, 11, 23, 0, 0); // sábado (dow=6)
+        const monday = new Date(2026, 6, 13, 23, 0, 0);    // segunda (dow=1)
+        expect(svc.isInQuietHours('whatsapp', saturday)).toBe(false);
+        expect(svc.isInQuietHours('whatsapp', monday)).toBe(true);
+    });
+
+    it('getQuietHours retorna uma CÓPIA (mutação pelo caller não vaza para o store)', () => {
+        const svc = new UiConfigService('ui.json');
+        const qh = svc.getQuietHours();
+        qh.whatsapp.enabled = true;
+        qh.email.startHHmm = '01:00';
+        // nova leitura deve seguir defaults
+        const fresh = svc.getQuietHours();
+        expect(fresh.whatsapp.enabled).toBe(false);
+        expect(fresh.email.startHHmm).toBe('22:00');
+    });
+});

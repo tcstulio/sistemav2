@@ -1136,7 +1136,12 @@ export class LocalProvider implements AIProvider {
         // cliente + buscar N produtos + montar proposta) completem sem cair na síntese que
         // proíbe ferramentas. Criação em massa (prepare_create_proposal(lines)/prepare_batch_create)
         // colapsa N escritas em 1 call — reforçado no prompt — então 30 cobre cenários pesados.
-        const MAX_ITERATIONS = Math.min(Math.max(config.agentMaxIterations ?? 30, 1), 40);
+        // #1397 (Dial 3): teto vem do agentConfigService (config do agente no Dolibarr), não só
+        // do env. Fallback: env (dev override) → default 30. Clamp 1..40 mantém a recomendação.
+        const MAX_ITERATIONS = Math.min(Math.max(
+            agentConfigService.getMaxToolCallsPerConversation() ?? config.agentMaxIterations ?? 30,
+            1,
+        ), 40);
         // Orçamento de contexto (#956): PARAR ANTES de estourar a janela do modelo, não num nº
         // mágico de passos. budget = fração da janela; o resto cobre a resposta final + margem.
         const contextBudgetTokens = Math.floor(ctxWindow * (config.agentContextBudgetPct ?? 0.72));
