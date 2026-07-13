@@ -31,7 +31,7 @@ function reload(bank: BankId): void {
 function handleSave(req: Request, res: Response, bank?: BankId): Response | void {
     try {
         const body = bank
-            ? { bank, ...(req.body || {}) }
+            ? { ...(req.body || {}), bank }
             : req.body;
         const parsed = CredsSchema.safeParse(body);
         if (!parsed.success) {

@@ -184,6 +184,22 @@ describe('bankingCredentialsRoutes (#988)', () => {
             );
             expect(mockItau.reloadCredentials).toHaveBeenCalled();
         });
+
+        it('bank do path vence bank conflitante no body (#1414 — ordem do spread)', async () => {
+            const res = await request(app)
+                .post('/api/banking/itau/credentials')
+                .send({ bank: 'inter', clientId: 'cid', clientSecret: 'sec', environment: 'sandbox' });
+
+            expect(res.status).toBe(200);
+            expect(mockStore.setCredentials).toHaveBeenCalledWith(
+                'itau',
+                expect.objectContaining({ clientId: 'cid', clientSecret: 'sec', sandbox: true }),
+                undefined,
+            );
+            expect(mockStore.setCredentials.mock.calls[0][0]).toBe('itau');
+            expect(mockInter.reloadCredentials).not.toHaveBeenCalled();
+            expect(mockItau.reloadCredentials).toHaveBeenCalled();
+        });
     });
 
     describe('POST /api/banking/inter/credentials (per-bank)', () => {
