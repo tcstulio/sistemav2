@@ -143,3 +143,71 @@ describe('classifyScope — regressão do comportamento original (portada de MyN
         expect(classifyScope(note({ recipient: '999' }), '1')).toBe('system');
     });
 });
+
+describe('classifyScope — equivalência byte-a-byte com a implementação original', () => {
+    // Cópia literal da função ORIGINAL portada de MyNotificationsView.tsx
+    // (linhas 25-33, commit b1f0ca4 — pré-extração). Mantida aqui APENAS para
+    // provar que a refatoração não alterou o comportamento runtime em nenhum
+    // caminho. Se algum teste deste bloco falhar, houve regressão silenciosa
+    // na extração e o PR deve ser bloqueado.
+    function originalClassifyScope(n: AppNotification, userId: string | undefined): 'personal' | 'system' {
+        if (n.scope) return n.scope;
+        if (!n.recipient) return 'system';
+        if (n.recipient === userId) return 'personal';
+        if (n.recipient === 'team' || n.recipient === 'all') return 'system';
+        if (n.event === 'agent.action' || n.event === 'stock.low' || n.event === 'custom') return 'system';
+        return 'system';
+    }
+
+    // Tabela de cenários que exercita TODOS os ramos da função, incluindo:
+    // - scope definido pelo backend (com e sem recipient coincidente)
+    // - recipient ausente, team, all, casando, não casando
+    // - eventos de metadado (com e sem recipient casando)
+    // - edge case recipient='0' (string falsy)
+    // - userId undefined
+    const scenarios: Array<{
+        label: string;
+        n: AppNotification;
+        userId: string | undefined;
+    }> = [
+        { label: 'backend scope=personal', n: note({ scope: 'personal' }), userId: '42' },
+        { label: 'backend scope=system', n: note({ scope: 'system' }), userId: '42' },
+        { label: 'backend scope=personal sem recipient', n: note({ scope: 'personal' }), userId: undefined },
+        { label: 'backend scope=system sem recipient', n: note({ scope: 'system' }), userId: undefined },
+        { label: 'backend scope=personal + recipient casando', n: note({ scope: 'personal', recipient: '42' }), userId: '42' },
+        { label: 'backend scope=system + recipient casando', n: note({ scope: 'system', recipient: '42' }), userId: '42' },
+        { label: 'sem recipient, sem scope', n: note({}), userId: '42' },
+        { label: 'sem recipient, sem scope, userId undefined', n: note({}), userId: undefined },
+        { label: 'recipient === userId', n: note({ recipient: '42' }), userId: '42' },
+        { label: 'recipient === "0" === userId "0"', n: note({ recipient: '0' }), userId: '0' },
+        { label: 'recipient !== userId', n: note({ recipient: '99' }), userId: '42' },
+        { label: 'recipient == userId mas userId undefined', n: note({ recipient: '42' }), userId: undefined },
+        { label: 'recipient=team, userId presente', n: note({ recipient: 'team' }), userId: '42' },
+        { label: 'recipient=team, userId undefined', n: note({ recipient: 'team' }), userId: undefined },
+        { label: 'recipient=all, userId presente', n: note({ recipient: 'all' }), userId: '42' },
+        { label: 'recipient=all, userId undefined', n: note({ recipient: 'all' }), userId: undefined },
+        { label: 'event=agent.action sem recipient', n: note({ event: 'agent.action' }), userId: '42' },
+        { label: 'event=agent.action + recipient casando', n: note({ event: 'agent.action', recipient: '42' }), userId: '42' },
+        { label: 'event=agent.action + recipient não casando', n: note({ event: 'agent.action', recipient: '99' }), userId: '42' },
+        { label: 'event=stock.low sem recipient', n: note({ event: 'stock.low' }), userId: '42' },
+        { label: 'event=custom sem recipient', n: note({ event: 'custom' }), userId: '42' },
+        { label: 'event desconhecido sem recipient', n: note({ event: 'something.else' }), userId: '42' },
+        { label: 'event desconhecido + recipient não casando', n: note({ event: 'something.else', recipient: '99' }), userId: '42' },
+        { label: 'tudo vazio (notificação mínima)', n: note({}), userId: '1' },
+    ];
+
+    it.each(scenarios)('$label: nova função === implementação original', ({ n, userId }) => {
+        const original = originalClassifyScope(n, userId);
+        const refactored = classifyScope(n, userId);
+        expect(refactored).toBe(original);
+    });
+
+    it('assinatura preservada: (AppNotification, string | undefined) => NotificationScope', () => {
+        // Esta asserção é estática (compile-time) e roda em runtime apenas
+        // para garantir que a função ainda é chamável com a assinatura original.
+        type OriginalSig = (n: AppNotification, userId: string | undefined) => 'personal' | 'system';
+        const refactoredAsOriginal: OriginalSig = classifyScope;
+        const result: 'personal' | 'system' = refactoredAsOriginal(note({ recipient: '7' }), '7');
+        expect(result).toBe('personal');
+    });
+});
