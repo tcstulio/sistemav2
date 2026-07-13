@@ -20,6 +20,7 @@ import { delegationService } from './delegationService';
 import { delegationEventsService, DelegationEventType } from './delegationEventsService';
 import { resolveRoleUsers, RoleUsers } from './taskNotificationLogic';
 import { decideFollowUp, Cadence, DEFAULT_CADENCE, TaskTracking, FollowUpEvent } from './delegationFollowUpLogic';
+import { uiConfigService } from './uiConfigService';
 
 // Evento do motor -> tipo no log da delegação (linha do tempo). by=sistema (undefined).
 const EVENT_TO_LOG: Record<FollowUpEvent, DelegationEventType> = {
@@ -79,14 +80,47 @@ const DEFAULT_STORE_PATH = path.join(__dirname, '../../data/delegation_tracking.
 export class DelegationFollowUpService {
     private store: TrackingStore = {};
     private readonly storePath: string;
-    private cadence: Cadence;
+    /** Cadência de FALLBACK (#1290): usada só se a leitura do UiConfig falhar (serviço indisponível
+     *  ou objeto inválido). Secure-default = DEFAULT_CADENCE. NÃO cacheada no construtor — a cadência
+     *  efetiva é lida do UiConfig a CADA tick em getNotificationCadence() para refletir mudanças da
+     *  UI sem reiniciar o worker. */
+    private readonly fallbackCadence: Cadence;
     /** teto de disparos por tick (rede de segurança; o baseline-na-1ª-vez já evita flood). */
     private readonly maxDispatchesPerTick = 200;
 
     constructor(storePath: string = DEFAULT_STORE_PATH, cadence: Cadence = DEFAULT_CADENCE) {
         this.storePath = storePath;
-        this.cadence = cadence;
+        this.fallbackCadence = cadence;
         this.load();
+    }
+
+    /**
+     * Cadência dinâmica lida do UiConfig a CADA consulta (não no construtor) — uma alteração
+     * em notificationPolicy.cobrancaCadence reflete no próximo tick SEM reiniciar o worker (#1290).
+     * Cai no fallback (DEFAULT_CADENCE ou o que foi passado no construtor) se o UiConfig estiver
+     * indisponível ou com campos inválidos.
+     */
+    private getNotificationCadence(): Cadence {
+        try {
+            const c = uiConfigService.getCobrancaCadence();
+            if (
+                c &&
+                typeof c.reminderDaysBefore === 'number' &&
+                typeof c.recobrancaIntervalDays === 'number' &&
+                typeof c.escalateAfterCobrancas === 'number' &&
+                typeof c.prazoDeAceiteDays === 'number'
+            ) {
+                return {
+                    reminderDaysBefore: c.reminderDaysBefore,
+                    recobrancaIntervalDays: c.recobrancaIntervalDays,
+                    escalateAfterCobrancas: c.escalateAfterCobrancas,
+                    prazoDeAceiteDays: c.prazoDeAceiteDays,
+                };
+            }
+        } catch (e) {
+            log.warn('getNotificationCadence: falha ao ler UiConfig, usando fallback', e);
+        }
+        return this.fallbackCadence;
     }
 
     private load() {
@@ -127,11 +161,12 @@ export class DelegationFollowUpService {
             }
 
             let dispatches = 0;
+            const cadence = this.getNotificationCadence(); // (#1290) leitura dinâmica a cada tick
             for (const task of tasks) {
                 const id = String(task.id);
                 const prev = this.store[id];
                 const aceite = delegationService.getAceite(id);
-                const { event, tracking } = decideFollowUp(task, prev, nowMs, this.cadence, aceite);
+                const { event, tracking } = decideFollowUp(task, prev, nowMs, cadence, aceite);
                 this.store[id] = tracking;
 
                 if (!prev) {

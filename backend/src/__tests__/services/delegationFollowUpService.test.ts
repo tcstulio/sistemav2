@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'path';
-import { DAY_MS } from '../../services/delegationFollowUpLogic';
+import { DAY_MS, DEFAULT_CADENCE } from '../../services/delegationFollowUpLogic';
 
 const mockDoli = vi.hoisted(() => ({
     listTasksFull: vi.fn(),
@@ -9,10 +9,17 @@ const mockDoli = vi.hoisted(() => ({
 const mockDispatch = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 const mockDelegation = vi.hoisted(() => ({ getAceite: vi.fn(() => undefined as any) }));
 
+// #1290 — mock do uiConfigService para controlar a cadência em runtime. Defaults espelham
+// DEFAULT_CADENCE para preservar o comportamento dos testes existentes quando não há override.
+const mockUiConfig = vi.hoisted(() => ({
+    getCobrancaCadence: vi.fn(() => ({ ...DEFAULT_CADENCE })),
+}));
+
 vi.mock('../../services/dolibarr', () => ({ dolibarrService: mockDoli }));
 vi.mock('../../services/taskNotificationService', () => ({ dispatchTaskNotification: mockDispatch }));
 vi.mock('../../services/delegationService', () => ({ delegationService: mockDelegation }));
 vi.mock('../../services/delegationEventsService', () => ({ delegationEventsService: { logEvent: vi.fn() } }));
+vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfig }));
 vi.mock('../../utils/atomicWrite', () => ({ atomicWriteSync: vi.fn() }));
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -141,5 +148,112 @@ describe('DelegationFollowUpService.runTick', () => {
         const r = await svc.runTick(noon(12)); // atrasada na entrega, mas aguardando aceite
         expect(r.overdue).toBe(0);
         expect(mockDispatch).not.toHaveBeenCalled();
+    });
+});
+
+// #1290 — Cadência dinâmica do UiConfig.notificationPolicy.cobrancaCadence.
+// Regras de aceite: comportamento idêntico ao atual com defaults; alterar os campos do UiConfig em
+// runtime muda o intervalo do próximo follow-up sem reiniciar o worker.
+describe('DelegationFollowUpService — UiConfig.notificationCadence (#1290)', () => {
+    beforeEach(() => {
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE });
+    });
+
+    it('com UiConfig defaults o comportamento é idêntico ao hardcoded (recobranca a cada 2 dias)', async () => {
+        mockDoli.listTasksFull.mockResolvedValue([{ id: '50', date_end: dueSec(10), progress: 0, fk_user_creat: '9' }]);
+        const svc = newSvc();
+        await svc.runTick(noon(11)); // baseline
+        await svc.runTick(noon(12)); // 1ª cobrança (lastCobrancaDay undefined → Infinity)
+        const r2 = await svc.runTick(noon(13)); // 1 dia após → ainda não recobra (precisa 2)
+        expect(r2.overdue).toBe(0);
+        const r3 = await svc.runTick(noon(14)); // 2 dias após → recobra
+        expect(r3.overdue).toBe(1);
+        expect(mockUiConfig.getCobrancaCadence).toHaveBeenCalled();
+    });
+
+    it('recobrancaIntervalDays=1 no UiConfig: re-cobra no dia seguinte', async () => {
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE, recobrancaIntervalDays: 1 });
+        mockDoli.listTasksFull.mockResolvedValue([{ id: '50', date_end: dueSec(10), progress: 0, fk_user_creat: '9' }]);
+        const svc = newSvc();
+        await svc.runTick(noon(11)); // baseline
+        await svc.runTick(noon(12)); // 1ª cobrança
+        const r = await svc.runTick(noon(13)); // 1 dia após → recobra (intervalo = 1)
+        expect(r.overdue).toBe(1);
+    });
+
+    it('recobrancaIntervalDays=5 no UiConfig: NÃO re-cobra com 2 dias de intervalo', async () => {
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE, recobrancaIntervalDays: 5 });
+        mockDoli.listTasksFull.mockResolvedValue([{ id: '50', date_end: dueSec(10), progress: 0, fk_user_creat: '9' }]);
+        const svc = newSvc();
+        await svc.runTick(noon(11)); // baseline
+        await svc.runTick(noon(12)); // 1ª cobrança
+        const r2 = await svc.runTick(noon(13)); // 1 dia após → NÃO recobra (intervalo = 5)
+        expect(r2.overdue).toBe(0);
+        const r3 = await svc.runTick(noon(17)); // 5 dias após → recobra
+        expect(r3.overdue).toBe(1);
+    });
+
+    it('escalateAfterCobrancas=2 no UiConfig: escala após 2 cobranças (não após 3)', async () => {
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE, escalateAfterCobrancas: 2, recobrancaIntervalDays: 1 });
+        mockDoli.listTasksFull.mockResolvedValue([{ id: '50', date_end: dueSec(10), progress: 0, fk_user_creat: '9' }]);
+        const svc = newSvc();
+        // baseline + 1ª cobrança + re-cobrança + 2ª re-cobrança (que dispara stalled após 2 cobranças)
+        await svc.runTick(noon(11)); // baseline
+        await svc.runTick(noon(12)); // 1ª cobrança (cobrancas=1)
+        const r = await svc.runTick(noon(13)); // 2ª cobrança (cobrancas=2) + escalonamento
+        expect(r.overdue).toBe(1);
+        expect(r.stalled).toBe(1);
+    });
+
+    it('escalateAfterCobrancas=5 no UiConfig: NÃO escala com 3 cobranças', async () => {
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE, escalateAfterCobrancas: 5, recobrancaIntervalDays: 1 });
+        mockDoli.listTasksFull.mockResolvedValue([{ id: '50', date_end: dueSec(10), progress: 0, fk_user_creat: '9' }]);
+        const svc = newSvc();
+        await svc.runTick(noon(11)); // baseline
+        await svc.runTick(noon(12)); // 1ª cobrança
+        await svc.runTick(noon(13)); // 2ª cobrança
+        const r = await svc.runTick(noon(14)); // 3ª cobrança → NÃO escala (precisa 5)
+        expect(r.overdue).toBe(1);
+        expect(r.stalled).toBe(0);
+    });
+
+    it('prazoDeAceiteDays do UiConfig aparece na cadência lida em runtime', () => {
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE, prazoDeAceiteDays: 7 });
+        const svc = newSvc() as any;
+        const cadence = svc.getNotificationCadence();
+        expect(cadence.prazoDeAceiteDays).toBe(7);
+    });
+
+    it('leitura dinâmica: tick seguinte reflete mudança do UiConfig sem reiniciar worker', async () => {
+        mockDoli.listTasksFull.mockResolvedValue([{ id: '50', date_end: dueSec(10), progress: 0, fk_user_creat: '9' }]);
+        const svc = newSvc();
+        // Tick 1+2 com cadência "lenta" (intervalo 5) — admin muda em runtime
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE, recobrancaIntervalDays: 5 });
+        await svc.runTick(noon(11)); // baseline
+        await svc.runTick(noon(12)); // 1ª cobrança
+        // Admin encurta o intervalo p/ 1 dia via UI; próximo tick DEVE refletir sem restart.
+        mockUiConfig.getCobrancaCadence.mockReturnValue({ ...DEFAULT_CADENCE, recobrancaIntervalDays: 1 });
+        const r = await svc.runTick(noon(13)); // com novo intervalo 1 → recobra (1 dia após)
+        expect(r.overdue).toBe(1);
+    });
+
+    it('UiConfig inválido (campo não-numérico): cai no fallback (DEFAULT_CADENCE)', () => {
+        mockUiConfig.getCobrancaCadence.mockReturnValue({
+            reminderDaysBefore: 'lixo' as any,
+            recobrancaIntervalDays: 2,
+            escalateAfterCobrancas: 3,
+            prazoDeAceiteDays: 1,
+        });
+        const svc = newSvc() as any;
+        const cadence = svc.getNotificationCadence();
+        expect(cadence).toEqual(DEFAULT_CADENCE);
+    });
+
+    it('UiConfig lança exceção: cai no fallback (cadência passada no construtor)', () => {
+        mockUiConfig.getCobrancaCadence.mockImplementation(() => { throw new Error('disk down'); });
+        const customFallback = { reminderDaysBefore: 9, recobrancaIntervalDays: 8, escalateAfterCobrancas: 7, prazoDeAceiteDays: 6 };
+        const svc = new (require('../../services/delegationFollowUpService').DelegationFollowUpService)(STORE, customFallback) as any;
+        const cadence = svc.getNotificationCadence();
+        expect(cadence).toEqual(customFallback);
     });
 });

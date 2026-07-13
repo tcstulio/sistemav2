@@ -601,6 +601,17 @@ export class UiConfigService {
         return this.data.notificationPolicy.invoiceDueHorizonDays;
     }
 
+    /**
+     * Cadência de cobrança/lembrete/escalonamento usada pelo motor de acompanhamento de
+     * delegações (#1290). Lida em runtime a cada consulta (sem cache) — assim uma alteração
+     * na UI (notificationPolicy.cobrancaCadence) reflete no próximo tick sem reiniciar worker.
+     * O retorno é o objeto saneado (clamp aplicado em sanitizeCobrancaCadence), portanto já
+     * respeita os limites operacionais.
+     */
+    getCobrancaCadence(): CobrancaCadenceConfig {
+        return { ...this.data.notificationPolicy.cobrancaCadence };
+    }
+
     /** Aplica apenas campos válidos (sanitiza tamanho e valida a cor). Retorna a config final. */
     update(partial: UiConfigUpdate): UiConfig {
         const next: UiConfig = { ...this.data };
