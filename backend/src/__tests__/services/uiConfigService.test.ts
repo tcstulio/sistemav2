@@ -73,6 +73,17 @@ describe('uiConfigService', () => {
         expect(out2.taskAutomation.dailyRoundBudget).toBe(10);   // 5 → piso 10
     });
 
+    it('taskAutomation: judgeModel — default vazio, string trim+cap, tipo errado → default', () => {
+        const svc = new UiConfigService('ui.json');
+        expect(svc.get().taskAutomation.judgeModel).toBe(''); // default = cadeia do chat
+        const out = svc.update({ taskAutomation: { judgeModel: '  sonnet  ' } } as any);
+        expect(out.taskAutomation.judgeModel).toBe('sonnet'); // trim
+        const out2 = svc.update({ taskAutomation: { judgeModel: 'x'.repeat(200) } } as any);
+        expect(out2.taskAutomation.judgeModel.length).toBe(60); // cap
+        const out3 = svc.update({ taskAutomation: { judgeModel: 123 } } as any);
+        expect(out3.taskAutomation.judgeModel).toBe(''); // tipo errado → default (não quebra)
+    });
+
     it('taskAutomation item 29: piso de nota SANE = 5 (não aceita <5 para aprovar/mergear)', () => {
         const svc = new UiConfigService('ui.json');
         const out = svc.update({ taskAutomation: { minMergeScore: 2, minApproveScore: 1 } } as any);

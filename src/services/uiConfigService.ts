@@ -27,6 +27,9 @@ export interface TaskAutomationConfig {
     maxRoundsPerTask?: number;
     /** Teto global de rodadas de opencode por dia — segura novos dispatches ao atingir (default 200). #1154 item 23 */
     dailyRoundBudget?: number;
+    /** Modelo do Juiz (LLM-as-judge). Vazio = cadeia do chat (MiniMax). Ex.: 'sonnet'/'opus'/'haiku' =
+     * juiz roda no Claude Code CLI (gate independente do coder), com fallback pra cadeia do chat. */
+    judgeModel?: string;
 }
 
 // #1204 — Kill-switches globais das automações de fundo. Default true = nada muda.

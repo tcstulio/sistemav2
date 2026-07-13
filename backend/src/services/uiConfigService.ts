@@ -90,6 +90,11 @@ export interface TaskAutomationConfig {
     maxRoundsPerTask: number;
     /** Teto GLOBAL de rodadas de opencode POR DIA — atingido, segura novos dispatches até a virada do dia (default 200, 10-5000). #1154 item 23 */
     dailyRoundBudget: number;
+    /** Modelo do JUIZ (LLM-as-judge que gateia o auto-merge). Vazio = usa a cadeia do chat (aiService,
+     * hoje MiniMax). Setado (ex.: 'sonnet', 'opus', 'haiku', ou ID completo) = o juiz roda no Claude
+     * Code CLI com esse modelo PRIMEIRO (família diferente do coder = gate independente, evita
+     * auto-julgamento), com FALLBACK pra cadeia do chat se o Claude falhar/estiver indisponível. */
+    judgeModel: string;
 }
 
 export interface ActionGovernanceConfig {
@@ -298,7 +303,7 @@ const DEFAULTS: UiConfig = {
     customPages: [],
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
     taskNotificationsExternalEnabled: false,
-    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200 },
+    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '' },
     actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [], businessActionsEnabled: true },
     automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
     featureSwitches: { dryRunMode: false, financialCommands: false, crmContextInjection: true },
@@ -471,6 +476,8 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
         maxGateFixRounds: maxGate,
         maxRoundsPerTask: maxPerTask,
         dailyRoundBudget: dailyBudget,
+        // Modelo do juiz: string livre (o Claude CLI valida o alias/ID); trim + cap defensivo. Vazio = cadeia do chat.
+        judgeModel: typeof a.judgeModel === 'string' ? a.judgeModel.trim().slice(0, 60) : d.judgeModel,
     };
 }
 

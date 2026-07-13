@@ -15,7 +15,7 @@ export interface TaskAutomationEditorProps {
 export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAdmin, themeColor = 'indigo' }) => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [config, setConfig] = useState<TaskAutomationConfig>({ autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200 });
+    const [config, setConfig] = useState<TaskAutomationConfig>({ autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '' });
 
     useEffect(() => {
         if (!isAdmin) { setLoading(false); return; }
@@ -136,6 +136,34 @@ export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAd
                                     {config.minApproveScore}
                                 </span>
                                 <span className="text-xs text-slate-400">/10</span>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700">
+                            <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
+                                <ShieldCheck size={16} /> Modelo do Juiz (quem da a nota)
+                            </div>
+                            <p className="text-xs text-slate-500 mb-3">
+                                Vazio = usa a cadeia do chat (hoje MiniMax). Um modelo Claude aqui faz o juiz rodar no Claude Code PRIMEIRO — familia diferente do coder = gate independente (evita o modelo julgar o proprio codigo) — com fallback pra cadeia do chat se indisponivel. Requer o Claude CLI instalado.
+                            </p>
+                            <input
+                                type="text"
+                                placeholder="vazio = cadeia do chat (MiniMax) — ou: sonnet / opus / haiku / ID completo"
+                                value={config.judgeModel ?? ''}
+                                onChange={(e) => setConfig({ ...config, judgeModel: e.target.value })}
+                                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-medium text-slate-800 dark:text-slate-100"
+                            />
+                            <div className="flex flex-wrap gap-2 mt-2">
+                                {['', 'sonnet', 'opus', 'haiku'].map((m) => (
+                                    <button
+                                        key={m || 'chat'}
+                                        type="button"
+                                        onClick={() => setConfig({ ...config, judgeModel: m })}
+                                        className={`text-xs px-2 py-1 rounded border ${(config.judgeModel ?? '') === m ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'}`}
+                                    >
+                                        {m || 'chat (MiniMax)'}
+                                    </button>
+                                ))}
                             </div>
                         </div>
 
