@@ -224,10 +224,37 @@ describe('DolibarrCommercialService', () => {
             );
         });
 
-        it('returns empty array on error', async () => {
-            mockAxios.get.mockRejectedValue(new Error('fail'));
+        it('retorna [] em 404 — Dolibarr não encontrou nada (#1349, padrão listTasks/getTicket)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
             const result = await service.listInvoices();
             expect(result).toEqual([]);
+        });
+
+        it('propaga erro (5xx/timeout/rede) — NÃO devolve [] silenciosamente (#1349)', async () => {
+            mockAxios.get.mockRejectedValue(new Error('Network Error'));
+            await expect(service.listInvoices()).rejects.toThrow('Network Error');
+        });
+
+        it('propaga erro 5xx do Dolibarr (não confunde com "não existe") (#1349)', async () => {
+            // Simula o que o axios real faria com validateStatus: (s) => s === 200 || s === 404:
+            // status 500 cai FORA de validateStatus → axios joga erro com response.status=500.
+            const axiosErr = Object.assign(new Error('Request failed with status code 500'), {
+                isAxiosError: true,
+                response: { status: 500, data: { error: { message: 'DB down' } } },
+            });
+            mockAxios.get.mockRejectedValue(axiosErr);
+            await expect(service.listInvoices()).rejects.toBeDefined();
+        });
+
+        it('aceita 404 em validateStatus (axios NÃO joga) (#1349)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
+            await service.listInvoices();
+            const cfg = mockAxios.get.mock.calls[0][1];
+            expect(cfg.validateStatus(200)).toBe(true);
+            expect(cfg.validateStatus(404)).toBe(true);
+            expect(cfg.validateStatus(500)).toBe(false);
+            expect(cfg.validateStatus(401)).toBe(false);
+            expect(cfg.validateStatus(403)).toBe(false);
         });
     });
 
@@ -274,10 +301,35 @@ describe('DolibarrCommercialService', () => {
             expect(params.sqlfilters).toContain('t.ref_client');
         });
 
-        it('returns empty array on error', async () => {
-            mockAxios.get.mockRejectedValue(new Error('fail'));
+        it('retorna [] em 404 — Dolibarr não encontrou nada (#1349)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
             const result = await service.listOrders();
             expect(result).toEqual([]);
+        });
+
+        it('propaga erro (5xx/timeout/rede) — NÃO devolve [] silenciosamente (#1349)', async () => {
+            mockAxios.get.mockRejectedValue(new Error('Network Error'));
+            await expect(service.listOrders()).rejects.toThrow('Network Error');
+        });
+
+        it('propaga erro 5xx do Dolibarr (prepara evitar duplicata em prepare_create_order) (#1349)', async () => {
+            const axiosErr = Object.assign(new Error('Request failed with status code 500'), {
+                isAxiosError: true,
+                response: { status: 500, data: { error: { message: 'DB down' } } },
+            });
+            mockAxios.get.mockRejectedValue(axiosErr);
+            await expect(service.listOrders()).rejects.toBeDefined();
+        });
+
+        it('aceita 404 em validateStatus (axios NÃO joga) (#1349)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
+            await service.listOrders();
+            const cfg = mockAxios.get.mock.calls[0][1];
+            expect(cfg.validateStatus(200)).toBe(true);
+            expect(cfg.validateStatus(404)).toBe(true);
+            expect(cfg.validateStatus(500)).toBe(false);
+            expect(cfg.validateStatus(401)).toBe(false);
+            expect(cfg.validateStatus(403)).toBe(false);
         });
     });
 
@@ -332,10 +384,35 @@ describe('DolibarrCommercialService', () => {
             expect(params.sqlfilters).not.toContain('undefined');
         });
 
-        it('returns empty array on error', async () => {
-            mockAxios.get.mockRejectedValue(new Error('fail'));
+        it('retorna [] em 404 — Dolibarr não encontrou nada (#1349)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
             const result = await service.listProposals();
             expect(result).toEqual([]);
+        });
+
+        it('propaga erro (5xx/timeout/rede) — NÃO devolve [] silenciosamente (#1349)', async () => {
+            mockAxios.get.mockRejectedValue(new Error('Network Error'));
+            await expect(service.listProposals()).rejects.toThrow('Network Error');
+        });
+
+        it('propaga erro 5xx do Dolibarr (prepara evitar duplicata em prepare_create_proposal) (#1349)', async () => {
+            const axiosErr = Object.assign(new Error('Request failed with status code 500'), {
+                isAxiosError: true,
+                response: { status: 500, data: { error: { message: 'DB down' } } },
+            });
+            mockAxios.get.mockRejectedValue(axiosErr);
+            await expect(service.listProposals()).rejects.toBeDefined();
+        });
+
+        it('aceita 404 em validateStatus (axios NÃO joga) (#1349)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
+            await service.listProposals();
+            const cfg = mockAxios.get.mock.calls[0][1];
+            expect(cfg.validateStatus(200)).toBe(true);
+            expect(cfg.validateStatus(404)).toBe(true);
+            expect(cfg.validateStatus(500)).toBe(false);
+            expect(cfg.validateStatus(401)).toBe(false);
+            expect(cfg.validateStatus(403)).toBe(false);
         });
     });
 
@@ -367,10 +444,35 @@ describe('DolibarrCommercialService', () => {
             expect(params.sqlfilters).toBeUndefined();
         });
 
-        it('returns empty array on error', async () => {
-            mockAxios.get.mockRejectedValue(new Error('fail'));
+        it('retorna [] em 404 — Dolibarr não encontrou nada (#1349)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
             const result = await service.listContracts();
             expect(result).toEqual([]);
+        });
+
+        it('propaga erro (5xx/timeout/rede) — NÃO devolve [] silenciosamente (#1349)', async () => {
+            mockAxios.get.mockRejectedValue(new Error('Network Error'));
+            await expect(service.listContracts()).rejects.toThrow('Network Error');
+        });
+
+        it('propaga erro 5xx do Dolibarr (#1349)', async () => {
+            const axiosErr = Object.assign(new Error('Request failed with status code 500'), {
+                isAxiosError: true,
+                response: { status: 500, data: { error: { message: 'DB down' } } },
+            });
+            mockAxios.get.mockRejectedValue(axiosErr);
+            await expect(service.listContracts()).rejects.toBeDefined();
+        });
+
+        it('aceita 404 em validateStatus (axios NÃO joga) (#1349)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
+            await service.listContracts();
+            const cfg = mockAxios.get.mock.calls[0][1];
+            expect(cfg.validateStatus(200)).toBe(true);
+            expect(cfg.validateStatus(404)).toBe(true);
+            expect(cfg.validateStatus(500)).toBe(false);
+            expect(cfg.validateStatus(401)).toBe(false);
+            expect(cfg.validateStatus(403)).toBe(false);
         });
     });
 });
