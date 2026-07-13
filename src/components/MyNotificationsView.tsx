@@ -12,9 +12,10 @@ import { useNotificationActions } from '../hooks/useNotifications';
 import { AppNotification } from '../types';
 import { formatTime } from '../utils/dateUtils';
 import { getNotificationIcon, NOTIFICATION_TYPE_LABELS } from '../utils/notificationIcons';
+import { classifyScope, type NotificationScope } from '../utils/notificationScope';
 
 type ReadFilter = 'all' | 'unread' | 'read';
-type ScopeTab = 'personal' | 'system';
+type ScopeTab = NotificationScope;
 
 interface MyNotificationsViewProps {
     config?: any;
@@ -22,19 +23,10 @@ interface MyNotificationsViewProps {
     onRefresh?: (opts?: any) => Promise<void>;
 }
 
-function classifyScope(n: AppNotification, userId: string | undefined): ScopeTab {
-    if (n.scope) return n.scope;
-    // Fallback: derivar pela regra do backend (isVisibleTo logic)
-    if (!n.recipient) return 'system';
-    if (n.recipient === userId) return 'personal';
-    if (n.recipient === 'team' || n.recipient === 'all') return 'system';
-    if (n.event === 'agent.action' || n.event === 'stock.low' || n.event === 'custom') return 'system';
-    return 'system';
-}
-
 const MyNotificationsView: React.FC<MyNotificationsViewProps> = ({ onNavigate }) => {
     const { notifications, setNotifications, currentUser } = useDolibarr();
     const userId = currentUser?.id || currentUser?.login;
+    const currentUserId = userId !== undefined && userId !== null && userId !== '' ? Number(userId) : null;
 
     const doAction = useNotificationActions();
 
@@ -43,13 +35,13 @@ const MyNotificationsView: React.FC<MyNotificationsViewProps> = ({ onNavigate })
     const [isMarkingAll, setIsMarkingAll] = useState(false);
 
     const personalNotifs = useMemo(
-        () => notifications.filter(n => classifyScope(n, userId) === 'personal'),
-        [notifications, userId]
+        () => notifications.filter(n => classifyScope(n, currentUserId) === 'personal'),
+        [notifications, currentUserId]
     );
 
     const systemNotifs = useMemo(
-        () => notifications.filter(n => classifyScope(n, userId) === 'system'),
-        [notifications, userId]
+        () => notifications.filter(n => classifyScope(n, currentUserId) === 'system'),
+        [notifications, currentUserId]
     );
 
     const baseList = activeTab === 'personal' ? personalNotifs : systemNotifs;
