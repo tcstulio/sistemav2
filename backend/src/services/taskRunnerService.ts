@@ -2671,17 +2671,39 @@ Return ONLY a JSON:
             // o PR preso pra sempre — visto no teste autônomo #486). Agora RE-AVALIA até 3x antes de
             // desistir, e o fallback por regex também cobre o caso de NÃO vir JSON nenhum.
             let result: any = null;
+            let judgeModelUsed = '';
+            const judgeModel = (this.getAutomationConfig().judgeModel || '').trim();
             for (let parseTry = 1; parseTry <= 3 && !(result && typeof result.score === 'number'); parseTry++) {
-                const judgeResult = await aiJobService.runAndWait(
-                    () => aiService.generateReply(history, '', undefined, 'chat'),
-                    `judge-pr-${task.prNumber}${parseTry > 1 ? `-retry${parseTry}` : ''}`,
-                );
-                // Métricas de Judge (#305): registra tokens e custo USD por task.
-                try {
-                    const modelName = (judgeResult as any).model || (judgeResult as any).modelUsed;
-                    recordUsage(task.issueNumber, judgeResult.usage, modelName);
-                } catch { /* não bloqueia Judge se tracker falhar */ }
-                const reply = judgeResult.text;
+                let reply = '';
+                // Juiz CLAUDE-FIRST (config taskAutomation.judgeModel): rodar num modelo de família
+                // DIFERENTE do coder é um gate INDEPENDENTE (evita MiniMax julgar código escrito por
+                // MiniMax). FALLBACK pra a cadeia do chat (aiService) se o Claude falhar/indisponível —
+                // sem regressão do gate. Vazio ⇒ pula direto pro fallback (comportamento atual).
+                if (judgeModel && await claudeCliService.available()) {
+                    try {
+                        const cr = await claudeCliService.runText(
+                            `${history[0].parts}\n\n${judgePrompt}`,
+                            { model: judgeModel, timeoutMs: 180000 },
+                        );
+                        if (!cr.isError && cr.text && cr.text.trim()) { reply = cr.text; judgeModelUsed = `claude:${judgeModel}`; }
+                        else this.recordEvent(task, 'judge_error', `Judge: Claude(${judgeModel}) vazio/erro — fallback pra cadeia do chat`);
+                    } catch (e: any) {
+                        this.recordEvent(task, 'judge_error', `Judge: Claude(${judgeModel}) exceção — fallback: ${String(e?.message || e).slice(0, 120)}`);
+                    }
+                }
+                if (!reply) {
+                    const judgeResult = await aiJobService.runAndWait(
+                        () => aiService.generateReply(history, '', undefined, 'chat'),
+                        `judge-pr-${task.prNumber}${parseTry > 1 ? `-retry${parseTry}` : ''}`,
+                    );
+                    // Métricas de Judge (#305): registra tokens e custo USD por task.
+                    try {
+                        const modelName = (judgeResult as any).model || (judgeResult as any).modelUsed;
+                        recordUsage(task.issueNumber, judgeResult.usage, modelName);
+                    } catch { /* não bloqueia Judge se tracker falhar */ }
+                    reply = judgeResult.text;
+                    judgeModelUsed = (judgeResult as any).model || 'chat-chain';
+                }
                 const jsonMatch = reply.match(/\{[\s\S]*\}/);
                 if (jsonMatch) {
                     try { result = JSON.parse(jsonMatch[0]); } catch { /* tenta o regex abaixo */ }
@@ -2714,10 +2736,11 @@ Return ONLY a JSON:
                 // VALOR 2: persiste o veto do Juiz (só quando explicitamente booleano; ausente != reprovado).
                 if (typeof result.approved === 'boolean') task.judgeApproved = result.approved;
 
-                this.recordEvent(task, 'judge_score', `Judge: ${result.score}/10 — ${result.review?.substring(0, 200) || ''}`, {
+                this.recordEvent(task, 'judge_score', `Judge (${judgeModelUsed}): ${result.score}/10 — ${result.review?.substring(0, 200) || ''}`, {
                     score: result.score,
                     approved: !!result.approved,
                     review: result.review,
+                    model: judgeModelUsed,
                     missingCoverage: result.missing_coverage || [],
                     attempt: task.judgeAttempts,
                 });
