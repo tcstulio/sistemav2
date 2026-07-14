@@ -77,6 +77,12 @@ const UpdateSchema = z.object({
         maxGateFixRounds: z.number().optional(),
         maxRoundsPerTask: z.number().optional(),
         dailyRoundBudget: z.number().optional(),
+        // #1411/#1443: juiz Claude-first configurável. Sem isto, o Zod estripa o campo e o
+        // save do editor volta p/ '' (cadeia do chat). Rota valida só o tipo (string) —
+        // alinhado com o padrão actionGovernance/notificationPolicy (#1207/#1293): o cap
+        // 60 fica no service (sanitizeTaskAutomation → .slice(0, 60)), que TRUNCA em vez
+        // de rejeitar (AC#3: '>60 chars → sanitize corta pra 60 sem quebrar a validação').
+        judgeModel: z.string().optional(),
     }).optional(),
     // #1207: governança de ações irreversíveis — só valida forma/tipos aqui; o sanitize real
     // (clamp de threshold, filtragem de allowlist por dígitos, etc.) fica no service.
