@@ -10,6 +10,7 @@ import axios from 'axios';
 import { aiService } from './aiService';
 import { aiJobService } from './aiJobService';
 import { isQuotaError, isQuotaExhausted, markQuotaExhausted, clearQuotaExhausted, quotaStatus } from './llmQuotaState';
+import { llmHealthService } from './llmHealthService';
 import { isPeakUtcHour } from '../utils/peakWindow';
 import { socketService } from './socketService';
 import { killTree, isAlive, killOpencodeOrphans } from '../utils/processTree';
@@ -1506,24 +1507,45 @@ class TaskRunnerService {
         return this.dailyRounds.date === today ? this.dailyRounds.count : 0;
     }
 
+    /**
+     * #1420: escolhe o modelo do coder (opencode) pela SAÚDE do provedor. O env
+     * TASKRUNNER_OPENCODE_PRIMARY_MODEL é OVERRIDE de emergência (vence se setado — ex.: pin
+     * durante a janela GLM-morto). Sem override, consulta llmHealthService.getStatusByModule
+     * ('taskrunner').active: 'glm' usa o default do opencode (zai-coding-plan/glm-5.2, sem --model);
+     * 'minimax' usa o MiniMax direto. Quando o GLM esgota, o coder rota p/ MiniMax sozinho e volta
+     * quando o provedor recupera — sem o revert manual do env. (Anti-thrash — sonda de recuperação
+     * antes de remover o pin — é follow-up; hoje o pin domina, então isto fica dormente e seguro.)
+     */
+    private resolveCoderModel(): { modelArg: string; provider: string } {
+        if (OPENCODE_PRIMARY_MODEL) {
+            return { modelArg: OPENCODE_PRIMARY_MODEL, provider: /minimax/i.test(OPENCODE_PRIMARY_MODEL) ? 'minimax' : 'glm' };
+        }
+        const active = llmHealthService.getStatusByModule('taskrunner').active || 'glm';
+        return { modelArg: active === 'minimax' ? OPENCODE_FALLBACK_MODEL : '', provider: active };
+    }
+
     private async runOpencodeIsolated(task: Task): Promise<string> {
         this.accountRound(task); // #1154 item 23: conta a rodada (por task + por dia) p/ os tetos de custo
         const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`, [], task);
         this.cleanStaleLocks(gone);
         const basePrompt = `Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo.`;
-        // Comando do run PRIMÁRIO: usa --model só se TASKRUNNER_OPENCODE_PRIMARY_MODEL estiver setado
-        // (senão, o default do opencode). Durante a janela GLM-morto, aponte-o p/ o MiniMax direto.
-        const primaryCmd = OPENCODE_PRIMARY_MODEL
-            ? `opencode run --model ${OPENCODE_PRIMARY_MODEL} "${basePrompt}"`
+        // Comando do run PRIMÁRIO: modelo vem de resolveCoderModel (#1420 — saúde do provedor;
+        // env override vence). '' = default do opencode (GLM). Durante a janela GLM-morto, o pin
+        // aponta p/ o MiniMax direto.
+        const { modelArg, provider } = this.resolveCoderModel();
+        const primaryCmd = modelArg
+            ? `opencode run --model ${modelArg} "${basePrompt}"`
             : `opencode run "${basePrompt}"`;
-        const primaryIsFallback = !!OPENCODE_PRIMARY_MODEL && OPENCODE_PRIMARY_MODEL === OPENCODE_FALLBACK_MODEL;
+        const primaryIsFallback = !!modelArg && modelArg === OPENCODE_FALLBACK_MODEL;
         try {
             try {
-                return await runOpencode(
+                const out = await runOpencode(
                     primaryCmd,
                     WT_ROOT, task, OPENCODE_TIMEOUT_MS,
                     (sample) => { task.cpuMemSamples?.push(sample); },
                 );
+                llmHealthService.recordSuccess(provider); // #1420: primário OK → provedor saudável
+                return out;
             } catch (e: any) {
                 // Fallback GLM→MiniMax do CODER: para COTA/429 OU timeout/hang do opencode. Sob limite
                 // semanal o primário PENDURA até o timeout em vez de 429 — tratar o hang como infra
@@ -1532,15 +1554,20 @@ class TaskRunnerService {
                 if (!shouldFallbackOpencode(msg, { hasFallbackModel: !!OPENCODE_FALLBACK_MODEL, killRequested: !!task.killRequested, primaryIsFallback })) throw e;
                 const isTimeout = /opencode timeout/i.test(msg);
                 const cause = isTimeout ? 'Timeout/hang do modelo primário' : 'Cota do modelo primário esgotada';
+                // #1420: primário falhou por cota/hang → marca o provedor exhausted p/ as próximas
+                // tasks roteiem pro saudável (o cooldown do llmHealthService re-promove depois).
+                llmHealthService.recordQuotaError(provider, cause);
                 this.recordEvent(task, 'attempt_started', `${cause} — re-rodando o opencode com fallback ${OPENCODE_FALLBACK_MODEL}.`, { fallbackModel: OPENCODE_FALLBACK_MODEL });
                 this.emitLog(task.issueNumber, 'warn', `Opencode: ${isTimeout ? 'timeout/hang' : 'cota/429'} no modelo primário — fallback para ${OPENCODE_FALLBACK_MODEL}.`);
                 const goneMid = await this.sweepOrphanedOpencode(`fallback-run #${task.issueNumber}`, [], task);
                 this.cleanStaleLocks(goneMid);
-                return await runOpencode(
+                const fbOut = await runOpencode(
                     `opencode run --model ${OPENCODE_FALLBACK_MODEL} "${basePrompt}"`,
                     WT_ROOT, task, OPENCODE_TIMEOUT_MS,
                     (sample) => { task.cpuMemSamples?.push(sample); },
                 );
+                llmHealthService.recordSuccess('minimax'); // #1420: fallback MiniMax respondeu
+                return fbOut;
             }
         } finally {
             // O timeout-kill (killTree do bash) pode falhar e deixar o opencode ÓRFÃO VIVO — ele
