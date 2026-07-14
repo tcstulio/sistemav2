@@ -55,6 +55,12 @@ export interface ChannelStatus {
  */
 class ChannelRouter {
     private whatsAppProvider: WhatsAppProvider;
+    // #1409 — placeholder usado pelo `resolveSession` quando não há sessionId explícito
+    // e nenhuma sessão WORKING está disponível: serve apenas como alvo para a mensagem de
+    // erro "Session X not found" ficar explícita. NÃO é configurável: o default institucional
+    // vive em `uiConfig.whatsappPrimarySessionId` (#1439), e o fallback runtime é
+    // `sessionService.getFirstWorkingSessionId()`. O setter `setDefaultSessionId` foi
+    // removido (path B do issue): só era chamado em teste, sem caller de produção.
     private defaultSessionId: string = 'default';
 
     constructor() {
@@ -79,13 +85,6 @@ class ChannelRouter {
      */
     getWhatsAppProvider(): WhatsAppProvider {
         return this.whatsAppProvider;
-    }
-
-    /**
-     * Set default session ID
-     */
-    setDefaultSessionId(sessionId: string): void {
-        this.defaultSessionId = sessionId;
     }
 
     /**
