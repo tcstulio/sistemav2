@@ -474,4 +474,37 @@ describe('sanitizeNotificationPolicy', () => {
         const out = svc.update({ companyName: 'Novo' });
         expect(out.notificationPolicy.staleHours).toBe(48);
     });
+
+    // #1439 — sessionId primário do WhatsApp (default global p/ scheduler).
+    describe('whatsappPrimarySessionId (#1439)', () => {
+        it('default vazio = delega ao resolveSession em runtime', () => {
+            const svc = new UiConfigService('ui.json');
+            expect(svc.get().whatsappPrimarySessionId).toBe('');
+        });
+
+        it('round-trip do PUT persiste o valor (trim + cap 80)', () => {
+            const svc = new UiConfigService('ui.json');
+            const out = svc.update({ whatsappPrimarySessionId: '  sessao-principal  ' } as any);
+            expect(out.whatsappPrimarySessionId).toBe('sessao-principal'); // trim
+            const out2 = svc.update({ whatsappPrimarySessionId: 'x'.repeat(200) } as any);
+            expect(out2.whatsappPrimarySessionId.length).toBe(80); // cap
+            const out3 = svc.update({ whatsappPrimarySessionId: '' } as any);
+            expect(out3.whatsappPrimarySessionId).toBe(''); // vazio é válido (= resolveSession decide)
+        });
+
+        it('load() carrega valor persistido; campo ausente ou tipo errado → vazio', () => {
+            // valor válido persistido
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappPrimarySessionId: 'v4' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappPrimarySessionId).toBe('v4');
+
+            // campo ausente (arquivo antigo)
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ companyName: 'X' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappPrimarySessionId).toBe('');
+
+            // tipo errado → string vazia (não quebra)
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappPrimarySessionId: 123 }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappPrimarySessionId).toBe('');
+        });
+    });
 });

@@ -401,12 +401,17 @@ router.post('/simulate', async (req: Request, res: Response) => {
 
             if (!finalText) continue;
 
-            const msgSessionId = rule.sessionId || sessionId || 'default';
+            // #1439 — resolve o sessionId com a mesma precedência do eventRouter (rule > uiConfig > unset).
+            // O `sessionId` vindo do body da requisição (parâmetro do simulate) é um override de teste:
+            // só vale quando a regra NÃO tem sessionId próprio e o admin não configurou um default global —
+            // preservando a regra explícita como autoridade máxima e a config como default institucional.
+            const { sessionId: resolvedSessionId, source: sessionIdSource } = schedulerService.resolveRuleSessionId(rule);
+            const finalSessionId = resolvedSessionId || sessionId || '';
 
             if (mockPhone) {
                 const msg = schedulerService.scheduleMessage({
                     chatId,
-                    sessionId: msgSessionId,
+                    sessionId: finalSessionId,
                     message: finalText,
                     scheduledAt: Date.now() + (rule.delay ? rule.delay * 60 * 1000 : 0)
                 });
@@ -414,11 +419,11 @@ router.post('/simulate', async (req: Request, res: Response) => {
                 schedulerService.addLog({
                     messageId: msg.id,
                     chatId,
-                    sessionId: msgSessionId,
+                    sessionId: finalSessionId,
                     type: 'webhook',
                     status: 'pending',
                     message: finalText,
-                    metadata: { event, ruleId: rule.id, ruleName: rule.name, simulated: true }
+                    metadata: { event, ruleId: rule.id, ruleName: rule.name, simulated: true, sessionIdSource }
                 });
 
                 results.push({ ruleId: rule.id, ruleName: rule.name, messageId: msg.id, scheduled: true });
