@@ -14,7 +14,7 @@ import {
     FolderKanban, ClipboardList, Landmark, CalendarDays, Tag, MessageSquare,
     Activity, Bug, UserCircle, Mail, Bot, Clock, Receipt, Banknote,
     Calculator, Building2, ChevronDown, ChevronRight, Music, ShieldCheck, Warehouse,
-    Zap
+    Zap, HandCoins
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -63,6 +63,7 @@ const MENU_ICONS: Record<string, React.ElementType> = {
     invoices: FileText,
     payments: TrendingUp,
     tax_payments: Landmark,
+    dunning: HandCoins,
     suppliers: Truck,
     supplier_proposals: FileSignature,
     supplier_invoices: FileText,

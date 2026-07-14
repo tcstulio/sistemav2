@@ -71,6 +71,7 @@ const AuditLog = React.lazy(() => import('./admin/AuditLog').then(m => ({ defaul
 const AutomationSettings = React.lazy(() => import('./admin/AutomationSettings').then(m => ({ default: m.AutomationSettings })));
 const IssuesPage = React.lazy(() => import('./Issues/IssuesPage'));
 const PermissionsCenter = React.lazy(() => import('./admin/PermissionsCenter'));
+const Dunning = React.lazy(() => import('../pages/Dunning'));
 
 interface ViewWrapperProps {
     Component: React.ComponentType<{
@@ -312,6 +313,7 @@ const App: React.FC = () => {
 
                         <Route path="/simulator" element={<ViewWrapper Component={Simulator} viewId="simulator" />} />
                         <Route path="/centrovibe" element={<ViewWrapper Component={CentroVibeManager} viewId="centrovibe" />} />
+                        <Route path="/dunning" element={<Dunning />} />
                         <Route path="*" element={<NotFound />} />
                     </Route>
                 </Routes>
