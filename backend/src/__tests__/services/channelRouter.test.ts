@@ -65,22 +65,16 @@ describe('ChannelRouter', () => {
 
         // #1409 — `setDefaultSessionId` foi removido (path B do issue): só era chamado em
         // teste e não persistia; o default institucional vive em
-        // `uiConfig.whatsappPrimarySessionId` (#1439). A asserção equivalente abaixo
-        // verifica que o default interno do router é 'default' (observável via
-        // resolveSession → sessionService.getStatus('default') e o argumento passado
-        // para legacyMessageService.sendText quando não há sessionId explícito).
-        it('sets default session ID', async () => {
+        // `uiConfig.whatsappPrimarySessionId` (#1439). O teste abaixo preserva a
+        // asserção equivalente (default interno = 'default') via comportamento observável
+        // do `resolveSession`: sem sessionId explícito, a default é propagada ao provider.
+        // A asserção de "setter sumiu" vive centralizada em `#1409 — setDefaultSessionId
+        // removido` mais abaixo — sem duplicação.
+        it('propaga "default" como sessionId quando nenhum sessionId explícito é fornecido', async () => {
             vi.mocked(legacyMessageService.sendText).mockResolvedValue({ id: 'msg1', timestamp: Date.now() });
             mockSession.getStatus.mockReturnValue('WORKING'); // 'default' está WORKING
             await channelRouter.sendWhatsApp('5511@c.us', 'Hello');
-            // Asserseão equivalente: sem sessionId explícito, a default interna ('default') é
-            // usada e propagada ao provider. Antes verificava-se via setter — agora via
-            // comportamento observável de resolveSession.
             expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'Hello');
-            // #1409 — sanity check do path B: o setter não existe mais na API pública.
-            // Cast via `unknown as Record<string, unknown>` evita `any` (e o warning do
-            // @typescript-eslint/no-explicit-any) e ainda permite checar ausência de método.
-            expect((channelRouter as unknown as Record<string, unknown>).setDefaultSessionId).toBeUndefined();
         });
     });
 
@@ -377,34 +371,47 @@ describe('ChannelRouter', () => {
             expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'oi');
         });
 
-        it('não permite alterar o default em runtime (path B: sem setter, sem teatro)', async () => {
+        it('não permite alterar o default em runtime (path B: default interno é imutável)', async () => {
             vi.mocked(legacyMessageService.sendText).mockResolvedValue({ id: 'msg1', timestamp: Date.now() });
-            // Após qualquer tentativa de "setar" o default em runtime, ele continua 'default'.
-            // Cast via Record<string, unknown> para acessar um método que não existe mais na API tipada.
-            const routerAsMap = channelRouter as unknown as Record<string, unknown> & { setDefaultSessionId?: (id: string) => void };
-            try { routerAsMap.setDefaultSessionId?.('anything-else'); } catch { /* método removido */ }
             mockSession.getStatus.mockReturnValue('WORKING');
             mockSession.getFirstWorkingSessionId.mockReturnValue(undefined);
-            await channelRouter.sendWhatsApp('5511@c.us', 'oi');
-            expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'oi');
+
+            // Sequência realista: alterna providers, envia com sessionId explícito
+            // e depois sem — todas as chamadas sem sessionId devem cair em 'default',
+            // nunca em outro valor que alguém tenha tentado "setar".
+            channelRouter.setWhatsAppProvider('moltbot');
+            await channelRouter.sendWhatsApp('5511@c.us', 'com-x', 'sessao-x'); // explícito: 'sessao-x'
+            vi.mocked(legacyMessageService.sendText).mockClear();
+
+            channelRouter.setWhatsAppProvider('legacy');
+            await channelRouter.sendWhatsApp('5511@c.us', 'sem-1');
+            await channelRouter.sendWhatsApp('5511@c.us', 'sem-2');
+            channelRouter.setWhatsAppProvider('moltbot');
+            await channelRouter.sendWhatsApp('5511@c.us', 'sem-3');
+
+            const calls = vi.mocked(legacyMessageService.sendText).mock.calls;
+            expect(calls).toHaveLength(3);
+            expect(calls.every((c) => c[0] === 'default')).toBe(true);
         });
 
         it('referência órfã a setDefaultSessionId no código de produção: nenhuma', async () => {
-            // Grep manual: as únicas referências em backend/src eram a definição (removida)
-            // e dois callsites de teste (removidos do beforeEach + adaptados). Este teste
-            // documenta o enforcement do critério de aceite #3 do issue.
-            const fs = await import('fs');
+            // Enforcement real do critério de aceite #3 do issue (nenhuma referência órfã).
+            // `fs` está mockado em `__tests__/setup.ts` (`readdirSync → []`), por isso usamos
+            // `vi.importActual` para acessar a implementação real do módulo. Sem isso o
+            // walker não listaria nenhum arquivo e o teste passaria trivialmente.
+            // `path` não é mockado no setup, então `import` direto é seguro.
+            const fsReal = await vi.importActual<typeof import('fs')>('fs');
             const path = await import('path');
             const rootSrc = path.resolve(__dirname, '../../');
             const offenders: string[] = [];
             const walk = (dir: string) => {
-                for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                for (const entry of fsReal.readdirSync(dir, { withFileTypes: true })) {
                     const full = path.join(dir, entry.name);
                     if (entry.isDirectory()) {
                         if (entry.name === 'node_modules' || entry.name === '__tests__') continue;
                         walk(full);
                     } else if (/\.ts$/.test(entry.name) && !/\.test\.ts$/.test(entry.name)) {
-                        const content = fs.readFileSync(full, 'utf-8');
+                        const content = fsReal.readFileSync(full, 'utf-8');
                         if (/setDefaultSessionId\s*\(/.test(content)) offenders.push(full);
                     }
                 }
