@@ -261,7 +261,9 @@ class SchedulerService {
                     name: def.name,
                     event: def.event as any,
                     channel: (def.channel as 'whatsapp' | 'email') || 'whatsapp',
-                    sessionId: 'default', // Will need to be updated by user for email
+                    // #1439 — sessionId agora vem do uiConfig.whatsappPrimarySessionId (string vazia
+                    // = deixa o channelRouter.resolveSession decidir). Antes era 'default' hardcoded.
+                    sessionId: uiConfigService.get().whatsappPrimarySessionId || '',
                     message: def.message,
                     subject: def.subject,
                     delay: 0
@@ -887,6 +889,32 @@ class SchedulerService {
         log.info(`Created automation rule: ${rule.name}`);
 
         return rule;
+    }
+
+    /**
+     * #1439 — Resolve qual sessionId uma AutomationRule deve usar no momento do envio,
+     * respeitando a precedência:
+     *   1. `rule.sessionId` (se explicitamente setada na regra) — prevalece sobre o default global
+     *   2. `whatsappPrimarySessionId` do uiConfig (default global institucional)
+     *   3. string vazia — `channelRouter.resolveSession` aplica a política de fallback
+     *      (primeira sessão WORKING em runtime)
+     *
+     * Loga qual fonte foi escolhida (rule / config / unset) p/ observabilidade. Retorna o
+     * `source` junto com o sessionId p/ quem chama registrar em log/metadata.
+     */
+    resolveRuleSessionId(rule: Pick<AutomationRule, 'sessionId' | 'name' | 'id'>): { sessionId: string; source: 'rule' | 'config' | 'unset' } {
+        const ruleSessionId = (rule.sessionId || '').trim();
+        if (ruleSessionId) {
+            log.info(`Rule ${rule.name} (#${rule.id}): usando sessionId da própria regra (${ruleSessionId})`);
+            return { sessionId: ruleSessionId, source: 'rule' };
+        }
+        const configDefault = (uiConfigService.get().whatsappPrimarySessionId || '').trim();
+        if (configDefault) {
+            log.info(`Rule ${rule.name} (#${rule.id}): usando sessionId do uiConfig.whatsappPrimarySessionId (${configDefault})`);
+            return { sessionId: configDefault, source: 'config' };
+        }
+        log.info(`Rule ${rule.name} (#${rule.id}): sessionId não configurado — channelRouter.resolveSession decide em runtime`);
+        return { sessionId: '', source: 'unset' };
     }
 
     getRules(): AutomationRule[] {

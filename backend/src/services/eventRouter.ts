@@ -134,9 +134,13 @@ class EventRouter {
                     continue;
                 }
 
+                // #1439 — resolve sessionId com precedência (rule > uiConfig > unset→resolveSession)
+                // e propaga a fonte ('rule' | 'config' | 'unset') p/ o log de auditoria.
+                const { sessionId: resolvedSessionId, source: sessionIdSource } = schedulerService.resolveRuleSessionId(rule);
+
                 const msg = schedulerService.scheduleMessage({
                     chatId: destination,
-                    sessionId: rule.sessionId || 'default',
+                    sessionId: resolvedSessionId,
                     channel: rule.channel,
                     subject: rule.subject,
                     message,
@@ -146,15 +150,15 @@ class EventRouter {
                 schedulerService.addLog({
                     messageId: msg.id,
                     chatId: destination,
-                    sessionId: rule.sessionId || 'default',
+                    sessionId: resolvedSessionId,
                     channel: rule.channel,
                     type: 'webhook',
                     status: 'pending',
                     message: message.substring(0, 200),
-                    metadata: { event, ruleId: rule.id, ruleName: rule.name },
+                    metadata: { event, ruleId: rule.id, ruleName: rule.name, sessionIdSource },
                 });
 
-                log.info(`Rule ${rule.name}: scheduled message to ${destination}`);
+                log.info(`Rule ${rule.name}: scheduled message to ${destination} (sessionIdSource=${sessionIdSource})`);
             } catch (e) {
                 log.error(`Failed to execute rule ${rule.name}`, e);
             }

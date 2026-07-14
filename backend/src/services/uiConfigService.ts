@@ -169,6 +169,10 @@ export interface UiConfig {
     automationSwitches: AutomationSwitchesConfig;
     featureSwitches: FeatureSwitchesConfig;
     notificationPolicy: NotificationPolicyConfig;
+    // #1439 — sessionId "primário" do WhatsApp, default global institucional. Scheduler lê
+    // este valor quando uma AutomationRule não tem sessionId próprio; string vazia = deixa
+    // o `channelRouter.resolveSession` decidir em runtime (fallback p/ primeira sessão WORKING).
+    whatsappPrimarySessionId: string;
     // Concorrência otimista (#central-permissões): incrementa a cada save. A Central envia
     // o version que leu; o backend rejeita (409) se mudou no meio — evita last-write-wins.
     version: number;
@@ -193,6 +197,9 @@ export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'scre
     automationSwitches?: unknown;
     featureSwitches?: unknown;
     notificationPolicy?: unknown;
+    // #1439 — admin pode atualizar o default global de sessionId. Aceita string; sanitize
+    // (trim + cap) é feito em update() — string vazia é válida (= delega ao resolveSession).
+    whatsappPrimarySessionId?: string;
 };
 
 // Padrão aprovado: Responsável leva a cobrança; Interveniente acompanha; Criador é avisado do desfecho.
@@ -313,6 +320,9 @@ const DEFAULTS: UiConfig = {
         staleHours: 24,
         invoiceDueHorizonDays: 3,
     },
+    // #1439 — default global vazio: scheduler usa string vazia → channelRouter.resolveSession
+    // aplica a política de fallback (primeira sessão WORKING). Admin configura em /ui-config.
+    whatsappPrimarySessionId: '',
     version: 0,
 };
 
@@ -577,6 +587,11 @@ export class UiConfigService {
                     automationSwitches: sanitizeAutomationSwitches(parsed.automationSwitches),
                     featureSwitches: sanitizeFeatureSwitches(parsed.featureSwitches),
                     notificationPolicy: sanitizeNotificationPolicy(parsed.notificationPolicy),
+                    // #1439 — default vazio p/ arquivos antigos: campo inexistente ou string que
+                    // não seja string vira '' (= resolveSession decide em runtime).
+                    whatsappPrimarySessionId: typeof parsed.whatsappPrimarySessionId === 'string'
+                        ? parsed.whatsappPrimarySessionId.trim().slice(0, 80)
+                        : '',
                     version: typeof parsed.version === 'number' ? parsed.version : 0,
                 };
             }
@@ -648,6 +663,11 @@ export class UiConfigService {
         }
         if (partial.notificationPolicy !== undefined) {
             next.notificationPolicy = sanitizeNotificationPolicy(partial.notificationPolicy);
+        }
+        // #1439 — sessionId primário do WhatsApp. Trim + cap 80 chars (consistente com o resto
+        // do UiConfig). String vazia é válida (= delega ao resolveSession).
+        if (typeof partial.whatsappPrimarySessionId === 'string') {
+            next.whatsappPrimarySessionId = partial.whatsappPrimarySessionId.trim().slice(0, 80);
         }
         if (typeof partial.appAccessGroupId === 'string') {
             const v = partial.appAccessGroupId.trim().slice(0, 40);
