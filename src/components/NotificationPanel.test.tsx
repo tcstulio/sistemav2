@@ -1,26 +1,48 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import NotificationPanel from '../../components/NotificationPanel';
-import { AppNotification, AppView } from '../../types';
-import { useDolibarr } from '../../context/DolibarrContext';
+import NotificationPanel from './NotificationPanel';
+import { AppNotification, AppView } from '../types';
+import { useDolibarr } from '../context/DolibarrContext';
+import { classifyScope } from '../utils/notificationScope';
 
 // #1429 — Mock do contexto Dolibarr. NotificationPanel usa useDolibarr() para obter
 // o currentUser e particionar notificações em MINHAS × SISTEMA via classifyScope.
 // Mantemos um userId padrão ('u1') para que os testes legados (que não se importam
 // com escopo) continuem determinísticos — todos caem no ramo 'system' (sem recipient).
-vi.mock('../../context/DolibarrContext', () => ({
+vi.mock('../context/DolibarrContext', () => ({
     useDolibarr: vi.fn(() => ({
         currentUser: { id: 'u1', login: 'u1' },
     })),
 }));
 
-vi.mock('../../utils/dateUtils', () => ({
+vi.mock('../utils/dateUtils', () => ({
     formatTime: vi.fn((date: number) => {
         const d = new Date(date);
         return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     })
 }));
+
+// #1431 — Mock do util compartilhado de classificação de escopo. Embrulha
+// a implementação real com um `vi.fn` (spy) para que possamos:
+//   (a) preservar o comportamento atual em todos os testes já existentes
+//       (o spy delega para a implementação real via vi.importActual);
+//   (b) asserir nos novos testes de fallback que o componente importa
+//       `classifyScope` do util compartilhado '../utils/notificationScope'
+//       e o chama com (notification, userId) esperada.
+//
+// Movido para o top-level do módulo (em vez de dentro de describe) para
+// silenciar o warning do Vitest sobre hoisting e refletir a ordem real
+// de execução. vi.importActual preserva os demais exports do módulo.
+vi.mock('../utils/notificationScope', async () => {
+    const actual = await vi.importActual<typeof import('../utils/notificationScope')>(
+        '../utils/notificationScope'
+    );
+    return {
+        ...actual,
+        classifyScope: vi.fn(actual.classifyScope),
+    };
+});
 
 const mockNotifications: AppNotification[] = [
     {
@@ -517,5 +539,422 @@ describe('NotificationPanel — colapso da seção SISTEMA (#1430)', () => {
         expect(
             container.querySelector('button[aria-controls="notif-system-section"]')
         ).toBeNull();
+    });
+});
+
+// =============================================================================
+// #1431 — Cobertura dedicada dos 3 subcasos de "estados vazios" da issue.
+// Describe isolado para reprodutibilidade de falha e aderência direta à spec.
+// =============================================================================
+
+describe('NotificationPanel — estados vazios (#1431)', () => {
+    const mockOnClose = vi.fn();
+    const mockOnMarkRead = vi.fn();
+    const mockOnNavigate = vi.fn();
+    const mockOnClearAll = vi.fn();
+    const mockOnMarkAllRead = vi.fn();
+    const mockOnDismiss = vi.fn();
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useDolibarr).mockImplementation(
+            () => ({ currentUser: { id: 'u1', login: 'u1' } } as unknown as ReturnType<typeof useDolibarr>)
+        );
+        localStorage.removeItem('notif_system_collapsed');
+    });
+
+    const renderPanel = (notifications: AppNotification[]) =>
+        render(
+            <MemoryRouter>
+                <NotificationPanel
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    notifications={notifications}
+                    onMarkRead={mockOnMarkRead}
+                    onNavigate={mockOnNavigate}
+                    onClearAll={mockOnClearAll}
+                    onMarkAllRead={mockOnMarkAllRead}
+                    onDismiss={mockOnDismiss}
+                />
+            </MemoryRouter>
+        );
+
+    const personalNote = (id: string): AppNotification => ({
+        id,
+        type: 'task',
+        title: `Tarefa pessoal ${id}`,
+        message: 'm',
+        date: Date.now() - 1000,
+        read: false,
+        priority: 'medium',
+        recipient: 'u1',
+    });
+
+    const systemNote = (id: string): AppNotification => ({
+        id,
+        type: 'stock',
+        title: `Alerta sistema ${id}`,
+        message: 'm',
+        date: Date.now() - 2000,
+        read: false,
+        priority: 'high',
+    });
+
+    it('5a — só pessoais: cabeçalho SISTEMA não aparece (nem cabeçalho, nem seção)', () => {
+        renderPanel([personalNote('p1'), personalNote('p2')]);
+
+        // MINHAS aparece com a contagem correta.
+        expect(screen.getByRole('heading', { name: /MINHAS \(2\)/ })).toBeInTheDocument();
+        // SISTEMA some por completo.
+        expect(screen.queryByRole('heading', { name: /SISTEMA/ })).not.toBeInTheDocument();
+    });
+
+    it('5b — só sistema: cabeçalho MINHAS com placeholder "Tudo em dia!"', () => {
+        renderPanel([systemNote('s1'), systemNote('s2')]);
+
+        // MINHAS permanece visível com contagem 0 e placeholder inline.
+        expect(screen.getByRole('heading', { name: /MINHAS \(0\)/ })).toBeInTheDocument();
+        const personalSection = screen.getByRole('heading', { name: /MINHAS/ }).closest('section')!;
+        expect(personalSection.textContent).toContain('Tudo em dia!');
+        // SISTEMA aparece normalmente.
+        expect(screen.getByRole('heading', { name: /SISTEMA \(2\)/ })).toBeInTheDocument();
+    });
+
+    it('5c — ambas vazias: empty state global renderiza (sem seções, com placeholder central)', () => {
+        const { container } = renderPanel([]);
+
+        // Nenhuma das duas seções chega a ser renderizada.
+        expect(container.querySelector('section[data-scope="personal"]')).toBeNull();
+        expect(container.querySelector('section[data-scope="system"]')).toBeNull();
+        // E o empty state centralizado do painel aparece.
+        expect(screen.getByText('Tudo em dia!')).toBeInTheDocument();
+    });
+});
+
+// =============================================================================
+// Cobertura da issue #1431 — adiciona cenários dos 6 grupos da especificação
+// sem remover/alterar nenhuma das suítes anteriores (regra de preservação).
+// =============================================================================
+
+describe('NotificationPanel — cobertura #1431 (issue)', () => {
+    const mockOnClose = vi.fn();
+    const mockOnMarkRead = vi.fn();
+    const mockOnNavigate = vi.fn();
+    const mockOnClearAll = vi.fn();
+    const mockOnMarkAllRead = vi.fn();
+    const mockOnDismiss = vi.fn();
+    const STORAGE_KEY = 'notif_system_collapsed';
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useDolibarr).mockImplementation(
+            () => ({ currentUser: { id: 'u1', login: 'u1' } } as unknown as ReturnType<typeof useDolibarr>)
+        );
+        // Reset do localStorage mockado para que cada teste parta do estado limpo
+        // (o mock em setup.ts mantém a store entre specs).
+        localStorage.removeItem(STORAGE_KEY);
+    });
+
+    const renderPanel = (notifications: AppNotification[]) =>
+        render(
+            <MemoryRouter>
+                <NotificationPanel
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    notifications={notifications}
+                    onMarkRead={mockOnMarkRead}
+                    onNavigate={mockOnNavigate}
+                    onClearAll={mockOnClearAll}
+                    onMarkAllRead={mockOnMarkAllRead}
+                    onDismiss={mockOnDismiss}
+                />
+            </MemoryRouter>
+        );
+
+    const personalNote = (id: string, type: AppNotification['type'] = 'task', recipient = 'u1'): AppNotification => ({
+        id,
+        type,
+        title: `Pessoal ${id}`,
+        message: 'm',
+        date: Date.now() - 1000,
+        read: false,
+        priority: 'medium',
+        recipient,
+    });
+
+    const systemNote = (id: string, type: AppNotification['type'] = 'stock'): AppNotification => ({
+        id,
+        type,
+        title: `Sistema ${id}`,
+        message: 'm',
+        date: Date.now() - 2000,
+        read: false,
+        priority: 'high',
+    });
+
+    // Helper: conta quantos títulos de notificação (h4 com classe font-semibold)
+    // estão dentro de uma seção. Como o componente renderiza os itens inline
+    // (não há <NotificationItem> como subcomponente), contamos via DOM.
+    const countTitlesInSection = (container: HTMLElement, scope: 'personal' | 'system'): number => {
+        const section = container.querySelector(`section[data-scope="${scope}"]`);
+        if (!section) return 0;
+        return section.querySelectorAll('h4.text-sm.font-semibold').length;
+    };
+
+    // -----------------------------------------------------------------------------
+    // Critério 1 — Ordem: primeiro item visível é pessoal; último é de sistema.
+    // -----------------------------------------------------------------------------
+    it('ordem global: primeiro item visível é pessoal, último item visível é de sistema', () => {
+        // Datas garantem que P1 é o mais recente (1º) e S2 é o mais antigo dentro
+        // de SISTEMA. P2 mais antigo que P1; S1 mais novo que S2.
+        const notes: AppNotification[] = [
+            { ...personalNote('P1', 'task'), date: 5_000 },
+            { ...personalNote('P2', 'task'), date: 4_000 },
+            { ...systemNote('S1', 'stock'), date: 3_000 },
+            { ...systemNote('S2', 'stock'), date: 2_000 },
+        ];
+        const { container } = renderPanel(notes);
+
+        const personalSection = container.querySelector('section[data-scope="personal"]')!;
+        const systemSection = container.querySelector('section[data-scope="system"]')!;
+
+        // Primeiro h4 (item) na seção pessoal vem antes do primeiro h4 em sistema.
+        const firstPersonalTitle = personalSection.querySelector('h4.text-sm.font-semibold')!;
+        const firstSystemTitle = systemSection.querySelector('h4.text-sm.font-semibold')!;
+        // DOCUMENT_POSITION_FOLLOWING = 4 → firstSystemTitle vem depois de firstPersonalTitle.
+        expect(
+            firstPersonalTitle.compareDocumentPosition(firstSystemTitle) & Node.DOCUMENT_POSITION_FOLLOWING
+        ).toBeTruthy();
+
+        // E a ordem por data desc dentro de cada seção: P1 (5000) > P2 (4000); S1 (3000) > S2 (2000).
+        const personalTitles = Array.from(personalSection.querySelectorAll('h4.text-sm.font-semibold'))
+            .map(h => h.textContent);
+        const systemTitles = Array.from(systemSection.querySelectorAll('h4.text-sm.font-semibold'))
+            .map(h => h.textContent);
+        expect(personalTitles).toEqual(['Pessoal P1', 'Pessoal P2']);
+        expect(systemTitles).toEqual(['Sistema S1', 'Sistema S2']);
+
+        // "Primeiro item visível" = primeiro título pessoal; "último item visível" = último título sistema.
+        expect(firstPersonalTitle.textContent).toBe('Pessoal P1');
+        const lastSystemTitle = systemSection.querySelectorAll('h4.text-sm.font-semibold');
+        expect(lastSystemTitle[lastSystemTitle.length - 1].textContent).toBe('Sistema S2');
+    });
+
+    // -----------------------------------------------------------------------------
+    // Critério 2 — Contagens: MINHAS (N) e SISTEMA (N) corretas.
+    // (Cobertura legada já existente; este teste reforça com cenário misto real.)
+    // -----------------------------------------------------------------------------
+    it('contagens: cabeçalhos MINHAS (N) e SISTEMA (N) refletem o particionamento por escopo', () => {
+        const notes = [
+            personalNote('p1'),
+            personalNote('p2'),
+            personalNote('p3'),
+            personalNote('p4'),
+            systemNote('s1'),
+            systemNote('s2'),
+        ];
+        renderPanel(notes);
+
+        expect(screen.getByRole('heading', { name: /MINHAS \(4\)/ })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: /SISTEMA \(2\)/ })).toBeInTheDocument();
+    });
+
+    // -----------------------------------------------------------------------------
+    // Critério 3 — Colapso: pré-set localStorage='true' → seção SISTEMA renderiza
+    // só o cabeçalho (sem itens); expandir mostra os itens; após toggle, localStorage
+    // é atualizado.
+    // -----------------------------------------------------------------------------
+    it('colapso: localStorage pré-setado =true → seção SISTEMA sem itens, só cabeçalho', () => {
+        localStorage.setItem(STORAGE_KEY, 'true');
+        const { container } = renderPanel([
+            personalNote('p1'),
+            systemNote('s1'),
+            systemNote('s2'),
+        ]);
+
+        const systemSection = container.querySelector('section[data-scope="system"]')!;
+        expect(systemSection).not.toBeNull();
+
+        // Sem itens: nenhum h4 de título de notificação dentro da seção.
+        expect(countTitlesInSection(container, 'system')).toBe(0);
+
+        // Cabeçalho segue visível com contagem e botão [mostrar] (aria-expanded=false).
+        expect(screen.getByRole('heading', { name: /SISTEMA \(2\)/ })).toBeInTheDocument();
+        const toggle = screen.getByRole('button', { name: '[mostrar]' });
+        expect(toggle).toBeInTheDocument();
+        expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('colapso: expandir via toggle revela os itens de SISTEMA', () => {
+        localStorage.setItem(STORAGE_KEY, 'true');
+        const { container } = renderPanel([
+            personalNote('p1'),
+            systemNote('s1'),
+            systemNote('s2'),
+        ]);
+
+        // Pré-condição: sem itens
+        expect(countTitlesInSection(container, 'system')).toBe(0);
+
+        fireEvent.click(screen.getByRole('button', { name: '[mostrar]' }));
+
+        // Após expandir: ambos os itens aparecem
+        expect(screen.getByText('Sistema s1')).toBeInTheDocument();
+        expect(screen.getByText('Sistema s2')).toBeInTheDocument();
+        expect(countTitlesInSection(container, 'system')).toBe(2);
+    });
+
+    it('colapso: cada toggle atualiza localStorage (true → false → true)', () => {
+        renderPanel([personalNote('p1'), systemNote('s1')]);
+        expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+        fireEvent.click(screen.getByRole('button', { name: '[ocultar]' }));
+        expect(localStorage.getItem(STORAGE_KEY)).toBe('true');
+
+        fireEvent.click(screen.getByRole('button', { name: '[mostrar]' }));
+        expect(localStorage.getItem(STORAGE_KEY)).toBe('false');
+
+        fireEvent.click(screen.getByRole('button', { name: '[ocultar]' }));
+        expect(localStorage.getItem(STORAGE_KEY)).toBe('true');
+    });
+
+    // -----------------------------------------------------------------------------
+    // Critério 4 — classifyScope fallback: sem `scope`, recipient === userId → personal;
+    // sem `scope`, recipient !== userId → system.
+    //
+    // Estes testes exercitam o ramo de FALLBACK do util compartilhado (regression
+    // guard: se alguém remover o fallback por recipient, estes testes quebram).
+    // -----------------------------------------------------------------------------
+    it('classifyScope fallback: AppNotification SEM scope, recipient === userId → vai para MINHAS', () => {
+        // Montamos uma nota SEM campo `scope` (não setado) com recipient casando
+        // com o userId do currentUser ('u1'). Deve cair em personal via fallback.
+        const noteWithoutScope: AppNotification = {
+            id: 'np1',
+            type: 'invoice',
+            title: 'Nota sem scope, recipient=u1',
+            message: 'm',
+            date: Date.now() - 1000,
+            read: false,
+            priority: 'medium',
+            recipient: 'u1',
+            // scope explicitamente ausente (undefined)
+        };
+        expect(noteWithoutScope.scope).toBeUndefined();
+
+        renderPanel([noteWithoutScope]);
+
+        // Aparece em MINHAS (e SISTEMA some, pois não há itens de sistema).
+        expect(screen.getByRole('heading', { name: /MINHAS \(1\)/ })).toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: /SISTEMA/ })).not.toBeInTheDocument();
+        expect(screen.getByText('Nota sem scope, recipient=u1')).toBeInTheDocument();
+    });
+
+    it('classifyScope fallback: AppNotification SEM scope, recipient !== userId → vai para SISTEMA', () => {
+        // Mesma nota mas com recipient diferente do userId do currentUser ('u1').
+        // Sem scope definido → fallback por recipient → 'system' (recipient não casa).
+        const noteWithoutScope: AppNotification = {
+            id: 'np2',
+            type: 'invoice',
+            title: 'Nota sem scope, recipient=outro',
+            message: 'm',
+            date: Date.now() - 1000,
+            read: false,
+            priority: 'medium',
+            recipient: 'outro-user',
+            // scope explicitamente ausente
+        };
+        expect(noteWithoutScope.scope).toBeUndefined();
+
+        renderPanel([noteWithoutScope]);
+
+        // Aparece em SISTEMA (e MINHAS mostra placeholder "Tudo em dia!").
+        expect(screen.getByRole('heading', { name: /SISTEMA \(1\)/ })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: /MINHAS \(0\)/ })).toBeInTheDocument();
+        const personalSection = screen.getByRole('heading', { name: /MINHAS/ }).closest('section')!;
+        expect(personalSection.textContent).toContain('Tudo em dia!');
+        expect(screen.getByText('Nota sem scope, recipient=outro')).toBeInTheDocument();
+    });
+
+    // -----------------------------------------------------------------------------
+    // Critério 6 — Filtro por tipo: alternar "Tickets" deve mostrar apenas itens
+    // pessoal E de sistema do tipo 'ticket'.
+    // -----------------------------------------------------------------------------
+    it('filtro "Tickets": apenas itens pessoal e de sistema do tipo ticket aparecem', () => {
+        const notes: AppNotification[] = [
+            { ...personalNote('p-tk', 'ticket'), title: 'Ticket pessoal' },
+            { ...personalNote('p-inv', 'invoice'), title: 'Fatura pessoal' },
+            { ...personalNote('p-stk', 'stock'), title: 'Estoque pessoal' },
+            { ...systemNote('s-tk', 'ticket'), title: 'Ticket sistema' },
+            { ...systemNote('s-inv', 'invoice'), title: 'Fatura sistema' },
+            { ...systemNote('s-stk', 'stock'), title: 'Estoque sistema' },
+        ];
+        renderPanel(notes);
+
+        // Antes do filtro: 3 pessoal + 3 sistema
+        expect(screen.getByRole('heading', { name: /MINHAS \(3\)/ })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: /SISTEMA \(3\)/ })).toBeInTheDocument();
+
+        // Abre o filtro e seleciona "Tickets"
+        const filterToggle = screen.getAllByRole('button')
+            .find(b => b.querySelector('svg.lucide-funnel'));
+        expect(filterToggle).toBeDefined();
+        fireEvent.click(filterToggle!);
+        fireEvent.click(screen.getByRole('button', { name: 'Tickets' }));
+
+        // Após filtro: 1 pessoal-ticket + 1 sistema-ticket
+        expect(screen.getByRole('heading', { name: /MINHAS \(1\)/ })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: /SISTEMA \(1\)/ })).toBeInTheDocument();
+
+        // Itens ticket (pessoal E de sistema) aparecem
+        expect(screen.getByText('Ticket pessoal')).toBeInTheDocument();
+        expect(screen.getByText('Ticket sistema')).toBeInTheDocument();
+
+        // Os outros somem (filtro aplicado ANTES do particionamento por escopo).
+        expect(screen.queryByText('Fatura pessoal')).not.toBeInTheDocument();
+        expect(screen.queryByText('Estoque pessoal')).not.toBeInTheDocument();
+        expect(screen.queryByText('Fatura sistema')).not.toBeInTheDocument();
+        expect(screen.queryByText('Estoque sistema')).not.toBeInTheDocument();
+    });
+
+    // -----------------------------------------------------------------------------
+    // Critério extra — `classifyScope` é importado do util compartilhado.
+    // Verificamos via spy do módulo (vi.mock no top-level do arquivo) que o
+    // componente CONSOME o export de '../utils/notificationScope'. Se alguém
+    // trocar por uma implementação inline (e remover a importação), este teste
+    // quebra — porque o spy pararia de ser chamado.
+    // -----------------------------------------------------------------------------
+    describe('classifyScope é importado do util compartilhado (mock do módulo)', () => {
+        // O vi.mock('../utils/notificationScope') é declarado no top-level
+        // do arquivo (junto dos outros mocks). Aqui só inspecionamos o spy
+        // através do binding de import ESM normal — sem require dinâmico,
+        // que não funciona em modo ESM do Vitest.
+        const classifyScopeMock = vi.mocked(classifyScope);
+
+        beforeEach(() => {
+            classifyScopeMock.mockClear();
+        });
+
+        it('classifyScope do util compartilhado é invocado durante o particionamento por escopo', () => {
+            const notes = [
+                personalNote('p1'),
+                systemNote('s1'),
+            ];
+            renderPanel(notes);
+
+            // O componente particionou usando o util spy: ambos os cabeçalhos visíveis com N corretos.
+            expect(screen.getByRole('heading', { name: /MINHAS \(1\)/ })).toBeInTheDocument();
+            expect(screen.getByRole('heading', { name: /SISTEMA \(1\)/ })).toBeInTheDocument();
+
+            // O spy foi invocado pelo menos uma vez por nota.
+            expect(classifyScopeMock).toHaveBeenCalled();
+            expect(classifyScopeMock.mock.calls.length).toBeGreaterThanOrEqual(notes.length);
+
+            // E a chamada foi com a (notification, userId) esperada — evidência de
+            // que o componente importa do util compartilhado e delega o trabalho.
+            const firstCallArgs = classifyScopeMock.mock.calls[0];
+            expect(firstCallArgs[0]).toBeDefined();
+            // userId passado como segundo argumento bate com o currentUser.id do mock do contexto.
+            expect(firstCallArgs[1]).toBe('u1');
+        });
     });
 });
