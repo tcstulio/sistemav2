@@ -3525,6 +3525,16 @@ Return ONLY a JSON:
                 if (task.branch) {
                     this.recordEvent(task, 'task_started', 'Auto-merge: rebaseando com main...');
                     await gitFetchWithRetry(['fetch', 'origin', 'main'], { timeout: 30000 }, 3, () => !!task.killRequested);
+                    // #1444: garante worktree LIMPO antes do checkout/rebase. Resíduo não-commitado
+                    // (de operação interrompida por restart/crash/nodemon-reload) fazia o `git rebase`
+                    // falhar com "cannot rebase: You have unstaged changes" e ESTACIONAR um PR JÁ
+                    // aprovado (juiz OK + CI verde) para revisão humana — o incidente do #1435. O
+                    // trabalho real do PR já está commitado e pushado na branch; o que está solto no
+                    // worktree é lixo — descartar é seguro (estamos sob withWorktreeLock, nenhuma
+                    // outra task usa o worktree agora). Cobre tanto o auto-merge fresco quanto o
+                    // resumePendingMerges (que foi onde o #1435 estacionou).
+                    await git(['reset', '--hard', 'HEAD'], { timeout: 15000, cwd: WT_ROOT }).catch(() => { /* worktree pode estar sem HEAD válido; o checkout abaixo resolve */ });
+                    await git(['clean', '-fd'], { timeout: 15000, cwd: WT_ROOT }).catch(() => { /* best-effort */ });
                     await git(['checkout', task.branch], { timeout: 15000, cwd: WT_ROOT });
                     try {
                         await git(['rebase', 'origin/main'], { timeout: 60000, cwd: WT_ROOT });
