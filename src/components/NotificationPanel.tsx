@@ -6,6 +6,7 @@ import { X, Bell, CheckCircle, Filter, ExternalLink } from 'lucide-react';
 import { formatTime } from '../utils/dateUtils';
 import { getNotificationIcon } from '../utils/notificationIcons';
 import { classifyScope } from '../utils/notificationScope';
+import { safeStorage } from '../utils/safeStorage';
 
 interface NotificationPanelProps {
     isOpen: boolean;
@@ -38,6 +39,21 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
     const userId = currentUser?.id || currentUser?.login;
     const [activeFilter, setActiveFilter] = useState<FilterType>('all');
     const [showFilters, setShowFilters] = useState(false);
+
+    // #1430: colapso da seção SISTEMA com persistência em localStorage.
+    // Estado inicial lido de 'notif_system_collapsed' (default false = expandido).
+    // Usamos safeStorage para lidar com storage indisponível (modo privado, SSR).
+    const [systemCollapsed, setSystemCollapsed] = useState<boolean>(() => {
+        return safeStorage.getItem('notif_system_collapsed') === 'true';
+    });
+
+    const toggleSystemCollapsed = () => {
+        setSystemCollapsed(prev => {
+            const next = !prev;
+            safeStorage.setItem('notif_system_collapsed', String(next));
+            return next;
+        });
+    };
 
     // #1429: filtro por tipo aplica ANTES da divisão por escopo (MINHAS × SISTEMA).
     // Primeiro aplicamos o filtro de tipo e ordenamos por data desc; depois o
@@ -199,16 +215,34 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen, onClose, 
                             {/* #1429: seção SISTEMA fica DEPOIS e só renderiza quando há itens.
                                 Se systemNotifs está vazio, ocultamos totalmente (nem cabeçalho). */}
                             {systemNotifs.length > 0 && (
-                                <section data-scope="system" aria-labelledby="notification-panel-system-heading">
+                                <section
+                                    id="notif-system-section"
+                                    data-scope="system"
+                                    aria-labelledby="notification-panel-system-heading"
+                                >
                                     <h4
                                         id="notification-panel-system-heading"
-                                        className="text-[10px] uppercase tracking-wider font-bold text-slate-500 dark:text-slate-400 px-1 mb-1.5"
+                                        className="text-[10px] uppercase tracking-wider font-bold text-slate-500 dark:text-slate-400 px-1 mb-1.5 flex items-center gap-2"
                                     >
-                                        SISTEMA ({systemNotifs.length})
+                                        <span>SISTEMA ({systemNotifs.length})</span>
+                                        {/* #1430: toggle colapsa SOMENTE os itens; o cabeçalho
+                                            (com a contagem) permanece visível para o usuário
+                                            poder expandir de novo. */}
+                                        <button
+                                            type="button"
+                                            onClick={toggleSystemCollapsed}
+                                            aria-expanded={!systemCollapsed}
+                                            aria-controls="notif-system-section"
+                                            className="text-[10px] font-medium normal-case text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300"
+                                        >
+                                            [{systemCollapsed ? 'mostrar' : 'ocultar'}]
+                                        </button>
                                     </h4>
-                                    <div className="space-y-2">
-                                        {systemNotifs.map(renderNotificationItem)}
-                                    </div>
+                                    {!systemCollapsed && (
+                                        <div className="space-y-2">
+                                            {systemNotifs.map(renderNotificationItem)}
+                                        </div>
+                                    )}
                                 </section>
                             )}
                         </div>
