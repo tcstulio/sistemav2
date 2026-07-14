@@ -634,6 +634,18 @@ export class UiConfigService {
         return this.data.notificationPolicy.invoiceDueHorizonDays;
     }
 
+    /**
+     * Cadência de cobrança configurada (#1406). Dial PRIORITÁRIO do motor de
+     * delegações: mudanças no PUT /api/ui-config passam a valer no próximo tick
+     * (sem restart). Sempre devolve um objeto saneado — `load()` aplica o
+     * `sanitizeNotificationPolicy` que preenche os defaults de `cobrancaCadence`
+     * mesmo em arquivos antigos/parciais. Retorna um espelho raso para que o
+     * caller não consiga mutar o estado interno por acidente.
+     */
+    getCobrancaCadence(): CobrancaCadenceConfig {
+        return { ...this.data.notificationPolicy.cobrancaCadence };
+    }
+
     /** Aplica apenas campos válidos (sanitiza tamanho e valida a cor). Retorna a config final. */
     update(partial: UiConfigUpdate): UiConfig {
         const next: UiConfig = { ...this.data };
