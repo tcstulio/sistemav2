@@ -67,23 +67,22 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
     }
 
     async searchThirdParty(query: string): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}thirdparties`;
-            const sqlfilters = `(${buildLikeFilter('t.nom', query)}) or (${buildLikeFilter('t.name_alias', query)}) or (${buildLikeFilter('t.email', query)})`;
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}thirdparties`;
+        const sqlfilters = `(${buildLikeFilter('t.nom', query)}) or (${buildLikeFilter('t.name_alias', query)}) or (${buildLikeFilter('t.email', query)})`;
 
-            const response = await axios.get(url, {
-                headers,
-                params: { sqlfilters, limit: 5 },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
+        // #1350: Dolibarr devolve 404 quando NÃO há resultados para o termo → tratamos como []
+        // legitimamente. 5xx/401/403/timeout/rede NÃO são silenciados: devem propagar para que
+        // o agente não confunda "erro de API" com "cliente não cadastrado".
+        const response = await axios.get(url, {
+            headers,
+            params: { sqlfilters, limit: 5 },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
 
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('searchThirdParty Error', error);
-            return [];
-        }
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 
     async getCustomerContext(thirdPartyId: string): Promise<string> {
@@ -171,61 +170,54 @@ export class DolibarrThirdPartiesService extends DolibarrServiceBase {
     }
 
     async listSuppliers(search?: string): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}thirdparties`;
-            let sqlfilters = `(t.fournisseur:=:1)`;
-            if (search) {
-                sqlfilters += ` and ((${buildLikeFilter('t.nom', search)}) or (${buildLikeFilter('t.name_alias', search)}))`;
-            }
-            const response = await axios.get(url, {
-                headers,
-                params: { sqlfilters, limit: 10 },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listSuppliers Error', error);
-            return [];
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}thirdparties`;
+        let sqlfilters = `(t.fournisseur:=:1)`;
+        if (search) {
+            sqlfilters += ` and ((${buildLikeFilter('t.nom', search)}) or (${buildLikeFilter('t.name_alias', search)}))`;
         }
+        // #1350: 404 do Dolibarr = "sem fornecedores para o filtro" → [] legitimamente. Erros
+        // reais (5xx/timeout/auth) propagam: listSuppliers alimenta prepare_create_supplier_*;
+        // um [] silencioso em falha de API poderia fazer o agente criar duplicata.
+        const response = await axios.get(url, {
+            headers,
+            params: { sqlfilters, limit: 10 },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 
     async listContacts(search?: string): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}contacts`;
-            let sqlfilters = undefined;
-            if (search) {
-                sqlfilters = `(${buildLikeFilter('t.firstname', search)}) or (${buildLikeFilter('t.lastname', search)}) or (${buildLikeFilter('t.email', search)})`;
-            }
-            const response = await axios.get(url, {
-                headers,
-                params: { sqlfilters, limit: 10 },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listContacts Error', error);
-            return [];
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}contacts`;
+        let sqlfilters = undefined;
+        if (search) {
+            sqlfilters = `(${buildLikeFilter('t.firstname', search)}) or (${buildLikeFilter('t.lastname', search)}) or (${buildLikeFilter('t.email', search)})`;
         }
+        // #1350: 404 = "sem contatos para o filtro" → [] legitimamente. Erros reais propagam.
+        const response = await axios.get(url, {
+            headers,
+            params: { sqlfilters, limit: 10 },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 
     async listCategories(type?: string): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}categories`;
-            const response = await axios.get(url, {
-                headers,
-                params: { type: type || undefined, limit: 20 },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listCategories Error', error);
-            return [];
-        }
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}categories`;
+        // #1350: 404 = "sem categorias" → [] legitimamente. Erros reais propagam.
+        const response = await axios.get(url, {
+            headers,
+            params: { type: type || undefined, limit: 20 },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 }

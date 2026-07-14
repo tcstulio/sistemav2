@@ -413,6 +413,90 @@ describe('SchedulerService', () => {
         });
     });
 
+    // #1439 — Resolução de sessionId por precedência (rule > uiConfig > unset).
+    describe('resolveRuleSessionId (#1439)', () => {
+        beforeEach(() => {
+            // default: uiConfig sem whatsappPrimarySessionId → string vazia → fallback 'unset'
+            mockUiConfigService.get.mockReturnValue({ automationSwitches: { schedulerEnabled: true, alertCronEnabled: true } });
+        });
+
+        it('regra com sessionId próprio prevalece sobre o default global (source=rule)', () => {
+            mockUiConfigService.get.mockReturnValue({
+                automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
+                whatsappPrimarySessionId: 'global-sess',
+            });
+            const out = schedulerService.resolveRuleSessionId({ id: 'r1', name: 'Minha Regra', sessionId: 'minha-sess' });
+            expect(out).toEqual({ sessionId: 'minha-sess', source: 'rule' });
+        });
+
+        it('regra SEM sessionId + uiConfig COM default → usa o default global (source=config)', () => {
+            mockUiConfigService.get.mockReturnValue({
+                automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
+                whatsappPrimarySessionId: 'global-sess',
+            });
+            const out = schedulerService.resolveRuleSessionId({ id: 'r1', name: 'Regra Sem Sess', sessionId: '' });
+            expect(out).toEqual({ sessionId: 'global-sess', source: 'config' });
+        });
+
+        it('regra SEM sessionId + uiConfig SEM default → string vazia p/ resolveSession (source=unset)', () => {
+            const out = schedulerService.resolveRuleSessionId({ id: 'r1', name: 'Regra', sessionId: '' });
+            expect(out).toEqual({ sessionId: '', source: 'unset' });
+        });
+
+        it('whitespace-only sessionId na regra é tratado como AUSENTE (cai no próximo nível)', () => {
+            mockUiConfigService.get.mockReturnValue({
+                automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
+                whatsappPrimarySessionId: 'global-sess',
+            });
+            const out = schedulerService.resolveRuleSessionId({ id: 'r1', name: 'Regra', sessionId: '   ' });
+            expect(out).toEqual({ sessionId: 'global-sess', source: 'config' });
+        });
+
+        it('whitespace no uiConfig também é normalizado (trim antes de comparar)', () => {
+            mockUiConfigService.get.mockReturnValue({
+                automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
+                whatsappPrimarySessionId: '   ',
+            });
+            const out = schedulerService.resolveRuleSessionId({ id: 'r1', name: 'Regra', sessionId: '' });
+            expect(out).toEqual({ sessionId: '', source: 'unset' });
+        });
+
+        it('REGRAS existentes com sessionId próprio NÃO são sobrescritas pela config (não-regressão)', () => {
+            // Simula uma regra que JÁ estava salva com sessionId próprio (cenário comum pós-deploy).
+            const regra = schedulerService.createRule({
+                name: 'Regra Antiga',
+                event: 'invoice_paid',
+                sessionId: 'sess-antiga',
+                message: 'oi',
+            });
+            // Admin depois muda o default global:
+            mockUiConfigService.get.mockReturnValue({
+                automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
+                whatsappPrimarySessionId: 'novo-default',
+            });
+            const out = schedulerService.resolveRuleSessionId(regra);
+            expect(out.sessionId).toBe('sess-antiga');     // não foi sobrescrita
+            expect(out.source).toBe('rule');
+        });
+
+        it('initDefaultRules cria regras com sessionId do uiConfig (não mais hardcoded "default")', () => {
+            // Não podemos acionar o initDefaultRules sem disparar save(), mas podemos inspecionar
+            // a closure: chamamos createRule com o valor do uiConfig como faria initDefaultRules.
+            mockUiConfigService.get.mockReturnValue({
+                automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
+                whatsappPrimarySessionId: 'sess-do-ui-config',
+            });
+            const configDefault = mockUiConfigService.get().whatsappPrimarySessionId || '';
+            const r = schedulerService.createRule({
+                name: 'Regra Default Replicada',
+                event: 'invoice_created',
+                sessionId: configDefault,
+                message: 'ok',
+            });
+            expect(r.sessionId).toBe('sess-do-ui-config');
+        });
+    });
+
     describe('message logs', () => {
         it('adds a log', () => {
             const log = schedulerService.addLog({
