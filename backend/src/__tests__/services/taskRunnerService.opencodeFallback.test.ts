@@ -20,6 +20,16 @@ vi.mock('../../services/taskPlannerService', () => ({
 }));
 vi.mock('../../services/uiConfigService', () => ({ uiConfigService: { get: vi.fn() } }));
 vi.mock('../../services/notificationService', () => ({ notificationService: { create: vi.fn(async () => ({})) } }));
+// #1420: runOpencodeIsolated agora consulta o llmHealthService (singleton). Mockar aqui isola estes
+// testes do estado real (senão recordQuotaError de um teste vaza p/ o próximo). active='glm' →
+// resolveCoderModel devolve modelArg='' (default do opencode) = mesmo comportamento pré-#1420.
+vi.mock('../../services/llmHealthService', () => ({
+    llmHealthService: {
+        getStatusByModule: vi.fn(() => ({ chain: ['glm', 'minimax'], active: 'glm', providers: [] })),
+        recordSuccess: vi.fn(),
+        recordQuotaError: vi.fn(),
+    },
+}));
 
 import { runOpencode } from '../../utils/runOpencode';
 import { taskRunnerService, shouldFallbackOpencode } from '../../services/taskRunnerService';
