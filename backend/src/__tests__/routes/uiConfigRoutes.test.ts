@@ -355,6 +355,156 @@ describe('uiConfigRoutes', () => {
         expect(mockUiConfigService.update).toHaveBeenCalledWith({ notificationPolicy: { staleHours: 72 } });
     });
 
+    // #1443: juiz Claude-first (#1411) — o Zod do taskAutomation estripava `judgeModel` (chave
+    // não listada no schema) e o save do editor voltava p/ '' (cadeia do chat). Agora `judgeModel`
+    // sobrevive ao .parse() e chega intacto no service (round-trip PUT → GET).
+    it('#1443: PUT com taskAutomation.judgeModel propaga intacto (não estripado pelo Zod)', async () => {
+        const custom = { maxJudgeRounds: 5, judgeModel: 'opus' };
+        mockUiConfigService.update.mockReturnValueOnce({ taskAutomation: { ...custom, minMergeScore: 8 } });
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: custom });
+        expect(res.status).toBe(200);
+        const sent = mockUiConfigService.update.mock.calls[0][0].taskAutomation;
+        expect(sent).toMatchObject({ judgeModel: 'opus', maxJudgeRounds: 5 });
+        expect(res.body.taskAutomation).toMatchObject({ judgeModel: 'opus' });
+    });
+
+    it('#1443: PUT com judgeModel vazio ("") propaga intacto (limpar juiz → cadeia do chat)', async () => {
+        const custom = { maxJudgeRounds: 5, judgeModel: '' };
+        mockUiConfigService.update.mockReturnValueOnce({ taskAutomation: { ...custom, minMergeScore: 8 } });
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: custom });
+        expect(res.status).toBe(200);
+        const sent = mockUiConfigService.update.mock.calls[0][0].taskAutomation;
+        expect(sent).toMatchObject({ judgeModel: '' });
+        expect(res.body.taskAutomation).toMatchObject({ judgeModel: '' });
+    });
+
+    it('#1443: PUT com judgeModel > 60 chars NÃO quebra a validação — Zod passa pro service, que trunca p/ 60 (AC#3)', async () => {
+        // Padrão do projeto (#1207/#1293): a rota valida só forma/tipos; o cap fica no service.
+        // .slice(0, 60) TRUNCA (não rejeita) → put não pode devolver 400 p/ 61 chars.
+        const long = 'x'.repeat(61);
+        const truncated = 'x'.repeat(60);
+        // Mock do update simula o sanitize real: trunca judgeModel > 60 antes de devolver.
+        mockUiConfigService.update.mockImplementationOnce((p: any) => ({
+            ...p,
+            taskAutomation: {
+                ...(p.taskAutomation || {}),
+                judgeModel: typeof p.taskAutomation?.judgeModel === 'string'
+                    ? p.taskAutomation.judgeModel.trim().slice(0, 60)
+                    : truncated,
+            },
+        }));
+        const res = await request(app).put('/api/ui-config').send({
+            taskAutomation: { judgeModel: long },
+        });
+        expect(res.status).toBe(200);
+        // O Zod passou intacto p/ o service (não estripa + não rejeita).
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ taskAutomation: { judgeModel: long } });
+        // O service (mock simulando sanitize real) trunca p/ 60 antes de responder.
+        expect(res.body.taskAutomation).toMatchObject({ judgeModel: truncated });
+    });
+
+    it('#1443: PUT com judgeModel exatamente 60 chars passa intacto p/ o service', async () => {
+        // Sem .max(60) na rota: o cap é responsabilidade do service. 60 chars passa (sanitize é no-op).
+        const custom = { judgeModel: 'x'.repeat(60) };
+        mockUiConfigService.update.mockReturnValueOnce({ taskAutomation: { ...custom } });
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: custom });
+        expect(res.status).toBe(200);
+        const sent = mockUiConfigService.update.mock.calls[0][0].taskAutomation;
+        expect(sent).toMatchObject({ judgeModel: 'x'.repeat(60) });
+    });
+
+    it('#1443: PUT com judgeModel tipo errado (number) retorna 400', async () => {
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: { judgeModel: 123 } });
+        expect(res.status).toBe(400);
+        expect(mockUiConfigService.update).not.toHaveBeenCalled();
+    });
+
+    // #1443: o editor de Automações manda judgeModel junto dos demais campos. Verifica que
+    // TODOS os campos de taskAutomation (incluindo judgeModel) sobrevivem ao .parse() sem
+    // regredir (round-trip completo).
+    it('#1443: PUT com judgeModel + demais campos de taskAutomation propaga TUDO intacto', async () => {
+        const custom = {
+            autoPlay: true,
+            autoMerge: true,
+            autoDecompose: false,
+            minMergeScore: 8,
+            minApproveScore: 9,
+            maxJudgeRounds: 5,
+            maxGateFixRounds: 4,
+            maxRoundsPerTask: 30,
+            dailyRoundBudget: 500,
+            judgeModel: 'sonnet',
+        };
+        mockUiConfigService.update.mockReturnValueOnce({ taskAutomation: custom });
+        // A rota lê get().taskAutomation.minMergeScore ANTES do save (#1168), então o mock de
+        // get() precisa retornar taskAutomation p/ não estourar "Cannot read properties of undefined".
+        mockUiConfigService.get.mockReturnValueOnce({ taskAutomation: { minMergeScore: 8 } });
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: custom });
+        expect(res.status).toBe(200);
+        const sent = mockUiConfigService.update.mock.calls[0][0].taskAutomation;
+        expect(sent).toMatchObject(custom);
+        expect(res.body.taskAutomation).toMatchObject(custom);
+    });
+
+    // #1443: AC#5 — round-trip PUT→GET real (não só nível-rota). Os mocks de get/update
+    // compartilham estado via closure 'stored' e o update aplica o sanitize real (trim+slice 60),
+    // simulando o uiConfigService de ponta a ponta: PUT grava, GET reflete o que foi persistido.
+    it('#1443: round-trip PUT→GET real persiste judgeModel; >60 chars é truncado pelo service (não rejeitado pela rota)', async () => {
+        const stored: { taskAutomation: { judgeModel: string; minMergeScore: number } } = {
+            taskAutomation: { judgeModel: '', minMergeScore: 8 },
+        };
+        // get() devolve uma cópia (defesa contra mutação externa do estado).
+        mockUiConfigService.get.mockImplementation(() => ({
+            taskAutomation: { ...stored.taskAutomation },
+        }));
+        // update aplica o sanitize real (espelha sanitizeTaskAutomation do uiConfigService):
+        // trim + slice(0, 60) para judgeModel. Estado é mutado in-place p/ simular persistência.
+        mockUiConfigService.update.mockImplementation((p: any) => {
+            const merged = { ...stored.taskAutomation, ...(p.taskAutomation || {}) };
+            if (typeof merged.judgeModel === 'string') {
+                merged.judgeModel = merged.judgeModel.trim().slice(0, 60);
+            }
+            stored.taskAutomation = merged;
+            return { taskAutomation: { ...stored.taskAutomation } };
+        });
+
+        try {
+            // 1) AC#1: PUT com judgeModel='opus' → GET subsequente retorna 'opus' (não '').
+            const putRes1 = await request(app).put('/api/ui-config').send({
+                taskAutomation: { judgeModel: 'opus' },
+            });
+            expect(putRes1.status).toBe(200);
+            const getRes1 = await request(app).get('/api/ui-config');
+            expect(getRes1.status).toBe(200);
+            expect(getRes1.body.taskAutomation.judgeModel).toBe('opus');
+
+            // 2) AC#3: PUT com judgeModel > 60 chars NÃO quebra (200); service trunca p/ 60.
+            //    O GET subsequente deve refletir o valor truncado, não o input original.
+            const longModel = 'y'.repeat(75);
+            const putRes2 = await request(app).put('/api/ui-config').send({
+                taskAutomation: { judgeModel: longModel },
+            });
+            expect(putRes2.status).toBe(200);
+            const getRes2 = await request(app).get('/api/ui-config');
+            expect(getRes2.status).toBe(200);
+            expect(getRes2.body.taskAutomation.judgeModel.length).toBe(60);
+            expect(getRes2.body.taskAutomation.judgeModel).toBe('y'.repeat(60));
+
+            // 3) AC#2: PUT com judgeModel='' (limpar) → GET subsequente persiste '' (volta p/ chat).
+            const putRes3 = await request(app).put('/api/ui-config').send({
+                taskAutomation: { judgeModel: '' },
+            });
+            expect(putRes3.status).toBe(200);
+            const getRes3 = await request(app).get('/api/ui-config');
+            expect(getRes3.status).toBe(200);
+            expect(getRes3.body.taskAutomation.judgeModel).toBe('');
+        } finally {
+            // Restaura o comportamento default dos mocks p/ não vazar p/ testes seguintes.
+            mockUiConfigService.get.mockImplementation(() => ({ companyName: 'CoolGroove', logoText: 'D', themeColor: 'indigo' }));
+            mockUiConfigService.update.mockImplementation((p: any) => ({ companyName: 'CoolGroove', logoText: 'D', themeColor: 'indigo', ...p }));
+        }
+    });
+
     it('#1293: PUT com tipo errado em notificationPolicy.cobrancaCadence retorna 400', async () => {
         const res = await request(app).put('/api/ui-config').send({
             notificationPolicy: { cobrancaCadence: { reminderDaysBefore: 'cinco' } },

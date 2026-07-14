@@ -46,9 +46,38 @@ class ClaudeCliService {
             child.on('close', (code) => {
                 clearTimeout(timer);
                 if (code === 0) resolve(out);
-                else reject(new Error(`claude saiu com código ${code}: ${(err || out).slice(0, 400)}`));
+                else {
+                    // #1449: anexa o exit code ao erro para o retry decidir de forma robusta
+                    // (126/127 = shim npm transitório) em vez de casar string da mensagem.
+                    const e: any = new Error(`claude saiu com código ${code}: ${(err || out).slice(0, 400)}`);
+                    e.exitCode = code;
+                    reject(e);
+                }
             });
         });
+    }
+
+    /**
+     * #1449: o shim npm do `claude` no Windows sai INTERMITENTEMENTE com exit 126/127
+     * ("cannot execute" — resolução do node em caminho misto Win/Unix). É transitório e
+     * fazia o juiz opus cair no fallback MiniMax por um hiccup do shim, anulando o gate
+     * independente. Retenta 1-2x com backoff curto antes de propagar. SÓ 126/127 são
+     * retentados; erro real (exit 1 = falha do modelo, timeout, JSON inválido) propaga na hora.
+     */
+    private async runBashWithRetry(command: string, cwd: string, timeoutMs: number, tries = 3): Promise<string> {
+        let lastErr: unknown;
+        for (let attempt = 1; attempt <= tries; attempt++) {
+            try {
+                return await this.runBash(command, cwd, timeoutMs);
+            } catch (e: any) {
+                lastErr = e;
+                const transient = e?.exitCode === 126 || e?.exitCode === 127;
+                if (!transient || attempt === tries) throw e;
+                log.warn(`claude exit ${e.exitCode} (shim transitório) — retry ${attempt}/${tries - 1} após ${attempt}s`);
+                await new Promise((r) => setTimeout(r, attempt * 1000));
+            }
+        }
+        throw lastErr;
     }
 
     private async run(prompt: string, flags: string[], cwd: string, timeoutMs: number): Promise<ClaudeResult> {
@@ -57,7 +86,7 @@ class ClaudeCliService {
         try {
             // prompt via arquivo -> "$(cat '<tmp>')" entra como UM arg seguro (sem re-parse do conteúdo).
             const cmd = `${BIN} -p "$(cat '${tmp}')" --output-format json ${flags.join(' ')}`;
-            const stdout = await this.runBash(cmd, cwd, timeoutMs);
+            const stdout = await this.runBashWithRetry(cmd, cwd, timeoutMs);
             const j = JSON.parse(stdout);
             return {
                 text: j.result ?? '',

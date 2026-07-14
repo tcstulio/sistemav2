@@ -134,10 +134,26 @@ describe('DolibarrOperationsService', () => {
             expect(result).toEqual([]);
         });
 
-        it('returns empty array on error', async () => {
-            mockAxios.get.mockRejectedValue(new Error('fail'));
+        it('retorna [] em 404 — Dolibarr não encontrou projetos (#1351)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
             const result = await service.listProjects();
             expect(result).toEqual([]);
+        });
+
+        it('propaga erro (5xx/timeout/rede) — não mascara falha de rede como "cliente sem projetos" (#1351)', async () => {
+            mockAxios.get.mockRejectedValue(new Error('Network Error'));
+            await expect(service.listProjects()).rejects.toThrow('Network Error');
+        });
+
+        it('aceita 404 em validateStatus e rejeita 5xx/401/403 (#1351)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
+            await service.listProjects();
+            const cfg = mockAxios.get.mock.calls[0][1];
+            expect(cfg.validateStatus(200)).toBe(true);
+            expect(cfg.validateStatus(404)).toBe(true);
+            expect(cfg.validateStatus(500)).toBe(false);
+            expect(cfg.validateStatus(401)).toBe(false);
+            expect(cfg.validateStatus(403)).toBe(false);
         });
     });
 
@@ -169,10 +185,25 @@ describe('DolibarrOperationsService', () => {
             expect(result).toEqual([]);
         });
 
-        it('returns empty array on error', async () => {
-            mockAxios.get.mockRejectedValue(new Error('fail'));
+        it('retorna [] em 404 — Dolibarr não encontrou tarefas (#1351)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
             const result = await service.listTasks();
             expect(result).toEqual([]);
+        });
+
+        it('propaga erro (5xx/timeout/rede) no fallback — não mascara "não consegui consultar" como vazio (#1351)', async () => {
+            // attempt() com sort joga (mock rejeita) e attempt() sem sort também rejeita
+            // → listTasks deve propagar, não devolver [] silenciosamente.
+            mockAxios.get.mockRejectedValue(new Error('Network Error'));
+            await expect(service.listTasks()).rejects.toThrow('Network Error');
+        });
+
+        it('caminho de sort: primeira tentativa falha, fallback sem sort retorna dados (#1351)', async () => {
+            mockAxios.get
+                .mockRejectedValueOnce(new Error('400 sort field'))
+                .mockResolvedValueOnce({ status: 200, data: [{ id: 7 }] });
+            const result = await service.listTasks();
+            expect(result).toEqual([{ id: 7 }]);
         });
     });
 
@@ -213,10 +244,15 @@ describe('DolibarrOperationsService', () => {
             expect(result).toEqual([]);
         });
 
-        it('returns empty array on error', async () => {
-            mockAxios.get.mockRejectedValue(new Error('fail'));
+        it('retorna [] em 404 — Dolibarr não encontrou tickets (#1351)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
             const result = await service.listTickets();
             expect(result).toEqual([]);
+        });
+
+        it('propaga erro (5xx/timeout/rede) — não mascara falha de rede (#1351)', async () => {
+            mockAxios.get.mockRejectedValue(new Error('Network Error'));
+            await expect(service.listTickets()).rejects.toThrow('Network Error');
         });
     });
 
@@ -242,10 +278,15 @@ describe('DolibarrOperationsService', () => {
             expect(params.sqlfilters).toBeUndefined();
         });
 
-        it('returns empty array on error', async () => {
-            mockAxios.get.mockRejectedValue(new Error('fail'));
+        it('retorna [] em 404 — Dolibarr não encontrou envios (#1351)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
             const result = await service.listShipments();
             expect(result).toEqual([]);
+        });
+
+        it('propaga erro (5xx/timeout/rede) — não mascara falha de rede (#1351)', async () => {
+            mockAxios.get.mockRejectedValue(new Error('Network Error'));
+            await expect(service.listShipments()).rejects.toThrow('Network Error');
         });
     });
 
@@ -277,10 +318,15 @@ describe('DolibarrOperationsService', () => {
             expect(result).toEqual([]);
         });
 
-        it('returns empty array on error', async () => {
-            mockAxios.get.mockRejectedValue(new Error('fail'));
+        it('retorna [] em 404 — Dolibarr não encontrou eventos (#1351)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
             const result = await service.listEvents();
             expect(result).toEqual([]);
+        });
+
+        it('propaga erro (5xx/timeout/rede) — agente precisa diferenciar "sem eventos" de "não consegui consultar" (#1351)', async () => {
+            mockAxios.get.mockRejectedValue(new Error('Network Error'));
+            await expect(service.listEvents()).rejects.toThrow('Network Error');
         });
     });
 
@@ -312,10 +358,15 @@ describe('DolibarrOperationsService', () => {
             expect(result).toEqual([]);
         });
 
-        it('returns empty array on error', async () => {
-            mockAxios.get.mockRejectedValue(new Error('fail'));
+        it('retorna [] em 404 — Dolibarr não encontrou intervenções (#1351)', async () => {
+            mockAxios.get.mockResolvedValue({ status: 404, data: null });
             const result = await service.listInterventions();
             expect(result).toEqual([]);
+        });
+
+        it('propaga erro (5xx/timeout/rede) — agente precisa diferenciar "sem intervenções" de "não consegui consultar" (#1351)', async () => {
+            mockAxios.get.mockRejectedValue(new Error('Network Error'));
+            await expect(service.listInterventions()).rejects.toThrow('Network Error');
         });
     });
 

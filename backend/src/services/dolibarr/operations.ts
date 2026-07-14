@@ -39,34 +39,34 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
     }
 
     async listProjects(params?: { search?: string; socid?: string }): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}projects`;
-            const parts: string[] = [];
-            if (params?.search) {
-                parts.push(`(${buildLikeFilter('t.title', params.search)}) or (${buildLikeFilter('t.ref', params.search)})`);
-            }
-            if (params?.socid) {
-                parts.push(`${buildSqlFilter('t.fk_soc', ':=', params.socid)}`);
-            }
-
-            const response = await axios.get(url, {
-                headers,
-                params: {
-                    sqlfilters: parts.length > 0 ? parts.join(' and ') : undefined,
-                    limit: 20,
-                    sortfield: 't.datec',
-                    sortorder: 'DESC'
-                },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listProjects Error', error);
-            return [];
+        // #1351: Dolibarr devolve 404 quando não há projetos para o filtro → tratamos como []
+        // legitimamente. 5xx/401/403/timeout/rede NÃO são silenciados: listProjects é usado por
+        // prepare_create_task/prepare_create_invoice com socid — falha de rede não pode ser
+        // interpretada como "cliente sem projetos" (causaria duplicatas).
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}projects`;
+        const parts: string[] = [];
+        if (params?.search) {
+            parts.push(`(${buildLikeFilter('t.title', params.search)}) or (${buildLikeFilter('t.ref', params.search)})`);
         }
+        if (params?.socid) {
+            parts.push(`${buildSqlFilter('t.fk_soc', ':=', params.socid)}`);
+        }
+
+        const response = await axios.get(url, {
+            headers,
+            params: {
+                sqlfilters: parts.length > 0 ? parts.join(' and ') : undefined,
+                limit: 20,
+                sortfield: 't.datec',
+                sortorder: 'DESC'
+            },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
+
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 
     async listTasks(projectId?: string): Promise<any[]> {
@@ -86,12 +86,15 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
         try {
             return await attempt({ sqlfilters, limit: 10, sortfield: 't.dateo', sortorder: 'DESC' });
         } catch (error: any) {
-            // Alguns campos de ordenação dão 400 no /tasks → tenta de novo SEM sort antes de desistir.
+            // #1351: Alguns campos de ordenação dão 400 no /tasks → tenta de novo SEM sort antes de
+            // desistir. Se o fallback também falhar, PROPAGA o erro (5xx/timeout/rede) em vez de
+            // devolver [] silenciosamente — caller precisa diferenciar "sem tarefas" de "não consegui
+            // consultar", assim como listEvents/listInterventions.
             try {
                 return await attempt({ sqlfilters, limit: 10 });
             } catch (error2: any) {
                 log.warn('listTasks falhou (com e sem sort)', error2?.message || error?.message);
-                return [];
+                throw error2;
             }
         }
     }
@@ -229,70 +232,64 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
     }
 
     async listTickets(params: { search?: string, limit?: number } = {}): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}tickets`;
-            let sqlfilters = undefined;
+        // #1351: Dolibarr devolve 404 quando não há tickets para o filtro → tratamos como [].
+        // 5xx/timeout/rede propagam para que o caller (agente) saiba que não foi possível consultar.
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}tickets`;
+        let sqlfilters = undefined;
 
-            if (params.search) {
-                sqlfilters = `((${buildLikeFilter('t.track_id', params.search)}) or (${buildLikeFilter('t.subject', params.search)}) or (${buildLikeFilter('t.message', params.search)}))`;
-            }
-
-            const response = await axios.get(url, {
-                headers,
-                params: {
-                    sqlfilters,
-                    limit: params.limit || 5,
-                    sortfield: 't.datec',
-                    sortorder: 'DESC'
-                },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listTickets Error', error);
-            return [];
+        if (params.search) {
+            sqlfilters = `((${buildLikeFilter('t.track_id', params.search)}) or (${buildLikeFilter('t.subject', params.search)}) or (${buildLikeFilter('t.message', params.search)}))`;
         }
+
+        const response = await axios.get(url, {
+            headers,
+            params: {
+                sqlfilters,
+                limit: params.limit || 5,
+                sortfield: 't.datec',
+                sortorder: 'DESC'
+            },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
+
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 
     async listShipments(search?: string): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}shipments`;
-            let sqlfilters = undefined;
-            if (search) {
-                sqlfilters = `(${buildLikeFilter('t.ref', search)})`;
-            }
-            const response = await axios.get(url, {
-                headers,
-                params: { sqlfilters, limit: 5, sortfield: 't.date_creation', sortorder: 'DESC' },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listShipments Error', error);
-            return [];
+        // #1351: Dolibarr devolve 404 quando não há envios para o filtro → tratamos como [].
+        // 5xx/timeout/rede propagam.
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}shipments`;
+        let sqlfilters = undefined;
+        if (search) {
+            sqlfilters = `(${buildLikeFilter('t.ref', search)})`;
         }
+        const response = await axios.get(url, {
+            headers,
+            params: { sqlfilters, limit: 5, sortfield: 't.date_creation', sortorder: 'DESC' },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 
     async listEvents(limit?: number): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}agendaevents`;
-            const response = await axios.get(url, {
-                headers,
-                params: { limit: limit || 10, sortfield: 't.datep', sortorder: 'DESC' },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listEvents Error', error);
-            return [];
-        }
+        // #1351: listEvents é chamada frequente pelo agente para montar contexto. Diferencia
+        // "sem eventos" (404 ou 200 com []) de "não consegui consultar" (5xx/timeout/rede → propaga).
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}agendaevents`;
+        const response = await axios.get(url, {
+            headers,
+            params: { limit: limit || 10, sortfield: 't.datep', sortorder: 'DESC' },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 
     /** Cria um evento de agenda (actioncomm) — usado p/ espelhar a trilha da delegação no Dolibarr. */
@@ -319,24 +316,22 @@ export class DolibarrOperationsService extends DolibarrServiceBase {
     }
 
     async listInterventions(search?: string): Promise<any[]> {
-        try {
-            const headers = this.getHeaders();
-            const url = `${this.baseUrl}interventions`;
-            let sqlfilters = undefined;
-            if (search) {
-                sqlfilters = `(${buildLikeFilter('t.ref', search)})`;
-            }
-            const response = await axios.get(url, {
-                headers,
-                params: { sqlfilters, limit: 10, sortfield: 't.datec', sortorder: 'DESC' },
-                httpsAgent: this.httpsAgent,
-                validateStatus: (s) => s === 200
-            });
-            return Array.isArray(response.data) ? response.data : [];
-        } catch (error) {
-            log.error('listInterventions Error', error);
-            return [];
+        // #1351: listInterventions é chamada frequente pelo agente para montar contexto. Diferencia
+        // "sem intervenções" (404 ou 200 com []) de "não consegui consultar" (5xx/timeout/rede → propaga).
+        const headers = this.getHeaders();
+        const url = `${this.baseUrl}interventions`;
+        let sqlfilters = undefined;
+        if (search) {
+            sqlfilters = `(${buildLikeFilter('t.ref', search)})`;
         }
+        const response = await axios.get(url, {
+            headers,
+            params: { sqlfilters, limit: 10, sortfield: 't.datec', sortorder: 'DESC' },
+            httpsAgent: this.httpsAgent,
+            validateStatus: (s) => s === 200 || s === 404
+        });
+        if (response.status === 404) return [];
+        return Array.isArray(response.data) ? response.data : [];
     }
 
     /**
