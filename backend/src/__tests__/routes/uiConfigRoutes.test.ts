@@ -355,6 +355,79 @@ describe('uiConfigRoutes', () => {
         expect(mockUiConfigService.update).toHaveBeenCalledWith({ notificationPolicy: { staleHours: 72 } });
     });
 
+    // #1443: juiz Claude-first (#1411) — o Zod do taskAutomation estripava `judgeModel` (chave
+    // não listada no schema) e o save do editor voltava p/ '' (cadeia do chat). Agora `judgeModel`
+    // sobrevive ao .parse() e chega intacto no service (round-trip PUT → GET).
+    it('#1443: PUT com taskAutomation.judgeModel propaga intacto (não estripado pelo Zod)', async () => {
+        const custom = { maxJudgeRounds: 5, judgeModel: 'opus' };
+        mockUiConfigService.update.mockReturnValueOnce({ taskAutomation: { ...custom, minMergeScore: 8 } });
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: custom });
+        expect(res.status).toBe(200);
+        const sent = mockUiConfigService.update.mock.calls[0][0].taskAutomation;
+        expect(sent).toMatchObject({ judgeModel: 'opus', maxJudgeRounds: 5 });
+        expect(res.body.taskAutomation).toMatchObject({ judgeModel: 'opus' });
+    });
+
+    it('#1443: PUT com judgeModel vazio ("") propaga intacto (limpar juiz → cadeia do chat)', async () => {
+        const custom = { maxJudgeRounds: 5, judgeModel: '' };
+        mockUiConfigService.update.mockReturnValueOnce({ taskAutomation: { ...custom, minMergeScore: 8 } });
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: custom });
+        expect(res.status).toBe(200);
+        const sent = mockUiConfigService.update.mock.calls[0][0].taskAutomation;
+        expect(sent).toMatchObject({ judgeModel: '' });
+        expect(res.body.taskAutomation).toMatchObject({ judgeModel: '' });
+    });
+
+    it('#1443: PUT com judgeModel > 60 chars é rejeitado pelo Zod (.max(60) retorna 400)', async () => {
+        const res = await request(app).put('/api/ui-config').send({
+            taskAutomation: { judgeModel: 'x'.repeat(61) },
+        });
+        expect(res.status).toBe(400);
+        expect(mockUiConfigService.update).not.toHaveBeenCalled();
+    });
+
+    it('#1443: PUT com judgeModel exatamente 60 chars passa (limite inclusivo)', async () => {
+        const custom = { judgeModel: 'x'.repeat(60) };
+        mockUiConfigService.update.mockReturnValueOnce({ taskAutomation: { ...custom } });
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: custom });
+        expect(res.status).toBe(200);
+        const sent = mockUiConfigService.update.mock.calls[0][0].taskAutomation;
+        expect(sent).toMatchObject({ judgeModel: 'x'.repeat(60) });
+    });
+
+    it('#1443: PUT com judgeModel tipo errado (number) retorna 400', async () => {
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: { judgeModel: 123 } });
+        expect(res.status).toBe(400);
+        expect(mockUiConfigService.update).not.toHaveBeenCalled();
+    });
+
+    // #1443: o editor de Automações manda judgeModel junto dos demais campos. Verifica que
+    // TODOS os campos de taskAutomation (incluindo judgeModel) sobrevivem ao .parse() sem
+    // regredir (round-trip completo).
+    it('#1443: PUT com judgeModel + demais campos de taskAutomation propaga TUDO intacto', async () => {
+        const custom = {
+            autoPlay: true,
+            autoMerge: true,
+            autoDecompose: false,
+            minMergeScore: 8,
+            minApproveScore: 9,
+            maxJudgeRounds: 5,
+            maxGateFixRounds: 4,
+            maxRoundsPerTask: 30,
+            dailyRoundBudget: 500,
+            judgeModel: 'sonnet',
+        };
+        mockUiConfigService.update.mockReturnValueOnce({ taskAutomation: custom });
+        // A rota lê get().taskAutomation.minMergeScore ANTES do save (#1168), então o mock de
+        // get() precisa retornar taskAutomation p/ não estourar "Cannot read properties of undefined".
+        mockUiConfigService.get.mockReturnValueOnce({ taskAutomation: { minMergeScore: 8 } });
+        const res = await request(app).put('/api/ui-config').send({ taskAutomation: custom });
+        expect(res.status).toBe(200);
+        const sent = mockUiConfigService.update.mock.calls[0][0].taskAutomation;
+        expect(sent).toMatchObject(custom);
+        expect(res.body.taskAutomation).toMatchObject(custom);
+    });
+
     it('#1293: PUT com tipo errado em notificationPolicy.cobrancaCadence retorna 400', async () => {
         const res = await request(app).put('/api/ui-config').send({
             notificationPolicy: { cobrancaCadence: { reminderDaysBefore: 'cinco' } },

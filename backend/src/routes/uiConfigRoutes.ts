@@ -77,6 +77,9 @@ const UpdateSchema = z.object({
         maxGateFixRounds: z.number().optional(),
         maxRoundsPerTask: z.number().optional(),
         dailyRoundBudget: z.number().optional(),
+        // #1411/#1443: juiz Claude-first configurável. Sem isto, o Zod estripa o campo e o
+        // save do editor volta p/ '' (cadeia do chat). Cap 60 espelha o sanitize (uiConfigService.ts).
+        judgeModel: z.string().max(60).optional(),
     }).optional(),
     // #1207: governança de ações irreversíveis — só valida forma/tipos aqui; o sanitize real
     // (clamp de threshold, filtragem de allowlist por dígitos, etc.) fica no service.
