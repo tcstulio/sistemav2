@@ -2326,10 +2326,43 @@ class TaskRunnerService {
                 // Antes o robô DESCARTAVA explorações boas só porque a última veio vazia (visto ao vivo
                 // na #1002/#1005: 2 explorações typecheck-OK jogadas fora). Só falha se NENHUMA produziu nada.
                 if (task.attempts.length === 0) {
+                    // #1423: TODAS as explorações vieram vazias. Antes de desistir, aplica o Tier
+                    // Resgate (#963) — o modo de falha nº1 do robô ("sem mudanças") tinha rede de
+                    // segurança na síntese (mais abaixo) e no modo cumulativo, MAS NÃO aqui — justo
+                    // onde o opencode não produziu NADA, que é o caso em que o resgate mais importa.
+                    if (isQuotaExhausted()) {
+                        // Vazio por cota esgotada (429), não por coder incapaz: devolve à fila em vez de
+                        // queimar o Claude; retoma quando a API voltar (mesma política da síntese).
+                        task.status = 'pending';
+                        task.startedAt = undefined;
+                        task.updatedAt = new Date().toISOString();
+                        this.recordEvent(task, 'quota_hold', '⏸️ Exploração toda vazia por cota de LLM esgotada — devolvida à fila; retoma quando a API voltar', { quotaHold: true });
+                        this.emitLog(issueNumber, 'warn', 'Cota de LLM esgotada na exploração — segurando a fila (auto-retoma).');
+                        this.save();
+                        this.emitStatus(task);
+                        return;
+                    }
+                    if (await this.tryClaudeRescue(task, issueData) && (await this.worktreeChanges()).length > 0) {
+                        // Resgate produziu trabalho: registra como uma tentativa de exploração e segue o
+                        // fluxo normal (a Fase 2 de síntese NÃO reseta o worktree → o diff do resgate
+                        // persiste → typecheck + commit + PR). Idêntico a "1 exploração teve sucesso".
+                        this.recordEvent(task, 'synthesis_started', '🛟 Resgate: exploração toda vazia — Claude Code assumiu o worktree.', { rescue: 'claude', fromEmpty: true });
+                        verify = await this.verify(task);
+                        const { stdout: rescueDiff } = await git(['diff'], { timeout: 30000, cwd: WT_ROOT });
+                        task.attempts.push({
+                            index: task.attempts.length + 1,
+                            phase: 'exploring',
+                            diff: rescueDiff.substring(0, 30000),
+                            typecheckOk: verify.ok,
+                            typecheckErrors: verify.ok ? undefined : verify.output.substring(0, 4000),
+                            filesChanged: await this.worktreeChanges(),
+                        });
+                        continue; // última exploração → o for termina → Fase 2 usa a tentativa do resgate
+                    }
                     task.status = 'failed';
-                    task.error = 'O agente não produziu nenhuma mudança após as tentativas.';
+                    task.error = 'O agente não produziu nenhuma mudança após as tentativas (nem o resgate Claude).';
                     task.updatedAt = new Date().toISOString();
-                    this.recordEvent(task, 'task_failed', 'Nenhuma mudança após exploração — abortando (sem PR).');
+                    this.recordEvent(task, 'task_failed', 'Nenhuma mudança após exploração — abortando (nem o resgate Claude produziu mudanças).');
                     this.finalizeTaskMetrics(task);
                     this.save();
                     this.emitStatus(task);
