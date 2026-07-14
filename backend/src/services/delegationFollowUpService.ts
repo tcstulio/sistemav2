@@ -19,6 +19,7 @@ import { dispatchTaskNotification } from './taskNotificationService';
 import { delegationService } from './delegationService';
 import { delegationEventsService, DelegationEventType } from './delegationEventsService';
 import { resolveRoleUsers, RoleUsers } from './taskNotificationLogic';
+import { uiConfigService } from './uiConfigService';
 import { decideFollowUp, Cadence, DEFAULT_CADENCE, TaskTracking, FollowUpEvent } from './delegationFollowUpLogic';
 
 // Evento do motor -> tipo no log da delegação (linha do tempo). by=sistema (undefined).
@@ -79,14 +80,36 @@ const DEFAULT_STORE_PATH = path.join(__dirname, '../../data/delegation_tracking.
 export class DelegationFollowUpService {
     private store: TrackingStore = {};
     private readonly storePath: string;
-    private cadence: Cadence;
+    /**
+     * Cadência injetada no construtor (usada em testes que pinam o valor). `null` = modo
+     * produção: a cadência é lida do `uiConfigService` a cada tick (#1406) — assim uma
+     * mudança em `notificationPolicy.cobrancaCadence` via PUT /api/ui-config reflete no
+     * próximo tick, sem restart.
+     */
+    private cadence: Cadence | null;
     /** teto de disparos por tick (rede de segurança; o baseline-na-1ª-vez já evita flood). */
     private readonly maxDispatchesPerTick = 200;
 
-    constructor(storePath: string = DEFAULT_STORE_PATH, cadence: Cadence = DEFAULT_CADENCE) {
+    constructor(storePath: string = DEFAULT_STORE_PATH, cadence?: Cadence) {
         this.storePath = storePath;
-        this.cadence = cadence;
+        this.cadence = cadence ?? null;
         this.load();
+    }
+
+    /**
+     * Resolve a cadência efetiva do tick: a injetada (testes) tem prioridade; ausente,
+     * consulta o `uiConfigService` em runtime. Se o config não tiver
+     * `notificationPolicy.cobrancaCadence` por algum motivo extremo, cai no
+     * `DEFAULT_CADENCE` para preservar o comportamento histórico (#1406).
+     */
+    private resolveCadence(): Cadence {
+        if (this.cadence) return this.cadence;
+        try {
+            return uiConfigService.getCobrancaCadence();
+        } catch (e) {
+            log.warn('uiConfigService.getCobrancaCadence() falhou; usando DEFAULT_CADENCE', e);
+            return DEFAULT_CADENCE;
+        }
     }
 
     private load() {
@@ -118,6 +141,11 @@ export class DelegationFollowUpService {
             if (!tasks || tasks.length === 0) return result;
             result.tasks = tasks.length;
 
+            // #1406 — cadência lida do uiConfigService a cada tick (sem cache). Admin pode
+            // ajustar `notificationPolicy.cobrancaCadence` via PUT /api/ui-config e o
+            // próximo tick já reflete, sem restart.
+            const cadence = this.resolveCadence();
+
             const allContacts = await dolibarrService.getAllTaskContacts();
             const contactsByTask = new Map<string, any[]>();
             for (const c of allContacts) {
@@ -131,7 +159,7 @@ export class DelegationFollowUpService {
                 const id = String(task.id);
                 const prev = this.store[id];
                 const aceite = delegationService.getAceite(id);
-                const { event, tracking } = decideFollowUp(task, prev, nowMs, this.cadence, aceite);
+                const { event, tracking } = decideFollowUp(task, prev, nowMs, cadence, aceite);
                 this.store[id] = tracking;
 
                 if (!prev) {
