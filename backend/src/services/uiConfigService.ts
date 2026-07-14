@@ -180,6 +180,10 @@ export interface UiConfig {
     // que carrega o direito user->self->creer (342) — assim a Chave de API do usuário nasce no
     // 1º /login. Configurado na Central (aba "Acesso ao App"). undefined = automação desligada.
     appAccessGroupId?: string;
+    // #1410 — Override persistente do provider WhatsApp. Ausente = cai no env WHATSAPP_PROVIDER
+    // (resolvido em runtime por `getEffectiveWhatsAppProvider` em config/featureSwitches). Setado
+    // = sobrescreve o env no boot, eliminando o "setter fantasma" que só mexia em memória.
+    whatsappProvider?: 'legacy' | 'moltbot';
 }
 
 // Limites expostos p/ a UI mostrar (em vez de truncar em silêncio).
@@ -200,6 +204,9 @@ export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'scre
     // #1439 — admin pode atualizar o default global de sessionId. Aceita string; sanitize
     // (trim + cap) é feito em update() — string vazia é válida (= delega ao resolveSession).
     whatsappPrimarySessionId?: string;
+    // #1410 — override persistente do provider WhatsApp. Aceita 'legacy' | 'moltbot' | null/undefined
+    // (= voltar ao env). Sanitizado em update().
+    whatsappProvider?: 'legacy' | 'moltbot' | null;
 };
 
 // Padrão aprovado: Responsável leva a cobrança; Interveniente acompanha; Criador é avisado do desfecho.
@@ -535,7 +542,8 @@ export function sanitizeAutomationSwitches(v: unknown): AutomationSwitchesConfig
     };
 }
 
-// Exportado p/ teste unitário direto. Booleanos: só valor explicitamente booleano é aceito;
+// Exportado p/ teste unitário direto (mesmo espírito das demais sanitize).
+// Booleanos: só valor explicitamente booleano é aceito;
 // ausente/inválido cai no default do respectivo flag (dryRun/financial OFF, crmContext ON).
 export function sanitizeFeatureSwitches(v: unknown): FeatureSwitchesConfig {
     const d = DEFAULTS.featureSwitches;
@@ -546,6 +554,13 @@ export function sanitizeFeatureSwitches(v: unknown): FeatureSwitchesConfig {
         financialCommands: typeof a.financialCommands === 'boolean' ? a.financialCommands : d.financialCommands,
         crmContextInjection: typeof a.crmContextInjection === 'boolean' ? a.crmContextInjection : d.crmContextInjection,
     };
+}
+
+// #1410 — Sanitiza o override do provider WhatsApp. Aceita só 'legacy' | 'moltbot'; qualquer
+// outro valor (incl. null, undefined, string vazia, número) vira undefined = cai no env.
+// Importante: o caller que envia null/undefined explicitamente está "resetando" o override.
+export function sanitizeWhatsappProvider(v: unknown): 'legacy' | 'moltbot' | undefined {
+    return v === 'legacy' || v === 'moltbot' ? v : undefined;
 }
 
 // Allowlist das cores do Tailwind usadas no tema (evita injeção de classe arbitrária).
@@ -592,6 +607,9 @@ export class UiConfigService {
                     whatsappPrimarySessionId: typeof parsed.whatsappPrimarySessionId === 'string'
                         ? parsed.whatsappPrimarySessionId.trim().slice(0, 80)
                         : '',
+                    // #1410 — só 'legacy' | 'moltbot' são aceitos do arquivo; resto cai no env
+                    // (sanitize devolve undefined, getEffectiveWhatsAppProvider fallback).
+                    whatsappProvider: sanitizeWhatsappProvider(parsed.whatsappProvider),
                     version: typeof parsed.version === 'number' ? parsed.version : 0,
                 };
             }
@@ -672,6 +690,11 @@ export class UiConfigService {
         if (typeof partial.appAccessGroupId === 'string') {
             const v = partial.appAccessGroupId.trim().slice(0, 40);
             next.appAccessGroupId = v || undefined; // string vazia = desligar automação
+        }
+        // #1410 — override do provider WhatsApp. null/undefined explícito reseta (volta ao env);
+        // string inválida também vira undefined (= cai no env). Só 'legacy' | 'moltbot' persistem.
+        if ('whatsappProvider' in partial) {
+            next.whatsappProvider = sanitizeWhatsappProvider(partial.whatsappProvider);
         }
         next.version = (this.data.version || 0) + 1;
         this.data = next;

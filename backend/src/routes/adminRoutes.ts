@@ -564,7 +564,7 @@ router.post('/config/features/provider', (req, res) => {
     res.json({
         success: true,
         provider: channelRouter.getWhatsAppProvider(),
-        note: 'Runtime change only. Set WHATSAPP_PROVIDER in .env to persist.'
+        note: 'Persisted to uiConfig (#1410). Survives server restart.'
     });
 });
 

@@ -1,4 +1,5 @@
 import { createLogger } from '../utils/logger';
+import { uiConfigService } from '../services/uiConfigService';
 
 const log = createLogger('Features');
 
@@ -11,6 +12,22 @@ const log = createLogger('Features');
  * @see docs/MOLTBOT_INTEGRATION_PLAN.md
  */
 
+/**
+ * #1410 — resolve o provider WhatsApp na ordem:
+ *   1. Override persistido em `uiConfig.whatsappProvider` (setado pela rota admin/integration)
+ *   2. Senão, cai no env WHATSAPP_PROVIDER (default 'legacy')
+ * Roda UMA vez no boot (a partir de uiConfigService, que carrega o JSON persistido) — antes
+ * desse ajuste, o setter admin/integration era teatro: mudava em memória e o restart voltava
+ * ao env. Agora `FEATURES.WHATSAPP_PROVIDER` já nasce com o valor persistido, então o getter
+ * do channelRouter (chamado no construtor) e o `getEffectiveWhatsAppProvider` em featureSwitches
+ * sempre leem o valor correto pós-reboot. Decisão documentada no PR (#1410): PERSISTIR.
+ */
+function resolveBootWhatsAppProvider(): 'legacy' | 'moltbot' {
+    const persisted = uiConfigService.get().whatsappProvider;
+    if (persisted === 'legacy' || persisted === 'moltbot') return persisted;
+    return (process.env.WHATSAPP_PROVIDER || 'legacy') as 'legacy' | 'moltbot';
+}
+
 export const FEATURES = {
     // ========================================
     // MOLTBOT INTEGRATION
@@ -20,8 +37,9 @@ export const FEATURES = {
      * WhatsApp provider: 'legacy' (whatsapp-web.js) ou 'moltbot'
      * - legacy: Usa whatsapp-web.js direto (Puppeteer)
      * - moltbot: Usa Moltbot Gateway (recomendado)
+     * Resolvido uma vez no boot via `resolveBootWhatsAppProvider()` (#1410) — ver bloco acima.
      */
-    WHATSAPP_PROVIDER: (process.env.WHATSAPP_PROVIDER || 'legacy') as 'legacy' | 'moltbot',
+    WHATSAPP_PROVIDER: resolveBootWhatsAppProvider(),
 
     /**
      * Habilitar Moltbot Gateway

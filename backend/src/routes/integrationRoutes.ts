@@ -396,7 +396,7 @@ router.post('/features/provider', (req, res) => {
         res.json({
             success: true,
             provider: channelRouter.getWhatsAppProvider(),
-            note: 'This change is runtime only and will reset on server restart'
+            note: 'Persisted to uiConfig (#1410). Survives server restart.'
         });
     } catch (error: any) {
         if (error instanceof z.ZodError) {

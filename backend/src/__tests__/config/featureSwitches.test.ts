@@ -116,4 +116,22 @@ describe('featureSwitches — resolvers de runtime (#1129)', () => {
             expect(isCrmContextInjectionEnabled()).toBe(false);
         });
     });
+
+    // #1410 — getEffectiveWhatsAppProvider é o wrapper consumido pelo construtor do ChannelRouter.
+    // A lógica pesada vive em features.ts (resolveBootWhatsAppProvider) — aqui só validamos que
+    // o wrapper delega corretamente, para evitar regressão silenciosa se alguém trocar a fonte
+    // do provider sem atualizar o channelRouter.
+    describe('getEffectiveWhatsAppProvider (#1410)', () => {
+        it('delega para FEATURES.WHATSAPP_PROVIDER (env "legacy")', async () => {
+            delete process.env.WHATSAPP_PROVIDER;
+            const { getEffectiveWhatsAppProvider } = await importResolvers();
+            expect(getEffectiveWhatsAppProvider()).toBe('legacy');
+        });
+
+        it('delega para FEATURES.WHATSAPP_PROVIDER (env "moltbot")', async () => {
+            process.env.WHATSAPP_PROVIDER = 'moltbot';
+            const { getEffectiveWhatsAppProvider } = await importResolvers();
+            expect(getEffectiveWhatsAppProvider()).toBe('moltbot');
+        });
+    });
 });

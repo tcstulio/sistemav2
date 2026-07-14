@@ -7,12 +7,13 @@
  * @see docs/MOLTBOT_INTEGRATION_PLAN.md
  */
 
-import { FEATURES, isUsingMoltbot } from '../config/features';
-import { isDryRunEnabled } from '../config/featureSwitches';
+import { FEATURES } from '../config/features';
+import { getEffectiveWhatsAppProvider, isDryRunEnabled } from '../config/featureSwitches';
 import { moltbotGateway, MessageResult as MoltbotMessageResult } from './moltbotGateway';
 import { messageService as legacyMessageService } from './legacy/messageService';
 import { sessionService } from './legacy/sessionService';
 import { emailService } from './emailService';
+import { uiConfigService } from './uiConfigService';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('ChannelRouter');
@@ -58,7 +59,11 @@ class ChannelRouter {
     private defaultSessionId: string = 'default';
 
     constructor() {
-        this.whatsAppProvider = FEATURES.WHATSAPP_PROVIDER;
+        // #1410 — antes lia só `FEATURES.WHATSAPP_PROVIDER` (env), o que tornava o setter admin
+        // um teatro: mudava em memória, no restart voltava ao env. Agora o getter resolve a cada
+        // boot pelo override persistido em `uiConfig.whatsappProvider` (setado pela rota admin/
+        // integration) e cai no env só se nada foi persistido.
+        this.whatsAppProvider = getEffectiveWhatsAppProvider();
         log.info(`Initialized with WhatsApp provider: ${this.whatsAppProvider}`);
     }
 
@@ -67,11 +72,18 @@ class ChannelRouter {
     // ========================================
 
     /**
-     * Set WhatsApp provider
+     * Set WhatsApp provider — atualiza em memória E persiste via uiConfigService (#1410).
+     * Falha de persistência é logada mas não derruba o estado em memória (fail-soft: o provider
+     * continua válido até o restart; a próxima reinicialização cai no env).
      */
     setWhatsAppProvider(provider: WhatsAppProvider): void {
         this.whatsAppProvider = provider;
         log.info(`WhatsApp provider changed to: ${provider}`);
+        try {
+            uiConfigService.update({ whatsappProvider: provider });
+        } catch (err: any) {
+            log.error('Failed to persist WhatsApp provider', { error: err?.message || String(err) });
+        }
     }
 
     /**

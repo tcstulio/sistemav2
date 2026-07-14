@@ -8,7 +8,7 @@ import { atomicWriteSync } from '../../utils/atomicWrite';
 const mockedFs = vi.mocked(fs);
 const mockedWrite = vi.mocked(atomicWriteSync);
 
-import { UiConfigService, sanitizeActionGovernance, sanitizeFeatureSwitches, sanitizeNotificationPolicy } from '../../services/uiConfigService';
+import { UiConfigService, sanitizeActionGovernance, sanitizeFeatureSwitches, sanitizeNotificationPolicy, sanitizeWhatsappProvider } from '../../services/uiConfigService';
 
 describe('uiConfigService', () => {
     beforeEach(() => {
@@ -505,6 +505,89 @@ describe('sanitizeNotificationPolicy', () => {
             // tipo errado → string vazia (não quebra)
             mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappPrimarySessionId: 123 }) as any);
             expect(new UiConfigService('ui.json').get().whatsappPrimarySessionId).toBe('');
+        });
+    });
+
+    // #1410 — override persistente do provider WhatsApp. Sem este sanitize, o "setter fantasma"
+    // das rotas admin/integration ficava restrito a mudar em memória (resolveBootWhatsAppProvider
+    // só lê o campo, e um valor corrompido/string fora do domínio quebraria o boot).
+    describe('sanitizeWhatsappProvider (#1410)', () => {
+        it('aceita os dois valores válidos do domínio', () => {
+            expect(sanitizeWhatsappProvider('legacy')).toBe('legacy');
+            expect(sanitizeWhatsappProvider('moltbot')).toBe('moltbot');
+        });
+
+        it('rejeita null/undefined → undefined (cai no env)', () => {
+            expect(sanitizeWhatsappProvider(null)).toBeUndefined();
+            expect(sanitizeWhatsappProvider(undefined)).toBeUndefined();
+        });
+
+        it('rejeita string vazia, número, boolean e strings parecidas mas inválidas', () => {
+            expect(sanitizeWhatsappProvider('')).toBeUndefined();
+            expect(sanitizeWhatsappProvider('LEGACY')).toBeUndefined();   // case-sensitive
+            expect(sanitizeWhatsappProvider('legacy ')).toBeUndefined();  // não trim
+            expect(sanitizeWhatsappProvider('legacy\n')).toBeUndefined();
+            expect(sanitizeWhatsappProvider('legacy2')).toBeUndefined();
+            expect(sanitizeWhatsappProvider('zapi')).toBeUndefined();     // nem é do domínio
+            expect(sanitizeWhatsappProvider(0)).toBeUndefined();
+            expect(sanitizeWhatsappProvider(1)).toBeUndefined();
+            expect(sanitizeWhatsappProvider(true)).toBeUndefined();
+            expect(sanitizeWhatsappProvider({})).toBeUndefined();
+            expect(sanitizeWhatsappProvider([])).toBeUndefined();
+        });
+    });
+
+    describe('whatsappProvider (#1410) — persistência do override', () => {
+        it('default: campo ausente no arquivo → undefined (cai no env)', () => {
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ companyName: 'X' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappProvider).toBeUndefined();
+        });
+
+        it('load(): valor válido persistido é preservado; valor inválido é descartado', () => {
+            // válido
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappProvider: 'moltbot' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappProvider).toBe('moltbot');
+
+            // inválido → cai no env (não quebra o boot)
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappProvider: 'zapi' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappProvider).toBeUndefined();
+
+            // tipo errado → undefined
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappProvider: 42 }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappProvider).toBeUndefined();
+        });
+
+        it('update(): round-trip persiste o override (e salva no disco via atomicWriteSync)', () => {
+            const svc = new UiConfigService('ui.json');
+            const out = svc.update({ whatsappProvider: 'moltbot' } as any);
+            expect(out.whatsappProvider).toBe('moltbot');
+            expect(mockedWrite).toHaveBeenCalled();
+            const written = mockedWrite.mock.calls[mockedWrite.mock.calls.length - 1][1] as any;
+            expect(written.whatsappProvider).toBe('moltbot');
+        });
+
+        it('update(): null/undefined explícito remove o override (volta ao env)', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({ whatsappProvider: 'moltbot' } as any);
+            expect(svc.get().whatsappProvider).toBe('moltbot');
+            // reset
+            const out = svc.update({ whatsappProvider: null } as any);
+            expect(out.whatsappProvider).toBeUndefined();
+        });
+
+        it('update(): valor inválido é descartado no sanitize (não persiste)', () => {
+            const svc = new UiConfigService('ui.json');
+            const out = svc.update({ whatsappProvider: 'zapi' } as any);
+            expect(out.whatsappProvider).toBeUndefined();
+        });
+
+        it('update(): whatsappProvider ausente do partial mantém o valor atual', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({ whatsappProvider: 'moltbot' } as any);
+            const out = svc.update({ companyName: 'Outra' });
+            expect(out.whatsappProvider).toBe('moltbot'); // preservado
         });
     });
 });

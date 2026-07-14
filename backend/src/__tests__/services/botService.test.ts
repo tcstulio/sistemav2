@@ -68,9 +68,13 @@ vi.mock('../../services/itauApiService', () => ({
 // #1129: /pagar e /pix agora são gated por isFinancialCommandsEnabled (kill-switch de admin).
 // A injeção de contexto CRM é gated por isCrmContextInjectionEnabled (kill-switch de privacidade).
 // Default do mock = ambos habilitados (preserva os testes existentes).
+// #1410: getEffectiveWhatsAppProvider é consumido pelo construtor do ChannelRouter, que é
+// carregado transitivamente (botService → agentTools → channelRouter). Sem o mock explícito
+// aqui o import falha em "export not defined" e o teste nem roda.
 const mockFeatureSwitches = vi.hoisted(() => ({
     isFinancialCommandsEnabled: vi.fn(() => true),
     isCrmContextInjectionEnabled: vi.fn(() => true),
+    getEffectiveWhatsAppProvider: vi.fn(() => 'legacy'),
 }));
 vi.mock('../../config/featureSwitches', () => mockFeatureSwitches);
 
