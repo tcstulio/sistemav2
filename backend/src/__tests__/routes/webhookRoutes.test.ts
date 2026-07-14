@@ -19,6 +19,8 @@ const mockSchedulerService = vi.hoisted(() => ({
     deleteFlow: vi.fn(() => true),
     toggleFlow: vi.fn(() => true),
     getFlow: vi.fn(() => ({ id: 'flow-1' })),
+    // #1439 — resolução de sessionId por precedência (rule > uiConfig > unset).
+    resolveRuleSessionId: vi.fn(() => ({ sessionId: '', source: 'unset' as const })),
 }));
 
 const mockDolibarrService = vi.hoisted(() => ({
@@ -246,6 +248,66 @@ describe('webhookRoutes', () => {
                 .send({ name: 'X' });
 
             expect(res.status).toBe(404);
+        });
+    });
+
+    // #1439 — /api/webhooks/simulate usa o helper de resolução de sessionId.
+    describe('POST /api/webhooks/simulate (#1439)', () => {
+        it('regra COM sessionId próprio → usa o sessionId da regra (não o do body nem o config)', async () => {
+            mockSchedulerService.getRules.mockReturnValue([
+                { id: 'r1', name: 'Regra com sessão', event: 'invoice_created', enabled: true, channel: 'whatsapp', sessionId: 'minha-sess', message: 'Olá {{customerName}}' },
+            ]);
+            mockSchedulerService.resolveRuleSessionId.mockReturnValue({ sessionId: 'minha-sess', source: 'rule' });
+
+            const res = await request(app)
+                .post('/api/webhooks/simulate')
+                .send({ event: 'invoice_created', mockPhone: '11999999999', sessionId: 'sessionId-do-body' });
+
+            expect(res.status).toBe(200);
+            expect(mockSchedulerService.resolveRuleSessionId).toHaveBeenCalledWith(
+                expect.objectContaining({ sessionId: 'minha-sess' }),
+            );
+            expect(mockSchedulerService.scheduleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({ sessionId: 'minha-sess' }),
+            );
+            expect(mockSchedulerService.addLog).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    metadata: expect.objectContaining({ sessionIdSource: 'rule' }),
+                }),
+            );
+        });
+
+        it('regra SEM sessionId + body COM sessionId → cai no sessionId do body (override de teste)', async () => {
+            mockSchedulerService.getRules.mockReturnValue([
+                { id: 'r1', name: 'Regra sem sessão', event: 'invoice_created', enabled: true, channel: 'whatsapp', sessionId: '', message: 'Oi' },
+            ]);
+            // helper devolve string vazia (sem default config) → caller usa o sessionId do body
+            mockSchedulerService.resolveRuleSessionId.mockReturnValue({ sessionId: '', source: 'unset' });
+
+            const res = await request(app)
+                .post('/api/webhooks/simulate')
+                .send({ event: 'invoice_created', mockPhone: '11999999999', sessionId: 'sessionId-do-body' });
+
+            expect(res.status).toBe(200);
+            expect(mockSchedulerService.scheduleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({ sessionId: 'sessionId-do-body' }),
+            );
+        });
+
+        it('regra SEM sessionId + body SEM sessionId + helper devolve config default → usa o default', async () => {
+            mockSchedulerService.getRules.mockReturnValue([
+                { id: 'r1', name: 'Regra', event: 'invoice_created', enabled: true, channel: 'whatsapp', sessionId: '', message: 'Oi' },
+            ]);
+            mockSchedulerService.resolveRuleSessionId.mockReturnValue({ sessionId: 'global-sess', source: 'config' });
+
+            const res = await request(app)
+                .post('/api/webhooks/simulate')
+                .send({ event: 'invoice_created', mockPhone: '11999999999' });
+
+            expect(res.status).toBe(200);
+            expect(mockSchedulerService.scheduleMessage).toHaveBeenCalledWith(
+                expect.objectContaining({ sessionId: 'global-sess' }),
+            );
         });
     });
 });

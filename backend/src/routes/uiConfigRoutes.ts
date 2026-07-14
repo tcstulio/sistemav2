@@ -89,6 +89,9 @@ const UpdateSchema = z.object({
     }).optional(),
     // Grupo Dolibarr p/ "Habilitar acesso ao app" (sem isto o Zod descartaria o campo e o save não persistiria).
     appAccessGroupId: z.string().max(40).optional(),
+    // #1439 — sessionId primário do WhatsApp (default global p/ scheduler). Trim + cap no service.
+    // Zod precisa declarar a chave p/ ela sobreviver ao .parse() e chegar ao sanitize.
+    whatsappPrimarySessionId: z.string().max(80).optional(),
     // #1204: kill-switches de automações de fundo (schedulerService / alertCronService). O Zod precisa
     // declarar o objeto p/ os flags sobreviverem ao .parse() e chegarem ao service (senão são estripados).
     automationSwitches: z.object({
