@@ -213,6 +213,23 @@ describe('integrationRoutes', () => {
                 .send({ provider: 'invalid' });
             expect(res.status).toBe(400);
         });
+
+        // #1410 — espelho do teste da rota admin: a integração também passa pelo setter (que
+        // persiste). A nota de resposta confirma persistência; sem essa asserção a regressão
+        // para "runtime only" passaria despercebida.
+        it('#1410: a resposta confirma persistência (nota "Survives server restart")', async () => {
+            mockChannelRouter.setWhatsAppProvider.mockClear();
+            mockChannelRouter.getWhatsAppProvider.mockReturnValue('moltbot');
+
+            const res = await request(app)
+                .post('/api/integration/features/provider')
+                .send({ provider: 'moltbot' });
+
+            expect(res.status).toBe(200);
+            expect(mockChannelRouter.setWhatsAppProvider).toHaveBeenCalledWith('moltbot');
+            expect(res.body.provider).toBe('moltbot');
+            expect(res.body.note).toMatch(/Survives server restart/i);
+        });
     });
 
     describe('GET /api/integration/features', () => {

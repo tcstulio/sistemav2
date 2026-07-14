@@ -588,6 +588,24 @@ describe('adminRoutes', () => {
 
             expect(res.status).toBe(400);
         });
+
+        // #1410 — a rota passa pelo setter, e o setter atualiza memória + pede persistência ao
+        // uiConfigService. A nota de resposta confirma p/ o admin que a mudança sobrevive ao
+        // restart (não é teatro). Sem essa asserção, a mudança de UX ("Persistido, sobrevive ao
+        // restart") poderia regredir silenciosamente.
+        it('#1410: a resposta confirma persistência (nota "Survives server restart")', async () => {
+            mockChannelRouter.setWhatsAppProvider.mockClear();
+            mockChannelRouter.getWhatsAppProvider.mockReturnValue('moltbot');
+
+            const res = await request(app)
+                .post('/api/admin/config/features/provider')
+                .send({ provider: 'moltbot' });
+
+            expect(res.status).toBe(200);
+            expect(mockChannelRouter.setWhatsAppProvider).toHaveBeenCalledWith('moltbot');
+            expect(res.body.provider).toBe('moltbot');
+            expect(res.body.note).toMatch(/Survives server restart/i);
+        });
     });
 
     describe('GET /api/admin/integration/status', () => {

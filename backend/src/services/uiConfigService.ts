@@ -542,25 +542,26 @@ export function sanitizeAutomationSwitches(v: unknown): AutomationSwitchesConfig
     };
 }
 
-// Exportado p/ teste unitário direto. Booleanos: só valor explicitamente booleano é aceito;
-    // ausente/inválido cai no default do respectivo flag (dryRun/financial OFF, crmContext ON).
-    export function sanitizeFeatureSwitches(v: unknown): FeatureSwitchesConfig {
-        const d = DEFAULTS.featureSwitches;
-        if (!v || typeof v !== 'object') return { ...d };
-        const a = v as Record<string, unknown>;
-        return {
-            dryRunMode: typeof a.dryRunMode === 'boolean' ? a.dryRunMode : d.dryRunMode,
-            financialCommands: typeof a.financialCommands === 'boolean' ? a.financialCommands : d.financialCommands,
-            crmContextInjection: typeof a.crmContextInjection === 'boolean' ? a.crmContextInjection : d.crmContextInjection,
-        };
-    }
+// Exportado p/ teste unitário direto (mesmo espírito das demais sanitize).
+// Booleanos: só valor explicitamente booleano é aceito;
+// ausente/inválido cai no default do respectivo flag (dryRun/financial OFF, crmContext ON).
+export function sanitizeFeatureSwitches(v: unknown): FeatureSwitchesConfig {
+    const d = DEFAULTS.featureSwitches;
+    if (!v || typeof v !== 'object') return { ...d };
+    const a = v as Record<string, unknown>;
+    return {
+        dryRunMode: typeof a.dryRunMode === 'boolean' ? a.dryRunMode : d.dryRunMode,
+        financialCommands: typeof a.financialCommands === 'boolean' ? a.financialCommands : d.financialCommands,
+        crmContextInjection: typeof a.crmContextInjection === 'boolean' ? a.crmContextInjection : d.crmContextInjection,
+    };
+}
 
 // #1410 — Sanitiza o override do provider WhatsApp. Aceita só 'legacy' | 'moltbot'; qualquer
-    // outro valor (incl. null, undefined, string vazia, número) vira undefined = cai no env.
-    // Importante: o caller que envia null/undefined explicitamente está "resetando" o override.
-    export function sanitizeWhatsappProvider(v: unknown): 'legacy' | 'moltbot' | undefined {
-        return v === 'legacy' || v === 'moltbot' ? v : undefined;
-    }
+// outro valor (incl. null, undefined, string vazia, número) vira undefined = cai no env.
+// Importante: o caller que envia null/undefined explicitamente está "resetando" o override.
+export function sanitizeWhatsappProvider(v: unknown): 'legacy' | 'moltbot' | undefined {
+    return v === 'legacy' || v === 'moltbot' ? v : undefined;
+}
 
 // Allowlist das cores do Tailwind usadas no tema (evita injeção de classe arbitrária).
 export const ALLOWED_THEME_COLORS = [

@@ -12,10 +12,11 @@
  *   - crmContextInjection (default ON): só fica ativo se env E toggle não desligarem (AND),
  *     preservando o comportamento histórico e permitindo ao admin desligar a injeção no LLM.
  *
- * #1410 — getEffectiveWhatsAppProvider() resolve o provider WhatsApp na ordem:
- *   1. Override persistido em `uiConfig.whatsappProvider` (setado pela rota admin/integration)
- *   2. Senão, cai no env WHATSAPP_PROVIDER (= FEATURES.WHATSAPP_PROVIDER lido no boot)
- * Sem essa cadeia, setWhatsAppProvider só mexe em memória e o restart volta pro env (#1410).
+ * #1410 — `getEffectiveWhatsAppProvider()` delega para `FEATURES.WHATSAPP_PROVIDER`, que já
+ * é resolvido no boot em `features.ts` (override persistido em `uiConfig.whatsappProvider`
+ * tem precedência sobre o env WHATSAPP_PROVIDER). Wrapper mantido para preservar a API
+ * consumida por `channelRouter` no construtor. Sem essa cadeia, `setWhatsAppProvider` só
+ * mexia em memória e o restart voltava pro env (#1410).
  */
 import { FEATURES } from './features';
 import { uiConfigService } from '../services/uiConfigService';
@@ -50,10 +51,9 @@ export function isCrmContextInjectionEnabled(): boolean {
     return FEATURES.CRM_CONTEXT_INJECTION !== false && toggleCrm();
 }
 
-/** #1410 — provider WhatsApp efetivo (override persistido > env). Lido a cada chamada p/ que
- *  o channelRouter pegue o valor atual logo após o POST, mesmo antes do "reboot". */
+/** #1410 — provider WhatsApp efetivo (override persistido > env). O valor já é resolvido
+ *  no boot em `features.ts`; aqui só devolvemos o que está em `FEATURES` p/ preservar a
+ *  API consumida pelo construtor do `channelRouter`. */
 export function getEffectiveWhatsAppProvider(): 'legacy' | 'moltbot' {
-    const persisted = uiConfigService.get().whatsappProvider;
-    if (persisted === 'legacy' || persisted === 'moltbot') return persisted;
     return FEATURES.WHATSAPP_PROVIDER;
 }

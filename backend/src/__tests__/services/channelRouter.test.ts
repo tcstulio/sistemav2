@@ -40,6 +40,15 @@ const mockSession = vi.hoisted(() => ({
 }));
 vi.mock('../../services/legacy/sessionService', () => ({ sessionService: mockSession }));
 
+// #1410 — setWhatsAppProvider persiste via uiConfigService.update; mock p/ evitar disco e
+// espiar a chamada (sem isso, o teste cairia no fs real e ainda não confirmaria que o setter
+// de fato chamou o persist).
+const mockUiConfig = vi.hoisted(() => ({
+    update: vi.fn((partial: any) => ({ whatsappProvider: partial?.whatsappProvider })),
+    get: vi.fn(() => ({})),
+}));
+vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfig }));
+
 import { channelRouter, ChannelRouter } from '../../services/channelRouter';
 import { FEATURES } from '../../config/features';
 import { moltbotGateway } from '../../services/moltbotGateway';
@@ -63,6 +72,26 @@ describe('ChannelRouter', () => {
 
         it('sets default session ID', () => {
             channelRouter.setDefaultSessionId('my-session');
+        });
+
+        // #1410 — setWhatsAppProvider persiste o override em uiConfig (não é mais teatro:
+        // só mudar em memória deixava o restart voltar pro env). Aqui validamos o contrato:
+        // o setter chama uiConfigService.update com { whatsappProvider }. O teste de "reboot"
+        // (persistência sobrevivendo ao reinício) mora em features.test.ts / uiConfigService.test.ts;
+        // este aqui cobre o lado do router.
+        it('#1410: setWhatsAppProvider persiste o override via uiConfigService.update', () => {
+            mockUiConfig.update.mockClear();
+            channelRouter.setWhatsAppProvider('moltbot');
+            expect(mockUiConfig.update).toHaveBeenCalledWith(expect.objectContaining({ whatsappProvider: 'moltbot' }));
+            expect(channelRouter.getWhatsAppProvider()).toBe('moltbot');
+        });
+
+        it('#1410: persistência é fail-soft — erro no update NÃO derruba o estado em memória', () => {
+            mockUiConfig.update.mockImplementationOnce(() => { throw new Error('disk full'); });
+            // setWhatsAppProvider deve logar o erro e manter o provider na memória (até o próximo
+            // POST que persista com sucesso ou o restart, que cai no env).
+            channelRouter.setWhatsAppProvider('moltbot');
+            expect(channelRouter.getWhatsAppProvider()).toBe('moltbot');
         });
     });
 
