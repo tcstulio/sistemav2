@@ -1,22 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import NotificationPanel from '../../components/NotificationPanel';
-import { AppNotification, AppView } from '../../types';
-import { useDolibarr } from '../../context/DolibarrContext';
-import { classifyScope } from '../../utils/notificationScope';
+import NotificationPanel from './NotificationPanel';
+import { AppNotification, AppView } from '../types';
+import { useDolibarr } from '../context/DolibarrContext';
+import { classifyScope } from '../utils/notificationScope';
 
 // #1429 — Mock do contexto Dolibarr. NotificationPanel usa useDolibarr() para obter
 // o currentUser e particionar notificações em MINHAS × SISTEMA via classifyScope.
 // Mantemos um userId padrão ('u1') para que os testes legados (que não se importam
 // com escopo) continuem determinísticos — todos caem no ramo 'system' (sem recipient).
-vi.mock('../../context/DolibarrContext', () => ({
+vi.mock('../context/DolibarrContext', () => ({
     useDolibarr: vi.fn(() => ({
         currentUser: { id: 'u1', login: 'u1' },
     })),
 }));
 
-vi.mock('../../utils/dateUtils', () => ({
+vi.mock('../utils/dateUtils', () => ({
     formatTime: vi.fn((date: number) => {
         const d = new Date(date);
         return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -28,15 +28,15 @@ vi.mock('../../utils/dateUtils', () => ({
 //   (a) preservar o comportamento atual em todos os testes já existentes
 //       (o spy delega para a implementação real via vi.importActual);
 //   (b) asserir nos novos testes de fallback que o componente importa
-//       `classifyScope` do util compartilhado '../../utils/notificationScope'
+//       `classifyScope` do util compartilhado '../utils/notificationScope'
 //       e o chama com (notification, userId) esperada.
 //
 // Movido para o top-level do módulo (em vez de dentro de describe) para
 // silenciar o warning do Vitest sobre hoisting e refletir a ordem real
 // de execução. vi.importActual preserva os demais exports do módulo.
-vi.mock('../../utils/notificationScope', async () => {
-    const actual = await vi.importActual<typeof import('../../utils/notificationScope')>(
-        '../../utils/notificationScope'
+vi.mock('../utils/notificationScope', async () => {
+    const actual = await vi.importActual<typeof import('../utils/notificationScope')>(
+        '../utils/notificationScope'
     );
     return {
         ...actual,
@@ -543,6 +543,95 @@ describe('NotificationPanel — colapso da seção SISTEMA (#1430)', () => {
 });
 
 // =============================================================================
+// #1431 — Cobertura dedicada dos 3 subcasos de "estados vazios" da issue.
+// Describe isolado para reprodutibilidade de falha e aderência direta à spec.
+// =============================================================================
+
+describe('NotificationPanel — estados vazios (#1431)', () => {
+    const mockOnClose = vi.fn();
+    const mockOnMarkRead = vi.fn();
+    const mockOnNavigate = vi.fn();
+    const mockOnClearAll = vi.fn();
+    const mockOnMarkAllRead = vi.fn();
+    const mockOnDismiss = vi.fn();
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(useDolibarr).mockImplementation(
+            () => ({ currentUser: { id: 'u1', login: 'u1' } } as unknown as ReturnType<typeof useDolibarr>)
+        );
+        localStorage.removeItem('notif_system_collapsed');
+    });
+
+    const renderPanel = (notifications: AppNotification[]) =>
+        render(
+            <MemoryRouter>
+                <NotificationPanel
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    notifications={notifications}
+                    onMarkRead={mockOnMarkRead}
+                    onNavigate={mockOnNavigate}
+                    onClearAll={mockOnClearAll}
+                    onMarkAllRead={mockOnMarkAllRead}
+                    onDismiss={mockOnDismiss}
+                />
+            </MemoryRouter>
+        );
+
+    const personalNote = (id: string): AppNotification => ({
+        id,
+        type: 'task',
+        title: `Tarefa pessoal ${id}`,
+        message: 'm',
+        date: Date.now() - 1000,
+        read: false,
+        priority: 'medium',
+        recipient: 'u1',
+    });
+
+    const systemNote = (id: string): AppNotification => ({
+        id,
+        type: 'stock',
+        title: `Alerta sistema ${id}`,
+        message: 'm',
+        date: Date.now() - 2000,
+        read: false,
+        priority: 'high',
+    });
+
+    it('5a — só pessoais: cabeçalho SISTEMA não aparece (nem cabeçalho, nem seção)', () => {
+        renderPanel([personalNote('p1'), personalNote('p2')]);
+
+        // MINHAS aparece com a contagem correta.
+        expect(screen.getByRole('heading', { name: /MINHAS \(2\)/ })).toBeInTheDocument();
+        // SISTEMA some por completo.
+        expect(screen.queryByRole('heading', { name: /SISTEMA/ })).not.toBeInTheDocument();
+    });
+
+    it('5b — só sistema: cabeçalho MINHAS com placeholder "Tudo em dia!"', () => {
+        renderPanel([systemNote('s1'), systemNote('s2')]);
+
+        // MINHAS permanece visível com contagem 0 e placeholder inline.
+        expect(screen.getByRole('heading', { name: /MINHAS \(0\)/ })).toBeInTheDocument();
+        const personalSection = screen.getByRole('heading', { name: /MINHAS/ }).closest('section')!;
+        expect(personalSection.textContent).toContain('Tudo em dia!');
+        // SISTEMA aparece normalmente.
+        expect(screen.getByRole('heading', { name: /SISTEMA \(2\)/ })).toBeInTheDocument();
+    });
+
+    it('5c — ambas vazias: empty state global renderiza (sem seções, com placeholder central)', () => {
+        const { container } = renderPanel([]);
+
+        // Nenhuma das duas seções chega a ser renderizada.
+        expect(container.querySelector('section[data-scope="personal"]')).toBeNull();
+        expect(container.querySelector('section[data-scope="system"]')).toBeNull();
+        // E o empty state centralizado do painel aparece.
+        expect(screen.getByText('Tudo em dia!')).toBeInTheDocument();
+    });
+});
+
+// =============================================================================
 // Cobertura da issue #1431 — adiciona cenários dos 6 grupos da especificação
 // sem remover/alterar nenhuma das suítes anteriores (regra de preservação).
 // =============================================================================
@@ -830,12 +919,12 @@ describe('NotificationPanel — cobertura #1431 (issue)', () => {
     // -----------------------------------------------------------------------------
     // Critério extra — `classifyScope` é importado do util compartilhado.
     // Verificamos via spy do módulo (vi.mock no top-level do arquivo) que o
-    // componente CONSOME o export de '../../utils/notificationScope'. Se alguém
+    // componente CONSOME o export de '../utils/notificationScope'. Se alguém
     // trocar por uma implementação inline (e remover a importação), este teste
     // quebra — porque o spy pararia de ser chamado.
     // -----------------------------------------------------------------------------
     describe('classifyScope é importado do util compartilhado (mock do módulo)', () => {
-        // O vi.mock('../../utils/notificationScope') é declarado no top-level
+        // O vi.mock('../utils/notificationScope') é declarado no top-level
         // do arquivo (junto dos outros mocks). Aqui só inspecionamos o spy
         // através do binding de import ESM normal — sem require dinâmico,
         // que não funciona em modo ESM do Vitest.
