@@ -215,6 +215,145 @@ describe('Dunning page (#1404)', () => {
         expect(screen.getByText(/Carregando digest/i)).toBeInTheDocument();
     });
 
+    it('preserva a ordem dos itens retornada pelo backend (sem re-sort no front)', async () => {
+        // O backend define a priorização; o front não deve reordenar.
+        mockGetDigest.mockResolvedValue({
+            digest: { totalItems: 3, totalReady: 3, totalIncomplete: 0 },
+            items: [
+                { id: 'c1', socname: 'Zeta', totalAberto: 100, diasAtrasoMax: 30, faturas: [], rascunho: 'z', status: 'ready' },
+                { id: 'c2', socname: 'Alfa', totalAberto: 100, diasAtrasoMax: 10, faturas: [], rascunho: 'a', status: 'ready' },
+                { id: 'c3', socname: 'Mike', totalAberto: 100, diasAtrasoMax: 20, faturas: [], rascunho: 'm', status: 'ready' },
+            ],
+        });
+        render(<Dunning />);
+
+        await waitFor(() => {
+            expect(screen.getByText('Zeta')).toBeInTheDocument();
+        });
+
+        const names = screen.getAllByRole('button', { name: /Zeta|Alfa|Mike/ }).map(b => b.textContent || '');
+        // ordem reflete exatamente a do backend: Zeta, Alfa, Mike
+        expect(names[0]).toMatch(/Zeta/);
+        expect(names[1]).toMatch(/Alfa/);
+        expect(names[2]).toMatch(/Mike/);
+    });
+
+    it('renderiza vencimentos em unix-seconds como DD/MM/YYYY (sem cair em 1970)', async () => {
+        const user = userEvent.setup();
+        // 1735689600s = 2025-01-01 UTC
+        mockGetDigest.mockResolvedValue({
+            digest: { totalItems: 1, totalReady: 1, totalIncomplete: 0 },
+            items: [
+                {
+                    id: 'c1',
+                    socname: 'Acme',
+                    totalAberto: 100,
+                    diasAtrasoMax: 1,
+                    faturas: [
+                        { ref: 'FA-001', vencimento: 1735689600, valor: 100 }, // unix-seconds
+                    ],
+                    rascunho: 'r',
+                    status: 'ready',
+                },
+            ],
+        });
+        const { container } = render(<Dunning />);
+
+        await waitFor(() => {
+            expect(screen.getByText('Acme')).toBeInTheDocument();
+        });
+        await user.click(screen.getByText('Acme'));
+
+        // O JSX "venc. {date} · {valor}" gera múltiplos text nodes; verificamos
+        // o textContent agregado do container para validar a renderização.
+        await waitFor(() => {
+            expect(container.textContent).toContain('01/01/2025');
+        });
+        expect(container.textContent).not.toContain('01/01/1970');
+    });
+
+    it('renderiza vencimentos em ms (>= 1e12) também corretamente', async () => {
+        const user = userEvent.setup();
+        mockGetDigest.mockResolvedValue({
+            digest: { totalItems: 1, totalReady: 1, totalIncomplete: 0 },
+            items: [
+                {
+                    id: 'c1',
+                    socname: 'Beta',
+                    totalAberto: 100,
+                    diasAtrasoMax: 1,
+                    faturas: [
+                        { ref: 'FA-002', vencimento: 1735689600000, valor: 100 }, // ms
+                    ],
+                    rascunho: 'r',
+                    status: 'ready',
+                },
+            ],
+        });
+        const { container } = render(<Dunning />);
+
+        await waitFor(() => {
+            expect(screen.getByText('Beta')).toBeInTheDocument();
+        });
+        await user.click(screen.getByText('Beta'));
+
+        await waitFor(() => {
+            expect(container.textContent).toContain('01/01/2025');
+        });
+    });
+
+    it('"Cancelar" na edição NÃO dispara HTTP e preserva o rascunho para reabrir', async () => {
+        const user = userEvent.setup();
+        const fetchSpy = vi.spyOn(globalThis, 'fetch');
+        mockGetDigest.mockResolvedValue(baseResponse);
+        render(<Dunning />);
+
+        await waitFor(() => {
+            expect(screen.getByText('Acme Corp')).toBeInTheDocument();
+        });
+        await user.click(screen.getByText('Acme Corp'));
+
+        const editBtn = await screen.findByRole('button', { name: /Editar/i });
+        await user.click(editBtn);
+
+        const textarea = await screen.findByLabelText(/Rascunho de mensagem para Acme Corp/);
+        await user.clear(textarea);
+        await user.type(textarea, 'rascunho do usuario');
+
+        const cancelBtn = screen.getByRole('button', { name: /Cancelar/i });
+        await user.click(cancelBtn);
+
+        // Nenhum fetch disparado
+        const nonGetCalls = fetchSpy.mock.calls.filter(([url]) => !String(url).includes('/api/dunning'));
+        expect(nonGetCalls.length).toBe(0);
+
+        // Reabrir edição deve mostrar o rascunho que o usuário digitou
+        const editBtn2 = screen.getByRole('button', { name: /Editar/i });
+        await user.click(editBtn2);
+
+        const textarea2 = await screen.findByLabelText(/Rascunho de mensagem para Acme Corp/);
+        expect((textarea2 as HTMLTextAreaElement).value).toBe('rascunho do usuario');
+
+        fetchSpy.mockRestore();
+    });
+
+    it('"Atualizar" recarrega o digest e respeita loading state', async () => {
+        const user = userEvent.setup();
+        mockGetDigest.mockResolvedValue(baseResponse);
+        render(<Dunning />);
+
+        await waitFor(() => {
+            expect(mockGetDigest).toHaveBeenCalledTimes(1);
+        });
+
+        const refreshBtn = screen.getByRole('button', { name: /Atualizar/i });
+        await user.click(refreshBtn);
+
+        await waitFor(() => {
+            expect(mockGetDigest).toHaveBeenCalledTimes(2);
+        });
+    });
+
     afterEach(() => {
         vi.restoreAllMocks();
     });

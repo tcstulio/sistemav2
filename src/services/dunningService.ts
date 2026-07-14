@@ -75,6 +75,16 @@ const emptyResponse: DunningResponse = {
 };
 
 /**
+ * Coalesce um contador do digest: aceita número explícito (inclusive 0) e
+ * cai para o `fallback` apenas quando o valor é nullish/NaN. Diferente de
+ * `||`, NÃO mascara zero legítimo.
+ */
+function asCount(value: unknown, fallback: number): number {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+/**
  * Busca o digest priorizado de cobranças.
  * Em caso de erro de rede/4xx/5xx devolve um digest vazio (fail-soft) —
  * a UI exibe empty state em vez de travar.
@@ -91,9 +101,11 @@ export async function getDunningDigest(): Promise<DunningResponse> {
         const items = Array.isArray(payload.items) ? payload.items : [];
         return {
             digest: {
-                totalItems: Number(digest.totalItems) || items.length,
-                totalReady: Number(digest.totalReady) || 0,
-                totalIncomplete: Number(digest.totalIncomplete) || 0,
+                // `asCount` preserva zero explícito vindo do backend; só cai no
+                // fallback (`items.length`) se o campo estiver ausente/NaN.
+                totalItems: asCount(digest.totalItems, items.length),
+                totalReady: asCount(digest.totalReady, 0),
+                totalIncomplete: asCount(digest.totalIncomplete, 0),
             },
             items,
         };

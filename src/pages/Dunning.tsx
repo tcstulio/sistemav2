@@ -2,24 +2,32 @@
 // Esta tela é uma "fila in-app": o humano lê, copia/edita o rascunho e dispara
 // manualmente por qualquer canal que quiser (WhatsApp/email/telefone/...).
 // Nenhum onClick desta página pode enviar nada (whatsapp/email/send/etc.).
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, ClipboardCopy, Pencil, RefreshCw, ChevronDown, ChevronRight, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageLayout, PageHeader, Card, EmptyState, Button, Spinner } from '../components/ui';
 import { formatCurrency } from '../utils/formatUtils';
-import { formatDateLocal } from '../utils/dateUtils';
+import { formatDateOnly } from '../utils/dateUtils';
 import { getDunningDigest, DunningItem, DunningResponse } from '../services/dunningService';
 
 const EMPTY_DIGEST = { totalItems: 0, totalReady: 0, totalIncomplete: 0 };
 
+/**
+ * Normaliza o `vencimento` da fatura (string ISO OU unix-seconds OU ms) e
+ * renderiza como data estrita (UTC). Vencimento é "Strict Date" — usar
+ * `formatDateLocal` (timezone local) causaria off-by-one em fusos como
+ * UTC-3 (Brasil): 2025-01-01T00:00:00Z viraria 31/12/2024.
+ */
 function parseTimestamp(value: string | number | undefined | null): string {
     if (value === undefined || value === null || value === '') return '—';
     if (typeof value === 'string') {
         const parsed = Date.parse(value);
-        if (!Number.isNaN(parsed)) return formatDateLocal(parsed);
+        if (!Number.isNaN(parsed)) return formatDateOnly(parsed);
         return value;
     }
-    return formatDateLocal(value);
+    // Heurística: >= 1e12 já está em ms; senão, assumimos unix-seconds (Dolibarr).
+    const ms = value >= 1_000_000_000_000 ? value : value * 1000;
+    return formatDateOnly(ms);
 }
 
 export const Dunning: React.FC = () => {
@@ -48,7 +56,10 @@ export const Dunning: React.FC = () => {
     const items = data.items ?? [];
     const digest = data.digest ?? EMPTY_DIGEST;
 
-    const sortedItems = useMemo(() => items, [items]);
+    // A ordenação é responsabilidade do backend (critério de aceite da issue #1404:
+    // "Ordenação visível na tela reflete a do backend (mesmo ordem)"). Não
+    // reordenamos no front para evitar divergência silenciosa com o digest.
+    const sortedItems = items;
 
     const handleToggleExpand = (id: string) => {
         setExpandedId((prev) => (prev === id ? null : id));
@@ -65,11 +76,16 @@ export const Dunning: React.FC = () => {
     };
 
     const handleStartEdit = (id: string, rascunho: string) => {
+        // Preserva o rascunho do usuário se já houver um (cancelou mas não
+        // fechou o card). Só inicializa a partir do backend na primeira vez.
         setEditingId(id);
-        setDraftText((prev) => ({ ...prev, [id]: rascunho ?? '' }));
+        setDraftText((prev) => ({ ...prev, [id]: prev[id] ?? rascunho ?? '' }));
     };
 
     const handleCancelEdit = () => {
+        // Intencional: NÃO limpamos `draftText[id]`. Edição local é um rascunho
+        // do humano — se ele cancelar, preservamos para que possa retomar sem
+        // perder o que já digitou. Para descartar de vez basta fechar o card.
         setEditingId(null);
     };
 
@@ -77,7 +93,7 @@ export const Dunning: React.FC = () => {
         setDraftText((prev) => ({ ...prev, [id]: value }));
     };
 
-    const handleSaveDraftLocal = (id: string) => {
+    const handleSaveDraftLocal = (_id: string) => {
         // Edição LOCAL — não dispara request HTTP. O usuário pode revisar o
         // texto e copiar. Nada é persistido no backend neste momento.
         setEditingId(null);
