@@ -341,3 +341,181 @@ describe('NotificationPanel — seções MINHAS x SISTEMA (#1429)', () => {
         expect(mockOnMarkRead).toHaveBeenCalledWith('s1');
     });
 });
+
+describe('NotificationPanel — colapso da seção SISTEMA (#1430)', () => {
+    const mockOnClose = vi.fn();
+    const mockOnMarkRead = vi.fn();
+    const mockOnNavigate = vi.fn();
+    const mockOnClearAll = vi.fn();
+    const mockOnMarkAllRead = vi.fn();
+    const mockOnDismiss = vi.fn();
+
+    const STORAGE_KEY = 'notif_system_collapsed';
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        // Garante estado limpo entre testes (o mock em setup.ts mantém store entre specs).
+        localStorage.removeItem(STORAGE_KEY);
+    });
+
+    const renderPanel = (notifications: AppNotification[], currentUser: { id: string; login?: string } | null = { id: 'u1', login: 'u1' }) => {
+        vi.mocked(useDolibarr).mockImplementation(() => ({ currentUser } as unknown as ReturnType<typeof useDolibarr>));
+        return render(
+            <MemoryRouter>
+                <NotificationPanel
+                    isOpen={true}
+                    onClose={mockOnClose}
+                    notifications={notifications}
+                    onMarkRead={mockOnMarkRead}
+                    onNavigate={mockOnNavigate}
+                    onClearAll={mockOnClearAll}
+                    onMarkAllRead={mockOnMarkAllRead}
+                    onDismiss={mockOnDismiss}
+                />
+            </MemoryRouter>
+        );
+    };
+
+    const personalNote = (id: string): AppNotification => ({
+        id,
+        type: 'task',
+        title: `Tarefa pessoal ${id}`,
+        message: 'Mensagem pessoal',
+        date: Date.now() - 1000,
+        read: false,
+        priority: 'medium',
+        recipient: 'u1',
+    });
+
+    const systemNote = (id: string): AppNotification => ({
+        id,
+        type: 'stock',
+        title: `Alerta sistema ${id}`,
+        message: 'Mensagem de sistema',
+        date: Date.now() - 2000,
+        read: false,
+        priority: 'high',
+    });
+
+    it('renderiza o botão toggle [ocultar] quando a seção SISTEMA está expandida', () => {
+        renderPanel([personalNote('p1'), systemNote('s1')]);
+
+        const toggle = screen.getByRole('button', { name: '[ocultar]' });
+        expect(toggle).toBeInTheDocument();
+        expect(toggle).toHaveAttribute('aria-expanded', 'true');
+        expect(toggle).toHaveAttribute('aria-controls', 'notif-system-section');
+    });
+
+    it('renderiza o botão toggle [mostrar] quando a seção SISTEMA inicia colapsada (localStorage=true)', () => {
+        localStorage.setItem(STORAGE_KEY, 'true');
+        renderPanel([personalNote('p1'), systemNote('s1')]);
+
+        const toggle = screen.getByRole('button', { name: '[mostrar]' });
+        expect(toggle).toBeInTheDocument();
+        expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('clicar em [ocultar] esconde os itens de SISTEMA mas mantém cabeçalho e contagem visíveis', () => {
+        renderPanel([personalNote('p1'), systemNote('s1'), systemNote('s2')]);
+
+        // Estado inicial: itens presentes
+        expect(screen.getByText('Alerta sistema s1')).toBeInTheDocument();
+        expect(screen.getByText('Alerta sistema s2')).toBeInTheDocument();
+        // Cabeçalho com contagem
+        expect(screen.getByRole('heading', { name: /SISTEMA \(2\)/ })).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: '[ocultar]' }));
+
+        // Itens somem
+        expect(screen.queryByText('Alerta sistema s1')).not.toBeInTheDocument();
+        expect(screen.queryByText('Alerta sistema s2')).not.toBeInTheDocument();
+        // Cabeçalho permanece visível (com a mesma contagem) — usuário pode reabrir
+        expect(screen.getByRole('heading', { name: /SISTEMA \(2\)/ })).toBeInTheDocument();
+        // Botão agora mostra [mostrar]
+        expect(screen.getByRole('button', { name: '[mostrar]' })).toBeInTheDocument();
+        // MINHAS não é afetada
+        expect(screen.getByText('Tarefa pessoal p1')).toBeInTheDocument();
+    });
+
+    it('clicar em [mostrar] traz os itens de SISTEMA de volta', () => {
+        localStorage.setItem(STORAGE_KEY, 'true');
+        renderPanel([personalNote('p1'), systemNote('s1'), systemNote('s2')]);
+
+        // Pré-condição colapsada
+        expect(screen.queryByText('Alerta sistema s1')).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: '[mostrar]' })).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: '[mostrar]' }));
+
+        // Itens voltam
+        expect(screen.getByText('Alerta sistema s1')).toBeInTheDocument();
+        expect(screen.getByText('Alerta sistema s2')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: '[ocultar]' })).toBeInTheDocument();
+        expect(localStorage.getItem(STORAGE_KEY)).toBe('false');
+    });
+
+    it('persiste o estado em localStorage a cada toggle (chave notif_system_collapsed)', () => {
+        const { unmount } = renderPanel([personalNote('p1'), systemNote('s1')]);
+
+        // Inicial: nada salvo
+        expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+        fireEvent.click(screen.getByRole('button', { name: '[ocultar]' }));
+        expect(localStorage.getItem(STORAGE_KEY)).toBe('true');
+
+        fireEvent.click(screen.getByRole('button', { name: '[mostrar]' }));
+        expect(localStorage.getItem(STORAGE_KEY)).toBe('false');
+
+        unmount();
+    });
+
+    it('persiste entre remounts (simula fechar/reabrir dropdown via localStorage)', () => {
+        // Primeira montagem: usuário colapsa
+        const first = renderPanel([personalNote('p1'), systemNote('s1')]);
+        fireEvent.click(first.getByRole('button', { name: '[ocultar]' }));
+        expect(localStorage.getItem(STORAGE_KEY)).toBe('true');
+        first.unmount();
+
+        // Segunda montagem: deve iniciar colapsado por causa do localStorage
+        const second = renderPanel([personalNote('p1'), systemNote('s1')]);
+        expect(second.queryByText('Alerta sistema s1')).toBeNull();
+        expect(second.getByRole('button', { name: '[mostrar]' })).toBeInTheDocument();
+        // Cabeçalho segue visível com contagem
+        expect(second.getByRole('heading', { name: /SISTEMA \(1\)/ })).toBeInTheDocument();
+        second.unmount();
+    });
+
+    it('atributos ARIA: seção SISTEMA com id="notif-system-section" e aria-labelledby apontando ao cabeçalho', () => {
+        const { container } = renderPanel([personalNote('p1'), systemNote('s1')]);
+
+        const section = container.querySelector('section[data-scope="system"]');
+        expect(section).not.toBeNull();
+        expect(section!.id).toBe('notif-system-section');
+        expect(section!.getAttribute('aria-labelledby')).toBe('notification-panel-system-heading');
+
+        // E o cabeçalho alvo deve existir dentro da seção
+        const heading = section!.querySelector('#notification-panel-system-heading');
+        expect(heading).not.toBeNull();
+    });
+
+    it('MINHAS não tem toggle de colapso (regra do escopo)', () => {
+        const { container } = renderPanel([personalNote('p1'), systemNote('s1')]);
+
+        const personalSection = container.querySelector('section[data-scope="personal"]');
+        expect(personalSection).not.toBeNull();
+        // Nenhum botão com aria-controls para 'notif-system-section' dentro de MINHAS
+        const collapseButtonsInsidePersonal = personalSection!.querySelectorAll(
+            'button[aria-controls="notif-system-section"]'
+        );
+        expect(collapseButtonsInsidePersonal).toHaveLength(0);
+    });
+
+    it('se SISTEMA está vazia, a seção some por inteiro (regra do #1429) — sem botão de toggle', () => {
+        const { container } = renderPanel([personalNote('p1')]);
+
+        expect(container.querySelector('section[data-scope="system"]')).toBeNull();
+        expect(
+            container.querySelector('button[aria-controls="notif-system-section"]')
+        ).toBeNull();
+    });
+});
