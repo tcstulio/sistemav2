@@ -512,4 +512,29 @@ describe('uiConfigRoutes', () => {
         expect(res.status).toBe(400);
         expect(mockUiConfigService.update).not.toHaveBeenCalled();
     });
+
+    // #1440: o #1437 declarou whatsappFallbackPolicy no service+sanitize mas ESQUECEU o Zod da rota —
+    // o .parse() estripava a chave e o save da política (na UI #1440) era NO-OP (mesmo bug do #1443).
+    it('#1440: PUT com whatsappFallbackPolicy propaga intacto (não estripado pelo Zod)', async () => {
+        mockUiConfigService.update.mockReturnValueOnce({ whatsappFallbackPolicy: 'first-working' });
+        const res = await request(app).put('/api/ui-config').send({ whatsappFallbackPolicy: 'first-working' });
+        expect(res.status).toBe(200);
+        expect(mockUiConfigService.update).toHaveBeenCalledWith({ whatsappFallbackPolicy: 'first-working' });
+        expect(res.body.whatsappFallbackPolicy).toBe('first-working');
+    });
+
+    it('#1440: PUT com whatsappPrimarySessionId + whatsappFallbackPolicy juntos propaga os dois', async () => {
+        const payload = { whatsappPrimarySessionId: 'v4_1747', whatsappFallbackPolicy: 'fail' as const };
+        mockUiConfigService.update.mockReturnValueOnce(payload);
+        const res = await request(app).put('/api/ui-config').send(payload);
+        expect(res.status).toBe(200);
+        expect(mockUiConfigService.update).toHaveBeenCalledWith(payload);
+        expect(res.body).toMatchObject(payload);
+    });
+
+    it('#1440: PUT com whatsappFallbackPolicy inválida (fora do enum) retorna 400', async () => {
+        const res = await request(app).put('/api/ui-config').send({ whatsappFallbackPolicy: 'divert-anywhere' });
+        expect(res.status).toBe(400);
+        expect(mockUiConfigService.update).not.toHaveBeenCalled();
+    });
 });
