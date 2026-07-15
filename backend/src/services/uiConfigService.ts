@@ -184,9 +184,11 @@ export interface UiConfig {
     // não está WORKING. Default 'fail' = se a default não estiver WORKING e nenhuma outra
     // sessão WORKING existir, devolve a default (erro "Session X not found" fica explícito).
     // 'first-working' = cai na primeira sessão WORKING disponível (logando o desvio). O boot
-    // do channelRouter chama `setDefaultSessionId(whatsappPrimarySessionId || 'default')` —
-    // este campo complementa a fiação e fica disponível para PRs futuros que venham a
-    // ramificar `resolveSession` (sem alterar comportamento de envio nesta entrega).
+    // do channelRouter hidrata `defaultSessionId` a partir deste uiConfig via field assignment
+    // direto no construtor (#1437 + #1409: o setter `setDefaultSessionId` foi REMOVIDO em #1409
+    // path B, era setter-fantasma sem caller de produção e sem persistência). Este campo
+    // complementa a fiação e fica disponível para PRs futuros que venham a ramificar
+    // `resolveSession` (sem alterar comportamento de envio nesta entrega).
     whatsappFallbackPolicy: WhatsappFallbackPolicy;
     // Concorrência otimista (#central-permissões): incrementa a cada save. A Central envia
     // o version que leu; o backend rejeita (409) se mudou no meio — evita last-write-wins.

@@ -56,6 +56,14 @@ export interface ChannelStatus {
  */
 class ChannelRouter {
     private whatsAppProvider: WhatsAppProvider;
+    // #1409 — placeholder interno usado pelo `resolveSession` quando não há sessionId explícito
+    // e nenhuma sessão WORKING está disponível: serve apenas como alvo para a mensagem de erro
+    // "Session X not found" ficar explícita. NÃO é configurável em runtime: o setter público
+    // `setDefaultSessionId` foi REMOVIDO (path B do issue) — só era chamado em teste, sem caller
+    // de produção e sem persistência (manter era "teatro"). O default institucional vive em
+    // `uiConfig.whatsappPrimarySessionId` (#1439); o fallback runtime é
+    // `sessionService.getFirstWorkingSessionId()`. A hidratação acontece no construtor via
+    // field assignment direto (não pelo setter).
     private defaultSessionId: string = 'default';
 
     constructor() {
@@ -66,14 +74,15 @@ class ChannelRouter {
         this.whatsAppProvider = getEffectiveWhatsAppProvider();
         log.info(`Initialized with WhatsApp provider: ${this.whatsAppProvider}`);
 
-        // #1437 — conserta o setter órfão de `setDefaultSessionId`: hidrata o defaultSessionId
-        // a partir do `whatsappPrimarySessionId` persistido em uiConfig. Sem override persistido
-        // (string vazia / null / undefined / só espaços) → fallback legado p/ 'default', mantendo
-        // compatibilidade com sessões já criadas cujo nome é literalmente 'default'. Log explícito
-        // serve de portão de verificação no boot (e de gancho p/ audit quando o admin troca).
+        // #1437 + #1409 — hidrata o `defaultSessionId` a partir do `whatsappPrimarySessionId`
+        // persistido em uiConfig. Sem override persistido (string vazia / null / undefined /
+        // só espaços) → fallback legado p/ 'default', mantendo compatibilidade com sessões já
+        // criadas cujo nome é literalmente 'default'. Log explícito serve de portão de
+        // verificação no boot (e de gancho p/ audit quando o admin troca). O setter público
+        // foi removido (#1409), por isso o construtor usa field assignment direto.
         const persisted = uiConfigService.get().whatsappPrimarySessionId;
         const effective = (persisted && persisted.trim()) ? persisted.trim() : 'default';
-        this.setDefaultSessionId(effective);
+        this.defaultSessionId = effective;
         log.info(`defaultSessionId set to ${effective}`);
     }
 
@@ -101,13 +110,6 @@ class ChannelRouter {
      */
     getWhatsAppProvider(): WhatsAppProvider {
         return this.whatsAppProvider;
-    }
-
-    /**
-     * Set default session ID
-     */
-    setDefaultSessionId(sessionId: string): void {
-        this.defaultSessionId = sessionId;
     }
 
     /**

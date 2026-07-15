@@ -59,7 +59,11 @@ describe('ChannelRouter', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         channelRouter.setWhatsAppProvider('legacy');
-        channelRouter.setDefaultSessionId('default');
+        // #1409 — `setDefaultSessionId` foi removido (path B do issue): o `defaultSessionId` é
+        // uma constante interna do router (hidratada no boot a partir de
+        // `uiConfig.whatsappPrimarySessionId` — ver #1437), não há mais API pública para
+        // resetar entre testes. O default é 'default' a menos que cada teste mocke o
+        // `mockUiConfig.get` antes de instanciar um `ChannelRouter` novo (ver describe #1437).
         (FEATURES as any).DRY_RUN_MODE = false;
         (FEATURES as any).MOLTBOT_ENABLED = false;
     });
@@ -70,8 +74,16 @@ describe('ChannelRouter', () => {
             expect(channelRouter.getWhatsAppProvider()).toBe('moltbot');
         });
 
-        it('sets default session ID', () => {
-            channelRouter.setDefaultSessionId('my-session');
+        // #1409 — adaptação do antigo teste `'sets default session ID'` (que validava um setter
+        // REMOVIDO no path B): a asserção equivalente é que `resolveSession` propaga 'default'
+        // quando nenhum sessionId explícito é fornecido, sem depender de setter em runtime.
+        // Comportamento observável = default interno do router chega ao provider como argumento.
+        it('#1409: propaga "default" como sessionId quando nenhum sessionId explícito é fornecido', async () => {
+            vi.mocked(legacyMessageService.sendText).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
+            mockSession.getStatus.mockReturnValue('WORKING'); // 'default' está WORKING
+            mockSession.getFirstWorkingSessionId.mockReturnValue(undefined);
+            await channelRouter.sendWhatsApp('5511@c.us', 'Hello');
+            expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'Hello');
         });
 
         // #1410 — setWhatsAppProvider persiste o override em uiConfig (não é mais teatro:
@@ -94,9 +106,10 @@ describe('ChannelRouter', () => {
             expect(channelRouter.getWhatsAppProvider()).toBe('moltbot');
         });
 
-        // #1437 — boot: hidrata `defaultSessionId` a partir de `uiConfig.whatsappPrimarySessionId`.
-        // Antes desse ajuste, `setDefaultSessionId` era um setter órfão (nunca era chamado no boot),
-        // então o canal sempre caía na string 'default' hardcoded. Aqui validamos:
+        // #1437 + #1409 — boot: hidrata `defaultSessionId` a partir de `uiConfig.whatsappPrimarySessionId`.
+        // O construtor faz field assignment direto (não chama setter) porque o setter público
+        // `setDefaultSessionId` foi removido em #1409 (path B): só era chamado em teste, sem caller
+        // de produção e sem persistência — manter era "teatro". Aqui validamos:
         //   - com `whatsappPrimarySessionId` setado no uiConfig → construtor usa esse valor
         //   - com valor vazio/ausente/whitespace → fallback legado para 'default'
         // Verificação é comportamental: instanciamos um ChannelRouter novo e disparamos um envio;
@@ -142,6 +155,78 @@ describe('ChannelRouter', () => {
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1' } as any);
                 await router.sendWhatsApp('5511@c.us', 'Oi');
                 expect(legacyMessageService.sendText).toHaveBeenCalledWith('primary-x', '5511@c.us', 'Oi');
+            });
+        });
+
+        // #1409 — path B: `setDefaultSessionId` removido (era setter-fantasma, só chamado em
+        // teste, sem caller de produção e sem persistência). O default institucional vive em
+        // `uiConfig.whatsappPrimarySessionId` (#1439); o router mantém a string 'default' apenas
+        // como placeholder usado pelo `resolveSession` quando não há sessão WORKING disponível
+        // (alvo para a mensagem de erro "Session X not found" ficar explícita).
+        // Casts via `unknown as Record<string, unknown>` evitam `any` (warning do
+        // @typescript-eslint/no-explicit-any) e ainda permitem checar ausência de método na API pública.
+        describe('#1409 — setDefaultSessionId removido', () => {
+            it('não expõe mais setDefaultSessionId na API pública', () => {
+                expect((channelRouter as unknown as Record<string, unknown>).setDefaultSessionId).toBeUndefined();
+                expect((ChannelRouter.prototype as unknown as Record<string, unknown>).setDefaultSessionId).toBeUndefined();
+            });
+
+            it('mantém o default interno como \'default\' (observável via resolveSession)', async () => {
+                vi.mocked(legacyMessageService.sendText).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
+                // 'default' WORKING → resolveSession devolve 'default', usado como argumento.
+                mockSession.getStatus.mockReturnValue('WORKING');
+                mockSession.getFirstWorkingSessionId.mockReturnValue(undefined);
+                await channelRouter.sendWhatsApp('5511@c.us', 'oi');
+                expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'oi');
+            });
+
+            it('chamadas sem sessionId explícito sempre usam "default" (nenhum caller runtime pode alterar)', async () => {
+                vi.mocked(legacyMessageService.sendText).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
+                mockSession.getStatus.mockReturnValue('WORKING');
+                mockSession.getFirstWorkingSessionId.mockReturnValue(undefined);
+
+                // Sequência realista: alterna providers e dispara envios sem sessionId explícito.
+                // Todas as chamadas devem cair em 'default' — não existe mais como alguém ter
+                // "setado" outro valor em runtime.
+                channelRouter.setWhatsAppProvider('moltbot');
+                await channelRouter.sendWhatsApp('5511@c.us', 'com-x', 'sessao-x'); // explícito: 'sessao-x'
+                vi.mocked(legacyMessageService.sendText).mockClear();
+
+                channelRouter.setWhatsAppProvider('legacy');
+                await channelRouter.sendWhatsApp('5511@c.us', 'sem-1');
+                await channelRouter.sendWhatsApp('5511@c.us', 'sem-2');
+                channelRouter.setWhatsAppProvider('moltbot');
+                await channelRouter.sendWhatsApp('5511@c.us', 'sem-3');
+
+                const calls = vi.mocked(legacyMessageService.sendText).mock.calls;
+                expect(calls).toHaveLength(3);
+                expect(calls.every((c) => c[0] === 'default')).toBe(true);
+            });
+
+            it('referência órfã a setDefaultSessionId no código de produção: nenhuma', async () => {
+                // Enforcement real do critério de aceite #3 do issue (nenhuma referência órfã).
+                // `fs` está mockado em `__tests__/setup.ts` (`readdirSync → []`), por isso usamos
+                // `vi.importActual` para acessar a implementação real do módulo. Sem isso o
+                // walker não listaria nenhum arquivo e o teste passaria trivialmente.
+                // `path` não é mockado no setup, então `import` direto é seguro.
+                const fsReal = await vi.importActual<typeof import('fs')>('fs');
+                const path = await import('path');
+                const rootSrc = path.resolve(__dirname, '../../');
+                const offenders: string[] = [];
+                const walk = (dir: string) => {
+                    for (const entry of fsReal.readdirSync(dir, { withFileTypes: true })) {
+                        const full = path.join(dir, entry.name);
+                        if (entry.isDirectory()) {
+                            if (entry.name === 'node_modules' || entry.name === '__tests__') continue;
+                            walk(full);
+                        } else if (/\.ts$/.test(entry.name) && !/\.test\.ts$/.test(entry.name)) {
+                            const content = fsReal.readFileSync(full, 'utf-8');
+                            if (/setDefaultSessionId\s*\(/.test(content)) offenders.push(full);
+                        }
+                    }
+                };
+                walk(rootSrc);
+                expect(offenders).toEqual([]);
             });
         });
     });
