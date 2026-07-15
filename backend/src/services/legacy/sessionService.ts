@@ -74,6 +74,22 @@ export class SessionService {
         return this.sessionStatus.get(sessionId) || 'STOPPED';
     }
 
+    /**
+     * Snapshot do estado de TODAS as sessões WhatsApp gerenciadas (#1441). É a fonte única da
+     * verdade que `channelRouter.resolveSession` consulta para decidir o roteamento: uma sessão
+     * só conta como WORKING se aparecer aqui com esse status (sem inferência por nome de pasta
+     * nem fallback legado implícito). Devolve um array novo a cada chamada (sem cache) para que
+     * o hot-reload de uiConfig pelo router enxergue o estado mais recente sem precisar invalidar
+     * nada manualmente.
+     */
+    public getWhatsAppSessions(): Array<{ id: string; status: string }> {
+        const out: Array<{ id: string; status: string }> = [];
+        this.sessionStatus.forEach((status, id) => {
+            out.push({ id, status });
+        });
+        return out;
+    }
+
     private setStatus(sessionId: string, status: 'INITIALIZING' | 'SCAN_QR_CODE' | 'WORKING' | 'STOPPED' | 'STARTING') {
         this.sessionStatus.set(sessionId, status);
         socketService.emit('session_status', { sessionId, status });

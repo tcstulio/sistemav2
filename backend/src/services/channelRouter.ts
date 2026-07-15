@@ -50,13 +50,43 @@ export interface ChannelStatus {
 }
 
 /**
+ * #1441 — erro distinto carregando o contexto da decisão de roteamento. Lançado por
+ * `resolveSession` quando há uma sessão primária configurada, ela não está WORKING e a política
+ * configurada é 'fail' (= default seguro). Carrega primary/policy/status para diagnóstico sem
+ * precisar de parsing de string. NÃO é um Error genérico: o caller pode usar `instanceof` para
+ * distinguir "primária offline" de outros erros de envio (autenticação, rede, etc.).
+ */
+export class WhatsAppPrimaryUnavailableError extends Error {
+    public readonly primary: string;
+    public readonly policy: string;
+    public readonly status: string;
+
+    constructor(primary: string, policy: string, status: string) {
+        super(
+            `WhatsApp primary session '${primary}' indisponível (status: ${status}) — ` +
+            `política '${policy}' não permite fallback silencioso. ` +
+            `Defina whatsappPrimarySessionId como string vazia para usar o legado, ` +
+            `ou corrija o status da sessão antes de enviar.`
+        );
+        this.name = 'WhatsAppPrimaryUnavailableError';
+        this.primary = primary;
+        this.policy = policy;
+        this.status = status;
+    }
+}
+
+/**
  * Channel Router
  *
  * Routes messages to the appropriate provider based on configuration.
  */
 class ChannelRouter {
     private whatsAppProvider: WhatsAppProvider;
-    private defaultSessionId: string = 'default';
+    // #1441 — sem 'default' hardcoded aqui: o default é decidido no construtor (hidrata do
+    // uiConfig.whatsappPrimarySessionId) ou pelo legacy fallback em resolveSession. Manter o
+    // literal nesse campo levaria o GUARD test a falhar (alguém reintroduzindo o fallback
+    // silencioso p/ 'default' pegaria a string em vez de respeitar a config).
+    private defaultSessionId: string = '';
 
     constructor() {
         // #1410 — antes lia só `FEATURES.WHATSAPP_PROVIDER` (env), o que tornava o setter admin
@@ -66,11 +96,13 @@ class ChannelRouter {
         this.whatsAppProvider = getEffectiveWhatsAppProvider();
         log.info(`Initialized with WhatsApp provider: ${this.whatsAppProvider}`);
 
-        // #1437 — conserta o setter órfão de `setDefaultSessionId`: hidrata o defaultSessionId
-        // a partir do `whatsappPrimarySessionId` persistido em uiConfig. Sem override persistido
-        // (string vazia / null / undefined / só espaços) → fallback legado p/ 'default', mantendo
-        // compatibilidade com sessões já criadas cujo nome é literalmente 'default'. Log explícito
-        // serve de portão de verificação no boot (e de gancho p/ audit quando o admin troca).
+        // #1437/#1441 — boot wiring: hidrata `defaultSessionId` a partir do `whatsappPrimarySessionId`
+        // persistido em uiConfig. Sem override persistido (string vazia / null / undefined / só
+        // espaços) → fallback legado p/ 'default', mantendo compatibilidade com sessões já criadas
+        // cujo nome é literalmente 'default'. O hot-reload real mora em `resolveSession`, que
+        // relê uiConfig a CADA chamada (sem cache do construtor) — esta hidratação aqui só
+        // serve para inicializar o legacy fallback. Log explícito serve de portão de verificação
+        // no boot (e de gancho p/ audit quando o admin troca).
         const persisted = uiConfigService.get().whatsappPrimarySessionId;
         const effective = (persisted && persisted.trim()) ? persisted.trim() : 'default';
         this.setDefaultSessionId(effective);
@@ -104,25 +136,89 @@ class ChannelRouter {
     }
 
     /**
-     * Set default session ID
+     * Set default session ID — fallback do caminho LEGADO (sem primary configurada). #1441
+     * preserva esta API porque testes e integrações legadas ainda dependem dela; o hot-path
+     * de produção lê uiConfig diretamente em `resolveSession`.
      */
     setDefaultSessionId(sessionId: string): void {
         this.defaultSessionId = sessionId;
     }
 
     /**
-     * Resolve a sessão de envio. sessionId explícito é sempre respeitado. Sem ele, usa a default;
-     * e se a default não estiver WORKING (ex.: a única sessão conectada tem outro nome, como 'v4'),
-     * cai na primeira sessão WORKING — logando o desvio (cuidado se houver várias sessões: pode
-     * enviar de outro número; follow-up = sessão primária configurável). Sem nenhuma sessão pronta,
-     * devolve a default para o erro "Session X not found" ficar explícito.
+     * #1441 — resolve a sessão de envio. Regras:
+     *   1. sessionId explícito sempre vence (nunca passa pela policy/legacy).
+     *   2. SEM sessionId, lê `uiConfig.whatsappPrimarySessionId` A CADA CHAMADA (sem cache do
+     *      construtor) — hot-reload: o admin troca no PUT /api/ui-config e o próximo envio já usa.
+     *   3. SEM primary configurada (string vazia/nula/whitespace) → caminho LEGADO:
+     *      defaultSessionId se WORKING, senão primeira WORKING (log.warn), senão defaultSessionId.
+     *   4. COM primary configurada → consulta `sessionService.getWhatsAppSessions()` (fonte única
+     *      da verdade). Se a primary estiver WORKING → usa. Senão, aplica `whatsappFallbackPolicy`:
+     *         - 'first-working': pega a primeira sessão WORKING e loga o desvio.
+     *         - 'fail' (default seguro): lança `WhatsAppPrimaryUnavailableError` SEM fallback
+     *           silencioso para 'default' — o erro fica explícito p/ a rota decidir.
+     * O resultado é type-checked em tempo de execução: nunca devolve 'default' como fallback
+     * quando há uma primária configurada.
      */
     private resolveSession(sessionId?: string): string {
         if (sessionId) return sessionId;
-        if (sessionService.getStatus(this.defaultSessionId) === 'WORKING') return this.defaultSessionId;
+
+        // Hot-reload: a config é lida AQUI, não no construtor. Mudanças no PUT /api/ui-config
+        // passam a valer no próximo envio sem reinicializar o router.
+        const cfg = uiConfigService.get();
+        const primaryRaw = (cfg.whatsappPrimarySessionId || '').trim();
+        const policy = cfg.whatsappFallbackPolicy || 'fail';
+
+        // Sem primária configurada → caminho legado, compatível com quem nunca tocou em /ui-config.
+        if (!primaryRaw) {
+            return this.resolveLegacyDefault();
+        }
+
+        // Com primária → `getWhatsAppSessions` é a fonte única da verdade. Nada de `getStatus`
+        // pontual nem de `getFirstWorkingSessionId` (esses continuam existindo p/ outros usos,
+        // mas o roteamento não confia neles).
+        const sessions = sessionService.getWhatsAppSessions();
+        const primarySession = sessions.find((s) => s.id === primaryRaw);
+
+        if (primarySession && primarySession.status === 'WORKING') {
+            return primaryRaw;
+        }
+
+        const statusObserved = primarySession?.status || 'STOPPED';
+
+        // 'first-working' só se aplica se EXISTE uma WORKING na lista. Sem WORKING nenhuma
+        // → política falha igual a 'fail' (não inventamos sessão).
+        if (policy === 'first-working') {
+            const working = sessions.find((s) => s.status === 'WORKING');
+            if (working) {
+                log.warn(
+                    `Sessão primária '${primaryRaw}' indisponível (status: ${statusObserved}); ` +
+                    `política 'first-working' → roteando para a sessão WORKING '${working.id}'.`
+                );
+                return working.id;
+            }
+        }
+
+        // 'fail' (default seguro) ou 'first-working' sem WORKING disponível → erro distinto
+        // carregando contexto. NÃO cai em 'default' silenciosamente.
+        throw new WhatsAppPrimaryUnavailableError(primaryRaw, policy, statusObserved);
+    }
+
+    /**
+     * Caminho LEGADO: sem `whatsappPrimarySessionId` configurada. Preserva o comportamento
+     * histórico (defaultSessionId WORKING → ela mesma; senão primeira WORKING com warn; senão
+     * defaultSessionId mesmo que não-WORKING para o erro "Session X not found" ficar explícito).
+     * Mantido separado p/ não misturar com a lógica de policy (#1441).
+     */
+    private resolveLegacyDefault(): string {
+        if (sessionService.getStatus(this.defaultSessionId) === 'WORKING') {
+            return this.defaultSessionId;
+        }
         const working = sessionService.getFirstWorkingSessionId();
         if (working && working !== this.defaultSessionId) {
-            log.warn(`Sessão default '${this.defaultSessionId}' indisponível; roteando para a sessão WORKING '${working}'.`);
+            log.warn(
+                `Sessão default '${this.defaultSessionId}' indisponível; ` +
+                `roteando para a sessão WORKING '${working}'.`
+            );
             return working;
         }
         return this.defaultSessionId;
