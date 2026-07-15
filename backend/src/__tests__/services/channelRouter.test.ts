@@ -1,4 +1,21 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// #1441 — espiões do logger para validar que `resolveSession` chama `warn` no ramo 'first-working'.
+// Hoisted para que o mock abaixo (vi.mock) consiga devolver SEMPRE o mesmo objeto (e não um
+// novo por chamada), permitindo assertivas sobre `loggerSpies.warn` ao longo dos testes.
+const loggerSpies = vi.hoisted(() => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+}));
+
+// Sobrescreve o mock de setup.ts (que retorna um objeto novo a cada createLogger). Para os
+// testes deste arquivo, queremos uma referência estável capturada por `channelRouter.ts`
+// (`const log = createLogger('ChannelRouter')` no module-load) para poder asserir sobre
+// `log.warn(...)`.
+vi.mock('../../utils/logger', () => ({ createLogger: () => loggerSpies }));
 
 vi.mock('../../config/features', () => ({
     FEATURES: {
@@ -434,6 +451,19 @@ describe('ChannelRouter', () => {
     // resolveSession do transportador real (`legacyMessageService.sendText` é espiado para
     // confirmar que ele NÃO foi chamado quando o teste espera throw).
     describe('#1441 — resolveSession honra whatsappFallbackPolicy', () => {
+        // O helper `setupScenario` muta o singleton `channelRouter.setDefaultSessionId(...)` para
+        // injetar a primária do cenário. Sem reset explícito, o estado vaza entre testes (a
+        // primária do cenário N vaza para o cenário N+1, mascarando falhas). O `beforeEach` do
+        // describe externo já reseta, mas o `afterEach` deste bloco é a barreira visível contra
+        // regressão: se alguém remover o reset do beforeEach, este afterEach continua segurando.
+        afterEach(() => {
+            channelRouter.setDefaultSessionId('default');
+            mockUiConfig.get.mockReset();
+            mockSession.getStatus.mockReset();
+            mockSession.getFirstWorkingSessionId.mockReset();
+            loggerSpies.warn.mockClear();
+        });
+
         // Helper: monta o cenário injetando primary/policy/status via mocks. `primarySessionId`
         // simula o `whatsappPrimarySessionId` configurado (string) OU o legado sem config
         // (null = cai em 'default' como defaultSessionId). `primaryStatus` força o status da
@@ -513,6 +543,12 @@ describe('ChannelRouter', () => {
             expect(legacyMessageService.sendText).not.toHaveBeenCalledWith(
                 'v4_1747', expect.anything(), expect.anything()
             );
+            // #1441 — Critério de aceite "log.warn registrado": o ramo 'first-working' loga warn
+            // ANTES de devolver o id (audit do desvio). Sem essa asserção, alguém poderia remover
+            // o log e o teste continuaria verde — mascarando regressão de observabilidade.
+            expect(loggerSpies.warn).toHaveBeenCalledWith(
+                expect.stringMatching(/Sessão default 'v4_1747'.*roteando para a sessão WORKING 'default'/)
+            );
         });
 
         // Cenário 3 — sem config (legado): `whatsappPrimarySessionId` ausente/vazio, política
@@ -554,6 +590,64 @@ describe('ChannelRouter', () => {
             await expect(channelRouter.sendWhatsApp('5511@c.us', 'oi'))
                 .rejects.toBeInstanceOf(WhatsAppPrimaryUnavailableError);
             expect(legacyMessageService.sendText).not.toHaveBeenCalled();
+        });
+
+        // Edge case documentado no JSDoc de `resolveSession` e exigido pelo critério "Cobertura
+        // de resolveSession ≥ 90%": policy='fail' + NENHUMA outra sessão WORKING → devolve a
+        // default e deixa o transportador emitir "Session X not found" (erro explícito de infra,
+        // NÃO erro de política). Sem este teste, alguém poderia reescrever o ramo final como
+        // `throw` (mascarando falha de infra "nenhum cliente WhatsApp up" com erro de "policy")
+        // ou como `return 'default'` hardcoded (regressão explícita do #1441).
+        it('Cenário 4 (edge): policy="fail" + primária OFFLINE + NENHUMA outra WORKING → devolve a default e tenta enviar (erro de infra, não de política)', async () => {
+            setupScenario({
+                primarySessionId: 'v4_1747',
+                primaryStatus: 'STOPPED',         // primária OFFLINE
+                policy: 'fail',                    // policy segura
+                fallbackWorking: undefined,        // NENHUMA outra WORKING
+                defaultSessionStatus: 'STOPPED',
+            });
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg-infra' });
+
+            // Sem fallback disponível, `resolveSession` cai no return final (defaultSessionId).
+            // O transportador é chamado — a falha "Session v4_1747 not found" é responsabilidade
+            // da camada de transporte, não da policy. Aqui verificamos o contrato do router.
+            await channelRouter.sendWhatsApp('5511@c.us', 'oi');
+
+            // Default devolvida (= primária configurada). NÃO chama 'default' literal hardcoded
+            // (que falharia se alguém reintroduzisse `return 'default'`).
+            expect(legacyMessageService.sendText).toHaveBeenCalledWith('v4_1747', '5511@c.us', 'oi');
+            // E NÃO lança o erro de política: a infra que tem que reportar a indisponibilidade.
+            // (asserção implícita: o await acima não rejeitou.)
+            expect(moltbotGateway.sendMessage).not.toHaveBeenCalled();
+        });
+
+        // Guard rail contra o literal 'default' hardcoded na hot path: o working session do
+        // fallback é uma terceira sessão (NEM 'default' NEM a primária configurada). Se alguém
+        // reintroduzir `return 'default'` em vez de `return working`, este teste falha porque
+        // a chamada esperada é com o id da WORKING real. Diferente do teste em
+        // `sendWhatsApp` (linha ~237) que verifica o mesmo contrato mas fora do bloco #1441,
+        // este aqui amarra a garantia ao issue/rubrica explicitamente.
+        it('Guard rail "default" hardcoded: policy="first-working" + working="v4_1748" (≠ "default") → roteia para "v4_1748", NÃO para "default" hardcoded', async () => {
+            setupScenario({
+                primarySessionId: 'v4_1747',
+                primaryStatus: 'STOPPED',
+                policy: 'first-working',
+                fallbackWorking: 'v4_1748',       // working real é 'v4_1748', não 'default'
+                defaultSessionStatus: 'WORKING',   // 'default' está WORKING também, mas NÃO deve ser escolhido
+            });
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg-v4' });
+
+            await channelRouter.sendWhatsApp('5511@c.us', 'oi');
+
+            // `getFirstWorkingSessionId` retorna 'v4_1748' (a "primeira" WORKING) — esse é o
+            // fallback, não 'default'. Se alguém hardcodar `return 'default'`, o teste falha.
+            expect(legacyMessageService.sendText).toHaveBeenCalledWith('v4_1748', '5511@c.us', 'oi');
+            expect(legacyMessageService.sendText).not.toHaveBeenCalledWith(
+                'default', expect.anything(), expect.anything()
+            );
+            expect(loggerSpies.warn).toHaveBeenCalledWith(
+                expect.stringMatching(/Sessão default 'v4_1747'.*roteando para a sessão WORKING 'v4_1748'/)
+            );
         });
     });
 });
