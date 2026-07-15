@@ -221,17 +221,50 @@ export const taskPlannerService = {
             if (conflictingPRs.length > 0 && !task.prNumber) {
                 const prNums = conflictingPRs.map(pr => pr.number);
                 decision.blockedBy = prNums;
-                const hasRunningTask = prNums.some(prNum => {
-                    const t = taskRunnerService.getTask(prNum);
-                    return t && (t.status === 'running' || t.status === 'fixing' || t.status === 'pending');
+                // #1455: resolve a TASK DONA de cada PR bloqueador pela BRANCH (`fix-<issue>`), não pelo
+                // número do PR. O `getTask(prNum)` era o BUG central do auto-deadlock: tasks são chaveadas
+                // por número de ISSUE, então consultar por número de PR achava a task errada/nenhuma.
+                const owners = conflictingPRs.map(pr => {
+                    const m = /(?:^|-)(\d+)$/.exec(pr.headRefName || '');
+                    const issueNum = m ? Number(m[1]) : NaN;
+                    return { pr, task: Number.isFinite(issueNum) ? taskRunnerService.getTask(issueNum) : null };
                 });
+                const ACTIVE = new Set(['running', 'fixing']);
+                const activeBlocker = owners.some(o => o.task && ACTIVE.has(o.task.status));
 
-                if (hasRunningTask) {
+                if (activeBlocker) {
+                    // Bloqueador com trabalho EM ANDAMENTO — esperar de fato evita conflito de merge.
                     decision.action = 'wait';
                     decision.reason = `Conflito de arquivos com PR(s) em andamento: #${prNums.join(', #')} (overlap: ${decision.overlappingFiles.slice(0, 5).join(', ')}). Aguardando merge.`;
                     decision.priority = 100 + prNums[0];
                     return store(decision);
                 }
+
+                // #1455: TODOS os PRs bloqueadores estão PARADOS/órfãos (task não-ativa, parada a <9). Esperar
+                // aqui é o AUTO-DEADLOCK: o PR parado nunca avança sozinho e trava os dependentes pra sempre.
+                // QUEBRA: re-despacha o(s) bloqueador(es) parado(s) — com TETO, p/ não loopar numa task que o
+                // coder sempre reprova. O re-despacho transiciona o bloqueador parado→'running', então nos
+                // próximos ticks o dependente espera corretamente um bloqueador ATIVO (ramo acima) até ele
+                // mergear/fechar. Só age se HÁ uma task parada re-despachável (PR órfão sem task cai no LLM).
+                const KICK_CAP = 2;
+                const kicked: number[] = [];
+                for (const o of owners) {
+                    const bt = o.task;
+                    if (bt && !ACTIVE.has(bt.status) && (bt.deadlockKicks || 0) < KICK_CAP) {
+                        bt.deadlockKicks = (bt.deadlockKicks || 0) + 1;
+                        kicked.push(bt.issueNumber);
+                        log.warn(`#1455: bloqueador PARADO #${bt.issueNumber} (PR #${o.pr.number}, status ${bt.status}) — re-despachando (kick ${bt.deadlockKicks}/${KICK_CAP}) p/ quebrar deadlock de #${task.issueNumber}`);
+                        taskRunnerService.redoTask(bt.issueNumber, 'Deadlock: seu PR ficou parado a <9 travando dependentes. Refaça buscando nota >=9; ataque os pontos que o juiz apontou.').catch((e: any) => log.error(`#1455: redo do bloqueador #${bt.issueNumber} falhou: ${e?.message || e}`));
+                    }
+                }
+                if (kicked.length > 0) {
+                    // Segue em 'wait' — desbloqueia quando o(s) bloqueador(es) re-despachado(s) mergear(em)/fechar(em).
+                    decision.action = 'wait';
+                    decision.reason = `Bloqueador(es) parado(s) re-despachado(s) p/ quebrar deadlock (#${kicked.join(', #')}). Aguardando avançarem.`;
+                    decision.priority = 100 + prNums[0];
+                    return store(decision);
+                }
+                // Nenhum bloqueador re-despachável (PR órfão sem task, ou teto de kicks atingido): cai no LLM abaixo.
             }
 
             const fileContext = await getFileContextFromMain(issueBody);

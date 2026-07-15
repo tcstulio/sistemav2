@@ -349,6 +349,7 @@ export interface Task {
     gateFixAttempts?: number;     // teto (default 3, #963 Fase A), SEPARADO de judgeAttempts (não se multiplicam)
     gateFixInstruction?: string;  // correção PERSISTENTE injetada nos builders (imune ao wipe de feedbackHistory na síntese)
     roundsUsed?: number; // #1154 item 23: rodadas de opencode acumuladas na vida da task (para o teto de custo por task)
+    deadlockKicks?: number; // #1455: quantas vezes o planner re-despachou esta task por estar PARADA bloqueando dependentes (teto p/ não loopar)
     // #1154 P1 item 3: crítica do Judge + feedback humano são AÇÕES a atender que DEVEM sobreviver ao wipe
     // de feedbackHistory entre fases (senão o auto-fix roda CEGO). PERSISTENTE como gateFixInstruction:
     // injetado em TODOS os builders + lido pelo Judge; limpo só na aprovação/redo.

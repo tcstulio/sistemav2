@@ -20,6 +20,7 @@ vi.mock('../../services/taskRunnerService', () => ({
     taskRunnerService: {
         getTask: vi.fn(),
         getAllTasks: vi.fn(() => []),
+        redoTask: vi.fn(async () => ({})), // #1455: o planner re-despacha bloqueador parado
     },
 }));
 
@@ -277,5 +278,52 @@ describe('taskPlannerService — throttle de concorrência (#1117 / Epic #1113)'
         expect(typeof d.reason).toBe('string');
         expect(typeof d.alreadyResolved).toBe('boolean');
         expect(Array.isArray(d.blockedBy)).toBe(true);
+    });
+});
+
+describe('taskPlannerService — auto-deadlock: bloqueador PARADO (#1455)', () => {
+    beforeEach(async () => {
+        vi.clearAllMocks();
+        invalidatePlannerCache();
+        resetPlannerThrottle();
+        const { execFile } = await import('child_process');
+        // gh pr list → 1 PR aberto na branch fix-1353; gh pr diff → toca src/services/foo.ts
+        vi.mocked(execFile as any).mockImplementation((cmd: string, args: string[], opts: any, cb: any) => {
+            if (typeof opts === 'function') cb = opts;
+            if (args[1] === 'list') cb(null, { stdout: JSON.stringify([{ number: 1458, title: 'feat(#1353)', headRefName: 'fix-1353' }]), stderr: '' });
+            else if (args[1] === 'diff') cb(null, { stdout: 'src/services/foo.ts\n', stderr: '' });
+            else cb(null, { stdout: '', stderr: '' });
+        });
+    });
+
+    const taskTouchingFoo = () => makeTask({ issueNumber: 9999, body: 'Alterar src/services/foo.ts' });
+
+    it('bloqueador PARADO (pending) → re-despacha via redoTask usando a ISSUE 1353 (não o PR 1458) + wait', async () => {
+        vi.mocked(taskRunnerService.getTask).mockReturnValue(makeTask({ issueNumber: 1353, status: 'pending' }));
+
+        const d = await taskPlannerService.analyzeTask(taskTouchingFoo());
+
+        // o BUG do #1455 era getTask(prNum): aqui garantimos que resolve pela BRANCH fix-1353 → ISSUE 1353
+        expect(taskRunnerService.getTask).toHaveBeenCalledWith(1353);
+        expect(taskRunnerService.getTask).not.toHaveBeenCalledWith(1458);
+        expect((taskRunnerService as any).redoTask).toHaveBeenCalledWith(1353, expect.any(String));
+        expect(d.action).toBe('wait');
+    });
+
+    it('bloqueador ATIVO (running) → NÃO re-despacha (esperar evita conflito) + wait', async () => {
+        vi.mocked(taskRunnerService.getTask).mockReturnValue(makeTask({ issueNumber: 1353, status: 'running' }));
+
+        const d = await taskPlannerService.analyzeTask(taskTouchingFoo());
+
+        expect((taskRunnerService as any).redoTask).not.toHaveBeenCalled();
+        expect(d.action).toBe('wait');
+    });
+
+    it('bloqueador parado mas TETO de kicks atingido (deadlockKicks=2) → NÃO re-despacha (não loopa)', async () => {
+        vi.mocked(taskRunnerService.getTask).mockReturnValue(makeTask({ issueNumber: 1353, status: 'pending', deadlockKicks: 2 }));
+
+        await taskPlannerService.analyzeTask(taskTouchingFoo());
+
+        expect((taskRunnerService as any).redoTask).not.toHaveBeenCalled();
     });
 });
