@@ -153,6 +153,13 @@ export interface NotificationPolicyConfig {
     invoiceDueHorizonDays: number; // fatura a vencer (dias) — horizonte do alerta de vencimento
 }
 
+// #1437 — Política aplicada pelo `channelRouter.resolveSession` quando a sessão primária
+// (`whatsappPrimarySessionId`) não está WORKING. Default 'fail' = devolve a default
+// (erro "Session X not found" fica explícito). 'first-working' = cai na primeira
+// sessão WORKING disponível (logando o desvio). Domínio fechado: só estes 2 valores
+// são aceitos; qualquer outro (incl. null/undefined/string vazia) cai no default.
+export type WhatsappFallbackPolicy = 'fail' | 'first-working';
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
@@ -173,6 +180,14 @@ export interface UiConfig {
     // este valor quando uma AutomationRule não tem sessionId próprio; string vazia = deixa
     // o `channelRouter.resolveSession` decidir em runtime (fallback p/ primeira sessão WORKING).
     whatsappPrimarySessionId: string;
+    // #1437 — política aplicada pelo `channelRouter.resolveSession` quando a sessão primária
+    // não está WORKING. Default 'fail' = se a default não estiver WORKING e nenhuma outra
+    // sessão WORKING existir, devolve a default (erro "Session X not found" fica explícito).
+    // 'first-working' = cai na primeira sessão WORKING disponível (logando o desvio). O boot
+    // do channelRouter chama `setDefaultSessionId(whatsappPrimarySessionId || 'default')` —
+    // este campo complementa a fiação e fica disponível para PRs futuros que venham a
+    // ramificar `resolveSession` (sem alterar comportamento de envio nesta entrega).
+    whatsappFallbackPolicy: WhatsappFallbackPolicy;
     // Concorrência otimista (#central-permissões): incrementa a cada save. A Central envia
     // o version que leu; o backend rejeita (409) se mudou no meio — evita last-write-wins.
     version: number;
@@ -204,6 +219,9 @@ export type UiConfigUpdate = Partial<Omit<UiConfig, 'menu' | 'dashboard' | 'scre
     // #1439 — admin pode atualizar o default global de sessionId. Aceita string; sanitize
     // (trim + cap) é feito em update() — string vazia é válida (= delega ao resolveSession).
     whatsappPrimarySessionId?: string;
+    // #1437 — política de fallback da sessão primária do WhatsApp. Aceita só os dois
+    // valores do domínio; sanitize em update() descarta qualquer outro valor (cai no default).
+    whatsappFallbackPolicy?: WhatsappFallbackPolicy;
     // #1410 — override persistente do provider WhatsApp. Aceita 'legacy' | 'moltbot' | null/undefined
     // (= voltar ao env). Sanitizado em update().
     whatsappProvider?: 'legacy' | 'moltbot' | null;
@@ -330,6 +348,9 @@ const DEFAULTS: UiConfig = {
     // #1439 — default global vazio: scheduler usa string vazia → channelRouter.resolveSession
     // aplica a política de fallback (primeira sessão WORKING). Admin configura em /ui-config.
     whatsappPrimarySessionId: '',
+    // #1437 — política default 'fail' (= comportamento atual: resolveSession devolve a default
+    // p/ o erro ficar explícito). Em PR futuro, ramificar resolveSession p/ honrar 'first-working'.
+    whatsappFallbackPolicy: 'fail',
     version: 0,
 };
 
@@ -563,6 +584,14 @@ export function sanitizeWhatsappProvider(v: unknown): 'legacy' | 'moltbot' | und
     return v === 'legacy' || v === 'moltbot' ? v : undefined;
 }
 
+// #1437 — Sanitiza a política de fallback da sessão primária do WhatsApp. Aceita só os dois
+// valores do domínio; qualquer outro (null/undefined/string vazia/string parecida tipo 'FAIL'
+// em maiúsculas, número, objeto) cai no default seguro 'fail' — não persiste valor perigoso
+// e não quebra o boot se um payload corrompido chegar pelo PUT.
+export function sanitizeWhatsappFallbackPolicy(v: unknown): WhatsappFallbackPolicy {
+    return v === 'fail' || v === 'first-working' ? v : 'fail';
+}
+
 // Allowlist das cores do Tailwind usadas no tema (evita injeção de classe arbitrária).
 export const ALLOWED_THEME_COLORS = [
     'slate', 'gray', 'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald',
@@ -607,6 +636,10 @@ export class UiConfigService {
                     whatsappPrimarySessionId: typeof parsed.whatsappPrimarySessionId === 'string'
                         ? parsed.whatsappPrimarySessionId.trim().slice(0, 80)
                         : '',
+                    // #1437 — saneamento do arquivo: campo inexistente / valor fora do domínio /
+                    // tipo errado → cai no default 'fail' (não quebra o boot se o JSON persistido
+                    // estiver corrompido).
+                    whatsappFallbackPolicy: sanitizeWhatsappFallbackPolicy(parsed.whatsappFallbackPolicy),
                     // #1410 — só 'legacy' | 'moltbot' são aceitos do arquivo; resto cai no env
                     // (sanitize devolve undefined, getEffectiveWhatsAppProvider fallback).
                     whatsappProvider: sanitizeWhatsappProvider(parsed.whatsappProvider),
@@ -686,6 +719,10 @@ export class UiConfigService {
         // do UiConfig). String vazia é válida (= delega ao resolveSession).
         if (typeof partial.whatsappPrimarySessionId === 'string') {
             next.whatsappPrimarySessionId = partial.whatsappPrimarySessionId.trim().slice(0, 80);
+        }
+        // #1437 — política de fallback: sanitize antes de gravar (fora do domínio → default).
+        if ('whatsappFallbackPolicy' in partial) {
+            next.whatsappFallbackPolicy = sanitizeWhatsappFallbackPolicy(partial.whatsappFallbackPolicy);
         }
         if (typeof partial.appAccessGroupId === 'string') {
             const v = partial.appAccessGroupId.trim().slice(0, 40);
