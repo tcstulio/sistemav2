@@ -10,6 +10,10 @@ import { killChromesByProfile } from '../../utils/processTree';
 
 const log = createLogger('SessionService');
 
+// #1438 / #1441 — tipo do status de uma sessão WhatsApp. Exportado p/ o `channelRouter` e os
+// testes tiparem o retorno de `getWhatsAppSessions()`.
+export type WhatsAppSessionStatus = 'INITIALIZING' | 'SCAN_QR_CODE' | 'WORKING' | 'STOPPED' | 'STARTING';
+
 // Helper to find local browser
 const getBrowserPath = () => {
     if (config.chromeBin && fs.existsSync(config.chromeBin)) {
@@ -36,7 +40,7 @@ export class SessionService {
     // State
     private clients: Map<string, Client> = new Map();
     private qrCodes: Map<string, string> = new Map();
-    private sessionStatus: Map<string, 'INITIALIZING' | 'SCAN_QR_CODE' | 'WORKING' | 'STOPPED' | 'STARTING'> = new Map();
+    private sessionStatus: Map<string, WhatsAppSessionStatus> = new Map();
 
     // Locks
     private initializationLocks: Map<string, boolean> = new Map();
@@ -70,11 +74,25 @@ export class SessionService {
         return undefined;
     }
 
+    /**
+     * Lista normalizada das sessões WhatsApp conhecidas ({ id, status }). É a fonte de verdade que
+     * o `channelRouter.resolveSession` consulta para decidir o roteamento (#1438 / #1441). Retorna
+     * um array vazio quando não há sessões registradas — nesse caso o router decide o que fazer
+     * (legado: cai no 'default'; com primária configurada: aplica a policy).
+     */
+    public getWhatsAppSessions(): Array<{ id: string; status: WhatsAppSessionStatus }> {
+        const out: Array<{ id: string; status: WhatsAppSessionStatus }> = [];
+        this.sessionStatus.forEach((status, id) => {
+            out.push({ id, status });
+        });
+        return out;
+    }
+
     public getStatus(sessionId: string) {
         return this.sessionStatus.get(sessionId) || 'STOPPED';
     }
 
-    private setStatus(sessionId: string, status: 'INITIALIZING' | 'SCAN_QR_CODE' | 'WORKING' | 'STOPPED' | 'STARTING') {
+    private setStatus(sessionId: string, status: WhatsAppSessionStatus) {
         this.sessionStatus.set(sessionId, status);
         socketService.emit('session_status', { sessionId, status });
     }
@@ -501,3 +519,14 @@ export class SessionService {
 }
 
 export const sessionService = SessionService.getInstance();
+
+/**
+ * Helper top-level (#1438 / #1441) — mesma coisa que `sessionService.getWhatsAppSessions()`,
+ * exposto como função para que os testes do `channelRouter` possam mockar com
+ * `vi.mock('../../services/legacy/sessionService')` e sobrescrever só este símbolo (em vez de
+ * reconfigurar o mock do singleton inteiro). Em produção, a função delega ao singleton — não
+ * carrega estado próprio.
+ */
+export function getWhatsAppSessions(): Array<{ id: string; status: WhatsAppSessionStatus }> {
+    return sessionService.getWhatsAppSessions();
+}
