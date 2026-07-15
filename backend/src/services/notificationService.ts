@@ -1,11 +1,15 @@
 import { createLogger } from '../utils/logger';
 import { socketService } from './socketService';
 import { channelRouter } from './channelRouter';
+import { uiConfigService, type QuietHoursChannel } from './uiConfigService';
+import { isWithinQuietWindow, nextQuietEnd } from './notifications/quietHours';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 
 const log = createLogger('Notification');
+
+export type { QuietHoursChannel };
 
 export type NotificationChannel = 'in-app' | 'whatsapp' | 'email';
 export type NotificationPriority = 'low' | 'medium' | 'high';
@@ -48,6 +52,55 @@ interface NotificationStore {
     notifications: Notification[];
 }
 
+/**
+ * Parâmetros aceitos por `send()`. Igual ao payload de `create()` + flag
+ * `critical` (bypass documentado do gate — vide #1407).
+ */
+export interface SendParams {
+    event: NotificationEvent;
+    title: string;
+    message: string;
+    channels?: NotificationChannel[];
+    priority?: NotificationPriority;
+    recipient?: string;
+    recipientName?: string;
+    recipientPhone?: string;
+    recipientEmail?: string;
+    senderId?: string;
+    senderName?: string;
+    entityType?: string;
+    entityId?: string;
+    linkTo?: string;
+    /**
+     * #1407 — bypass documentado do gate de quiet-hours. Reservado para
+     * fluxos críticos (security/OTP/2FA) que PRECISAM chegar mesmo em
+     * horário de silêncio. O uso fica registrado em log estruturado
+     * (`notification.critical.bypass`) para auditoria. Default: false.
+     */
+    critical?: boolean;
+}
+
+/**
+ * Resultado de `send()`. Separa o que foi despachado agora do que ficou
+ * agendado em `scheduledDispatch` para o fim da janela de silêncio.
+ */
+export interface SendResult {
+    /** Notificação persistida (canais = `dispatchedChannels`). */
+    notification: Notification;
+    /** Canais efetivamente despachados neste instante. */
+    dispatchedChannels: NotificationChannel[];
+    /** Canais adiados, com o instante alvo do redispatch. */
+    deferred: Array<{ channel: NotificationChannel; scheduledFor: Date }>;
+}
+
+/** Entry interna do scheduledDispatch (in-memory queue + timer). */
+interface ScheduledEntry {
+    notificationId: string;
+    channel: NotificationChannel;
+    scheduledFor: number; // ms epoch
+    timer: NodeJS.Timeout;
+}
+
 const STORE_PATH = path.join(__dirname, '../../data/notifications.json');
 const MAX_NOTIFICATIONS = 1000;
 
@@ -81,6 +134,15 @@ class NotificationService {
         return route;
     }
     private data: NotificationStore;
+    /**
+     * #1407 — `scheduledDispatch`: fila in-memory de canais adiados pelo gate
+     * de quiet-hours. Cada entrada possui um `setTimeout` que, ao disparar,
+     * chama `deliver()` para a notificação original e atualiza `deliveredTo`.
+     * Trade-off aceito: a fila é perdida em restart do processo — escopo
+     * documentado no issue (#1397 epic). P/ sobreviver a restart seria
+     * necessário persistir (issue separada).
+     */
+    private scheduled: Map<string, ScheduledEntry> = new Map();
 
     constructor() {
         this.data = { notifications: [] };
@@ -272,6 +334,185 @@ class NotificationService {
         // poderia perder a notificação antes do debounce (1s) gravar — parecendo "não chegou".
         await this.flush();
         return notification;
+    }
+
+    /**
+     * #1407 — Gate único de quiet-hours para o despachante central. Substitui
+     * a porta de entrada de quem quiser respeitar `notificationPolicy.quietHours`.
+     * Fluxo:
+     *   1. `critical=true` → bypass documentado, despacha todos os canais agora.
+     *   2. Caso contrário, particiona `channels` em `dispatched` (fora do silêncio)
+     *      e `deferred` (dentro). Os diferidos entram em `scheduledDispatch` via
+     *      `setTimeout` para o instante calculado por `nextQuietEnd()`.
+     *   3. Retorna `SendResult` com a notificação persistida (canais = `dispatched`)
+     *      e a lista de canais adiados (auditáveis).
+     *
+     * Justificativa de escopo: `create()` / `notifyPerson()` / `notifyTeam()` /
+     * `channelRouter` / `alertCron` / `notificationRoutes` NÃO passam por este
+     * gate nesta PR — são pontos de adoção futura. O escopo do card é expor o
+     * gate; migração dos callers fica em issues separadas (per item 5 do
+     * acceptance criteria).
+     */
+    async send(params: SendParams): Promise<SendResult> {
+        const fallback: NotificationChannel[] = ['in-app'];
+        const requested: NotificationChannel[] =
+            params.channels && params.channels.length > 0 ? params.channels : fallback;
+        const critical = !!params.critical;
+
+        if (critical) {
+            // Bypass: críticos (security/OTP) precisam chegar mesmo em silêncio.
+            const notification = await this.create({ ...params, channels: requested });
+            log.info('notification.critical.bypass', {
+                notificationId: notification.id,
+                channels: requested,
+            });
+            return { notification, dispatchedChannels: [...requested], deferred: [] };
+        }
+
+        const now = new Date();
+        const policy = uiConfigService.getNotificationPolicy();
+        const dispatched: NotificationChannel[] = [];
+        const deferred: Array<{ channel: NotificationChannel; scheduledFor: Date }> = [];
+        for (const ch of requested) {
+            // in-app é reversível/benigno → nunca bloqueia. Mesmo padrão do
+            // `applyQuietHoursGate` em `taskNotificationService`.
+            if (ch === 'in-app') {
+                dispatched.push(ch);
+                continue;
+            }
+            if (uiConfigService.isWithinQuietHours(now, ch)) {
+                const rule = policy.quietHours[ch];
+                const scheduledFor = nextQuietEnd(now, rule);
+                deferred.push({ channel: ch, scheduledFor });
+            } else {
+                dispatched.push(ch);
+            }
+        }
+
+        // Persiste a notificação com os canais IMEDIATOS (entrega real).
+        // Se todos os canais foram adiados, cria um placeholder com
+        // `channels=[]` (reservando o ID e permitindo update quando o
+        // scheduledDispatch disparar).
+        let notification: Notification;
+        if (dispatched.length > 0) {
+            notification = await this.create({ ...params, channels: dispatched });
+        } else {
+            notification = this.buildPlaceholderNotification(params);
+        }
+
+        for (const d of deferred) {
+            this.scheduleChannel(notification.id, d.channel, d.scheduledFor);
+        }
+
+        return {
+            notification,
+            dispatchedChannels: dispatched,
+            deferred,
+        };
+    }
+
+    /**
+     * Cria stub de notificação (channels=[]) usado quando TODOS os canais
+     * solicitados caem na janela de silêncio. Preserva o ID p/ que o
+     * `fireScheduled` futuro atualize o mesmo registro.
+     */
+    private buildPlaceholderNotification(params: SendParams): Notification {
+        const stub: Notification = {
+            id: `notif_${crypto.randomUUID()}`,
+            event: params.event,
+            title: params.title,
+            message: params.message,
+            channels: [],
+            priority: params.priority || 'medium',
+            recipient: params.recipient,
+            recipientName: params.recipientName,
+            recipientPhone: params.recipientPhone,
+            recipientEmail: params.recipientEmail,
+            senderId: params.senderId,
+            senderName: params.senderName,
+            entityType: params.entityType,
+            entityId: params.entityId,
+            linkTo: this.resolveLinkTo(params),
+            read: false,
+            createdAt: Date.now(),
+            deliveredTo: [],
+            failedChannels: [],
+        };
+        this.data.notifications.unshift(stub);
+        this.save();
+        return stub;
+    }
+
+    /** Agenda a entrega de um canal adiado para `scheduledFor` (Date). */
+    private scheduleChannel(notificationId: string, channel: NotificationChannel, scheduledFor: Date): void {
+        const entryId = `${notificationId}:${channel}`;
+        const delay = Math.max(0, scheduledFor.getTime() - Date.now());
+        const timer = setTimeout(() => {
+            this.scheduled.delete(entryId);
+            this.fireScheduled(notificationId, channel).catch((e) =>
+                log.error(
+                    `Scheduled dispatch failed for ${notificationId} on ${channel}`,
+                    (e && (e as Error).message) || String(e),
+                ),
+            );
+        }, delay);
+        // Não impede o processo de encerrar só por causa do timer (testes + shutdown rápido).
+        if (typeof (timer as any).unref === 'function') (timer as any).unref();
+
+        this.scheduled.set(entryId, {
+            notificationId,
+            channel,
+            scheduledFor: scheduledFor.getTime(),
+            timer,
+        });
+        log.info('notification.scheduled', {
+            notificationId,
+            channel,
+            scheduledFor: scheduledFor.toISOString(),
+        });
+    }
+
+    /**
+     * Dispara a entrega efetiva do canal adiado. Atualiza a notificação
+     * original (deliveredTo/failedChannels/channels) — preservando o ID
+     * p/ que o consumidor (UI/Central) veja UM único registro.
+     */
+    private async fireScheduled(notificationId: string, channel: NotificationChannel): Promise<void> {
+        const notif = this.data.notifications.find((n) => n.id === notificationId);
+        if (!notif) {
+            log.warn(`Scheduled notification ${notificationId} not found; skipping fire`);
+            return;
+        }
+        try {
+            await this.deliver(notif, channel);
+            notif.deliveredTo.push(channel);
+            if (!notif.channels.includes(channel)) notif.channels.push(channel);
+        } catch (e: any) {
+            notif.failedChannels.push(channel);
+            if (!notif.channels.includes(channel)) notif.channels.push(channel);
+            log.error(
+                `Scheduled dispatch failed for ${notificationId} on ${channel}: ${e?.message || e}`,
+            );
+        }
+        this.save();
+        log.info('notification.scheduled.dispatched', { notificationId, channel });
+    }
+
+    /**
+     * #1407 — Limpa todos os timers pendentes do `scheduledDispatch`.
+     * Útil em shutdown gracioso do backend e em `afterEach` de testes
+     * que usam `vi.useFakeTimers()` (evita timers órfãos vazarem).
+     */
+    dispose(): void {
+        for (const entry of this.scheduled.values()) {
+            clearTimeout(entry.timer);
+        }
+        this.scheduled.clear();
+    }
+
+    /** Snapshot de canais agendados (para debug/inspeção/testes). */
+    getScheduledCount(): number {
+        return this.scheduled.size;
     }
 
     /** Força a gravação pendente em disco (flush do debounce de save). */

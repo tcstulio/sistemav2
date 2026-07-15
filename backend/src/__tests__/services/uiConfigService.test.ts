@@ -590,4 +590,143 @@ describe('sanitizeNotificationPolicy', () => {
             expect(out.whatsappProvider).toBe('moltbot'); // preservado
         });
     });
+
+    // #1407 — Gate único de quiet-hours no despachante central. O método
+    // `isWithinQuietHours(now?, channel?)` é o ponto único consumido pelo
+    // `notificationService.send()` para decidir se adia ou despacha.
+    describe('#1407 — isWithinQuietHours + getNotificationPolicy', () => {
+        it('getNotificationPolicy: retorna defaults quando não há arquivo', () => {
+            const svc = new UiConfigService('ui.json');
+            const policy = svc.getNotificationPolicy();
+            // Estrutura coerente com DEFAULT_NOTIFICATION_POLICY.
+            expect(policy.quietHours.whatsapp.enabled).toBe(false);
+            expect(policy.quietHours.email.enabled).toBe(false);
+            expect(policy.quietHours['in-app'].enabled).toBe(false);
+            expect(policy.staleHours).toBe(24);
+            expect(policy.invoiceDueHorizonDays).toBe(3);
+            expect(policy.cobrancaCadence.reminderDaysBefore).toBe(1);
+        });
+
+        it('getNotificationPolicy: reflete update() (round-trip)', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({
+                notificationPolicy: {
+                    quietHours: {
+                        whatsapp: { enabled: true, startHHmm: '23:00', endHHmm: '07:00', weekdaysOnly: false },
+                    },
+                },
+            } as any);
+            const policy = svc.getNotificationPolicy();
+            expect(policy.quietHours.whatsapp.enabled).toBe(true);
+            expect(policy.quietHours.whatsapp.startHHmm).toBe('23:00');
+            expect(policy.quietHours.whatsapp.endHHmm).toBe('07:00');
+        });
+
+        it('isWithinQuietHours: default (todas as janelas enabled=false) → sempre false', () => {
+            const svc = new UiConfigService('ui.json');
+            // qualquer hora, qualquer canal: nunca bloqueia.
+            expect(svc.isWithinQuietHours(new Date('2025-01-15T03:00:00Z'))).toBe(false);  // 00:00 SP
+            expect(svc.isWithinQuietHours(new Date('2025-01-16T05:00:00Z'))).toBe(false);  // 02:00 SP
+            expect(svc.isWithinQuietHours(new Date('2025-01-16T02:00:00Z'))).toBe(false);  // 23:00 SP-1
+            expect(svc.isWithinQuietHours(new Date('2025-01-15T12:00:00Z'))).toBe(false);  // 09:00 SP
+        });
+
+        it('isWithinQuietHours: whatsapp 23:00-07:00 SP — 23:30 BLOQUEIA, 10:00 LIBERA', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({
+                notificationPolicy: {
+                    quietHours: {
+                        whatsapp: { enabled: true, startHHmm: '23:00', endHHmm: '07:00', weekdaysOnly: false },
+                    },
+                },
+            } as any);
+            // canal default é 'whatsapp'.
+            expect(svc.isWithinQuietHours(new Date('2025-01-16T02:30:00Z'))).toBe(true);   // 23:30 SP Jan 15
+            expect(svc.isWithinQuietHours(new Date('2025-01-16T13:00:00Z'))).toBe(false);  // 10:00 SP Jan 16
+        });
+
+        it('isWithinQuietHours: in-app NUNCA bloqueia (mesmo se a janela estiver enabled)', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({
+                notificationPolicy: {
+                    quietHours: {
+                        'in-app': { enabled: true, startHHmm: '00:00', endHHmm: '23:59', weekdaysOnly: false },
+                    },
+                },
+            } as any);
+            // 02:00 SP — janela cobria, mas in-app é benigno: NÃO bloqueia.
+            expect(svc.isWithinQuietHours(new Date('2025-01-16T05:00:00Z'), 'in-app')).toBe(false);
+            expect(svc.isWithinQuietHours(new Date('2025-01-15T15:00:00Z'), 'in-app')).toBe(false);
+        });
+
+        it('isWithinQuietHours: respeita o canal passado (whatsapp vs email)', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({
+                notificationPolicy: {
+                    quietHours: {
+                        whatsapp: { enabled: true, startHHmm: '23:00', endHHmm: '07:00', weekdaysOnly: false },
+                        email:    { enabled: false, startHHmm: '23:00', endHHmm: '07:00', weekdaysOnly: false },
+                    },
+                },
+            } as any);
+            const now = new Date('2025-01-16T02:30:00Z'); // 23:30 SP
+            expect(svc.isWithinQuietHours(now, 'whatsapp')).toBe(true);  // bloqueia
+            expect(svc.isWithinQuietHours(now, 'email')).toBe(false);    // não bloqueia (enabled=false)
+        });
+
+        it('isWithinQuietHours: weekdaysOnly bloqueia sábado 12:00 SP mesmo fora da janela HH:mm', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({
+                notificationPolicy: {
+                    quietHours: {
+                        whatsapp: { enabled: true, startHHmm: '23:00', endHHmm: '07:00', weekdaysOnly: true },
+                    },
+                },
+            } as any);
+            // 2025-01-18 (Sat) 12:00 SP = 15:00Z — fora de 23-07, mas fim de semana.
+            expect(svc.isWithinQuietHours(new Date('2025-01-18T15:00:00Z'))).toBe(true);
+            // Mesma hora numa segunda → NÃO bloqueia.
+            expect(svc.isWithinQuietHours(new Date('2025-01-20T15:00:00Z'))).toBe(false);
+        });
+
+        it('isWithinQuietHours: now ausente usa `new Date()` (injetável via fake timers)', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({
+                notificationPolicy: {
+                    quietHours: {
+                        whatsapp: { enabled: true, startHHmm: '23:00', endHHmm: '07:00', weekdaysOnly: false },
+                    },
+                },
+            } as any);
+            vi.useFakeTimers();
+            try {
+                vi.setSystemTime(new Date('2025-01-16T02:30:00Z')); // 23:30 SP
+                expect(svc.isWithinQuietHours()).toBe(true);          // sem `now` → usa Date.now() do fake timer
+                vi.setSystemTime(new Date('2025-01-15T12:00:00Z')); // 09:00 SP
+                expect(svc.isWithinQuietHours()).toBe(false);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
+        it('isWithinQuietHours: falha-open se HH:mm malformado (fail-safe)', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({
+                notificationPolicy: {
+                    quietHours: {
+                        whatsapp: { enabled: true, startHHmm: '99:99', endHHmm: '07:00', weekdaysOnly: false },
+                    },
+                },
+            } as any);
+            // HH:mm inválido → isWithinQuietWindow devolve false (fail-open).
+            expect(svc.isWithinQuietHours(new Date('2025-01-15T15:00:00Z'))).toBe(false);
+        });
+
+        it('isWithinQuietHours: não depende do fs (testável isoladamente)', () => {
+            // Sem mock do fs, sem arquivo — UiConfigService cai nos defaults
+            // e ainda responde corretamente.
+            const svc = new UiConfigService('nao-existe-' + Date.now() + '.json');
+            expect(svc.isWithinQuietHours(new Date('2025-01-15T12:00:00Z'))).toBe(false);
+        });
+    });
 });
