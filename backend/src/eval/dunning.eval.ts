@@ -67,6 +67,14 @@ const GOLDEN = golden as GoldenSet;
 
 const DAY_IN_SECONDS = 86400;
 
+type ReceivableFn = (dateFrom?: string, dateTo?: string) => Promise<ReceivableItem[]>;
+type CustomerContextFn = (thirdPartyId: string) => Promise<string>;
+
+interface DolibarrServiceMock {
+    getAccountsReceivable: ReceivableFn;
+    getCustomerContext: CustomerContextFn;
+}
+
 function dueDateForDias(diasAtraso: number): string {
     const nowSec = Math.floor(Date.now() / 1000);
     const target = nowSec - diasAtraso * DAY_IN_SECONDS;
@@ -92,29 +100,26 @@ class Spy {
 
 interface SenderPatch {
     label: string;
-    owner: Record<string, unknown>;
+    owner: Record<string, (...args: unknown[]) => unknown>;
     method: string;
     original: (...args: unknown[]) => unknown;
 }
 
 function patchSenderMethod(
-    owner: Record<string, unknown>,
+    owner: Record<string, (...args: unknown[]) => unknown>,
     method: string,
     spy: Spy
 ): SenderPatch {
-    const original = (owner as Record<string, (...args: unknown[]) => unknown>)[method].bind(
-        owner
-    );
-    (owner as Record<string, (...args: unknown[]) => unknown>)[method] = (...args: unknown[]) => {
+    const original = owner[method].bind(owner) as (...args: unknown[]) => unknown;
+    owner[method] = (...args: unknown[]) => {
         spy.record(...args);
         return undefined;
     };
-    return { label: `${owner.constructor?.name ?? 'Object'}.${method}`, owner, method, original };
+    return { label: spy.name, owner, method, original };
 }
 
 function restorePatch(patch: SenderPatch): void {
-    (patch.owner as Record<string, (...args: unknown[]) => unknown>)[patch.method] =
-        patch.original;
+    patch.owner[patch.method] = patch.original;
 }
 
 function buildReceivables(fixtures: Fixture[]): ReceivableItem[] {
@@ -171,8 +176,8 @@ function checkFixture(
     if (item.socid !== fixture.socid) {
         return {
             fixtureId: fixture.id,
-            passed: true,
-            reason: `WARN: socid do digest no rank ${rank} é "${item.socid}" mas a fixture esperava "${fixture.socid}" (reordene ou ajuste)`,
+            passed: false,
+            reason: `socid do digest no rank ${rank} é "${item.socid || '(vazio)'}" mas a fixture esperava "${fixture.socid}" — ranking quebrou (regressão na ordenação por score?)`,
         };
     }
 
@@ -257,54 +262,66 @@ function printScoreboard(results: CheckResult[]): void {
     console.log('');
 }
 
+type SenderModule = Record<string, unknown>;
+
+interface SenderTarget {
+    label: string;
+    module: SenderModule;
+    method: string;
+}
+
+const SENDER_TARGETS: SenderTarget[] = [
+    { label: 'channelRouter.send', module: channelRouter as unknown as SenderModule, method: 'send' },
+    { label: 'channelRouter.sendWhatsApp', module: channelRouter as unknown as SenderModule, method: 'sendWhatsApp' },
+    { label: 'channelRouter.sendEmail', module: channelRouter as unknown as SenderModule, method: 'sendEmail' },
+    { label: 'channelRouter.sendWhatsAppFile', module: channelRouter as unknown as SenderModule, method: 'sendWhatsAppFile' },
+    { label: 'channelRouter.sendWhatsAppVoice', module: channelRouter as unknown as SenderModule, method: 'sendWhatsAppVoice' },
+    { label: 'emailService.send', module: emailService as unknown as SenderModule, method: 'send' },
+    { label: 'emailService.sendMail', module: emailService as unknown as SenderModule, method: 'sendMail' },
+    { label: 'emailService.sendEmail', module: emailService as unknown as SenderModule, method: 'sendEmail' },
+    { label: 'notificationService.notifyPerson', module: notificationService as unknown as SenderModule, method: 'notifyPerson' },
+    { label: 'notificationService.notifyTeam', module: notificationService as unknown as SenderModule, method: 'notifyTeam' },
+    { label: 'notificationService.sendNotification', module: notificationService as unknown as SenderModule, method: 'sendNotification' },
+];
+
 async function main(): Promise<number> {
     console.log(`Carregando golden-set: ${GOLDEN.fixtures.length} fixtures (${GOLDEN.issue})`);
-
-    const origGetAccountsReceivable = dolibarrService.getAccountsReceivable.bind(dolibarrService);
-    const origGetCustomerContext = dolibarrService.getCustomerContext.bind(dolibarrService);
 
     const spies: Spy[] = [];
     const patches: SenderPatch[] = [];
 
-    const senders: Array<{ owner: Record<string, unknown>; method: string }> = [
-        { owner: channelRouter as unknown as Record<string, unknown>, method: 'sendWhatsApp' },
-        { owner: channelRouter as unknown as Record<string, unknown>, method: 'sendEmail' },
-        { owner: channelRouter as unknown as Record<string, unknown>, method: 'send' },
-        { owner: channelRouter as unknown as Record<string, unknown>, method: 'sendWhatsAppFile' },
-        { owner: channelRouter as unknown as Record<string, unknown>, method: 'sendWhatsAppVoice' },
-        { owner: emailService as unknown as Record<string, unknown>, method: 'send' },
-        { owner: emailService as unknown as Record<string, unknown>, method: 'sendMail' },
-        { owner: emailService as unknown as Record<string, unknown>, method: 'sendEmail' },
-        { owner: notificationService as unknown as Record<string, unknown>, method: 'notifyPerson' },
-        { owner: notificationService as unknown as Record<string, unknown>, method: 'notifyTeam' },
-        { owner: notificationService as unknown as Record<string, unknown>, method: 'sendNotification' },
-    ];
-
-    for (const { owner, method } of senders) {
-        if (typeof (owner as Record<string, unknown>)[method] !== 'function') continue;
-        const spy = new Spy(`${method}`);
-        const patch = patchSenderMethod(owner, method, spy);
+    for (const target of SENDER_TARGETS) {
+        const fn = target.module[target.method];
+        if (typeof fn !== 'function') continue;
+        const ownerRecord = target.module as unknown as Record<string, (...args: unknown[]) => unknown>;
+        const spy = new Spy(target.label);
+        const patch = patchSenderMethod(ownerRecord, target.method, spy);
         spies.push(spy);
         patches.push(patch);
     }
+
+    const dolibarrMock = dolibarrService as DolibarrServiceMock;
+    const origGetAccountsReceivable = dolibarrMock.getAccountsReceivable;
+    const origGetCustomerContext = dolibarrMock.getCustomerContext;
 
     try {
         const fixturesReceivable = GOLDEN.fixtures;
         const throwingSocids = new Set(
             fixturesReceivable
                 .filter(f => f.customerContextThrows && f.socid)
-                .map(f => f.socid)
+                .map(f => String(f.socid))
         );
 
-        dolibarrService.getAccountsReceivable = (async () =>
-            buildReceivables(fixturesReceivable)) as typeof dolibarrService.getAccountsReceivable;
-
-        dolibarrService.getCustomerContext = (async (thirdPartyId: string) => {
+        const mockReceivable: ReceivableFn = async () => buildReceivables(fixturesReceivable);
+        const mockCustomer: CustomerContextFn = async (thirdPartyId: string) => {
             if (throwingSocids.has(String(thirdPartyId))) {
                 throw new Error(`mock: customer context indisponível para ${thirdPartyId}`);
             }
             return `contexto-mock-${thirdPartyId}`;
-        }) as typeof dolibarrService.getCustomerContext;
+        };
+
+        dolibarrMock.getAccountsReceivable = mockReceivable;
+        dolibarrMock.getCustomerContext = mockCustomer;
 
         const digest = await buildDunningDigest();
 
@@ -323,10 +340,8 @@ async function main(): Promise<number> {
         const failedCount = results.filter(r => !r.passed).length;
         return failedCount === 0 ? 0 : 1;
     } finally {
-        dolibarrService.getAccountsReceivable =
-            origGetAccountsReceivable as typeof dolibarrService.getAccountsReceivable;
-        dolibarrService.getCustomerContext =
-            origGetCustomerContext as typeof dolibarrService.getCustomerContext;
+        dolibarrMock.getAccountsReceivable = origGetAccountsReceivable;
+        dolibarrMock.getCustomerContext = origGetCustomerContext;
 
         for (const patch of patches) {
             restorePatch(patch);
