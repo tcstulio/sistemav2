@@ -12,6 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { createLogger } from '../utils/logger';
+import { isWithinQuietWindow, nextQuietEnd } from './notifications/quietHours';
 
 // createLogger (não logger.child) p/ casar com o padrão de mock dos testes (todos mockam createLogger).
 const log = createLogger('UiConfigService');
@@ -665,6 +666,62 @@ export class UiConfigService {
 
     getInvoiceDueHorizonDays(): number {
         return this.data.notificationPolicy.invoiceDueHorizonDays;
+    }
+
+    /**
+     * #1407 — Espelho clonado (raso) de `notificationPolicy`. Retorna um snapshot seguro
+     * (JSON deep-clone) para que o caller NÃO consiga mutar o estado interno do service
+     * por acidente, e mantenha o teste determinístico (cada chamada devolve um objeto
+     * novo, equivalente à leitura via `get()`). Use este getter quando precisar de
+     * múltiplas leituras atômicas (ex.: o gate central de `notificationService`).
+     */
+    getNotificationPolicy(): NotificationPolicyConfig {
+        return JSON.parse(JSON.stringify(this.data.notificationPolicy)) as NotificationPolicyConfig;
+    }
+
+    /**
+     * #1407 — Gate de quiet-hours por canal no despachante central. Devolve `true` se
+     * `now` (default = `new Date()`) cai DENTRO da janela de silêncio configurada para
+     * o canal informado. Sem canal, devolve `true` se QUALQUER canal externo (whatsapp
+     * OU email) estiver silenciado (in-app é benigno: nunca bloqueia).
+     *
+     * - Regras desabilitadas (`enabled = false`) → sempre `false` (não bloqueia).
+     * - Fuso resolvido a partir da config (`America/Sao_Paulo` por padrão).
+     * - Função pura do ponto de vista do estado: lê `this.data.notificationPolicy` no
+     *   momento da chamada — o `update()` posterior passa a valer sem restart.
+     * - Aceita `now` injetado para testes determinísticos com `vi.useFakeTimers()`.
+     */
+    isWithinQuietHours(channel?: QuietHoursChannel, now: Date = new Date()): boolean {
+        const cfg = this.data.notificationPolicy.quietHours;
+        if (channel) {
+            const rule = cfg[channel];
+            if (!rule || !rule.enabled) return false;
+            return isWithinQuietWindow(now, rule);
+        }
+        // Sem canal específico: gate genérico "algum canal externo está em silêncio?"
+        return (['whatsapp', 'email'] as QuietHoursChannel[]).some((ch) => {
+            const rule = cfg[ch];
+            return !!rule && rule.enabled && isWithinQuietWindow(now, rule);
+        });
+    }
+
+    /**
+     * #1407 — Próximo instante (>= now) em que o canal SAI da janela de silêncio
+     * (= janela de despacho abre). Devolve `now` se:
+     *   - a regra está desabilitada;
+     *   - a janela é vazia (start === end);
+     *   - `now` JÁ está fora da janela (nada a adiar — o caller deve despachar agora).
+     *
+     * Caso contrário (regra habilitada E `now` dentro da janela), devolve o
+     * próximo instante em que o canal pode sair, calculado por
+     * `nextQuietEnd(now, rule)`. Reaproveita o helper puro de
+     * `notifications/quietHours.ts` para manter a consistência com o gate.
+     */
+    nextQuietHoursEnd(channel: QuietHoursChannel, now: Date = new Date()): Date {
+        const rule = this.data.notificationPolicy.quietHours[channel];
+        if (!rule || !rule.enabled) return now;
+        if (!isWithinQuietWindow(now, rule)) return now; // já fora da janela
+        return nextQuietEnd(now, rule);
     }
 
     /**

@@ -1,6 +1,7 @@
 import { createLogger } from '../utils/logger';
 import { socketService } from './socketService';
 import { channelRouter } from './channelRouter';
+import { uiConfigService } from './uiConfigService';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -16,9 +17,23 @@ export type NotificationEvent =
     | 'ticket.created' | 'ticket.assigned'
     | 'task.assigned' | 'task.acceptance_pending' | 'task.acceptance_overdue' | 'task.deadline_reminder' | 'task.overdue' | 'task.stalled' | 'task.completed' | 'task.comment'
     | 'agent.action'
+    | 'security' | 'otp'
     | 'stock.low'
     | 'payment.received'
     | 'custom';
+
+/**
+ * #1407 — Eventos críticos que FURAM o gate de quietHours por design. Senhas, OTPs e
+ * ações do agente (que podem precisar de confirmação imediata do usuário) não podem
+ * ser adiadas para o fim da janela silenciada. Para que um evento novo entre neste
+ * conjunto, basta adicioná-lo aqui — o caller continua usando `notificationService.
+ * create()` normalmente; o gate central detecta e despacha na hora.
+ */
+export const CRITICAL_EVENTS: ReadonlySet<NotificationEvent> = new Set<NotificationEvent>([
+    'security',
+    'otp',
+    'agent.action',
+]);
 
 export interface Notification {
     id: string;
@@ -48,8 +63,33 @@ interface NotificationStore {
     notifications: Notification[];
 }
 
+/**
+ * #1407 — Item enfileirado pelo gate central de `dispatch()`. Cada (notification, channel)
+ * que cair em janela silenciada vira uma entrada separada para que canais diferentes
+ * possam ter regras independentes (ex.: whatsapp pode estar silenciado às 23h mas
+ * email não). `scheduledFor` é o instante em que o canal PODE sair (calculado por
+ * `uiConfigService.nextQuietHoursEnd`); `originalDueAt` preserva o instante em que
+ * o caller chamou `create()` — útil p/ auditoria/métrica.
+ */
+export interface ScheduledDispatchItem {
+    id: string;
+    notification: Notification;
+    channel: NotificationChannel;
+    scheduledFor: number;   // timestamp ms em que o canal pode sair da fila
+    originalDueAt: number;  // timestamp ms original em que a chamada entrou
+}
+
 const STORE_PATH = path.join(__dirname, '../../data/notifications.json');
 const MAX_NOTIFICATIONS = 1000;
+// #1407 — granularidade do auto-drain da fila de quietHours. 60s é suficiente para
+// alertas humanos (não perdemos precisão de minuto na abertura da janela) e mantém
+// o custo de timers desprezível.
+const SCHEDULED_DISPATCH_TICK_MS = 60_000;
+// #1407 — trava defensiva contra memory leak. Se a fila passar deste tamanho, é
+// config maluca (silêncio 24h) — melhor descartar o item mais antigo do que travar
+// o processo. Cada entrada é pequena (ref + canal + 2 timestamps) mas o limite é
+// folgado para cobrir picos.
+const SCHEDULED_DISPATCH_MAX = 5_000;
 
 class NotificationService {
 
@@ -102,7 +142,36 @@ class NotificationService {
     }
 
     private saveTimeout: NodeJS.Timeout | null = null;
-    
+
+    /**
+     * #1407 — Fila de envios adiados pelo gate de quietHours. Cada item carrega o canal
+     * (whatsapp/email) que foi bloqueado e o `scheduledFor` calculado via
+     * `uiConfigService.nextQuietHoursEnd()`. A fila é drenada por `tickScheduledDispatch()`
+     * chamado em (a) cada `create()` lazy (no início, antes de processar a notificação
+     * nova — se algo ficou pronto enquanto esperávamos, despacha antes); (b) um
+     * `setInterval` de 60s quando há itens pendentes (auto-drain para janelas que
+     * abrem sem nova chamada).
+     */
+    private scheduledDispatch: ScheduledDispatchItem[] = [];
+    private scheduledDispatchTimer: NodeJS.Timeout | null = null;
+
+    /**
+     * #1407 — Tamanho atual da fila de quietHours (exposto p/ testes/diagnóstico).
+     * `0` ⇒ sem diferidos pendentes; `>0` ⇒ há itens aguardando abertura de janela.
+     */
+    getScheduledDispatchSize(): number {
+        return this.scheduledDispatch.length;
+    }
+
+    /**
+     * #1407 — Inspeção da fila de quietHours p/ teste/diagnóstico. Devolve um
+     * espelho raso do estado (cada item é `JSON.parse(JSON.stringify(...))` para
+     * que mutações externas não afetem o estado interno).
+     */
+    getScheduledDispatchSnapshot(): ScheduledDispatchItem[] {
+        return this.scheduledDispatch.map((it) => JSON.parse(JSON.stringify(it)));
+    }
+
     private async performSave() {
         try {
             const dir = path.dirname(STORE_PATH);
@@ -170,13 +239,29 @@ class NotificationService {
         this.data.notifications.unshift(notification);
         this.save();
 
+        // #1407 — Lazy drain da fila de quietHours: se algum item ficou pronto enquanto
+        // esperávamos (ex.: criamos uma notificação nova e a janela abriu nesse meio
+        // tempo), despacha antes de tentar o canal novo. `await` para que o caller
+        // observe um estado de fila consistente quando `create()` resolve. O próprio
+        // `tickScheduledDispatch` engole erros internos (provider lança → item vai
+        // p/ failedChannels ou é re-enfileirado), então não propaga falha p/ cá.
+        await this.tickScheduledDispatch();
+
         for (const channel of channels) {
             try {
-                await this.deliver(notification, channel);
-                notification.deliveredTo.push(channel);
+                const status = await this.dispatch(notification, channel);
+                if (status === 'delivered') {
+                    if (!notification.deliveredTo.includes(channel)) {
+                        notification.deliveredTo.push(channel);
+                    }
+                }
+                // 'deferred' → canal NÃO entra em deliveredTo (só entra quando o drain
+                // chamar `dispatch()` de novo e o provider aceitar).
             } catch (e: any) {
                 log.error(`Failed to deliver via ${channel}: ${e.message}`);
-                notification.failedChannels.push(channel);
+                if (!notification.failedChannels.includes(channel)) {
+                    notification.failedChannels.push(channel);
+                }
             }
         }
 
@@ -185,17 +270,189 @@ class NotificationService {
         return notification;
     }
 
-    private async deliver(notification: Notification, channel: NotificationChannel): Promise<void> {
+    /**
+     * #1407 — Despacho central de UMA notificação em UM canal. É o gargalo único por
+     * onde passam todos os canais externos (cron/agendamento/agentTools/taskNotification):
+     * a única coisa que muda entre os callers é o que entra em `create()`; a partir
+     * daí, o gate fica aqui e a config de quietHours passa a valer uniformemente.
+     *
+     * Comportamento:
+     *   - `in-app` → sempre entrega (canal benigno/reversível).
+     *   - Evento crítico (security/otp/agent.action) → fura o gate (bypass documentado).
+     *   - Canal externo (whatsapp/email) em quiet hours → enfileira em `scheduledDispatch`
+     *     para sair no fim da janela; devolve `'deferred'`.
+     *   - Caso contrário → chama o provider; devolve `'delivered'`.
+     *
+     * Retorna o status para o caller:
+     *   - `'delivered'` → provider chamado com sucesso; canal PODE entrar em `deliveredTo`.
+     *   - `'deferred'`  → canal entrou na fila `scheduledDispatch`; NÃO entra em `deliveredTo`
+     *                       (só entra quando o drain chamar `dispatch()` de novo e o provider
+     *                       aceitar).
+     * Erros do provider lançam normalmente (caller adiciona o canal a `failedChannels`).
+     */
+    async dispatch(notification: Notification, channel: NotificationChannel): Promise<'delivered' | 'deferred'> {
+        // in-app é benigno (reversível): nunca bloqueia.
+        if (channel === 'in-app') {
+            this.deliverInApp(notification);
+            return 'delivered';
+        }
+
+        // Eventos críticos furam o gate (security/otp/agent.action) — não podemos adiar
+        // uma senha, um OTP ou uma confirmação de ação do agente.
+        if (CRITICAL_EVENTS.has(notification.event)) {
+            await this.deliverByChannel(notification, channel);
+            return 'delivered';
+        }
+
+        // Gate de quietHours por canal externo (whatsapp/email). in-app já saiu acima.
+        if (uiConfigService.isWithinQuietHours(channel)) {
+            this.enqueueScheduledDispatch(notification, channel);
+            return 'deferred';
+        }
+
+        await this.deliverByChannel(notification, channel);
+        return 'delivered';
+    }
+
+    /**
+     * Roteia `notification` para o provider correto do `channel`. Equivalente ao antigo
+     * `deliver()` (que não centralizava o gate); aqui é privado e usado apenas pelo
+     * `dispatch()` quando o gate libera o envio.
+     */
+    private async deliverByChannel(notification: Notification, channel: NotificationChannel): Promise<void> {
         switch (channel) {
             case 'in-app':
                 this.deliverInApp(notification);
-                break;
+                return;
             case 'whatsapp':
                 await this.deliverWhatsApp(notification);
-                break;
+                return;
             case 'email':
                 await this.deliverEmail(notification);
-                break;
+                return;
+        }
+    }
+
+    /**
+     * #1407 — Enfileira (notification, channel) na fila de quietHours. Defensivo contra
+     * memory leak: se a fila passar de `SCHEDULED_DISPATCH_MAX`, descarta o item mais
+     * antigo (logando) — em produção isso indica config maluca (silêncio 24h ou
+     * janela absurda); é melhor perder um envio do que travar o processo. Garante
+     * que o timer de auto-drain está armado.
+     */
+    private enqueueScheduledDispatch(notification: Notification, channel: NotificationChannel): void {
+        const now = new Date();
+        const scheduledFor = uiConfigService.nextQuietHoursEnd(channel, now);
+        const item: ScheduledDispatchItem = {
+            id: `qd_${crypto.randomUUID()}`,
+            notification,
+            channel,
+            scheduledFor: scheduledFor.getTime(),
+            originalDueAt: now.getTime(),
+        };
+        if (this.scheduledDispatch.length >= SCHEDULED_DISPATCH_MAX) {
+            log.warn(`scheduledDispatch overflow (>${SCHEDULED_DISPATCH_MAX}); descartando item mais antigo`);
+            this.scheduledDispatch.shift();
+        }
+        this.scheduledDispatch.push(item);
+        log.info('notification.quietHours.deferred', {
+            canal: channel,
+            scheduledFor: new Date(item.scheduledFor).toISOString(),
+            originalDueAt: new Date(item.originalDueAt).toISOString(),
+            event: notification.event,
+            notificationId: notification.id,
+        });
+        this.armScheduledDispatchTimer();
+    }
+
+    /**
+     * #1407 — Arma o `setInterval` de auto-drain SOMENTE se há itens pendentes e
+     * o timer ainda não está ativo. Quando a fila zera, cancela o timer (evita
+     * manter um interval rodando à toa). Granularidade 60s (constante).
+     */
+    private armScheduledDispatchTimer(): void {
+        if (this.scheduledDispatchTimer || this.scheduledDispatch.length === 0) return;
+        this.scheduledDispatchTimer = setInterval(() => {
+            this.tickScheduledDispatch().catch((e) => log.error('tickScheduledDispatch timer', e));
+        }, SCHEDULED_DISPATCH_TICK_MS);
+        // não bloqueia o processo (unref se existir — best-effort).
+        if (typeof (this.scheduledDispatchTimer as any).unref === 'function') {
+            (this.scheduledDispatchTimer as any).unref();
+        }
+    }
+
+    /**
+     * #1407 — Cancela o `setInterval` de auto-drain quando a fila zera. Idempotente.
+     */
+    private cancelScheduledDispatchTimer(): void {
+        if (this.scheduledDispatchTimer) {
+            clearInterval(this.scheduledDispatchTimer);
+            this.scheduledDispatchTimer = null;
+        }
+    }
+
+    /**
+     * #1407 — Drena a fila de quietHours: para cada item cujo `scheduledFor` já passou
+     * (now >= scheduledFor), chama o `dispatch()` de novo. Se o gate liberar (a janela
+     * abriu de fato), o canal entra em `deliveredTo`; se o gate ainda bloquear
+     * (caso patológico: relógio voltou, ou regra mudou e ficou mais restritiva),
+     * o item volta para a fila com o novo `scheduledFor` ou é descartado conforme
+     * o limite. Nunca lança — todos os erros são logados e o drain continua.
+     *
+     * Chamado em (a) lazy (no início de cada `create()`); (b) auto-drain por timer
+     * (60s) enquanto há itens pendentes.
+     */
+    async tickScheduledDispatch(): Promise<void> {
+        if (this.scheduledDispatch.length === 0) {
+            this.cancelScheduledDispatchTimer();
+            return;
+        }
+        const now = Date.now();
+        const remaining: ScheduledDispatchItem[] = [];
+        for (const item of this.scheduledDispatch) {
+            if (item.scheduledFor > now) {
+                remaining.push(item); // ainda não é hora
+                continue;
+            }
+            // janela aberta: tentar de novo. Se o gate liberar, o canal entra em deliveredTo.
+            try {
+                const status = await this.dispatch(item.notification, item.channel);
+                if (status === 'deferred') {
+                    // Regra mudou no meio (ou ainda silenciado por outro motivo). Recoloca
+                    // com novo scheduledFor calculado a partir de agora.
+                    const newScheduledFor = uiConfigService.nextQuietHoursEnd(item.channel, new Date(now));
+                    if (newScheduledFor.getTime() <= now) {
+                        // A janela de fato abriu (regra desabilitada) mas o gate ainda
+                        // segurou — improvável, mas defensivo: descarta e loga.
+                        log.warn('quietHours drain: item deferred sem novo scheduledFor válido; descartando', {
+                            notificationId: item.notification.id,
+                            canal: item.channel,
+                        });
+                        continue;
+                    }
+                    remaining.push({
+                        ...item,
+                        scheduledFor: newScheduledFor.getTime(),
+                    });
+                } else {
+                    // 'delivered' → sucesso. Garante que o canal entra em deliveredTo.
+                    if (!item.notification.deliveredTo.includes(item.channel)) {
+                        item.notification.deliveredTo.push(item.channel);
+                    }
+                }
+            } catch (e: any) {
+                log.error(`tickScheduledDispatch dispatch failed: ${e?.message || e}`, {
+                    notificationId: item.notification.id,
+                    canal: item.channel,
+                });
+                if (!item.notification.failedChannels.includes(item.channel)) {
+                    item.notification.failedChannels.push(item.channel);
+                }
+            }
+        }
+        this.scheduledDispatch = remaining;
+        if (remaining.length === 0) {
+            this.cancelScheduledDispatchTimer();
         }
     }
 
