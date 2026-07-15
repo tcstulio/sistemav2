@@ -98,6 +98,9 @@ const UpdateSchema = z.object({
     // #1439 — sessionId primário do WhatsApp (default global p/ scheduler). Trim + cap no service.
     // Zod precisa declarar a chave p/ ela sobreviver ao .parse() e chegar ao sanitize.
     whatsappPrimarySessionId: z.string().max(80).optional(),
+    // #1440 — política de fallback da sessão primária. O #1437 declarou o campo no service+sanitize mas
+    // ESQUECEU o Zod da rota → o .parse() estripava a chave e o save da política era NO-OP (bug #1443).
+    whatsappFallbackPolicy: z.enum(['fail', 'first-working']).optional(),
     // #1204: kill-switches de automações de fundo (schedulerService / alertCronService). O Zod precisa
     // declarar o objeto p/ os flags sobreviverem ao .parse() e chegarem ao service (senão são estripados).
     automationSwitches: z.object({
