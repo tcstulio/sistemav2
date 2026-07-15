@@ -320,6 +320,31 @@ describe('ChannelRouter — enforcement de config (issue #1441)', () => {
             expect(result.success).toBe(true);
             expect(legacyMessageService.sendText).toHaveBeenCalledWith('v4_1747', '5511@c.us', 'oi');
         });
+
+        it('sem nenhuma sessão WORKING (legado): devolve \'default\' e deixa o transportador falhar explicitamente', async () => {
+            // #1441 — branch legado SEM fallback possível: `primary` vazio, NENHUMA sessão
+            // WORKING (nem 'default' nem outra). `resolveSession` devolve 'default' para que
+            // o transportador emita "Session X not found" em vez de mascarar a falha com um
+            // erro de "política". Garante que o último `return 'default'` (linha 172) do
+            // `resolveSession` é exercitado — necessário para cobertura ≥ 90% do método.
+            //
+            // Por que NÃO lançar `WhatsAppPrimaryUnavailableError` aqui? Porque ele só faz
+            // sentido quando a primária FOI configurada (a policy fala sobre ela). No legado
+            // sem config, não há decisão de policy — só resta propagar a inexistência.
+            mockUiConfig.get.mockImplementation(() => ({
+                whatsappPrimarySessionId: '',
+                whatsappFallbackPolicy: 'fail',
+            }));
+            mockSession.getWhatsAppSessions.mockImplementation(() => [
+                { id: 'default', status: 'STOPPED' },
+            ]);
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg' } as any);
+
+            const result = await channelRouter.sendWhatsApp('5511@c.us', 'oi');
+
+            expect(result.success).toBe(true);
+            expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'oi');
+        });
     });
 
     // ============================================================
