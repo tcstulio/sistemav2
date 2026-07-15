@@ -225,7 +225,10 @@ export const taskPlannerService = {
                 // número do PR. O `getTask(prNum)` era o BUG central do auto-deadlock: tasks são chaveadas
                 // por número de ISSUE, então consultar por número de PR achava a task errada/nenhuma.
                 const owners = conflictingPRs.map(pr => {
-                    const m = /(?:^|-)(\d+)$/.exec(pr.headRefName || '');
+                    // #1455: extrai a issue do PREFIXO conhecido (fix-1353, fix-1353-retry, feat/908-x,
+                    // bugfix/issue-896-x → 1353/1353/908/896), NUNCA os dígitos do fim (senão `fix-1353-2`
+                    // casaria a issue 2 = task ERRADA e o redo fecharia o PR errado). No-match = órfão.
+                    const m = /^(?:fix|feat|feature|bugfix|hotfix|chore)[-/](?:issue-)?(\d+)(?:$|[-/])/.exec(pr.headRefName || '');
                     const issueNum = m ? Number(m[1]) : NaN;
                     return { pr, task: Number.isFinite(issueNum) ? taskRunnerService.getTask(issueNum) : null };
                 });
