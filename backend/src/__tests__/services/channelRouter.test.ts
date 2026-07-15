@@ -49,7 +49,7 @@ const mockUiConfig = vi.hoisted(() => ({
 }));
 vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfig }));
 
-import { channelRouter, ChannelRouter } from '../../services/channelRouter';
+import { channelRouter, ChannelRouter, WhatsAppPrimaryUnavailableError } from '../../services/channelRouter';
 import { FEATURES } from '../../config/features';
 import { moltbotGateway } from '../../services/moltbotGateway';
 import { messageService as legacyMessageService } from '../../services/legacy/messageService';
@@ -234,8 +234,13 @@ describe('ChannelRouter', () => {
             expect(legacyMessageService.sendText).toHaveBeenCalledWith('custom-session', '5511@c.us', 'Hello');
         });
 
-        it('faz fallback para a sessão WORKING quando a default não está pronta (ex.: só existe "v4")', async () => {
+        it('policy="first-working": faz fallback para a sessão WORKING quando a default não está pronta (ex.: só existe "v4")', async () => {
+            // #1441 — fallback silencioso SÓ acontece com whatsappFallbackPolicy='first-working'.
+            // Antes desse ajuste, este teste rodava com policy='fail' (default do sanitize) e
+            // passava silenciosamente — mascarando a regressão #1441. Agora ele declara
+            // explicitamente que está exercendo o ramo "first-working".
             (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() });
+            mockUiConfig.get.mockReturnValue({ whatsappFallbackPolicy: 'first-working' } as any);
             mockSession.getStatus.mockReturnValue('STOPPED');                 // 'default' não está WORKING
             mockSession.getFirstWorkingSessionId.mockReturnValue('v4_1747');  // a única conectada
 
@@ -414,6 +419,141 @@ describe('ChannelRouter', () => {
             expect(statuses).toHaveLength(2);
             expect(statuses[0].channel).toBe('whatsapp');
             expect(statuses[1].channel).toBe('email');
+        });
+    });
+
+    // #1441 — enforcement: a config muda a sessão usada e a policy é respeitada. Estes 3 cenários
+    // travam o contrato de `resolveSession`:
+    //   - policy='fail' (default seguro): primária OFFLINE + fallback disponível → THROW, NÃO envia
+    //     de 'default'. Garante que o fallback silencioso NÃO volte p/ nenhuma policy.
+    //   - policy='first-working': primária OFFLINE + fallback disponível → usa fallback com warn.
+    //   - sem config (legado): sem whatsappPrimarySessionId + 'default' WORKING → usa 'default'
+    //     (compatibilidade com deploys antigos).
+    //
+    // O mock de `sessionService` (`mockSession.getStatus` / `getFirstWorkingSessionId`) isola o
+    // resolveSession do transportador real (`legacyMessageService.sendText` é espiado para
+    // confirmar que ele NÃO foi chamado quando o teste espera throw).
+    describe('#1441 — resolveSession honra whatsappFallbackPolicy', () => {
+        // Helper: monta o cenário injetando primary/policy/status via mocks. `primarySessionId`
+        // simula o `whatsappPrimarySessionId` configurado (string) OU o legado sem config
+        // (null = cai em 'default' como defaultSessionId). `primaryStatus` força o status da
+        // sessão primária. `fallbackWorking` é o que `getFirstWorkingSessionId` devolve.
+        const setupScenario = (opts: {
+            primarySessionId: string | null;       // null = sem config (legado)
+            primaryStatus: 'WORKING' | 'STOPPED';
+            policy: 'fail' | 'first-working';
+            fallbackWorking?: string | undefined;  // sessão WORKING retornada pelo fallback
+            defaultSessionStatus?: 'WORKING' | 'STOPPED';
+        }) => {
+            // defaultSessionId da router = primary configurada (ou 'default' legado).
+            channelRouter.setDefaultSessionId(opts.primarySessionId ?? 'default');
+            // uiConfig mock devolve a config que o resolveSession lê.
+            mockUiConfig.get.mockReturnValue({
+                whatsappPrimarySessionId: opts.primarySessionId ?? '',
+                whatsappFallbackPolicy: opts.policy,
+            } as any);
+            // sessionService.getStatus: primária e 'default' podem ter status independentes
+            // (cenário 1 e 2 têm primária OFFLINE mas 'default' WORKING; cenário 3 tem só 'default').
+            const defaultStatus = opts.defaultSessionStatus ?? opts.primaryStatus;
+            mockSession.getStatus.mockImplementation((id: string) => {
+                if (id === opts.primarySessionId) return opts.primaryStatus;
+                if (id === 'default') return defaultStatus;
+                return 'STOPPED';
+            });
+            mockSession.getFirstWorkingSessionId.mockReturnValue(opts.fallbackWorking);
+        };
+
+        // Cenário 1 — policy 'fail' (default seguro): primária OFFLINE, 'default' WORKING,
+        // existe fallback disponível. Esperado: throw WhatsAppPrimaryUnavailableError mencionando
+        // a primária e a policy. NÃO envia de 'default' (transportador não pode ser chamado).
+        it('Cenário 1: policy="fail" + primária OFFLINE + "default" WORKING → lança WhatsAppPrimaryUnavailableError e NÃO envia de "default"', async () => {
+            setupScenario({
+                primarySessionId: 'v4_1747',
+                primaryStatus: 'STOPPED',         // primária forçada OFFLINE
+                policy: 'fail',                    // política segura default
+                fallbackWorking: 'default',        // 'default' está WORKING (seria o fallback)
+                defaultSessionStatus: 'WORKING',
+            });
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg-x' });
+
+            // Resolve a primária pelo id configurado (não 'default' hardcoded).
+            await expect(channelRouter.sendWhatsApp('5511@c.us', 'cobranca'))
+                .rejects.toBeInstanceOf(WhatsAppPrimaryUnavailableError);
+
+            // A mensagem do erro carrega o id da primária e o nome da policy (audit-friendly).
+            await expect(channelRouter.sendWhatsApp('5511@c.us', 'cobranca'))
+                .rejects.toThrow(/v4_1747/);
+            await expect(channelRouter.sendWhatsApp('5511@c.us', 'cobranca'))
+                .rejects.toThrow(/fail/);
+
+            // E o transportador real (legacy ou moltbot) NÃO pode ter sido chamado — sem fallback
+            // silencioso para 'default'. Garante o critério "NÃO envia de 'default'".
+            expect(legacyMessageService.sendText).not.toHaveBeenCalled();
+            expect(moltbotGateway.sendMessage).not.toHaveBeenCalled();
+        });
+
+        // Cenário 2 — policy 'first-working': mesma config mas com policy permissiva. Esperado:
+        // resolveSession devolve 'default' (a única WORKING) e log.warn é registrado.
+        it('Cenário 2: policy="first-working" + primária OFFLINE + "default" WORKING → roteia para "default" (com log.warn registrado)', async () => {
+            setupScenario({
+                primarySessionId: 'v4_1747',
+                primaryStatus: 'STOPPED',
+                policy: 'first-working',
+                fallbackWorking: 'default',
+                defaultSessionStatus: 'WORKING',
+            });
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg-ok' });
+
+            await channelRouter.sendWhatsApp('5511@c.us', 'notificacao');
+
+            // Cai no fallback 'default' (a única WORKING diferente da primária) — este é o ramo
+            // "first-working" do `resolveSession`, que loga warn ANTES de devolver o id.
+            expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'notificacao');
+            // NUNCA chama a primária OFFLINE.
+            expect(legacyMessageService.sendText).not.toHaveBeenCalledWith(
+                'v4_1747', expect.anything(), expect.anything()
+            );
+        });
+
+        // Cenário 3 — sem config (legado): `whatsappPrimarySessionId` ausente/vazio, política
+        // 'fail' (default), sessão 'default' WORKING. Esperado: usa 'default' (compatibilidade
+        // — não força configuração nova em deploys antigos que só têm a sessão 'default').
+        it('Cenário 3: sem whatsappPrimarySessionId configurado + "default" WORKING → usa "default" (compat)', async () => {
+            setupScenario({
+                primarySessionId: null,           // sem config → defaultSessionId vira 'default'
+                primaryStatus: 'WORKING',         // 'default' está WORKING
+                policy: 'fail',                    // policy default (sanitize cai em 'fail' p/ ausentes)
+                // fallbackWorking irrelevante: 'default' WORKING resolve antes do fallback.
+            });
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg-legacy' });
+
+            await channelRouter.sendWhatsApp('5511@c.us', 'oi');
+
+            // Compatibilidade: usa 'default' direto (resolveSession retorna na 1ª checagem
+            // porque 'default' está WORKING, antes de chegar na lógica de policy/fallback).
+            expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'oi');
+        });
+
+        // Guard rail — política ausente / fora do domínio é saneada para 'fail' (consistente com
+        // sanitizeWhatsappFallbackPolicy). Garante que um JSON corrompido nunca reativa o
+        // fallback silencioso silenciosamente.
+        it('Guard rail: whatsappFallbackPolicy ausente / fora do domínio → saneada para "fail" (throw, não fallback)', async () => {
+            setupScenario({
+                primarySessionId: 'v4_1747',
+                primaryStatus: 'STOPPED',
+                // bypass do helper: mock direto com valor "inválido" p/ forçar o sanitize no
+                // resolveSession (rawPolicy !== 'first-working' → cai em 'fail').
+                policy: 'fail',
+                fallbackWorking: 'default',
+                defaultSessionStatus: 'WORKING',
+            });
+            mockUiConfig.get.mockReturnValue({ whatsappFallbackPolicy: 'FIRST-WORKING' } as any);
+
+            (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg-x' });
+
+            await expect(channelRouter.sendWhatsApp('5511@c.us', 'oi'))
+                .rejects.toBeInstanceOf(WhatsAppPrimaryUnavailableError);
+            expect(legacyMessageService.sendText).not.toHaveBeenCalled();
         });
     });
 });

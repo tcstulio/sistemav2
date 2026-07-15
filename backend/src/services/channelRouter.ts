@@ -13,7 +13,7 @@ import { moltbotGateway, MessageResult as MoltbotMessageResult } from './moltbot
 import { messageService as legacyMessageService } from './legacy/messageService';
 import { sessionService } from './legacy/sessionService';
 import { emailService } from './emailService';
-import { uiConfigService } from './uiConfigService';
+import { uiConfigService, WhatsappFallbackPolicy } from './uiConfigService';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('ChannelRouter');
@@ -47,6 +47,38 @@ export interface ChannelStatus {
     status: string;
     provider?: string;
     error?: string;
+}
+
+/**
+ * #1441 — Erro lançado quando a sessão primária do WhatsApp (`whatsappPrimarySessionId`)
+ * não está WORKING e a política de fallback configurada é 'fail' (default seguro). Indica
+ * que o envio NÃO pode prosseguir silenciosamente por uma sessão alternativa — a operação
+ * deve ser tratada pelo caller (re-agendar, escalar, notificar admin). Carrega o id da
+ * primária e a policy configurada para que o caller consiga logar/auditar com contexto.
+ *
+ * Cenários que disparam o throw:
+ *   - `defaultSessionId` (= `whatsappPrimarySessionId`) OFFLINE
+ *   - existe OUTRA sessão WORKING (i.e., o fallback seria possível)
+ *   - `whatsappFallbackPolicy === 'fail'` (default seguro, ou qualquer valor fora do domínio
+ *     que o `sanitizeWhatsappFallbackPolicy` já converteu em 'fail')
+ *
+ * Quando NÃO há outra sessão WORKING, `resolveSession` devolve a default mesmo com
+ * policy='fail' — o transportador emite o "Session X not found" explícito. Isso evita
+ * mascarar uma falha de infraestrutura (nenhum cliente WhatsApp up) com um erro de
+ * "política".
+ */
+export class WhatsAppPrimaryUnavailableError extends Error {
+    public readonly primarySessionId: string;
+    public readonly policy: WhatsappFallbackPolicy;
+
+    constructor(primarySessionId: string, policy: WhatsappFallbackPolicy) {
+        super(
+            `Sessão WhatsApp primária '${primarySessionId}' indisponível e policy='${policy}' impede fallback para outra sessão.`
+        );
+        this.name = 'WhatsAppPrimaryUnavailableError';
+        this.primarySessionId = primarySessionId;
+        this.policy = policy;
+    }
 }
 
 /**
@@ -112,19 +144,37 @@ class ChannelRouter {
 
     /**
      * Resolve a sessão de envio. sessionId explícito é sempre respeitado. Sem ele, usa a default;
-     * e se a default não estiver WORKING (ex.: a única sessão conectada tem outro nome, como 'v4'),
-     * cai na primeira sessão WORKING — logando o desvio (cuidado se houver várias sessões: pode
-     * enviar de outro número; follow-up = sessão primária configurável). Sem nenhuma sessão pronta,
-     * devolve a default para o erro "Session X not found" ficar explícito.
+     * e se a default não estiver WORKING, o comportamento depende da `whatsappFallbackPolicy`
+     * lida do uiConfig (a cada chamada — sem cache — pra refletir PUTs do admin):
+     *   - 'fail' (default seguro, #1441): se houver OUTRA sessão WORKING, lança
+     *     `WhatsAppPrimaryUnavailableError` para que o caller decida (NÃO faz fallback
+     *     silencioso — evita mandar cobrança pelo número errado). Sem nenhuma outra WORKING,
+     *     devolve a default e deixa o transportador emitir "Session X not found" (erro
+     *     explícito, não mascara falha de infra com erro de política).
+     *   - 'first-working': cai na primeira sessão WORKING disponível (logando o desvio).
+     * Sem `whatsappPrimarySessionId` configurado, a default vira 'default' legado
+     * (compatibilidade — não força configuração nova em deploys existentes).
      */
     private resolveSession(sessionId?: string): string {
         if (sessionId) return sessionId;
         if (sessionService.getStatus(this.defaultSessionId) === 'WORKING') return this.defaultSessionId;
+
+        // Sanitize aqui também: campo ausente / valor fora do domínio vira 'fail'.
+        const rawPolicy = uiConfigService.get().whatsappFallbackPolicy;
+        const policy: WhatsappFallbackPolicy = rawPolicy === 'first-working' ? 'first-working' : 'fail';
         const working = sessionService.getFirstWorkingSessionId();
+
         if (working && working !== this.defaultSessionId) {
-            log.warn(`Sessão default '${this.defaultSessionId}' indisponível; roteando para a sessão WORKING '${working}'.`);
-            return working;
+            if (policy === 'first-working') {
+                log.warn(`Sessão default '${this.defaultSessionId}' indisponível; roteando para a sessão WORKING '${working}'.`);
+                return working;
+            }
+            // policy === 'fail': recusa fallback silencioso — propaga erro com contexto.
+            throw new WhatsAppPrimaryUnavailableError(this.defaultSessionId, policy);
         }
+
+        // Sem fallback disponível: devolve a default e deixa o transportador falhar
+        // explicitamente. NÃO lança aqui — não há o que decidir.
         return this.defaultSessionId;
     }
 
