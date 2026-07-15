@@ -7,7 +7,7 @@ import path from 'path';
 import { ScraperService } from './scraperService';
 import { logger } from '../utils/logger';
 import { isValidExternalUrl } from '../utils/urlValidation';
-import { TOOLS_PROMPT, executeTool } from './agentTools';
+import { TOOLS_PROMPT, executeTool, getToolContext } from './agentTools';
 import { agentConfigService } from './agentConfigService';
 import { classifyTool } from '../config/actionCatalog';
 import { claimsWriteSuccess, WRITE_CLAIM_RETRY_INSTRUCTION, WRITE_CLAIM_DISCLAIMER } from '../utils/writeClaimGuard';
@@ -255,8 +255,39 @@ export function evaluateConclusionGate(inp: ConclusionGateInput): ConclusionGate
     return { action: 'synthesize', reason: 'announce-no-nudge-budget' };
 }
 
+// #1408: opções do runner. `approvedTools` é a lista de ferramentas que o USUÁRIO já aprovou
+// explicitamente para este turno (alimenta o gate de confirmação abaixo).
+export interface GenerateReplyOptions {
+    provider?: string;
+    model?: string;
+    origin?: string;
+    approvedTools?: string[];
+}
+
+// #1408: mensagem EXPLÍCITA de teto de tool-calls atingido. Antes o loop caía em síntese
+// silenciosa ao bater o teto (parecia uma resposta normal). Agora o teto interrompe com um
+// aviso claro, dizendo qual dial ajustar. Exportada para o teste de enforcement asseverar.
+export const TOOL_BUDGET_EXHAUSTED_MSG = (max: number): string =>
+    `⚠️ Limite de ferramentas atingido: este turno alcançou o teto de ${max} chamada(s) de ferramenta `
+    + `(dial \`maxToolCallsPerConversation\`) e foi interrompido para evitar loop. `
+    + `Refine o pedido ou ajuste o limite nas configurações do agente.`;
+
+/**
+ * #1408: gate de confirmação (HITL) do runner. Uma ferramenta listada em `requireConfirmationFor`
+ * (config do agente) só pode ser executada com aprovação explícita do usuário
+ * (`options.approvedTools`) OU quando o chamador é admin (bypass — uso interno/testes).
+ * Retorna a MENSAGEM de bloqueio quando a execução deve ser BARRADA, ou `null` para liberar.
+ */
+export function confirmationBlock(tool: string, approvedTools?: string[]): string | null {
+    if (!agentConfigService.requiresConfirmation(tool)) return null;
+    if (getToolContext().isAdmin === true) return null;      // bypass admin
+    if ((approvedTools || []).includes(tool)) return null;   // aprovado pelo usuário neste turno
+    return `A ferramenta "${tool}" exige confirmação humana e NÃO foi aprovada. `
+        + `Peça ao usuário para confirmar explicitamente antes de executá-la — não invente o resultado nem afirme que foi feita.`;
+}
+
 interface AIProvider {
-    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult>;
+    generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult>;
     analyzeSystem(query: string, fileContext: string, module?: string): Promise<string>;
     analyzeSentiment(text: string, module?: string): Promise<{ score: number; label: string }>;
     extractCustomerInfo(text: string, module?: string): Promise<any>;
@@ -317,7 +348,7 @@ class GoogleProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult> {
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult> {
         if (!this.ai) {
             log.error('Google AI not configured.');
             throw new Error("Google AI not configured.");
@@ -402,6 +433,16 @@ class GoogleProvider implements AIProvider {
                         continue;
                     }
                     seenToolCalls.add(callSig);
+
+                    // #1408: gate de confirmação (HITL) — paridade com o LocalProvider. Tools em
+                    // `requireConfirmationFor` sem aprovação/admin não executam; injeta a instrução.
+                    const confirmBlock = confirmationBlock(toolCall.tool, options?.approvedTools);
+                    if (confirmBlock) {
+                        log.warn(`GoogleProvider #1408: tool "${toolCall.tool}" exige confirmação e não foi aprovada — execução barrada.`);
+                        currentContext += `\n\n[CONFIRMAÇÃO NECESSÁRIA ${toolCall.tool}]: ${confirmBlock}`;
+                        iterations++;
+                        continue;
+                    }
 
                     const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
 
@@ -1124,19 +1165,26 @@ export class LocalProvider implements AIProvider {
         }
     }
 
-    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: { provider?: string, model?: string, origin?: string }): Promise<GenerateReplyResult> {
+    async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult> {
         const toolsPrompt = TOOLS_PROMPT;
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
         let currentHistory = [...conversationHistory];
         let currentContext = context;
         let iterations = 0;
-        // #956: teto de iterações (25-40; default 30) — NÃO infinito (risco de loop). Junto
-        // com o orçamento de tokens abaixo, garante que tarefas multi-lookup (cotação = achar
-        // cliente + buscar N produtos + montar proposta) completem sem cair na síntese que
-        // proíbe ferramentas. Criação em massa (prepare_create_proposal(lines)/prepare_batch_create)
-        // colapsa N escritas em 1 call — reforçado no prompt — então 30 cobre cenários pesados.
-        const MAX_ITERATIONS = Math.min(Math.max(config.agentMaxIterations ?? 30, 1), 40);
+        // #1408: teto de TOOL CALLS por conversa — agora vindo do CONFIG SERVICE
+        // (`maxToolCallsPerConversation`, editável pelo admin em runtime), NÃO mais de
+        // process.env.AGENT_MAX_ITERATIONS (que sobrevive só como override de cold-start).
+        // Junto com o orçamento de tokens (#956), garante que tarefas multi-lookup (cotação =
+        // achar cliente + buscar N produtos + montar proposta) completem sem cair na síntese que
+        // proíbe ferramentas. Criação em massa colapsa N escritas em 1 call — então o default (50)
+        // cobre cenários pesados. `toolCallsUsed` conta cada executeTool() de fato disparado.
+        const MAX_TOOL_CALLS = agentConfigService.getMaxToolCalls();
+        let toolCallsUsed = 0;
+        // O loop EXTERNO tem folga sobre o teto de tool-calls (nudges/duplicatas não gastam
+        // orçamento de tool-call, mas contam iteração) — o teto REAL e observável é
+        // `toolCallsUsed >= MAX_TOOL_CALLS`, que interrompe com ERRO EXPLÍCITO (não silencioso).
+        const MAX_ITERATIONS = MAX_TOOL_CALLS + MAX_CONCLUSION_NUDGES + 2;
         // Orçamento de contexto (#956): PARAR ANTES de estourar a janela do modelo, não num nº
         // mágico de passos. budget = fração da janela; o resto cobre a resposta final + margem.
         const contextBudgetTokens = Math.floor(ctxWindow * (config.agentContextBudgetPct ?? 0.72));
@@ -1260,14 +1308,34 @@ export class LocalProvider implements AIProvider {
 
                 if (toolCalls.length) {
                     let ranAny = false;
+                    let confirmationBlocked = false; // #1408: alguma tool foi barrada pelo gate HITL nesta iteração
                     const duplicates: string[] = [];
                     for (const tc of toolCalls) {
+                        // #1408: TETO DE TOOL CALLS (config service). Interrompe ANTES de exceder,
+                        // com ERRO EXPLÍCITO (não deixa o turno terminar em síntese silenciosa como
+                        // antes). Ex.: maxToolCallsPerConversation=2 → a 3ª tool call cai aqui.
+                        if (toolCallsUsed >= MAX_TOOL_CALLS) {
+                            log.warn(`#1408: teto de tool calls (${MAX_TOOL_CALLS}) atingido — interrompendo o turno com aviso explícito.`);
+                            return { text: TOOL_BUDGET_EXHAUSTED_MSG(MAX_TOOL_CALLS), usage: accUsage, contextWindow: ctxWindow, model: lastModelUsed, fellBack: lastFellBack };
+                        }
                         const callSig = toolCallSignature(tc.tool, tc.args || {});
                         if (seenToolCalls.has(callSig)) {
                             duplicates.push(tc.tool);
                             continue; // #957: pula a duplicata (não aborta o turno)
                         }
                         seenToolCalls.add(callSig);
+                        // #1408: GATE DE CONFIRMAÇÃO (HITL). Tools em `requireConfirmationFor` só
+                        // rodam com aprovação explícita (options.approvedTools) ou por admin. Sem
+                        // aprovação: NÃO executa, injeta a instrução clara e segue (o modelo pede
+                        // a confirmação ao usuário). Sem isto o dial era teatro (nunca lido).
+                        const confirmBlock = confirmationBlock(tc.tool, options?.approvedTools);
+                        if (confirmBlock) {
+                            log.warn(`#1408: tool "${tc.tool}" exige confirmação e não foi aprovada — execução barrada.`);
+                            currentContext += `\n\n[CONFIRMAÇÃO NECESSÁRIA ${tc.tool}]: ${confirmBlock}`;
+                            confirmationBlocked = true;
+                            continue;
+                        }
+                        toolCallsUsed++; // #1408: só conta o que de fato vai executar
                         log.info(`Local LLM Tool Call: ${tc.tool}`, tc.args);
                         try {
                             const toolResult = await executeTool(tc.tool, tc.args || {});
@@ -1302,6 +1370,13 @@ export class LocalProvider implements AIProvider {
                         }
                     }
                     if (ranAny) {
+                        iterations++;
+                        continue;
+                    }
+                    if (confirmationBlocked) {
+                        // #1408: nada executou porque a(s) tool(s) exigiam confirmação. O contexto
+                        // já tem a instrução p/ o modelo pedir aprovação — segue o loop (não trata
+                        // como duplicata). O teto de iterações garante a terminação.
                         iterations++;
                         continue;
                     }

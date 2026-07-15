@@ -57,12 +57,17 @@ export const config = {
     llmRetryDeadlineMs: parseInt(process.env.LLM_RETRY_DEADLINE_MS || '60000', 10),
 
     // Orçamento do agente Marciano (#956): teto de iterações + fração da janela do modelo
-    // usada como orçamento de contexto. Substitui o teto fixo mágico (era 5/10) por um
-    // limite que PARA ANTES de estourar a janela de contexto (evidência: 6 list tools →
-    // 135K tokens, perto do limite de 200K). Faixa recomendada p/ iterações: 25-40.
+    // usada como orçamento de contexto.
+    // #1408: a FONTE DE VERDADE do teto de tool-calls agora é o config service
+    // (`maxToolCallsPerConversation`, editável pelo admin em runtime). AGENT_MAX_ITERATIONS
+    // permanece SÓ como OVERRIDE de COLD-START (compat): quando definido no ambiente, vence o
+    // config no boot; quando ausente, fica `null` e o config service decide. Por isso não há mais
+    // default '30' aqui — ausência precisa ser distinguível de um valor explícito.
     // AGENT_CONTEXT_BUDGET_PCT: fração da janela reservada p/ o prompt (default 0.72); o
     // restante cobre a resposta final + margem de segurança.
-    agentMaxIterations: parseInt(process.env.AGENT_MAX_ITERATIONS || '30', 10),
+    agentMaxIterations: process.env.AGENT_MAX_ITERATIONS != null && process.env.AGENT_MAX_ITERATIONS !== ''
+        ? parseInt(process.env.AGENT_MAX_ITERATIONS, 10)
+        : null as number | null,
     agentContextBudgetPct: parseFloat(process.env.AGENT_CONTEXT_BUDGET_PCT || '0.72'),
 
 

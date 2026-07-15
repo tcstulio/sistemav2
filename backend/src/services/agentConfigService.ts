@@ -1,7 +1,14 @@
 import { createLogger } from '../utils/logger';
 import { agentPromptStore } from './agentPromptStore';
+import { config } from '../config/env';
 
 const log = createLogger('AgentConfig');
+
+// #1408: clamp defensivo do teto de tool-calls. NÃO é a proteção principal contra estouro de
+// janela de contexto (isso é o orçamento de tokens do #956 no runner) — é só uma sanidade que
+// evita 0/negativo e um runaway absurdo caso alguém configure um número gigante.
+const MIN_TOOL_CALLS = 1;
+const MAX_TOOL_CALLS_CEILING = 200;
 
 export interface AgentPermissions {
     canCreate: boolean;
@@ -168,6 +175,29 @@ class AgentConfigService {
         return this.profile;
     }
 
+    /**
+     * Config efetivo (sync): usa o profile carregado ou os defaults. É a base síncrona dos dials
+     * consultados no hot-path do runner (getMaxToolCalls/requiresConfirmation) sem pagar refresh.
+     */
+    private resolveConfig(): AgentConfig {
+        return this.profile?.config || DEFAULT_CONFIG;
+    }
+
+    /**
+     * #1408: teto de TOOL CALLS por conversa — FONTE DE VERDADE do loop do agente.
+     * Antes o teto real vinha de `AGENT_MAX_ITERATIONS` (env) e este dial era teatro.
+     * Agora o valor sai de `maxToolCallsPerConversation` (editável pelo admin em runtime);
+     * `AGENT_MAX_ITERATIONS` sobrevive apenas como OVERRIDE de COLD-START (compat): se definido
+     * no ambiente, vence o config no boot (ver env.ts). O valor é clampado a [1, 200] só por
+     * sanidade — a defesa real contra estouro de contexto é o orçamento de tokens (#956).
+     */
+    getMaxToolCalls(): number {
+        const coldStartOverride = config.agentMaxIterations; // null quando não definido no env
+        const raw = coldStartOverride != null ? coldStartOverride : this.resolveConfig().maxToolCallsPerConversation;
+        const n = Number.isFinite(raw) ? Math.floor(raw as number) : DEFAULT_CONFIG.maxToolCallsPerConversation;
+        return Math.min(Math.max(n, MIN_TOOL_CALLS), MAX_TOOL_CALLS_CEILING);
+    }
+
     isToolBlocked(tool: string): boolean {
         if (!this.profile) return false;
         const { blockedTools, allowedTools } = this.profile.config;
@@ -176,9 +206,13 @@ class AgentConfigService {
         return false;
     }
 
+    /**
+     * #1408: gate de confirmação (HITL). A tool está na lista `requireConfirmationFor` do config
+     * do agente? Consumido pelo runner ANTES de executar a ferramenta. Sem chamadores antes desta
+     * issue — era teatro. Usa resolveConfig() (defaults quando sem profile).
+     */
     requiresConfirmation(tool: string): boolean {
-        if (!this.profile) return false;
-        return this.profile.config.requireConfirmationFor.includes(tool);
+        return this.resolveConfig().requireConfirmationFor.includes(tool);
     }
 
     canDo(action: keyof AgentPermissions): boolean {
