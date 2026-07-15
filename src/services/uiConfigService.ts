@@ -71,11 +71,20 @@ export interface NotificationPolicyConfig {
     invoiceDueHorizonDays: number; // fatura a vencer (dias)
 }
 
+// #1398/#1440 — sessão de WhatsApp que dispara os envios institucionais (cobranças/notificações) e o
+// que fazer se ela cair. 'fail' (default seguro) = não envia (evita mandar do número errado);
+// 'first-working' = comportamento legado (desvia p/ a 1ª sessão WORKING).
+export type WhatsappFallbackPolicy = 'fail' | 'first-working';
+
 export interface UiConfig {
     companyName: string;
     logoText: string;
     logoUrl?: string;
     themeColor: string;
+    /** #1440 — sessão de WhatsApp institucional (id) usada nos envios automáticos. Vazio = 'default' (legado). */
+    whatsappPrimarySessionId?: string;
+    /** #1440 — política se a sessão primária não estiver WORKING. Default 'fail'. */
+    whatsappFallbackPolicy?: WhatsappFallbackPolicy;
     menu?: OrderVisibilityPrefs;
     dashboard?: OrderVisibilityPrefs;
     screenPermissions?: ScreenPermissions;
