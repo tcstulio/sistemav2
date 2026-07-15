@@ -8,7 +8,7 @@ import { atomicWriteSync } from '../../utils/atomicWrite';
 const mockedFs = vi.mocked(fs);
 const mockedWrite = vi.mocked(atomicWriteSync);
 
-import { UiConfigService, sanitizeActionGovernance, sanitizeFeatureSwitches, sanitizeNotificationPolicy, sanitizeWhatsappProvider } from '../../services/uiConfigService';
+import { UiConfigService, sanitizeActionGovernance, sanitizeFeatureSwitches, sanitizeNotificationPolicy, sanitizeWhatsappFallbackPolicy, sanitizeWhatsappProvider } from '../../services/uiConfigService';
 
 describe('uiConfigService', () => {
     beforeEach(() => {
@@ -505,6 +505,98 @@ describe('sanitizeNotificationPolicy', () => {
             // tipo errado → string vazia (não quebra)
             mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappPrimarySessionId: 123 }) as any);
             expect(new UiConfigService('ui.json').get().whatsappPrimarySessionId).toBe('');
+        });
+    });
+
+    // #1437 — política aplicada pelo `channelRouter.resolveSession` quando a sessão primária
+    // não está WORKING. Domínio fechado: 'fail' | 'first-working'; qualquer outro valor (incl.
+    // null/undefined/string vazia/número/string parecida em maiúsculas/objeto/array) cai no
+    // default seguro 'fail' — não persiste valor perigoso e não quebra o boot se o JSON
+    // persistido estiver corrompido.
+    describe('sanitizeWhatsappFallbackPolicy (#1437)', () => {
+        it('aceita os dois valores válidos do domínio', () => {
+            expect(sanitizeWhatsappFallbackPolicy('fail')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('first-working')).toBe('first-working');
+        });
+
+        it('rejeita null/undefined/string vazia → default seguro \'fail\'', () => {
+            expect(sanitizeWhatsappFallbackPolicy(null)).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy(undefined)).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('')).toBe('fail');
+        });
+
+        it('rejeita case variants e strings parecidas (case-sensitive, sem trim)', () => {
+            expect(sanitizeWhatsappFallbackPolicy('FAIL')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('Fail')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('First-Working')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('fail ')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy(' fail')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('first_working')).toBe('fail'); // underscore em vez de hífen
+            expect(sanitizeWhatsappFallbackPolicy('firstworking')).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy('first-working ')).toBe('fail');
+        });
+
+        it('rejeita outros tipos (número, boolean, objeto, array) → default', () => {
+            expect(sanitizeWhatsappFallbackPolicy(0)).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy(1)).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy(true)).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy(false)).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy({})).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy({ value: 'first-working' })).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy([])).toBe('fail');
+            expect(sanitizeWhatsappFallbackPolicy(['first-working'])).toBe('fail');
+        });
+    });
+
+    describe('whatsappFallbackPolicy (#1437) — persistência da política de fallback', () => {
+        it('default: campo ausente no arquivo → \'fail\' (comportamento atual preservado)', () => {
+            const svc = new UiConfigService('ui.json');
+            expect(svc.get().whatsappFallbackPolicy).toBe('fail');
+        });
+
+        it('round-trip do PUT persiste o valor válido', () => {
+            const svc = new UiConfigService('ui.json');
+            const out = svc.update({ whatsappFallbackPolicy: 'first-working' } as any);
+            expect(out.whatsappFallbackPolicy).toBe('first-working');
+            expect(mockedWrite).toHaveBeenCalled();
+            const written = mockedWrite.mock.calls[mockedWrite.mock.calls.length - 1][1] as any;
+            expect(written.whatsappFallbackPolicy).toBe('first-working');
+        });
+
+        it('update(): valor fora do domínio é descartado no sanitize (cai no default \'fail\')', () => {
+            const svc = new UiConfigService('ui.json');
+            const out = svc.update({ whatsappFallbackPolicy: 'fail-strict' } as any);
+            expect(out.whatsappFallbackPolicy).toBe('fail');
+        });
+
+        it('load(): valor válido persistido é preservado; valor inválido cai no default', () => {
+            // válido
+            mockedFs.existsSync.mockReturnValue(true);
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappFallbackPolicy: 'first-working' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappFallbackPolicy).toBe('first-working');
+
+            // inválido → default (não quebra o boot)
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappFallbackPolicy: 'fail-strict' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappFallbackPolicy).toBe('fail');
+
+            // tipo errado → default
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappFallbackPolicy: 42 }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappFallbackPolicy).toBe('fail');
+
+            // null → default
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ whatsappFallbackPolicy: null }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappFallbackPolicy).toBe('fail');
+
+            // ausente → default
+            mockedFs.readFileSync.mockReturnValue(JSON.stringify({ companyName: 'X' }) as any);
+            expect(new UiConfigService('ui.json').get().whatsappFallbackPolicy).toBe('fail');
+        });
+
+        it('update(): whatsappFallbackPolicy ausente do partial mantém o valor atual', () => {
+            const svc = new UiConfigService('ui.json');
+            svc.update({ whatsappFallbackPolicy: 'first-working' } as any);
+            const out = svc.update({ companyName: 'Outra' });
+            expect(out.whatsappFallbackPolicy).toBe('first-working'); // preservado
         });
     });
 

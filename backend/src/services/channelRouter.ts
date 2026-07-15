@@ -65,6 +65,16 @@ class ChannelRouter {
         // integration) e cai no env só se nada foi persistido.
         this.whatsAppProvider = getEffectiveWhatsAppProvider();
         log.info(`Initialized with WhatsApp provider: ${this.whatsAppProvider}`);
+
+        // #1437 — conserta o setter órfão de `setDefaultSessionId`: hidrata o defaultSessionId
+        // a partir do `whatsappPrimarySessionId` persistido em uiConfig. Sem override persistido
+        // (string vazia / null / undefined / só espaços) → fallback legado p/ 'default', mantendo
+        // compatibilidade com sessões já criadas cujo nome é literalmente 'default'. Log explícito
+        // serve de portão de verificação no boot (e de gancho p/ audit quando o admin troca).
+        const persisted = uiConfigService.get().whatsappPrimarySessionId;
+        const effective = (persisted && persisted.trim()) ? persisted.trim() : 'default';
+        this.setDefaultSessionId(effective);
+        log.info(`defaultSessionId set to ${effective}`);
     }
 
     // ========================================
