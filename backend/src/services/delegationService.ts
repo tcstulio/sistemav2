@@ -13,6 +13,7 @@ import path from 'path';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { createLogger } from '../utils/logger';
 import { AceiteState, dayIndex, DEFAULT_CADENCE } from './delegationFollowUpLogic';
+import { uiConfigService } from './uiConfigService';
 import { dolibarrService } from './dolibarr';
 
 const log = createLogger('Delegation');
@@ -139,11 +140,28 @@ export class DelegationService {
     /** Solicita o aceite: marca pending com um prazo (day index). nowMs injetável p/ teste. */
     requestAcceptance(taskId: string, opts: { nowMs?: number; prazoDeAceiteDays?: number; by?: string } = {}): DelegationRecord {
         const nowMs = opts.nowMs ?? Date.now();
-        const dias = opts.prazoDeAceiteDays ?? DEFAULT_CADENCE.prazoDeAceiteDays;
+        // #1406 — prazo default vem do `notificationPolicy.cobrancaCadence.prazoDeAceiteDays`
+        // lido em runtime do `uiConfigService`. Fallback `DEFAULT_CADENCE` se o config não
+        // tiver o bloco (preserva comportamento histórico / testes que não mockam o config).
+        const dias = opts.prazoDeAceiteDays ?? this.resolvePrazoDeAceiteDays();
         const deadlineDay = dayIndex(nowMs) + dias;
         return this.upsert(taskId, {
             aceite: { status: 'pending', deadlineDay, requestedAt: new Date(nowMs).toISOString(), by: opts.by },
         });
+    }
+
+    /**
+     * Resolve o prazo de aceite a partir do `uiConfigService` em runtime (#1406). Se o
+     * serviço de config não estiver disponível ou não tiver a chave, devolve
+     * `DEFAULT_CADENCE.prazoDeAceiteDays` como rede de segurança.
+     */
+    private resolvePrazoDeAceiteDays(): number {
+        try {
+            return uiConfigService.getCobrancaCadence().prazoDeAceiteDays;
+        } catch (e) {
+            log.warn('uiConfigService.getCobrancaCadence() falhou em requestAcceptance; usando DEFAULT_CADENCE', e);
+            return DEFAULT_CADENCE.prazoDeAceiteDays;
+        }
     }
 
     accept(taskId: string, by: string, nowMs: number = Date.now()): DelegationRecord {
