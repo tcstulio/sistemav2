@@ -341,6 +341,12 @@ export interface Task {
     judgeReview?: string;
     judgeAttempts?: number;
     judgeApproved?: boolean; // VALOR 2: veto do Juiz (approved=false bloqueia auto-merge; nunca aprova sozinho)
+    // #1407: quando o Judge NÃO consegue produzir um score por falha NÃO-cota — a chamada LANÇOU 3×
+    // (ex.: "Request failed with status code 400" transiente do provider) OU respondeu 3× sem JSON
+    // parseável (200 com corpo-de-erro sob esgotamento) — ANTES caía direto em 'reviewing' (beco-sem-
+    // saída: sem nota, PR preso pra sempre). Agora re-enfileira até N vezes (a falha transiente costuma
+    // passar numa retomada); só escala p/ humano após esgotar. Zerado a cada julgamento com score OK.
+    judgeErrorRequeues?: number;
     // #1203 (Fase D2): anti-spam do comentário do Judge no PR — qual judgeAttempts já recebeu
     // comentário (no máx. 1 por rodada; não re-posta no resume).
     _judgeCommentedAttempt?: number;
@@ -2706,6 +2712,9 @@ Return ONLY a JSON:
             // desistir, e o fallback por regex também cobre o caso de NÃO vir JSON nenhum.
             let result: any = null;
             let judgeModelUsed = '';
+            // #1407: guarda o ÚLTIMO erro LANÇADO pela chamada do juiz (ex.: HTTP 400 transiente do
+            // provider). O loop abaixo re-tenta o juiz INLINE (mesmo diff, sem re-codar) antes de desistir.
+            let judgeCallError = '';
             const judgeModel = (this.getAutomationConfig().judgeModel || '').trim();
             for (let parseTry = 1; parseTry <= 3 && !(result && typeof result.score === 'number'); parseTry++) {
                 let reply = '';
@@ -2726,17 +2735,30 @@ Return ONLY a JSON:
                     }
                 }
                 if (!reply) {
-                    const judgeResult = await aiJobService.runAndWait(
-                        () => aiService.generateReply(history, '', undefined, 'chat'),
-                        `judge-pr-${task.prNumber}${parseTry > 1 ? `-retry${parseTry}` : ''}`,
-                    );
-                    // Métricas de Judge (#305): registra tokens e custo USD por task.
                     try {
-                        const modelName = (judgeResult as any).model || (judgeResult as any).modelUsed;
-                        recordUsage(task.issueNumber, judgeResult.usage, modelName);
-                    } catch { /* não bloqueia Judge se tracker falhar */ }
-                    reply = judgeResult.text;
-                    judgeModelUsed = (judgeResult as any).model || 'chat-chain';
+                        const judgeResult = await aiJobService.runAndWait(
+                            () => aiService.generateReply(history, '', undefined, 'chat'),
+                            `judge-pr-${task.prNumber}${parseTry > 1 ? `-retry${parseTry}` : ''}`,
+                        );
+                        // Métricas de Judge (#305): registra tokens e custo USD por task.
+                        try {
+                            const modelName = (judgeResult as any).model || (judgeResult as any).modelUsed;
+                            recordUsage(task.issueNumber, judgeResult.usage, modelName);
+                        } catch { /* não bloqueia Judge se tracker falhar */ }
+                        reply = judgeResult.text;
+                        judgeModelUsed = (judgeResult as any).model || 'chat-chain';
+                    } catch (callErr: any) {
+                        // #1407: a chamada do juiz LANÇOU (ex.: "Request failed with status code 400" —
+                        // 400 transiente do provider). ANTES isto propagava p/ o catch externo → 'reviewing'
+                        // (beco-sem-saída, PR preso pra sempre). Agora RE-TENTA inline no mesmo diff (SEM
+                        // re-codar): registra o erro, faz backoff e passa p/ a próxima parseTry. Se as 3
+                        // tentativas falharem, o ramo `else` pós-loop re-enfileira (limitado) — NUNCA morre.
+                        judgeCallError = String(callErr?.message || callErr);
+                        this.recordEvent(task, 'judge_error', `Judge: chamada falhou (tentativa ${parseTry}/3): ${judgeCallError.slice(0, 100)}${parseTry < 3 ? ' — re-tentando inline' : ''}`, { error: judgeCallError, inlineRetry: parseTry });
+                        const backoffMs = Math.max(0, Number(process.env.TASKRUNNER_JUDGE_RETRY_BACKOFF_MS ?? 1500));
+                        if (parseTry < 3 && backoffMs > 0) await new Promise((r) => setTimeout(r, backoffMs * parseTry));
+                        continue; // próxima parseTry (re-julga o mesmo PR)
+                    }
                 }
                 const jsonMatch = reply.match(/\{[\s\S]*\}/);
                 if (jsonMatch) {
@@ -2767,6 +2789,7 @@ Return ONLY a JSON:
                 task.judgeScore = result.score;
                 task.judgeReview = result.review;
                 task.judgeAttempts = (task.judgeAttempts || 0) + 1;
+                task.judgeErrorRequeues = 0; // #1407: julgou com sucesso → zera o contador de re-tentativas por erro de infra
                 // VALOR 2: persiste o veto do Juiz (só quando explicitamente booleano; ausente != reprovado).
                 if (typeof result.approved === 'boolean') task.judgeApproved = result.approved;
 
@@ -2825,10 +2848,14 @@ Return ONLY a JSON:
                     return;
                 }
             } else {
-                // Esgotou as 3 re-avaliações sem score parseável.
-                // Distingue INFRA (LLM não respondeu — 429/timeout/5xx) de QUALIDADE (respondeu mas
-                // não produziu JSON): em infra, devolve a task à fila (não marca reviewing) — o PR
-                // fica vivo e o Judge é re-executado na próxima retomada. Em qualidade, escala.
+                // #1407 + review adversarial (Ponto 4): as 3 tentativas (inline) NÃO produziram score.
+                // Isso cobre AMBOS: (a) a chamada do juiz LANÇOU 3× (judgeCallError setado — ex.: 400
+                // transiente) e (b) o LLM RESPONDEU mas sem JSON/score parseável 3× (o provider pode
+                // devolver 200 com corpo-de-erro sob esgotamento = infra disfarçada de resposta,
+                // indistinguível de "juiz preguiçoso"). ANTES o caso (b) não-cota caía DIRETO em
+                // 'reviewing' (mesmo beco-sem-saída do #1407, por outro caminho). Agora: cota → devolve à
+                // fila (sem contar no teto — a cota se resolve sozinha); demais → re-enfileira até N vezes
+                // (o PR fica vivo e é RE-JULGADO numa retomada futura) e só então escala p/ humano.
                 if (isQuotaExhausted()) {
                     log.warn(`Judge #${task.issueNumber}: cota/infra esgotada — devolvendo à fila para re-julgar`);
                     task.status = 'pending';
@@ -2840,10 +2867,25 @@ Return ONLY a JSON:
                     this.emitStatus(task);
                     return;
                 }
-                // Falha de qualidade (LLM respondeu mas sem JSON/score): escala p/ revisão humana.
+                const JUDGE_ERROR_MAX_REQUEUES = Math.max(0, Number(process.env.TASKRUNNER_JUDGE_ERROR_MAX_REQUEUES ?? 3));
+                if ((task.judgeErrorRequeues || 0) < JUDGE_ERROR_MAX_REQUEUES) {
+                    task.judgeErrorRequeues = (task.judgeErrorRequeues || 0) + 1;
+                    task.status = 'pending';
+                    task.startedAt = undefined;
+                    task.updatedAt = new Date().toISOString();
+                    const why = judgeCallError ? `erro na chamada (${judgeCallError.slice(0, 80)})` : 'saída sem score parseável';
+                    this.recordEvent(task, 'judge_error', `⏸️ Judge: ${why} — re-enfileirado ${task.judgeErrorRequeues}/${JUDGE_ERROR_MAX_REQUEUES} para re-julgamento (falha transiente costuma passar)`, { judgeErrorRequeue: task.judgeErrorRequeues, error: judgeCallError || undefined });
+                    this.emitLog(task.issueNumber, 'warn', `Judge: ${why} — re-tentando julgar (${task.judgeErrorRequeues}/${JUDGE_ERROR_MAX_REQUEUES}).`);
+                    this.save();
+                    this.emitStatus(task);
+                    return;
+                }
+                // Esgotou as re-tentativas → escala p/ revisão humana (aí sim é provavelmente persistente).
                 task.status = 'reviewing';
-                task.judgeReview = 'Judge falhou em avaliar após 3 tentativas — requer revisão humana.';
-                this.recordEvent(task, 'judge_error', 'Judge: 3 tentativas sem score parseável — escalado p/ revisão humana');
+                task.judgeReview = judgeCallError
+                    ? `Judge falhou (erro na chamada: ${judgeCallError.slice(0, 100)}) após ${JUDGE_ERROR_MAX_REQUEUES} re-tentativas — requer revisão humana.`
+                    : `Judge não produziu score após ${JUDGE_ERROR_MAX_REQUEUES} re-tentativas — requer revisão humana.`;
+                this.recordEvent(task, 'judge_error', `Judge: sem score após ${JUDGE_ERROR_MAX_REQUEUES} re-tentativas — escalado p/ revisão humana`, { error: judgeCallError || undefined });
             }
         } catch (e: any) {
             log.error(`Judge error for #${task.issueNumber}`, e);
@@ -2861,6 +2903,9 @@ Return ONLY a JSON:
                 this.emitStatus(task);
                 return;
             }
+            // Erro NÃO-cota FORA do loop do juiz (ex.: o `gh pr diff` lançou algo não-transiente, ou uma
+            // falha inesperada). O beco-sem-saída do #1407 (erro LANÇADO pela chamada do juiz) já é tratado
+            // INLINE no loop acima → aqui é o resíduo genuinamente inesperado, que escala p/ revisão humana.
             task.status = 'reviewing';
             task.judgeReview = `Judge error: ${e.message}`;
             this.recordEvent(task, 'judge_error', `Judge error: ${e.message}`, { error: e.message });
