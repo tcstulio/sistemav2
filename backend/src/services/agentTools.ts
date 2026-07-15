@@ -75,6 +75,73 @@ export function getToolContext(): ToolContext {
     return toolContextStore.getStore() || DEFAULT_TOOL_CONTEXT;
 }
 
+/**
+ * #1353 — marker que sinaliza ao LLM que o resultado de uma tool de listagem veio
+ * de uma FALHA DE API (5xx/401/403/timeout/rede), NÃO de um conjunto vazio legítimo.
+ * Aparece no INÍCIO da string retornada, para que o modelo detecte e NÃO afirme
+ * "X não existe" — quando o marker está presente, a verdade é "não consegui consultar".
+ * Também é usado em logs para facilitar alertas/grep.
+ */
+export const ERRO_API_MARKER = 'ERRO_API';
+
+/**
+ * Configuração do wrapper `safeListCall`.
+ * - `fn`        : chamada ao service do Dolibarr que retorna `T[]`.
+ * - `entityName`: nome da entidade em português (singular, lowercase) p/ mensagens.
+ * - `entityNamePlural` (opcional): usado em mensagens de erro. Default = `${entityName}s`.
+ * - `emptyMessage` (opcional): mensagem quando a lista volta vazia legitimamente.
+ * - `format`    : formata a lista de itens em string para o LLM quando há resultados.
+ */
+export interface SafeListOptions<T> {
+    fn: () => Promise<T[]>;
+    entityName: string;
+    entityNamePlural?: string;
+    emptyMessage?: string;
+    format: (items: T[]) => string;
+}
+
+/**
+ * #1353 — wrapper padronizado para tools de listagem (`list_*` / `search_*`).
+ *
+ * Sub-tarefas #1349-#1352 ajustaram o Dolibarr para NÃO silenciar erros reais
+ * (5xx/401/403/timeout/rede): o service agora LANÇA a exceção em vez de devolver
+ * `[]`. Esse wrapper converte os 2 cenários em mensagens distintas para o LLM:
+ *
+ *   1. service retornou `[]` (404 ou 200 com array vazio)
+ *      → "Nenhum X encontrado." (legítimo, sem alarme).
+ *
+ *   2. service LANÇOU (5xx/401/403/timeout/network)
+ *      → "ERRO_API: Não consegui consultar X (falha de conexão/permissão no ERP).
+ *         Detalhe: <msg curta>. Tente novamente em alguns instantes."
+ *
+ * Diferencia também o LOG: `→ empty (legit)` vs `→ error (api failure)`,
+ * permitindo que o operador identifique incidentes de ERP sem alarmes falsos.
+ *
+ * Importante: a string retornada é TEXT-FRIENDLY (sem HTML) para que o marker
+ * seja detectável tanto em logs quanto no prompt que volta para o modelo.
+ */
+export async function safeListCall<T>(opts: SafeListOptions<T>): Promise<string> {
+    const { fn, entityName, format } = opts;
+    const plural = opts.entityNamePlural || `${entityName}s`;
+    const emptyMsg = opts.emptyMessage || `Nenhum ${entityName} encontrado.`;
+    try {
+        const items = await fn();
+        if (!Array.isArray(items) || items.length === 0) {
+            log.info(`safeListCall ${entityName} → empty (legit)`);
+            return emptyMsg;
+        }
+        log.info(`safeListCall ${entityName} → ${items.length} item(s)`);
+        return format(items);
+    } catch (e: any) {
+        const raw = e?.message || (typeof e === 'string' ? e : '') || 'erro desconhecido';
+        const msg = String(raw).replace(/\s+/g, ' ').substring(0, 200);
+        const status = e?.response?.status;
+        const reason = status ? `HTTP ${status}` : (e?.code || 'falha');
+        log.warn(`safeListCall ${entityName} → error (api failure) [${reason}]: ${msg}`);
+        return `${ERRO_API_MARKER}: Não consegui consultar ${plural} no momento (falha de conexão/permissão no ERP). Detalhe: ${msg}. Tente novamente em alguns instantes.`;
+    }
+}
+
 export const TOOLS_PROMPT = `
         FERRAMENTAS DISPONÍVEIS:
         Você pode buscar dados em tempo real se necessário. Para usar uma ferramenta, responda APENAS com um JSON no seguinte formato:
@@ -190,6 +257,12 @@ export const TOOLS_PROMPT = `
 
         REGRA PARA MÍDIA (generate_*): devolvem um LINK pronto. Inclua o link na resposta para o usuário ouvir/ver.
         REGRA PARA VÍDEO: generate_video devolve um task_id e demora minutos; avise o usuário e use check_video(task_id) depois (ex.: quando ele pedir o resultado) para obter o link.
+
+        REGRA PARA LISTAGENS (list_*, search_*) — DIFERENCIA VAZIO LEGÍTIMO DE FALHA DE API (#1353):
+        As ferramentas de listagem podem devolver duas mensagens DIFERENTES que NÃO devem ser confundidas:
+          • "Nenhum X encontrado." → o ERP respondeu COM SUCESSO e não há registros. É informação válida.
+          • "ERRO_API: ..." → o ERP FALHOU (5xx/401/403/timeout/rede). NADA foi consultado.
+        Quando a resposta contiver o marker "ERRO_API", NUNCA afirme que "X não existe", "está vazio", "não há X cadastrados" ou ofereça criar/duplicar. Em vez disso, peça ao usuário para tentar novamente em alguns instantes ou contate o suporte (o ERP pode estar fora do ar). Trate ERRO_API como indisponibilidade temporária, nunca como ausência de dados.
 
         FERRAMENTAS DE VALIDAÇÃO (confirma entidades do Dolibarr — ação imediata, sem deeplink):
         108. validate_invoice(invoice_id) - Valida (confirma) uma fatura de venda em rascunho. invoice_id = id da fatura (ache com list_invoices). Muda status de rascunho para validada.
@@ -1050,12 +1123,16 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             if (!args?.query || String(args.query).trim() === '') {
                 return 'Especifique um nome ou termo para buscar clientes (query não pode ser vazio).';
             }
-            const customers = await dolibarrService.searchThirdParty(args.query);
-            if (customers.length === 0) return `Nenhum cliente encontrado para "${args.query}".`;
-            return '<h3>👥 Clientes encontrados</h3><ul>' +
-                customers.map((c: any) =>
-                    `<li><a href="/customers/${c.id}" class="text-blue-600 underline font-semibold">${c.name}</a> — ${c.email || 'sem email'} (ID: ${c.id})</li>`
-                ).join('') + '</ul>';
+            const q = args.query;
+            return safeListCall({
+                fn: () => dolibarrService.searchThirdParty(q),
+                entityName: 'cliente',
+                emptyMessage: `Nenhum cliente encontrado para "${q}".`,
+                format: (customers) => '<h3>👥 Clientes encontrados</h3><ul>' +
+                    customers.map((c: any) =>
+                        `<li><a href="/customers/${c.id}" class="text-blue-600 underline font-semibold">${c.name}</a> — ${c.email || 'sem email'} (ID: ${c.id})</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'get_customer_details': {
             if (!args?.id) throw new Error("Parâmetro 'id' ausente.");
@@ -1063,245 +1140,349 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
             return `<a href="/customers/${args.id}" class="text-blue-600 underline font-semibold">Abrir ficha do cliente</a>\n\n${context}`;
         }
         case 'list_invoices': {
-            const invs = await dolibarrService.listInvoices(args || {});
-            if (invs.length === 0) return 'Nenhuma fatura encontrada.';
-            const statusLabel = (s: any) => s == 1 ? '✅ Paga' : s == 0 ? '📝 Rascunho' : '❌ Não paga';
-            return '<h3>🧾 Faturas</h3><ul>' +
-                invs.map((i: any) =>
-                    `<li><a href="/invoices/${i.id}" class="text-blue-600 underline font-semibold">${i.ref}</a> — R$ ${parseFloat(i.total_ttc || 0).toFixed(2)} ${statusLabel(i.statut)}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listInvoices(args || {}),
+                entityName: 'fatura',
+                emptyMessage: 'Nenhuma fatura encontrada.',
+                format: (invs) => {
+                    const statusLabel = (s: any) => s == 1 ? '✅ Paga' : s == 0 ? '📝 Rascunho' : '❌ Não paga';
+                    return '<h3>🧾 Faturas</h3><ul>' +
+                        invs.map((i: any) =>
+                            `<li><a href="/invoices/${i.id}" class="text-blue-600 underline font-semibold">${i.ref}</a> — R$ ${parseFloat(i.total_ttc || 0).toFixed(2)} ${statusLabel(i.statut)}</li>`
+                        ).join('') + '</ul>';
+                },
+            });
         }
         case 'list_projects': {
-            const projs = await dolibarrService.listProjects(args);
-            if (projs.length === 0) return 'Nenhum projeto encontrado.';
-            const statusLabel = (s: any) => s == 1 ? '🟢 Aberto' : s == 0 ? '⚪ Rascunho' : '🔴 Fechado';
-            return '<h3>📁 Projetos</h3><ul>' +
-                projs.map((p: any) =>
-                    `<li><a href="/projects/${p.id}" class="text-blue-600 underline font-semibold">${p.ref} — ${p.title}</a> ${statusLabel(p.statut)}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listProjects(args),
+                entityName: 'projeto',
+                emptyMessage: 'Nenhum projeto encontrado.',
+                format: (projs) => {
+                    const statusLabel = (s: any) => s == 1 ? '🟢 Aberto' : s == 0 ? '⚪ Rascunho' : '🔴 Fechado';
+                    return '<h3>📁 Projetos</h3><ul>' +
+                        projs.map((p: any) =>
+                            `<li><a href="/projects/${p.id}" class="text-blue-600 underline font-semibold">${p.ref} — ${p.title}</a> ${statusLabel(p.statut)}</li>`
+                        ).join('') + '</ul>';
+                },
+            });
         }
         case 'list_orders': {
-            const orders = await dolibarrService.listOrders(args);
-            if (orders.length === 0) return 'Nenhum pedido encontrado.';
-            return '<h3>📦 Pedidos de Venda</h3><ul>' +
-                orders.map((o: any) =>
-                    `<li><a href="/orders/${o.id}" class="text-blue-600 underline font-semibold">${o.ref}</a> — R$ ${parseFloat(o.total_ttc || 0).toFixed(2)}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listOrders(args),
+                entityName: 'pedido',
+                entityNamePlural: 'pedidos',
+                emptyMessage: 'Nenhum pedido encontrado.',
+                format: (orders) => '<h3>📦 Pedidos de Venda</h3><ul>' +
+                    orders.map((o: any) =>
+                        `<li><a href="/orders/${o.id}" class="text-blue-600 underline font-semibold">${o.ref}</a> — R$ ${parseFloat(o.total_ttc || 0).toFixed(2)}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_proposals': {
-            const props = await dolibarrService.listProposals(args);
-            if (props.length === 0) return 'Nenhuma proposta encontrada.';
-            return '<h3>📄 Propostas</h3><ul>' +
-                props.map((p: any) =>
-                    `<li><a href="/proposals/${p.id}" class="text-blue-600 underline font-semibold">${p.ref}</a> — R$ ${parseFloat(p.total_ttc || 0).toFixed(2)}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listProposals(args),
+                entityName: 'proposta',
+                emptyMessage: 'Nenhuma proposta encontrada.',
+                format: (props) => '<h3>📄 Propostas</h3><ul>' +
+                    props.map((p: any) =>
+                        `<li><a href="/proposals/${p.id}" class="text-blue-600 underline font-semibold">${p.ref}</a> — R$ ${parseFloat(p.total_ttc || 0).toFixed(2)}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_tickets': {
-            const tickets = await dolibarrService.listTickets(args);
-            if (tickets.length === 0) return 'Nenhum ticket encontrado.';
-            return '<h3>🎫 Tickets</h3><ul>' +
-                tickets.map((t: any) =>
-                    `<li><a href="/tickets/${t.id}" class="text-blue-600 underline font-semibold">${t.subject}</a> — ${t.track_id || ''}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listTickets(args),
+                entityName: 'ticket',
+                emptyMessage: 'Nenhum ticket encontrado.',
+                format: (tickets) => '<h3>🎫 Tickets</h3><ul>' +
+                    tickets.map((t: any) =>
+                        `<li><a href="/tickets/${t.id}" class="text-blue-600 underline font-semibold">${t.subject}</a> — ${t.track_id || ''}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_products': {
-            const prods = await dolibarrService.listProducts(args?.search);
-            if (prods.length === 0) return 'Nenhum produto encontrado.';
-            return '<h3>📦 Produtos</h3><ul>' +
-                prods.map((p: any) =>
-                    `<li><a href="/products/${p.id}" class="text-blue-600 underline font-semibold">${p.ref} — ${p.label}</a> — R$ ${parseFloat(p.price || 0).toFixed(2)}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listProducts(args?.search),
+                entityName: 'produto',
+                emptyMessage: 'Nenhum produto encontrado.',
+                format: (prods) => '<h3>📦 Produtos</h3><ul>' +
+                    prods.map((p: any) =>
+                        `<li><a href="/products/${p.id}" class="text-blue-600 underline font-semibold">${p.ref} — ${p.label}</a> — R$ ${parseFloat(p.price || 0).toFixed(2)}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_bank_accounts': {
-            const banks = await dolibarrService.listBankAccounts();
-            if (banks.length === 0) return 'Nenhuma conta bancária encontrada.';
-            return '<h3>🏦 Contas Bancárias</h3><ul>' +
-                banks.map((b: any) =>
-                    `<li><a href="/bank_accounts" class="text-blue-600 underline font-semibold">${b.label || b.ref}</a> — Saldo: R$ ${parseFloat(b.solde || 0).toFixed(2)} ${b.currency_code || ''}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listBankAccounts(),
+                entityName: 'conta bancária',
+                entityNamePlural: 'contas bancárias',
+                emptyMessage: 'Nenhuma conta bancária encontrada.',
+                format: (banks) => '<h3>🏦 Contas Bancárias</h3><ul>' +
+                    banks.map((b: any) =>
+                        `<li><a href="/bank_accounts" class="text-blue-600 underline font-semibold">${b.label || b.ref}</a> — Saldo: R$ ${parseFloat(b.solde || 0).toFixed(2)} ${b.currency_code || ''}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_contracts': {
-            const contracts = await dolibarrService.listContracts(args?.search);
-            if (contracts.length === 0) return 'Nenhum contrato encontrado.';
-            return '<h3>📑 Contratos</h3><ul>' +
-                contracts.map((c: any) =>
-                    `<li><a href="/contracts" class="text-blue-600 underline font-semibold">${c.ref}</a></li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listContracts(args?.search),
+                entityName: 'contrato',
+                emptyMessage: 'Nenhum contrato encontrado.',
+                format: (contracts) => '<h3>📑 Contratos</h3><ul>' +
+                    contracts.map((c: any) =>
+                        `<li><a href="/contracts" class="text-blue-600 underline font-semibold">${c.ref}</a></li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_shipments': {
-            const ships = await dolibarrService.listShipments(args?.search);
-            if (ships.length === 0) return 'Nenhum envio encontrado.';
-            return '<h3>🚚 Envios</h3><ul>' +
-                ships.map((s: any) =>
-                    `<li><a href="/shipments" class="text-blue-600 underline font-semibold">${s.ref}</a></li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listShipments(args?.search),
+                entityName: 'envio',
+                emptyMessage: 'Nenhum envio encontrado.',
+                format: (ships) => '<h3>🚚 Envios</h3><ul>' +
+                    ships.map((s: any) =>
+                        `<li><a href="/shipments" class="text-blue-600 underline font-semibold">${s.ref}</a></li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_supplier_invoices': {
-            const supInvs = await dolibarrService.listSupplierInvoices(args?.status);
-            if (supInvs.length === 0) return 'Nenhuma fatura de fornecedor encontrada.';
-            return '<h3>🧾 Faturas de Fornecedor</h3><ul>' +
-                supInvs.map((i: any) =>
-                    `<li><a href="/supplier_invoices/${i.id}" class="text-blue-600 underline font-semibold">${i.ref}</a> — R$ ${parseFloat(i.total_ttc || 0).toFixed(2)}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listSupplierInvoices(args?.status),
+                entityName: 'fatura de fornecedor',
+                entityNamePlural: 'faturas de fornecedor',
+                emptyMessage: 'Nenhuma fatura de fornecedor encontrada.',
+                format: (supInvs) => '<h3>🧾 Faturas de Fornecedor</h3><ul>' +
+                    supInvs.map((i: any) =>
+                        `<li><a href="/supplier_invoices/${i.id}" class="text-blue-600 underline font-semibold">${i.ref}</a> — R$ ${parseFloat(i.total_ttc || 0).toFixed(2)}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_expense_reports': {
-            const expenses = await dolibarrService.listExpenseReports(args?.status);
-            if (expenses.length === 0) return 'Nenhum relatório de despesa encontrado.';
-            return '<h3>💰 Despesas</h3><ul>' +
-                expenses.map((e: any) =>
-                    `<li><a href="/hr/expenses" class="text-blue-600 underline font-semibold">${e.ref}</a> — R$ ${parseFloat(e.total_ttc || 0).toFixed(2)}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listExpenseReports(args?.status),
+                entityName: 'relatório de despesa',
+                entityNamePlural: 'relatórios de despesa',
+                emptyMessage: 'Nenhum relatório de despesa encontrado.',
+                format: (expenses) => '<h3>💰 Despesas</h3><ul>' +
+                    expenses.map((e: any) =>
+                        `<li><a href="/hr/expenses" class="text-blue-600 underline font-semibold">${e.ref}</a> — R$ ${parseFloat(e.total_ttc || 0).toFixed(2)}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_users': {
-            const users = await dolibarrService.listUsers(args?.search);
-            if (users.length === 0) return 'Nenhum usuário encontrado.';
-            return '<h3>👥 Usuários</h3><ul>' +
-                users.map((u: any) => {
-                    const mobile = resolveUserMobile(u);
-                    return `<li><a href="/hr/${u.id}" class="text-blue-600 underline font-semibold">${u.lastname} ${u.firstname}</a> [id ${u.id}] — ${u.email || ''} ${u.job ? '(' + u.job + ')' : ''}${mobile ? ' | 📱 ' + mobile : ''}</li>`;
-                }).join('') +
-                '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listUsers(args?.search),
+                entityName: 'usuário',
+                entityNamePlural: 'usuários',
+                emptyMessage: 'Nenhum usuário encontrado.',
+                format: (users) => '<h3>👥 Usuários</h3><ul>' +
+                    users.map((u: any) => {
+                        const mobile = resolveUserMobile(u);
+                        return `<li><a href="/hr/${u.id}" class="text-blue-600 underline font-semibold">${u.lastname} ${u.firstname}</a> [id ${u.id}] — ${u.email || ''} ${u.job ? '(' + u.job + ')' : ''}${mobile ? ' | 📱 ' + mobile : ''}</li>`;
+                    }).join('') +
+                    '</ul>',
+            });
         }
         case 'list_warehouses': {
-            const warehouses = await dolibarrService.listWarehouses();
-            if (warehouses.length === 0) return 'Nenhum armazém encontrado.';
-            return '<h3>🏭 Armazéns</h3><ul>' +
-                warehouses.map((w: any) =>
-                    `<li><a href="/warehouses" class="text-blue-600 underline font-semibold">${w.label}</a>${w.description ? ' — ' + w.description : ''}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listWarehouses(),
+                entityName: 'armazém',
+                entityNamePlural: 'armazéns',
+                emptyMessage: 'Nenhum armazém encontrado.',
+                format: (warehouses) => '<h3>🏭 Armazéns</h3><ul>' +
+                    warehouses.map((w: any) =>
+                        `<li><a href="/warehouses" class="text-blue-600 underline font-semibold">${w.label}</a>${w.description ? ' — ' + w.description : ''}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_tasks': {
-            const tasks = await dolibarrService.listTasks(args?.projectId);
-            if (tasks.length === 0) return 'Nenhuma tarefa encontrada.';
-            return '<h3>📋 Tarefas</h3><ul>' +
-                tasks.map((t: any) =>
-                    `<li><a href="/tasks/${t.id}" class="text-blue-600 underline font-semibold">${t.ref} — ${t.label}</a> — ${t.progress || 0}%</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listTasks(args?.projectId),
+                entityName: 'tarefa',
+                emptyMessage: 'Nenhuma tarefa encontrada.',
+                format: (tasks) => '<h3>📋 Tarefas</h3><ul>' +
+                    tasks.map((t: any) =>
+                        `<li><a href="/tasks/${t.id}" class="text-blue-600 underline font-semibold">${t.ref} — ${t.label}</a> — ${t.progress || 0}%</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_user_tasks': {
             // Fallback p/ o usuário logado (ctx.userId) quando o LLM não informa o id (#300).
             const targetUserId = args?.userId || getToolContext().userId;
             if (!targetUserId) throw new Error("Parâmetro 'userId' ausente e o usuário atual não tem ID Dolibarr vinculado.");
-            const userTasks = await dolibarrService.listUserTasks(targetUserId);
-            if (userTasks.length === 0) return 'Nenhuma tarefa encontrada para este usuário.';
-            return '<h3>📋 Tarefas do Usuário</h3><ul>' +
-                userTasks.map((t: any) =>
-                    `<li><a href="/tasks/${t.id}" class="text-blue-600 underline font-semibold">${t.ref} — ${t.label}</a> — ${t.progress || 0}%</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listUserTasks(targetUserId),
+                entityName: 'tarefa',
+                emptyMessage: 'Nenhuma tarefa encontrada para este usuário.',
+                format: (userTasks) => '<h3>📋 Tarefas do Usuário</h3><ul>' +
+                    userTasks.map((t: any) =>
+                        `<li><a href="/tasks/${t.id}" class="text-blue-600 underline font-semibold">${t.ref} — ${t.label}</a> — ${t.progress || 0}%</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_events': {
-            const events = await dolibarrService.listEvents(args?.limit);
-            if (events.length === 0) return 'Nenhum evento encontrado.';
-            return '<h3>📅 Eventos</h3><ul>' +
-                events.map((e: any) =>
-                    `<li><a href="/agenda/${e.id}" class="text-blue-600 underline font-semibold">${e.label}</a> — ${e.datep || ''}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listEvents(args?.limit),
+                entityName: 'evento',
+                emptyMessage: 'Nenhum evento encontrado.',
+                format: (events) => '<h3>📅 Eventos</h3><ul>' +
+                    events.map((e: any) =>
+                        `<li><a href="/agenda/${e.id}" class="text-blue-600 underline font-semibold">${e.label}</a> — ${e.datep || ''}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_contacts': {
-            const contacts = await dolibarrService.listContacts(args?.search);
-            if (contacts.length === 0) return 'Nenhum contato encontrado.';
-            return '<h3>📇 Contatos</h3><ul>' +
-                contacts.map((c: any) =>
-                    `<li><a href="/contacts/${c.id}" class="text-blue-600 underline font-semibold">${c.lastname} ${c.firstname}</a> — ${c.email || ''} ${c.phone_mobile ? '| ' + c.phone_mobile : ''}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listContacts(args?.search),
+                entityName: 'contato',
+                emptyMessage: 'Nenhum contato encontrado.',
+                format: (contacts) => '<h3>📇 Contatos</h3><ul>' +
+                    contacts.map((c: any) =>
+                        `<li><a href="/contacts/${c.id}" class="text-blue-600 underline font-semibold">${c.lastname} ${c.firstname}</a> — ${c.email || ''} ${c.phone_mobile ? '| ' + c.phone_mobile : ''}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_categories': {
-            const cats = await dolibarrService.listCategories(args?.type);
-            if (cats.length === 0) return 'Nenhuma categoria encontrada.';
-            return '<h3>🏷️ Categorias</h3><ul>' +
-                cats.map((c: any) =>
-                    `<li><a href="/categories" class="text-blue-600 underline font-semibold">${c.label}</a> (${c.type || ''})</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listCategories(args?.type),
+                entityName: 'categoria',
+                emptyMessage: 'Nenhuma categoria encontrada.',
+                format: (cats) => '<h3>🏷️ Categorias</h3><ul>' +
+                    cats.map((c: any) =>
+                        `<li><a href="/categories" class="text-blue-600 underline font-semibold">${c.label}</a> (${c.type || ''})</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_suppliers': {
-            const suppliers = await dolibarrService.listSuppliers(args?.search);
-            if (suppliers.length === 0) return 'Nenhum fornecedor encontrado.';
-            return '<h3>🏭 Fornecedores</h3><ul>' +
-                suppliers.map((s: any) =>
-                    `<li><a href="/suppliers/${s.id}" class="text-blue-600 underline font-semibold">${s.name}</a> — ${s.email || 'sem email'}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listSuppliers(args?.search),
+                entityName: 'fornecedor',
+                emptyMessage: 'Nenhum fornecedor encontrado.',
+                format: (suppliers) => '<h3>🏭 Fornecedores</h3><ul>' +
+                    suppliers.map((s: any) =>
+                        `<li><a href="/suppliers/${s.id}" class="text-blue-600 underline font-semibold">${s.name}</a> — ${s.email || 'sem email'}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_supplier_orders': {
-            const supOrders = await dolibarrService.listSupplierOrders(args?.status);
-            if (supOrders.length === 0) return 'Nenhum pedido de compra encontrado.';
-            return '<h3>📦 Pedidos de Compra</h3><ul>' +
-                supOrders.map((o: any) =>
-                    `<li><a href="/supplier_orders" class="text-blue-600 underline font-semibold">${o.ref}</a> — R$ ${parseFloat(o.total_ttc || 0).toFixed(2)}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listSupplierOrders(args?.status),
+                entityName: 'pedido de compra',
+                entityNamePlural: 'pedidos de compra',
+                emptyMessage: 'Nenhum pedido de compra encontrado.',
+                format: (supOrders) => '<h3>📦 Pedidos de Compra</h3><ul>' +
+                    supOrders.map((o: any) =>
+                        `<li><a href="/supplier_orders" class="text-blue-600 underline font-semibold">${o.ref}</a> — R$ ${parseFloat(o.total_ttc || 0).toFixed(2)}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_payments': {
-            const payments = await dolibarrService.listPayments(args?.limit);
-            if (payments.length === 0) return 'Nenhum pagamento encontrado.';
-            return '<h3>💳 Pagamentos</h3><ul>' +
-                payments.map((p: any) =>
-                    `<li><a href="/payments/${p.id}" class="text-blue-600 underline font-semibold">Pagamento #${p.id}</a> — R$ ${parseFloat(p.amount || 0).toFixed(2)}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listPayments(args?.limit),
+                entityName: 'pagamento',
+                emptyMessage: 'Nenhum pagamento encontrado.',
+                format: (payments) => '<h3>💳 Pagamentos</h3><ul>' +
+                    payments.map((p: any) =>
+                        `<li><a href="/payments/${p.id}" class="text-blue-600 underline font-semibold">Pagamento #${p.id}</a> — R$ ${parseFloat(p.amount || 0).toFixed(2)}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_bank_lines': {
-            const bankLines = await dolibarrService.listBankLines(args?.accountId, args?.limit);
-            if (bankLines.length === 0) return 'Nenhuma movimentação encontrada.';
-            return '<h3>🏦 Movimentações Bancárias</h3><ul>' +
-                bankLines.map((l: any) =>
-                    `<li>${l.label || ''} — R$ ${parseFloat(l.amount || 0).toFixed(2)} (${l.dateo || ''})</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listBankLines(args?.accountId, args?.limit),
+                entityName: 'movimentação',
+                entityNamePlural: 'movimentações',
+                emptyMessage: 'Nenhuma movimentação encontrada.',
+                format: (bankLines) => '<h3>🏦 Movimentações Bancárias</h3><ul>' +
+                    bankLines.map((l: any) =>
+                        `<li>${l.label || ''} — R$ ${parseFloat(l.amount || 0).toFixed(2)} (${l.dateo || ''})</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_stock_movements': {
-            const stockMoves = await dolibarrService.listStockMovements(args?.productId);
-            if (stockMoves.length === 0) return 'Nenhuma movimentação de estoque encontrada.';
-            return '<h3>📦 Movimentações de Estoque</h3><ul>' +
-                stockMoves.map((m: any) =>
-                    `<li><a href="/products/${m.fk_product}" class="text-blue-600 underline font-semibold">Produto ${m.fk_product}</a> — Qty: ${m.qty} (${m.datem || ''})</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listStockMovements(args?.productId),
+                entityName: 'movimentação de estoque',
+                entityNamePlural: 'movimentações de estoque',
+                emptyMessage: 'Nenhuma movimentação de estoque encontrada.',
+                format: (stockMoves) => '<h3>📦 Movimentações de Estoque</h3><ul>' +
+                    stockMoves.map((m: any) =>
+                        `<li><a href="/products/${m.fk_product}" class="text-blue-600 underline font-semibold">Produto ${m.fk_product}</a> — Qty: ${m.qty} (${m.datem || ''})</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_interventions': {
-            const interventions = await dolibarrService.listInterventions(args?.search);
-            if (interventions.length === 0) return 'Nenhuma intervenção encontrada.';
-            return '<h3>🔧 Intervenções</h3><ul>' +
-                interventions.map((i: any) =>
-                    `<li><a href="/interventions" class="text-blue-600 underline font-semibold">${i.ref}</a>${i.description ? ' — ' + i.description : ''}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listInterventions(args?.search),
+                entityName: 'intervenção',
+                entityNamePlural: 'intervenções',
+                emptyMessage: 'Nenhuma intervenção encontrada.',
+                format: (interventions) => '<h3>🔧 Intervenções</h3><ul>' +
+                    interventions.map((i: any) =>
+                        `<li><a href="/interventions" class="text-blue-600 underline font-semibold">${i.ref}</a>${i.description ? ' — ' + i.description : ''}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_leave_requests': {
-            const leaves = await dolibarrService.listLeaveRequests(args?.status);
-            if (leaves.length === 0) return 'Nenhuma solicitação de férias encontrada.';
-            return '<h3>🏖️ Solicitações de Férias</h3><ul>' +
-                leaves.map((l: any) => {
-                    const ts = l.date_debut;
-                    const debut = ts ? new Date(ts < 1e12 ? ts * 1000 : ts).toLocaleDateString('pt-BR') : '';
-                    return `<li><a href="/hr/leaves" class="text-blue-600 underline font-semibold">${l.ref}</a> — ${debut}</li>`;
-                }).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listLeaveRequests(args?.status),
+                entityName: 'solicitação de férias',
+                entityNamePlural: 'solicitações de férias',
+                emptyMessage: 'Nenhuma solicitação de férias encontrada.',
+                format: (leaves) => '<h3>🏖️ Solicitações de Férias</h3><ul>' +
+                    leaves.map((l: any) => {
+                        const ts = l.date_debut;
+                        const debut = ts ? new Date(ts < 1e12 ? ts * 1000 : ts).toLocaleDateString('pt-BR') : '';
+                        return `<li><a href="/hr/leaves" class="text-blue-600 underline font-semibold">${l.ref}</a> — ${debut}</li>`;
+                    }).join('') + '</ul>',
+            });
         }
         case 'list_boms': {
-            const boms = await dolibarrService.listBOMs(args?.search);
-            if (boms.length === 0) return 'Nenhum BOM encontrado.';
-            return '<h3>🔩 Listas Técnicas (BOM)</h3><ul>' +
-                boms.map((b: any) =>
-                    `<li><a href="/manufacturing" class="text-blue-600 underline font-semibold">${b.ref} — ${b.label}</a></li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listBOMs(args?.search),
+                entityName: 'BOM',
+                entityNamePlural: 'BOMs',
+                emptyMessage: 'Nenhum BOM encontrado.',
+                format: (boms) => '<h3>🔩 Listas Técnicas (BOM)</h3><ul>' +
+                    boms.map((b: any) =>
+                        `<li><a href="/manufacturing" class="text-blue-600 underline font-semibold">${b.ref} — ${b.label}</a></li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_manufacturing_orders': {
-            const mos = await dolibarrService.listManufacturingOrders(args?.status);
-            if (mos.length === 0) return 'Nenhuma ordem de produção encontrada.';
-            return '<h3>🏭 Ordens de Produção</h3><ul>' +
-                mos.map((m: any) =>
-                    `<li><a href="/manufacturing" class="text-blue-600 underline font-semibold">${m.ref}</a> — Qty: ${m.qty}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listManufacturingOrders(args?.status),
+                entityName: 'ordem de produção',
+                entityNamePlural: 'ordens de produção',
+                emptyMessage: 'Nenhuma ordem de produção encontrada.',
+                format: (mos) => '<h3>🏭 Ordens de Produção</h3><ul>' +
+                    mos.map((m: any) =>
+                        `<li><a href="/manufacturing" class="text-blue-600 underline font-semibold">${m.ref}</a> — Qty: ${m.qty}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_candidates': {
-            const candidates = await dolibarrService.listCandidates(args?.search);
-            if (candidates.length === 0) return 'Nenhum candidato encontrado.';
-            return '<h3>👤 Candidatos</h3><ul>' +
-                candidates.map((c: any) =>
-                    `<li><a href="/hr/candidates" class="text-blue-600 underline font-semibold">${c.lastname} ${c.firstname}</a> — ${c.email || ''}</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listCandidates(args?.search),
+                entityName: 'candidato',
+                emptyMessage: 'Nenhum candidato encontrado.',
+                format: (candidates) => '<h3>👤 Candidatos</h3><ul>' +
+                    candidates.map((c: any) =>
+                        `<li><a href="/hr/candidates" class="text-blue-600 underline font-semibold">${c.lastname} ${c.firstname}</a> — ${c.email || ''}</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'list_job_positions': {
-            const jobs = await dolibarrService.listJobPositions(true);
-            if (jobs.length === 0) return 'Nenhuma vaga aberta no momento.';
-            return '<h3>💼 Vagas Abertas</h3><ul>' +
-                jobs.map((j: any) =>
-                    `<li><a href="/hr/jobs" class="text-blue-600 underline font-semibold">${j.ref} — ${j.label}</a> (Qty: ${j.qty || 1})</li>`
-                ).join('') + '</ul>';
+            return safeListCall({
+                fn: () => dolibarrService.listJobPositions(true),
+                entityName: 'vaga',
+                emptyMessage: 'Nenhuma vaga aberta no momento.',
+                format: (jobs) => '<h3>💼 Vagas Abertas</h3><ul>' +
+                    jobs.map((j: any) =>
+                        `<li><a href="/hr/jobs" class="text-blue-600 underline font-semibold">${j.ref} — ${j.label}</a> (Qty: ${j.qty || 1})</li>`
+                    ).join('') + '</ul>',
+            });
         }
         case 'search_web': {
             const searchResults = await ScraperService.searchGoogle(args?.query);
