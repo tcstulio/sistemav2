@@ -1,0 +1,84 @@
+name: Dunning Eval
+
+# CI de negócio (issue #1405 / epic #1400):
+#   1. Roda `npm test -- dunning` (vitest backend, suite dunningService + suítes
+#      relacionadas) — garante que o pipeline unitário segue verde.
+#   2. Roda `npm run eval:dunning` — golden-set de 18 fixtures + guard de saída
+#      externa. Este passo é a única prova comportamental de que o serviço
+#      NUNCA inventa valor nem dispara canal de envio externo.
+#   3. Em caso de falha, posta um comentário no PR com a saída completa
+#      (scoreboard + quais fixtures falharam e por quê).
+#
+# Dispara apenas em PRs que mexem nos arquivos relevantes — não desperdiça
+# CI em PRs não relacionados.
+
+on:
+    pull_request:
+        paths:
+            - 'backend/src/services/dunningService.ts'
+            - 'backend/src/services/dunningService.test.ts'
+            - 'backend/src/routes/dunning*'
+            - 'backend/src/eval/**'
+            - '.github/workflows/dunning-eval.yml'
+            - 'package.json'
+
+jobs:
+    dunning-eval:
+        name: dunning digest eval (golden-set + blast-radius guard)
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            pull-requests: write
+        env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-node@v4
+                with:
+                    node-version: 20
+                    cache: npm
+                    cache-dependency-path: |
+                        package-lock.json
+                        backend/package-lock.json
+
+            # npm install (não ci): o lockfile é gerado em dev Windows e a CI é
+            # Linux; deps opcionais por plataforma (ex.: @emnapi/runtime) faltam
+            # no lock e quebram `npm ci`. Mesmo motivo já documentado em
+            # .github/workflows/ci.yml.
+            - name: Install backend dependencies
+              working-directory: backend
+              run: npm install --no-audit --no-fund
+
+            - name: Install root dependencies (tsx para o eval)
+              run: npm install --no-audit --no-fund
+
+            - name: Run vitest backend (suite dunningService)
+              working-directory: backend
+              run: npx vitest run dunningService
+
+            - name: Run dunning eval (golden-set + blast-radius guard)
+              id: eval
+              run: |
+                  set +e
+                  npm run eval:dunning | tee eval-output.txt
+                  echo "exit=$?" >> "$GITHUB_OUTPUT"
+                  set -e
+
+            - name: Comment on PR if eval failed
+              if: steps.eval.outputs.exit != '0' && github.event_name == 'pull_request'
+              env:
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+              run: |
+                  {
+                      echo "### ❌ Dunning eval falhou"
+                      echo ""
+                      echo "O golden-set do **issue #1405** detectou regressão. Saída completa abaixo:"
+                      echo ""
+                      echo '```'
+                      cat eval-output.txt
+                      echo '```'
+                      echo ""
+                      echo "_Workflow: \`${{ github.workflow }}\` • commit \`${{ github.event.pull_request.head.sha }}\`_"
+                  } > pr-comment.md
+                  gh pr comment "$PR_NUMBER" --body-file pr-comment.md

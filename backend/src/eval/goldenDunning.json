@@ -1,0 +1,334 @@
+{
+    "schemaVersion": 1,
+    "issue": "#1405",
+    "description": "Golden-set de 18 fixtures para o dunning digest (issue #1405). Cobre happy path (faturas vencidas com pesos diferentes + a vencer em 1/3/7/15 dias) e todos os edge cases exigidos pelo epic #1400: faturas pagas filtradas, socid vazio (fail-closed), valores absurdos (sanity de não-invenção) e fetch de cliente falhando.",
+    "fixtures": [
+        {
+            "id": "v-abs-huge",
+            "ref": "FA-ABH-1",
+            "socid": "soc-ABH1",
+            "socname": "Cliente Valor Absurdo Max",
+            "totalAberto": 999999.99,
+            "diasAtraso": 1,
+            "expect": {
+                "rank": 0,
+                "status": "ready",
+                "rascunhoContains": [
+                    "Olá Cliente Valor Absurdo Max",
+                    "999.999,99",
+                    "FA-ABH-1"
+                ],
+                "rascunhoNotContains": [
+                    "999.999.999,99",
+                    "1.000.000,00"
+                ]
+            }
+        },
+        {
+            "id": "v-high-1",
+            "ref": "FA-VH-1",
+            "socid": "soc-VH1",
+            "socname": "Cliente Vencido High 1",
+            "totalAberto": 5000,
+            "diasAtraso": 100,
+            "expect": {
+                "rank": 1,
+                "status": "ready",
+                "rascunhoContains": [
+                    "Olá Cliente Vencido High 1",
+                    "5.000,00",
+                    "FA-VH-1"
+                ],
+                "rascunhoNotContains": []
+            }
+        },
+        {
+            "id": "v-high-2",
+            "ref": "FA-VH-2",
+            "socid": "soc-VH2",
+            "socname": "Cliente Vencido High 2",
+            "totalAberto": 3000,
+            "diasAtraso": 80,
+            "expect": {
+                "rank": 2,
+                "status": "ready",
+                "rascunhoContains": [
+                    "Olá Cliente Vencido High 2",
+                    "3.000,00",
+                    "FA-VH-2"
+                ],
+                "rascunhoNotContains": []
+            }
+        },
+        {
+            "id": "v-med-1",
+            "ref": "FA-VM-1",
+            "socid": "soc-VM1",
+            "socname": "Cliente Vencido Med 1",
+            "totalAberto": 800,
+            "diasAtraso": 40,
+            "expect": {
+                "rank": 3,
+                "status": "ready",
+                "rascunhoContains": [
+                    "Cliente Vencido Med 1",
+                    "800,00",
+                    "FA-VM-1"
+                ],
+                "rascunhoNotContains": []
+            }
+        },
+        {
+            "id": "v-med-2",
+            "ref": "FA-VM-2",
+            "socid": "soc-VM2",
+            "socname": "Cliente Vencido Med 2",
+            "totalAberto": 600,
+            "diasAtraso": 20,
+            "expect": {
+                "rank": 4,
+                "status": "ready",
+                "rascunhoContains": [
+                    "Cliente Vencido Med 2",
+                    "600,00",
+                    "FA-VM-2"
+                ],
+                "rascunhoNotContains": []
+            }
+        },
+        {
+            "id": "v-low-1",
+            "ref": "FA-VL-1",
+            "socid": "soc-VL1",
+            "socname": "Cliente Vencido Low 1",
+            "totalAberto": 100,
+            "diasAtraso": 10,
+            "expect": {
+                "rank": 5,
+                "status": "ready",
+                "rascunhoContains": [
+                    "Cliente Vencido Low 1",
+                    "100,00",
+                    "FA-VL-1"
+                ],
+                "rascunhoNotContains": []
+            }
+        },
+        {
+            "id": "v-low-2",
+            "ref": "FA-VL-2",
+            "socid": "soc-VL2",
+            "socname": "Cliente Vencido Low 2",
+            "totalAberto": 50,
+            "diasAtraso": 3,
+            "expect": {
+                "rank": 6,
+                "status": "ready",
+                "rascunhoContains": [
+                    "Cliente Vencido Low 2",
+                    "50,00",
+                    "FA-VL-2"
+                ],
+                "rascunhoNotContains": []
+            }
+        },
+        {
+            "id": "f-1d",
+            "ref": "FA-F1D",
+            "socid": "soc-F1D",
+            "socname": "Cliente A Vencer 1D",
+            "totalAberto": 400,
+            "diasAtraso": -1,
+            "expect": {
+                "rank": 7,
+                "status": "ready",
+                "rascunhoContains": [
+                    "Cliente A Vencer 1D",
+                    "400,00",
+                    "FA-F1D"
+                ],
+                "rascunhoNotContains": []
+            }
+        },
+        {
+            "id": "f-3d",
+            "ref": "FA-F3D",
+            "socid": "soc-F3D",
+            "socname": "Cliente A Vencer 3D",
+            "totalAberto": 300,
+            "diasAtraso": -3,
+            "expect": {
+                "rank": 8,
+                "status": "ready",
+                "rascunhoContains": [
+                    "Cliente A Vencer 3D",
+                    "300,00",
+                    "FA-F3D"
+                ],
+                "rascunhoNotContains": []
+            }
+        },
+        {
+            "id": "f-7d",
+            "ref": "FA-F7D",
+            "socid": "soc-F7D",
+            "socname": "Cliente A Vencer 7D",
+            "totalAberto": 200,
+            "diasAtraso": -7,
+            "expect": {
+                "rank": 9,
+                "status": "ready",
+                "rascunhoContains": [
+                    "Cliente A Vencer 7D",
+                    "200,00",
+                    "FA-F7D"
+                ],
+                "rascunhoNotContains": []
+            }
+        },
+        {
+            "id": "f-15d",
+            "ref": "FA-F15D",
+            "socid": "soc-F15D",
+            "socname": "Cliente A Vencer 15D",
+            "totalAberto": 100,
+            "diasAtraso": -15,
+            "expect": {
+                "rank": 10,
+                "status": "ready",
+                "rascunhoContains": [
+                    "Cliente A Vencer 15D",
+                    "100,00",
+                    "FA-F15D"
+                ],
+                "rascunhoNotContains": []
+            }
+        },
+        {
+            "id": "v-abs-tiny",
+            "ref": "FA-ABT-1",
+            "socid": "soc-ABT1",
+            "socname": "Cliente Valor Min",
+            "totalAberto": 0.01,
+            "diasAtraso": 1,
+            "expect": {
+                "rank": 11,
+                "status": "ready",
+                "rascunhoContains": [
+                    "Cliente Valor Min",
+                    "0,01",
+                    "FA-ABT-1"
+                ],
+                "rascunhoNotContains": [
+                    "0,00"
+                ]
+            }
+        },
+        {
+            "id": "p-1",
+            "ref": "FA-PAY-1",
+            "socid": "soc-PAY1",
+            "socname": "Cliente Pago 1",
+            "totalAberto": 1000,
+            "diasAtraso": 30,
+            "isPaid": true,
+            "expect": {
+                "notInDigest": true,
+                "status": "absent",
+                "rascunhoContains": [],
+                "rascunhoNotContains": [
+                    "FA-PAY-1",
+                    "Cliente Pago 1"
+                ]
+            }
+        },
+        {
+            "id": "p-2",
+            "ref": "FA-PAY-2",
+            "socid": "soc-PAY2",
+            "socname": "Cliente Pago 2",
+            "totalAberto": 2000,
+            "diasAtraso": 60,
+            "isPaid": true,
+            "expect": {
+                "notInDigest": true,
+                "status": "absent",
+                "rascunhoContains": [],
+                "rascunhoNotContains": [
+                    "FA-PAY-2",
+                    "Cliente Pago 2"
+                ]
+            }
+        },
+        {
+            "id": "ns-1",
+            "ref": "FA-NS-1",
+            "socid": "",
+            "socname": "Cliente Sem SocID 1",
+            "totalAberto": 500,
+            "diasAtraso": 30,
+            "expect": {
+                "notInDigest": true,
+                "status": "absent",
+                "rascunhoContains": [],
+                "rascunhoNotContains": [
+                    "FA-NS-1",
+                    "Cliente Sem SocID 1"
+                ]
+            }
+        },
+        {
+            "id": "ns-2",
+            "ref": "FA-NS-2",
+            "socid": "",
+            "socname": "Cliente Sem SocID 2",
+            "totalAberto": 300,
+            "diasAtraso": 10,
+            "expect": {
+                "notInDigest": true,
+                "status": "absent",
+                "rascunhoContains": [],
+                "rascunhoNotContains": [
+                    "FA-NS-2",
+                    "Cliente Sem SocID 2"
+                ]
+            }
+        },
+        {
+            "id": "fe-1",
+            "ref": "FA-FE-1",
+            "socid": "soc-FE1",
+            "socname": "",
+            "totalAberto": 200,
+            "diasAtraso": 15,
+            "customerContextThrows": true,
+            "expect": {
+                "rank": 12,
+                "status": "incomplete",
+                "motivo": "fetch falhou",
+                "rascunhoContains": [],
+                "rascunhoNotContains": [
+                    "Olá"
+                ]
+            }
+        },
+        {
+            "id": "fe-2",
+            "ref": "FA-FE-2",
+            "socid": "soc-FE2",
+            "socname": "",
+            "totalAberto": 150,
+            "diasAtraso": 12,
+            "customerContextThrows": true,
+            "expect": {
+                "rank": 13,
+                "status": "incomplete",
+                "motivo": "fetch falhou",
+                "rascunhoContains": [],
+                "rascunhoNotContains": [
+                    "Olá"
+                ]
+            }
+        }
+    ]
+}
