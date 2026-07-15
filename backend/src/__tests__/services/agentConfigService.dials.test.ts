@@ -4,9 +4,10 @@
  *    OVERRIDE de COLD-START via AGENT_MAX_ITERATIONS (decisão do critério 4) e clamp defensivo.
  *  - `requiresConfirmation()`: reflete a lista `requireConfirmationFor` do profile.
  *
- * O profile é semeado direto no singleton (`(svc as any).profile`) — o carregamento real via
- * refresh()/Dolibarr não é o objeto sob teste aqui, e o `require()` lazy de dolibarrService não
- * é interceptável pelo vitest. Semear o estado privado isola a lógica de resolução.
+ * Semeamos o profile via o helper público `_setProfileForTesting()` (introduzido nesta issue)
+ * — em vez de `(svc as any).profile = ...` frágil, o helper encapsula a forma interna. O
+ * carregamento real via refresh()/Dolibarr não é o objeto sob teste aqui, e o `require()` lazy
+ * de dolibarrService dentro de refresh() não é interceptável pelo vitest sem mock adicional.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -21,15 +22,15 @@ import { agentConfigService } from '../../services/agentConfigService';
 
 const DEFAULT_MAX = 50; // igual ao DEFAULT_CONFIG.maxToolCallsPerConversation
 
-/** Semeia o profile privado do singleton com um config parcial (só o que os dials leem). */
+/** Atalho: semeia o profile do singleton via helper público. */
 function seedConfig(cfg: { maxToolCallsPerConversation?: number; requireConfirmationFor?: string[] }) {
-    (agentConfigService as any).profile = { config: cfg };
+    agentConfigService._setProfileForTesting(cfg);
 }
 
 describe('#1408 — agentConfigService.getMaxToolCalls (fonte de verdade + override)', () => {
     beforeEach(() => {
         envConfig.config.agentMaxIterations = null;
-        (agentConfigService as any).profile = null;
+        agentConfigService._setProfileForTesting(null);
     });
 
     it('default (sem override, sem profile): usa o default do config service', () => {
@@ -59,7 +60,7 @@ describe('#1408 — agentConfigService.getMaxToolCalls (fonte de verdade + overr
 describe('#1408 — agentConfigService.requiresConfirmation (gate)', () => {
     beforeEach(() => {
         envConfig.config.agentMaxIterations = null;
-        (agentConfigService as any).profile = null;
+        agentConfigService._setProfileForTesting(null);
     });
 
     it('reflete a lista requireConfirmationFor do profile', () => {

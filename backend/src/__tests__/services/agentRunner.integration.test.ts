@@ -13,9 +13,10 @@
  * chamada por uma constante congelada) os mocks não pegam. Este teste pega.
  *
  * Estratégia: NÃO mockar `agentConfigService` (o objeto real é importado e usado). Em vez
- * disso, semeamos `(svc as any).profile = ...` para evitar a chamada de rede ao Dolibarr
- * em `refresh()`. O `axios` (chamada HTTP ao LLM) e `executeTool` (chamada de ferramentas
- * de produção) continuam mockados — o que está sob teste é o ACOPLAMENTO entre os dois.
+ * disso, semeamos o profile via o helper público `_setProfileForTesting()` para evitar a
+ * chamada de rede ao Dolibarr em `refresh()`. O `axios` (chamada HTTP ao LLM) e `executeTool`
+ * (chamada de ferramentas de produção) continuam mockados — o que está sob teste é o
+ * ACOPLAMENTO entre os dois.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import axios from 'axios';
@@ -60,11 +61,11 @@ vi.mock('../../services/agentTools', () => ({
     getToolContext: () => ({ listener: null, isAdmin: toolState.isAdmin }),
 }));
 
-// #1408: `dolibarrService` é mockado para IMPEDIR a chamada de rede quando o
-// `agentConfigService.refresh()` for acionado. O `refresh()` é lazy (chamado em
-// `getConfig()` se o profile não estiver carregado) — semeamos `profile` direto
-// para nunca chegar lá. Mas o `require()` lazy do `dolibarrService` em refresh()
-// ainda precisa de um stub válido.
+// #1408: `dolibarrService` é mockado para IMPEDIR a chamada de rede caso o
+// `agentConfigService.refresh()` venha a ser acionado. O `refresh()` é lazy
+// (chamado em `getConfig()` se o profile não estiver carregado) — semeamos o
+// profile via `_setProfileForTesting()` para nunca chegar lá. O `require()`
+// lazy do `dolibarrService` em refresh() ainda precisa de um stub válido.
 vi.mock('../../services/dolibarrService', () => ({ dolibarrService: {} }));
 vi.mock('../../services/llmHealthService', () => ({
     llmHealthService: {
@@ -92,26 +93,16 @@ import { LocalProvider, TOOL_BUDGET_EXHAUSTED_MSG } from '../../services/aiServi
 const user = [{ role: 'user', parts: 'faça a tarefa' } as any];
 
 /**
- * Semeia o profile REAL do singleton com o config MÍNIMO necessário para o loop rodar.
- * O `getSystemPrompt()` consome várias chaves (blockedTools, allowedTools, etc.) — semeamos
- * só as pedidas pelos dials sob teste (maxToolCallsPerConversation, requireConfirmationFor)
- * + defaults vazios para satisfazer o consumer sem mexer no que não está sob teste.
+ * Semeia o profile REAL do singleton via helper público `_setProfileForTesting()`. Evita
+ * `(svc as any).profile = ...` frágil — o helper mescla com defaults e encapsula a forma
+ * interna. O `getSystemPrompt()` consome várias chaves (blockedTools, allowedTools, etc.);
+ * passamos só os dials sob teste — o helper cuida do resto.
  */
 function seedRealProfile(cfg: {
     maxToolCallsPerConversation?: number;
     requireConfirmationFor?: string[];
 }) {
-    (agentConfigService as any).profile = {
-        config: {
-            blockedTools: [],
-            allowedTools: 'all',
-            requireConfirmationFor: [],
-            maxToolCallsPerConversation: 50,
-            ...cfg,
-        },
-    };
-    // Invalida o cache para forçar releitura do profile semeado.
-    (agentConfigService as any).lastFetch = Date.now();
+    agentConfigService._setProfileForTesting(cfg);
 }
 
 describe('#1408 — integração REAL config service → runner (sem mock do config)', () => {
@@ -120,7 +111,7 @@ describe('#1408 — integração REAL config service → runner (sem mock do con
         toolState.isAdmin = false;
         executeToolMock.mockImplementation(async () => 'RESULTADO OK');
         // Reseta o profile do singleton para isolar entre os testes.
-        (agentConfigService as any).profile = null;
+        agentConfigService._setProfileForTesting(null);
     });
 
     it('integration #1 (a): teto=2 no config REAL → runner executa no máximo 2 tools', async () => {
@@ -203,7 +194,7 @@ describe('#1408 — integração REAL config service → runner (sem mock do con
         // #1408 (sem override de cold-start, sem profile carregado): o default 50 vale.
         // Sem o dial estar ligado ao runner, o teto seria 5 (constante antiga). 50 é a
         // assinatura de que o config service é a fonte.
-        (agentConfigService as any).profile = null;
+        agentConfigService._setProfileForTesting(null);
         expect(agentConfigService.getMaxToolCalls()).toBe(50);
     });
 });

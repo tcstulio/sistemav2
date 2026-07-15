@@ -184,6 +184,50 @@ class AgentConfigService {
     }
 
     /**
+     * #1408: helper PÚBLICO de TESTE para semear o profile sem depender de Dolibarr. Evita o
+     * `(svc as any).profile = ...` frágil dos testes anteriores (quebra se a representação
+     * interna mudar). Aceita um config parcial — `null` reseta para defaults (estado limpo).
+     *
+     * Uso:
+     *   agentConfigService._setProfileForTesting({ maxToolCallsPerConversation: 2 });
+     *   agentConfigService._setProfileForTesting({ requireConfirmationFor: ['deleteInvoice'] });
+     *   agentConfigService._setProfileForTesting(null); // reset
+     *
+     * O prefixo `_` e o nome longo sinalizam: não é parte da API pública de runtime. Os testes
+     * em `agentConfigService.dials.test.ts` e `agentRunner.integration.test.ts` usam-no para
+     * montar cenários determinísticos sem precisar de refresh() real ou de mock do dolibarr.
+     */
+    _setProfileForTesting(config: Partial<AgentConfig> | null): void {
+        if (config === null) {
+            this.profile = null;
+            this.lastFetch = 0;
+            return;
+        }
+        // Mescla com os defaults — assim um config parcial (só os dials sob teste) já é
+        // suficiente para `getSystemPrompt()` e afins não quebrarem em outros pontos.
+        this.profile = {
+            id: '1',
+            login: 'admin',
+            firstname: '',
+            lastname: 'MARCIANO',
+            email: 'contato@coolgroove.com.br',
+            job: 'Inteligencia Artificial',
+            photo: '',
+            notePublic: '',
+            notePrivate: '',
+            config: {
+                ...DEFAULT_CONFIG,
+                ...config,
+                permissions: {
+                    ...DEFAULT_CONFIG.permissions,
+                    ...(config.permissions || {}),
+                },
+            },
+        };
+        this.lastFetch = Date.now();
+    }
+
+    /**
      * #1408: teto de TOOL CALLS por conversa — FONTE DE VERDADE do loop do agente.
      * Antes o teto real vinha de `AGENT_MAX_ITERATIONS` (env) e este dial era teatro.
      * Agora o valor sai de `maxToolCallsPerConversation` (editável pelo admin em runtime);
