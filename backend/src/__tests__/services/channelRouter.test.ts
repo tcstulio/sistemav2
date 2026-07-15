@@ -32,24 +32,35 @@ vi.mock('../../services/emailService', () => ({
     },
 }));
 
-// Default do mock: nenhuma sessão pronta → resolveSession devolve a default (preserva os testes
-// que esperam 'default'). Casos de fallback sobrescrevem por teste.
+// #1441 — Mock de sessionService agora expõe `getWhatsAppSessions()` (fonte única da verdade
+// para o estado de todas as sessões, lido a cada chamada de resolveSession). `getStatus` e
+// `getFirstWorkingSessionId` continuam no mock só p/ preservar a API que outros módulos
+// possam usar; o caminho LEGADO (sem whatsappPrimarySessionId configurada) ainda os consulta,
+// mas a policy de routing sob primary configurada NÃO — ela confia em `getWhatsAppSessions`.
 const mockSession = vi.hoisted(() => ({
     getStatus: vi.fn(() => 'STOPPED'),
     getFirstWorkingSessionId: vi.fn(() => undefined as string | undefined),
+    getWhatsAppSessions: vi.fn(() => [] as Array<{ id: string; status: string }>),
 }));
 vi.mock('../../services/legacy/sessionService', () => ({ sessionService: mockSession }));
 
 // #1410 — setWhatsAppProvider persiste via uiConfigService.update; mock p/ evitar disco e
 // espiar a chamada (sem isso, o teste cairia no fs real e ainda não confirmaria que o setter
-// de fato chamou o persist).
+// de fato chamou o persist). #1441 — `get` agora é lido a CADA CHAMADA de resolveSession
+// (hot-reload), então cada teste que precisa de config específica deve mockar `get` (com
+// mockReturnValue para persistir por todo o teste, ou mockImplementationOnce para uma
+// única leitura).
 const mockUiConfig = vi.hoisted(() => ({
     update: vi.fn((partial: any) => ({ whatsappProvider: partial?.whatsappProvider })),
     get: vi.fn(() => ({})),
 }));
 vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfig }));
 
-import { channelRouter, ChannelRouter } from '../../services/channelRouter';
+import {
+    channelRouter,
+    ChannelRouter,
+    WhatsAppPrimaryUnavailableError,
+} from '../../services/channelRouter';
 import { FEATURES } from '../../config/features';
 import { moltbotGateway } from '../../services/moltbotGateway';
 import { messageService as legacyMessageService } from '../../services/legacy/messageService';
@@ -62,6 +73,12 @@ describe('ChannelRouter', () => {
         channelRouter.setDefaultSessionId('default');
         (FEATURES as any).DRY_RUN_MODE = false;
         (FEATURES as any).MOLTBOT_ENABLED = false;
+        // Defaults seguros: uiConfig vazio (= sem primária) + nenhuma sessão WORKING.
+        // Testes que mudam isso sobrescrevem por teste (mockReturnValue / mockImplementationOnce).
+        mockUiConfig.get.mockReturnValue({});
+        mockSession.getWhatsAppSessions.mockReturnValue([]);
+        mockSession.getStatus.mockReturnValue('STOPPED');
+        mockSession.getFirstWorkingSessionId.mockReturnValue(undefined);
     });
 
     describe('constructor & configuration', () => {
@@ -94,18 +111,19 @@ describe('ChannelRouter', () => {
             expect(channelRouter.getWhatsAppProvider()).toBe('moltbot');
         });
 
-        // #1437 — boot: hidrata `defaultSessionId` a partir de `uiConfig.whatsappPrimarySessionId`.
-        // Antes desse ajuste, `setDefaultSessionId` era um setter órfão (nunca era chamado no boot),
-        // então o canal sempre caía na string 'default' hardcoded. Aqui validamos:
-        //   - com `whatsappPrimarySessionId` setado no uiConfig → construtor usa esse valor
+        // #1437/#1441 — boot + hot-reload: resolveSession agora lê `uiConfig.whatsappPrimarySessionId`
+        // A CADA CHAMADA (sem cache do construtor). Aqui validamos:
+        //   - com `whatsappPrimarySessionId` setado no uiConfig → resolveSession devolve esse valor
         //   - com valor vazio/ausente/whitespace → fallback legado para 'default'
         // Verificação é comportamental: instanciamos um ChannelRouter novo e disparamos um envio;
-        // `resolveSession` deve devolver exatamente o `defaultSessionId` que o construtor setou
-        // (mock de sessionService devolve STOPPED p/ qualquer id + getFirstWorkingSessionId → undefined,
-        // então resolveSession devolve o default diretamente).
-        describe('#1437 — boot wiring: hidrata defaultSessionId do uiConfig', () => {
-            it('com whatsappPrimarySessionId setado: construtor usa esse valor (resolveSession devolve)', async () => {
-                mockUiConfig.get.mockImplementationOnce(() => ({ whatsappPrimarySessionId: 'primary-x' }) as any);
+        // `resolveSession` deve devolver exatamente o `primarySessionId` que o uiConfig devolve.
+        // (mock de sessionService devolve [] p/ getWhatsAppSessions → resolveLegacySession devolve
+        // 'default'; com primary setado + sessions vazias → throw WhatsAppPrimaryUnavailableError;
+        // por isso os testes com primary setado mockam getWhatsAppSessions com a primary WORKING.)
+        describe('#1437/#1441 — boot wiring + hot-reload: resolveSession lê uiConfig a cada chamada', () => {
+            it('com whatsappPrimarySessionId setado: resolveSession usa esse valor (hot-reload)', async () => {
+                mockUiConfig.get.mockReturnValue({ whatsappPrimarySessionId: 'primary-x' } as any);
+                mockSession.getWhatsAppSessions.mockReturnValue([{ id: 'primary-x', status: 'WORKING' }]);
                 const router = new ChannelRouter();
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1' } as any);
                 await router.sendWhatsApp('5511@c.us', 'Oi');
@@ -113,7 +131,7 @@ describe('ChannelRouter', () => {
             });
 
             it('com whatsappPrimarySessionId vazio (string): fallback legado para \'default\'', async () => {
-                mockUiConfig.get.mockImplementationOnce(() => ({ whatsappPrimarySessionId: '' }) as any);
+                mockUiConfig.get.mockReturnValue({ whatsappPrimarySessionId: '' } as any);
                 const router = new ChannelRouter();
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1' } as any);
                 await router.sendWhatsApp('5511@c.us', 'Oi');
@@ -121,7 +139,7 @@ describe('ChannelRouter', () => {
             });
 
             it('com whatsappPrimarySessionId ausente (mock retorna {}): fallback legado para \'default\'', async () => {
-                mockUiConfig.get.mockImplementationOnce(() => ({}) as any);
+                mockUiConfig.get.mockReturnValue({} as any);
                 const router = new ChannelRouter();
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1' } as any);
                 await router.sendWhatsApp('5511@c.us', 'Oi');
@@ -129,7 +147,7 @@ describe('ChannelRouter', () => {
             });
 
             it('com whatsappPrimarySessionId só de whitespace: trim → vazio → fallback legado', async () => {
-                mockUiConfig.get.mockImplementationOnce(() => ({ whatsappPrimarySessionId: '   ' }) as any);
+                mockUiConfig.get.mockReturnValue({ whatsappPrimarySessionId: '   ' } as any);
                 const router = new ChannelRouter();
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1' } as any);
                 await router.sendWhatsApp('5511@c.us', 'Oi');
@@ -137,7 +155,8 @@ describe('ChannelRouter', () => {
             });
 
             it('com whatsappPrimarySessionId com whitespace nas bordas: trim é aplicado', async () => {
-                mockUiConfig.get.mockImplementationOnce(() => ({ whatsappPrimarySessionId: '  primary-x  ' }) as any);
+                mockUiConfig.get.mockReturnValue({ whatsappPrimarySessionId: '  primary-x  ' } as any);
+                mockSession.getWhatsAppSessions.mockReturnValue([{ id: 'primary-x', status: 'WORKING' }]);
                 const router = new ChannelRouter();
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1' } as any);
                 await router.sendWhatsApp('5511@c.us', 'Oi');
