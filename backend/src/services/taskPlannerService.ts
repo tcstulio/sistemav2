@@ -203,7 +203,18 @@ export const taskPlannerService = {
 
         await acquirePlannerSlot();
         try {
-            const openPRs = await listOpenPRs();
+            const allOpenPRs = await listOpenPRs();
+            // #1460: NUNCA tratar o PR da PRÓPRIA task como conflito/duplicata. O planner (determinístico
+            // E LLM) via o próprio PR aberto como "PR concorrente já em andamento" (regra do prompt: 'wait
+            // if same files AND in progress') e devolvia 'wait' — CACHEADO por 1h — travando a task NELA
+            // MESMA. É a causa-raiz do "deadlock esperando o próprio PR" (visto ao vivo em #1353/#1441/
+            // #1405) que o redo do #1455 só paliava: fecha o PR, cria outro, e o planner espera no NOVO
+            // próprio-PR (loop redo→self-wait; #1441 reincidiu 3×). Resolve pela BRANCH `fix-<issue>` — a
+            // MESMA regex de prefixo do #1455 (nunca os dígitos do fim, senão `fix-1353-2` casaria issue 2).
+            const openPRs = allOpenPRs.filter(pr => {
+                const m = /^(?:fix|feat|feature|bugfix|hotfix|chore)[-/](?:issue-)?(\d+)(?:$|[-/])/.exec(pr.headRefName || '');
+                return !(m && Number(m[1]) === task.issueNumber);
+            });
             const issueBody = task.body || '';
 
             const filesInBody = issueBody.match(/[\w/.-]+\.(ts|tsx|js|jsx|json|css|md|sql)/g) || [];
