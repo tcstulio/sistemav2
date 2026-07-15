@@ -234,6 +234,10 @@ app.use('/api/users', userRoutes); // /me usa whitelist — nunca devolve api_ke
 import dashboardRoutes from './routes/dashboardRoutes';
 app.use('/api/dashboard', dashboardRoutes);
 
+import dunningRoutes from './routes/dunningRoutes';
+// Dunning digest (#1403) — read-only, auth via requireDolibarrLogin dentro do próprio router.
+app.use('/api/dunning', dunningRoutes);
+
 import taskRoutes from './routes/taskRoutes';
 app.use('/api/tasks', taskRoutes);
 
