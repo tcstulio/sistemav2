@@ -12,6 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { atomicWriteSync } from '../utils/atomicWrite';
 import { createLogger } from '../utils/logger';
+import { isWithinQuietWindow } from './notifications/quietHours';
 
 // createLogger (não logger.child) p/ casar com o padrão de mock dos testes (todos mockam createLogger).
 const log = createLogger('UiConfigService');
@@ -665,6 +666,41 @@ export class UiConfigService {
 
     getInvoiceDueHorizonDays(): number {
         return this.data.notificationPolicy.invoiceDueHorizonDays;
+    }
+
+    /**
+     * #1407 — Helper para testes e consumidores do gate. Devolve uma cópia rasa
+     * (spread) da `notificationPolicy` atual em memória. Útil p/ mock direto em
+     * testes unitários sem depender do `get()` completo (mais barato de
+     * controlar quando só a policy importa).
+     */
+    getNotificationPolicy(): NotificationPolicyConfig {
+        return {
+            ...this.data.notificationPolicy,
+            quietHours: { ...this.data.notificationPolicy.quietHours },
+        };
+    }
+
+    /**
+     * #1407 — Gate único de quiet-hours (#1293/#1291 + epic #1397). Resolve a
+     * janela configurada para `channel` no fuso `America/Sao_Paulo` (já embutido
+     * em `isWithinQuietWindow`) e devolve `true` quando `now` cai dentro da
+     * janela de silêncio — i.e., o canal DEVE ser adiado.
+     *
+     * Regras:
+     * - `channel === 'in-app'` SEMPRE retorna `false` (in-app é reversível/
+     *   benigno e NÃO passa pelo gate — mesmo padrão do `taskNotificationService`
+     *   em `dispatchTaskNotification`).
+     * - `channel` ausente → default 'whatsapp' (canal externo mais comum).
+     * - `now` ausente → `new Date()` (injetável em testes com `vi.useFakeTimers`).
+     *
+     * Puro em I/O — só lê `this.data.notificationPolicy` (snapshot em memória).
+     */
+    isWithinQuietHours(now?: Date, channel?: QuietHoursChannel): boolean {
+        const ch: QuietHoursChannel = channel || 'whatsapp';
+        if (ch === 'in-app') return false;
+        const rule = this.data.notificationPolicy.quietHours[ch];
+        return isWithinQuietWindow(now ?? new Date(), rule);
     }
 
     /**
