@@ -33,6 +33,11 @@ const { mockPinoInstance, pinoMock, mockDolibarrService } = vi.hoisted(() => {
         listInvoices: vi.fn(),
         listProposals: vi.fn(),
         searchThirdParty: vi.fn(),
+        listSupplierInvoices: vi.fn(),
+        listEvents: vi.fn(),
+        listUsers: vi.fn(),
+        listWarehouses: vi.fn(),
+        listCandidates: vi.fn(),
     };
     return { mockPinoInstance: instance, pinoMock: pinoFn, mockDolibarrService: dolibarr };
 });
@@ -55,6 +60,32 @@ const resetDolibarrMocks = () => {
     mockDolibarrService.listInvoices.mockReset();
     mockDolibarrService.listProposals.mockReset();
     mockDolibarrService.searchThirdParty.mockReset();
+    mockDolibarrService.listSupplierInvoices.mockReset();
+    mockDolibarrService.listEvents.mockReset();
+    mockDolibarrService.listUsers.mockReset();
+    mockDolibarrService.listWarehouses.mockReset();
+    mockDolibarrService.listCandidates.mockReset();
+    // Outros métodos chamados pelo `search` — se não forem resetados, mocks de testes
+    // anteriores vazariam para o teste de "search todas falhando".
+    const dolibarrAny = mockDolibarrService as any;
+    if (dolibarrAny.listProjects) dolibarrAny.listProjects.mockReset();
+    if (dolibarrAny.listTasks) dolibarrAny.listTasks.mockReset();
+    if (dolibarrAny.listOrders) dolibarrAny.listOrders.mockReset();
+};
+
+/**
+ * Extrai a mensagem legível de uma chamada de log, suportando DOIS formatos:
+ *   1. setup.ts global mock — `info: vi.fn()` recebe a string crua → `c[0]` é string.
+ *   2. pino real (via Logger class) — `info({ msg, context, data })` → `c[0]` é objeto.
+ * Assim o teste não quebra dependendo de qual mock está ativo.
+ */
+const logMsg = (call: unknown[]): string => {
+    const arg = call[0];
+    if (typeof arg === 'string') return arg;
+    if (arg && typeof arg === 'object' && 'msg' in (arg as Record<string, unknown>)) {
+        return String((arg as { msg?: unknown }).msg ?? '');
+    }
+    return '';
 };
 
 beforeEach(() => {
@@ -191,7 +222,7 @@ describe('agentTools — log diferencia empty (legit) vs error 500 (api failure)
 
         await executeTool('list_invoices', { status: 'unpaid' });
 
-        const infos = mockPinoInstance.info.mock.calls.map((c) => String(c[0]?.msg ?? ''));
+        const infos = mockPinoInstance.info.mock.calls.map(logMsg);
         expect(infos.some((m) => /fatura/.test(m) && /empty \(legit\)/.test(m))).toBe(true);
         // E NÃO chama warn
         expect(mockPinoInstance.warn).not.toHaveBeenCalled();
@@ -205,13 +236,13 @@ describe('agentTools — log diferencia empty (legit) vs error 500 (api failure)
         await executeTool('list_invoices', { status: 'unpaid' });
 
         const warns = mockPinoInstance.warn.mock.calls.map((c) => ({
-            msg: String(c[0]?.msg ?? ''),
+            msg: logMsg(c),
             meta: c[0],
         }));
         const apiFailLog = warns.find((w) => /fatura/.test(w.msg) && /error \(api failure\)/.test(w.msg));
         expect(apiFailLog).toBeTruthy();
         // E NÃO loga como "empty (legit)"
-        const infos = mockPinoInstance.info.mock.calls.map((c) => String(c[0]?.msg ?? ''));
+        const infos = mockPinoInstance.info.mock.calls.map(logMsg);
         expect(infos.some((m) => /empty \(legit\)/.test(m) && /fatura/.test(m))).toBe(false);
     });
 
@@ -219,7 +250,7 @@ describe('agentTools — log diferencia empty (legit) vs error 500 (api failure)
         // empty (legit) para proposals
         mockDolibarrService.listProposals.mockResolvedValueOnce([]);
         await executeTool('list_proposals', {});
-        const infosProposals = mockPinoInstance.info.mock.calls.map((c) => String(c[0]?.msg ?? ''));
+        const infosProposals = mockPinoInstance.info.mock.calls.map(logMsg);
         expect(infosProposals.some((m) => /proposta/.test(m) && /empty \(legit\)/.test(m))).toBe(true);
 
         resetLoggerMocks();
@@ -229,7 +260,7 @@ describe('agentTools — log diferencia empty (legit) vs error 500 (api failure)
             Object.assign(new Error('Boom 503'), { response: { status: 503 } })
         );
         await executeTool('search_customer', { query: 'x' });
-        const warnsCust = mockPinoInstance.warn.mock.calls.map((c) => String(c[0]?.msg ?? ''));
+        const warnsCust = mockPinoInstance.warn.mock.calls.map(logMsg);
         expect(warnsCust.some((m) => /cliente/.test(m) && /error \(api failure\)/.test(m))).toBe(true);
     });
 });
@@ -241,5 +272,155 @@ describe('agentTools — TOOLS_PROMPT explica ERRO_API (#1353)', () => {
         expect(TOOLS_PROMPT).toContain('ERRO_API');
         // A regra deve estar explícita sobre o comportamento esperado do LLM.
         expect(TOOLS_PROMPT).toMatch(/NUNCA afirme.*não existe|ERRO_API.*NUNCA afirme/i);
+    });
+});
+
+// --- list_supplier_invoices / list_events / list_users / list_warehouses / list_candidates ---
+
+// Helper genérico: 3 variantes para uma tool de listagem. Usa o mockDolibarrService especificado.
+// Mantém os asserts idênticos aos 3 tools já cobertos (list_invoices, list_proposals, search_customer)
+// para garantir consistência.
+function describeListTool({
+    describeLabel,
+    toolName,
+    entityRe,
+    emptyMessage,
+    dolibarrMethod,
+    mockReturnValue,
+    expectedContent,
+}: {
+    describeLabel: string;
+    toolName: string;
+    entityRe: RegExp;
+    emptyMessage: string;
+    dolibarrMethod: keyof typeof mockDolibarrService;
+    mockReturnValue: any[];
+    expectedContent: string[];
+}) {
+    describe(describeLabel, () => {
+        it('500 → resposta contém ERRO_API + NÃO contém empty message', async () => {
+            (mockDolibarrService[dolibarrMethod] as any).mockRejectedValueOnce(
+                Object.assign(new Error(`Request failed with status code 500`), { response: { status: 500 } })
+            );
+
+            const out = await executeTool(toolName, {});
+
+            expect(out).toContain(ERRO_API_MARKER);
+            expect(out).not.toContain(emptyMessage);
+            expect(entityRe.test(out)).toBe(true);
+            expect(out).toMatch(/Tente novamente em alguns instantes/);
+        });
+
+        it('200 [] → empty message', async () => {
+            (mockDolibarrService[dolibarrMethod] as any).mockResolvedValueOnce([]);
+
+            const out = await executeTool(toolName, {});
+
+            expect(out).toBe(emptyMessage);
+            expect(out).not.toContain(ERRO_API_MARKER);
+        });
+
+        it(`200 [items] → lista os itens`, async () => {
+            (mockDolibarrService[dolibarrMethod] as any).mockResolvedValueOnce(mockReturnValue);
+
+            const out = await executeTool(toolName, {});
+
+            expect(out).not.toContain(ERRO_API_MARKER);
+            for (const expected of expectedContent) {
+                expect(out).toContain(expected);
+            }
+        });
+    });
+}
+
+describeListTool({
+    describeLabel: 'agentTools — list_supplier_invoices (#1353)',
+    toolName: 'list_supplier_invoices',
+    entityRe: /faturas/i,
+    emptyMessage: 'Nenhuma fatura de fornecedor encontrada.',
+    dolibarrMethod: 'listSupplierInvoices',
+    mockReturnValue: [{ id: '51', ref: 'FF2501-0051', total_ttc: '320.00' }],
+    expectedContent: ['FF2501-0051', 'R$ 320.00'],
+});
+
+describeListTool({
+    describeLabel: 'agentTools — list_events (#1353)',
+    toolName: 'list_events',
+    entityRe: /eventos/i,
+    emptyMessage: 'Nenhum evento encontrado.',
+    dolibarrMethod: 'listEvents',
+    mockReturnValue: [{ id: '201', label: 'Reunião semanal', datep: '2026-01-15 10:00:00' }],
+    expectedContent: ['Reunião semanal', '2026-01-15 10:00:00'],
+});
+
+describeListTool({
+    describeLabel: 'agentTools — list_users (#1353)',
+    toolName: 'list_users',
+    entityRe: /usuários/i,
+    emptyMessage: 'Nenhum usuário encontrado.',
+    dolibarrMethod: 'listUsers',
+    mockReturnValue: [{ id: '5', firstname: 'Maria', lastname: 'Silva', email: 'maria@acme.com' }],
+    expectedContent: ['Silva', 'Maria', 'maria@acme.com'],
+});
+
+describeListTool({
+    describeLabel: 'agentTools — list_warehouses (#1353)',
+    toolName: 'list_warehouses',
+    entityRe: /armazéns/i,
+    emptyMessage: 'Nenhum armazém encontrado.',
+    dolibarrMethod: 'listWarehouses',
+    mockReturnValue: [{ id: '11', label: 'Almoxarifado Central', description: 'SP' }],
+    expectedContent: ['Almoxarifado Central', 'SP'],
+});
+
+describeListTool({
+    describeLabel: 'agentTools — list_candidates (#1353)',
+    toolName: 'list_candidates',
+    entityRe: /candidatos/i,
+    emptyMessage: 'Nenhum candidato encontrado.',
+    dolibarrMethod: 'listCandidates',
+    mockReturnValue: [{ id: '301', firstname: 'João', lastname: 'Pereira', email: 'joao@example.com' }],
+    expectedContent: ['Pereira', 'João', 'joao@example.com'],
+});
+
+// --- search (todas as fontes falhando → ERRO_API no agregado) ---------------------
+
+describe('agentTools — search (todas as fontes falhando → ERRO_API agregado) (#1353)', () => {
+    it('quando TODAS as fontes falham, devolve ERRO_API em vez de "Nenhum resultado"', async () => {
+        mockDolibarrService.searchThirdParty.mockRejectedValueOnce(
+            Object.assign(new Error('Boom'), { response: { status: 503 } })
+        );
+        // Para os outros métodos (listProjects, listTasks, listInvoices, listOrders, listProposals),
+        // precisamos do mock — mas o test só mockou 3+5. Se o agentTools.ts chamar algo não mockado,
+        // o mock do dolibarrService devolve undefined, e a chamada `undefined().catch` lança.
+        // Solução: mockamos TODOS os métodos do dolibarrService no escopo do test.
+        const dolibarrServiceAny = mockDolibarrService as any;
+        dolibarrServiceAny.listProjects = dolibarrServiceAny.listProjects || vi.fn();
+        dolibarrServiceAny.listTasks = dolibarrServiceAny.listTasks || vi.fn();
+        dolibarrServiceAny.listInvoices = dolibarrServiceAny.listInvoices || vi.fn();
+        dolibarrServiceAny.listOrders = dolibarrServiceAny.listOrders || vi.fn();
+        dolibarrServiceAny.listProposals = dolibarrServiceAny.listProposals || vi.fn();
+
+        dolibarrServiceAny.listProjects.mockRejectedValueOnce(
+            Object.assign(new Error('Boom'), { response: { status: 500 } })
+        );
+        dolibarrServiceAny.listTasks.mockRejectedValueOnce(
+            Object.assign(new Error('Boom'), { response: { status: 500 } })
+        );
+        dolibarrServiceAny.listInvoices.mockRejectedValueOnce(
+            Object.assign(new Error('Boom'), { response: { status: 500 } })
+        );
+        dolibarrServiceAny.listOrders.mockRejectedValueOnce(
+            Object.assign(new Error('Boom'), { response: { status: 500 } })
+        );
+        dolibarrServiceAny.listProposals.mockRejectedValueOnce(
+            Object.assign(new Error('Boom'), { response: { status: 500 } })
+        );
+
+        const out = await executeTool('search', { query: 'qualquer' });
+
+        expect(out).toContain(ERRO_API_MARKER);
+        expect(out).not.toContain('Nenhum resultado encontrado');
+        expect(out).toMatch(/Tente novamente em alguns instantes/);
     });
 });

@@ -117,6 +117,10 @@ export interface SafeListOptions<T> {
  * Diferencia também o LOG: `→ empty (legit)` vs `→ error (api failure)`,
  * permitindo que o operador identifique incidentes de ERP sem alarmes falsos.
  *
+ * O segundo argumento dos logs é um objeto estruturado (`entity`, `count`,
+ * `reason`, `status`) para que ferramentas de log/agregação possam filtrar por
+ * `entity=fatura` sem depender de parsing de string.
+ *
  * Importante: a string retornada é TEXT-FRIENDLY (sem HTML) para que o marker
  * seja detectável tanto em logs quanto no prompt que volta para o modelo.
  */
@@ -127,17 +131,27 @@ export async function safeListCall<T>(opts: SafeListOptions<T>): Promise<string>
     try {
         const items = await fn();
         if (!Array.isArray(items) || items.length === 0) {
-            log.info(`safeListCall ${entityName} → empty (legit)`);
+            log.info(`safeListCall ${entityName} → empty (legit)`, { entity: entityName, result: 'empty' });
             return emptyMsg;
         }
-        log.info(`safeListCall ${entityName} → ${items.length} item(s)`);
+        log.info(`safeListCall ${entityName} → ${items.length} item(s)`, {
+            entity: entityName,
+            result: 'ok',
+            count: items.length,
+        });
         return format(items);
     } catch (e: any) {
         const raw = e?.message || (typeof e === 'string' ? e : '') || 'erro desconhecido';
         const msg = String(raw).replace(/\s+/g, ' ').substring(0, 200);
         const status = e?.response?.status;
         const reason = status ? `HTTP ${status}` : (e?.code || 'falha');
-        log.warn(`safeListCall ${entityName} → error (api failure) [${reason}]: ${msg}`);
+        log.warn(`safeListCall ${entityName} → error (api failure) [${reason}]: ${msg}`, {
+            entity: entityName,
+            result: 'error',
+            reason,
+            status,
+            detail: msg,
+        });
         return `${ERRO_API_MARKER}: Não consegui consultar ${plural} no momento (falha de conexão/permissão no ERP). Detalhe: ${msg}. Tente novamente em alguns instantes.`;
     }
 }
@@ -1020,17 +1034,58 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
         case 'search': {
             if (!args?.query) throw new Error("Parâmetro 'query' ausente.");
             const q = args.query;
-            const [customers, projects, tasks, invoices, orders, proposals] = await Promise.all([
-                dolibarrService.searchThirdParty(q).catch(() => []),
-                dolibarrService.listProjects({ search: q }).catch(() => []),
-                dolibarrService.listTasks().catch(() => []),
+            // #1353: ao invés de engolir o erro silenciosamente (.catch([])), distinguimos vazio
+            // legítimo de falha de API — se TODAS as fontes principais falharem, devolvemos ERRO_API em
+            // vez de "Nenhum resultado encontrado", para o LLM não concluir "não existe X" por causa de
+            // uma falha transitória do ERP. Falhas parciais são logadas mas NÃO abortam o resultado.
+            const guardedCall = async <T>(label: string, fn: () => Promise<T[]>): Promise<{ items: T[]; failed: boolean }> => {
+                try {
+                    const items = await fn();
+                    log.info(`search.${label} → ${items.length} item(s)`, {
+                        entity: label,
+                        result: 'ok',
+                        count: items.length,
+                    });
+                    return { items, failed: false };
+                } catch (e: any) {
+                    const raw = e?.message || (typeof e === 'string' ? e : '') || 'erro desconhecido';
+                    const detail = String(raw).replace(/\s+/g, ' ').substring(0, 200);
+                    const status = e?.response?.status;
+                    const reason = status ? `HTTP ${status}` : (e?.code || 'falha');
+                    log.warn(`search.${label} → error (api failure) [${reason}]: ${detail}`, {
+                        entity: label,
+                        result: 'error',
+                        reason,
+                        status,
+                        detail,
+                    });
+                    return { items: [], failed: true };
+                }
+            };
+            const sources = await Promise.all([
+                guardedCall('searchThirdParty', () => dolibarrService.searchThirdParty(q)),
+                guardedCall('listProjects', () => dolibarrService.listProjects({ search: q })),
+                guardedCall('listTasks', () => dolibarrService.listTasks()),
                 // #1340: passa a query — antes era listInvoices({}), que devolvia as faturas mais
                 // RECENTES do sistema inteiro (sem relação com o termo) sob o cabeçalho "Resultados
                 // para X", induzindo o modelo a associá-las falsamente à entidade buscada.
-                dolibarrService.listInvoices({ search: q }).catch(() => []),
-                dolibarrService.listOrders({ search: q }).catch(() => []),
-                dolibarrService.listProposals({ search: q }).catch(() => []),
+                guardedCall('listInvoices', () => dolibarrService.listInvoices({ search: q })),
+                guardedCall('listOrders', () => dolibarrService.listOrders({ search: q })),
+                guardedCall('listProposals', () => dolibarrService.listProposals({ search: q })),
             ]);
+            const customers = sources[0].items;
+            const projects = sources[1].items;
+            const tasks = sources[2].items;
+            const invoices = sources[3].items;
+            const orders = sources[4].items;
+            const proposals = sources[5].items;
+
+            // #1353: se TODAS as fontes principais falharam, é falha de API — não "vazio legítimo".
+            const allFailed = sources.every(s => s.failed);
+
+            if (allFailed) {
+                return `${ERRO_API_MARKER}: Não consegui consultar resultados no momento (falha de conexão/permissão no ERP). Tente novamente em alguns instantes.`;
+            }
 
             const customerIds = customers.map((c: any) => String(c.id));
             let relatedProjects: any[] = [];
@@ -2079,67 +2134,63 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
         }
 
         case 'list_payment_types': {
-            try {
-                const types = await dolibarrService.listPaymentTypes();
-                if (types.length === 0) return 'Nenhum método de pagamento encontrado.';
-                const lines = [
+            return safeListCall({
+                fn: () => dolibarrService.listPaymentTypes(),
+                entityName: 'método de pagamento',
+                entityNamePlural: 'métodos de pagamento',
+                emptyMessage: 'Nenhum método de pagamento encontrado.',
+                format: (types) => [
                     `<h3>💳 Métodos de Pagamento (${types.length})</h3>`,
                     '<ul>',
                     ...types.map((t: any) => `<li><b>${t.code || t.id}</b> — ${t.label || t.libelle || 'sem nome'} ${t.active === 1 || t.active === '1' ? '' : '(inativo)'}</li>`),
                     '</ul>',
-                ];
-                return lines.join('\n');
-            } catch (e: any) {
-                return `Erro ao listar métodos de pagamento: ${e.message || e}`;
-            }
+                ].join('\n'),
+            });
         }
 
         case 'list_tax_rates': {
-            try {
-                const rates = await dolibarrService.listVatRates();
-                if (rates.length === 0) return 'Nenhuma taxa de imposto encontrada.';
-                const lines = [
+            return safeListCall({
+                fn: () => dolibarrService.listVatRates(),
+                entityName: 'taxa de imposto',
+                entityNamePlural: 'taxas de imposto',
+                emptyMessage: 'Nenhuma taxa de imposto encontrada.',
+                format: (rates) => [
                     `<h3>📊 Taxas de Imposto (${rates.length})</h3>`,
                     '<ul>',
                     ...rates.map((r: any) => `<li><b>${r.tva_tx || r.rate || r.id}%</b> — ${r.label || r.libelle || 'sem nome'} ${r.active === 1 || r.active === '1' ? '' : '(inativo)'}</li>`),
                     '</ul>',
-                ];
-                return lines.join('\n');
-            } catch (e: any) {
-                return `Erro ao listar taxas de imposto: ${e.message || e}`;
-            }
+                ].join('\n'),
+            });
         }
 
         case 'list_currencies': {
-            try {
-                const currencies = await dolibarrService.listCurrencies();
-                if (currencies.length === 0) return 'Nenhuma moeda encontrada.';
-                const lines = [
+            return safeListCall({
+                fn: () => dolibarrService.listCurrencies(),
+                entityName: 'moeda',
+                entityNamePlural: 'moedas',
+                emptyMessage: 'Nenhuma moeda encontrada.',
+                format: (currencies) => [
                     `<h3>💰 Moedas (${currencies.length})</h3>`,
                     '<ul>',
                     ...currencies.map((c: any) => `<li><b>${c.code_iso || c.code}</b> — ${c.label || c.libelle || 'sem nome'} ${c.rate ? `(taxa: ${c.rate})` : ''}</li>`),
                     '</ul>',
-                ];
-                return lines.join('\n');
-            } catch (e: any) {
-                return `Erro ao listar moedas: ${e.message || e}`;
-            }
+                ].join('\n'),
+            });
         }
 
         case 'list_countries': {
-            try {
-                const countries = await dolibarrService.listCountries();
-                if (countries.length === 0) return 'Nenhum país encontrado.';
-                const lines = [
+            return safeListCall({
+                fn: () => dolibarrService.listCountries(),
+                entityName: 'país',
+                entityNamePlural: 'países',
+                emptyMessage: 'Nenhum país encontrado.',
+                format: (countries) => [
                     `<h3>🌍 Países (${countries.length})</h3>`,
                     '<ul>',
                     ...countries.map((c: any) => `<li><b>${c.code || c.code_iso}</b> — ${c.label || c.libelle || c.nom || 'sem nome'}</li>`),
                     '</ul>',
-                ];
-                return lines.join('\n');
-            } catch (e: any) {
-                return `Erro ao listar países: ${e.message || e}`;
-            }
+                ].join('\n'),
+            });
         }
 
         case 'search_code': {
