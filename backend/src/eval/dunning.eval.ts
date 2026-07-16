@@ -52,6 +52,7 @@ interface Fixture {
     diasAtraso: number;
     isPaid?: boolean;
     customerContextThrows?: boolean;
+    customerContextEmpty?: boolean;
     expect: FixtureExpect;
 }
 
@@ -108,6 +109,12 @@ function assertGoldenSet(value: unknown): asserts value is GoldenSet {
             typeof rawFixture.customerContextThrows !== 'boolean'
         ) {
             throw new Error(`${prefix}.customerContextThrows deve ser booleano`);
+        }
+        if (
+            rawFixture.customerContextEmpty !== undefined &&
+            typeof rawFixture.customerContextEmpty !== 'boolean'
+        ) {
+            throw new Error(`${prefix}.customerContextEmpty deve ser booleano`);
         }
 
         const expected = rawFixture.expect;
@@ -240,15 +247,33 @@ function checkFixture(
     }
 
     const rank = exp.rank;
-    if (rank === undefined || rank < 0 || rank >= digest.items.length) {
+    if (rank === undefined || rank < 0) {
         return {
             fixtureId: fixture.id,
             passed: false,
-            reason: `rank esperado=${rank} está fora do range (digest tem ${digest.items.length} itens)`,
+            reason: `rank esperado=${rank} é inválido`,
         };
     }
 
-    const item = digest.items[rank];
+    const actualRank = digest.items.findIndex(item =>
+        item.invoices.some(invoice => invoice.ref === fixture.ref)
+    );
+    if (actualRank === -1) {
+        return {
+            fixtureId: fixture.id,
+            passed: false,
+            reason: `a fatura ${fixture.ref} não está no digest — ranking ou agrupamento quebrou`,
+        };
+    }
+    if (actualRank !== rank) {
+        return {
+            fixtureId: fixture.id,
+            passed: false,
+            reason: `rank esperado=${rank}, mas a fatura ${fixture.ref} ficou no rank ${actualRank} — ranking quebrou`,
+        };
+    }
+
+    const item = digest.items[actualRank];
 
     if (item.socid !== fixture.socid) {
         return {
@@ -385,11 +410,19 @@ async function main(): Promise<number> {
                 .filter(f => f.customerContextThrows && f.socid)
                 .map(f => String(f.socid))
         );
+        const emptyContextSocids = new Set(
+            fixturesReceivable
+                .filter(f => f.customerContextEmpty && f.socid)
+                .map(f => String(f.socid))
+        );
 
         const mockReceivable: ReceivableFn = async () => buildReceivables(fixturesReceivable);
         const mockCustomer: CustomerContextFn = async (thirdPartyId: string) => {
             if (throwingSocids.has(String(thirdPartyId))) {
                 throw new Error(`mock: customer context indisponível para ${thirdPartyId}`);
+            }
+            if (emptyContextSocids.has(String(thirdPartyId))) {
+                return '';
             }
             return `contexto-mock-${thirdPartyId}`;
         };
