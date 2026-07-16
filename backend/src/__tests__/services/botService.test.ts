@@ -74,11 +74,25 @@ vi.mock('../../services/itauApiService', () => ({
 const mockFeatureSwitches = vi.hoisted(() => ({
     isFinancialCommandsEnabled: vi.fn(() => true),
     isCrmContextInjectionEnabled: vi.fn(() => true),
+    isWhatsappEmployeeElevationEnabled: vi.fn(() => false),
     getEffectiveWhatsAppProvider: vi.fn(() => 'legacy'),
 }));
 vi.mock('../../config/featureSwitches', () => mockFeatureSwitches);
 
+// Identidade do remetente (funcionário × cliente × desconhecido) — default: desconhecido.
+const mockIdentity = vi.hoisted(() => ({
+    identifySender: vi.fn(async (): Promise<any> => ({ kind: 'unknown' })),
+}));
+vi.mock('../../services/whatsappIdentityService', () => ({ whatsappIdentityService: mockIdentity }));
+
+const mockPermissions = vi.hoisted(() => ({
+    getProfile: vi.fn(async (): Promise<any> => ({ role: 'user', agent: {} })),
+    getProfileForContext: vi.fn(async () => '[PERMISSÕES DO USUÁRIO] ...'),
+}));
+vi.mock('../../services/userPermissionsService', () => ({ userPermissionsService: mockPermissions }));
+
 import { botService } from '../../services/botService';
+import { getToolContext } from '../../services/agentTools';
 import { messageService } from '../../services/legacy/messageService';
 import { aiService } from '../../services/aiService';
 import { storeService } from '../../services/storeService';
@@ -95,6 +109,8 @@ describe('BotService', () => {
         // #1129: comandos financeiros habilitados por padrão nos testes (comportamento histórico).
         mockFeatureSwitches.isFinancialCommandsEnabled.mockReturnValue(true);
         mockFeatureSwitches.isCrmContextInjectionEnabled.mockReturnValue(true);
+        mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(false);
+        mockIdentity.identifySender.mockResolvedValue({ kind: 'unknown' });
         (storeService.getSessionSettings as any).mockReturnValue({
             autoReply: true,
             historyLimit: 10,
@@ -455,14 +471,16 @@ describe('BotService', () => {
             (schedulerService.checkFlowTrigger as any).mockReturnValue(null);
             (messageService.getMessages as any).mockResolvedValue([]);
             (aiService.generateReply as any).mockResolvedValue('AI response');
-            (dolibarrService.getThirdPartyByPhone as any).mockResolvedValue({ id: 'c1', name: 'John' });
+            mockIdentity.identifySender.mockResolvedValue({ kind: 'customer', thirdpartyId: 'c1', name: 'John' });
             (dolibarrService.getCustomerContext as any).mockResolvedValue('Customer context');
             (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
             (sessionService.sendTyping as any).mockResolvedValue(undefined);
 
             await botService.processMessage(createMessage({ body: 'Hello' }));
 
-            expect(aiService.generateReply).toHaveBeenCalled();
+            expect(dolibarrService.getCustomerContext).toHaveBeenCalledWith('c1');
+            const ctx = (aiService.generateReply as any).mock.calls[0][1];
+            expect(ctx).toContain('DADOS DO CLIENTE IDENTIFICADO NO CRM');
             expect(messageService.sendText).toHaveBeenCalledWith(
                 'sess1', '5511999999999@c.us', expect.stringContaining('Bot')
             );
@@ -481,7 +499,8 @@ describe('BotService', () => {
             (schedulerService.checkFlowTrigger as any).mockReturnValue(null);
             (messageService.getMessages as any).mockResolvedValue([]);
             (aiService.generateReply as any).mockResolvedValue('Reply');
-            (dolibarrService.getThirdPartyByPhone as any).mockRejectedValue(new Error('CRM fail'));
+            mockIdentity.identifySender.mockResolvedValue({ kind: 'customer', thirdpartyId: 'c1', name: 'John' });
+            (dolibarrService.getCustomerContext as any).mockRejectedValue(new Error('CRM fail'));
             (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
             (sessionService.sendTyping as any).mockResolvedValue(undefined);
 
@@ -723,6 +742,89 @@ describe('BotService', () => {
                     groupSettings: expect.objectContaining({ messageCounter: 0 }),
                 })
             );
+        });
+
+        // Identidade do remetente → contexto de permissões (kill-switch whatsappEmployeeElevation).
+        // Captura o ToolContext efetivo de DENTRO do generateReply (AsyncLocalStorage real).
+        describe('elevação de funcionário identificado', () => {
+            let capturedCtx: any;
+
+            const setupReplyFlow = () => {
+                capturedCtx = null;
+                (schedulerService.getActiveFlow as any).mockReturnValue(null);
+                (schedulerService.checkConfirmation as any).mockReturnValue(null);
+                (schedulerService.checkFlowTrigger as any).mockReturnValue(null);
+                (messageService.getMessages as any).mockResolvedValue([]);
+                (aiService.generateReply as any).mockImplementation(async () => {
+                    capturedCtx = getToolContext();
+                    return 'Reply';
+                });
+                (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+                (sessionService.sendTyping as any).mockResolvedValue(undefined);
+            };
+
+            it('funcionário 1:1 com a flag LIGADA roda com o próprio perfil (readOnly=false, isAdmin=false)', async () => {
+                setupReplyFlow();
+                mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(true);
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva' });
+                const profile = { role: 'user', agent: { canCreate: ['proposal'] } };
+                mockPermissions.getProfile.mockResolvedValue(profile);
+
+                await botService.processMessage(createMessage({ body: 'Prepara uma proposta' }));
+
+                expect(capturedCtx).toMatchObject({ readOnly: false, userId: '7', isAdmin: false });
+                expect(capturedCtx.permissionProfile).toBe(profile);
+                const ctx = (aiService.generateReply as any).mock.calls[0][1];
+                expect(ctx).toContain('FUNCIONÁRIO IDENTIFICADO');
+                expect(ctx).toContain('Túlio Silva');
+            });
+
+            it('flag DESLIGADA: funcionário identificado continua somente-leitura', async () => {
+                setupReplyFlow();
+                mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(false);
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva' });
+
+                await botService.processMessage(createMessage({ body: 'Prepara uma proposta' }));
+
+                expect(capturedCtx.readOnly).toBe(true);
+                expect(capturedCtx.userId).toBeUndefined();
+                expect(mockPermissions.getProfile).not.toHaveBeenCalled();
+            });
+
+            it('grupo NUNCA identifica nem eleva, mesmo com a flag ligada', async () => {
+                setupReplyFlow();
+                mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(true);
+                (storeService.getChatSettings as any).mockReturnValue({ groupSettings: { llmEnabled: true } });
+
+                await botService.processMessage(createMessage({ body: 'Hello', from: 'g1@g.us' }));
+
+                expect(mockIdentity.identifySender).not.toHaveBeenCalled();
+                expect(capturedCtx.readOnly).toBe(true);
+            });
+
+            it('falha ao carregar o perfil ⇒ fail-closed em somente-leitura', async () => {
+                setupReplyFlow();
+                mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(true);
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva' });
+                mockPermissions.getProfile.mockRejectedValue(new Error('Dolibarr caiu'));
+
+                await botService.processMessage(createMessage({ body: 'Hello' }));
+
+                expect(capturedCtx.readOnly).toBe(true);
+                expect(capturedCtx.userId).toBeUndefined();
+            });
+
+            it('cliente identificado continua somente-leitura, mesmo com a flag ligada', async () => {
+                setupReplyFlow();
+                mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(true);
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'customer', thirdpartyId: 'c1', name: 'John' });
+                (dolibarrService.getCustomerContext as any).mockResolvedValue('Customer context');
+
+                await botService.processMessage(createMessage({ body: 'Hello' }));
+
+                expect(capturedCtx.readOnly).toBe(true);
+                expect(mockPermissions.getProfile).not.toHaveBeenCalled();
+            });
         });
 
         it('handles process error gracefully', async () => {

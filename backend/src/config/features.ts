@@ -92,6 +92,12 @@ export const FEATURES = {
      */
     FINANCIAL_COMMANDS_ENABLED: process.env.FINANCIAL_COMMANDS_ENABLED === 'true',
 
+    /**
+     * Funcionário identificado por telefone ganha o próprio perfil de permissões no bot
+     * (fora do somente-leitura). Secure-default OFF.
+     */
+    WHATSAPP_EMPLOYEE_ELEVATION: process.env.WHATSAPP_EMPLOYEE_ELEVATION === 'true',
+
     // ========================================
     // CRM INTEGRATION
     // ========================================

@@ -122,35 +122,35 @@ describe('uiConfigService', () => {
     // #1129 — kill-switches perigosos (DRY_RUN / FINANCIAL_COMMANDS / CRM_CONTEXT).
     it('featureSwitches: defaults dryRun/financial OFF e crmContext ON (secure-default)', () => {
         const svc = new UiConfigService('ui.json');
-        expect(svc.get().featureSwitches).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true });
+        expect(svc.get().featureSwitches).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
     });
 
     it('featureSwitches: round-trip do PUT persiste os 3 flags (false sobrevive ao sanitize)', () => {
         const svc = new UiConfigService('ui.json');
         const out = svc.update({ featureSwitches: { dryRunMode: true, financialCommands: true, crmContextInjection: false } } as any);
-        expect(out.featureSwitches).toEqual({ dryRunMode: true, financialCommands: true, crmContextInjection: false });
+        expect(out.featureSwitches).toEqual({ dryRunMode: true, financialCommands: true, crmContextInjection: false, whatsappEmployeeElevation: false });
         // como o sanitize substitui o bloco inteiro (mesmo padrão do automationSwitches), religar só o
         // crm mantém o que foi enviado e leva os demais aos defaults (OFF).
         const out2 = svc.update({ featureSwitches: { crmContextInjection: true } } as any);
-        expect(out2.featureSwitches).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true });
+        expect(out2.featureSwitches).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
     });
 
     it('featureSwitches: sanitize aceita só booleano explícito; ausente/inválido → default', () => {
         // flag ausente → default respectivo
-        expect(sanitizeFeatureSwitches({ dryRunMode: true })).toEqual({ dryRunMode: true, financialCommands: false, crmContextInjection: true });
+        expect(sanitizeFeatureSwitches({ dryRunMode: true })).toEqual({ dryRunMode: true, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
         // valor inválido (string/number) → default (não coerção implícita)
         expect(sanitizeFeatureSwitches({ dryRunMode: 'yes', financialCommands: 1, crmContextInjection: 'false' }))
-            .toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true });
+            .toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
         // payload inteiro inválido → defaults
-        expect(sanitizeFeatureSwitches(null)).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true });
-        expect(sanitizeFeatureSwitches('lixo')).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true });
+        expect(sanitizeFeatureSwitches(null)).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
+        expect(sanitizeFeatureSwitches('lixo')).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
     });
 
     it('featureSwitches: load() preenche defaults quando o arquivo não tem o bloco', () => {
         mockedFs.existsSync.mockReturnValue(true);
         mockedFs.readFileSync.mockReturnValue(JSON.stringify({ companyName: 'X' }) as any);
         const svc = new UiConfigService('ui.json');
-        expect(svc.get().featureSwitches).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true });
+        expect(svc.get().featureSwitches).toEqual({ dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false });
     });
 
     it('update aplica e persiste campos válidos', () => {
