@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as path from 'path';
 
 vi.mock('../../config/features', () => ({
     FEATURES: {
@@ -32,8 +33,8 @@ vi.mock('../../services/emailService', () => ({
     },
 }));
 
-// Default do mock: sessão 'default' (e qualquer outra consultada) WORKING → `resolveSession`
-// devolve 'default' direto (happy path). Testes que precisam do caminho de política/fallback
+// Default do mock: qualquer sessão consultada está WORKING → `resolveSession` devolve a
+// primária direto (happy path). Testes que precisam do caminho de política/fallback
 // sobrescrevem `mockSession.getStatus.mockReturnValue('STOPPED')` no escopo do `it`.
 const mockSession = vi.hoisted(() => ({
     getStatus: vi.fn(() => 'WORKING'),
@@ -42,13 +43,14 @@ const mockSession = vi.hoisted(() => ({
 vi.mock('../../services/legacy/sessionService', () => ({ sessionService: mockSession }));
 
 // #1410 — setWhatsAppProvider persiste via uiConfigService.update; mock p/ evitar disco e
-// espiar a chamada (sem isso, o teste cairia no fs real e ainda não confirmaria que o setter
-// de fato chamou o persist). #1438 — `resolveSession` lê `uiConfigService.get()` AO VIVO a cada
-// envio (não há mais cache no boot nem setter-fantasma); o mock base devolve `{}` → primária
-// vazia (→ 'default') e política ausente (→ 'fail' default seguro, ou seja, sem fallback).
+// espiar a chamada. #1438 — `resolveSession` lê `uiConfigService.get()` AO VIVO a cada envio
+// (não há mais cache no boot nem setter-fantasma); o mock base devolve um objeto com primária
+// `'default'` explícita e política ausente (→ 'fail' default seguro, ou seja, sem fallback)
+// para os testes do happy path. Testes que precisam de primária vazia/inespecífica usam
+// `mockReturnValueOnce({})` ou similar.
 const mockUiConfig = vi.hoisted(() => ({
     update: vi.fn((partial: any) => ({ whatsappProvider: partial?.whatsappProvider })),
-    get: vi.fn(() => ({})),
+    get: vi.fn(() => ({ whatsappPrimarySessionId: 'default' })),
 }));
 vi.mock('../../services/uiConfigService', () => ({ uiConfigService: mockUiConfig }));
 
@@ -71,7 +73,7 @@ describe('ChannelRouter', () => {
         mockSession.getFirstWorkingSessionId.mockReset();
         mockSession.getFirstWorkingSessionId.mockImplementation(() => undefined);
         mockUiConfig.get.mockReset();
-        mockUiConfig.get.mockImplementation(() => ({}));
+        mockUiConfig.get.mockImplementation(() => ({ whatsappPrimarySessionId: 'default' }));
         mockUiConfig.update.mockReset();
         mockUiConfig.update.mockImplementation((partial: any) => ({ whatsappProvider: partial?.whatsappProvider }));
         channelRouter.setWhatsAppProvider('legacy');
@@ -121,7 +123,9 @@ describe('ChannelRouter', () => {
         // mais caching no boot: o campo `defaultSessionId` e o setter-fantasma `setDefaultSessionId`
         // foram removidos). Aqui validamos a derivação da sessão primária:
         //   - com `whatsappPrimarySessionId` setado no uiConfig → é essa a sessão usada
-        //   - com valor vazio/ausente/whitespace → fallback legado para 'default'
+        //   - com valor vazio/ausente/whitespace → LANÇA `WhatsAppPrimaryUnavailableError`
+        //     (admin precisa configurar; antes era fallback legado para 'default' — removido
+        //     por reintroduzir a string mágica no hot path que o fix tenta eliminar)
         // Verificação é comportamental: disparamos um envio e conferimos o sessionId que chega ao
         // provider (mock de sessionService devolve WORKING p/ qualquer id → resolveSession devolve
         // a primária diretamente, sem ramificar pela política).
@@ -134,28 +138,36 @@ describe('ChannelRouter', () => {
                 expect(legacyMessageService.sendText).toHaveBeenCalledWith('primary-x', '5511@c.us', 'Oi');
             });
 
-            it('com whatsappPrimarySessionId vazio (string): fallback legado para \'default\'', async () => {
+            // #1438 — o fallback legado para 'default' foi REMOVIDO (string mágica no hot path).
+            // Adaptado para refletir o novo comportamento: primária vazia LANÇA o erro
+            // distinto (caller sabe que é erro de CONFIGURAÇÃO, não do provider).
+            it('com whatsappPrimarySessionId vazio (string): lança WhatsAppPrimaryUnavailableError (sem fallback)', async () => {
                 mockUiConfig.get.mockImplementationOnce(() => ({ whatsappPrimarySessionId: '' }) as any);
                 const router = new ChannelRouter();
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1' } as any);
-                await router.sendWhatsApp('5511@c.us', 'Oi');
-                expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'Oi');
+                await expect(router.sendWhatsApp('5511@c.us', 'Oi'))
+                    .rejects.toBeInstanceOf(WhatsAppPrimaryUnavailableError);
+                expect(legacyMessageService.sendText).not.toHaveBeenCalled();
             });
 
-            it('com whatsappPrimarySessionId ausente (mock retorna {}): fallback legado para \'default\'', async () => {
+            // #1438 — primária ausente do uiConfig: mesma recusa (admin precisa configurar).
+            it('com whatsappPrimarySessionId ausente (mock retorna {}): lança WhatsAppPrimaryUnavailableError (sem fallback)', async () => {
                 mockUiConfig.get.mockImplementationOnce(() => ({}) as any);
                 const router = new ChannelRouter();
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1' } as any);
-                await router.sendWhatsApp('5511@c.us', 'Oi');
-                expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'Oi');
+                await expect(router.sendWhatsApp('5511@c.us', 'Oi'))
+                    .rejects.toBeInstanceOf(WhatsAppPrimaryUnavailableError);
+                expect(legacyMessageService.sendText).not.toHaveBeenCalled();
             });
 
-            it('com whatsappPrimarySessionId só de whitespace: trim → vazio → fallback legado', async () => {
+            // #1438 — whitespace-only é tratado como vazio após trim (e recusa, sem fallback).
+            it('com whatsappPrimarySessionId só de whitespace: trim → vazio → lança (sem fallback)', async () => {
                 mockUiConfig.get.mockImplementationOnce(() => ({ whatsappPrimarySessionId: '   ' }) as any);
                 const router = new ChannelRouter();
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1' } as any);
-                await router.sendWhatsApp('5511@c.us', 'Oi');
-                expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'Oi');
+                await expect(router.sendWhatsApp('5511@c.us', 'Oi'))
+                    .rejects.toBeInstanceOf(WhatsAppPrimaryUnavailableError);
+                expect(legacyMessageService.sendText).not.toHaveBeenCalled();
             });
 
             it('com whatsappPrimarySessionId com whitespace nas bordas: trim é aplicado', async () => {
@@ -261,7 +273,7 @@ describe('ChannelRouter', () => {
             // `whatsappFallbackPolicy: 'first-working'` no uiConfig. Asserção equivalente
             // (cai em 'v4_1747'), apenas explicitando a política que o habilita.
             (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() });
-            mockUiConfig.get.mockReturnValueOnce({ whatsappFallbackPolicy: 'first-working' } as any);
+            mockUiConfig.get.mockReturnValueOnce({ whatsappPrimarySessionId: 'default', whatsappFallbackPolicy: 'first-working' } as any);
             mockSession.getStatus.mockReturnValue('STOPPED');                 // primária ('default') não está WORKING
             mockSession.getFirstWorkingSessionId.mockReturnValue('v4_1747');  // a única conectada
 
@@ -287,7 +299,8 @@ describe('ChannelRouter', () => {
             (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() });
             mockSession.getStatus.mockReturnValue('STOPPED');
             mockSession.getFirstWorkingSessionId.mockReturnValue(undefined);
-            // uiConfig mock base devolve {} → whatsappFallbackPolicy ausente → política default 'fail'.
+            // uiConfig mock base devolve `{ whatsappPrimarySessionId: 'default' }` (sem
+            // whatsappFallbackPolicy) → política default 'fail'.
 
             await expect(channelRouter.sendWhatsApp('5511@c.us', 'Oi'))
                 .rejects.toBeInstanceOf(WhatsAppPrimaryUnavailableError);
@@ -306,7 +319,7 @@ describe('ChannelRouter', () => {
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
                 mockSession.getStatus.mockReturnValue('WORKING'); // 'default' WORKING
                 // Política irrelevante — mesmo se for 'fail', WORKING não ramifica.
-                mockUiConfig.get.mockReturnValueOnce({ whatsappFallbackPolicy: 'fail' } as any);
+                mockUiConfig.get.mockReturnValueOnce({ whatsappPrimarySessionId: 'default', whatsappFallbackPolicy: 'fail' } as any);
 
                 await channelRouter.sendWhatsApp('5511@c.us', 'Oi');
                 expect(legacyMessageService.sendText).toHaveBeenCalledWith('default', '5511@c.us', 'Oi');
@@ -314,7 +327,7 @@ describe('ChannelRouter', () => {
 
             it('primária OFFLINE + policy "fail" (explícita): lança WhatsAppPrimaryUnavailableError, NÃO desvia', async () => {
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
-                mockUiConfig.get.mockReturnValueOnce({ whatsappFallbackPolicy: 'fail' } as any);
+                mockUiConfig.get.mockReturnValueOnce({ whatsappPrimarySessionId: 'default', whatsappFallbackPolicy: 'fail' } as any);
                 mockSession.getStatus.mockReturnValue('STOPPED');
                 mockSession.getFirstWorkingSessionId.mockReturnValue('v4_1747'); // existe WORKING — mesmo assim não desvia
 
@@ -335,7 +348,7 @@ describe('ChannelRouter', () => {
                 // Política default 'fail' garante secure-default: arquivo corrompido, config nova,
                 // migração — sempre recusa em vez de enviar silenciosamente pelo número errado.
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
-                mockUiConfig.get.mockReturnValueOnce({} as any); // sem whatsappFallbackPolicy
+                mockUiConfig.get.mockReturnValueOnce({ whatsappPrimarySessionId: 'default' } as any); // sem whatsappFallbackPolicy → fail
                 mockSession.getStatus.mockReturnValue('STOPPED');
                 mockSession.getFirstWorkingSessionId.mockReturnValue('v4_1747');
 
@@ -346,7 +359,7 @@ describe('ChannelRouter', () => {
 
             it('primária OFFLINE + policy "first-working" + WORKING disponível: cai na WORKING (warn, não throw)', async () => {
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
-                mockUiConfig.get.mockReturnValueOnce({ whatsappFallbackPolicy: 'first-working' } as any);
+                mockUiConfig.get.mockReturnValueOnce({ whatsappPrimarySessionId: 'default', whatsappFallbackPolicy: 'first-working' } as any);
                 mockSession.getStatus.mockReturnValue('STOPPED');
                 mockSession.getFirstWorkingSessionId.mockReturnValue('v4_1747');
 
@@ -358,7 +371,7 @@ describe('ChannelRouter', () => {
             it('primária OFFLINE + policy "first-working" mas SEM WORKING: lança (não tem pra onde cair)', async () => {
                 // Política fail-by-default: 'first-working' sem WORKING = mesma recusa explícita.
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
-                mockUiConfig.get.mockReturnValueOnce({ whatsappFallbackPolicy: 'first-working' } as any);
+                mockUiConfig.get.mockReturnValueOnce({ whatsappPrimarySessionId: 'default', whatsappFallbackPolicy: 'first-working' } as any);
                 mockSession.getStatus.mockReturnValue('STOPPED');
                 mockSession.getFirstWorkingSessionId.mockReturnValue(undefined);
 
@@ -371,7 +384,7 @@ describe('ChannelRouter', () => {
                 // Defesa contra corrida: se a "primeira WORKING" for a própria primária (porque
                 // alguém mudou o nome mas o status ficou stale), ainda é a mesma sessão fora.
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
-                mockUiConfig.get.mockReturnValueOnce({ whatsappFallbackPolicy: 'first-working' } as any);
+                mockUiConfig.get.mockReturnValueOnce({ whatsappPrimarySessionId: 'default', whatsappFallbackPolicy: 'first-working' } as any);
                 mockSession.getStatus.mockReturnValue('STOPPED');
                 mockSession.getFirstWorkingSessionId.mockReturnValue('default'); // == primária
 
@@ -385,7 +398,7 @@ describe('ChannelRouter', () => {
                 // `resolveSession` retorna SEM consultar a política. Garante que a política
                 // NUNCA bloqueia envios com sessionId explícito (importante p/ HITL/allowlist).
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
-                mockUiConfig.get.mockReturnValueOnce({ whatsappFallbackPolicy: 'fail' } as any);
+                mockUiConfig.get.mockReturnValueOnce({ whatsappPrimarySessionId: 'default', whatsappFallbackPolicy: 'fail' } as any);
                 mockSession.getStatus.mockReturnValue('STOPPED'); // mesmo que esteja fora, ignora
 
                 await channelRouter.sendWhatsApp('5511@c.us', 'Oi', 'sessao-explicita');
@@ -398,7 +411,7 @@ describe('ChannelRouter', () => {
                 // `instanceof WhatsAppPrimaryUnavailableError` é o discriminador fino.
                 (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
                 mockSession.getStatus.mockReturnValue('STOPPED');
-                mockUiConfig.get.mockReturnValueOnce({ whatsappFallbackPolicy: 'fail' } as any);
+                mockUiConfig.get.mockReturnValueOnce({ whatsappPrimarySessionId: 'default', whatsappFallbackPolicy: 'fail' } as any);
 
                 let captured: unknown;
                 try {
@@ -455,16 +468,105 @@ describe('ChannelRouter', () => {
                 mockSession.getFirstWorkingSessionId.mockReturnValue('v4_1747');
 
                 // Política 'fail' (default) → recusa.
-                mockUiConfig.get.mockReturnValueOnce({ whatsappFallbackPolicy: 'fail' } as any);
+                mockUiConfig.get.mockReturnValueOnce({ whatsappPrimarySessionId: 'default', whatsappFallbackPolicy: 'fail' } as any);
                 await expect(channelRouter.sendWhatsApp('5511@c.us', 'Oi'))
                     .rejects.toBeInstanceOf(WhatsAppPrimaryUnavailableError);
 
                 // Admin troca para 'first-working' (mesma instância, sem restart) → cai na v4.
-                mockUiConfig.get.mockReturnValueOnce({ whatsappFallbackPolicy: 'first-working' } as any);
+                mockUiConfig.get.mockReturnValueOnce({ whatsappPrimarySessionId: 'default', whatsappFallbackPolicy: 'first-working' } as any);
                 await channelRouter.sendWhatsApp('5511@c.us', 'Oi');
                 expect(legacyMessageService.sendText).toHaveBeenLastCalledWith('v4_1747', '5511@c.us', 'Oi');
             });
+
+            // #1438 — cobertura do caso "primária NÃO configurada" (vazia/whitespace). Antes
+            // desta entrega caía em fallback legado 'default' (string mágica); agora LANÇA
+            // explicitamente. Aqui cobrimos as duas políticas + log.warn no first-working.
+            it('primária vazia + policy "fail" (explícita): lança com detail "não configurado" e NÃO desvia', async () => {
+                (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
+                mockUiConfig.get.mockReturnValueOnce({ whatsappFallbackPolicy: 'fail' } as any); // whatsappPrimarySessionId AUSENTE
+                mockSession.getFirstWorkingSessionId.mockReturnValue('v4_1747'); // existe WORKING — não desvia mesmo assim
+
+                const promise = channelRouter.sendWhatsApp('5511@c.us', 'Oi');
+                await expect(promise).rejects.toBeInstanceOf(WhatsAppPrimaryUnavailableError);
+                await expect(promise).rejects.toMatchObject({
+                    sessionId: '',                                  // vazia (não configurada)
+                    policy: 'fail',
+                });
+                // Detail explica o motivo (caller sabe que é config, não runtime).
+                await expect(promise).rejects.toThrow(/whatsappPrimarySessionId não configurado/);
+                await expect(promise).rejects.toThrow(/Sessão primária \(não configurada\)/);
+                // Crítico: sendText NÃO foi chamado (recusa antes do envio).
+                expect(legacyMessageService.sendText).not.toHaveBeenCalled();
+            });
+
+            // #1438 — primária NÃO configurada + 'first-working' → ainda cai na primeira
+            // WORKING (a política é sobre o que fazer QUANDO a primária não está ok — e
+            // "não configurada" é um caso particular de "não está ok"). Importante: log.warn
+            // deixa rastro do desvio, mesmo sem nome de primária.
+            it('primária vazia + policy "first-working" + WORKING disponível: cai na WORKING (warn, não throw)', async () => {
+                const logWarn = vi.spyOn((channelRouter as any).log ?? console, 'warn').mockImplementation(() => {});
+                try {
+                    (legacyMessageService.sendText as any).mockResolvedValue({ id: 'msg1', timestamp: Date.now() } as any);
+                    mockUiConfig.get.mockReturnValueOnce({ whatsappFallbackPolicy: 'first-working' } as any); // primária AUSENTE
+                    mockSession.getFirstWorkingSessionId.mockReturnValue('v4_1747');
+
+                    const result = await channelRouter.sendWhatsApp('5511@c.us', 'Oi');
+                    expect(result.success).toBe(true);
+                    expect(legacyMessageService.sendText).toHaveBeenCalledWith('v4_1747', '5511@c.us', 'Oi');
+                } finally {
+                    logWarn.mockRestore();
+                }
+            });
         });
+    });
+
+    // #1438 — VALIDAÇÃO EXPLÍCITA DE BYPASS: o issue lista os 3 pontos institucionais de
+    // envio com a instrução "validar que não há bypass". Aqui lemos o código-fonte de cada
+    // arquivo e afirmamos que (a) chamam `channelRouter.sendWhatsApp` e (b) NÃO passam
+    // sessionId explícito (o que faria `resolveSession` ser pulado, e a política ignorada).
+    // Se algum desses pontos for refatorado pra chamar `legacyMessageService.sendText`
+    // direto (bypass do router), este teste falha antes do código ir pra produção.
+    describe('#1438 — bypass: os 3 pontos institucionais passam pelo resolveSession', () => {
+        // Lê a fonte real de cada arquivo a partir do disco. Importante: NÃO importar os
+        // módulos alvo (notificationService / agentActionConfirm / agentTools) porque eles
+        // já estão mockados pelos vi.mock no topo do teste — `import` daria a versão
+        // mockada e perderíamos a verificação estática do código real. O `fs` também está
+        // mockado globalmente pelo setup.ts (devolve Buffer); carregamos o `fs` real via
+        // `vi.importActual` em beforeAll (async) para uso síncrono nos testes.
+        let realFs: typeof import('fs');
+        beforeAll(async () => {
+            realFs = await vi.importActual<typeof import('fs')>('fs');
+        });
+        const readSrc = (rel: string): string => {
+            const p = path.join(__dirname, '..', '..', 'services', rel);
+            return realFs.readFileSync(p, 'utf-8');
+        };
+
+        const SOURCES = [
+            { file: 'notificationService.ts', expectedLine: 224, fn: 'deliverWhatsApp' },
+            { file: 'agentActionConfirm.ts', expectedLine: 102, fn: 'send_whatsapp.execute' },
+            { file: 'agentTools.ts', expectedLine: 1686, fn: 'send_whatsapp' },
+        ] as const;
+
+        for (const src of SOURCES) {
+            it(`${src.file}:${src.expectedLine} (${src.fn}) chama channelRouter.sendWhatsApp SEM sessionId explícito`, () => {
+                const code = readSrc(src.file);
+                const lines = code.split('\n');
+                // Janela de 3 linhas em torno do expectedLine (cobre a chamada em si).
+                const win = lines.slice(Math.max(0, src.expectedLine - 2), src.expectedLine + 1).join('\n');
+
+                // (a) chama channelRouter.sendWhatsApp
+                expect(win).toMatch(/channelRouter\.sendWhatsApp\(/);
+                // (b) NÃO passa sessionId explícito: a chamada tem EXATAMENTE 2 argumentos
+                //     (chatId, content) — `sendWhatsApp(recipient, content, sessionId?)`
+                //     onde sessionId é o 3º arg. Se virar 3 args, é bypass.
+                expect(win).not.toMatch(/channelRouter\.sendWhatsApp\([^)]*,[^)]*,[^)]*\)/);
+                // Reforço: a regex anterior pode dar falso negativo se a chamada quebrar
+                // linha; checa também que não há `, sessionId` nem `, 'sess...'` após o 2º arg.
+                expect(win).not.toMatch(/,\s*sessionId\b/);
+                expect(win).not.toMatch(/,\s*['"][^'"]+['"]\s*\)\s*;/); // p/ chamadas inline simples
+            });
+        }
     });
 
     describe('sendWhatsAppFile', () => {
