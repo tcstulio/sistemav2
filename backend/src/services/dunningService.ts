@@ -190,9 +190,11 @@ export async function buildDunningDigest(opts?: BuildDunningDigestOpts): Promise
     let receivableFetchFailed = false;
     try {
         rawInvoices = await dolibarrService.getAccountsReceivable();
-    } catch (err: any) {
+    } catch (err) {
         receivableFetchFailed = true;
-        log.warn('getAccountsReceivable falhou', { err: err?.message || String(err) });
+        log.warn('getAccountsReceivable falhou', {
+            err: err instanceof Error ? err.message : String(err),
+        });
     }
 
     if (receivableFetchFailed) {
@@ -233,8 +235,11 @@ export async function buildDunningDigest(opts?: BuildDunningDigestOpts): Promise
                 // O enrichment devolve string formatada; não extraímos
                 // socname dela (mantém consistência: rascunho usa campos
                 // reais da fatura). Se ainda faltar, falha no template.
-            } catch (err: any) {
-                log.warn('getCustomerContext falhou', { socid, err: err?.message || String(err) });
+            } catch (err) {
+                log.warn('getCustomerContext falhou', {
+                    socid,
+                    err: err instanceof Error ? err.message : String(err),
+                });
                 items.push({
                     socid,
                     socname,
@@ -257,7 +262,7 @@ export async function buildDunningDigest(opts?: BuildDunningDigestOpts): Promise
             totalAberto,
         });
 
-        const score = totalAberto * Math.max(1, diasAtrasoMax);
+        const score = rascunho ? totalAberto * Math.max(1, diasAtrasoMax) : 0;
 
         items.push({
             socid,
