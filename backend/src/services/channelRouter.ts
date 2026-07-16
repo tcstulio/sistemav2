@@ -50,13 +50,37 @@ export interface ChannelStatus {
 }
 
 /**
+ * Erro lançado por `resolveSession` (#1438) quando a sessão primária configurada pelo admin
+ * (`uiConfig.whatsappPrimarySessionId`) não está WORKING e a política `whatsappFallbackPolicy`
+ * está em 'fail' (default seguro). Tipo distinto para o caller diferenciar "sessão primária
+ * indisponível por config" (recusa explícita, sem desvio) de erros do provider (rede, auth,
+ * número inválido). Os três pontos institucionais de envio (`notificationService.deliverWhatsApp`,
+ * `agentActionConfirm` send_whatsapp, `agentTools` send_whatsapp) já passam pelo `resolveSession`
+ * — basta o caller capturar `instanceof WhatsAppPrimaryUnavailableError` se quiser dar
+ * tratamento especial (ex.: logar "primária fora, política fail" vs. "erro de envio"); cair
+ * no catch genérico já é suficiente para a recusa ser propagada como falha de envio.
+ */
+export class WhatsAppPrimaryUnavailableError extends Error {
+    public readonly sessionId: string;
+    public readonly policy: 'fail' | 'first-working';
+    constructor(sessionId: string, policy: 'fail' | 'first-working', detail?: string) {
+        super(
+            `Sessão primária '${sessionId}' indisponível e política configurada para falhar ` +
+            `(não desviamos para outro número)${detail ? ` — ${detail}` : ''}.`
+        );
+        this.name = 'WhatsAppPrimaryUnavailableError';
+        this.sessionId = sessionId;
+        this.policy = policy;
+    }
+}
+
+/**
  * Channel Router
  *
  * Routes messages to the appropriate provider based on configuration.
  */
 class ChannelRouter {
     private whatsAppProvider: WhatsAppProvider;
-    private defaultSessionId: string = 'default';
 
     constructor() {
         // #1410 — antes lia só `FEATURES.WHATSAPP_PROVIDER` (env), o que tornava o setter admin
@@ -65,16 +89,6 @@ class ChannelRouter {
         // integration) e cai no env só se nada foi persistido.
         this.whatsAppProvider = getEffectiveWhatsAppProvider();
         log.info(`Initialized with WhatsApp provider: ${this.whatsAppProvider}`);
-
-        // #1437 — conserta o setter órfão de `setDefaultSessionId`: hidrata o defaultSessionId
-        // a partir do `whatsappPrimarySessionId` persistido em uiConfig. Sem override persistido
-        // (string vazia / null / undefined / só espaços) → fallback legado p/ 'default', mantendo
-        // compatibilidade com sessões já criadas cujo nome é literalmente 'default'. Log explícito
-        // serve de portão de verificação no boot (e de gancho p/ audit quando o admin troca).
-        const persisted = uiConfigService.get().whatsappPrimarySessionId;
-        const effective = (persisted && persisted.trim()) ? persisted.trim() : 'default';
-        this.setDefaultSessionId(effective);
-        log.info(`defaultSessionId set to ${effective}`);
     }
 
     // ========================================
@@ -104,28 +118,42 @@ class ChannelRouter {
     }
 
     /**
-     * Set default session ID
-     */
-    setDefaultSessionId(sessionId: string): void {
-        this.defaultSessionId = sessionId;
-    }
-
-    /**
-     * Resolve a sessão de envio. sessionId explícito é sempre respeitado. Sem ele, usa a default;
-     * e se a default não estiver WORKING (ex.: a única sessão conectada tem outro nome, como 'v4'),
-     * cai na primeira sessão WORKING — logando o desvio (cuidado se houver várias sessões: pode
-     * enviar de outro número; follow-up = sessão primária configurável). Sem nenhuma sessão pronta,
-     * devolve a default para o erro "Session X not found" ficar explícito.
+     * Resolve a sessão de envio. Tudo é lido AO VIVO do uiConfig persistido — nada é cacheado no
+     * boot, então trocas do admin valem sem restart e persistem de verdade em `ui_config.json`
+     * (#1438). Regras:
+     *   - sessionId explícito é sempre respeitado;
+     *   - senão usa a sessão primária (`uiConfig.whatsappPrimarySessionId`); vazia/whitespace
+     *     → fallback legado 'default' (mantém compat com sessões nomeadas literalmente 'default');
+     *   - se a primária está WORKING → usa ela, sem ramificar;
+     *   - se a primária NÃO está WORKING, a política persistida (`uiConfig.whatsappFallbackPolicy`)
+     *     decide o que fazer:
+     *       · 'first-working' → cai na primeira sessão WORKING disponível, logando o desvio
+     *         (cuidado: pode enviar de outro número se houver várias sessões);
+     *       · 'fail' (default seguro) → LANÇA `WhatsAppPrimaryUnavailableError` para o caller
+     *         decidir (em vez de enviar silenciosamente pelo número errado). Tipo distinto do
+     *         erro "Session X not found" do provider legado: identifica o motivo (config primária
+     *         indisponível + policy fail), não erro de envio.
+     * Antes desta entrega (#1438) a política era ignorada: `resolveSession` SEMPRE fazia
+     * 'first-working', contradizendo o default documentado — flag-fantasma agora conectada.
      */
     private resolveSession(sessionId?: string): string {
         if (sessionId) return sessionId;
-        if (sessionService.getStatus(this.defaultSessionId) === 'WORKING') return this.defaultSessionId;
-        const working = sessionService.getFirstWorkingSessionId();
-        if (working && working !== this.defaultSessionId) {
-            log.warn(`Sessão default '${this.defaultSessionId}' indisponível; roteando para a sessão WORKING '${working}'.`);
-            return working;
+        // Uma única leitura do config por resolução (primária + política vêm juntas).
+        const cfg = uiConfigService.get();
+        const rawPrimary = cfg.whatsappPrimarySessionId;
+        const primary = (rawPrimary && rawPrimary.trim()) ? rawPrimary.trim() : 'default';
+        if (sessionService.getStatus(primary) === 'WORKING') return primary;
+        const policy = cfg.whatsappFallbackPolicy;
+        if (policy === 'first-working') {
+            const working = sessionService.getFirstWorkingSessionId();
+            if (working && working !== primary) {
+                log.warn(`Sessão primária '${primary}' indisponível; política 'first-working' → roteando para a sessão WORKING '${working}'.`);
+                return working;
+            }
+            // first-working mas sem nenhuma WORKING: abaixo ainda cai no throw (não temos
+            // pra onde cair — política fail-by-default).
         }
-        return this.defaultSessionId;
+        throw new WhatsAppPrimaryUnavailableError(primary, policy ?? 'fail');
     }
 
     // ========================================
@@ -179,6 +207,13 @@ class ChannelRouter {
         content: string,
         sessionId?: string
     ): Promise<SendResult> {
+        // #1438 — `resolveSession` PODE lançar `WhatsAppPrimaryUnavailableError` quando a primária
+        // não está WORKING e a política é 'fail'. Diferente dos outros erros (rede, auth, número
+        // inválido), esse erro é de CONFIGURAÇÃO e o caller precisa ser capaz de identificá-lo:
+        // não engulo no catch genérico, propaga pra cima. Os pontos institucionais de envio
+        // (`notificationService`, `agentActionConfirm`, `agentTools`) já têm try/catch que
+        // converte pra falha legível; basta o caller checar `instanceof WhatsAppPrimaryUnavailableError`
+        // se quiser logar diferenciado.
         const session = this.resolveSession(sessionId);
 
         // Dry-run mode
