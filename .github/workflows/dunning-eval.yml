@@ -15,8 +15,7 @@ name: Dunning Eval
 on:
     pull_request:
         paths:
-            - 'backend/src/services/dunningService.ts'
-            - 'backend/src/services/dunningService.test.ts'
+            - 'backend/src/services/dunning*'
             - 'backend/src/routes/dunning*'
             - 'backend/src/eval/**'
             - '.github/workflows/dunning-eval.yml'
@@ -42,31 +41,29 @@ jobs:
                         package-lock.json
                         backend/package-lock.json
 
-            # npm install (não ci): o lockfile é gerado em dev Windows e a CI é
-            # Linux; deps opcionais por plataforma (ex.: @emnapi/runtime) faltam
-            # no lock e quebram `npm ci`. Mesmo motivo já documentado em
-            # .github/workflows/ci.yml.
             - name: Install backend dependencies
               working-directory: backend
-              run: npm install --no-audit --no-fund
+              run: npm ci --no-audit --no-fund
 
             - name: Install root dependencies (tsx para o eval)
-              run: npm install --no-audit --no-fund
+              run: npm ci --no-audit --no-fund
 
             - name: Run vitest backend (suite dunningService)
               working-directory: backend
-              run: npx vitest run dunningService
+              run: npm test -- dunning
 
             - name: Run dunning eval (golden-set + blast-radius guard)
               id: eval
+              shell: bash
               run: |
                   set +e
-                  npm run eval:dunning | tee eval-output.txt
-                  echo "exit=$?" >> "$GITHUB_OUTPUT"
-                  set -e
+                  npm run eval:dunning 2>&1 | tee eval-output.txt
+                  eval_status=${PIPESTATUS[0]}
+                  echo "exit=$eval_status" >> "$GITHUB_OUTPUT"
+                  exit "$eval_status"
 
             - name: Comment on PR if eval failed
-              if: steps.eval.outputs.exit != '0' && github.event_name == 'pull_request'
+              if: always() && steps.eval.outputs.exit != '0' && github.event_name == 'pull_request'
               env:
                   PR_NUMBER: ${{ github.event.pull_request.number }}
               run: |

@@ -14,9 +14,8 @@
  *      que não deveria). Falhas patológicas (valor absurdo, ref inexistente,
  *      fetch falhando) estão todas cobertas.
  *   2. Guard de saída externa: ANTES do `buildDunningDigest()` rodar, todos
- *      os canais de envio (channelRouter.sendWhatsApp / sendEmail / send /
- *      sendWhatsAppFile / sendWhatsAppVoice; emailService.send / sendEmail;
- *      notificationService.notifyPerson / sendNotification) são trocados por
+ *      os canais de envio (channelRouter.send / sendWhatsApp / sendEmail;
+ *      emailService.sendEmail; notificationService.notifyPerson) são trocados por
  *      spies. Se QUALQUER um for chamado mesmo UMA vez durante a geração
  *      do digest, o teste falha com `FAIL` claro apontando o spy violado.
  *      A verificação é puramente comportamental (não usa grep textual sobre
@@ -67,13 +66,9 @@ const GOLDEN = golden as GoldenSet;
 
 const DAY_IN_SECONDS = 86400;
 
-type ReceivableFn = (dateFrom?: string, dateTo?: string) => Promise<ReceivableItem[]>;
-type CustomerContextFn = (thirdPartyId: string) => Promise<string>;
-
-interface DolibarrServiceMock {
-    getAccountsReceivable: ReceivableFn;
-    getCustomerContext: CustomerContextFn;
-}
+type ReceivableFn = typeof dolibarrService.getAccountsReceivable;
+type CustomerContextFn = typeof dolibarrService.getCustomerContext;
+type DolibarrServiceMock = Pick<typeof dolibarrService, 'getAccountsReceivable' | 'getCustomerContext'>;
 
 function dueDateForDias(diasAtraso: number): string {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -100,26 +95,33 @@ class Spy {
 
 interface SenderPatch {
     label: string;
-    owner: Record<string, (...args: unknown[]) => unknown>;
+    owner: object;
     method: string;
-    original: (...args: unknown[]) => unknown;
+    original: unknown;
+    hadOwnProperty: boolean;
 }
 
-function patchSenderMethod(
-    owner: Record<string, (...args: unknown[]) => unknown>,
-    method: string,
-    spy: Spy
-): SenderPatch {
-    const original = owner[method].bind(owner) as (...args: unknown[]) => unknown;
-    owner[method] = (...args: unknown[]) => {
+function patchSenderMethod(owner: object, method: string, spy: Spy): SenderPatch {
+    const original = Reflect.get(owner, method);
+    if (typeof original !== 'function') {
+        throw new Error(`sender "${spy.name}" não possui o método ${method}`);
+    }
+
+    const hadOwnProperty = Object.prototype.hasOwnProperty.call(owner, method);
+    Reflect.set(owner, method, (...args: unknown[]) => {
         spy.record(...args);
         return undefined;
-    };
-    return { label: spy.name, owner, method, original };
+    });
+
+    return { label: spy.name, owner, method, original, hadOwnProperty };
 }
 
 function restorePatch(patch: SenderPatch): void {
-    patch.owner[patch.method] = patch.original;
+    if (patch.hadOwnProperty) {
+        Reflect.set(patch.owner, patch.method, patch.original);
+    } else {
+        Reflect.deleteProperty(patch.owner, patch.method);
+    }
 }
 
 function buildReceivables(fixtures: Fixture[]): ReceivableItem[] {
@@ -262,26 +264,18 @@ function printScoreboard(results: CheckResult[]): void {
     console.log('');
 }
 
-type SenderModule = Record<string, unknown>;
-
 interface SenderTarget {
     label: string;
-    module: SenderModule;
+    module: object;
     method: string;
 }
 
 const SENDER_TARGETS: SenderTarget[] = [
-    { label: 'channelRouter.send', module: channelRouter as unknown as SenderModule, method: 'send' },
-    { label: 'channelRouter.sendWhatsApp', module: channelRouter as unknown as SenderModule, method: 'sendWhatsApp' },
-    { label: 'channelRouter.sendEmail', module: channelRouter as unknown as SenderModule, method: 'sendEmail' },
-    { label: 'channelRouter.sendWhatsAppFile', module: channelRouter as unknown as SenderModule, method: 'sendWhatsAppFile' },
-    { label: 'channelRouter.sendWhatsAppVoice', module: channelRouter as unknown as SenderModule, method: 'sendWhatsAppVoice' },
-    { label: 'emailService.send', module: emailService as unknown as SenderModule, method: 'send' },
-    { label: 'emailService.sendMail', module: emailService as unknown as SenderModule, method: 'sendMail' },
-    { label: 'emailService.sendEmail', module: emailService as unknown as SenderModule, method: 'sendEmail' },
-    { label: 'notificationService.notifyPerson', module: notificationService as unknown as SenderModule, method: 'notifyPerson' },
-    { label: 'notificationService.notifyTeam', module: notificationService as unknown as SenderModule, method: 'notifyTeam' },
-    { label: 'notificationService.sendNotification', module: notificationService as unknown as SenderModule, method: 'sendNotification' },
+    { label: 'channelRouter.send', module: channelRouter, method: 'send' },
+    { label: 'channelRouter.sendWhatsApp', module: channelRouter, method: 'sendWhatsApp' },
+    { label: 'channelRouter.sendEmail', module: channelRouter, method: 'sendEmail' },
+    { label: 'emailService.sendEmail', module: emailService, method: 'sendEmail' },
+    { label: 'notificationService.notifyPerson', module: notificationService, method: 'notifyPerson' },
 ];
 
 async function main(): Promise<number> {
@@ -291,16 +285,13 @@ async function main(): Promise<number> {
     const patches: SenderPatch[] = [];
 
     for (const target of SENDER_TARGETS) {
-        const fn = target.module[target.method];
-        if (typeof fn !== 'function') continue;
-        const ownerRecord = target.module as unknown as Record<string, (...args: unknown[]) => unknown>;
         const spy = new Spy(target.label);
-        const patch = patchSenderMethod(ownerRecord, target.method, spy);
+        const patch = patchSenderMethod(target.module, target.method, spy);
         spies.push(spy);
         patches.push(patch);
     }
 
-    const dolibarrMock = dolibarrService as DolibarrServiceMock;
+    const dolibarrMock: DolibarrServiceMock = dolibarrService;
     const origGetAccountsReceivable = dolibarrMock.getAccountsReceivable;
     const origGetCustomerContext = dolibarrMock.getCustomerContext;
 
