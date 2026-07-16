@@ -21,7 +21,13 @@ import { toast } from 'sonner';
 import { useProducts, useSuppliers } from '../hooks/dolibarr';
 import * as CommercialService from '../services/api/commercial';
 import * as InventoryService from '../services/api/inventory';
-import { generateSupplierRequests, ParsedItem, PriceOffer } from '../services/quotationWizard';
+import {
+    generateSupplierRequests,
+    ParsedItem,
+    PriceOffer,
+    QuotationPartialError,
+} from '../services/quotationWizard';
+import { useQuotationProgress, emptyQuotationProgress } from '../hooks/useQuotationProgress';
 import { logger } from '../utils/logger';
 
 const log = logger.child('SmartQuotationWizard');
@@ -59,6 +65,12 @@ export const SmartQuotationWizard: React.FC = () => {
 
     // State Step 3
     const [priceOffers, setPriceOffers] = useState<PriceOffer[]>([]);
+
+    // #1416 — progresso persistido em localStorage para retomada sem duplicar.
+    // Carrega automaticamente ao montar (sobrevive a reload) e persiste
+    // tanto em sucesso quanto em QuotationPartialError.
+    const { savedProgress, persistProgress, clearSavedProgress } = useQuotationProgress();
+    const [lastPartialError, setLastPartialError] = useState<string | null>(null);
 
     // --- Actions ---
 
@@ -194,18 +206,58 @@ export const SmartQuotationWizard: React.FC = () => {
         }
         setLoading(true);
         const toastId = toast.loading("Gerando solicitações...");
+        // #1416 — passamos o progresso persistido (de uma tentativa anterior
+        // interrompida) p/ que o engine NÃO recrie produtos/fornecedores/linhas
+        // já efetivados no ERP. Vazio na primeira chamada da sessão.
+        const initialProgress = savedProgress ?? emptyQuotationProgress();
         try {
             const selectedOffers = priceOffers.filter(o => o.selected);
-            const result = await generateSupplierRequests(config, parsedItems, selectedOffers, {
-                createProduct: InventoryService.createProduct,
-                createThirdParty: CommercialService.createThirdParty,
-                createSupplierProposal: CommercialService.createSupplierProposal,
-                addSupplierProposalLine: CommercialService.addSupplierProposalLine,
-            });
-            toast.success(`${result.proposalsCreated} solicitação(ões) gerada(s) com sucesso!`, { id: toastId });
+            const result = await generateSupplierRequests(
+                config,
+                parsedItems,
+                selectedOffers,
+                {
+                    createProduct: InventoryService.createProduct,
+                    createThirdParty: CommercialService.createThirdParty,
+                    createSupplierProposal: CommercialService.createSupplierProposal,
+                    addSupplierProposalLine: CommercialService.addSupplierProposalLine,
+                },
+                initialProgress,
+            );
+            // Sucesso: persistimos o progresso final p/ sobreviver a reload e
+            // oferecermos auditoria, e limpamos o erro parcial anterior.
+            persistProgress(result.progress);
+            setLastPartialError(null);
+            const resumedCount =
+                initialProgress.processedOfferIds.length;
+            const resumedMsg = resumedCount > 0
+                ? ` (${resumedCount} oferta(s) já processada(s) anteriormente)`
+                : '';
+            toast.success(
+                `${result.proposalsCreated} solicitação(ões) gerada(s) com sucesso!${resumedMsg}`,
+                { id: toastId },
+            );
         } catch (e) {
-            log.error("Failed to generate proposals", e);
-            toast.error("Erro ao gerar solicitações.", { id: toastId });
+            // #1416 — falha parcial: o engine já criou produtos/fornecedores/linhas
+            // antes de quebrar. Persistimos o `progress` carregado no erro para que
+            // o usuário possa RETOMAR sem duplicar. Falha "pura" (sem progresso)
+            // segue o caminho antigo: só toast genérico.
+            if (e instanceof QuotationPartialError) {
+                persistProgress(e.progress);
+                setLastPartialError(e.message);
+                toast.error(
+                    `Falha parcial ao gerar: ${e.message}. Já cadastrei ${Object.keys(e.progress.productIdsByRef).length} produto(s) e ${Object.keys(e.progress.supplierIdsByName).length} fornecedor(es). Clique em "Retomar" para continuar sem duplicar.`,
+                    { id: toastId, duration: 8000 },
+                );
+                log.warn('Falha parcial do wizard; progresso persistido para retomada', {
+                    products: Object.keys(e.progress.productIdsByRef).length,
+                    suppliers: Object.keys(e.progress.supplierIdsByName).length,
+                    processed: e.progress.processedOfferIds.length,
+                });
+            } else {
+                log.error("Failed to generate proposals", e);
+                toast.error("Erro ao gerar solicitações.", { id: toastId });
+            }
         } finally {
             setLoading(false);
         }
@@ -346,6 +398,62 @@ export const SmartQuotationWizard: React.FC = () => {
                     Gerar Solicitações ({priceOffers.filter(o => o.selected).length})
                 </button>
             </div>
+
+            {/* #1416 — banner de retomada: aparece quando uma execução anterior
+                deixou progresso parcial persistido (produto/fornecedor/linha já
+                criados no ERP). O botão "Retomar" chama handleGenerate, que
+                passa o savedProgress p/ o engine pular o que já foi feito. */}
+            {savedProgress && (
+                <div
+                    data-testid="quotation-resume-banner"
+                    className="mt-4 p-4 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700"
+                >
+                    <div className="flex items-start gap-3">
+                        <AlertTriangle className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" size={20} />
+                        <div className="flex-1">
+                            <h4 className="font-bold text-amber-900 dark:text-amber-200">
+                                Execução anterior interrompida
+                            </h4>
+                            <p className="text-sm text-amber-800 dark:text-amber-300 mt-1">
+                                Já foram cadastrados{' '}
+                                <strong>{Object.keys(savedProgress.productIdsByRef).length}</strong>{' '}
+                                produto(s) e{' '}
+                                <strong>{Object.keys(savedProgress.supplierIdsByName).length}</strong>{' '}
+                                fornecedor(es), e{' '}
+                                <strong>{savedProgress.processedOfferIds.length}</strong>{' '}
+                                linha(s) já foram adicionadas a propostas.{' '}
+                                {lastPartialError && (
+                                    <span className="block mt-1 italic">
+                                        Último erro: {lastPartialError}
+                                    </span>
+                                )}
+                            </p>
+                            <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">
+                                Clique em <strong>Retomar</strong> abaixo para continuar de onde parou, sem duplicar cadastros no ERP.
+                            </p>
+                            <div className="mt-3 flex gap-2">
+                                <button
+                                    data-testid="quotation-resume-button"
+                                    onClick={handleGenerate}
+                                    disabled={loading || priceOffers.filter(o => o.selected).length === 0}
+                                    className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 disabled:opacity-50 transition-colors"
+                                >
+                                    {loading ? <Loader2 className="animate-spin" size={16} /> : <ArrowRight size={16} />}
+                                    Retomar de onde parou
+                                </button>
+                                <button
+                                    data-testid="quotation-resume-discard"
+                                    onClick={clearSavedProgress}
+                                    disabled={loading}
+                                    className="bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 px-4 py-2 rounded-lg text-sm font-medium border border-slate-300 dark:border-slate-600 transition-colors"
+                                >
+                                    Descartar progresso
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 
