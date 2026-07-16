@@ -215,7 +215,14 @@ class BotService {
                 const rawHistory = await messageService.getMessages(sessionId, chatId, historyLimit);
 
                 // 1. Initial Map & Clean History (with senderName for groups + media context)
-                let rawMapped = rawHistory.map((m: any) => {
+                let rawMapped = rawHistory
+                    .filter((m: any) => {
+                        const b = m.body || '';
+                        return !b.includes('Status do Sistema') && 
+                               !b.includes('Comandos Disponíveis') && 
+                               !b.startsWith('/');
+                    })
+                    .map((m: any) => {
                     // Strip existing signatures from history to avoid poisoning the LLM context
                     const cleanBody = (m.body || '').replace(/(\n\s*~.*)+$/g, '').trim();
 
@@ -276,7 +283,8 @@ class BotService {
             // NÃO injeta dados do cliente no LLM. Mesmo padrão do kill-switch financeiro.
             if (isCrmContextInjectionEnabled()) {
                 try {
-                    const phone = chatId.split('@')[0];
+                    const phoneToLookup = message.realSender || chatId;
+                    const phone = phoneToLookup.split('@')[0];
                     const customer = await dolibarrService.getThirdPartyByPhone(phone);
 
                     if (customer) {
@@ -313,6 +321,13 @@ class BotService {
                 1000
             );
             let replyText = typeof replyResult === 'string' ? replyResult : replyResult.text;
+
+            // Converter links internos relativos para absolutos APENAS para o WhatsApp
+            // A interface web continuará usando caminhos relativos (para manter o SPA layout)
+            if (replyText) {
+                const baseUrl = process.env.FRONTEND_URL || 'https://app.coolgroove.com.br';
+                replyText = replyText.replace(/(?<=^|\s)(\/[a-zA-Z0-9_\-\/\?=\.\&\%]+)/g, match => baseUrl + match);
+            }
 
             // Cleanup: Strip any hallucinated signatures in the response
             if (replyText) {

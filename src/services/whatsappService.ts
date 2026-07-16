@@ -112,8 +112,8 @@ export const WhatsAppService = {
                 return {
                     id: serializedId,
                     accountId: sessionId,
-                    customerName: c.name || c.pushname || userNumber,
-                    customerNumber: userNumber,
+                    customerName: c.name || c.pushname || c.phoneNumber || userNumber,
+                    customerNumber: c.phoneNumber || userNumber,
                     lastMessage: c.lastMessage || '',
                     lastMessageTimestamp: c.timestamp ? c.timestamp * 1000 : Date.now(),
                     unreadCount: c.unreadCount || 0,

@@ -130,6 +130,16 @@ class ChannelRouter {
     }
 
     /**
+     * Sessão default p/ rotas de LEITURA sem sessionId explícito (conversations/messages).
+     * Segue a primária persistida (#1438) quando configurada; senão 'default' (compat).
+     * NÃO aplica a política de fallback de ENVIO — leitura não deve falhar por política.
+     */
+    getDefaultSessionId(): string {
+        const primary = (uiConfigService.get().whatsappPrimarySessionId || '').trim();
+        return primary || 'default';
+    }
+
+    /**
      * Resolve a sessão de envio. Tudo é lido AO VIVO do uiConfig persistido — nada é cacheado no
      * boot, então trocas do admin valem sem restart e persistem de verdade em `ui_config.json`
      * (#1438). Regras:
