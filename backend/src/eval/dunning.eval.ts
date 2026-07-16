@@ -62,7 +62,82 @@ interface GoldenSet {
     fixtures: Fixture[];
 }
 
-const GOLDEN = golden as GoldenSet;
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+    return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+function assertGoldenSet(value: unknown): asserts value is GoldenSet {
+    if (
+        !isRecord(value) ||
+        value.schemaVersion !== 1 ||
+        typeof value.issue !== 'string' ||
+        typeof value.description !== 'string' ||
+        !Array.isArray(value.fixtures) ||
+        value.fixtures.length < 18
+    ) {
+        throw new Error('goldenDunning.json inválido: schema ou quantidade de fixtures');
+    }
+
+    value.fixtures.forEach((rawFixture, index) => {
+        const prefix = `goldenDunning.fixtures[${index}]`;
+        if (!isRecord(rawFixture)) {
+            throw new Error(`${prefix} deve ser um objeto`);
+        }
+
+        const requiredStrings = ['id', 'ref', 'socid', 'socname'];
+        if (!requiredStrings.every(field => typeof rawFixture[field] === 'string')) {
+            throw new Error(`${prefix} possui campo textual ausente ou inválido`);
+        }
+        if (
+            typeof rawFixture.totalAberto !== 'number' ||
+            !Number.isFinite(rawFixture.totalAberto) ||
+            typeof rawFixture.diasAtraso !== 'number' ||
+            !Number.isFinite(rawFixture.diasAtraso)
+        ) {
+            throw new Error(`${prefix} possui valor ou atraso inválido`);
+        }
+        if (rawFixture.isPaid !== undefined && typeof rawFixture.isPaid !== 'boolean') {
+            throw new Error(`${prefix}.isPaid deve ser booleano`);
+        }
+        if (
+            rawFixture.customerContextThrows !== undefined &&
+            typeof rawFixture.customerContextThrows !== 'boolean'
+        ) {
+            throw new Error(`${prefix}.customerContextThrows deve ser booleano`);
+        }
+
+        const expected = rawFixture.expect;
+        if (
+            !isRecord(expected) ||
+            typeof expected.status !== 'string' ||
+            !['ready', 'incomplete', 'absent'].includes(expected.status) ||
+            !isStringArray(expected.rascunhoContains) ||
+            !isStringArray(expected.rascunhoNotContains)
+        ) {
+            throw new Error(`${prefix}.expect possui schema inválido`);
+        }
+        const rank = expected.rank;
+        if (
+            rank !== undefined &&
+            (typeof rank !== 'number' || !Number.isInteger(rank) || rank < 0)
+        ) {
+            throw new Error(`${prefix}.expect.rank deve ser inteiro não negativo`);
+        }
+        if (expected.notInDigest !== undefined && typeof expected.notInDigest !== 'boolean') {
+            throw new Error(`${prefix}.expect.notInDigest deve ser booleano`);
+        }
+        if (expected.motivo !== undefined && typeof expected.motivo !== 'string') {
+            throw new Error(`${prefix}.expect.motivo deve ser textual`);
+        }
+    });
+}
+
+assertGoldenSet(golden);
+const GOLDEN = golden;
 
 const DAY_IN_SECONDS = 86400;
 
@@ -180,6 +255,14 @@ function checkFixture(
             fixtureId: fixture.id,
             passed: false,
             reason: `socid do digest no rank ${rank} é "${item.socid || '(vazio)'}" mas a fixture esperava "${fixture.socid}" — ranking quebrou (regressão na ordenação por score?)`,
+        };
+    }
+
+    if (!item.invoices.some(invoice => invoice.ref === fixture.ref)) {
+        return {
+            fixtureId: fixture.id,
+            passed: false,
+            reason: `a fatura ${fixture.ref} não está no item do digest no rank ${rank} — ranking ou agrupamento quebrou`,
         };
     }
 
