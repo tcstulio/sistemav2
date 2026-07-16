@@ -24,11 +24,9 @@
  * Exit code: 0 quando todos passam, 1 quando qualquer um falha.
  */
 
-import { dolibarrService } from '../services/dolibarr';
-import { channelRouter } from '../services/channelRouter';
-import { emailService } from '../services/emailService';
-import { notificationService } from '../services/notificationService';
-import { buildDunningDigest } from '../services/dunningService';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { DunningItem, DunningDigest } from '../services/dunningService';
 import type { ReceivableItem } from '../services/dolibarr/finance';
 
@@ -148,9 +146,12 @@ const GOLDEN = golden;
 
 const DAY_IN_SECONDS = 86400;
 
-type ReceivableFn = typeof dolibarrService.getAccountsReceivable;
-type CustomerContextFn = typeof dolibarrService.getCustomerContext;
-type DolibarrServiceMock = Pick<typeof dolibarrService, 'getAccountsReceivable' | 'getCustomerContext'>;
+type ReceivableFn = (dateFrom?: string, dateTo?: string) => Promise<ReceivableItem[]>;
+type CustomerContextFn = (thirdPartyId: string) => Promise<string>;
+interface DolibarrServiceMock {
+    getAccountsReceivable: ReceivableFn;
+    getCustomerContext: CustomerContextFn;
+}
 
 function dueDateForDias(diasAtraso: number): string {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -378,81 +379,95 @@ interface SenderTarget {
     method: string;
 }
 
-const SENDER_TARGETS: SenderTarget[] = [
-    { label: 'channelRouter.send', module: channelRouter, method: 'send' },
-    { label: 'channelRouter.sendWhatsApp', module: channelRouter, method: 'sendWhatsApp' },
-    { label: 'channelRouter.sendEmail', module: channelRouter, method: 'sendEmail' },
-    { label: 'emailService.sendEmail', module: emailService, method: 'sendEmail' },
-    { label: 'notificationService.notifyPerson', module: notificationService, method: 'notifyPerson' },
-];
-
 async function main(): Promise<number> {
-    console.log(`Carregando golden-set: ${GOLDEN.fixtures.length} fixtures (${GOLDEN.issue})`);
-
-    const spies: Spy[] = [];
-    const patches: SenderPatch[] = [];
-
-    for (const target of SENDER_TARGETS) {
-        const spy = new Spy(target.label);
-        const patch = patchSenderMethod(target.module, target.method, spy);
-        spies.push(spy);
-        patches.push(patch);
-    }
-
-    const dolibarrMock: DolibarrServiceMock = dolibarrService;
-    const origGetAccountsReceivable = dolibarrMock.getAccountsReceivable;
-    const origGetCustomerContext = dolibarrMock.getCustomerContext;
+    const originalCwd = process.cwd();
+    const tempCwd = mkdtempSync(join(tmpdir(), 'dunning-eval-'));
+    process.chdir(tempCwd);
 
     try {
-        const fixturesReceivable = GOLDEN.fixtures;
-        const throwingSocids = new Set(
-            fixturesReceivable
-                .filter(f => f.customerContextThrows && f.socid)
-                .map(f => String(f.socid))
-        );
-        const emptyContextSocids = new Set(
-            fixturesReceivable
-                .filter(f => f.customerContextEmpty && f.socid)
-                .map(f => String(f.socid))
-        );
+        const { dolibarrService } = await import('../services/dolibarr');
+        const { channelRouter } = await import('../services/channelRouter');
+        const { emailService } = await import('../services/emailService');
+        const { notificationService } = await import('../services/notificationService');
+        const { buildDunningDigest } = await import('../services/dunningService');
+        const senderTargets: SenderTarget[] = [
+            { label: 'channelRouter.send', module: channelRouter, method: 'send' },
+            { label: 'channelRouter.sendWhatsApp', module: channelRouter, method: 'sendWhatsApp' },
+            { label: 'channelRouter.sendEmail', module: channelRouter, method: 'sendEmail' },
+            { label: 'emailService.sendEmail', module: emailService, method: 'sendEmail' },
+            { label: 'notificationService.notifyPerson', module: notificationService, method: 'notifyPerson' },
+        ];
 
-        const mockReceivable: ReceivableFn = async () => buildReceivables(fixturesReceivable);
-        const mockCustomer: CustomerContextFn = async (thirdPartyId: string) => {
-            if (throwingSocids.has(String(thirdPartyId))) {
-                throw new Error(`mock: customer context indisponível para ${thirdPartyId}`);
-            }
-            if (emptyContextSocids.has(String(thirdPartyId))) {
-                return '';
-            }
-            return `contexto-mock-${thirdPartyId}`;
-        };
+        console.log(`Carregando golden-set: ${GOLDEN.fixtures.length} fixtures (${GOLDEN.issue})`);
 
-        dolibarrMock.getAccountsReceivable = mockReceivable;
-        dolibarrMock.getCustomerContext = mockCustomer;
+        const spies: Spy[] = [];
+        const patches: SenderPatch[] = [];
 
-        const digest = await buildDunningDigest();
-
-        const results: CheckResult[] = [];
-        for (const fixture of GOLDEN.fixtures) {
-            results.push(checkFixture(fixture, digest));
+        for (const target of senderTargets) {
+            const spy = new Spy(target.label);
+            const patch = patchSenderMethod(target.module, target.method, spy);
+            spies.push(spy);
+            patches.push(patch);
         }
 
-        const guardViolations = checkGuards(spies);
-        for (const violation of guardViolations) {
-            results.push(violation);
+        const dolibarrMock: DolibarrServiceMock = dolibarrService;
+        const origGetAccountsReceivable = dolibarrMock.getAccountsReceivable;
+        const origGetCustomerContext = dolibarrMock.getCustomerContext;
+
+        try {
+            const fixturesReceivable = GOLDEN.fixtures;
+            const throwingSocids = new Set(
+                fixturesReceivable
+                    .filter(f => f.customerContextThrows && f.socid)
+                    .map(f => String(f.socid))
+            );
+            const emptyContextSocids = new Set(
+                fixturesReceivable
+                    .filter(f => f.customerContextEmpty && f.socid)
+                    .map(f => String(f.socid))
+            );
+
+            const mockReceivable: ReceivableFn = async () => buildReceivables(fixturesReceivable);
+            const mockCustomer: CustomerContextFn = async (thirdPartyId: string) => {
+                if (throwingSocids.has(String(thirdPartyId))) {
+                    throw new Error(`mock: customer context indisponível para ${thirdPartyId}`);
+                }
+                if (emptyContextSocids.has(String(thirdPartyId))) {
+                    return '';
+                }
+                return `contexto-mock-${thirdPartyId}`;
+            };
+
+            dolibarrMock.getAccountsReceivable = mockReceivable;
+            dolibarrMock.getCustomerContext = mockCustomer;
+
+            const digest = await buildDunningDigest();
+
+            const results: CheckResult[] = [];
+            for (const fixture of GOLDEN.fixtures) {
+                results.push(checkFixture(fixture, digest));
+            }
+
+            const guardViolations = checkGuards(spies);
+            for (const violation of guardViolations) {
+                results.push(violation);
+            }
+
+            printScoreboard(results);
+
+            const failedCount = results.filter(r => !r.passed).length;
+            return failedCount === 0 ? 0 : 1;
+        } finally {
+            dolibarrMock.getAccountsReceivable = origGetAccountsReceivable;
+            dolibarrMock.getCustomerContext = origGetCustomerContext;
+
+            for (const patch of patches) {
+                restorePatch(patch);
+            }
         }
-
-        printScoreboard(results);
-
-        const failedCount = results.filter(r => !r.passed).length;
-        return failedCount === 0 ? 0 : 1;
     } finally {
-        dolibarrMock.getAccountsReceivable = origGetAccountsReceivable;
-        dolibarrMock.getCustomerContext = origGetCustomerContext;
-
-        for (const patch of patches) {
-            restorePatch(patch);
-        }
+        process.chdir(originalCwd);
+        rmSync(tempCwd, { recursive: true, force: true });
     }
 }
 
