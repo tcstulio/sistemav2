@@ -9,7 +9,8 @@
         "build": "tsc",
         "test": "vitest run",
         "test:watch": "vitest",
-        "test:coverage": "vitest run --coverage"
+        "test:coverage": "vitest run --coverage",
+        "postinstall": "node scripts/apply-wwebjs-patch.js"
     },
     "keywords": [],
     "author": "",

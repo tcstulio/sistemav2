@@ -62,9 +62,9 @@ describe('MessageService.getChats (#1480)', () => {
 
         expect(getChatsMock).toHaveBeenCalledTimes(1);
         expect(result).toEqual([
-            { id: 'a@c.us', name: 'A', unreadCount: 2, timestamp: 100, isGroup: false, lastMessage: 'oi', accountId: 'sess-1' },
-            { id: 'g@g.us', name: 'G', unreadCount: 0, timestamp: 200, isGroup: true, lastMessage: 'olá grupo', accountId: 'sess-1' },
-            { id: 'c@c.us', name: 'C', unreadCount: 1, timestamp: 300, isGroup: false, lastMessage: '', accountId: 'sess-1' },
+            { id: 'a@c.us', phoneNumber: '', name: 'A', unreadCount: 2, timestamp: 100, isGroup: false, lastMessage: 'oi', accountId: 'sess-1' },
+            { id: 'g@g.us', phoneNumber: '', name: 'G', unreadCount: 0, timestamp: 200, isGroup: true, lastMessage: 'olá grupo', accountId: 'sess-1' },
+            { id: 'c@c.us', phoneNumber: '', name: 'C', unreadCount: 1, timestamp: 300, isGroup: false, lastMessage: '', accountId: 'sess-1' },
         ]);
     });
 
@@ -83,7 +83,7 @@ describe('MessageService.getChats (#1480)', () => {
 
         expect(getChatsMock).toHaveBeenCalledTimes(3);
         expect(result).toEqual([
-            { id: 'x@c.us', name: 'X', unreadCount: 0, timestamp: 1700000000, isGroup: false, lastMessage: '', accountId: 'sess-2' },
+            { id: 'x@c.us', phoneNumber: '', name: 'X', unreadCount: 0, timestamp: 1700000000, isGroup: false, lastMessage: '', accountId: 'sess-2' },
         ]);
     });
 
