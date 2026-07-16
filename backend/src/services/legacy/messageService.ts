@@ -66,19 +66,63 @@ export class MessageService {
         return { id: msg.id._serialized, timestamp: msg.timestamp };
     }
 
-    async getChats(sessionId: string) {
+    /**
+     * #1480: wwebjs dispara 'ready' (status → WORKING) ANTES do store interno terminar de
+     * carregar os chats. Em sessões recém-conectadas, `client.getChats()` pode retornar `[]`
+     * (ou lançar com "Page evaluation failed" / "Store is not ready") por alguns segundos —
+     * antes o endpoint engolia o caso e devolvia `[]`/500, então a UI mostrava "sessão
+     * conectada, nenhuma conversa" mesmo com a sessão funcional. Aqui: faz retry com backoff
+     * leve até o store encher, ou até esgotar as tentativas. Mantém a assinatura existente
+     * (sem `options` é retrocompatível com todos os callers).
+     */
+    async getChats(sessionId: string, options?: { maxRetries?: number; retryDelayMs?: number }) {
         const client = this.getClient(sessionId);
-        const chats = await client.getChats();
+        const maxRetries = options?.maxRetries ?? 4;
+        const retryDelayMs = options?.retryDelayMs ?? 1000;
 
-        return chats.map(c => ({
-            id: c.id._serialized,
-            name: c.name,
-            unreadCount: c.unreadCount,
-            timestamp: c.timestamp,
-            isGroup: c.isGroup,
-            lastMessage: (c as any).lastMessage ? (c as any).lastMessage.body : '',
-            accountId: sessionId
-        }));
+        let lastError: Error | null = null;
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                const chats = await client.getChats();
+                if (Array.isArray(chats) && chats.length > 0) {
+                    if (attempt > 0) {
+                        log.info(`[${sessionId}] getChats: store wwebjs carregou após ${attempt} retry(s) (${chats.length} chats).`);
+                    }
+                    return chats.map(c => ({
+                        id: c.id._serialized,
+                        name: c.name,
+                        unreadCount: c.unreadCount,
+                        timestamp: c.timestamp,
+                        isGroup: c.isGroup,
+                        lastMessage: (c as any).lastMessage ? (c as any).lastMessage.body : '',
+                        accountId: sessionId
+                    }));
+                }
+                // status=WORKING mas store vazio → race do #1480. Aguarda e tenta de novo,
+                // exceto na última iteração (devolve [] honestamente = "sessão conectada, sem chats").
+                if (attempt < maxRetries) {
+                    log.warn(`[${sessionId}] getChats vazio (tentativa ${attempt + 1}/${maxRetries + 1}); aguardando ${retryDelayMs}ms para o store wwebjs carregar.`);
+                    await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+                }
+            } catch (e: any) {
+                lastError = e;
+                // Mesmo cenário por outro caminho: wwebjs lança "Page evaluation failed" /
+                // "Store is not ready" enquanto o store interno sobe. Aguarda e tenta de novo.
+                if (attempt < maxRetries) {
+                    log.warn(`[${sessionId}] getChats erro (tentativa ${attempt + 1}/${maxRetries + 1}): ${e?.message?.slice(0, 120) || e}. Aguardando ${retryDelayMs}ms.`);
+                    await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+                }
+            }
+        }
+
+        if (lastError) {
+            // Esgotou retries e a ÚLTIMA iteração terminou em erro (não em array vazio).
+            throw lastError;
+        }
+
+        // Esgotou retries com [] em todas as tentativas: a sessão está limpa mesmo.
+        return [];
     }
 
     async getMessages(sessionId: string, chatId: string, limit: number = 50) {
