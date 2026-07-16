@@ -116,3 +116,50 @@ describe('AgentMarkdown — deeplink de confirmação HITL vira BOTÃO curto (#1
         expect(navigate).toHaveBeenCalledWith(confirmUrl);
     });
 });
+
+describe('AgentMarkdown — deeplink SOLTO no texto vira botão (regressão do render antigo)', () => {
+    // Desde #1355 a resposta de prepare_* é o texto cru da tool ("… na tela: /x/new?prefill=…"),
+    // sem markdown. O render antigo (pré-#1354) linkificava por regex; o AgentMarkdown só tratava
+    // markdown/anchor — o deeplink virava TEXTO MORTO. Estes testes pregam a reconstrução.
+    const token = 'eyJ' + 'a'.repeat(120);
+
+    it('caminho ?prefill= solto (resposta crua do prepare_*) vira botão que navega in-app', () => {
+        const navigate = vi.fn();
+        render(<AgentMarkdown text={`Preparei o rascunho. Clique para revisar e confirmar a criação na tela: /tasks/new?prefill=${token}`} navigate={navigate} />);
+        const btn = screen.getByRole('button');
+        expect(btn.textContent).toMatch(/Revisar e criar/);
+        fireEvent.click(btn);
+        expect(navigate).toHaveBeenCalledWith(`/tasks/new?prefill=${token}`);
+    });
+
+    it('/confirm-action?token= solto vira botão "Revisar e confirmar"', () => {
+        const navigate = vi.fn();
+        render(<AgentMarkdown text={`Confirme aqui: /confirm-action?token=${token}`} navigate={navigate} />);
+        const btn = screen.getByRole('button');
+        expect(btn.textContent).toMatch(/Revisar e confirmar/);
+        fireEvent.click(btn);
+        expect(navigate).toHaveBeenCalledWith(`/confirm-action?token=${token}`);
+    });
+
+    it('URL ABSOLUTA do próprio app com ?prefill= volta a ser relativa e vira botão (mensagens absolutizadas p/ WhatsApp)', () => {
+        const navigate = vi.fn();
+        const abs = `${window.location.origin}/customers/new?prefill=${token}`;
+        render(<AgentMarkdown text={`Clique para revisar: ${abs}`} navigate={navigate} />);
+        const btn = screen.getByRole('button');
+        expect(btn.textContent).toMatch(/Revisar e criar/);
+        fireEvent.click(btn);
+        expect(navigate).toHaveBeenCalledWith(`/customers/new?prefill=${token}`);
+    });
+
+    it('deeplink JÁ em markdown não é re-embrulhado (sem botão duplicado)', () => {
+        render(<AgentMarkdown text={`[criar tarefa](/tasks/new?prefill=${token})`} navigate={vi.fn()} />);
+        expect(screen.getAllByRole('button')).toHaveLength(1);
+        expect(screen.getByRole('button').textContent).toMatch(/criar tarefa/);
+    });
+
+    it('caminho relativo comum solto (sem prefill/token) segue como texto — só deeplink de AÇÃO é reconstruído', () => {
+        render(<AgentMarkdown text={'Veja em /proposals/303 os detalhes.'} navigate={vi.fn()} />);
+        expect(screen.queryByRole('button')).toBeNull();
+        expect(screen.queryByRole('link')).toBeNull();
+    });
+});
