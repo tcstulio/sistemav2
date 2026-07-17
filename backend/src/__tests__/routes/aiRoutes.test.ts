@@ -81,6 +81,9 @@ vi.mock('../../services/agentTools', () => ({
         return fn();
     },
     TOOLS_PROMPT: '',
+    // #1498: aiService.ts agora importa getToolsPrompt direto (TOOLS_PROMPT virou wrapper
+    // deprecated). Mock precisa expor getToolsPrompt pra não quebrar o import.
+    getToolsPrompt: () => '',
     executeTool: vi.fn(),
 }));
 

@@ -57,6 +57,8 @@ const toolState = vi.hoisted(() => ({ isAdmin: false }));
 const executeToolMock = vi.hoisted(() => vi.fn(async () => 'RESULTADO OK'));
 vi.mock('../../services/agentTools', () => ({
     TOOLS_PROMPT: 'FERRAMENTAS',
+    // #1498: aiService.ts agora importa getToolsPrompt direto. Mock deve expor pra não quebrar.
+    getToolsPrompt: () => 'FERRAMENTAS',
     executeTool: executeToolMock,
     getToolContext: () => ({ listener: null, isAdmin: toolState.isAdmin }),
 }));
