@@ -94,11 +94,13 @@ const mockRunWithToolContext = vi.hoisted(() => vi.fn((ctx: any, fn: () => Promi
 // #1500: hoist o mock de executeTool — debug routes precisam ver ctx.isAdmin correto.
 const mockExecuteTool = vi.hoisted(() => vi.fn(() => Promise.resolve('{}')));
 
-// #1500: rota /api/analyze/pdf usa `await import('pdf-parse')` no handler (a versão antiga com
-// `require()` não é interceptada consistentemente pelo vi.mock em resoluções cross-workspace).
-// Mock exporta como ESM default para o `pdfParseMod.default` do handler cair na função mockada.
+// #1500: rota /api/analyze/pdf usa `await import('pdf-parse')` (ESM dinâmico) no handler
+// com fallback v1/v2. Vitest v4 não intercepta `require()` para pacotes com `exports`
+// field (a forma legacy), então trocou-se para `await import()` — e o mock precisa
+// retornar um namespace com `default` para casar com o fallback do handler.
 vi.mock('pdf-parse', () => ({
-    default: vi.fn(() => Promise.resolve({ text: 'conteúdo mock do PDF para teste #1500' })),
+    __esModule: true,
+    default: vi.fn(async (_buf: any) => ({ text: 'conteúdo mock do PDF para teste #1500' })),
 }));
 
 vi.mock('../../services/agentActivityService', () => ({
