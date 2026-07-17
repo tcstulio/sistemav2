@@ -24,12 +24,14 @@ router.post('/execute', async (req, res) => {
 
     // requireDolibarrLogin já resolveu a chave EFETIVA do usuário (sessão → dolapikey real) neste header.
     const userKey = req.headers['dolapikey'] as string;
-    const r = await executeConfirm(String(token), userKey);
+    // Ator LOGADO (da sessão) — o executeConfirm exige que bata com o actorUserId do token (D).
+    const user = (req as any).user || {};
+    const sessionUserId = String(user.id || '');
+    const r = await executeConfirm(String(token), sessionUserId, userKey);
 
     if (r.ok) {
         // Trilha (F0.3): registra a execução CONFIRMADA com o ator logado.
         try {
-            const user = (req as any).user || {};
             agentActivityService.record({
                 userId: String(user.id || user.login || ''),
                 userName: [user.firstname, user.lastname].filter(Boolean).join(' ') || user.login || 'Usuário',

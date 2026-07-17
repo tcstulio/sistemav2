@@ -65,7 +65,7 @@ describe('agentActionConfirm — HITL de ação irreversível (§8.1)', () => {
 
     it('execute: valida COM A CHAVE DO USUÁRIO (RBAC real)', async () => {
         const link = buildConfirmDeeplink('validate_invoice', { invoice_id: '50' }, '42');
-        const r = await executeConfirm(tokenFrom(link), 'user-key-xyz');
+        const r = await executeConfirm(tokenFrom(link), '42', 'user-key-xyz');
         expect(r).toMatchObject({ ok: true, action: 'validate_invoice' });
         expect(mockDolibarr.validateInvoice).toHaveBeenCalledWith('50', 'user-key-xyz');
     });
@@ -73,15 +73,15 @@ describe('agentActionConfirm — HITL de ação irreversível (§8.1)', () => {
     it('anti-replay: a MESMA confirmação não executa 2x', async () => {
         const link = buildConfirmDeeplink('validate_order', { order_id: '11' }, '42');
         const t = tokenFrom(link);
-        expect((await executeConfirm(t, 'k')).ok).toBe(true);
-        const r2 = await executeConfirm(t, 'k');
+        expect((await executeConfirm(t, '42', 'k')).ok).toBe(true);
+        const r2 = await executeConfirm(t, '42', 'k');
         expect(r2).toMatchObject({ ok: false });
         expect((r2 as any).error).toMatch(/já foi usada/i);
         expect(mockDolibarr.validateOrder).toHaveBeenCalledTimes(1);
     });
 
     it('token inválido/adulterado → erro, não executa nem descreve', async () => {
-        expect((await executeConfirm('lixo.assinatura', 'k')).ok).toBe(false);
+        expect((await executeConfirm('lixo.assinatura', '42', 'k')).ok).toBe(false);
         expect(describeConfirm('lixo.assinatura').ok).toBe(false);
         expect(mockDolibarr.validateInvoice).not.toHaveBeenCalled();
     });
@@ -90,10 +90,10 @@ describe('agentActionConfirm — HITL de ação irreversível (§8.1)', () => {
         mockDolibarr.validateProposal.mockRejectedValueOnce(new Error('403 Forbidden'));
         const link = buildConfirmDeeplink('validate_proposal', { proposal_id: '3' }, '42');
         const t = tokenFrom(link);
-        const r1 = await executeConfirm(t, 'k');
+        const r1 = await executeConfirm(t, '42', 'k');
         expect(r1.ok).toBe(false);
         mockDolibarr.validateProposal.mockResolvedValueOnce({ id: '3' });
-        const r2 = await executeConfirm(t, 'k'); // pode re-tentar (não consumiu no erro)
+        const r2 = await executeConfirm(t, '42', 'k'); // pode re-tentar (não consumiu no erro)
         expect(r2.ok).toBe(true);
     });
 });
@@ -108,11 +108,11 @@ describe('anti-replay PERSISTIDO (Fase 1 — sobrevive a restart)', () => {
     it('replay após RESTART é bloqueado (o furo da versão em memória)', async () => {
         const link = buildConfirmDeeplink('validate_invoice', { invoice_id: '77' }, '42');
         const t = tokenFrom(link);
-        expect((await executeConfirm(t, 'k')).ok).toBe(true);
+        expect((await executeConfirm(t, '42', 'k')).ok).toBe(true);
 
         __reloadConsumedForTests(); // "restart": Map zerado, recarrega SÓ do disco
 
-        const replay = await executeConfirm(t, 'k');
+        const replay = await executeConfirm(t, '42', 'k');
         expect(replay).toMatchObject({ ok: false });
         expect((replay as any).error).toMatch(/já foi usada/i);
         expect(mockDolibarr.validateInvoice).toHaveBeenCalledTimes(1);
@@ -122,19 +122,19 @@ describe('anti-replay PERSISTIDO (Fase 1 — sobrevive a restart)', () => {
         mockDolibarr.validateOrder.mockRejectedValueOnce(new Error('500'));
         const link = buildConfirmDeeplink('validate_order', { order_id: '9' }, '42');
         const t = tokenFrom(link);
-        expect((await executeConfirm(t, 'k')).ok).toBe(false);
+        expect((await executeConfirm(t, '42', 'k')).ok).toBe(false);
 
         __reloadConsumedForTests();
 
         mockDolibarr.validateOrder.mockResolvedValueOnce({ id: '9' });
-        expect((await executeConfirm(t, 'k')).ok).toBe(true);
+        expect((await executeConfirm(t, '42', 'k')).ok).toBe(true);
     });
 
     it('entradas EXPIRADAS são varridas do disco no cleanup (arquivo se auto-limita)', async () => {
         // Consome 1 confirmação → vai pro disco.
         const link = buildConfirmDeeplink('validate_invoice', { invoice_id: '5' }, '42');
         const t = tokenFrom(link);
-        expect((await executeConfirm(t, 'k')).ok).toBe(true);
+        expect((await executeConfirm(t, '42', 'k')).ok).toBe(true);
         const diskPath = [...fakeDisk.files.keys()][0];
         expect(diskPath).toBeTruthy();
 
@@ -145,11 +145,11 @@ describe('anti-replay PERSISTIDO (Fase 1 — sobrevive a restart)', () => {
         __reloadConsumedForTests();
 
         // O válido continua bloqueado (recarregado do disco); o expirado foi FILTRADO no load.
-        expect((await executeConfirm(t, 'k')).ok).toBe(false);
+        expect((await executeConfirm(t, '42', 'k')).ok).toBe(false);
 
         // Na PRÓXIMA escrita (nova confirmação), o arquivo é reescrito sem o expirado.
         const link2 = buildConfirmDeeplink('validate_order', { order_id: '6' }, '42');
-        expect((await executeConfirm(tokenFrom(link2), 'k')).ok).toBe(true);
+        expect((await executeConfirm(tokenFrom(link2), '42', 'k')).ok).toBe(true);
         const after = JSON.parse(fakeDisk.files.get(diskPath)!);
         expect(after.jti_expirado).toBeUndefined();
         expect(Object.keys(after).length).toBe(2); // o do invoice '5' + o do order '6'
@@ -159,7 +159,7 @@ describe('anti-replay PERSISTIDO (Fase 1 — sobrevive a restart)', () => {
         const { atomicWriteSync } = await import('../../utils/atomicWrite');
         vi.mocked(atomicWriteSync).mockImplementationOnce(() => { throw new Error('EPERM'); });
         const link = buildConfirmDeeplink('validate_proposal', { proposal_id: '8' }, '42');
-        const r = await executeConfirm(tokenFrom(link), 'k');
+        const r = await executeConfirm(tokenFrom(link), '42', 'k');
         expect(r.ok).toBe(true); // ação executou; só a persistência falhou (logada)
     });
 });
@@ -184,7 +184,7 @@ describe('send_whatsapp no registry (Fase 2)', () => {
 
     it('execute: envia via channelRouter com chatId normalizado (@c.us)', async () => {
         const link = buildConfirmDeeplink('send_whatsapp', { phone: '5511999990000', message: 'msg confirmada' }, '42');
-        const r = await executeConfirm(tokenFrom(link), 'user-key-ignorada');
+        const r = await executeConfirm(tokenFrom(link), '42', 'user-key-ignorada');
         expect(r).toMatchObject({ ok: true, action: 'send_whatsapp' });
         expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledWith('5511999990000@c.us', 'msg confirmada');
     });
@@ -192,9 +192,9 @@ describe('send_whatsapp no registry (Fase 2)', () => {
     it('anti-replay vale p/ send_whatsapp: mesma confirmação NÃO envia 2x (nem após restart)', async () => {
         const link = buildConfirmDeeplink('send_whatsapp', { phone: '5511999990000', message: 'não duplicar' }, '42');
         const t = tokenFrom(link);
-        expect((await executeConfirm(t, 'k')).ok).toBe(true);
+        expect((await executeConfirm(t, '42', 'k')).ok).toBe(true);
         __reloadConsumedForTests(); // restart do backend
-        const replay = await executeConfirm(t, 'k');
+        const replay = await executeConfirm(t, '42', 'k');
         expect(replay.ok).toBe(false);
         expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledTimes(1);
     });
@@ -203,32 +203,32 @@ describe('send_whatsapp no registry (Fase 2)', () => {
         const link = buildConfirmDeeplink('send_whatsapp', { phone: '5511999990000', message: 'oi' }, '42');
         // Entre o deeplink e o clique, o admin restringiu a allowlist a OUTRO número.
         mockUiConfig.get.mockReturnValue({ actionGovernance: { whatsappDestinationAllowlist: ['5599888887777'] } });
-        const r = await executeConfirm(tokenFrom(link), 'k');
+        const r = await executeConfirm(tokenFrom(link), '42', 'k');
         expect(r.ok).toBe(false);
         expect((r as any).error).toMatch(/allowlist/i);
         expect(mockChannelRouter.sendWhatsApp).not.toHaveBeenCalled();
         // e o jti foi liberado (erro real) — corrigida a allowlist, pode confirmar de novo
         mockUiConfig.get.mockReturnValue({ actionGovernance: { whatsappDestinationAllowlist: [] } });
-        expect((await executeConfirm(tokenFrom(link), 'k')).ok).toBe(true);
+        expect((await executeConfirm(tokenFrom(link), '42', 'k')).ok).toBe(true);
     });
 
     it('falha do transporte (sessão caída) devolve erro e LIBERA p/ nova tentativa', async () => {
         mockChannelRouter.sendWhatsApp.mockResolvedValueOnce({ success: false, error: 'sessão desconectada' });
         const link = buildConfirmDeeplink('send_whatsapp', { phone: '5511999990000', message: 'oi' }, '42');
         const t = tokenFrom(link);
-        const r1 = await executeConfirm(t, 'k');
+        const r1 = await executeConfirm(t, '42', 'k');
         expect(r1.ok).toBe(false);
         expect((r1 as any).error).toMatch(/sessão desconectada/);
-        const r2 = await executeConfirm(t, 'k'); // transporte voltou
+        const r2 = await executeConfirm(t, '42', 'k'); // transporte voltou
         expect(r2.ok).toBe(true);
         expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledTimes(2);
     });
 
     it('args inválidos (sem phone / sem message) falham sem chamar o transporte', async () => {
         const l1 = buildConfirmDeeplink('send_whatsapp', { message: 'sem destino' }, '42');
-        expect((await executeConfirm(tokenFrom(l1), 'k')).ok).toBe(false);
+        expect((await executeConfirm(tokenFrom(l1), '42', 'k')).ok).toBe(false);
         const l2 = buildConfirmDeeplink('send_whatsapp', { phone: '5511999990000' }, '42');
-        expect((await executeConfirm(tokenFrom(l2), 'k')).ok).toBe(false);
+        expect((await executeConfirm(tokenFrom(l2), '42', 'k')).ok).toBe(false);
         expect(mockChannelRouter.sendWhatsApp).not.toHaveBeenCalled();
     });
 });
@@ -247,21 +247,21 @@ describe('delete_proposal — guard "só rascunho" (§1378, única proteção)',
     it('status 0 (rascunho) → DELETA com a chave do usuário (RBAC)', async () => {
         mockDolibarr.getProposal.mockResolvedValueOnce({ id: '5', status: 0 });
         const link = buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42');
-        const r = await executeConfirm(tokenFrom(link), 'user-key-abc');
+        const r = await executeConfirm(tokenFrom(link), '42', 'user-key-abc');
         expect(r).toMatchObject({ ok: true, action: 'delete_proposal' });
         expect(mockDolibarr.deleteProposal).toHaveBeenCalledWith('5', 'user-key-abc');
     });
 
     it('status "0" (string) → DELETA (robusto a tipo)', async () => {
         mockDolibarr.getProposal.mockResolvedValueOnce({ id: '5', status: '0' });
-        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), 'k');
+        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), '42', 'k');
         expect(r.ok).toBe(true);
         expect(mockDolibarr.deleteProposal).toHaveBeenCalledTimes(1);
     });
 
     it('status 1 (validada) → RECUSA, NÃO deleta', async () => {
         mockDolibarr.getProposal.mockResolvedValueOnce({ id: '5', status: 1 });
-        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), 'k');
+        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), '42', 'k');
         expect(r.ok).toBe(false);
         expect((r as any).error).toMatch(/rascunho/i);
         expect(mockDolibarr.deleteProposal).not.toHaveBeenCalled();
@@ -269,28 +269,28 @@ describe('delete_proposal — guard "só rascunho" (§1378, única proteção)',
 
     it('status "1" (string) → RECUSA (não cai em coerção)', async () => {
         mockDolibarr.getProposal.mockResolvedValueOnce({ id: '5', status: '1' });
-        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), 'k');
+        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), '42', 'k');
         expect(r.ok).toBe(false);
         expect(mockDolibarr.deleteProposal).not.toHaveBeenCalled();
     });
 
     it('status 2 (assinada/outra) → RECUSA (whitelist, não blacklist)', async () => {
         mockDolibarr.getProposal.mockResolvedValueOnce({ id: '5', status: 2 });
-        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), 'k');
+        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), '42', 'k');
         expect(r.ok).toBe(false);
         expect(mockDolibarr.deleteProposal).not.toHaveBeenCalled();
     });
 
     it('status null → RECUSA (o furo do Number(null)===0)', async () => {
         mockDolibarr.getProposal.mockResolvedValueOnce({ id: '5', status: null });
-        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), 'k');
+        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), '42', 'k');
         expect(r.ok).toBe(false);
         expect(mockDolibarr.deleteProposal).not.toHaveBeenCalled();
     });
 
     it('proposta ausente / fetch falhou (getProposal → null) → RECUSA (fail-closed)', async () => {
         mockDolibarr.getProposal.mockResolvedValueOnce(null);
-        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), 'k');
+        const r = await executeConfirm(tokenFrom(buildConfirmDeeplink('delete_proposal', { proposal_id: '5' }, '42')), '42', 'k');
         expect(r.ok).toBe(false);
         expect(mockDolibarr.deleteProposal).not.toHaveBeenCalled();
     });
@@ -301,5 +301,40 @@ describe('delete_proposal — guard "só rascunho" (§1378, única proteção)',
         expect(d).toMatchObject({ ok: true, action: 'delete_proposal', entityType: 'proposal', entityId: '9' });
         expect(mockDolibarr.getProposal).not.toHaveBeenCalled();
         expect(mockDolibarr.deleteProposal).not.toHaveBeenCalled();
+    });
+});
+
+describe('agentActionConfirm — binding de ATOR (D, red-team 2026-07-17)', () => {
+    beforeEach(() => { vi.clearAllMocks(); __reloadConsumedForTests(); });
+
+    it('usuário logado DIFERENTE do ator do token → RECUSA e NÃO executa', async () => {
+        const link = buildConfirmDeeplink('validate_invoice', { invoice_id: '50' }, '42'); // emitido p/ o ator 42
+        const r = await executeConfirm(tokenFrom(link), '99', 'k');                        // confirma logado como 99
+        expect(r.ok).toBe(false);
+        expect((r as any).error).toMatch(/outro usuário/i);
+        expect(mockDolibarr.validateInvoice).not.toHaveBeenCalled();
+    });
+
+    it('mismatch NÃO consome o jti — o ator LEGÍTIMO ainda executa depois', async () => {
+        const t = tokenFrom(buildConfirmDeeplink('validate_invoice', { invoice_id: '51' }, '42'));
+        expect((await executeConfirm(t, 'INTRUSO', 'k')).ok).toBe(false); // 'INTRUSO' ≠ '42' → recusa, jti intacto
+        const ok = await executeConfirm(t, '42', 'k');                    // ator legítimo 42 → executa
+        expect(ok.ok).toBe(true);
+        expect(mockDolibarr.validateInvoice).toHaveBeenCalledWith('51', 'k');
+    });
+
+    it('token com ator VAZIO → RECUSA (fail-closed)', async () => {
+        const link = buildConfirmDeeplink('validate_invoice', { invoice_id: '52' }, ''); // ator vazio
+        const r = await executeConfirm(tokenFrom(link), '42', 'k');
+        expect(r.ok).toBe(false);
+        expect((r as any).error).toMatch(/outro usuário/i);
+        expect(mockDolibarr.validateInvoice).not.toHaveBeenCalled();
+    });
+
+    it('sessão sem usuário (sessionUserId vazio) → RECUSA mesmo com token válido', async () => {
+        const link = buildConfirmDeeplink('validate_invoice', { invoice_id: '53' }, '42');
+        const r = await executeConfirm(tokenFrom(link), '', 'k');
+        expect(r.ok).toBe(false);
+        expect(mockDolibarr.validateInvoice).not.toHaveBeenCalled();
     });
 });
