@@ -766,7 +766,7 @@ describe('BotService', () => {
             it('funcionário 1:1 com a flag LIGADA roda com o próprio perfil (readOnly=false, isAdmin=false)', async () => {
                 setupReplyFlow();
                 mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(true);
-                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva' });
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva', matchStrength: 'full' });
                 const profile = { role: 'user', agent: { canCreate: ['proposal'] } };
                 mockPermissions.getProfile.mockResolvedValue(profile);
 
@@ -782,7 +782,7 @@ describe('BotService', () => {
             it('flag DESLIGADA: funcionário identificado continua somente-leitura', async () => {
                 setupReplyFlow();
                 mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(false);
-                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva' });
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva', matchStrength: 'full' });
 
                 await botService.processMessage(createMessage({ body: 'Prepara uma proposta' }));
 
@@ -805,7 +805,7 @@ describe('BotService', () => {
             it('falha ao carregar o perfil ⇒ fail-closed em somente-leitura', async () => {
                 setupReplyFlow();
                 mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(true);
-                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva' });
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva', matchStrength: 'full' });
                 mockPermissions.getProfile.mockRejectedValue(new Error('Dolibarr caiu'));
 
                 await botService.processMessage(createMessage({ body: 'Hello' }));

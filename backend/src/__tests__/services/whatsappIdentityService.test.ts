@@ -22,14 +22,14 @@ describe('whatsappIdentityService.identifySender', () => {
         mockDolibarr.getThirdPartyByPhone.mockResolvedValue(null);
     });
 
-    it('identifica funcionário por user_mobile, tolerante a DDI/formatação (sufixo de 8 dígitos)', async () => {
+    it('identifica funcionário por user_mobile pelo número COMPLETO (normaliza +/espaço/DDI)', async () => {
         const id = await whatsappIdentityService.identifySender('5511986781025@c.us');
-        expect(id).toEqual({ kind: 'employee', userId: '7', displayName: 'Túlio Silva' });
+        expect(id).toEqual({ kind: 'employee', userId: '7', displayName: 'Túlio Silva', matchStrength: 'full' });
     });
 
-    it('identifica funcionário por phone_mobile', async () => {
+    it('identifica funcionário por phone_mobile (BR sem DDI no cadastro normaliza p/ 55)', async () => {
         const id = await whatsappIdentityService.identifySender('5511912345678@c.us');
-        expect(id).toEqual({ kind: 'employee', userId: '8', displayName: 'Ana' });
+        expect(id).toEqual({ kind: 'employee', userId: '8', displayName: 'Ana', matchStrength: 'full' });
     });
 
     it('usuário INATIVO (statut 0) não conta como funcionário', async () => {
@@ -94,5 +94,34 @@ describe('whatsappIdentityService.identifySender', () => {
         mockDolibarr.getThirdPartyByPhone.mockRejectedValue(new Error('Dolibarr caiu'));
         const id = await whatsappIdentityService.identifySender('5511900001111@c.us');
         expect(id).toEqual({ kind: 'unknown' });
+    });
+
+    // #segurança — a elevação exige o número COMPLETO (E.164), não os 8 dígitos finais.
+    describe('anti-spoof: só o número completo eleva (sufixo-8 não basta)', () => {
+        it('mesmo sufixo-8 mas DDD diferente (5521…) ⇒ NÃO é funcionário', async () => {
+            // id 7 é 5511986781025; este é 5521986781025 (DDD 21) — mesmos 8 finais 86781025.
+            const id = await whatsappIdentityService.identifySender('5521986781025@c.us');
+            expect(id.kind).not.toBe('employee');
+        });
+
+        it('mesmo sufixo-8 mas DDI estrangeiro ⇒ NÃO é funcionário', async () => {
+            // 1 999 86781025 (11 díg começando por 1, não-BR) — mesmos 8 finais que o dono.
+            const id = await whatsappIdentityService.identifySender('19998678 1025'.replace(/\s/g, '') + '@c.us');
+            expect(id.kind).not.toBe('employee');
+        });
+
+        it('spoof com mesmo sufixo NÃO herda a identidade do cache do número verdadeiro', async () => {
+            // 1º: número verdadeiro do dono ⇒ employee (cacheado pelo número COMPLETO)
+            const real = await whatsappIdentityService.identifySender('5511986781025@c.us');
+            expect(real.kind).toBe('employee');
+            // 2º: spoof com o mesmo sufixo-8 (DDD 21) NÃO pode cair no cache do verdadeiro
+            const spoof = await whatsappIdentityService.identifySender('5521986781025@c.us');
+            expect(spoof.kind).not.toBe('employee');
+        });
+
+        it('número completo com + e espaços normaliza e eleva (matchStrength full)', async () => {
+            const id = await whatsappIdentityService.identifySender('5511986781025@c.us');
+            expect(id).toMatchObject({ kind: 'employee', userId: '7', matchStrength: 'full' });
+        });
     });
 });
