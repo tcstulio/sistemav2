@@ -91,8 +91,8 @@ const mockPermissions = vi.hoisted(() => ({
 }));
 vi.mock('../../services/userPermissionsService', () => ({ userPermissionsService: mockPermissions }));
 
-import { botService } from '../../services/botService';
-import { getToolContext } from '../../services/agentTools';
+import { botService, getWhatsAppBotToolsPrompt, validateWhatsAppBotToolsPrompt } from '../../services/botService';
+import { getToolContext, DEV_TOOLS, getToolsPrompt } from '../../services/agentTools';
 import { messageService } from '../../services/legacy/messageService';
 import { aiService } from '../../services/aiService';
 import { storeService } from '../../services/storeService';
@@ -834,5 +834,182 @@ describe('BotService', () => {
 
             await expect(botService.processMessage(createMessage({ body: 'Hello' }))).resolves.toBeUndefined();
         });
+
+        // #1501 — canal WhatsApp NUNCA é admin. O bot atende Comercial/Financeiro/Produtor, então
+        // mesmo que o remetente tenha cargo admin no ERP, no WhatsApp ele é tratado como usuário
+        // de negócio. Cobre três eixos:
+        //   (a) getWhatsAppBotToolsPrompt() exportado não contém nenhuma das 13 DEV_TOOLS — se o
+        //       filtro #1498 regredir, o módulo joga throw no boot (já testado indiretamente: a
+        //       mera importação de botService.ts passaria a falhar).
+        //   (b) O ToolContext efetivo dentro do generateReply tem isAdmin !== true em TODOS os
+        //       caminhos: unknown default, customer, employee-com-elevação, employee-sem-elevação,
+        //       grupo.
+        //   (c) O default toolCtx do bloco principal tem isAdmin explicitamente false (não undefined
+        //       silencioso) — defesa em profundidade contra alguém esquecer o campo.
+        describe('#1501: botService sempre passa isAdmin: false (canal WhatsApp nunca é admin)', () => {
+            let capturedCtx: any;
+
+            const captureCtxFromReply = () => {
+                capturedCtx = null;
+                (schedulerService.getActiveFlow as any).mockReturnValue(null);
+                (schedulerService.checkConfirmation as any).mockReturnValue(null);
+                (schedulerService.checkFlowTrigger as any).mockReturnValue(null);
+                (messageService.getMessages as any).mockResolvedValue([]);
+                (aiService.generateReply as any).mockImplementation(async () => {
+                    capturedCtx = getToolContext();
+                    return 'Reply';
+                });
+                (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+                (sessionService.sendTyping as any).mockResolvedValue(undefined);
+            };
+
+            it('getWhatsAppBotToolsPrompt() NÃO contém nenhuma das 13 DEV_TOOLS (filtro #1498 ok)', () => {
+                for (const devTool of DEV_TOOLS) {
+                    expect(getWhatsAppBotToolsPrompt()).not.toContain(devTool);
+                }
+            });
+
+            // (c) Chain-of-trust: o prompt EXPORTADO pelo botService TEM que ser idêntico ao
+            //     que aiService.generateReply resolveria via getToolsPrompt({isAdmin:false}).
+            //     Como aiService.ts:359 chama `getToolsPrompt({ isAdmin: getToolContext().isAdmin
+            //     === true })` e o botService passa toolCtx com isAdmin:false, o que a IA
+            //     vê é literalmente `getToolsPrompt({isAdmin: false})` — equivalência abaixo
+            //     PROVA o caminho sem precisar mockar aiService. Defesa contra mudanças
+            //     silenciosas em aiService.
+            it('chain-of-trust: getWhatsAppBotToolsPrompt() === getToolsPrompt({isAdmin: false})', () => {
+                expect(getWhatsAppBotToolsPrompt()).toBe(getToolsPrompt({ isAdmin: false }));
+            });
+
+            // (d) Self-check é idempotente em runtime (cache em `_whatsappBotToolsPrompt` +
+            //     flag `_whatsappBotToolsPromptValidated`). Chamadas repetidas não re-pintam
+            //     o cache nem rebuscam as DEV_TOOLS — call site em processMessage pode rodar
+            //     toda mensagem sem custo.
+            it('validateWhatsAppBotToolsPrompt() é idempotente (chamadas repetidas não re-checam DEV_TOOLS)', () => {
+                expect(() => validateWhatsAppBotToolsPrompt()).not.toThrow();
+                expect(() => validateWhatsAppBotToolsPrompt()).not.toThrow();
+            });
+
+            it('getWhatsAppBotToolsPrompt() continua listando ferramentas de negócio (search, list_invoices, prepare_*)', () => {
+                expect(getWhatsAppBotToolsPrompt()).toContain('search(query');
+                expect(getWhatsAppBotToolsPrompt()).toContain('list_invoices');
+                expect(getWhatsAppBotToolsPrompt()).toContain('prepare_create_proposal');
+                expect(getWhatsAppBotToolsPrompt()).toContain('validate_invoice');
+                expect(getWhatsAppBotToolsPrompt()).toContain('notify_person');
+            });
+
+            it('sender=unknown 1:1: isAdmin NUNCA é true (default readOnly)', async () => {
+                captureCtxFromReply();
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'unknown' });
+
+                await botService.processMessage(createMessage({ body: 'Olá' }));
+
+                expect(capturedCtx).toBeDefined();
+                expect(capturedCtx.isAdmin).not.toBe(true);
+            });
+
+            it('sender=customer identificado: isAdmin NUNCA é true (permanece readOnly)', async () => {
+                captureCtxFromReply();
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'customer', thirdpartyId: 'c1', name: 'John' });
+                (dolibarrService.getCustomerContext as any).mockResolvedValue('Customer context');
+
+                await botService.processMessage(createMessage({ body: 'Olá' }));
+
+                expect(capturedCtx.isAdmin).not.toBe(true);
+                expect(capturedCtx.readOnly).toBe(true);
+            });
+
+            it('sender=employee COM elevação de perfil: isAdmin explicitamente false (não undefined)', async () => {
+                captureCtxFromReply();
+                mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(true);
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva', matchStrength: 'full' });
+                mockPermissions.getProfile.mockResolvedValue({ role: 'admin', agent: { canCreate: ['*'] } });
+
+                await botService.processMessage(createMessage({ body: 'Prepara proposta' }));
+
+                // Garante que mesmo funcionário com perfil admin no ERP NÃO vira admin no canal
+                // WhatsApp. isAdmin deve ser explicitamente false (nunca true, nunca silenciosamente
+                // undefined que poderia virar true num refactor futuro).
+                expect(capturedCtx.isAdmin).toBe(false);
+                expect(capturedCtx.readOnly).toBe(false);
+                expect(capturedCtx.userId).toBe('7');
+            });
+
+            it('sender=employee SEM elevação (kill-switch off): isAdmin continua false/undefined', async () => {
+                captureCtxFromReply();
+                mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(false);
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva', matchStrength: 'full' });
+
+                await botService.processMessage(createMessage({ body: 'Olá' }));
+
+                expect(capturedCtx.isAdmin).not.toBe(true);
+                expect(capturedCtx.readOnly).toBe(true);
+                expect(capturedCtx.userId).toBeUndefined();
+            });
+
+            it('grupo (@g.us): isAdmin NUNCA é true (sender fica como unknown)', async () => {
+                captureCtxFromReply();
+                mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(true);
+                (storeService.getChatSettings as any).mockReturnValue({ groupSettings: { llmEnabled: true } });
+
+                await botService.processMessage(createMessage({ body: 'Olá', from: 'g1@g.us' }));
+
+                expect(mockIdentity.identifySender).not.toHaveBeenCalled();
+                expect(capturedCtx.isAdmin).not.toBe(true);
+            });
+        });
+    });
+});
+
+// #1501 — fail-fast self-check de produção. Isola o módulo agentTools via vi.doMock +
+// vi.resetModules (mesmo padrão usado em logger.test / centrovibeStoreService.test) para
+// simular uma REGRESSÃO do filtro não-admin de #1498 e confirmar que os helpers do
+// botService jogam throw ALTO com a mensagem identificável. Sem isto, a defesa em
+// profundidade só estaria provada pelos testes de filtragem do agentTools — o que não
+// cobre o caso "call-site em produção nunca disparou".
+describe('#1501: self-check fail-fast com agentTools mockado (regressão #1498)', () => {
+    it('getWhatsAppBotToolsPrompt() joga throw #1501 se getToolsPrompt({isAdmin:false}) vazar search_code', async () => {
+        vi.resetModules();
+        vi.doMock('../../services/agentTools', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('../../services/agentTools')>();
+            return {
+                ...actual,
+                getToolsPrompt: vi.fn(() => 'PROMPT COM search_code EMBUTIDO'),
+            };
+        });
+
+        const botServiceMod = await import('../../services/botService');
+        expect(() => botServiceMod.getWhatsAppBotToolsPrompt())
+            .toThrow(/#1501: WHATSAPP_BOT_TOOLS_PROMPT contém DEV_TOOL "search_code"/);
+
+        vi.doUnmock('../../services/agentTools');
+        vi.resetModules();
+    });
+
+    it('validateWhatsAppBotToolsPrompt() propaga o throw (caminho de produção via processMessage)', async () => {
+        vi.resetModules();
+        vi.doMock('../../services/agentTools', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('../../services/agentTools')>();
+            return {
+                ...actual,
+                getToolsPrompt: vi.fn(() => 'PROMPT COM git_recent EMBUTIDO'),
+            };
+        });
+
+        const botServiceMod = await import('../../services/botService');
+        expect(() => botServiceMod.validateWhatsAppBotToolsPrompt())
+            .toThrow(/#1501: WHATSAPP_BOT_TOOLS_PROMPT contém DEV_TOOL "git_recent"/);
+
+        vi.doUnmock('../../services/agentTools');
+        vi.resetModules();
+    });
+
+    it('validateWhatsAppBotToolsPrompt() é idempotente (1ª call popula cache+flag, 2ª+ call é no-op)', async () => {
+        vi.resetModules();
+        const botServiceMod = await import('../../services/botService');
+
+        expect(() => botServiceMod.validateWhatsAppBotToolsPrompt()).not.toThrow();
+        expect(() => botServiceMod.validateWhatsAppBotToolsPrompt()).not.toThrow();
+
+        vi.resetModules();
     });
 });
