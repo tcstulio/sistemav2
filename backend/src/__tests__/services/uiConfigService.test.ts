@@ -91,6 +91,24 @@ describe('uiConfigService', () => {
         expect(out.taskAutomation.minApproveScore).toBe(5); // 1 → piso 5
     });
 
+    it('#escalada-opus: defaults conservadores + clamps das travas de custo (nunca undefined)', () => {
+        const svc = new UiConfigService('ui.json');
+        // defaults fail-closed
+        expect(svc.get().taskAutomation).toMatchObject({
+            opusEscalationEnabled: false, maxOpusEscalationsPerDay: 2, maxOpusCostUsdPerDay: 5, coderEscalationModel: 'opus',
+        });
+        // clamps: custo 0-50, escaladas 0-10, model trim/cap; enabled só com true explícito
+        const out = svc.update({ taskAutomation: { opusEscalationEnabled: true, maxOpusEscalationsPerDay: 99, maxOpusCostUsdPerDay: 999, coderEscalationModel: '  sonnet  ' } } as any);
+        expect(out.taskAutomation.opusEscalationEnabled).toBe(true);
+        expect(out.taskAutomation.maxOpusEscalationsPerDay).toBe(10);   // 99 → teto 10
+        expect(out.taskAutomation.maxOpusCostUsdPerDay).toBe(50);       // 999 → teto 50
+        expect(out.taskAutomation.coderEscalationModel).toBe('sonnet'); // trim
+        // valores inválidos → default (NUNCA undefined/ilimitado no teto $)
+        const out2 = svc.update({ taskAutomation: { opusEscalationEnabled: 'yes', maxOpusCostUsdPerDay: 'lots' } } as any);
+        expect(out2.taskAutomation.opusEscalationEnabled).toBe(false);
+        expect(out2.taskAutomation.maxOpusCostUsdPerDay).toBe(5);
+    });
+
     // #1204 — kill-switches de automações de fundo (default true = nada muda).
     it('automationSwitches: defaults schedulerEnabled/alertCronEnabled = true', () => {
         const svc = new UiConfigService('ui.json');

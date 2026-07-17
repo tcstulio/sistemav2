@@ -95,6 +95,17 @@ export interface TaskAutomationConfig {
      * Code CLI com esse modelo PRIMEIRO (família diferente do coder = gate independente, evita
      * auto-julgamento), com FALLBACK pra cadeia do chat se o Claude falhar/estiver indisponível. */
     judgeModel: string;
+    /** Escalada do CODER para Opus quando o coder barato (opencode) empaca por QUALIDADE (juiz reprova
+     * após maxJudgeRounds). GASTA $ real do pool Claude — default OFF (fail-closed). Precisa também do
+     * env TASKRUNNER_OPUS_ESCALATION=1 (kill-switch de ops). #escalada-opus */
+    opusEscalationEnabled?: boolean;
+    /** Teto DIÁRIO de escaladas Opus (default 2, 0-10). Persistido — não reabre no restart. */
+    maxOpusEscalationsPerDay?: number;
+    /** Teto de CUSTO $ DIÁRIO das escaladas Opus + juiz Opus (default 5, 0-50). Trava DURA contra
+     * estouro de orçamento — o limite externo é em $, contar escaladas não protege. */
+    maxOpusCostUsdPerDay?: number;
+    /** Modelo usado quando o coder escala (default 'opus'). Passado a claudeCliService.runCode({model}). */
+    coderEscalationModel?: string;
 }
 
 export interface ActionGovernanceConfig {
@@ -335,7 +346,7 @@ const DEFAULTS: UiConfig = {
     customPages: [],
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
     taskNotificationsExternalEnabled: false,
-    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '' },
+    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '', opusEscalationEnabled: false, maxOpusEscalationsPerDay: 2, maxOpusCostUsdPerDay: 5, coderEscalationModel: 'opus' },
     actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [], businessActionsEnabled: true },
     automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
     featureSwitches: { dryRunMode: false, financialCommands: false, crmContextInjection: true },
@@ -516,6 +527,12 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
         dailyRoundBudget: dailyBudget,
         // Modelo do juiz: string livre (o Claude CLI valida o alias/ID); trim + cap defensivo. Vazio = cadeia do chat.
         judgeModel: typeof a.judgeModel === 'string' ? a.judgeModel.trim().slice(0, 60) : d.judgeModel,
+        // Escalada Opus (#escalada-opus): gasta $ real — defaults conservadores, NUNCA undefined (senão o
+        // teto $ ficaria ilimitado). Custo diário clampa 0..50, escaladas/dia 0..10.
+        opusEscalationEnabled: a.opusEscalationEnabled === true,
+        maxOpusEscalationsPerDay: typeof a.maxOpusEscalationsPerDay === 'number' ? Math.max(0, Math.min(10, Math.round(a.maxOpusEscalationsPerDay))) : (d.maxOpusEscalationsPerDay ?? 2),
+        maxOpusCostUsdPerDay: typeof a.maxOpusCostUsdPerDay === 'number' ? Math.max(0, Math.min(50, a.maxOpusCostUsdPerDay)) : (d.maxOpusCostUsdPerDay ?? 5),
+        coderEscalationModel: typeof a.coderEscalationModel === 'string' && a.coderEscalationModel.trim() ? a.coderEscalationModel.trim().slice(0, 60) : (d.coderEscalationModel ?? 'opus'),
     };
 }
 
