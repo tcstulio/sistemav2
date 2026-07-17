@@ -327,7 +327,10 @@ class BotService {
             // aqui: ação irreversível continua exigindo o deeplink /confirm-action logado no webapp
             // (o login é o 2º fator; adminBypassIrreversible nunca se aplica via WhatsApp).
             let toolCtx: Parameters<typeof runWithToolContext>[0] = { readOnly: true };
-            if (senderIdentity.kind === 'employee' && !isGroup && isWhatsappEmployeeElevationEnabled()) {
+            // #segurança — só ELEVA (perfil + escrita) com match do número COMPLETO (E.164). O
+            // matchStrength só existe como 'full' (matchEmployee já exige número inteiro), mas a
+            // checagem explícita é defesa em profundidade: um match fraco jamais concede perfil.
+            if (senderIdentity.kind === 'employee' && senderIdentity.matchStrength === 'full' && !isGroup && isWhatsappEmployeeElevationEnabled()) {
                 try {
                     const permissionProfile = await userPermissionsService.getProfile(senderIdentity.userId);
                     const permContext = await userPermissionsService.getProfileForContext(senderIdentity.userId);

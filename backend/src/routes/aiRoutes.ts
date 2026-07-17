@@ -30,8 +30,10 @@ router.post('/debug/execute-tool', requireDolibarrLogin, requireDolibarrAdmin, a
     const { tool, args } = req.body;
     if (!tool) return res.status(400).json({ error: 'Missing tool' });
     try {
-        const { executeTool } = require('../services/agentTools');
-        const result = await executeTool(tool, args || {});
+        const { executeTool, runWithToolContext } = require('../services/agentTools');
+        // Rota admin-only (requireDolibarrAdmin): roda sob contexto de admin explícito, senão o gate
+        // #1498 (DEV_TOOLS restritas a admin) negaria tools legítimas de diagnóstico do próprio admin.
+        const result = await runWithToolContext({ isAdmin: true }, () => executeTool(tool, args || {}));
         res.json({ tool, args, result: result.substring(0, 2000) });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
