@@ -94,17 +94,19 @@ const mockRunWithToolContext = vi.hoisted(() => vi.fn((ctx: any, fn: () => Promi
 // #1500: hoist o mock de executeTool — debug routes precisam ver ctx.isAdmin correto.
 const mockExecuteTool = vi.hoisted(() => vi.fn(() => Promise.resolve('{}')));
 
-// #1500: mock determinístico de `pdf-parse` para a rota /api/analyze/pdf sem introduzir
-// refactor fora de escopo na produção (que continua `require('pdf-parse')`). O factory
-// cria a função INLINE: se referenciássemos uma var de módulo, `vi.mock` (hoisted)
-// capturaria ela em TDZ e `require('pdf-parse')` retornaria undefined. CJS default
-// = módulo exporta a função chamável direta + `.default = fn` para tolerar troca futura
-// para `await import()`.
-vi.mock('pdf-parse', () => {
-    const fn = vi.fn(async (_buf: any) => ({ text: 'conteúdo mock do PDF para teste #1500' }));
-    (fn as any).default = fn;
-    return fn;
-});
+// #1500: mock determinístico de `pdf-parse` para a rota /api/analyze/pdf. O pacote
+// instalado é v2 (classe PDFParse com getText/destroy) e a rota o carrega via
+// `await import()` — dynamic import passa pelo grafo de módulos do vitest, então o
+// vi.mock é aplicado (require() dentro do handler NÃO seria interceptado).
+vi.mock('pdf-parse', () => ({
+    PDFParse: class {
+        constructor(_opts: any) { /* data ignorado no mock */ }
+        async getText() {
+            return { text: 'conteúdo mock do PDF para teste #1500' };
+        }
+        async destroy() { /* no-op */ }
+    },
+}));
 
 vi.mock('../../services/agentActivityService', () => ({
     agentActivityService: {

@@ -503,9 +503,18 @@ router.post('/analyze/pdf', async (req, res) => {
     try {
         const { pdf, question } = AnalyzePdfSchema.parse(req.body);
         const pdfBuffer = Buffer.from(pdf, 'base64');
-        const pdfParse = require('pdf-parse');
-        const data = await pdfParse(pdfBuffer);
-        const text = data.text.substring(0, 15000);
+        // pdf-parse instalado é v2 (API de classe; a chamada v1 `pdfParse(buffer)` quebra em
+        // runtime). Import dinâmico mantém o carregamento lazy da dep pesada e, diferente de
+        // require() dentro do handler, é interceptável por vi.mock nos testes.
+        const { PDFParse } = await import('pdf-parse');
+        const parser = new PDFParse({ data: pdfBuffer });
+        let text: string;
+        try {
+            const data = await parser.getText();
+            text = data.text.substring(0, 15000);
+        } finally {
+            await parser.destroy().catch(() => { /* liberação best-effort */ });
+        }
 
         const prompt = `Analise o conteúdo deste documento PDF e responda à pergunta do usuário.
 
