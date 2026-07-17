@@ -83,6 +83,12 @@ const UpdateSchema = z.object({
         // 60 fica no service (sanitizeTaskAutomation → .slice(0, 60)), que TRUNCA em vez
         // de rejeitar (AC#3: '>60 chars → sanitize corta pra 60 sem quebrar a validação').
         judgeModel: z.string().optional(),
+        // #escalada-opus (PR #1497): sem listar aqui, o Zod estripa e o save do editor reseta p/ os
+        // defaults (opusEscalationEnabled=false). Faixas/clamps ficam no sanitizeTaskAutomation.
+        opusEscalationEnabled: z.boolean().optional(),
+        maxOpusEscalationsPerDay: z.number().optional(),
+        maxOpusCostUsdPerDay: z.number().optional(),
+        coderEscalationModel: z.string().optional(),
     }).optional(),
     // #1207: governança de ações irreversíveis — só valida forma/tipos aqui; o sanitize real
     // (clamp de threshold, filtragem de allowlist por dígitos, etc.) fica no service.
