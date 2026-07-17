@@ -118,6 +118,31 @@ export function getToolContext(): ToolContext {
 }
 
 /**
+ * #1493: type_codes REAIS do dicionário de agenda CoolGroove. Os baunilha do Dolibarr
+ * (AC_RDV / AC_TEL / AC_EMAIL / AC_OTH) NÃO existem na base (0 eventos AC_RDV foram criados
+ * quando o prompt instruía o LLM a usá-los como default) — substituí-los pelos códigos REAIS
+ * abaixo faz o agente criar o evento com o tipo correto.
+ *
+ * Cada entrada é `[code, semântica_pt_br]`. A semântica vira texto no prompt via
+ * `${COOLGROOVE_EVENT_TYPE_CODES_PROSE}` — fonte única, renderizada abaixo
+ * para que o LLM veja "ta_vt (visita técnica), …, montagem_agenda (montagem)".
+ */
+export const COOLGROOVE_EVENT_TYPE_CODES: ReadonlyArray<readonly [string, string]> = [
+    ['ta_vt', 'visita técnica'],
+    ['ta_duvidas', 'prospecto / dúvidas'],
+    ['Contratado', 'evento confirmado, aberto ao público'],
+    ['Contratado_externa', 'evento externo — equipe vai ao local'],
+    ['Contratado_fechadoaopublico', 'evento fechado'],
+    ['agenda_ensaios', 'ensaio'],
+    ['montagem_agenda', 'montagem'],
+];
+
+/** Prose do dicionário para dentro do prompt — `code (semantica), code (semantica), …`. */
+const COOLGROOVE_EVENT_TYPE_CODES_PROSE = COOLGROOVE_EVENT_TYPE_CODES
+    .map(([code, sem]) => `${code} (${sem})`)
+    .join(', ');
+
+/**
  * Prompt-base com TODAS as ferramentas (inclusive as 13 DEV_TOOLS). Identical byte-a-byte ao
  * `TOOLS_PROMPT` antigo — usado como fonte tanto de `getToolsPrompt({ isAdmin: true })` quanto
  * do filtro para não-admin (#1498).
@@ -186,8 +211,8 @@ const TOOLS_PROMPT_FULL = `
         42b. prepare_create_delegation(label, project_id, fk_user_assign, date_end?, criterio?, description?) - Cria uma DELEGAÇÃO: tarefa + responsável + critério de pronto, pedindo o ACEITE do responsável. Use quando alguém PEDE algo a outra pessoa ("peça pro fulano entregar X até sexta"). project_id e fk_user_assign obrigatórios (ache com list_projects/list_users). date_end (prazo) em YYYY-MM-DD. criterio = como saber que terminou. O solicitante é quem confirmar.
         43. prepare_create_category(label, type?, description?) - Rascunho de nova categoria (type: 'product' | 'customer' | 'supplier').
         44. prepare_edit_category(id, label?, type?, description?) - Prepara EDIÇÃO de uma categoria. Ache o id antes com list_categories.
-        45. prepare_create_event(label, date_start, date_end?, type_code?, description?) - Rascunho de evento na agenda. date_start/date_end no formato "YYYY-MM-DDTHH:mm". type_code: AC_RDV (reunião), AC_TEL (ligação), AC_EMAIL, AC_OTH.
-        46. prepare_edit_event(id, label?, date_start?, date_end?, description?, percentage?) - Prepara EDIÇÃO de um evento. Ache o id antes com list_events. date_start/date_end no formato "YYYY-MM-DDTHH:mm". percentage: 0-100 (progresso).
+        45. prepare_create_event(label, date_start, date_end?, type_code?, description?) - Rascunho de evento na agenda. date_start/date_end no formato "YYYY-MM-DDTHH:mm". type_code (códigos REAIS do dicionário de agenda CoolGroove — NÃO use os baunilha do Dolibarr AC_RDV/AC_TEL/AC_EMAIL/AC_OTH, eles não existem na base): ${COOLGROOVE_EVENT_TYPE_CODES_PROSE}.
+        46. prepare_edit_event(id, label?, date_start?, date_end?, description?, percentage?) - Prepara EDIÇÃO de um evento. Ache o id antes com list_events. date_start/date_end no formato "YYYY-MM-DDTHH:mm". percentage: 0-100 (progresso). type_code NÃO é editável aqui (defina no criar); se o tipo estiver errado, exclua e recrie.
         47. prepare_create_intervention(socid, date?, description?, project_id?) - Rascunho de intervenção (serviço de campo). socid = id do cliente (ache com search_customer). date em YYYY-MM-DD.
         48. prepare_create_job(label, qty?, description?) - Rascunho de nova vaga de emprego (label = cargo; qty = quantidade).
         49. prepare_edit_job(id, label?, qty?, description?) - Prepara EDIÇÃO de uma vaga. Ache o id antes com list_job_positions.
