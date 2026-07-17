@@ -336,7 +336,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                     </div>
                 ) : (
                     <div className="max-w-4xl mx-auto w-full space-y-2">
-                        {messages.map((msg) => (
+                        {[...messages].sort((a, b) => Number(a.timestamp) - Number(b.timestamp)).map((msg) => (
                             <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-start' : 'justify-end'}`}>
                                 <div className={`max-w-[85%] md:max-w-[70%] rounded-lg p-2 shadow-sm relative ${msg.sender === 'user'
                                     ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-none'

@@ -2,13 +2,14 @@ import { Router } from 'express';
 import { MessageMedia } from 'whatsapp-web.js';
 import { sessionService } from '../services/legacy/sessionService';
 import { messageService } from '../services/legacy/messageService';
+import { channelRouter } from '../services/channelRouter';
+import { moltbotGateway } from '../services/moltbotGateway';
 import { storeService } from '../services/storeService';
 import { socketService } from '../services/socketService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
 import { createLogger } from '../utils/logger';
-import { channelRouter } from '../services/channelRouter';
 import { FEATURES } from '../config/features';
 
 const log = createLogger('WhatsApp');
@@ -38,7 +39,7 @@ router.use(requireDolibarrLogin);
 
 // Helper to extract session ID
 const getSessionId = (req: any) => {
-    return req.params.sessionId || req.query.sessionId || req.body.sessionId || DEFAULT_SESSION;
+    return req.params.sessionId || req.query.sessionId || req.body.sessionId || channelRouter.getDefaultSessionId();
 };
 
 // List all sessions
@@ -358,7 +359,15 @@ router.post('/assign', async (req, res) => {
 router.get('/conversations', async (req, res) => {
     const sessionId = getSessionId(req);
     try {
-        const chats = await messageService.getChats(sessionId);
+        let chats = [];
+        const provider = channelRouter.getWhatsAppProvider();
+
+        if (provider === 'moltbot') {
+            if (!moltbotGateway) throw new Error('Moltbot gateway not initialized');
+            chats = await moltbotGateway.getChats(sessionId);
+        } else {
+            chats = await messageService.getChats(sessionId);
+        }
 
         // Inject Assignment Data from Store
         const enrichedChats = chats.map((chat: any) => {
@@ -388,7 +397,12 @@ router.get('/messages/:chatId', async (req, res) => {
     try {
         const { chatId } = req.params;
         const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+        const provider = channelRouter.getWhatsAppProvider();
+        if (provider === 'moltbot') {
+            throw new Error('getMessages não implementado no provider moltbot');
+        }
         const messages = await messageService.getMessages(sessionId, chatId, limit);
+
         res.json(messages);
     } catch (error: any) {
         log.error('Error fetching messages', { chatId: req.params.chatId, error: error.message, stack: error.stack });

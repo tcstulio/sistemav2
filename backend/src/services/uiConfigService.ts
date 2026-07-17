@@ -135,6 +135,7 @@ export interface FeatureSwitchesConfig {
     dryRunMode: boolean;          // impede envio real de mensagens (anti-spam de incidente)
     financialCommands: boolean;   // habilita /pagar e /pix (movimentam dinheiro real)
     crmContextInjection: boolean; // injeta dados do cliente no LLM (privacidade)
+    whatsappEmployeeElevation: boolean; // funcionário identificado por fone ganha o próprio perfil no bot
 }
 
 // ---- Política de notificações (#1293): cadência de cobrança, quiet-hours por canal e horizontes
@@ -349,7 +350,7 @@ const DEFAULTS: UiConfig = {
     taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '', opusEscalationEnabled: false, maxOpusEscalationsPerDay: 2, maxOpusCostUsdPerDay: 5, coderEscalationModel: 'opus' },
     actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [], businessActionsEnabled: true },
     automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
-    featureSwitches: { dryRunMode: false, financialCommands: false, crmContextInjection: true },
+    featureSwitches: { dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false },
     notificationPolicy: {
         cobrancaCadence: { ...DEFAULT_COBRANCA_CADENCE },
         quietHours: defaultQuietHours(),
@@ -591,6 +592,7 @@ export function sanitizeFeatureSwitches(v: unknown): FeatureSwitchesConfig {
         dryRunMode: typeof a.dryRunMode === 'boolean' ? a.dryRunMode : d.dryRunMode,
         financialCommands: typeof a.financialCommands === 'boolean' ? a.financialCommands : d.financialCommands,
         crmContextInjection: typeof a.crmContextInjection === 'boolean' ? a.crmContextInjection : d.crmContextInjection,
+        whatsappEmployeeElevation: typeof a.whatsappEmployeeElevation === 'boolean' ? a.whatsappEmployeeElevation : d.whatsappEmployeeElevation,
     };
 }
 

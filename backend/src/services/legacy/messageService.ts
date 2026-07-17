@@ -47,7 +47,7 @@ export class MessageService {
         const media = new MessageMedia(mimetype, data, filename);
         const msg = await client.sendMessage(this.formatChatId(chatId), media, { caption });
 
-        return { id: msg.id._serialized };
+        return { id: msg.id._serialized || (msg.id as any).$1 };
     }
 
     async sendVoice(sessionId: string, chatId: string, fileData: string) {
@@ -63,7 +63,7 @@ export class MessageService {
         const media = new MessageMedia('audio/ogg; codecs=opus', convertedBase64, 'voice.ogg');
         const msg = await client.sendMessage(this.formatChatId(chatId), media, { sendAudioAsVoice: true });
 
-        return { id: msg.id._serialized, timestamp: msg.timestamp };
+        return { id: msg.id._serialized || (msg.id as any).$1, timestamp: msg.timestamp };
     }
 
     /**
@@ -89,15 +89,35 @@ export class MessageService {
                     if (attempt > 0) {
                         log.info(`[${sessionId}] getChats: store wwebjs carregou após ${attempt} retry(s) (${chats.length} chats).`);
                     }
-                    return chats.map(c => ({
-                        id: c.id._serialized,
-                        name: c.name,
-                        unreadCount: c.unreadCount,
-                        timestamp: c.timestamp,
-                        isGroup: c.isGroup,
-                        lastMessage: (c as any).lastMessage ? (c as any).lastMessage.body : '',
-                        accountId: sessionId
+                    const formattedChats = await Promise.all(chats.map(async c => {
+                        let id = c.id._serialized || (c.id as any).$1;
+                        let phoneNumber = '';
+                        
+                        if (id.includes('@lid')) {
+                            try {
+                                const contact = await client.getContactById(id).catch(() => null);
+                                if (contact && contact.number) {
+                                    phoneNumber = contact.number;
+                                } else if (contact && contact.isMe && client.info) {
+                                    phoneNumber = client.info.me?.user || client.info.wid.user;
+                                } else if (client.info && id === client.info.wid._serialized) {
+                                    phoneNumber = client.info.me?.user || client.info.wid.user;
+                                }
+                            } catch (err) {}
+                        }
+
+                        return {
+                            id,
+                            phoneNumber,
+                            name: c.name,
+                            unreadCount: c.unreadCount,
+                            timestamp: Math.min(c.timestamp, Math.floor(Date.now() / 1000)),
+                            isGroup: c.isGroup,
+                            lastMessage: (c as any).lastMessage ? (c as any).lastMessage.body : '',
+                            accountId: sessionId
+                        };
                     }));
+                    return formattedChats;
                 }
                 // status=WORKING mas store vazio → race do #1480. Aguarda e tenta de novo,
                 // exceto na última iteração (devolve [] honestamente = "sessão conectada, sem chats").
@@ -145,11 +165,11 @@ export class MessageService {
 
         const messages = await chat.fetchMessages({ limit });
 
-        return await Promise.all(messages.map(async (m: any) => ({
-            id: m.id._serialized,
+        const mappedMessages = await Promise.all(messages.map(async (m: any) => ({
+            id: m.id._serialized || (m.id as any).$1,
             body: m.body,
             fromMe: m.fromMe,
-            timestamp: m.timestamp,
+            timestamp: Math.min(m.timestamp, Math.floor(Date.now() / 1000)),
             hasMedia: m.hasMedia,
             ack: m.ack,
             sender: m.fromMe ? 'agent' : 'user',
@@ -158,6 +178,8 @@ export class MessageService {
             type: m.type,
             mimetype: m._data?.mimetype
         })));
+        
+        return mappedMessages.sort((a, b) => a.timestamp - b.timestamp);
     }
 
     private async resolveSenderName(client: any, msg: any): Promise<string> {

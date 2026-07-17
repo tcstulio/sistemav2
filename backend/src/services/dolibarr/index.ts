@@ -116,6 +116,7 @@ export class DolibarrService extends DolibarrServiceBase {
     addUserRight = (userId: string, rid: string) => this.hr.addUserRight(userId, rid);
     removeUserRight = (userId: string, rid: string) => this.hr.removeUserRight(userId, rid);
     listUsers = (search?: string) => this.hr.listUsers(search);
+    listAllUsers = (limit?: number) => this.hr.listAllUsers(limit);
     findUserByLoginOrEmail = (loginOrEmail: string) => this.hr.findUserByLoginOrEmail(loginOrEmail);
     listExpenseReports = (status?: string) => this.hr.listExpenseReports(status);
     listLeaveRequests = (status?: string) => this.hr.listLeaveRequests(status);
