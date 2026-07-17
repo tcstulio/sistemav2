@@ -94,23 +94,16 @@ const mockRunWithToolContext = vi.hoisted(() => vi.fn((ctx: any, fn: () => Promi
 // #1500: hoist o mock de executeTool — debug routes precisam ver ctx.isAdmin correto.
 const mockExecuteTool = vi.hoisted(() => vi.fn(() => Promise.resolve('{}')));
 
-// Mock do `pdf-parse` (CommonJS) usado pela rota /api/analyze/pdf.
-// O handler faz `const pdfParse = require('pdf-parse'); await pdfParse(buffer)` —
-// ou seja, o módulo exportado TEM que ser chamável diretamente. Para cobrir outros
-// caminhos (default import ESM, namespace v2), o módulo expõe aliases (`default`,
-// `pdfParse`) que apontam para a mesma função. Assim o mesmo mock serve para
-// qualquer variante de import/require que o código possa usar.
+// #1500: mock do `pdf-parse` para a rota /api/analyze/pdf. O handler faz
+// `const pdfParse = require('pdf-parse'); await pdfParse(buffer)` (CJS), então o módulo
+// exportado precisa ser diretamente chamável. NÃO setamos `__esModule: true` — vitest
+// preservaria como namespace ESM e o `require` retornaria o objeto, quebrando `pdfParse(buf)`.
+// Adicionar variantes como `'pdf-parse/index.js'` falha com pdf-parse v2 (sem entry
+// `./index.js` no `exports` field do package.json). Default exposto cobre futuras trocas
+// para `await import()`.
 const mockPdfParse = vi.fn(async (_buf: any) => ({ text: 'conteúdo mock do PDF para teste #1500' }));
-const pdfParseModule: any = Object.assign(mockPdfParse, {
-    default: mockPdfParse,
-    pdfParse: mockPdfParse,
-    __esModule: true,
-});
-vi.mock('pdf-parse', () => pdfParseModule);
-// Vitest v4 só intercepta o module-id literal. `require('pdf-parse')` no
-// handler é resolvido pelo node-resolver; mockamos a entrada CJS direta
-// para garantir que o require seja capturado.
-vi.mock('pdf-parse/index.js', () => pdfParseModule);
+(mockPdfParse as any).default = mockPdfParse;
+vi.mock('pdf-parse', () => mockPdfParse);
 
 vi.mock('../../services/agentActivityService', () => ({
     agentActivityService: {
