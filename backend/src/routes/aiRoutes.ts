@@ -503,17 +503,8 @@ router.post('/analyze/pdf', async (req, res) => {
     try {
         const { pdf, question } = AnalyzePdfSchema.parse(req.body);
         const pdfBuffer = Buffer.from(pdf, 'base64');
-        // pdf-parse: o pacote instalado (`pdfjs` v2.x) exporta um namespace de classes
-        // (`PDFParse`), não uma função chamável. A interface legada v1.x (default
-        // exportava função) era o que a chamada `pdfParse(buffer)` esperava. Para
-        // manter compatibilidade com qualquer das duas versões instaladas (produção
-        // varia conforme lockfile), aceitamos ambos os formatos.
-        const pdfParseMod: any = await import('pdf-parse');
-        const pdfParseFn: (buf: Buffer) => Promise<{ text: string }> =
-            typeof pdfParseMod === 'function'
-                ? pdfParseMod
-                : (pdfParseMod?.default || pdfParseMod?.pdfParse);
-        const data = await pdfParseFn(pdfBuffer);
+        const pdfParse = require('pdf-parse');
+        const data = await pdfParse(pdfBuffer);
         const text = data.text.substring(0, 15000);
 
         const prompt = `Analise o conteúdo deste documento PDF e responda à pergunta do usuário.
