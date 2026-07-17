@@ -189,7 +189,12 @@ export const AiService = {
             if (!d?.data) return null;
             return { kind: d.kind || 'unknown', data: d.data };
         } catch (error: any) {
-            handleAiError('Resolver rascunho', error);
+            // #1521 — surfa a mensagem REAL do backend (ex.: "Link inválido ou expirado. Peça ao agente
+            // para gerar um novo.") em vez do genérico "IA indisponível". O 404-de-link-antigo já é
+            // tratado pelo redirect de rota; aqui cobrimos o token expirado/inválido numa rota válida.
+            const msg = error?.response?.data?.error || 'Não foi possível abrir este link. Peça um novo ao agente.';
+            log.error(`Resolver rascunho: ${msg}`);
+            toast.error(msg);
             return null;
         }
     },
