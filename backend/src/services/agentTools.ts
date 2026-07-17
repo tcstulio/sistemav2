@@ -126,121 +126,121 @@ export const TOOLS_PROMPT = `
         34. extract_from_url(url: string) - Acessa um link e extrai o conteúdo da página.
 
         FERRAMENTAS DE AÇÃO (escrita com confirmação na tela; devolvem um LINK):
-        33. prepare_create_ticket(subject, message, type_code?, severity_code?, socid?) - Rascunho de ticket de suporte. Se souber o cliente, ache o id antes com search_customer e passe em socid.
-        34. prepare_edit_ticket(id, subject?, message?, severity_code?) - Prepara EDIÇÃO de um ticket. Ache o id antes com list_tickets. severity_code: 'LOW', 'NORMAL', 'HIGH', 'BLOCKING'.
-        35. prepare_create_customer(name, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, client?, array_options?) - Rascunho de novo cliente/prospect (client: '1'=cliente, '0' ou '2'=prospect; typent_id: '8'=PF, '5'=PJ; idprof1=CNPJ/CPF; array_options.options_assinante=responsável legal PJ).
-        36. prepare_edit_customer(id, name?, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, client?, array_options?) - Prepara EDIÇÃO de um cliente existente. Ache o id antes com search_customer e informe APENAS os campos a mudar.
-        37. prepare_create_project(title, ref?, socid?) - Rascunho de novo projeto. socid = id do cliente (ache com search_customer). ref = referência (ex.: PROJ-2025-001).
-        38. prepare_edit_project(id, title) - Prepara EDIÇÃO de um projeto (ex.: renomear). Ache o id antes com list_projects.
-        39. prepare_create_supplier(name, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, code_fournisseur?, array_options?) - Rascunho de novo fornecedor (typent_id: '8'=PF, '5'=PJ; idprof1=CNPJ/CPF; array_options.options_assinante=responsável legal PJ).
-        40. prepare_edit_supplier(id, name?, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, code_fournisseur?, array_options?) - Prepara EDIÇÃO de um fornecedor. Ache o id antes com list_suppliers.
-        41. prepare_create_task(label, project_id, description?, planned_workload?, date_start?, date_end?, fk_user_assign?) - Rascunho de tarefa num projeto. project_id obrigatório (ache com list_projects). planned_workload em HORAS; datas em YYYY-MM-DD. fk_user_assign = id do usuário responsável (ache com list_users).
-        42. prepare_edit_task(id, label?, description?, planned_workload?, date_start?, date_end?) - Prepara EDIÇÃO de uma tarefa. Ache o id antes com list_tasks. planned_workload em HORAS; datas em YYYY-MM-DD.
-        42b. prepare_create_delegation(label, project_id, fk_user_assign, date_end?, criterio?, description?) - Cria uma DELEGAÇÃO: tarefa + responsável + critério de pronto, pedindo o ACEITE do responsável. Use quando alguém PEDE algo a outra pessoa ("peça pro fulano entregar X até sexta"). project_id e fk_user_assign obrigatórios (ache com list_projects/list_users). date_end (prazo) em YYYY-MM-DD. criterio = como saber que terminou. O solicitante é quem confirmar.
-        43. prepare_create_category(label, type?, description?) - Rascunho de nova categoria (type: 'product' | 'customer' | 'supplier').
-        44. prepare_edit_category(id, label?, type?, description?) - Prepara EDIÇÃO de uma categoria. Ache o id antes com list_categories.
-        45. prepare_create_event(label, date_start, date_end?, type_code?, description?) - Rascunho de evento na agenda. date_start/date_end no formato "YYYY-MM-DDTHH:mm". type_code: AC_RDV (reunião), AC_TEL (ligação), AC_EMAIL, AC_OTH.
-        46. prepare_edit_event(id, label?, date_start?, date_end?, description?, percentage?) - Prepara EDIÇÃO de um evento. Ache o id antes com list_events. date_start/date_end no formato "YYYY-MM-DDTHH:mm". percentage: 0-100 (progresso).
-        47. prepare_create_intervention(socid, date?, description?, project_id?) - Rascunho de intervenção (serviço de campo). socid = id do cliente (ache com search_customer). date em YYYY-MM-DD.
-        48. prepare_create_job(label, qty?, description?) - Rascunho de nova vaga de emprego (label = cargo; qty = quantidade).
-        49. prepare_edit_job(id, label?, qty?, description?) - Prepara EDIÇÃO de uma vaga. Ache o id antes com list_job_positions.
-        50. prepare_create_leave(fk_user, date_debut, date_fin, type?, description?) - Rascunho de solicitação de licença/férias. fk_user = id do funcionário (ache com list_users). Datas em YYYY-MM-DD. type: 'Paid Vacation', 'Sick Leave', 'Unpaid', 'Other'.
-        51. prepare_edit_leave(id, date_debut?, date_fin?, type?, description?) - Prepara EDIÇÃO de uma licença/férias. Ache o id antes com list_leave_requests. Datas em YYYY-MM-DD. Não troca o funcionário (fk_user).
-        52. prepare_create_contact(firstname, lastname, socid, email?, phone_mobile?, poste?) - Rascunho de novo contato. socid = id do cliente (ache com search_customer).
-        53. prepare_edit_contact(id, firstname?, lastname?, email?, phone_mobile?, poste?) - Prepara EDIÇÃO de um contato. Ache o id antes com list_contacts.
-        54. prepare_create_candidate(firstname, lastname, email, phone?, fk_job_position?, note_public?) - Rascunho de novo candidato (RH/Recrutamento). fk_job_position = id da vaga (ache com list_job_positions); omita para candidato espontâneo.
-        55. prepare_edit_candidate(id, firstname?, lastname?, email?, phone?, fk_job_position?, note_public?) - Prepara EDIÇÃO de um candidato. Ache o id antes com list_candidates.
-        56. prepare_create_invoice(socid, date?, lines?) - Rascunho de fatura de venda. socid = id do cliente (ache com search_customer). date em YYYY-MM-DD. lines = array de itens [{fk_product?, desc, qty, subprice, remise_percent?}] — fk_product = id do produto (opcional; ache com list_products), desc = descrição, qty = quantidade, subprice = preço unitário, remise_percent = % de desconto.
-        57. prepare_create_proposal(socid, date?, project_id?, note_public?, lines?) - Rascunho de proposta comercial. socid = id do cliente. lines = mesma estrutura da fatura [{fk_product?, desc, qty, subprice, remise_percent?}].
-        58. prepare_create_supplier_invoice(socid, date?, lines?) - Rascunho de fatura de fornecedor. socid = id do fornecedor (ache com list_suppliers). lines = [{desc, qty, subprice, remise_percent?}] (sem produto).
-        59. prepare_create_supplier_proposal(socid, date?, project_id?, lines?) - Rascunho de solicitação de preço a fornecedor. socid = id do fornecedor. lines = [{fk_product?, desc, qty, subprice, remise_percent?}].
-        60. prepare_create_order(socid, date?, lines?) - Rascunho de pedido de venda. socid = id do cliente (ache com search_customer). lines = [{fk_product?, desc, qty, subprice}].
-        61. prepare_create_mo(product_to_produce_id, qty?, label?, project_id?, date_start?) - Rascunho de ordem de produção (MRP). product_to_produce_id = id do produto a produzir (ache com list_products). date_start em YYYY-MM-DD.
-        62. prepare_create_bom(product_id, qty?, label?, duration?) - Rascunho de lista de materiais (BOM). product_id = id do produto final (ache com list_products). duration em segundos.
-        63. prepare_edit_invoice(id, date?, lines?) - Prepara EDIÇÃO de uma fatura. Ache o id antes com list_invoices. date em YYYY-MM-DD. lines = itens a ACRESCENTAR [{fk_product?, desc, qty, subprice, remise_percent?}].
-        64. prepare_edit_proposal(id, date?, note_public?, project_id?, lines?) - Prepara EDIÇÃO de uma proposta. Ache o id antes com list_proposals. lines = itens a ACRESCENTAR.
-        65. prepare_edit_supplier_invoice(id, date?, lines?) - Prepara EDIÇÃO de uma fatura de fornecedor. lines = itens a ACRESCENTAR [{desc, qty, subprice, remise_percent?}].
-        66. prepare_edit_supplier_proposal(id, date?, project_id?, lines?) - Prepara EDIÇÃO de uma solicitação de preço. lines = itens a ACRESCENTAR.
-        67. prepare_create_product(ref, label, type?, price?, description?) - Rascunho de novo produto/serviço. ref = referência única; type: '0'=produto, '1'=serviço; price = preço unitário.
-        68. prepare_edit_product(id, ref?, label?, type?, price?, description?) - Prepara EDIÇÃO de um produto/serviço. Ache o id antes com list_products.
-        69. prepare_create_user(login, email, firstname?, lastname?, job?, supervisor_id?) - Rascunho de novo usuário do sistema. login e email obrigatórios. supervisor_id = id do gestor (ache com list_users).
-        70. prepare_edit_user(id, firstname?, lastname?, email?, job?, supervisor_id?) - Prepara EDIÇÃO de um usuário. Ache o id antes com list_users. Não troca o login.
-        71. prepare_create_group(name, note?) - Rascunho de novo grupo de usuários.
-        72. prepare_edit_group(id, name?, note?) - Prepara EDIÇÃO de um grupo. Ache o id antes com a lista de grupos.
-        73. prepare_create_contract(socid, date_contrat?, date_fin_validite?, note_public?) - Rascunho de novo contrato. socid = id do cliente. Datas em YYYY-MM-DD.
-        74. prepare_edit_contract(id, date_contrat?, date_fin_validite?, note_public?) - Prepara EDIÇÃO de um contrato. Ache o id antes com list_contracts. Datas em YYYY-MM-DD.
-        75. prepare_edit_intervention(id, description?, date?, project_id?) - Prepara EDIÇÃO de uma intervenção. Ache o id antes com list_interventions. date em YYYY-MM-DD.
-        76. prepare_create_expense(fk_user_author, date_debut, date_fin, total_ttc?, note_public?) - Rascunho de relatório de despesa. fk_user_author = id do funcionário (ache com list_users). Datas em YYYY-MM-DD. total_ttc = valor total.
-        77. prepare_edit_expense(id, date_debut?, date_fin?, total_ttc?, note_public?) - Prepara EDIÇÃO de um relatório de despesa. Ache o id antes com list_expense_reports. Não troca o funcionário.
-        78. prepare_edit_bom(id, label?, qty?, duration?) - Prepara EDIÇÃO de uma lista de materiais (BOM). Ache o id antes com list_boms. duration em segundos. Não troca o produto final.
-        79. prepare_edit_mo(id, label?, qty?) - Prepara EDIÇÃO de uma ordem de produção (MRP). Ache o id antes com list_manufacturing_orders. Não troca o produto a produzir.
-        80. prepare_edit_order(id, date?) - Prepara EDIÇÃO do cabeçalho de um pedido de venda. Ache o id antes com list_orders. date em YYYY-MM-DD. Não troca o cliente nem os itens (só o cabeçalho).
+        35. prepare_create_ticket(subject, message, type_code?, severity_code?, socid?) - Rascunho de ticket de suporte. Se souber o cliente, ache o id antes com search_customer e passe em socid.
+        36. prepare_edit_ticket(id, subject?, message?, severity_code?) - Prepara EDIÇÃO de um ticket. Ache o id antes com list_tickets. severity_code: 'LOW', 'NORMAL', 'HIGH', 'BLOCKING'.
+        37. prepare_create_customer(name, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, client?, array_options?) - Rascunho de novo cliente/prospect (client: '1'=cliente, '0' ou '2'=prospect; typent_id: '8'=PF, '5'=PJ; idprof1=CNPJ/CPF; array_options.options_assinante=responsável legal PJ).
+        38. prepare_edit_customer(id, name?, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, client?, array_options?) - Prepara EDIÇÃO de um cliente existente. Ache o id antes com search_customer e informe APENAS os campos a mudar.
+        39. prepare_create_project(title, ref?, socid?) - Rascunho de novo projeto. socid = id do cliente (ache com search_customer). ref = referência (ex.: PROJ-2025-001).
+        40. prepare_edit_project(id, title) - Prepara EDIÇÃO de um projeto (ex.: renomear). Ache o id antes com list_projects.
+        41. prepare_create_supplier(name, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, code_fournisseur?, array_options?) - Rascunho de novo fornecedor (typent_id: '8'=PF, '5'=PJ; idprof1=CNPJ/CPF; array_options.options_assinante=responsável legal PJ).
+        42. prepare_edit_supplier(id, name?, email?, phone?, phone_mobile?, fax?, url?, idprof1?, typent_id?, name_alias?, address?, town?, zip?, code_fournisseur?, array_options?) - Prepara EDIÇÃO de um fornecedor. Ache o id antes com list_suppliers.
+        43. prepare_create_task(label, project_id, description?, planned_workload?, date_start?, date_end?, fk_user_assign?) - Rascunho de tarefa num projeto. project_id obrigatório (ache com list_projects). planned_workload em HORAS; datas em YYYY-MM-DD. fk_user_assign = id do usuário responsável (ache com list_users).
+        44. prepare_edit_task(id, label?, description?, planned_workload?, date_start?, date_end?) - Prepara EDIÇÃO de uma tarefa. Ache o id antes com list_tasks. planned_workload em HORAS; datas em YYYY-MM-DD.
+        45. prepare_create_delegation(label, project_id, fk_user_assign, date_end?, criterio?, description?) - Cria uma DELEGAÇÃO: tarefa + responsável + critério de pronto, pedindo o ACEITE do responsável. Use quando alguém PEDE algo a outra pessoa ("peça pro fulano entregar X até sexta"). project_id e fk_user_assign obrigatórios (ache com list_projects/list_users). date_end (prazo) em YYYY-MM-DD. criterio = como saber que terminou. O solicitante é quem confirmar.
+        46. prepare_create_category(label, type?, description?) - Rascunho de nova categoria (type: 'product' | 'customer' | 'supplier').
+        47. prepare_edit_category(id, label?, type?, description?) - Prepara EDIÇÃO de uma categoria. Ache o id antes com list_categories.
+        48. prepare_create_event(label, date_start, date_end?, type_code?, description?) - Rascunho de evento na agenda. date_start/date_end no formato "YYYY-MM-DDTHH:mm". type_code: AC_RDV (reunião), AC_TEL (ligação), AC_EMAIL, AC_OTH.
+        49. prepare_edit_event(id, label?, date_start?, date_end?, description?, percentage?) - Prepara EDIÇÃO de um evento. Ache o id antes com list_events. date_start/date_end no formato "YYYY-MM-DDTHH:mm". percentage: 0-100 (progresso).
+        50. prepare_create_intervention(socid, date?, description?, project_id?) - Rascunho de intervenção (serviço de campo). socid = id do cliente (ache com search_customer). date em YYYY-MM-DD.
+        51. prepare_create_job(label, qty?, description?) - Rascunho de nova vaga de emprego (label = cargo; qty = quantidade).
+        52. prepare_edit_job(id, label?, qty?, description?) - Prepara EDIÇÃO de uma vaga. Ache o id antes com list_job_positions.
+        53. prepare_create_leave(fk_user, date_debut, date_fin, type?, description?) - Rascunho de solicitação de licença/férias. fk_user = id do funcionário (ache com list_users). Datas em YYYY-MM-DD. type: 'Paid Vacation', 'Sick Leave', 'Unpaid', 'Other'.
+        54. prepare_edit_leave(id, date_debut?, date_fin?, type?, description?) - Prepara EDIÇÃO de uma licença/férias. Ache o id antes com list_leave_requests. Datas em YYYY-MM-DD. Não troca o funcionário (fk_user).
+        55. prepare_create_contact(firstname, lastname, socid, email?, phone_mobile?, poste?) - Rascunho de novo contato. socid = id do cliente (ache com search_customer).
+        56. prepare_edit_contact(id, firstname?, lastname?, email?, phone_mobile?, poste?) - Prepara EDIÇÃO de um contato. Ache o id antes com list_contacts.
+        57. prepare_create_candidate(firstname, lastname, email, phone?, fk_job_position?, note_public?) - Rascunho de novo candidato (RH/Recrutamento). fk_job_position = id da vaga (ache com list_job_positions); omita para candidato espontâneo.
+        58. prepare_edit_candidate(id, firstname?, lastname?, email?, phone?, fk_job_position?, note_public?) - Prepara EDIÇÃO de um candidato. Ache o id antes com list_candidates.
+        59. prepare_create_invoice(socid, date?, lines?) - Rascunho de fatura de venda. socid = id do cliente (ache com search_customer). date em YYYY-MM-DD. lines = array de itens [{fk_product?, desc, qty, subprice, remise_percent?}] — fk_product = id do produto (opcional; ache com list_products), desc = descrição, qty = quantidade, subprice = preço unitário, remise_percent = % de desconto.
+        60. prepare_create_proposal(socid, date?, project_id?, note_public?, lines?) - Rascunho de proposta comercial. socid = id do cliente. lines = mesma estrutura da fatura [{fk_product?, desc, qty, subprice, remise_percent?}].
+        61. prepare_create_supplier_invoice(socid, date?, lines?) - Rascunho de fatura de fornecedor. socid = id do fornecedor (ache com list_suppliers). lines = [{desc, qty, subprice, remise_percent?}] (sem produto).
+        62. prepare_create_supplier_proposal(socid, date?, project_id?, lines?) - Rascunho de solicitação de preço a fornecedor. socid = id do fornecedor. lines = [{fk_product?, desc, qty, subprice, remise_percent?}].
+        63. prepare_create_order(socid, date?, lines?) - Rascunho de pedido de venda. socid = id do cliente (ache com search_customer). lines = [{fk_product?, desc, qty, subprice}].
+        64. prepare_create_mo(product_to_produce_id, qty?, label?, project_id?, date_start?) - Rascunho de ordem de produção (MRP). product_to_produce_id = id do produto a produzir (ache com list_products). date_start em YYYY-MM-DD.
+        65. prepare_create_bom(product_id, qty?, label?, duration?) - Rascunho de lista de materiais (BOM). product_id = id do produto final (ache com list_products). duration em segundos.
+        66. prepare_edit_invoice(id, date?, lines?) - Prepara EDIÇÃO de uma fatura. Ache o id antes com list_invoices. date em YYYY-MM-DD. lines = itens a ACRESCENTAR [{fk_product?, desc, qty, subprice, remise_percent?}].
+        67. prepare_edit_proposal(id, date?, note_public?, project_id?, lines?) - Prepara EDIÇÃO de uma proposta. Ache o id antes com list_proposals. lines = itens a ACRESCENTAR.
+        68. prepare_edit_supplier_invoice(id, date?, lines?) - Prepara EDIÇÃO de uma fatura de fornecedor. lines = itens a ACRESCENTAR [{desc, qty, subprice, remise_percent?}].
+        69. prepare_edit_supplier_proposal(id, date?, project_id?, lines?) - Prepara EDIÇÃO de uma solicitação de preço. lines = itens a ACRESCENTAR.
+        70. prepare_create_product(ref, label, type?, price?, description?) - Rascunho de novo produto/serviço. ref = referência única; type: '0'=produto, '1'=serviço; price = preço unitário.
+        71. prepare_edit_product(id, ref?, label?, type?, price?, description?) - Prepara EDIÇÃO de um produto/serviço. Ache o id antes com list_products.
+        72. prepare_create_user(login, email, firstname?, lastname?, job?, supervisor_id?) - Rascunho de novo usuário do sistema. login e email obrigatórios. supervisor_id = id do gestor (ache com list_users).
+        73. prepare_edit_user(id, firstname?, lastname?, email?, job?, supervisor_id?) - Prepara EDIÇÃO de um usuário. Ache o id antes com list_users. Não troca o login.
+        74. prepare_create_group(name, note?) - Rascunho de novo grupo de usuários.
+        75. prepare_edit_group(id, name?, note?) - Prepara EDIÇÃO de um grupo. Ache o id antes com a lista de grupos.
+        76. prepare_create_contract(socid, date_contrat?, date_fin_validite?, note_public?) - Rascunho de novo contrato. socid = id do cliente. Datas em YYYY-MM-DD.
+        77. prepare_edit_contract(id, date_contrat?, date_fin_validite?, note_public?) - Prepara EDIÇÃO de um contrato. Ache o id antes com list_contracts. Datas em YYYY-MM-DD.
+        78. prepare_edit_intervention(id, description?, date?, project_id?) - Prepara EDIÇÃO de uma intervenção. Ache o id antes com list_interventions. date em YYYY-MM-DD.
+        79. prepare_create_expense(fk_user_author, date_debut, date_fin, total_ttc?, note_public?) - Rascunho de relatório de despesa. fk_user_author = id do funcionário (ache com list_users). Datas em YYYY-MM-DD. total_ttc = valor total.
+        80. prepare_edit_expense(id, date_debut?, date_fin?, total_ttc?, note_public?) - Prepara EDIÇÃO de um relatório de despesa. Ache o id antes com list_expense_reports. Não troca o funcionário.
+        81. prepare_edit_bom(id, label?, qty?, duration?) - Prepara EDIÇÃO de uma lista de materiais (BOM). Ache o id antes com list_boms. duration em segundos. Não troca o produto final.
+        82. prepare_edit_mo(id, label?, qty?) - Prepara EDIÇÃO de uma ordem de produção (MRP). Ache o id antes com list_manufacturing_orders. Não troca o produto a produzir.
+        83. prepare_edit_order(id, date?) - Prepara EDIÇÃO do cabeçalho de um pedido de venda. Ache o id antes com list_orders. date em YYYY-MM-DD. Não troca o cliente nem os itens (só o cabeçalho).
 
         FERRAMENTA DE LOTE (criar VÁRIOS de uma vez, numa única tela de confirmação):
-        85. prepare_batch_create(entity, items) - Cria EM LOTE vários itens da MESMA entidade. entity = tipo ('customer','contact','product','project','supplier','task','ticket','invoice','proposal','order',...); items = array onde cada elemento tem os campos daquele tipo (os mesmos do prepare_create_<entity>), incluindo 'lines' (array) para entidades com itens (fatura/proposta/pedido/etc.). Devolve UM ÚNICO link de revisão em lote. Use quando o usuário pedir para criar vários registros de uma vez. Máx. 50 itens.
+        84. prepare_batch_create(entity, items) - Cria EM LOTE vários itens da MESMA entidade. entity = tipo ('customer','contact','product','project','supplier','task','ticket','invoice','proposal','order',...); items = array onde cada elemento tem os campos daquele tipo (os mesmos do prepare_create_<entity>), incluindo 'lines' (array) para entidades com itens (fatura/proposta/pedido/etc.). Devolve UM ÚNICO link de revisão em lote. Use quando o usuário pedir para criar vários registros de uma vez. Máx. 50 itens.
 
         FERRAMENTAS DE MÍDIA (geram um arquivo e devolvem um LINK válido por ~24h):
-        81. generate_speech(text, voice_id?) - Gera ÁUDIO (TTS) do texto e devolve o link do mp3. Use quando o usuário pedir áudio/voz/narração.
-        82. generate_image(prompt, aspect_ratio?) - Gera uma IMAGEM a partir da descrição e devolve o link. aspect_ratio ex.: '1:1', '16:9', '9:16'.
-        83. generate_video(prompt, duration?, resolution?) - Inicia a geração de um VÍDEO (assíncrono) e devolve um task_id. duration: 6 ou 10 (seg); resolution: '768P' ou '1080P'. O vídeo NÃO fica pronto na hora.
-        84. check_video(task_id) - Verifica o status do vídeo iniciado por generate_video. Quando pronto, devolve o link. Senão, informa que ainda está processando.
+        85. generate_speech(text, voice_id?) - Gera ÁUDIO (TTS) do texto e devolve o link do mp3. Use quando o usuário pedir áudio/voz/narração.
+        86. generate_image(prompt, aspect_ratio?) - Gera uma IMAGEM a partir da descrição e devolve o link. aspect_ratio ex.: '1:1', '16:9', '9:16'.
+        87. generate_video(prompt, duration?, resolution?) - Inicia a geração de um VÍDEO (assíncrono) e devolve um task_id. duration: 6 ou 10 (seg); resolution: '768P' ou '1080P'. O vídeo NÃO fica pronto na hora.
+        88. check_video(task_id) - Verifica o status do vídeo iniciado por generate_video. Quando pronto, devolve o link. Senão, informa que ainda está processando.
 
         FERRAMENTA DE PESQUISA NA WEB:
-        86. web_search(query) - Pesquisa na INTERNET e devolve os principais resultados (título, link e trecho). Use para informações externas ao sistema: cotações de moedas, notícias, dados de empresas/CNPJ, endereços, preços de mercado, fatos atuais. NÃO use para dados internos (clientes, faturas, tarefas — para esses use as ferramentas do sistema). Cite os links relevantes na resposta.
+        89. web_search(query) - Pesquisa na INTERNET e devolve os principais resultados (título, link e trecho). Use para informações externas ao sistema: cotações de moedas, notícias, dados de empresas/CNPJ, endereços, preços de mercado, fatos atuais. NÃO use para dados internos (clientes, faturas, tarefas — para esses use as ferramentas do sistema). Cite os links relevantes na resposta.
 
         REGRA PARA MÍDIA (generate_*): devolvem um LINK pronto. Inclua o link na resposta para o usuário ouvir/ver.
         REGRA PARA VÍDEO: generate_video devolve um task_id e demora minutos; avise o usuário e use check_video(task_id) depois (ex.: quando ele pedir o resultado) para obter o link.
 
         FERRAMENTAS DE VALIDAÇÃO (confirma entidades do Dolibarr — ação imediata, sem deeplink):
-        108. validate_invoice(invoice_id) - Valida (confirma) uma fatura de venda em rascunho. invoice_id = id da fatura (ache com list_invoices). Muda status de rascunho para validada.
-        109. validate_order(order_id) - Valida (confirma) um pedido de venda em rascunho. order_id = id do pedido (ache com list_orders). Muda status de rascunho para validado.
-        110. validate_proposal(proposal_id) - Valida (confirma) uma proposta comercial em rascunho. proposal_id = id da proposta (ache com list_proposals). Muda status de rascunho para validada.
-        110b. delete_proposal(proposal_id) - EXCLUI uma proposta que está em RASCUNHO (status 0). Só rascunhos podem ser excluídos; validadas são recusadas. Pede confirmação humana (irreversível). Use para limpar rascunhos de teste que você mesmo criou.
+        90. validate_invoice(invoice_id) - Valida (confirma) uma fatura de venda em rascunho. invoice_id = id da fatura (ache com list_invoices). Muda status de rascunho para validada.
+        91. validate_order(order_id) - Valida (confirma) um pedido de venda em rascunho. order_id = id do pedido (ache com list_orders). Muda status de rascunho para validado.
+        92. validate_proposal(proposal_id) - Valida (confirma) uma proposta comercial em rascunho. proposal_id = id da proposta (ache com list_proposals). Muda status de rascunho para validada.
+        93. delete_proposal(proposal_id) - EXCLUI uma proposta que está em RASCUNHO (status 0). Só rascunhos podem ser excluídos; validadas são recusadas. Pede confirmação humana (irreversível). Use para limpar rascunhos de teste que você mesmo criou.
 
         FERRAMENTAS DE DOCUMENTO (PDF):
-        111. get_document_pdf(entity_type, entity_id) - Obtém o PDF de um documento Dolibarr e retorna como base64. entity_type: 'invoice', 'order', 'proposal', 'supplier_order', 'supplier_invoice', 'intervention', 'contract', 'shipment'. entity_id = id do documento (ache com list_invoices, list_orders, etc.). Retorna o PDF em base64 para download ou envio.
+        94. get_document_pdf(entity_type, entity_id) - Obtém o PDF de um documento Dolibarr e retorna como base64. entity_type: 'invoice', 'order', 'proposal', 'supplier_order', 'supplier_invoice', 'intervention', 'contract', 'shipment'. entity_id = id do documento (ache com list_invoices, list_orders, etc.). Retorna o PDF em base64 para download ou envio.
 
         FERRAMENTAS FINANCEIRAS:
-        112. get_financial_summary() - Resumo financeiro geral: saldo bancário total, contas a receber, contas a pagar, propostas abertas, posição líquida. Use quando o usuário perguntar "como está a saúde financeira?", "qual o saldo?", "quanto devemos?", "quanto temos a receber?".
-        113. get_bank_balance(account_id?) - Saldo bancário. Sem account_id retorna todas as contas. Com account_id retorna apenas aquela conta. Use quando o usuário perguntar "qual o saldo do Inter?".
-        114. get_accounts_receivable(date_from?, date_to?) - Faturas a receber (não pagas). Opcionalmente filtra por período de vencimento (YYYY-MM-DD). Mostra valor, vencimento, se está atrasada, e cliente. Use quando o usuário perguntar "o que temos a receber?", "quais faturas estão atrasadas?".
-        115. get_accounts_payable(date_from?, date_to?) - Contas a pagar: faturas de fornecedor não pagas + despesas pendentes. Opcionalmente filtra por período. Use quando o usuário perguntar "o que temos a pagar?", "quais contas vencem essa semana?".
-        116. get_cash_flow_forecast(date_from, date_to) - Fluxo de caixa projetado semanal. Mostra receitas previstas - despesas previstas por semana, com acumulado. date_from e date_to obrigatórios (YYYY-MM-DD). Use quando o usuário perguntar "como fica o fluxo de caixa até o fim do mês?", "previsão de caixa".
+        95. get_financial_summary() - Resumo financeiro geral: saldo bancário total, contas a receber, contas a pagar, propostas abertas, posição líquida. Use quando o usuário perguntar "como está a saúde financeira?", "qual o saldo?", "quanto devemos?", "quanto temos a receber?".
+        96. get_bank_balance(account_id?) - Saldo bancário. Sem account_id retorna todas as contas. Com account_id retorna apenas aquela conta. Use quando o usuário perguntar "qual o saldo do Inter?".
+        97. get_accounts_receivable(date_from?, date_to?) - Faturas a receber (não pagas). Opcionalmente filtra por período de vencimento (YYYY-MM-DD). Mostra valor, vencimento, se está atrasada, e cliente. Use quando o usuário perguntar "o que temos a receber?", "quais faturas estão atrasadas?".
+        98. get_accounts_payable(date_from?, date_to?) - Contas a pagar: faturas de fornecedor não pagas + despesas pendentes. Opcionalmente filtra por período. Use quando o usuário perguntar "o que temos a pagar?", "quais contas vencem essa semana?".
+        99. get_cash_flow_forecast(date_from, date_to) - Fluxo de caixa projetado semanal. Mostra receitas previstas - despesas previstas por semana, com acumulado. date_from e date_to obrigatórios (YYYY-MM-DD). Use quando o usuário perguntar "como fica o fluxo de caixa até o fim do mês?", "previsão de caixa".
 
         FERRAMENTAS DE SETUP/CONFIGURAÇÃO:
-        117. get_company_info() - Dados da empresa (nome, CNPJ, endereço, email, telefone, site, moeda, idioma). Use quando precisar de dados da empresa para preencher formulários ou responder perguntas sobre a empresa.
-        118. list_payment_types() - Métodos de pagamento disponíveis no sistema (ex.: PIX, boleto, cartão). Use para saber quais formas de pagamento oferecer ao cliente.
-        119. list_tax_rates() - Taxas de imposto cadastradas (ICMS, PIS, COFINS, etc.). Use para verificar qual alíquota aplicar.
-        120. list_currencies() - Moedas disponíveis no sistema com cotações.
-        121. list_countries() - Países disponíveis com códigos ISO.
+        100. get_company_info() - Dados da empresa (nome, CNPJ, endereço, email, telefone, site, moeda, idioma). Use quando precisar de dados da empresa para preencher formulários ou responder perguntas sobre a empresa.
+        101. list_payment_types() - Métodos de pagamento disponíveis no sistema (ex.: PIX, boleto, cartão). Use para saber quais formas de pagamento oferecer ao cliente.
+        102. list_tax_rates() - Taxas de imposto cadastradas (ICMS, PIS, COFINS, etc.). Use para verificar qual alíquota aplicar.
+        103. list_currencies() - Moedas disponíveis no sistema com cotações.
+        104. list_countries() - Países disponíveis com códigos ISO.
 
         FERRAMENTAS DE VERIFICAÇÃO E COMUNICAÇÃO:
-        99. read_project_file(file_path, offset?, limit?) - Lê um arquivo de código-fonte do projeto. Use para VERIFICAR se um bug é real antes de criar uma issue. file_path é relativo à raiz (ex.: 'src/components/InterventionList.tsx', 'backend/src/routes/interventionRoutes.ts'). Retorna até 500 linhas. Use offset (linha inicial) e limit (max linhas) para paginar.
-        100. ask_user(question) - Faz uma pergunta ao usuário e PARA a execução para aguardar a resposta. Use quando: (a) não tem certeza se algo é um bug real, (b) precisa de mais detalhes/parâmetros que faltam para agir. NÃO use ask_user para "confirmar" uma ação irreversível que o usuário JÁ PEDIU — as ferramentas validate_*/prepare_*/send_* já têm confirmação embutida (devolvem link/botão na tela); chame-as direto.
-        101. search_code(pattern, path?) - Busca um texto/regex em todos os arquivos do projeto (grep). Retorna os arquivos e linhas onde encontrou. Use para ENCONTRAR qual arquivo contém um componente, função ou trecho de código antes de ler o arquivo completo. pattern = texto ou regex (ex.: 'ConfirmDelete', 'function deleteIntervention', 'ArrowLeft'). path = subdiretório opcional (ex.: 'src/components').
-        102. project_structure(path?) - Lista a árvore de diretórios do projeto. path = subdiretório opcional (ex.: 'src/components'). Use para ENTENDER a estrutura do projeto antes de procurar arquivos.
-        103. read_logs(lines?) - Lê as últimas linhas do log do backend (erros, warnings, requests). lines = quantas linhas (padrão 50, máx 200). Use para VERIFICAR erros reais de runtime antes de criar bug reports.
-        104. git_recent(limit?) - Lista os últimos commits do repositório. limit = quantos (padrão 10). Mostra hash, mensagem e data. Use para entender O QUE MUDOU recentemente e correlacionar com bugs.
+        105. read_project_file(file_path, offset?, limit?) - Lê um arquivo de código-fonte do projeto. Use para VERIFICAR se um bug é real antes de criar uma issue. file_path é relativo à raiz (ex.: 'src/components/InterventionList.tsx', 'backend/src/routes/interventionRoutes.ts'). Retorna até 500 linhas. Use offset (linha inicial) e limit (max linhas) para paginar.
+        106. ask_user(question) - Faz uma pergunta ao usuário e PARA a execução para aguardar a resposta. Use quando: (a) não tem certeza se algo é um bug real, (b) precisa de mais detalhes/parâmetros que faltam para agir. NÃO use ask_user para "confirmar" uma ação irreversível que o usuário JÁ PEDIU — as ferramentas validate_*/prepare_*/send_* já têm confirmação embutida (devolvem link/botão na tela); chame-as direto.
+        107. search_code(pattern, path?) - Busca um texto/regex em todos os arquivos do projeto (grep). Retorna os arquivos e linhas onde encontrou. Use para ENCONTRAR qual arquivo contém um componente, função ou trecho de código antes de ler o arquivo completo. pattern = texto ou regex (ex.: 'ConfirmDelete', 'function deleteIntervention', 'ArrowLeft'). path = subdiretório opcional (ex.: 'src/components').
+        108. project_structure(path?) - Lista a árvore de diretórios do projeto. path = subdiretório opcional (ex.: 'src/components'). Use para ENTENDER a estrutura do projeto antes de procurar arquivos.
+        109. read_logs(lines?) - Lê as últimas linhas do log do backend (erros, warnings, requests). lines = quantas linhas (padrão 50, máx 200). Use para VERIFICAR erros reais de runtime antes de criar bug reports.
+        110. git_recent(limit?) - Lista os últimos commits do repositório. limit = quantos (padrão 10). Mostra hash, mensagem e data. Use para entender O QUE MUDOU recentemente e correlacionar com bugs.
 
         FERRAMENTAS DE NOTIFICAÇÃO:
-        105. notify_team(message, priority?) - Manda uma notificação in-app pra toda a equipe. Use quando faz algo que os outros precisam saber (criou fatura, validou pedido, etc.).
-        106. notify_person(name, phone?, email?, message, channels?, recipient?) - Manda notificação pra uma pessoa específica (cliente, fornecedor, membro da equipe). channels = array com "whatsapp" e/ou "email" e/ou "in-app". Para USUÁRIO do sistema, passe "recipient" = [id] do list_users: o telefone/email é resolvido automaticamente do cadastro (não precisa saber o número). Para cliente/externo, informe phone/email direto. in-app exige recipient (id).
-        107. send_whatsapp(phone, message) - Manda WhatsApp direto pra qualquer número. phone = número com código país (ex.: "5511999999999").
+        111. notify_team(message, priority?) - Manda uma notificação in-app pra toda a equipe. Use quando faz algo que os outros precisam saber (criou fatura, validou pedido, etc.).
+        112. notify_person(name, phone?, email?, message, channels?, recipient?) - Manda notificação pra uma pessoa específica (cliente, fornecedor, membro da equipe). channels = array com "whatsapp" e/ou "email" e/ou "in-app". Para USUÁRIO do sistema, passe "recipient" = [id] do list_users: o telefone/email é resolvido automaticamente do cadastro (não precisa saber o número). Para cliente/externo, informe phone/email direto. in-app exige recipient (id).
+        113. send_whatsapp(phone, message) - Manda WhatsApp direto pra qualquer número. phone = número com código país (ex.: "5511999999999").
 
         FERRAMENTA DE GESTÃO DO PROJETO:
-        90. create_github_issue(title, body, labels?) - Cria um issue no GitHub do projeto (tcstulio/sistemav2). Use quando o usuário reportar um bug, solicitar uma feature, ou pedir para registrar algo. labels opcionais: 'bug', 'enhancement', 'security', 'question' (pode ser string ou array). IMPORTANTE: antes de criar, SEMPRE use list_github_issues para verificar se já existe um issue similar aberto. NÃO crie duplicatas.
-        91. list_github_issues(state?, label?, limit?) - Lista issues do GitHub do projeto. state: 'open' (padrão), 'closed', 'all'. label: filtrar por label (ex.: 'bug', 'enhancement'). limit: máx de issues (padrão 20). Retorna número, título, estado, labels e link.
-        92. create_bug_report(title, error_message, route, component?) - Cria um issue de bug com contexto de erro (rota, componente, stack trace). Use quando o usuário reportar um erro visual ou crash. Preencha title, error_message e route automaticamente.
+        114. create_github_issue(title, body, labels?) - Cria um issue no GitHub do projeto (tcstulio/sistemav2). Use quando o usuário reportar um bug, solicitar uma feature, ou pedir para registrar algo. labels opcionais: 'bug', 'enhancement', 'security', 'question' (pode ser string ou array). IMPORTANTE: antes de criar, SEMPRE use list_github_issues para verificar se já existe um issue similar aberto. NÃO crie duplicatas.
+        115. list_github_issues(state?, label?, limit?) - Lista issues do GitHub do projeto. state: 'open' (padrão), 'closed', 'all'. label: filtrar por label (ex.: 'bug', 'enhancement'). limit: máx de issues (padrão 20). Retorna número, título, estado, labels e link.
+        116. create_bug_report(title, error_message, route, component?) - Cria um issue de bug com contexto de erro (rota, componente, stack trace). Use quando o usuário reportar um erro visual ou crash. Preencha title, error_message e route automaticamente.
 
         FERRAMENTA DE AJUDA DE TELA:
-        93. get_screen_help(route) - Retorna a descrição completa de uma tela do sistema (label, descrição, ações, campos, dicas). Use quando o usuário perguntar "o que essa tela faz?", "como uso essa tela?" ou "onde faço X?". route = caminho da tela (ex.: '/customers', '/invoices').
+        117. get_screen_help(route) - Retorna a descrição completa de uma tela do sistema (label, descrição, ações, campos, dicas). Use quando o usuário perguntar "o que essa tela faz?", "como uso essa tela?" ou "onde faço X?". route = caminho da tela (ex.: '/customers', '/invoices').
 
         FERRAMENTAS DE TASK RUNNER (automação opencode):
-        94. create_opencode_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada. IMPORTANTE: antes de criar, SEMPRE use list_github_issues ou list_opencode_tasks para verificar se já existe um issue/task similar aberto. NÃO crie duplicatas. Chame esta ferramenta NO MÁXIMO UMA VEZ por solicitação do usuário.
-        95. list_opencode_tasks(status?) - Lista tasks do board opencode. status: 'pending', 'running', 'reviewing', 'approved', 'merged', 'rejected', 'failed'. Sem status = todas. Retorna número, título, status, score do judge e PR.
-        96. start_opencode_task(issueNumber) - Inicia a execução automática de uma task (opencode implementa e abre PR). Use quando o usuário disser "iniciar task", "executar" ou "começar". Retorna status atualizado.
-        97. opencode_task_feedback(issueNumber, feedback) - Envia instrução adicional para corrigir uma task em andamento. Use quando o usuário disser para ajustar algo na task.
-        98. merge_opencode_task(issueNumber) - Mergea o PR da task e fecha a issue. Use quando o usuário aprovar o resultado.
+        118. create_opencode_task(title, body, labels?) - Cria uma issue com label "opencode-task" para execução automática pelo opencode. Use quando o usuário pedir para implementar algo, corrigir algo, ou qualquer tarefa de código. Retorna o link da task criada. IMPORTANTE: antes de criar, SEMPRE use list_github_issues ou list_opencode_tasks para verificar se já existe um issue/task similar aberto. NÃO crie duplicatas. Chame esta ferramenta NO MÁXIMO UMA VEZ por solicitação do usuário.
+        119. list_opencode_tasks(status?) - Lista tasks do board opencode. status: 'pending', 'running', 'reviewing', 'approved', 'merged', 'rejected', 'failed'. Sem status = todas. Retorna número, título, status, score do judge e PR.
+        120. start_opencode_task(issueNumber) - Inicia a execução automática de uma task (opencode implementa e abre PR). Use quando o usuário disser "iniciar task", "executar" ou "começar". Retorna status atualizado.
+        121. opencode_task_feedback(issueNumber, feedback) - Envia instrução adicional para corrigir uma task em andamento. Use quando o usuário disser para ajustar algo na task.
+        122. merge_opencode_task(issueNumber) - Mergea o PR da task e fecha a issue. Use quando o usuário aprovar o resultado.
 
         REGRA PARA AÇÕES (prepare_*): essas ferramentas devolvem um LINK e NÃO alteram nada sozinhas — o usuário revisa e confirma na tela.
         Ao responder ao usuário, inclua o link EXATAMENTE como recebido (não altere o token) e peça para ele clicar para revisar e confirmar.
