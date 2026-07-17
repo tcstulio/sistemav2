@@ -42,6 +42,22 @@ export function getWhatsAppBotToolsPrompt(): string {
     return _whatsappBotToolsPrompt;
 }
 
+// #1501 — fail-fast self-check de produção (defesa em profundidade contra regressão de
+// #1498). Chamada no início de processMessage, ANTES de qualquer trabalho caro
+// (identifySender, dolibarrService.getCustomerContext, aiService.generateReply). Custo
+// ≈ 0 depois da 1ª chamada (cache em `_whatsappBotToolsPrompt` + flag local). Se o
+// filtro não-admin algum dia regredir e vazar uma DEV_TOOL, jogamos throw ALTO no log
+// já na 1ª mensagem — sem isso, a invariante "WhatsApp nunca é admin" só estaria
+// coberta pelos testes. `executeTool` também barra DEV_TOOLS via ctx.isAdmin !== true,
+// mas o ideal é não depender SÓ dessa 2ª linha. EXPORTADA para que o teste possa
+// reinjetar o ciclo lazy no setup (vi.resetModules + re-import).
+let _whatsappBotToolsPromptValidated = false;
+export function validateWhatsAppBotToolsPrompt(): void {
+    if (_whatsappBotToolsPromptValidated) return;
+    getWhatsAppBotToolsPrompt(); // throws se uma DEV_TOOL escapar (regressão #1498)
+    _whatsappBotToolsPromptValidated = true;
+}
+
 // Delay helper
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -106,6 +122,11 @@ class BotService {
             }
 
             if (!body || body.length < 2) return; // Ignore empty/short messages
+
+            // #1501 — canal WhatsApp NUNCA é admin (ver comentário em getWhatsAppBotToolsPrompt
+            // acima). Fail-fast: se o filtro não-admin de #1498 regrediu, o throw aqui aborta a
+            // mensagem ANTES de chamar aiService.generateReply — sem LLM tokens gastos.
+            validateWhatsAppBotToolsPrompt();
 
             log.info(`Processing incoming message from ${chatId} (Session: ${sessionId})`);
 
