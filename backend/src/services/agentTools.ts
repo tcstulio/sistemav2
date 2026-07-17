@@ -1,7 +1,30 @@
 // Registro UNIFICADO de ferramentas do agente.
 // Antes, GoogleProvider e LocalProvider tinham switches separados (Gemini: 32 tools;
-// GLM/Ollama: 5 "Lite"). Agora ambos usam TOOLS_PROMPT + executeTool daqui — então
-// qualquer provider tem o mesmo conjunto completo de ferramentas.
+// GLM/Ollama: 5 "Lite"). Agora ambos usam getToolsPrompt + executeTool daqui — então
+// qualquer provider tem o mesmo conjunto completo de ferramentas (filtrado por papel).
+//
+// #1498: as 13 ferramentas de dev/robô (issues, tarefas opencode, leitura de código,
+// logs/git) são restritas ao papel de administrador. Defesa em DUAS camadas:
+//   (1) `getToolsPrompt({ isAdmin })` remove do prompt a menção a essas ferramentas para
+//       não-admin (evita o modelo tentar chamá-las);
+//   (2) `executeTool` recusa a execução se a tool estiver em DEV_TOOLS e o ctx não for
+//       admin — fecha o bypass via injeção direta da chamada.
+export const DEV_TOOLS: ReadonlySet<string> = new Set<string>([
+    'create_github_issue',
+    'list_github_issues',
+    'create_bug_report',
+    'create_opencode_task',
+    'list_opencode_tasks',
+    'start_opencode_task',
+    'opencode_task_feedback',
+    'merge_opencode_task',
+    'read_project_file',
+    'search_code',
+    'project_structure',
+    'read_logs',
+    'git_recent',
+]);
+
 import { AsyncLocalStorage } from 'async_hooks';
 import { dolibarrService } from './dolibarrService';
 import { ScraperService } from './scraperService';
@@ -75,7 +98,12 @@ export function getToolContext(): ToolContext {
     return toolContextStore.getStore() || DEFAULT_TOOL_CONTEXT;
 }
 
-export const TOOLS_PROMPT = `
+/**
+ * Prompt-base com TODAS as ferramentas (inclusive as 13 DEV_TOOLS). Identical byte-a-byte ao
+ * `TOOLS_PROMPT` antigo — usado como fonte tanto de `getToolsPrompt({ isAdmin: true })` quanto
+ * do filtro para não-admin (#1498).
+ */
+const TOOLS_PROMPT_FULL = `
         FERRAMENTAS DISPONÍVEIS:
         Você pode buscar dados em tempo real se necessário. Para usar uma ferramenta, responda APENAS com um JSON no seguinte formato:
         { "tool": "nome_da_ferramenta", "args": { ... } }
@@ -284,6 +312,101 @@ export const TOOLS_PROMPT = `
         - O sistema roda em Express+TypeScript (backend) e React+Vite (frontend). O repositório é tcstulio/sistemav2.
         - Você NÃO deve criar issues, tasks ou bugs por conta própria — SEMPRE confirme com o usuário antes.
         `;
+
+// --- DEV_TOOLS / getToolsPrompt (#1498) ---
+// Pergunta do filtro: ao gerar o prompt para um NÃO-admin, queremos que o MODELO não saiba
+// que essas 13 ferramentas existem. O prompt-base tem 3 tipos de menção a essas tools:
+//   (a) seções inteiras 100% DEV (ex.: "FERRAMENTA DE GESTÃO DO PROJETO:", "FERRAMENTAS DE
+//       TASK RUNNER (...)") — basta remover o bloco até a próxima seção;
+//   (b) entradas numeradas dentro de seção mista (ex.: "99. read_project_file(...)" dentro
+//       de "FERRAMENTAS DE VERIFICAÇÃO E COMUNICAÇÃO") — remover cada linha;
+//   (c) menção textual solta em regras/exemplos (ex.: "use search_code para encontrar ...")
+//       — remover o nome com word-boundaries.
+// Os helpers abaixo tratam cada caso. A ordem importa: passa (a) antes de (b) antes de (c).
+
+/** Regex de uma entrada numerada do tipo "<num>. <toolName>(...)" — captura até a próxima entrada numerada. */
+function stripNumberedToolEntry(prompt: string, toolName: string): string {
+    // Casa "\n\s+\d+\.\s+<name>(...)" e tudo até o próximo "\n\s+\d+\." (início de outra entrada
+    // numerada) ou fim do bloco. Non-greedy com lookahead para parar na PRIMEIRA outra.
+    const re = new RegExp(`\\n\\s+\\d+\\.\\s+${toolName}\\([^)]*\\)[\\s\\S]*?(?=\\n\\s+\\d+\\.)`, 'g');
+    return prompt.replace(re, '');
+}
+
+/** Regex de um par User/Assistant de exemplo demonstrando uma tool call (ex.: create_github_issue). */
+function stripExampleToolCall(prompt: string, toolName: string): string {
+    // Casa "\n\s+User: ...\n\s+Assistant: { "tool": "<name>" ... }" (a linha Assistant inteira,
+    // sem tentar balancear chaves do args aninhado). Os 2 exemplos do template atual usam
+    // create_github_issue e list_github_issues.
+    const re = new RegExp(
+        `\\n[ \\t]*User:[^\\n]*\\n[ \\t]*Assistant:[^\\n]*\\{[ \\t]*"tool"[ \\t]*:[ \\t]*"${toolName}"[^\\n]*`,
+        'g',
+    );
+    return prompt.replace(re, '');
+}
+
+/**
+ * Devolve o prompt-base com TODAS as menções às 13 DEV_TOOLS removidas (#1498). Preserva
+ * inalteradas as ferramentas de negócio (search, list_*, prepare_*, validate_*, send_*,
+ * notify_*, get_financial_*, get_screen_help, etc.).
+ *
+ * Defesa em profundidade: a remoção aqui é cosmética (evita o modelo sugerir essas tools a
+ * não-admin). A trava REAL é em `executeTool`, que recusa a chamada se a tool for DEV e
+ * ctx.isAdmin !== true.
+ */
+function buildNonAdminPrompt(): string {
+    let p = TOOLS_PROMPT_FULL;
+
+    // (a) Seção 100% DEV: "FERRAMENTA DE GESTÃO DO PROJETO:" — contém as 3 tools de issues/bugs.
+    p = p.replace(
+        /\n\s+FERRAMENTA DE GESTÃO DO PROJETO:[^\n]*\n[\s\S]*?(?=\n\s+FERRAMENTA DE AJUDA DE TELA:)/,
+        '\n',
+    );
+    // (a) Seção 100% DEV: "FERRAMENTAS DE TASK RUNNER (automação opencode):" — contém as 5 tools
+    //     de task runner do opencode.
+    p = p.replace(
+        /\n\s+FERRAMENTAS DE TASK RUNNER[^\n]*\n[\s\S]*?(?=\n\s+REGRA PARA AÇÕES)/,
+        '\n',
+    );
+
+    // (b) Entradas numeradas das 5 tools de VERIFICAÇÃO (read_project_file, search_code,
+    //     project_structure, read_logs, git_recent) que aparecem dentro da seção mista
+    //     "FERRAMENTAS DE VERIFICAÇÃO E COMUNICAÇÃO:" — removidas uma a uma.
+    for (const name of ['read_project_file', 'search_code', 'project_structure', 'read_logs', 'git_recent']) {
+        p = stripNumberedToolEntry(p, name);
+    }
+
+    // (c) Menções textuais soltas (regras 6 e 8 citam search_code/read_project_file/read_logs;
+    //     exemplos de formato citam create_github_issue e list_github_issues). Word-boundaries
+    //     pra não comer parte de outro token.
+    const toolAlt = Array.from(DEV_TOOLS).join('|');
+    p = p.replace(new RegExp(`\\b(${toolAlt})\\b`, 'g'), '');
+
+    // (c) Exemplos do template: par User/Assistant demonstrando a tool call (create_github_issue
+    //     e list_github_issues).
+    for (const name of ['create_github_issue', 'list_github_issues']) {
+        p = stripExampleToolCall(p, name);
+    }
+
+    // Restaura a estética: colapsa linhas vazias triplas+ em dupla e remove espaços soltos.
+    p = p.replace(/\n{3,}/g, '\n\n');
+    return p;
+}
+
+/**
+ * Devolve o prompt de ferramentas do agente respeitando o papel do chamador (#1498).
+ *  - `opts.isAdmin === true`  → prompt COMPLETO idêntico ao de hoje (todas as ferramentas).
+ *  - `opts.isAdmin !== true`  → mesmo prompt MAS sem qualquer menção/bloco das 13 DEV_TOOLS.
+ */
+export function getToolsPrompt(opts: { isAdmin: boolean }): string {
+    return opts.isAdmin === true ? TOOLS_PROMPT_FULL : buildNonAdminPrompt();
+}
+
+/**
+ * @deprecated desde #1498 — use `getToolsPrompt({ isAdmin })`. Mantida como wrapper legado
+ * que devolve o prompt COMPLETO (idêntico ao de hoje) para callers externos / testes que
+ * ainda importam o símbolo `TOOLS_PROMPT`. Equivalente a `getToolsPrompt({ isAdmin: true })`.
+ */
+export const TOOLS_PROMPT: string = getToolsPrompt({ isAdmin: true });
 
 // --- AÇÕES HITL via deeplink (#57 Peça 2/3) ---
 // Registro de entidades que o agente pode propor criar/editar. Adicionar uma entidade =
@@ -777,6 +900,17 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
     }
 
     const ctx = getToolContext();
+
+    // #1498 — defesa em profundidade: 13 ferramentas de dev/robô (issues, tarefas opencode,
+    // leitura de código, logs/git) são restritas ao papel de administrador. NÃO basta filtrar
+    // o prompt — se o modelo (injeção, alucinação, ou chamador externo) injetar a tool direto,
+    // `executeTool` RECUSA educadamente sem executar o despacho. Admin (`ctx.isAdmin === true`)
+    // passa normal.
+    if (DEV_TOOLS.has(resolvedTool) && ctx?.isAdmin !== true) {
+        log.warn(`DEV_TOOLS blocked for non-admin: tool=${resolvedTool} actor=${ctx.userLogin || 'anônimo'}`);
+        return 'Esta ferramenta é restrita ao papel de administrador.';
+    }
+
     // Contexto somente-leitura (ex.: bot WhatsApp com entrada externa): bloqueia escrita/efeito
     // externo antes de qualquer checagem de profile — vale inclusive sem profile e para admin.
     // web_search também: entrada não-confiável não deve disparar requisições à internet

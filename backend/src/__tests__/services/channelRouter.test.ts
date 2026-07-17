@@ -545,7 +545,7 @@ describe('ChannelRouter', () => {
         const SOURCES = [
             { file: 'notificationService.ts', expectedLine: 224, fn: 'deliverWhatsApp' },
             { file: 'agentActionConfirm.ts', expectedLine: 102, fn: 'send_whatsapp.execute' },
-            { file: 'agentTools.ts', expectedLine: 1686, fn: 'send_whatsapp' },
+            { file: 'agentTools.ts', expectedLine: 1820, fn: 'send_whatsapp' },
         ] as const;
 
         for (const src of SOURCES) {
