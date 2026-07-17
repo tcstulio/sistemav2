@@ -194,8 +194,7 @@ const TOOLS_PROMPT_FULL = `
         30. list_manufacturing_orders(status: 'draft'|'validated'|'inprogress') - Lista ordens de produção.
         31. list_candidates(search: string) - Lista candidatos (RH/Recrutamento).
         32. list_job_positions() - Lista vagas de emprego abertas.
-        33. search_web(query: string) - Pesquisa preços e fornecedores na internet (Google via Serper).
-        34. extract_from_url(url: string) - Acessa um link e extrai o conteúdo da página.
+        33. extract_from_url(url: string) - Acessa um link e extrai o conteúdo da página.
 
         FERRAMENTAS DE AÇÃO (escrita com confirmação na tela; devolvem um LINK):
         33. prepare_create_ticket(subject, message, type_code?, severity_code?, socid?) - Rascunho de ticket de suporte. Se souber o cliente, ache o id antes com search_customer e passe em socid.
@@ -1554,12 +1553,17 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                 ).join('') + '</ul>';
         }
         case 'search_web': {
-            const searchResults = await ScraperService.searchGoogle(args?.query);
-            if (!searchResults || searchResults.length === 0) return `Nenhum resultado encontrado para "${args?.query}".`;
-            return '<h3>🔍 Resultados da Web</h3><ul>' +
-                searchResults.map((r: any) =>
-                    `<li><a href="${r.link || '#'}" class="text-blue-600 underline font-semibold">${r.title || 'Sem título'}</a> — ${r.snippet || ''}</li>`
-                ).join('') + '</ul>';
+            try {
+                const searchResults = await ScraperService.searchGoogle(args?.query);
+                if (!searchResults || searchResults.length === 0) return `Nenhum resultado encontrado para "${args?.query}".`;
+                return '<h3>🔍 Resultados da Web</h3><ul>' +
+                    searchResults.map((r: any) =>
+                        `<li><a href="${r.link || '#'}" class="text-blue-600 underline font-semibold">${r.title || 'Sem título'}</a> — ${r.snippet || ''}</li>`
+                    ).join('') + '</ul>';
+            } catch (err: any) {
+                log.error('search_web falhou', err?.message || err);
+                return `Erro: ${err?.message || String(err)}`;
+            }
         }
         case 'extract_from_url': {
             if (!isValidExternalUrl(args?.url)) {
