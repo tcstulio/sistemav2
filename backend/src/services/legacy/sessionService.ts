@@ -184,6 +184,7 @@ export class SessionService {
 
             const client = new Client({
                 authStrategy: authStrategy,
+                webVersionCache: { type: 'remote', remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html' },
                 puppeteer: {
                     args: [
                         '--no-sandbox',
@@ -192,7 +193,9 @@ export class SessionService {
                         '--disable-dev-shm-usage',
                         '--disable-extensions',
                         '--disable-accelerated-2d-canvas',
-                        '--no-first-run'
+                        '--no-first-run',
+                        '--disk-cache-size=0',
+                        '--js-flags=--max-old-space-size=4096'
                     ],
                     headless: true,
                     executablePath: executablePath
@@ -332,6 +335,19 @@ export class SessionService {
         return msg.author ? msg.author.split('@')[0] : '';
     }
 
+    private resolveRealSender = async (msg: any): Promise<string> => {
+        let phone = msg.from;
+        if (phone && phone.includes('@lid')) {
+            try {
+                const contact = await msg.getContact();
+                if (contact && contact.number) {
+                    return `${contact.number}@c.us`;
+                }
+            } catch (e) { /* ignore */ }
+        }
+        return phone;
+    }
+
     private setupEvents(client: Client, sessionId: string) {
         client.on('qr', (qr) => {
             log.info(`[${sessionId}] QR Code received`);
@@ -388,12 +404,13 @@ export class SessionService {
             const payload = {
                 sessionId,
                 from: msg.from,
+                realSender: await this.resolveRealSender(msg),
                 to: msg.to,
                 body: msg.body,
                 pushName: (msg as any)._data?.notifyName,
                 senderName: await this.resolveSenderName(msg),
                 fromMe: msg.fromMe,
-                timestamp: msg.timestamp,
+                timestamp: Math.min(msg.timestamp, Math.floor(Date.now() / 1000)),
                 hasMedia: msg.hasMedia,
                 id: msg.id._serialized,
                 type: msg.type,
@@ -456,7 +473,7 @@ export class SessionService {
 
         return {
             name: client.info.pushname,
-            number: client.info.wid.user,
+            number: contact.number || client.info.wid.user,
             about: about || '',
             profilePicUrl: picUrl,
             status: await client.getState()

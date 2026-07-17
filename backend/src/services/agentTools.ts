@@ -841,6 +841,12 @@ const MUTATING_TOOLS = new Set([
     'create_opencode_task', 'start_opencode_task', 'merge_opencode_task',
 ]);
 
+// #segurança — remetente NÃO identificado (bot WhatsApp readOnly SEM elevação de funcionário) não
+// roda NENHUMA tool de leitura de dado interno. Decisão do dono (2026-07-17): "nada de dado interno"
+// — o contexto do próprio cliente já vem injetado no prompt via CRM. Allowlist pública EXPLÍCITA
+// (fail-closed): hoje vazia porque toda tool de leitura expõe dado interno (usuários/banco/PII/RH).
+const PUBLIC_READONLY_ALLOWLIST = new Set<string>([]);
+
 /** True se a ferramenta escreve/dispara efeito externo (deve ser bloqueada em read-only). */
 function isMutatingTool(tool: string): boolean {
     return MUTATING_TOOLS.has(tool)
@@ -942,6 +948,14 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
     if (ctx.readOnly && (isMutatingTool(resolvedTool) || resolvedTool === 'web_search')) {
         log.warn(`Read-only context blocked mutating tool: ${resolvedTool}`);
         return `A ferramenta "${resolvedTool}" não está disponível neste contexto (somente leitura).`;
+    }
+    // #segurança — readOnly SEM perfil = remetente NÃO identificado (cliente/desconhecido no
+    // WhatsApp). Nega TODA tool de leitura de dado interno (só a allowlist pública passa; hoje
+    // vazia). Fecha o vazamento de list_users/banco/PII/RH a contato externo. NÃO afeta funcionário
+    // elevado (tem perfil, readOnly=false) nem o webapp (readOnly indefinido → falsy).
+    if (ctx.readOnly && !ctx.permissionProfile && !PUBLIC_READONLY_ALLOWLIST.has(resolvedTool)) {
+        log.warn(`Negado: remetente não-identificado tentou ler dado interno — tool=${resolvedTool} actor=${ctx.userLogin || 'não-identificado'}`);
+        return `A ferramenta "${resolvedTool}" não está disponível neste contexto.`;
     }
     if (ctx.permissionProfile && !ctx.isAdmin) {
         const permKey = getWritePermissionKey(resolvedTool);

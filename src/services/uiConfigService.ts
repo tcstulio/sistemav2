@@ -43,6 +43,7 @@ export interface FeatureSwitchesConfig {
     dryRunMode: boolean;          // impede envio real de mensagens (anti-spam de incidente)
     financialCommands: boolean;   // habilita /pagar e /pix (movimentam dinheiro real)
     crmContextInjection: boolean; // injeta dados do cliente no LLM (privacidade)
+    whatsappEmployeeElevation?: boolean; // funcionário identificado por fone ganha o próprio perfil no bot
 }
 
 // ---- Política de notificações (#1293): cadência de cobrança, quiet-hours por canal, alertas ----

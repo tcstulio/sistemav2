@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { ShieldAlert, Send, Banknote, Lock, Save } from 'lucide-react';
+import { ShieldAlert, Send, Banknote, Lock, Save, UserCheck } from 'lucide-react';
 import { Card, Button, Spinner } from '../ui';
 import { getUiConfig, updateUiConfig, FeatureSwitchesConfig } from '../../services/uiConfigService';
 import { logger } from '../../utils/logger';
 
 const log = logger.child('SecurityFeatureSwitches');
 
-// Defaults alinhados ao backend: dryRun/financial OFF, crmContext ON.
-const DEFAULT_SWITCHES: FeatureSwitchesConfig = { dryRunMode: false, financialCommands: false, crmContextInjection: true };
+// Defaults alinhados ao backend: dryRun/financial/employeeElevation OFF, crmContext ON.
+const DEFAULT_SWITCHES: FeatureSwitchesConfig = { dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false };
 
 export interface SecurityFeatureSwitchesProps {
     isAdmin: boolean;
@@ -119,6 +119,25 @@ export const SecurityFeatureSwitches: React.FC<SecurityFeatureSwitchesProps> = (
                             </div>
                             <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-4">
                                 <input type="checkbox" checked={switches.crmContextInjection} onChange={(e) => setSwitches({ ...switches, crmContextInjection: e.target.checked })} className="sr-only peer" />
+                                <div className={`w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-${themeColor}-600`}></div>
+                            </label>
+                        </div>
+
+                        {/* WHATSAPP_EMPLOYEE_ELEVATION */}
+                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                            <div>
+                                <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+                                    <UserCheck size={18} className={switches.whatsappEmployeeElevation ? 'text-emerald-500' : 'text-slate-400'} />
+                                    Permissões de funcionário no bot do WhatsApp
+                                </div>
+                                <p className="text-xs text-slate-400 mt-1">
+                                    {switches.whatsappEmployeeElevation
+                                        ? 'Ativo — funcionário identificado pelo celular (1:1) usa o próprio perfil de permissões no bot; irreversíveis seguem exigindo confirmação logada no app.'
+                                        : 'Inativo — o bot é 100% somente-leitura para todos os remetentes, inclusive funcionários.'}
+                                </p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer shrink-0 ml-4">
+                                <input type="checkbox" checked={!!switches.whatsappEmployeeElevation} onChange={(e) => setSwitches({ ...switches, whatsappEmployeeElevation: e.target.checked })} className="sr-only peer" />
                                 <div className={`w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-${themeColor}-600`}></div>
                             </label>
                         </div>
