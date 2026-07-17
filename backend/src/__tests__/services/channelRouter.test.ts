@@ -542,31 +542,52 @@ describe('ChannelRouter', () => {
             return realFs.readFileSync(p, 'utf-8');
         };
 
+        // Localiza a chamada `channelRouter.sendWhatsApp(` DENTRO do bloco/função relevante
+        // (âncora estável), NÃO por número de linha — robusto a shift de linhas (ex.: quando
+        // o TOOLS_PROMPT cresce). Conta os argumentos com balanceamento de parênteses/strings:
+        // 2 = OK (chatId, content); 3+ = bypass de sessionId (a política do resolveSession seria
+        // pulada). O detector negativo abaixo prova que 3 args ainda é pego.
+        const CALL = 'channelRouter.sendWhatsApp(';
+        function sendWhatsAppArgCount(code: string, anchor: RegExp): { found: boolean; argCount: number } {
+            const m = code.match(anchor);
+            if (!m || m.index === undefined) return { found: false, argCount: -1 };
+            const callIdx = code.indexOf(CALL, m.index);
+            if (callIdx === -1) return { found: false, argCount: -1 };
+            let depth = 1, args = 1, sawAny = false;
+            let str: string | null = null;
+            for (let i = callIdx + CALL.length; i < code.length && depth > 0; i++) {
+                const c = code[i];
+                if (str) { if (c === str && code[i - 1] !== '\\') str = null; else sawAny = true; continue; }
+                if (c === '"' || c === "'" || c === '`') { str = c; sawAny = true; continue; }
+                if (c === '(' || c === '[' || c === '{') depth++;
+                else if (c === ')' || c === ']' || c === '}') depth--;
+                else if (c === ',' && depth === 1) args++;
+                else if (!/\s/.test(c)) sawAny = true;
+            }
+            return { found: true, argCount: sawAny ? args : 0 };
+        }
+
         const SOURCES = [
-            { file: 'notificationService.ts', expectedLine: 224, fn: 'deliverWhatsApp' },
-            { file: 'agentActionConfirm.ts', expectedLine: 102, fn: 'send_whatsapp.execute' },
-            { file: 'agentTools.ts', expectedLine: 1842, fn: 'send_whatsapp' },
+            { file: 'notificationService.ts', anchor: /private async deliverWhatsApp/, fn: 'deliverWhatsApp' },
+            { file: 'agentActionConfirm.ts', anchor: /send_whatsapp:\s*\{/, fn: 'send_whatsapp.execute' },
+            { file: 'agentTools.ts', anchor: /case 'send_whatsapp':/, fn: 'send_whatsapp' },
         ] as const;
 
         for (const src of SOURCES) {
-            it(`${src.file}:${src.expectedLine} (${src.fn}) chama channelRouter.sendWhatsApp SEM sessionId explícito`, () => {
+            it(`${src.file} (${src.fn}) chama channelRouter.sendWhatsApp SEM sessionId explícito`, () => {
                 const code = readSrc(src.file);
-                const lines = code.split('\n');
-                // Janela de 3 linhas em torno do expectedLine (cobre a chamada em si).
-                const win = lines.slice(Math.max(0, src.expectedLine - 2), src.expectedLine + 1).join('\n');
-
-                // (a) chama channelRouter.sendWhatsApp
-                expect(win).toMatch(/channelRouter\.sendWhatsApp\(/);
-                // (b) NÃO passa sessionId explícito: a chamada tem EXATAMENTE 2 argumentos
-                //     (chatId, content) — `sendWhatsApp(recipient, content, sessionId?)`
-                //     onde sessionId é o 3º arg. Se virar 3 args, é bypass.
-                expect(win).not.toMatch(/channelRouter\.sendWhatsApp\([^)]*,[^)]*,[^)]*\)/);
-                // Reforço: a regex anterior pode dar falso negativo se a chamada quebrar
-                // linha; checa também que não há `, sessionId` nem `, 'sess...'` após o 2º arg.
-                expect(win).not.toMatch(/,\s*sessionId\b/);
-                expect(win).not.toMatch(/,\s*['"][^'"]+['"]\s*\)\s*;/); // p/ chamadas inline simples
+                const r = sendWhatsAppArgCount(code, src.anchor);
+                expect(r.found).toBe(true);   // (a) achou a chamada dentro do bloco
+                expect(r.argCount).toBe(2);   // (b) exatamente 2 args (chatId, content) — 3+ = bypass
             });
         }
+
+        it('o detector PEGA um bypass de sessionId (3º arg) — teste negativo', () => {
+            const bypass = `const send_whatsapp = {\n  execute() {\n    return channelRouter.sendWhatsApp(chatId, msg, 'sess-1');\n  }\n};`;
+            expect(sendWhatsAppArgCount(bypass, /const send_whatsapp =/).argCount).toBe(3);
+            const ok = `function deliverWhatsApp() { channelRouter.sendWhatsApp(chatId, content); }`;
+            expect(sendWhatsAppArgCount(ok, /function deliverWhatsApp/).argCount).toBe(2);
+        });
     });
 
     describe('sendWhatsAppFile', () => {
