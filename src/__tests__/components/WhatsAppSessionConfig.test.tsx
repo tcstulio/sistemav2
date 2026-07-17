@@ -28,8 +28,8 @@ describe('WhatsAppSessionConfig (#1440)', () => {
 
     it('admin: carrega config + sessões; dropdown lista SÓ as WORKING (connected)', async () => {
         render(<WhatsAppSessionConfig isAdmin={true} />);
-        await screen.findByText(/Sessão de WhatsApp institucional/);
-        const select = screen.getByRole('combobox') as HTMLSelectElement;
+        // o título renderiza ainda em loading; o combobox só existe após o fetch resolver
+        const select = await screen.findByRole('combobox') as HTMLSelectElement;
         const optionValues = Array.from(select.options).map(o => o.value);
         expect(optionValues).toContain('v4_1747');   // connected → listada
         expect(optionValues).not.toContain('default'); // disconnected → NÃO listada
@@ -40,8 +40,7 @@ describe('WhatsAppSessionConfig (#1440)', () => {
 
     it('escolher sessão WORKING + política + salvar → updateUiConfig com o payload certo', async () => {
         render(<WhatsAppSessionConfig isAdmin={true} />);
-        await screen.findByText(/Sessão de WhatsApp institucional/);
-        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'v4_1747' } });
+        fireEvent.change(await screen.findByRole('combobox'), { target: { value: 'v4_1747' } });
         fireEvent.click(screen.getByRole('radio', { name: /Desviar para a 1ª sessão WORKING/ }));
         fireEvent.click(screen.getByText('Salvar sessão de envio'));
         await waitFor(() => expect(mockCfg.updateUiConfig).toHaveBeenCalledWith({
@@ -62,9 +61,8 @@ describe('WhatsAppSessionConfig (#1440)', () => {
         mockCfg.getUiConfig.mockResolvedValue({ whatsappPrimarySessionId: 'down-sess', whatsappFallbackPolicy: 'fail' });
         mockWa.WhatsAppService.getAccounts.mockResolvedValue([acct('v4_1747', 'connected')]); // down-sess NÃO está working
         render(<WhatsAppSessionConfig isAdmin={true} />);
-        await screen.findByText(/Sessão de WhatsApp institucional/);
-        // aviso de "configurada mas down" aparece
-        expect(screen.getByText(/NÃO está WORKING agora/)).toBeInTheDocument();
+        // aviso de "configurada mas down" só renderiza após o load — esperar por ele
+        expect(await screen.findByText(/NÃO está WORKING agora/)).toBeInTheDocument();
         fireEvent.click(screen.getByText('Salvar sessão de envio'));
         await waitFor(() => expect(mockToast.toast.error).toHaveBeenCalled());
         expect(mockCfg.updateUiConfig).not.toHaveBeenCalled();
