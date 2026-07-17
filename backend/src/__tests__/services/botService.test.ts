@@ -91,7 +91,7 @@ const mockPermissions = vi.hoisted(() => ({
 }));
 vi.mock('../../services/userPermissionsService', () => ({ userPermissionsService: mockPermissions }));
 
-import { botService, getWhatsAppBotToolsPrompt, validateWhatsAppBotToolsPrompt } from '../../services/botService';
+import { botService, __resetMessageDedupForTests, getWhatsAppBotToolsPrompt, validateWhatsAppBotToolsPrompt } from '../../services/botService';
 import { getToolContext, DEV_TOOLS, getToolsPrompt } from '../../services/agentTools';
 import { messageService } from '../../services/legacy/messageService';
 import { aiService } from '../../services/aiService';
@@ -106,6 +106,7 @@ import { itauApiService } from '../../services/itauApiService';
 describe('BotService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        __resetMessageDedupForTests(); // o dedup de msg é de processo; os testes reusam o mesmo id
         // #1129: comandos financeiros habilitados por padrão nos testes (comportamento histórico).
         mockFeatureSwitches.isFinancialCommandsEnabled.mockReturnValue(true);
         mockFeatureSwitches.isCrmContextInjectionEnabled.mockReturnValue(true);
@@ -145,6 +146,24 @@ describe('BotService', () => {
         it('ignores short messages', async () => {
             await botService.processMessage(createMessage({ body: 'a' }));
             expect(messageService.sendText).not.toHaveBeenCalled();
+        });
+
+        it('deduplica re-emissão: MESMA mensagem entregue 2× → processa 1× (não gera resposta dupla)', async () => {
+            (aiService.generateReply as any).mockResolvedValue('AI reply');
+            (messageService.getMessages as any).mockResolvedValue([]);
+            const msg = createMessage({ body: 'valide a fatura 50', id: 'msg_DEDUP_1' });
+            await botService.processMessage(msg);
+            await botService.processMessage(msg); // re-emissão (reconexão/replay do whatsapp-web.js)
+            expect(aiService.generateReply).toHaveBeenCalledTimes(1);
+            expect(messageService.sendText).toHaveBeenCalledTimes(1);
+        });
+
+        it('mensagens DIFERENTES (ids distintos) processam normalmente', async () => {
+            (aiService.generateReply as any).mockResolvedValue('AI reply');
+            (messageService.getMessages as any).mockResolvedValue([]);
+            await botService.processMessage(createMessage({ body: 'oi', id: 'msg_A' }));
+            await botService.processMessage(createMessage({ body: 'tudo bem?', id: 'msg_B' }));
+            expect(aiService.generateReply).toHaveBeenCalledTimes(2);
         });
 
         it('handles audio transcription', async () => {
@@ -219,6 +238,23 @@ describe('BotService', () => {
             expect(messageService.sendText).toHaveBeenCalledWith(
                 'sess1', '5511999999999@c.us', expect.stringContaining('Resumo')
             );
+        });
+
+        it('/resumo roda o generateReply em contexto READONLY (sem bypass de escrita)', async () => {
+            (messageService.getMessages as any).mockResolvedValue([
+                { fromMe: false, body: 'oi', senderName: 'User' },
+            ]);
+            (sessionService.sendTyping as any).mockResolvedValue(undefined);
+            (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+            let capturedReadOnly: any = 'NÃO-CAPTURADO';
+            (aiService.generateReply as any).mockImplementation(async () => {
+                capturedReadOnly = getToolContext().readOnly; // o que executeTool veria
+                return 'Summary';
+            });
+
+            await botService.processMessage(createMessage({ body: '/resumo', id: 'msg_RESUMO' }));
+
+            expect(capturedReadOnly).toBe(true); // escrita bloqueada nesta rota alcançável por WhatsApp
         });
 
         it('handles /resumo command with no messages', async () => {

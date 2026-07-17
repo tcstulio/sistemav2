@@ -83,6 +83,33 @@ async function retryWithBackoff<T>(
     throw lastError || new Error('Max retries exceeded');
 }
 
+/** Id ESTÁVEL de uma mensagem do WhatsApp (string), tolerante ao formato do whatsapp-web.js. */
+function messageId(message: any): string {
+    const id = message?.id;
+    if (!id) return '';
+    if (typeof id === 'string') return id;
+    return String(id._serialized || id.id || '');
+}
+
+// Dedup de mensagem (red-team 2026-07-17): o whatsapp-web.js RE-EMITE `message_create` em
+// reconexão/replay (o próprio churn de @lid da memória). Sem dedup, o pipeline inteiro roda 2× →
+// escrita duplicada, LLM em dobro e resposta repetida. Guarda o msg.id por uma janela curta (a
+// re-emissão é logo após reconectar). Complementa a idempotência de ESCRITA (writeIdempotency): esta
+// corta ANTES de gastar LLM/responder; aquela é o backstop durável só do efeito de escrita.
+const MSG_DEDUP_TTL_MS = 5 * 60 * 1000; // 5 min
+const seenMessages = new Map<string, number>();
+function alreadyProcessed(id: string): boolean {
+    if (!id) return false; // sem id não dá p/ deduplicar — segue (não pior que hoje)
+    const now = Date.now();
+    for (const [k, exp] of seenMessages) if (exp <= now) seenMessages.delete(k); // limpeza preguiçosa
+    if (seenMessages.has(id)) return true;
+    seenMessages.set(id, now + MSG_DEDUP_TTL_MS);
+    return false;
+}
+
+/** SÓ TESTES: zera o dedup de mensagens (o Map é de processo; testes reusam ids). */
+export function __resetMessageDedupForTests(): void { seenMessages.clear(); }
+
 class BotService {
 
     /**
@@ -93,6 +120,15 @@ class BotService {
             // 1. Basic Filters
             if (message.fromMe) return; // Ignore own messages (unless we want to track manual replies for assignment?)
             // Manual replies are tracked in the SEND route, not here. Here is implementation for INCOMING.
+
+            // Dedup de re-emissão: mesma mensagem entregue 2× (reconexão/replay do whatsapp-web.js) NÃO
+            // reprocessa. Marca ANTES de qualquer await (atômico no event loop) p/ também cobrir corrida
+            // de eventos quase-simultâneos. Uma nova pergunta do usuário tem outro id → não é bloqueada.
+            const msgId = messageId(message);
+            if (alreadyProcessed(msgId)) {
+                log.debug(`Mensagem ${msgId.slice(0, 16)}… já processada — ignorando re-emissão.`);
+                return;
+            }
 
             // 2. Identify Context
             const chatId = message.from; // e.g. 551199999999@c.us
@@ -373,9 +409,13 @@ class BotService {
             // o próprio perfil de permissões, como no chat do webapp. isAdmin fica SEMPRE false por
             // aqui: ação irreversível continua exigindo o deeplink /confirm-action logado no webapp
             // (o login é o 2º fator; adminBypassIrreversible nunca se aplica via WhatsApp).
-            // #1501 — `isAdmin: false` explícito em TODOS os caminhos (default e elevação de
-            // funcionário). O canal WhatsApp nunca é admin, ponto.
-            let toolCtx: Parameters<typeof runWithToolContext>[0] = { readOnly: true, isAdmin: false };
+            // turnId ESTÁVEL do turno = id da mensagem do WhatsApp. Torna toda escrita idempotente por
+            // (turno, ator, tool, args): a mesma escrita não roda 2× se o retryWithBackoff re-invocar
+            // generateReply após um throw pós-escrita, nem numa re-emissão do evento. Ver writeIdempotency.
+            // #1501 — `isAdmin: false` explícito em TODOS os caminhos (default e elevação de funcionário):
+            // o canal WhatsApp nunca é admin, ponto.
+            const turnId = messageId(message);
+            let toolCtx: Parameters<typeof runWithToolContext>[0] = { readOnly: true, isAdmin: false, turnId };
             // #segurança — só ELEVA (perfil + escrita) com match do número COMPLETO (E.164). O
             // matchStrength só existe como 'full' (matchEmployee já exige número inteiro), mas a
             // checagem explícita é defesa em profundidade: um match fraco jamais concede perfil.
@@ -385,7 +425,7 @@ class BotService {
                 try {
                     const permissionProfile = await userPermissionsService.getProfile(senderIdentity.userId);
                     const permContext = await userPermissionsService.getProfileForContext(senderIdentity.userId);
-                    toolCtx = { readOnly: false, userId: senderIdentity.userId, isAdmin: false, permissionProfile };
+                    toolCtx = { readOnly: false, userId: senderIdentity.userId, isAdmin: false, permissionProfile, turnId };
                     context += `\n\n[FUNCIONÁRIO IDENTIFICADO]\nVocê está falando com ${senderIdentity.displayName} (usuário interno, id ${senderIdentity.userId}), identificado pelo telefone.\n\n${permContext}`;
                     log.info(`Funcionário identificado no WhatsApp: ${senderIdentity.displayName} (id ${senderIdentity.userId}) — contexto com o perfil do usuário.`);
                 } catch (e: any) {
@@ -485,8 +525,12 @@ class BotService {
 
                     try {
                         await sessionService.sendTyping(sessionId, chatId);
+                        // #segurança (red-team 2026-07-17): /resumo roda o MESMO loop de tools do
+                        // generateReply com histórico controlável pelo remetente. Sem contexto de tool,
+                        // executeTool herdava o DEFAULT (readOnly falsy) → um tool JSON emitido aqui
+                        // escreveria SEM gate. Fecha embrulhando em readOnly (resumo é leitura pura).
                         const summaryResult = await retryWithBackoff(
-                            () => aiService.generateReply([], summaryContext),
+                            () => runWithToolContext({ readOnly: true }, () => aiService.generateReply([], summaryContext)),
                             2, 1000
                         );
                         const summary = typeof summaryResult === 'string' ? summaryResult : summaryResult.text;

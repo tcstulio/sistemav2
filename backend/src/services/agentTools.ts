@@ -30,6 +30,7 @@ import { getWhatsappAllowlist, whatsappDestinationAllowed, socidOf } from '../ut
 import { findSimilarIssue } from '../utils/issueDedup';
 import { isConfirmable, buildConfirmDeeplink } from './agentActionConfirm';
 import { classifyTool } from '../config/actionCatalog';
+import { writeIdempotencyKey, getIdempotentWrite, rememberWrite } from '../utils/writeIdempotency';
 import { notificationService } from './notificationService';
 
 const execFileAsync = promisify(execFile);
@@ -78,6 +79,13 @@ interface ToolContext {
      * mensagens externas), onde o agente deve ser estritamente somente-leitura.
      */
     readOnly?: boolean;
+    /**
+     * Identificador ESTÁVEL do "turno" lógico (ex.: msg.id do WhatsApp). Quando presente, toda
+     * escrita real é idempotente por (turnId, ator, tool, args) — executa no máximo 1× mesmo que a
+     * cadeia do agente seja re-invocada (retry externo, re-emissão de evento, fallback de provider).
+     * Ausente (ex.: webapp hoje) ⇒ guarda inativa, comportamento inalterado.
+     */
+    turnId?: string;
 }
 
 const toolContextStore = new AsyncLocalStorage<ToolContext>();
@@ -1071,11 +1079,34 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
         }
     }
 
+    // Idempotência de ESCRITA (red-team 2026-07-17): tool com efeito real executa NO MÁXIMO 1× por
+    // turno lógico (ctx.turnId), mesmo que a cadeia do agente seja re-invocada (retry externo do
+    // botService, re-emissão de evento @lid, fallback de provider). Roda DEPOIS de todos os gates
+    // (permissão/kill-switch/HITL) — um tool barrado ou desviado p/ deeplink NUNCA chega aqui, então
+    // não é cacheado. `prepare_*` é excluído: gera só deeplink (efeito zero), não é escrita real.
+    // Ausente turnId (webapp) ⇒ guarda inativa. Chave inclui ator+args ⇒ escritas distintas no mesmo
+    // turno não colidem; mesma chamada idêntica = intenção idempotente.
+    const isRealWrite = classifyTool(resolvedTool).reversibility !== 'read' && !resolvedTool.startsWith('prepare_');
+    const idemKey = (isRealWrite && ctx.turnId)
+        ? writeIdempotencyKey(ctx.turnId, ctx.userId || 'anon', resolvedTool, args)
+        : null;
+    if (idemKey) {
+        const cached = getIdempotentWrite(idemKey);
+        if (cached !== undefined) {
+            log.warn(`Idempotência: "${resolvedTool}" já executada neste turno — devolvendo resultado anterior SEM re-executar (evita escrita duplicada).`);
+            return cached;
+        }
+    }
+
     // #954: executeToolInner LANÇA em params inválidos/HTTP 5xx. Não engolimos aqui (mantém o
     // contrato testado); quem trata é o loop do agente (catch por-chamada injeta o erro e CONTINUA
     // em vez de abortar o turno — ver LocalProvider.generateReply e GoogleProvider).
     const t0 = Date.now();
     const result = await executeToolInner(resolvedTool, args);
+    // Contrato "no máximo 1×/turno": registra quando a chamada COMPLETA (retorna — sucesso OU erro
+    // tratado como string). Uma escrita que LANÇA (throw) NÃO chega aqui → permanece re-tentável.
+    // Re-tentar um erro tratado acontece num turno NOVO (msg nova = turnId novo), nunca dobra o efeito.
+    if (idemKey) rememberWrite(idemKey, result);
     const listener = ctx.listener || DEFAULT_TOOL_CONTEXT.listener;
     if (listener) {
         try { listener(tool, args, result, Date.now() - t0); } catch { /* ignore */ }
