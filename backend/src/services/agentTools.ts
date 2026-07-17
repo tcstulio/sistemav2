@@ -975,10 +975,12 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
     // #1514 — usuário LOGADO cujo perfil FALHOU a carregar (Dolibarr instável/ id não resolvido):
     // sem perfil não dá p/ checar permissão, e como readOnly é falsy no webapp a trava acima não pega.
     // Fail-closed: nega ESCRITA REAL a não-admin (admin é conhecido por req.user.admin, independe do
-    // perfil). prepare_* é isento — só gera deeplink e a escrita real ocorre no /confirm-action com a
-    // chave RBAC do usuário (2º fator); leitura também segue. O usuário re-tenta quando o Dolibarr volta.
+    // perfil). Usa o MESMO conjunto autoritativo de escrita do gate readOnly (isMutatingTool) — assim
+    // bloqueia exatamente validate_*/delete/notify_*/send_whatsapp e NÃO pega leituras mal-catalogadas
+    // (search/extract_from_url/web_search seguem). prepare_* é isento — só gera deeplink; a escrita real
+    // ocorre no /confirm-action com a chave RBAC do usuário (2º fator). O usuário re-tenta quando volta.
     if (ctx.profileLoadFailed && !ctx.isAdmin
-        && classifyTool(resolvedTool).reversibility !== 'read' && !resolvedTool.startsWith('prepare_')) {
+        && isMutatingTool(resolvedTool) && !resolvedTool.startsWith('prepare_')) {
         log.warn(`#1514: perfil não carregou — escrita "${resolvedTool}" negada fail-closed p/ ${ctx.userLogin || 'usuário'} (sem perfil, não-admin).`);
         return `Não foi possível verificar suas permissões agora (o perfil não carregou). Tente novamente em instantes; se persistir, contate um administrador.`;
     }

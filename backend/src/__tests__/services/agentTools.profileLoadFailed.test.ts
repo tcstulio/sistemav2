@@ -42,6 +42,16 @@ describe('agentTools — #1514 perfil falhou a carregar (fail-closed p/ escrita)
         expect(out).not.toMatch(/perfil não carregou|não foi possível verificar suas permissões/i);
     });
 
+    it('perfil falhou: reads mal-catalogadas (search/extract_from_url) NÃO são bloqueadas', async () => {
+        // O gate usa isMutatingTool (conjunto autoritativo de escrita), não classifyTool — então
+        // 'search'/'extract_from_url' (que o catálogo marca como default irreversível) seguem passando.
+        for (const tool of ['search', 'extract_from_url']) {
+            const out = await runWithToolContext({ profileLoadFailed: true, isAdmin: false },
+                () => executeTool(tool, { query: 'x', url: 'https://e.com' }).catch(e => String(e)));
+            expect(out).not.toMatch(/perfil não carregou|não foi possível verificar suas permissões/i);
+        }
+    });
+
     it('perfil falhou + ADMIN: admin escreve (isAdmin independe do perfil)', async () => {
         await runWithToolContext({ profileLoadFailed: true, isAdmin: true },
             () => executeTool('validate_invoice', { invoice_id: '50' }));
