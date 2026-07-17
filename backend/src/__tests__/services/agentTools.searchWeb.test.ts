@@ -15,20 +15,15 @@ vi.mock('../../utils/urlValidation', () => ({ isValidExternalUrl: () => true }))
 import { executeTool, TOOLS_PROMPT, getToolsPrompt } from '../../services/agentTools';
 
 describe('agentTools — #1504 remover search_web do TOOLS_PROMPT', () => {
-    it('TOOLS_PROMPT (admin e não-admin) NÃO contém a string `search_web` (apenas no dispatch)', () => {
-        // O critério de aceite fala `grep search_web` no arquivo inteiro. Como o `case 'search_web':`
-        // e o log.error mantêm a string no arquivo, a checagem de aceitação do prompt é: o nome
-        // `search_web` (como token de ferramenta que o LLM poderia escolher) NÃO aparece no prompt.
-        // Procuramos especificamente pela frase que define a ferramenta no TOOLS_PROMPT.
+    it('TOOLS_PROMPT (admin e não-admin) NÃO contém a string `search_web(`', () => {
+        // Critério de aceite da issue #1504: o nome `search_web` (token de ferramenta que o LLM
+        // poderia escolher proativamente) NÃO aparece no prompt. O case no dispatch e o helper
+        // `getToolsPrompt` precisam refletir isso tanto para admin quanto não-admin.
         const admin = getToolsPrompt({ isAdmin: true });
         const nonAdmin = getToolsPrompt({ isAdmin: false });
 
         for (const prompt of [admin, nonAdmin, TOOLS_PROMPT]) {
-            const semBloco = prompt
-                .split('\n')
-                .filter((l) => !/^\s*\d+\.\s+search_web\s*\(/.test(l))
-                .join('\n');
-            expect(semBloco).not.toMatch(/\bsearch_web\s*\(/);
+            expect(prompt).not.toMatch(/\bsearch_web\s*\(/);
         }
     });
 

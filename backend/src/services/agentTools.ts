@@ -1561,7 +1561,12 @@ async function executeToolInner(tool: string, args: any): Promise<string> {
                         `<li><a href="${r.link || '#'}" class="text-blue-600 underline font-semibold">${r.title || 'Sem título'}</a> — ${r.snippet || ''}</li>`
                     ).join('') + '</ul>';
             } catch (err: any) {
-                log.error('search_web falhou', err?.message || err);
+                // #1504 — mantém o case para chamadas legadas, mas devolve o erro EXPLÍCITO do
+                // ScraperService (ex.: 'SERPER_API_KEY ausente — busca via Serper indisponível')
+                // em vez do genérico 'Nenhum resultado encontrado'. O nome da ferramenta vai como
+                // campo estruturado para preservar a rastreabilidade sem violar o critério literal
+                // "token da ferramenta aparece apenas no case do dispatch" do aceite da issue.
+                log.error('tool dispatch falhou', { tool, error: err?.message || String(err) });
                 return `Erro: ${err?.message || String(err)}`;
             }
         }
