@@ -254,6 +254,7 @@ describe('dunningService (#1402) — pipeline funcional', () => {
         expect(digest.items[0].status).toBe('incomplete');
         expect(digest.items[0].rascunho).toBeNull();
         expect(digest.items[0].motivo).toBe('dado incompleto: socname');
+        expect(digest.items[0].score).toBe(0);
         // O enrichment FOI chamado (regra do spec).
         expect(mockGetCustomerContext).toHaveBeenCalledWith('soc-1');
     });
