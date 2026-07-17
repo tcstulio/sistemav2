@@ -119,6 +119,7 @@ const UpdateSchema = z.object({
         dryRunMode: z.boolean().optional(),
         financialCommands: z.boolean().optional(),
         crmContextInjection: z.boolean().optional(),
+        whatsappEmployeeElevation: z.boolean().optional(),
     }).optional(),
     // #1293: política de notificações (cadência/quiet-hours/alertas). Sanitização final (clamp de
     // faixas, validação de HH:mm) fica no service; o Zod só declara a forma p/ os campos sobreviverem.

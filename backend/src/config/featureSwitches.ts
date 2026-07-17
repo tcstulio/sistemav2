@@ -36,6 +36,11 @@ function toggleCrm(): boolean {
     return sw?.crmContextInjection !== false;
 }
 
+function toggleEmployeeElevation(): boolean {
+    const sw = uiConfigService.get().featureSwitches;
+    return sw?.whatsappEmployeeElevation === true;
+}
+
 /** DRY_RUN ativo (env DRY_RUN_MODE=true OU toggle de UI). Impede envio real de mensagens. */
 export function isDryRunEnabled(): boolean {
     return FEATURES.DRY_RUN_MODE === true || toggleDryRun();
@@ -49,6 +54,11 @@ export function isFinancialCommandsEnabled(): boolean {
 /** Injeção de contexto CRM no LLM ativa (env não 'false' E toggle não desligado). */
 export function isCrmContextInjectionEnabled(): boolean {
     return FEATURES.CRM_CONTEXT_INJECTION !== false && toggleCrm();
+}
+
+/** Elevação de funcionário no bot WhatsApp (env OU toggle de UI). Secure-default OFF. */
+export function isWhatsappEmployeeElevationEnabled(): boolean {
+    return FEATURES.WHATSAPP_EMPLOYEE_ELEVATION === true || toggleEmployeeElevation();
 }
 
 /** #1410 — provider WhatsApp efetivo (override persistido > env). O valor já é resolvido

@@ -10,7 +10,9 @@ import { interApiService } from './interApiService';
 import { itauApiService } from './itauApiService';
 import { logger } from '../utils/logger';
 import { FEATURES } from '../config/features';
-import { isFinancialCommandsEnabled, isCrmContextInjectionEnabled } from '../config/featureSwitches';
+import { isFinancialCommandsEnabled, isCrmContextInjectionEnabled, isWhatsappEmployeeElevationEnabled } from '../config/featureSwitches';
+import { whatsappIdentityService, SenderIdentity } from './whatsappIdentityService';
+import { userPermissionsService } from './userPermissionsService';
 
 const log = logger.child('BotService');
 
@@ -215,7 +217,14 @@ class BotService {
                 const rawHistory = await messageService.getMessages(sessionId, chatId, historyLimit);
 
                 // 1. Initial Map & Clean History (with senderName for groups + media context)
-                let rawMapped = rawHistory.map((m: any) => {
+                let rawMapped = rawHistory
+                    .filter((m: any) => {
+                        const b = m.body || '';
+                        return !b.includes('Status do Sistema') && 
+                               !b.includes('Comandos Disponíveis') && 
+                               !b.startsWith('/');
+                    })
+                    .map((m: any) => {
                     // Strip existing signatures from history to avoid poisoning the LLM context
                     const cleanBody = (m.body || '').replace(/(\n\s*~.*)+$/g, '').trim();
 
@@ -271,24 +280,31 @@ class BotService {
                 context += "\n\n[CONTEXTO DE GRUPO] Esta é uma conversa de grupo do WhatsApp. Múltiplos usuários participam. Os nomes dos remetentes estão indicados entre colchetes [Nome]. Responda de forma que seja útil para todos no grupo.";
             }
 
+            // Identidade do remetente (funcionário × cliente × desconhecido) — decide o contexto
+            // de permissões e o que injetar no LLM. Grupo NUNCA identifica: o autor é ambíguo e
+            // manipulável pelos demais participantes (fail-closed = unknown).
+            let senderIdentity: SenderIdentity = { kind: 'unknown' };
+            if (!isGroup) {
+                try {
+                    senderIdentity = await whatsappIdentityService.identifySender(message.realSender || chatId);
+                } catch (e: any) {
+                    log.warn(`Identificação do remetente falhou (${e?.message}) — seguindo como desconhecido.`);
+                }
+            }
+
             // [ANTIGRAVITY] INJECT CRM DATA
             // #1129: kill-switch de privacidade (env + toggle de UI) — desligado em incidente
             // NÃO injeta dados do cliente no LLM. Mesmo padrão do kill-switch financeiro.
-            if (isCrmContextInjectionEnabled()) {
+            if (isCrmContextInjectionEnabled() && senderIdentity.kind === 'customer') {
                 try {
-                    const phone = chatId.split('@')[0];
-                    const customer = await dolibarrService.getThirdPartyByPhone(phone);
-
-                    if (customer) {
-                        log.info(`Found CRM Customer: ${customer.name}`);
-                        const crmData = await dolibarrService.getCustomerContext(customer.id);
-                        context += `\n\n[DADOS DO CLIENTE IDENTIFICADO NO CRM]\nNome: ${customer.name}\n${crmData}\n\nUse estes dados para responder perguntas sobre faturas, tickets ou status.`;
-                    } else {
-                        context += `\n\n[CRM] Telefone ${phone} não encontrado no banco de dados.`;
-                    }
+                    log.info(`Found CRM Customer: ${senderIdentity.name}`);
+                    const crmData = await dolibarrService.getCustomerContext(senderIdentity.thirdpartyId);
+                    context += `\n\n[DADOS DO CLIENTE IDENTIFICADO NO CRM]\nNome: ${senderIdentity.name}\n${crmData}\n\nUse estes dados para responder perguntas sobre faturas, tickets ou status.`;
                 } catch (crmError) {
                     log.error("CRM Injection Failed", crmError);
                 }
+            } else if (isCrmContextInjectionEnabled() && senderIdentity.kind === 'unknown' && !isGroup) {
+                context += `\n\n[CRM] Remetente não identificado no banco de dados.`;
             }
 
             let signatureName = "Assistente Virtual";
@@ -304,15 +320,37 @@ class BotService {
             }
 
             // Generate reply with retry on failure.
-            // Mensagem de WhatsApp de entrada é input NÃO-CONFIÁVEL e não há usuário autenticado,
-            // então o agente roda em modo somente-leitura: o loop de tools não pode validar
-            // documentos, enviar mensagens ou disparar ações externas a partir do texto recebido.
+            // Mensagem de WhatsApp de entrada é input NÃO-CONFIÁVEL: o default é somente-leitura
+            // (nenhuma tool de escrita/efeito externo). Exceção controlada: FUNCIONÁRIO identificado
+            // pelo telefone, em chat 1:1, com o kill-switch whatsappEmployeeElevation ligado — recebe
+            // o próprio perfil de permissões, como no chat do webapp. isAdmin fica SEMPRE false por
+            // aqui: ação irreversível continua exigindo o deeplink /confirm-action logado no webapp
+            // (o login é o 2º fator; adminBypassIrreversible nunca se aplica via WhatsApp).
+            let toolCtx: Parameters<typeof runWithToolContext>[0] = { readOnly: true };
+            if (senderIdentity.kind === 'employee' && !isGroup && isWhatsappEmployeeElevationEnabled()) {
+                try {
+                    const permissionProfile = await userPermissionsService.getProfile(senderIdentity.userId);
+                    const permContext = await userPermissionsService.getProfileForContext(senderIdentity.userId);
+                    toolCtx = { readOnly: false, userId: senderIdentity.userId, isAdmin: false, permissionProfile };
+                    context += `\n\n[FUNCIONÁRIO IDENTIFICADO]\nVocê está falando com ${senderIdentity.displayName} (usuário interno, id ${senderIdentity.userId}), identificado pelo telefone.\n\n${permContext}`;
+                    log.info(`Funcionário identificado no WhatsApp: ${senderIdentity.displayName} (id ${senderIdentity.userId}) — contexto com o perfil do usuário.`);
+                } catch (e: any) {
+                    log.warn(`Elevação de funcionário falhou (${e?.message}) — mantendo somente-leitura.`);
+                }
+            }
             let replyResult = await retryWithBackoff(
-                () => runWithToolContext({ readOnly: true }, () => aiService.generateReply(history, context)),
+                () => runWithToolContext(toolCtx, () => aiService.generateReply(history, context)),
                 3,
                 1000
             );
             let replyText = typeof replyResult === 'string' ? replyResult : replyResult.text;
+
+            // Converter links internos relativos para absolutos APENAS para o WhatsApp
+            // A interface web continuará usando caminhos relativos (para manter o SPA layout)
+            if (replyText) {
+                const baseUrl = process.env.FRONTEND_URL || 'https://app.coolgroove.com.br';
+                replyText = replyText.replace(/(?<=^|\s)(\/[a-zA-Z0-9_\-\/\?=\.\&\%]+)/g, match => baseUrl + match);
+            }
 
             // Cleanup: Strip any hallucinated signatures in the response
             if (replyText) {

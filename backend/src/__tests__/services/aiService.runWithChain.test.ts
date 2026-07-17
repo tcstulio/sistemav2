@@ -56,6 +56,8 @@ vi.mock('../../services/llmQuotaState', () => ({
 
 vi.mock('../../services/agentTools', () => ({
     TOOLS_PROMPT: '',
+    // #1498: aiService.ts agora importa getToolsPrompt direto em vez do TOOLS_PROMPT wrapper.
+    getToolsPrompt: () => '',
     executeTool: vi.fn(),
 }));
 

@@ -46,6 +46,8 @@ const mockChannelRouter = vi.hoisted(() => ({
     sendWhatsApp: vi.fn(() => ({ success: true, messageId: 'msg-1', timestamp: Date.now(), provider: 'legacy' })),
     sendWhatsAppFile: vi.fn(() => ({ success: true, messageId: 'msg-1', provider: 'legacy' })),
     sendWhatsAppVoice: vi.fn(() => ({ success: true, messageId: 'msg-1', provider: 'legacy' })),
+    getDefaultSessionId: vi.fn(() => 'default'),
+    getWhatsAppProvider: vi.fn(() => 'legacy'),
 }));
 
 vi.mock('../../middleware/authMiddleware', () => ({
