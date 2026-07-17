@@ -278,11 +278,23 @@ export function evaluateConclusionGate(inp: ConclusionGateInput): ConclusionGate
 
 // #1408: opções do runner. `approvedTools` é a lista de ferramentas que o USUÁRIO já aprovou
 // explicitamente para este turno (alimenta o gate de confirmação abaixo).
+// #1499: `isAdmin` é o papel do chamador para o filtro de DEV_TOOLS (#1498) — propagado
+// EXPLICITAMENTE pela handler `runChatReply` (que já o tem do req.user.admin, normalizado
+// para boolean estrito). Quando NÃO é fornecido, o runner cai pro fallback
+// `getToolContext().isAdmin` (compat com callers legacy que já envolveram a chamada em
+// `runWithToolContext({ isAdmin })`). Quando É fornecido, é a FONTE DA VERDADE — mesmo
+// que o ctx diga admin, passar `isAdmin: false` força o prompt não-admin (defesa em
+// profundidade / testes determinísticos). A normalização final (`=== true`) é ÚNICA e
+// acontece dentro dos providers, garantindo que ambos os caminhos (options explícito e
+// ctx) recebam o MESMO tratamento — defence in depth contra tipos não-boolean (ex.:
+// `req.user.admin === '1'` / `=== 1` do Dolibarr), que nunca viram admin e nunca
+// conseguem passar pelo `getToolsPrompt` como admin.
 export interface GenerateReplyOptions {
     provider?: string;
     model?: string;
     origin?: string;
     approvedTools?: string[];
+    isAdmin?: boolean;
 }
 
 // #1408: mensagem EXPLÍCITA de teto de tool-calls atingido. Antes o loop caía em síntese
@@ -377,7 +389,16 @@ class GoogleProvider implements AIProvider {
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
         // #1498: filtra as 13 DEV_TOOLS do prompt para não-admin.
-        const toolsPrompt = getToolsPrompt({ isAdmin: getToolContext().isAdmin === true });
+        // #1499: `options.isAdmin` (propagado explicitamente pela handler `runChatReply`
+        // a partir do `req.user.admin` normalizado) é a FONTE DA VERDADE — quando ausente,
+        // cai pro ctx do runWithToolContext (compat com callers legacy). A normalização
+        // `=== true` é aplicada UNIFORMEMENTE nos DOIS caminhos (parênteses explícitos):
+        // sem ela, um `options.isAdmin` não-boolean (ex.: string `'1'`, número `1` do
+        // Dolibarr, objeto `{}`) seria repassado CRU a `getToolsPrompt`, vazando o filtro
+        // ou vazando DEV_TOOLS conforme a checagem interna do helper. Fazemos fail-closed
+        // AQUI, no provider — único ponto onde o admin gate é avaliado para o prompt.
+        const isAdminExplicit = (options?.isAdmin ?? getToolContext().isAdmin) === true;
+        const toolsPrompt = getToolsPrompt({ isAdmin: isAdminExplicit });
 
         let currentHistory = [...conversationHistory];
         let currentContext = context;
@@ -1190,7 +1211,14 @@ export class LocalProvider implements AIProvider {
     async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult> {
         // #1498: filtra as 13 DEV_TOOLS do prompt para não-admin (defesa em profundidade:
         // executeTool TAMBÉM recusa, mesmo com prompt injetado).
-        const toolsPrompt = getToolsPrompt({ isAdmin: getToolContext().isAdmin === true });
+        // #1499: `options.isAdmin` é a FONTE DA VERDADE — quando ausente, cai pro ctx
+        // do runWithToolContext (compat com callers legacy). A normalização `=== true`
+        // é aplicada UNIFORMEMENTE nos DOIS caminhos (parênteses explícitos): sem ela,
+        // um `options.isAdmin` não-boolean (ex.: string `'1'`, número `1` do Dolibarr,
+        // objeto `{}`) seria repassado CRU a `getToolsPrompt`, vazando o filtro ou
+        // vazando DEV_TOOLS. Fail-closed no provider — admin gate avaliado em UM ponto.
+        const isAdminExplicit = (options?.isAdmin ?? getToolContext().isAdmin) === true;
+        const toolsPrompt = getToolsPrompt({ isAdmin: isAdminExplicit });
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
         let currentHistory = [...conversationHistory];
@@ -2115,7 +2143,14 @@ export const aiService = {
         return [];
     },
 
-    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], moduleName: string = 'chat') => {
+    // #1499: `isAdmin` é o papel do chamador para o filtro de DEV_TOOLS (#1498). Propagado
+    // EXPLICITAMENTE pela handler `runChatReply` (`req.user.admin` já normalizado para
+    // boolean estrito por lá). Quando ausente, cada provider cai pro fallback
+    // `getToolContext().isAdmin` (compat com callers legacy que já envolviam em
+    // runWithToolContext). A normalização final (`=== true`) é responsabilidade do
+    // provider — UNIFORME nos dois caminhos (options explícito e ctx), fail-closed
+    // contra qualquer valor não-boolean (`'1'`, `1`, `{}`, etc.).
+    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], moduleName: string = 'chat', isAdmin?: boolean) => {
         // Injeta o endereço público (cloudflared) no contexto -> o agente sabe responder "qual o endereço de acesso?".
         try {
             const tunnelUrl = require('./tunnelService').tunnelService.getUrl();
@@ -2131,9 +2166,9 @@ export const aiService = {
                 let specificProvider = getProvider(providerName);
                 if (imageBase64 && !providerSupportsVision(specificProvider)) {
                     const mm = getMultimodalProvider();
-                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName }).then(sanitizeResult);
+                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin }).then(sanitizeResult);
                 }
-                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName }).then(sanitizeResult);
+                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin }).then(sanitizeResult);
             });
         }
 
@@ -2147,12 +2182,12 @@ export const aiService = {
             const mm = getMultimodalProvider();
             if (mm) {
                 log.info(`generateReply: imagem presente e provider '${providerName}' sem visão -> roteando para Google.`);
-                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName }).then(sanitizeResult);
+                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin }).then(sanitizeResult);
             }
             log.warn(`generateReply: imagem presente mas nenhum provider com visão disponível (sem googleApiKey) -> seguindo com '${providerName}'.`);
         }
 
-        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName }).then(sanitizeResult);
+        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin }).then(sanitizeResult);
     },
 
     analyzeSystem: async (query: string, rootPath: string = '../src', module: string = 'system_analysis') => {
