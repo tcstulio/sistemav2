@@ -91,8 +91,8 @@ const mockPermissions = vi.hoisted(() => ({
 }));
 vi.mock('../../services/userPermissionsService', () => ({ userPermissionsService: mockPermissions }));
 
-import { botService } from '../../services/botService';
-import { getToolContext } from '../../services/agentTools';
+import { botService, getWhatsAppBotToolsPrompt } from '../../services/botService';
+import { getToolContext, DEV_TOOLS } from '../../services/agentTools';
 import { messageService } from '../../services/legacy/messageService';
 import { aiService } from '../../services/aiService';
 import { storeService } from '../../services/storeService';
@@ -833,6 +833,109 @@ describe('BotService', () => {
             });
 
             await expect(botService.processMessage(createMessage({ body: 'Hello' }))).resolves.toBeUndefined();
+        });
+
+        // #1501 — canal WhatsApp NUNCA é admin. O bot atende Comercial/Financeiro/Produtor, então
+        // mesmo que o remetente tenha cargo admin no ERP, no WhatsApp ele é tratado como usuário
+        // de negócio. Cobre três eixos:
+        //   (a) getWhatsAppBotToolsPrompt() exportado não contém nenhuma das 13 DEV_TOOLS — se o
+        //       filtro #1498 regredir, o módulo joga throw no boot (já testado indiretamente: a
+        //       mera importação de botService.ts passaria a falhar).
+        //   (b) O ToolContext efetivo dentro do generateReply tem isAdmin !== true em TODOS os
+        //       caminhos: unknown default, customer, employee-com-elevação, employee-sem-elevação,
+        //       grupo.
+        //   (c) O default toolCtx do bloco principal tem isAdmin explicitamente false (não undefined
+        //       silencioso) — defesa em profundidade contra alguém esquecer o campo.
+        describe('#1501: botService sempre passa isAdmin: false (canal WhatsApp nunca é admin)', () => {
+            let capturedCtx: any;
+
+            const captureCtxFromReply = () => {
+                capturedCtx = null;
+                (schedulerService.getActiveFlow as any).mockReturnValue(null);
+                (schedulerService.checkConfirmation as any).mockReturnValue(null);
+                (schedulerService.checkFlowTrigger as any).mockReturnValue(null);
+                (messageService.getMessages as any).mockResolvedValue([]);
+                (aiService.generateReply as any).mockImplementation(async () => {
+                    capturedCtx = getToolContext();
+                    return 'Reply';
+                });
+                (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+                (sessionService.sendTyping as any).mockResolvedValue(undefined);
+            };
+
+            it('getWhatsAppBotToolsPrompt() NÃO contém nenhuma das 13 DEV_TOOLS (filtro #1498 ok)', () => {
+                for (const devTool of DEV_TOOLS) {
+                    expect(getWhatsAppBotToolsPrompt()).not.toContain(devTool);
+                }
+            });
+
+            it('getWhatsAppBotToolsPrompt() continua listando ferramentas de negócio (search, list_invoices, prepare_*)', () => {
+                expect(getWhatsAppBotToolsPrompt()).toContain('search(query');
+                expect(getWhatsAppBotToolsPrompt()).toContain('list_invoices');
+                expect(getWhatsAppBotToolsPrompt()).toContain('prepare_create_proposal');
+                expect(getWhatsAppBotToolsPrompt()).toContain('validate_invoice');
+                expect(getWhatsAppBotToolsPrompt()).toContain('notify_person');
+            });
+
+            it('sender=unknown 1:1: isAdmin NUNCA é true (default readOnly)', async () => {
+                captureCtxFromReply();
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'unknown' });
+
+                await botService.processMessage(createMessage({ body: 'Olá' }));
+
+                expect(capturedCtx).toBeDefined();
+                expect(capturedCtx.isAdmin).not.toBe(true);
+            });
+
+            it('sender=customer identificado: isAdmin NUNCA é true (permanece readOnly)', async () => {
+                captureCtxFromReply();
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'customer', thirdpartyId: 'c1', name: 'John' });
+                (dolibarrService.getCustomerContext as any).mockResolvedValue('Customer context');
+
+                await botService.processMessage(createMessage({ body: 'Olá' }));
+
+                expect(capturedCtx.isAdmin).not.toBe(true);
+                expect(capturedCtx.readOnly).toBe(true);
+            });
+
+            it('sender=employee COM elevação de perfil: isAdmin explicitamente false (não undefined)', async () => {
+                captureCtxFromReply();
+                mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(true);
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva', matchStrength: 'full' });
+                mockPermissions.getProfile.mockResolvedValue({ role: 'admin', agent: { canCreate: ['*'] } });
+
+                await botService.processMessage(createMessage({ body: 'Prepara proposta' }));
+
+                // Garante que mesmo funcionário com perfil admin no ERP NÃO vira admin no canal
+                // WhatsApp. isAdmin deve ser explicitamente false (nunca true, nunca silenciosamente
+                // undefined que poderia virar true num refactor futuro).
+                expect(capturedCtx.isAdmin).toBe(false);
+                expect(capturedCtx.readOnly).toBe(false);
+                expect(capturedCtx.userId).toBe('7');
+            });
+
+            it('sender=employee SEM elevação (kill-switch off): isAdmin continua false/undefined', async () => {
+                captureCtxFromReply();
+                mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(false);
+                mockIdentity.identifySender.mockResolvedValue({ kind: 'employee', userId: '7', displayName: 'Túlio Silva', matchStrength: 'full' });
+
+                await botService.processMessage(createMessage({ body: 'Olá' }));
+
+                expect(capturedCtx.isAdmin).not.toBe(true);
+                expect(capturedCtx.readOnly).toBe(true);
+                expect(capturedCtx.userId).toBeUndefined();
+            });
+
+            it('grupo (@g.us): isAdmin NUNCA é true (sender fica como unknown)', async () => {
+                captureCtxFromReply();
+                mockFeatureSwitches.isWhatsappEmployeeElevationEnabled.mockReturnValue(true);
+                (storeService.getChatSettings as any).mockReturnValue({ groupSettings: { llmEnabled: true } });
+
+                await botService.processMessage(createMessage({ body: 'Olá', from: 'g1@g.us' }));
+
+                expect(mockIdentity.identifySender).not.toHaveBeenCalled();
+                expect(capturedCtx.isAdmin).not.toBe(true);
+            });
         });
     });
 });
