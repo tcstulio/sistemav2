@@ -145,20 +145,34 @@ describe('#1499 — LocalProvider.generateReply: isAdmin via options (explícito
         }
     });
 
-    it('safety: string truthy (ex.: "1") NÃO vira admin (=== true é estrito)', async () => {
+    it('safety: string truthy (ex.: "1") NÃO vira admin (=== true é estrito no provider)', async () => {
         // Defesa contra callers que repassem string "1" do req.user.admin sem normalizar
-        // p/ boolean. ?? mantém o valor (não-null), mas `=== true` é estrito → cai em
-        // não-admin. Mesma regra que `options.isAdmin = {}` ou `= []`. NÃO é fallback
-        // ao ctx — é fail-closed contra promoção indevida.
+        // p/ boolean. A normalização `=== true` acontece no provider, em AMBOS os caminhos
+        // (options explícito e ctx), com parênteses explícitos para garantir fail-closed
+        // uniforme (#1499 follow-up). Mesma regra que `options.isAdmin = {}` ou `= []`.
+        // O ctx tem `isAdmin: true`, mas o options EXPLÍCITO (`'1'`) sobrescreve e é
+        // normalizado p/ `false` ANTES de chegar em getToolsPrompt.
         const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
         await runWithToolContext({ isAdmin: true }, () =>
-            // bypass de tipos proposital (testamos a regra de normalização).
+            // bypass de tipos proposital (testamos a regra de normalização no provider).
             provider.generateReply(user, '', undefined, { isAdmin: '1' as unknown as boolean })
         );
 
         const sys = getSystemPromptSent();
         for (const dev of DEV_TOOLS) {
             expect(sys, `string truthy "1" NÃO devia virar admin: "${dev}"`).not.toContain(dev);
+        }
+    });
+
+    it('safety: options.isAdmin = null/undefined cai pro ctx, mas ctx undefined mantém não-admin', async () => {
+        // Edge-case: options sem isAdmin E ctx sem isAdmin → fallback duplo nulo → não-admin.
+        const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
+        // Sem `runWithToolContext` (AsyncLocalStorage vazio) e sem options.isAdmin.
+        await provider.generateReply(user, '', undefined, {});
+
+        const sys = getSystemPromptSent();
+        for (const dev of DEV_TOOLS) {
+            expect(sys, `sem ctx/admin deveria ser não-admin: "${dev}"`).not.toContain(dev);
         }
     });
 });

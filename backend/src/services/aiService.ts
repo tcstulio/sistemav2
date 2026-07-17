@@ -279,11 +279,16 @@ export function evaluateConclusionGate(inp: ConclusionGateInput): ConclusionGate
 // #1408: opções do runner. `approvedTools` é a lista de ferramentas que o USUÁRIO já aprovou
 // explicitamente para este turno (alimenta o gate de confirmação abaixo).
 // #1499: `isAdmin` é o papel do chamador para o filtro de DEV_TOOLS (#1498) — propagado
-// EXPLICITAMENTE pela handler `runChatReply` (que já o tem do req.user.admin). Quando NÃO
-// é fornecido, o runner cai pro fallback `getToolContext().isAdmin === true` (compat
-// com callers que já envolveram a chamada em `runWithToolContext({ isAdmin })`).
-// Quando É fornecido, é a FONTE DA VERDADE — mesmo que o ctx diga admin, passar
-// `isAdmin: false` força o prompt não-admin (defesa em profundidade / testes determinísticos).
+// EXPLICITAMENTE pela handler `runChatReply` (que já o tem do req.user.admin, normalizado
+// para boolean estrito). Quando NÃO é fornecido, o runner cai pro fallback
+// `getToolContext().isAdmin` (compat com callers legacy que já envolveram a chamada em
+// `runWithToolContext({ isAdmin })`). Quando É fornecido, é a FONTE DA VERDADE — mesmo
+// que o ctx diga admin, passar `isAdmin: false` força o prompt não-admin (defesa em
+// profundidade / testes determinísticos). A normalização final (`=== true`) é ÚNICA e
+// acontece dentro dos providers, garantindo que ambos os caminhos (options explícito e
+// ctx) recebam o MESMO tratamento — defence in depth contra tipos não-boolean (ex.:
+// `req.user.admin === '1'` / `=== 1` do Dolibarr), que nunca viram admin e nunca
+// conseguem passar pelo `getToolsPrompt` como admin.
 export interface GenerateReplyOptions {
     provider?: string;
     model?: string;
@@ -384,11 +389,15 @@ class GoogleProvider implements AIProvider {
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
         // #1498: filtra as 13 DEV_TOOLS do prompt para não-admin.
-        // #1499: `options.isAdmin` (propagado explicitamente pela handler) é a FONTE DA
-        // VERDADE — quando ausente, cai pro ctx do runWithToolContext (compat com
-        // callers legacy). O `=== true` é proposital: strings de Dolibarr ("1") ou
-        // números não viram isAdmin=true sem normalização explícita.
-        const isAdminExplicit = options?.isAdmin ?? getToolContext().isAdmin === true;
+        // #1499: `options.isAdmin` (propagado explicitamente pela handler `runChatReply`
+        // a partir do `req.user.admin` normalizado) é a FONTE DA VERDADE — quando ausente,
+        // cai pro ctx do runWithToolContext (compat com callers legacy). A normalização
+        // `=== true` é aplicada UNIFORMEMENTE nos DOIS caminhos (parênteses explícitos):
+        // sem ela, um `options.isAdmin` não-boolean (ex.: string `'1'`, número `1` do
+        // Dolibarr, objeto `{}`) seria repassado CRU a `getToolsPrompt`, vazando o filtro
+        // ou vazando DEV_TOOLS conforme a checagem interna do helper. Fazemos fail-closed
+        // AQUI, no provider — único ponto onde o admin gate é avaliado para o prompt.
+        const isAdminExplicit = (options?.isAdmin ?? getToolContext().isAdmin) === true;
         const toolsPrompt = getToolsPrompt({ isAdmin: isAdminExplicit });
 
         let currentHistory = [...conversationHistory];
@@ -1203,8 +1212,12 @@ export class LocalProvider implements AIProvider {
         // #1498: filtra as 13 DEV_TOOLS do prompt para não-admin (defesa em profundidade:
         // executeTool TAMBÉM recusa, mesmo com prompt injetado).
         // #1499: `options.isAdmin` é a FONTE DA VERDADE — quando ausente, cai pro ctx
-        // do runWithToolContext (compat com callers legacy).
-        const isAdminExplicit = options?.isAdmin ?? getToolContext().isAdmin === true;
+        // do runWithToolContext (compat com callers legacy). A normalização `=== true`
+        // é aplicada UNIFORMEMENTE nos DOIS caminhos (parênteses explícitos): sem ela,
+        // um `options.isAdmin` não-boolean (ex.: string `'1'`, número `1` do Dolibarr,
+        // objeto `{}`) seria repassado CRU a `getToolsPrompt`, vazando o filtro ou
+        // vazando DEV_TOOLS. Fail-closed no provider — admin gate avaliado em UM ponto.
+        const isAdminExplicit = (options?.isAdmin ?? getToolContext().isAdmin) === true;
         const toolsPrompt = getToolsPrompt({ isAdmin: isAdminExplicit });
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
@@ -2131,9 +2144,12 @@ export const aiService = {
     },
 
     // #1499: `isAdmin` é o papel do chamador para o filtro de DEV_TOOLS (#1498). Propagado
-    // EXPLICITAMENTE pela handler `runChatReply` (já vem de req.user.admin). Quando ausente,
-    // o provider cai pro fallback `getToolContext().isAdmin` (compat com callers legacy que
-    // já envolviam em runWithToolContext).
+    // EXPLICITAMENTE pela handler `runChatReply` (`req.user.admin` já normalizado para
+    // boolean estrito por lá). Quando ausente, cada provider cai pro fallback
+    // `getToolContext().isAdmin` (compat com callers legacy que já envolviam em
+    // runWithToolContext). A normalização final (`=== true`) é responsabilidade do
+    // provider — UNIFORME nos dois caminhos (options explícito e ctx), fail-closed
+    // contra qualquer valor não-boolean (`'1'`, `1`, `{}`, etc.).
     generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], moduleName: string = 'chat', isAdmin?: boolean) => {
         // Injeta o endereço público (cloudflared) no contexto -> o agente sabe responder "qual o endereço de acesso?".
         try {

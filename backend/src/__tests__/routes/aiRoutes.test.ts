@@ -886,6 +886,67 @@ describe('aiRoutes', () => {
         });
     });
 
+    // #1499 follow-up: o filtro de DEV_TOOLS (#1498) é sensível ao tipo de isAdmin. A
+    // handler `runChatReply` precisa passar o 5º arg de `aiService.generateReply` como
+    // BOOLEAN estrito, não o `req.user.admin` cru (que pode ser string `'1'`, número
+    // `1`, boolean `true` ou falsy). A regra de normalização está em runChatReply:
+    //   const isAdmin = user?.admin === '1' || user?.admin === 1 || user?.admin === true;
+    // Defensiva contra regressões futuras (ex.: alguém mudar pra `Boolean(user?.admin)`
+    // que promoveria `{}`, `'1'` de outro fornecedor, etc.).
+    describe('isAdmin normalization (#1499): 5º arg de aiService.generateReply é boolean estrito', () => {
+        function captureAdminForUser(userOverride: any): any {
+            mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+                req.user = userOverride;
+                next();
+            });
+            return request(app).post('/api/generate-reply').send({ context: 'test' }).then(() => {
+                return mockAiService.generateReply.mock.calls.at(-1)?.[4];
+            });
+        }
+
+        it('admin = "1" (string) → 5º arg é exatamente true (boolean estrito)', async () => {
+            const arg = await captureAdminForUser({ id: '1', login: 'admin', admin: '1' });
+            expect(typeof arg, '5º arg deve ser boolean').toBe('boolean');
+            expect(arg, 'admin="1" deve virar true').toBe(true);
+        });
+
+        it('admin = 1 (número) → 5º arg é exatamente true', async () => {
+            const arg = await captureAdminForUser({ id: '1', login: 'admin', admin: 1 });
+            expect(typeof arg).toBe('boolean');
+            expect(arg).toBe(true);
+        });
+
+        it('admin = true (boolean) → 5º arg é exatamente true', async () => {
+            const arg = await captureAdminForUser({ id: '1', login: 'admin', admin: true });
+            expect(typeof arg).toBe('boolean');
+            expect(arg).toBe(true);
+        });
+
+        it('admin = "0" (string) → 5º arg é exatamente false', async () => {
+            const arg = await captureAdminForUser({ id: '1', login: 'u', admin: '0' });
+            expect(typeof arg).toBe('boolean');
+            expect(arg).toBe(false);
+        });
+
+        it('admin = 0 (número) → 5º arg é exatamente false', async () => {
+            const arg = await captureAdminForUser({ id: '1', login: 'u', admin: 0 });
+            expect(typeof arg).toBe('boolean');
+            expect(arg).toBe(false);
+        });
+
+        it('admin = false (boolean) → 5º arg é exatamente false', async () => {
+            const arg = await captureAdminForUser({ id: '1', login: 'u', admin: false });
+            expect(typeof arg).toBe('boolean');
+            expect(arg).toBe(false);
+        });
+
+        it('admin = ausente (user sem `admin`) → 5º arg é exatamente false', async () => {
+            const arg = await captureAdminForUser({ id: '1', login: 'u' });
+            expect(typeof arg).toBe('boolean');
+            expect(arg).toBe(false);
+        });
+    });
+
     describe('DELETE /api/sessions/:id', () => {
         it('deletes a single session', async () => {
             const { chatSessionService } = await import('../../services/chatSessionService');
