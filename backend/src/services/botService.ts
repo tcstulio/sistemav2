@@ -1,6 +1,6 @@
 import { messageService } from './legacy/messageService';
 import { aiService } from './aiService';
-import { runWithToolContext } from './agentTools';
+import { runWithToolContext, getToolsPrompt, DEV_TOOLS } from './agentTools';
 import { storeService } from './storeService';
 import { dolibarrService } from './dolibarrService';
 import { sessionService } from './legacy/sessionService';
@@ -15,6 +15,48 @@ import { whatsappIdentityService, SenderIdentity } from './whatsappIdentityServi
 import { userPermissionsService } from './userPermissionsService';
 
 const log = logger.child('BotService');
+
+// #1501 — por design, o canal WhatsApp NUNCA é admin. O bot atende Comercial/Financeiro/Produtor:
+// mesmo que o remetente tenha cargo admin no ERP, no canal WhatsApp ele é tratado como usuário
+// de negócio. aiService internamente já chama getToolsPrompt({ isAdmin: getToolContext().isAdmin
+// === true }) respeitando o runWithToolContext — mas tornamos isso EXPLÍCITO aqui também:
+//   (a) documenta a invariante "WhatsApp nunca é admin" no próprio fluxo do bot;
+//   (b) falhamos ALTO na primeira chamada se o filtro não-admin do #1498 algum dia regredir e
+//       voltar a vazar DEV_TOOLS neste canal. Defesa em profundidade: executeTool também barra
+//       DEV_TOOLS via ctx.isAdmin !== true, mas o ideal é não depender só dessa 2ª linha.
+// Inicialização LAZY (não no module-load): botService entra num ciclo de imports
+// (channelRouter→messageService→sessionService→botService), e chamar getToolsPrompt aqui
+// dispararia um TDZ em agentTools.TOOLS_PROMPT_FULL antes da const ser avaliada. Adiar a
+// construção até a 1ª chamada resolve o ciclo sem alterar a invariante "WhatsApp nunca é admin".
+let _whatsappBotToolsPrompt: string | undefined;
+export function getWhatsAppBotToolsPrompt(): string {
+    if (_whatsappBotToolsPrompt !== undefined) return _whatsappBotToolsPrompt;
+    const prompt = getToolsPrompt({ isAdmin: false });
+    for (const devTool of DEV_TOOLS) {
+        if (prompt.includes(devTool)) {
+            log.error('#1501: getToolsPrompt({isAdmin:false}) vazou DEV_TOOL — filtro #1498 regrediu', { devTool });
+            throw new Error(`#1501: WHATSAPP_BOT_TOOLS_PROMPT contém DEV_TOOL "${devTool}" — filtro não-admin #1498 regrediu`);
+        }
+    }
+    _whatsappBotToolsPrompt = prompt;
+    return _whatsappBotToolsPrompt;
+}
+
+// #1501 — fail-fast self-check de produção (defesa em profundidade contra regressão de
+// #1498). Chamada no início de processMessage, ANTES de qualquer trabalho caro
+// (identifySender, dolibarrService.getCustomerContext, aiService.generateReply). Custo
+// ≈ 0 depois da 1ª chamada (cache em `_whatsappBotToolsPrompt` + flag local). Se o
+// filtro não-admin algum dia regredir e vazar uma DEV_TOOL, jogamos throw ALTO no log
+// já na 1ª mensagem — sem isso, a invariante "WhatsApp nunca é admin" só estaria
+// coberta pelos testes. `executeTool` também barra DEV_TOOLS via ctx.isAdmin !== true,
+// mas o ideal é não depender SÓ dessa 2ª linha. EXPORTADA para que o teste possa
+// reinjetar o ciclo lazy no setup (vi.resetModules + re-import).
+let _whatsappBotToolsPromptValidated = false;
+export function validateWhatsAppBotToolsPrompt(): void {
+    if (_whatsappBotToolsPromptValidated) return;
+    getWhatsAppBotToolsPrompt(); // throws se uma DEV_TOOL escapar (regressão #1498)
+    _whatsappBotToolsPromptValidated = true;
+}
 
 // Delay helper
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -116,6 +158,11 @@ class BotService {
             }
 
             if (!body || body.length < 2) return; // Ignore empty/short messages
+
+            // #1501 — canal WhatsApp NUNCA é admin (ver comentário em getWhatsAppBotToolsPrompt
+            // acima). Fail-fast: se o filtro não-admin de #1498 regrediu, o throw aqui aborta a
+            // mensagem ANTES de chamar aiService.generateReply — sem LLM tokens gastos.
+            validateWhatsAppBotToolsPrompt();
 
             log.info(`Processing incoming message from ${chatId} (Session: ${sessionId})`);
 
@@ -365,11 +412,15 @@ class BotService {
             // turnId ESTÁVEL do turno = id da mensagem do WhatsApp. Torna toda escrita idempotente por
             // (turno, ator, tool, args): a mesma escrita não roda 2× se o retryWithBackoff re-invocar
             // generateReply após um throw pós-escrita, nem numa re-emissão do evento. Ver writeIdempotency.
+            // #1501 — `isAdmin: false` explícito em TODOS os caminhos (default e elevação de funcionário):
+            // o canal WhatsApp nunca é admin, ponto.
             const turnId = messageId(message);
-            let toolCtx: Parameters<typeof runWithToolContext>[0] = { readOnly: true, turnId };
+            let toolCtx: Parameters<typeof runWithToolContext>[0] = { readOnly: true, isAdmin: false, turnId };
             // #segurança — só ELEVA (perfil + escrita) com match do número COMPLETO (E.164). O
             // matchStrength só existe como 'full' (matchEmployee já exige número inteiro), mas a
             // checagem explícita é defesa em profundidade: um match fraco jamais concede perfil.
+            // #1501 — `isAdmin: false` permanece EXPLÍCITO mesmo no caminho de elevação de
+            // funcionário: o canal WhatsApp nunca é admin, mesmo que o usuário seja admin no ERP.
             if (senderIdentity.kind === 'employee' && senderIdentity.matchStrength === 'full' && !isGroup && isWhatsappEmployeeElevationEnabled()) {
                 try {
                     const permissionProfile = await userPermissionsService.getProfile(senderIdentity.userId);
