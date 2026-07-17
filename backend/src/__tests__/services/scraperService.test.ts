@@ -3,9 +3,17 @@ import axios from 'axios';
 
 vi.mock('../../config/env', () => ({
     config: {
-        serperApiKey: '',
+        get serperApiKey() {
+            return process.env.SERPER_API_KEY || '';
+        },
     },
 }));
+// `config.serperApiKey` é capturado uma única vez em env.ts no carregamento do
+// módulo, então uma SERPER_API_KEY real exportada no ambiente de CI shadow-aria
+// o `vi.stubEnv` posterior. O getter acima reflete `process.env.SERPER_API_KEY`
+// em cada acesso, espelhando o fallback `config.serperApiKey ||
+// process.env.SERPER_API_KEY` do scraperService e isolando estes testes de
+// qualquer chave pré-existente no host.
 
 vi.mock('../../utils/urlValidation', () => ({
     isValidExternalUrl: vi.fn((url: string) => !url.includes('192.168') && !url.includes('localhost')),
@@ -25,23 +33,33 @@ describe('ScraperService', () => {
     });
 
     describe('searchGoogle', () => {
+        // Cobre o ramo "chave AUSENTE do env" (delete da var). Exercita o
+        // caminho `apiKey = config.serperApiKey || process.env.SERPER_API_KEY`
+        // → undefined → falsy → throw. Diferente do teste seguinte (empty string).
         it('rejects with explicit error when SERPER_API_KEY is missing (undefined)', async () => {
             delete process.env.SERPER_API_KEY;
             await expect(ScraperService.searchGoogle('test query'))
                 .rejects.toThrow(/SERPER_API_KEY ausente/);
         });
 
+        // Cobre o ramo "chave = string vazia" via stubEnv no beforeEach.
+        // Diferente do teste anterior (delete → undefined).
         it('rejects with explicit error when SERPER_API_KEY is empty string', async () => {
             await expect(ScraperService.searchGoogle('test query'))
                 .rejects.toThrow(/SERPER_API_KEY ausente/);
         });
 
+        // Issue #1503 (canônico): rejeita com a mensagem EXATA exigida pela issue
+        // e cobre o critério "Teste falha se alguém reintroduzir o retorno silencioso
+        // []" — se a promise resolver com [], `.rejects.toThrow(...)` falha porque
+        // a promise não rejeitou. Mantido como asserção dedicada/separada das
+        // duas anteriores (regex) para rastreabilidade da issue e servir de guard
+        // contra regressões silenciosas.
         it('#1503: rejects with the exact error message when SERPER_API_KEY is missing', async () => {
-            const promise = ScraperService.searchGoogle('test query');
-            await expect(promise).rejects.toBeInstanceOf(Error);
-            await expect(promise).rejects.toThrow(
-                'SERPER_API_KEY ausente — busca via Serper indisponível'
-            );
+            await expect(ScraperService.searchGoogle('test query'))
+                .rejects.toBeInstanceOf(Error);
+            await expect(ScraperService.searchGoogle('test query'))
+                .rejects.toThrow('SERPER_API_KEY ausente — busca via Serper indisponível');
         });
 
         it('returns shopping and organic results', async () => {
