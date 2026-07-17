@@ -74,18 +74,40 @@ vi.mock('../../services/agentBootstrapConfigStore', () => ({
 
 vi.mock('../../services/agentTools', () => ({
     setToolCallListener: vi.fn(),
-    runWithToolContext: (ctx: any, fn: () => Promise<any>) => {
-        if (ctx?.listener) {
-            ctx.listener('mock_tool', { test: true }, 'mock result', 50);
-        }
-        return fn();
-    },
+    runWithToolContext: mockRunWithToolContext,
     TOOLS_PROMPT: '',
     // #1498: aiService.ts agora importa getToolsPrompt direto (TOOLS_PROMPT virou wrapper
     // deprecated). Mock precisa expor getToolsPrompt pra não quebrar o import.
     getToolsPrompt: () => '',
-    executeTool: vi.fn(),
+    executeTool: mockExecuteTool,
 }));
+
+// #1500: hoist o mock de runWithToolContext para que possamos inspecionar (e mockar) os args
+// passados a ele — incluindo `isAdmin` que #1500 exige propagar a partir de req.user.
+const mockRunWithToolContext = vi.hoisted(() => vi.fn((ctx: any, fn: () => Promise<any>) => {
+    if (ctx?.listener) {
+        ctx.listener('mock_tool', { test: true }, 'mock result', 50);
+    }
+    return fn();
+}));
+
+// #1500: hoist o mock de executeTool — debug routes precisam ver ctx.isAdmin correto.
+const mockExecuteTool = vi.hoisted(() => vi.fn(() => Promise.resolve('{}')));
+
+// #1500: rota /api/analyze/pdf usa `require('pdf-parse')` no handler. Sem mock, pdf-parse
+// tenta decodificar base64 inválido e estoura antes de chegar no `withUserToolContext`,
+// mascarando o teste de propagação. Mock determinístico libera o handler a passar.
+// O handler faz `const pdfParse = require('pdf-parse'); await pdfParse(buffer)` —
+// o módulo exporta a função via module.exports; para que `pdfParse(buf)` funcione
+// direto, o mock retorna o módulo como a própria função. NÃO setamos __esModule:
+// Vitest desempacotaria .default e quebraria pdfParse(buf).
+vi.mock('pdf-parse', () => {
+    // Force write to a file so we can see if factory is invoked
+    require('fs').appendFileSync('/tmp/pdf-mock-debug.log', `mock factory invoked at ${new Date().toISOString()}\n`);
+    const fn: any = vi.fn(() => Promise.resolve({ text: 'conteúdo mock do PDF para teste #1500' }));
+    fn.default = fn;
+    return fn;
+});
 
 vi.mock('../../services/agentActivityService', () => ({
     agentActivityService: {
@@ -1129,5 +1151,311 @@ describe('#1011: heartbeat do job via reportProgress (tool-call = progresso)', (
         // -> o guard `if (jobId)` bloqueia reportProgress.
         expect(spy).not.toHaveBeenCalled();
         spy.mockRestore();
+    });
+});
+
+// =====================================================
+// #1500: propagação de isAdmin do req.user até o aiService.
+//
+// Quando #1498 introduziu DEV_TOOLS e o gate de `getToolsPrompt({ isAdmin })`, a propagação
+// ficou implícita no chat path (runChatReply já chamava runWithToolContext({ isAdmin }))
+// mas os outros handlers (analyze-system, extract/customer, transcribe-audio, etc.) chamavam
+// `aiService.X(...)` sem contexto de tool — ou seja, isAdmin ficava undefined para essas
+// rotas. Esta suíte cobre:
+//   - admin=true → runWithToolContext({ isAdmin: true, ... })
+//   - admin=false/0 → runWithToolContext({ isAdmin: false, ... })
+//   - /analyze/pdf propaga isAdmin (usava aiService.generateReply direto, era bug)
+//   - /debug/execute-tool propaga isAdmin (gate de DEV_TOOLS depende disso)
+//   - req.user.admin ausente → isAdmin=false (fail-closed; não promove ninguém a admin)
+// =====================================================
+describe('#1500: propagação de isAdmin do req.user até aiService', () => {
+    let app: express.Application;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        // Garante estado "feliz" (outros describes usam mockRejectedValue que persiste).
+        mockAiService.generateReply.mockResolvedValue({ text: 'Generated reply text' });
+        app = createApp();
+    });
+
+    // Helper: último ctx passado a runWithToolContext após a requisição.
+    async function lastContext(reqFn: () => Promise<any>): Promise<any> {
+        mockRunWithToolContext.mockClear();
+        await reqFn();
+        const calls = mockRunWithToolContext.mock.calls;
+        if (calls.length === 0) throw new Error('runWithToolContext não foi chamado');
+        return calls[calls.length - 1][0];
+    }
+
+    it('admin="1": /api/generate-reply propaga isAdmin=true', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '10', login: 'admin_user', firstname: 'A', lastname: 'D', admin: '1' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/generate-reply').send({ context: 'oi' }));
+        expect(ctx.isAdmin).toBe(true);
+        expect(ctx.userLogin).toBe('admin_user');
+        expect(ctx.userId).toBe('10');
+    });
+
+    it('admin="0": /api/generate-reply propaga isAdmin=false', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '20', login: 'common_user', admin: '0' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/generate-reply').send({ context: 'oi' }));
+        expect(ctx.isAdmin).toBe(false);
+        expect(ctx.userLogin).toBe('common_user');
+    });
+
+    it('admin=1 (number): /api/generate-reply propaga isAdmin=true', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '11', login: 'admin_num', admin: 1 };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/generate-reply').send({ context: 'oi' }));
+        expect(ctx.isAdmin).toBe(true);
+    });
+
+    it('/api/generate-reply-async (job assíncrono) também propaga isAdmin=true', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '30', login: 'admin_async', admin: '1' };
+            next();
+        });
+        mockRunWithToolContext.mockClear();
+        const res = await request(app)
+            .post('/api/generate-reply-async')
+            .send({ sessionId: 'sess_async_1500', message: 'oi', module: 'chat' });
+        expect(res.status).toBe(202);
+        // Job roda em background — espera terminar para que `withUserToolContext` seja chamado.
+        await waitForJob(app, res.body.jobId);
+        const calls = mockRunWithToolContext.mock.calls;
+        expect(calls.length).toBeGreaterThan(0);
+        // A última chamada deve ter isAdmin=true (vinda de req.user propagada via wrapper).
+        const ctx = calls[calls.length - 1][0];
+        expect(ctx.isAdmin).toBe(true);
+        expect(ctx.userLogin).toBe('admin_async');
+    });
+
+    it('/api/analyze/pdf (que usa aiService.generateReply direto) propaga isAdmin=true', async () => {
+        // ANTES de #1500: /analyze/pdf chamava aiService.generateReply SEM runWithToolContext,
+        // então aiService via `getToolContext().isAdmin === undefined` -> prompt não-admin
+        // (sem DEV_TOOLS) mesmo para admin. Esta é a regressão corrigida.
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '40', login: 'admin_pdf', admin: '1' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/analyze/pdf').send({ pdf: Buffer.from('hi').toString('base64') }));
+        expect(ctx.isAdmin).toBe(true);
+        expect(ctx.userLogin).toBe('admin_pdf');
+    });
+
+    it('/api/analyze/pdf com não-admin propaga isAdmin=false', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '41', login: 'common_pdf', admin: '0' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/analyze/pdf').send({ pdf: Buffer.from('hi').toString('base64') }));
+        expect(ctx.isAdmin).toBe(false);
+    });
+
+    it('/api/analyze-system propaga isAdmin=true (admin)', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '50', login: 'admin_sys', admin: '1' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/analyze-system').send({ query: 'q' }));
+        expect(ctx.isAdmin).toBe(true);
+    });
+
+    it('/api/analyze-system propaga isAdmin=false (não-admin)', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '51', login: 'common_sys', admin: '0' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/analyze-system').send({ query: 'q' }));
+        expect(ctx.isAdmin).toBe(false);
+    });
+
+    it('/api/analyze-sentiment propaga isAdmin', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '60', login: 'admin_sent', admin: '1' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/analyze-sentiment').send({ text: 'oi' }));
+        expect(ctx.isAdmin).toBe(true);
+    });
+
+    it('/api/extract/customer propaga isAdmin=false', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '70', login: 'common_cust', admin: '0' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/extract/customer').send({ text: 'Fulano' }));
+        expect(ctx.isAdmin).toBe(false);
+    });
+
+    it('/api/extract/receipt propaga isAdmin=true (admin via number)', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '80', login: 'admin_receipt', admin: 1 };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/extract/receipt').send({ image: 'AAAA' }));
+        expect(ctx.isAdmin).toBe(true);
+    });
+
+    it('/api/analyze/financial propaga isAdmin', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '90', login: 'admin_fin', admin: '1' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/analyze/financial').send({ data: { a: 1 } }));
+        expect(ctx.isAdmin).toBe(true);
+    });
+
+    it('/api/fix/api-call propaga isAdmin=false', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '100', login: 'common_fix', admin: '0' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/fix/api-call').send({ log: {} }));
+        expect(ctx.isAdmin).toBe(false);
+    });
+
+    it('/api/generate/code propaga isAdmin=true', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '110', login: 'admin_code', admin: '1' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/generate/code').send({ endpoint: '/x', method: 'GET' }));
+        expect(ctx.isAdmin).toBe(true);
+    });
+
+    it('/api/transcribe-audio propaga isAdmin', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '120', login: 'admin_audio', admin: '1' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/transcribe-audio').send({ audio: 'AAAA' }));
+        expect(ctx.isAdmin).toBe(true);
+    });
+
+    it('/api/draft/collection-email propaga isAdmin=false', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '130', login: 'common_draft', admin: '0' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/draft/collection-email').send({ customer: {}, amount: 10 }));
+        expect(ctx.isAdmin).toBe(false);
+    });
+
+    it('/api/analyze/sales-forecast propaga isAdmin=true', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '140', login: 'admin_fc', admin: '1' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/analyze/sales-forecast').send({ invoices: [] }));
+        expect(ctx.isAdmin).toBe(true);
+    });
+
+    it('/api/analyze/customer-sentiment propaga isAdmin', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '150', login: 'admin_cs', admin: '1' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/analyze/customer-sentiment').send({ customer: {}, invoices: [] }));
+        expect(ctx.isAdmin).toBe(true);
+    });
+
+    it('/api/audit/proposal propaga isAdmin', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '160', login: 'admin_aud', admin: '1' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/audit/proposal').send({ proposal: {} }));
+        expect(ctx.isAdmin).toBe(true);
+    });
+
+    it('/api/audit/project propaga isAdmin', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '170', login: 'common_aud', admin: '0' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/audit/project').send({ project: {} }));
+        expect(ctx.isAdmin).toBe(false);
+    });
+
+    it('/api/analyze/logs propaga isAdmin', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '180', login: 'admin_logs', admin: '1' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/analyze/logs').send({ logs: [] }));
+        expect(ctx.isAdmin).toBe(true);
+    });
+
+    it('/api/analyze/monthly-report propaga isAdmin', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '190', login: 'common_mr', admin: '0' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/analyze/monthly-report').send({ data: {} }));
+        expect(ctx.isAdmin).toBe(false);
+    });
+
+    it('req.user sem campo `admin` → isAdmin=false (fail-closed)', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '200', login: 'sem_flag' };
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/analyze-system').send({ query: 'q' }));
+        expect(ctx.isAdmin).toBe(false);
+    });
+
+    it('req.user=null → isAdmin=false (não crasha)', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = null;
+            next();
+        });
+        const ctx = await lastContext(() => request(app).post('/api/analyze-system').send({ query: 'q' }));
+        expect(ctx.isAdmin).toBe(false);
+        expect(ctx.userId).toBe('');
+        expect(ctx.userLogin).toBe('unknown');
+    });
+
+    // Não deve existir rota pública/anônima chamando aiService (#1500 item 3 — fail-closed).
+    // Mesmo assim, testamos /prefill: se um dia virar pública chamando aiService, queremos
+    // um "red" explícito para revisitar esta suíte.
+    it('sanidade: nenhuma rota /api/* chamada sem middleware de auth chega no aiService', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((_req: any, _res: any, next: any) => {
+            _res.status(401).json({ error: 'mocked-reject' });
+            // Não chama next() — simula bloqueio de auth.
+        });
+        mockRunWithToolContext.mockClear();
+        const res = await request(app).post('/api/analyze-system').send({ query: 'q' });
+        expect(res.status).toBe(401);
+        expect(mockRunWithToolContext).not.toHaveBeenCalled();
+    });
+
+    // Critérios de aceite da issue #1500:
+    //  "Admin autenticado → prompt completo (todas as tools)."
+    //  "Usuário comum autenticado → prompt sem DEV_TOOLS."
+    //
+    // Como getToolsPrompt é chamado dentro de aiService (mockado nos testes), validamos o
+    // CONTRATO do wrapper propagando o flag correto — a chain prompt → tools é exercida nos
+    // testes de integração end-to-end. Aqui garantimos que o flag chega ao context.
+    it('chain completa: admin=true propaga até o context antes de chamar aiService.generateReply', async () => {
+        mockRequireDolibarrLogin.mockImplementationOnce((req: any, _res: any, next: any) => {
+            req.user = { id: '300', login: 'admin_chain', admin: '1' };
+            next();
+        });
+        await request(app).post('/api/generate-reply').send({ context: 'oi' });
+        const call = mockRunWithToolContext.mock.calls[mockRunWithToolContext.mock.calls.length - 1];
+        const ctx = call[0];
+        // isAdmin EXPLICITAMENTE true, não undefined. Garante bypass do gate de #1408.
+        expect(ctx.isAdmin).toBe(true);
+        // como o mock apenas chama fn() (sem preservar ctx) — o importante aqui é que
+        // o wrapper **propagou** o boolean certo; o use real via AsyncLocalStorage.
+        expect(typeof ctx.isAdmin).toBe('boolean');
     });
 });

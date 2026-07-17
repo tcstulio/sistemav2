@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { aiService } from '../services/aiService';
 import { dolibarrService } from '../services/dolibarr';
 import { chatSessionService } from '../services/chatSessionService';
-import { runWithToolContext } from '../services/agentTools';
+import { runWithToolContext, executeTool } from '../services/agentTools';
 import { extractToolCall } from '../services/aiService';
 import { requireDolibarrLogin, requireDolibarrAdmin } from '../middleware/authMiddleware';
 import { agentActivityService } from '../services/agentActivityService';
@@ -17,6 +17,30 @@ import { verifyDeeplink } from '../utils/deeplinkToken';
 const log = createLogger('AI');
 const router = Router();
 
+// #1500: derive `isAdmin` boolean a partir do que o middleware de auth (protoSession.userData
+// ou dolibarrService.getUserByKey) carregou em `req.user`. Dolibarr devolve `admin` como
+// string `'0'|'1'`, mas algumas queries trazem number `0|1`; toleramos ambos. Se vier
+// `undefined`/ausente, default seguro = false (não-admin) — a política DEV_TOOLS de #1498
+// só libera as 13 ferramentas de dev/robô quando isAdmin === true.
+function resolveIsAdmin(user: any): boolean {
+    if (!user) return false;
+    const a = user.admin;
+    return a === '1' || a === 1 || a === true;
+}
+
+// #1500: wrapper que executa uma função dentro de um `runWithToolContext` com `isAdmin` (e o
+// mínimo de userId/userLogin) propagado a partir de `req.user`. Garante que TODA chamada a
+// `aiService.*` veja o flag correto — sem isso, aiService.generateReply cai no prompt
+// não-admin (sem DEV_TOOLS) mesmo para admin autenticado, e executeTool recusa/bypassa
+// errado no /debug/execute-tool.
+function withUserToolContext<T>(user: any, fn: () => Promise<T>): Promise<T> {
+    return runWithToolContext({
+        userId: user?.id ? String(user.id) : '',
+        userLogin: user?.login || 'unknown',
+        isAdmin: resolveIsAdmin(user),
+    }, fn);
+}
+
 // Debug routes — exigem login; execute-tool exige admin (executa ferramentas arbitrárias).
 // Antes ficavam ANTES do requireDolibarrLogin global = expostas sem autenticação (furo de segurança).
 router.post('/debug/extract-tool', requireDolibarrLogin, (req, res) => {
@@ -29,9 +53,12 @@ router.post('/debug/extract-tool', requireDolibarrLogin, (req, res) => {
 router.post('/debug/execute-tool', requireDolibarrLogin, requireDolibarrAdmin, async (req, res) => {
     const { tool, args } = req.body;
     if (!tool) return res.status(400).json({ error: 'Missing tool' });
+    const user = (req as any).user;
     try {
-        const { executeTool } = require('../services/agentTools');
-        const result = await executeTool(tool, args || {});
+        // #1500: propaga isAdmin no contexto para que executeTool consulte `ctx.isAdmin`
+        // (gate de DEV_TOOLS de #1498) — sem o wrapper, o gate vê undefined e recusa
+        // mesmo para o admin do `requireDolibarrAdmin` lá em cima.
+        const result = await withUserToolContext(user, () => executeTool(tool, args || {}));
         res.json({ tool, args, result: result.substring(0, 2000) });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -124,7 +151,7 @@ async function runChatReply(body: any, user: any, jobId?: string): Promise<{ rep
 
         let enrichedContext = context || '';
         let permissionProfile: import('../services/userPermissionsService').UserPermissionProfile | null = null;
-        const isAdmin = user?.admin === '1' || user?.admin === 1 || user?.admin === true;
+        const isAdmin = resolveIsAdmin(user);
 
         enrichedContext += `\n[SISTEMA] Data e hora atual: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
 
@@ -308,11 +335,15 @@ router.get('/prefill', (req, res) => {
     }
     res.json({ kind: payload.kind, data: payload.data, expiresAt: payload.exp });
 });
-
 router.post('/analyze-system', async (req, res) => {
     try {
         const { query } = AnalyzeSystemSchema.parse(req.body);
-        const result = await aiService.analyzeSystem(query, '../src', 'system_analysis');
+        const user = (req as any).user;
+        // #1500: propaga isAdmin (e userId/userLogin) para o tool-context — aiService
+        // consulta `getToolContext().isAdmin` em helpers como confirmationBlock (#1408).
+        const result = await withUserToolContext(user, () =>
+            aiService.analyzeSystem(query, '../src', 'system_analysis')
+        );
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -329,7 +360,9 @@ const AnalyzeSentimentSchema = z.object({
 router.post('/analyze-sentiment', async (req, res) => {
     try {
         const { text } = AnalyzeSentimentSchema.parse(req.body);
-        const result = await aiService.analyzeSentiment(text, 'chat');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () => aiService.analyzeSentiment(text, 'chat'));
         res.json(result);
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -346,7 +379,9 @@ const ExtractCustomerSchema = z.object({
 router.post('/extract/customer', async (req, res) => {
     try {
         const { text } = ExtractCustomerSchema.parse(req.body);
-        const result = await aiService.extractCustomerInfo(text, 'chat');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () => aiService.extractCustomerInfo(text, 'chat'));
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -365,7 +400,9 @@ const ExtractReceiptSchema = z.object({
 router.post('/extract/receipt', async (req, res) => {
     try {
         const { image } = ExtractReceiptSchema.parse(req.body);
-        const result = await aiService.extractReceiptData(image, 'banking');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () => aiService.extractReceiptData(image, 'banking'));
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -376,6 +413,7 @@ router.post('/extract/receipt', async (req, res) => {
 });
 
 
+
 const AnalyzeFinancialSchema = z.object({
     data: z.any()
 });
@@ -383,7 +421,9 @@ const AnalyzeFinancialSchema = z.object({
 router.post('/analyze/financial', async (req, res) => {
     try {
         const { data } = AnalyzeFinancialSchema.parse(req.body);
-        const result = await aiService.analyzeFinancialHealth(data, 'banking');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () => aiService.analyzeFinancialHealth(data, 'banking'));
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -400,7 +440,9 @@ const FixApiCallSchema = z.object({
 router.post('/fix/api-call', async (req, res) => {
     try {
         const { log } = FixApiCallSchema.parse(req.body);
-        const result = await aiService.fixApiCall(log, 'system_analysis');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () => aiService.fixApiCall(log, 'system_analysis'));
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -419,7 +461,11 @@ const GenerateCodeSchema = z.object({
 router.post('/generate/code', async (req, res) => {
     try {
         const { endpoint, method, description } = GenerateCodeSchema.parse(req.body);
-        const result = await aiService.generateCode(endpoint, method, description, 'system_analysis');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () =>
+            aiService.generateCode(endpoint, method, description, 'system_analysis')
+        );
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -440,7 +486,11 @@ const TranscribeAudioSchema = z.object({
 router.post('/transcribe-audio', async (req, res) => {
     try {
         const { audio, mimeType } = TranscribeAudioSchema.parse(req.body);
-        const transcription = await aiService.transcribeAudio(audio, mimeType || 'audio/ogg', 'chat');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const transcription = await withUserToolContext(user, () =>
+            aiService.transcribeAudio(audio, mimeType || 'audio/ogg', 'chat')
+        );
         res.json({ transcription });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -470,11 +520,17 @@ ${text}
 
 ${question ? `Pergunta: ${question}` : 'Faça um resumo dos pontos principais do documento.'}`;
 
-        const result = await aiService.generateReply(
-            [{ role: 'user' as const, parts: prompt }],
-            'Você é um assistente especializado em análise de documentos.',
-            undefined,
-            'chat'
+        const user = (req as any).user;
+        // #1500: aiService.generateReply consulta `getToolContext().isAdmin` para
+        // escolher getToolsPrompt({ isAdmin }) — sem o wrapper, mesmo um admin autenticado
+        // aqui recebe prompt NÃO-admin (sem DEV_TOOLS de #1498). Propagação obrigatória.
+        const result = await withUserToolContext(user, () =>
+            aiService.generateReply(
+                [{ role: 'user' as const, parts: prompt }],
+                'Você é um assistente especializado em análise de documentos.',
+                undefined,
+                'chat'
+            )
         );
         res.json({ result: result.text });
     } catch (error: any) {
@@ -494,7 +550,11 @@ const DraftEmailSchema = z.object({
 router.post('/draft/collection-email', async (req, res) => {
     try {
         const { customer, amount } = DraftEmailSchema.parse(req.body);
-        const result = await aiService.draftCollectionEmail(customer, amount, 'banking');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () =>
+            aiService.draftCollectionEmail(customer, amount, 'banking')
+        );
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -513,9 +573,11 @@ const SalesForecastSchema = z.object({
 router.post('/analyze/sales-forecast', async (req, res) => {
     try {
         const { invoices, context } = SalesForecastSchema.parse(req.body);
-        // We pass context if the service supports it, or just invoices.
-        // For now, service logic infers from dates, but we keep the route flexible.
-        const result = await aiService.generateSalesForecast(invoices, context, 'banking');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () =>
+            aiService.generateSalesForecast(invoices, context, 'banking')
+        );
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -529,11 +591,17 @@ router.post('/analyze/sales-forecast', async (req, res) => {
 // e com variância alta (60-90s típico, cauda >120s); segurar a conexão síncrona estourava o
 // timeout de cliente/túnel. Aqui enfileiramos e respondemos na hora com jobId; o cliente faz
 // polling de GET /jobs/:id. O resultado vem em job.result (a string JSON do forecast).
+// #1500: o job roda FORA do contexto de tool (aiJobService usa seu próprio AsyncLocalStorage),
+// então embrulhamos a chamada em withUserToolContext ANTES de chamar aiService — assim o
+// `getToolContext().isAdmin` dentro do aiService vê o valor correto do usuário.
 router.post('/analyze/sales-forecast-async', (req, res) => {
     try {
         const { invoices, context } = SalesForecastSchema.parse(req.body);
+        const user = (req as any).user;
         const jobId = aiJobService.enqueue(
-            async () => ({ result: await aiService.generateSalesForecast(invoices, context, 'banking') }),
+            () => withUserToolContext(user, () =>
+                aiService.generateSalesForecast(invoices, context, 'banking')
+            ).then(result => ({ result })),
             'forecast'
         );
         res.status(202).json({ jobId, status: 'queued' });
@@ -606,7 +674,11 @@ const CustomerSentimentSchema = z.object({
 router.post('/analyze/customer-sentiment', async (req, res) => {
     try {
         const { customer, invoices } = CustomerSentimentSchema.parse(req.body);
-        const result = await aiService.analyzeCustomerSentiment(customer, invoices, 'banking');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () =>
+            aiService.analyzeCustomerSentiment(customer, invoices, 'banking')
+        );
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -624,7 +696,9 @@ const AuditProposalSchema = z.object({
 router.post('/audit/proposal', async (req, res) => {
     try {
         const { proposal } = AuditProposalSchema.parse(req.body);
-        const result = await aiService.auditProposal(proposal, 'proposals');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () => aiService.auditProposal(proposal, 'proposals'));
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -644,7 +718,11 @@ const AuditProjectSchema = z.object({
 router.post('/audit/project', async (req, res) => {
     try {
         const { project, tasks, invoices } = AuditProjectSchema.parse(req.body);
-        const result = await aiService.auditProject(project, tasks, invoices, 'proposals');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () =>
+            aiService.auditProject(project, tasks, invoices, 'proposals')
+        );
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -662,7 +740,9 @@ const AnalyzeLogsSchema = z.object({
 router.post('/analyze/logs', async (req, res) => {
     try {
         const { logs } = AnalyzeLogsSchema.parse(req.body);
-        const result = await aiService.analyzeSystemLogs(logs, 'system_analysis');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () => aiService.analyzeSystemLogs(logs, 'system_analysis'));
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -680,7 +760,9 @@ const AnalyzeReportSchema = z.object({
 router.post('/analyze/monthly-report', async (req, res) => {
     try {
         const { data } = AnalyzeReportSchema.parse(req.body);
-        const result = await aiService.analyzeMonthlyReport(data, 'system_analysis');
+        const user = (req as any).user;
+        // #1500: isAdmin propagado via context — ver /analyze-system.
+        const result = await withUserToolContext(user, () => aiService.analyzeMonthlyReport(data, 'system_analysis'));
         res.json({ result });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
