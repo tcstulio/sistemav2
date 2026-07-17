@@ -94,16 +94,17 @@ const mockRunWithToolContext = vi.hoisted(() => vi.fn((ctx: any, fn: () => Promi
 // #1500: hoist o mock de executeTool — debug routes precisam ver ctx.isAdmin correto.
 const mockExecuteTool = vi.hoisted(() => vi.fn(() => Promise.resolve('{}')));
 
-// #1500: mock do `pdf-parse` para a rota /api/analyze/pdf. O handler faz
-// `const pdfParse = require('pdf-parse'); await pdfParse(buffer)` (CJS), então o módulo
-// exportado precisa ser diretamente chamável. NÃO setamos `__esModule: true` — vitest
-// preservaria como namespace ESM e o `require` retornaria o objeto, quebrando `pdfParse(buf)`.
-// Adicionar variantes como `'pdf-parse/index.js'` falha com pdf-parse v2 (sem entry
-// `./index.js` no `exports` field do package.json). Default exposto cobre futuras trocas
+// #1500: mock determinístico de `pdf-parse` para a rota /api/analyze/pdf sem introduzir
+// refactor fora de escopo na produção (que continua `require('pdf-parse')`). O factory
+// cria a função INLINE: se referenciássemos uma var de módulo, `vi.mock` (hoisted)
+// capturaria ela em TDZ e `require('pdf-parse')` retornaria undefined. CJS default
+// = módulo exporta a função chamável direta + `.default = fn` para tolerar troca futura
 // para `await import()`.
-const mockPdfParse = vi.fn(async (_buf: any) => ({ text: 'conteúdo mock do PDF para teste #1500' }));
-(mockPdfParse as any).default = mockPdfParse;
-vi.mock('pdf-parse', () => mockPdfParse);
+vi.mock('pdf-parse', () => {
+    const fn = vi.fn(async (_buf: any) => ({ text: 'conteúdo mock do PDF para teste #1500' }));
+    (fn as any).default = fn;
+    return fn;
+});
 
 vi.mock('../../services/agentActivityService', () => ({
     agentActivityService: {
