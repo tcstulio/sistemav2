@@ -1,5 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import axios from 'axios';
+
+vi.mock('../../config/env', () => ({
+    config: {
+        serperApiKey: '',
+    },
+}));
 
 vi.mock('../../utils/urlValidation', () => ({
     isValidExternalUrl: vi.fn((url: string) => !url.includes('192.168') && !url.includes('localhost')),
@@ -11,33 +17,35 @@ import { isValidExternalUrl } from '../../utils/urlValidation';
 describe('ScraperService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.stubEnv('SERPER_API_KEY', '');
+    });
+
+    afterEach(() => {
+        vi.unstubAllEnvs();
     });
 
     describe('searchGoogle', () => {
         it('rejects with explicit error when SERPER_API_KEY is missing (undefined)', async () => {
-            const originalEnv = process.env.SERPER_API_KEY;
             delete process.env.SERPER_API_KEY;
-            try {
-                await expect(ScraperService.searchGoogle('test query'))
-                    .rejects.toThrow(/SERPER_API_KEY ausente/);
-            } finally {
-                if (originalEnv !== undefined) process.env.SERPER_API_KEY = originalEnv;
-            }
+            await expect(ScraperService.searchGoogle('test query'))
+                .rejects.toThrow(/SERPER_API_KEY ausente/);
         });
 
         it('rejects with explicit error when SERPER_API_KEY is empty string', async () => {
-            const originalEnv = process.env.SERPER_API_KEY;
-            process.env.SERPER_API_KEY = '';
-            try {
-                await expect(ScraperService.searchGoogle('test query'))
-                    .rejects.toThrow(/SERPER_API_KEY ausente/);
-            } finally {
-                if (originalEnv !== undefined) process.env.SERPER_API_KEY = originalEnv;
-            }
+            await expect(ScraperService.searchGoogle('test query'))
+                .rejects.toThrow(/SERPER_API_KEY ausente/);
+        });
+
+        it('#1503: rejects with the exact error message when SERPER_API_KEY is missing', async () => {
+            const promise = ScraperService.searchGoogle('test query');
+            await expect(promise).rejects.toBeInstanceOf(Error);
+            await expect(promise).rejects.toThrow(
+                'SERPER_API_KEY ausente — busca via Serper indisponível'
+            );
         });
 
         it('returns shopping and organic results', async () => {
-            process.env.SERPER_API_KEY = 'test-api-key';
+            vi.stubEnv('SERPER_API_KEY', 'test-api-key');
             (axios.post as any).mockResolvedValue({
                 data: {
                     shopping: [{ source: 'Store', title: 'Product', price: 'R$ 100', link: 'https://store.com/p' }],
@@ -54,6 +62,7 @@ describe('ScraperService', () => {
         });
 
         it('returns empty on API error', async () => {
+            vi.stubEnv('SERPER_API_KEY', 'test-api-key');
             (axios.post as any).mockRejectedValue(new Error('API error'));
             const result = await ScraperService.searchGoogle('test');
             expect(result).toEqual([]);
