@@ -93,6 +93,27 @@ export function extractToolCalls(text: string, max = 16): { tool: string; args: 
     return calls;
 }
 
+// #E (red-team bot WhatsApp 2026-07-17): barra VAZAMENTO de tool-call CRU. Quando o modelo emite
+// `tool":"prepare_create_task","args":{...}}` SEM a chave inicial `{`, o extractToolCall (que exige
+// `{`) não casa, a call não é executada e o JSON iria como TEXTO ao usuário (visto no histórico do
+// dono). A assinatura do vazamento é o par tool:"nome", args: — raríssimo em prosa legítima. Deeplinks
+// de prepare_* (mensagem + URL) NÃO casam. Se detectado numa resposta final, troca por erro amigável.
+const LEAKED_TOOLCALL_RE = /"?tool"?\s*:\s*"[a-z_]{3,}"\s*,\s*"?args"?\s*:|<tool_call\s*:/i;
+export function looksLikeLeakedToolCall(text?: string): boolean {
+    return LEAKED_TOOLCALL_RE.test(String(text || ''));
+}
+export function sanitizeFinalReply(text: string): string {
+    if (looksLikeLeakedToolCall(text)) {
+        log.warn('#E: resposta final continha tool-call CRU não-interpretado — substituída por erro amigável.');
+        return 'Tive um problema ao processar essa ação. Pode repetir o pedido, por favor?';
+    }
+    return text;
+}
+function sanitizeResult(r: GenerateReplyResult): GenerateReplyResult {
+    if (r && typeof r.text === 'string') r.text = sanitizeFinalReply(r.text);
+    return r;
+}
+
 // #1002/#1316: system prompt do Marciano — identidade concisa + regras anti-sycophancy,
 // anti-"announce-and-stop" e exemplo de tool call. Fonte única em config/agentSystemPrompt.ts,
 // compartilhada entre GoogleProvider e LocalProvider para comportamento consistente.
@@ -2110,9 +2131,9 @@ export const aiService = {
                 let specificProvider = getProvider(providerName);
                 if (imageBase64 && !providerSupportsVision(specificProvider)) {
                     const mm = getMultimodalProvider();
-                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName });
+                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName }).then(sanitizeResult);
                 }
-                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName });
+                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName }).then(sanitizeResult);
             });
         }
 
@@ -2126,12 +2147,12 @@ export const aiService = {
             const mm = getMultimodalProvider();
             if (mm) {
                 log.info(`generateReply: imagem presente e provider '${providerName}' sem visão -> roteando para Google.`);
-                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName });
+                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName }).then(sanitizeResult);
             }
             log.warn(`generateReply: imagem presente mas nenhum provider com visão disponível (sem googleApiKey) -> seguindo com '${providerName}'.`);
         }
 
-        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName });
+        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName }).then(sanitizeResult);
     },
 
     analyzeSystem: async (query: string, rootPath: string = '../src', module: string = 'system_analysis') => {

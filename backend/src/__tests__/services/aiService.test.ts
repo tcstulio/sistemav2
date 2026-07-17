@@ -102,7 +102,7 @@ vi.mock('../../services/scraperService', () => ({
     },
 }));
 
-import { aiService, LocalProvider, aggregateInvoicesToMonthlySeries, estimateTokens, pruneContext, toolCallSignature, stableStringify, evaluateConclusionGate, looksLikeUnfinishedAnnouncement, MAX_CONCLUSION_NUDGES, MARCIANO_IDENTITY_PROMPT } from '../../services/aiService';
+import { aiService, LocalProvider, aggregateInvoicesToMonthlySeries, estimateTokens, pruneContext, toolCallSignature, stableStringify, evaluateConclusionGate, looksLikeUnfinishedAnnouncement, MAX_CONCLUSION_NUDGES, MARCIANO_IDENTITY_PROMPT, looksLikeLeakedToolCall, sanitizeFinalReply } from '../../services/aiService';
 import { GoogleGenAI } from '@google/genai';
 import { dolibarrService } from '../../services/dolibarrService';
 import { ScraperService } from '../../services/scraperService';
@@ -1407,5 +1407,23 @@ describe('LocalProvider.generateReply (#1355) — auto-correção de ferramenta 
         const provider = new LocalProvider('http://localhost:11434/v1', 'llama3');
         await provider.generateReply([{ role: 'user', parts: 'aprove' } as any], 'ctx');
         expect((axios.post as any).mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+});
+
+describe('sanitizeFinalReply / looksLikeLeakedToolCall (#E vazamento de tool-call cru)', () => {
+    it('detecta tool-call CRU sem chave inicial (o vazamento real do histórico do dono)', () => {
+        expect(looksLikeLeakedToolCall('tool":"prepare_create_task","args":{"label":"x"}}')).toBe(true);
+        expect(looksLikeLeakedToolCall('{"tool":"list_invoices","args":{}}')).toBe(true);
+        expect(looksLikeLeakedToolCall('<tool_call: {"name":"x"}>')).toBe(true);
+    });
+    it('NÃO dispara em prosa legítima que menciona a palavra "tool"', () => {
+        expect(looksLikeLeakedToolCall('Use a ferramenta (tool) de busca para achar o cliente.')).toBe(false);
+        expect(looksLikeLeakedToolCall('Aqui estão suas tarefas: TK2510-0306, TK2510-0307.')).toBe(false);
+        expect(looksLikeLeakedToolCall('Preparei o rascunho. Clique para confirmar: /tasks/new?prefill=abc')).toBe(false);
+    });
+    it('sanitizeFinalReply troca o JSON cru por mensagem amigável, e preserva texto normal', () => {
+        expect(sanitizeFinalReply('tool":"prepare_create_task","args":{"x":1}}')).toMatch(/problema ao processar/i);
+        const ok = 'Aqui estão suas tarefas pendentes.';
+        expect(sanitizeFinalReply(ok)).toBe(ok);
     });
 });
