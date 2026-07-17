@@ -474,8 +474,12 @@ class BotService {
 
                     try {
                         await sessionService.sendTyping(sessionId, chatId);
+                        // #segurança (red-team 2026-07-17): /resumo roda o MESMO loop de tools do
+                        // generateReply com histórico controlável pelo remetente. Sem contexto de tool,
+                        // executeTool herdava o DEFAULT (readOnly falsy) → um tool JSON emitido aqui
+                        // escreveria SEM gate. Fecha embrulhando em readOnly (resumo é leitura pura).
                         const summaryResult = await retryWithBackoff(
-                            () => aiService.generateReply([], summaryContext),
+                            () => runWithToolContext({ readOnly: true }, () => aiService.generateReply([], summaryContext)),
                             2, 1000
                         );
                         const summary = typeof summaryResult === 'string' ? summaryResult : summaryResult.text;

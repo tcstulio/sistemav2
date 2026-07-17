@@ -240,6 +240,23 @@ describe('BotService', () => {
             );
         });
 
+        it('/resumo roda o generateReply em contexto READONLY (sem bypass de escrita)', async () => {
+            (messageService.getMessages as any).mockResolvedValue([
+                { fromMe: false, body: 'oi', senderName: 'User' },
+            ]);
+            (sessionService.sendTyping as any).mockResolvedValue(undefined);
+            (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
+            let capturedReadOnly: any = 'NÃO-CAPTURADO';
+            (aiService.generateReply as any).mockImplementation(async () => {
+                capturedReadOnly = getToolContext().readOnly; // o que executeTool veria
+                return 'Summary';
+            });
+
+            await botService.processMessage(createMessage({ body: '/resumo', id: 'msg_RESUMO' }));
+
+            expect(capturedReadOnly).toBe(true); // escrita bloqueada nesta rota alcançável por WhatsApp
+        });
+
         it('handles /resumo command with no messages', async () => {
             (messageService.getMessages as any).mockResolvedValue([]);
             (messageService.sendText as any).mockResolvedValue({ id: 'r1' } as any);
