@@ -86,6 +86,13 @@ interface ToolContext {
      * Ausente (ex.: webapp hoje) ⇒ guarda inativa, comportamento inalterado.
      */
     turnId?: string;
+    /**
+     * true quando o perfil de permissões DEVERIA existir (usuário logado no webapp) mas FALHOU a
+     * carregar (Dolibarr instável, id não resolvido). Distingue-se de "sem perfil por ser contexto
+     * público/não-identificado" (esse é tratado pela trava readOnly). Com a flag ligada, executeTool
+     * NEGA escrita real fail-closed a não-admin (não dá p/ checar permissão sem o perfil). Ver #1514.
+     */
+    profileLoadFailed?: boolean;
 }
 
 const toolContextStore = new AsyncLocalStorage<ToolContext>();
@@ -989,6 +996,18 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
     if (ctx.readOnly && !ctx.permissionProfile && !PUBLIC_READONLY_ALLOWLIST.has(resolvedTool)) {
         log.warn(`Negado: remetente não-identificado tentou ler dado interno — tool=${resolvedTool} actor=${ctx.userLogin || 'não-identificado'}`);
         return `A ferramenta "${resolvedTool}" não está disponível neste contexto.`;
+    }
+    // #1514 — usuário LOGADO cujo perfil FALHOU a carregar (Dolibarr instável/ id não resolvido):
+    // sem perfil não dá p/ checar permissão, e como readOnly é falsy no webapp a trava acima não pega.
+    // Fail-closed: nega ESCRITA REAL a não-admin (admin é conhecido por req.user.admin, independe do
+    // perfil). Usa o MESMO conjunto autoritativo de escrita do gate readOnly (isMutatingTool) — assim
+    // bloqueia exatamente validate_*/delete/notify_*/send_whatsapp e NÃO pega leituras mal-catalogadas
+    // (search/extract_from_url/web_search seguem). prepare_* é isento — só gera deeplink; a escrita real
+    // ocorre no /confirm-action com a chave RBAC do usuário (2º fator). O usuário re-tenta quando volta.
+    if (ctx.profileLoadFailed && !ctx.isAdmin
+        && isMutatingTool(resolvedTool) && !resolvedTool.startsWith('prepare_')) {
+        log.warn(`#1514: perfil não carregou — escrita "${resolvedTool}" negada fail-closed p/ ${ctx.userLogin || 'usuário'} (sem perfil, não-admin).`);
+        return `Não foi possível verificar suas permissões agora (o perfil não carregou). Tente novamente em instantes; se persistir, contate um administrador.`;
     }
     if (ctx.permissionProfile && !ctx.isAdmin) {
         const permKey = getWritePermissionKey(resolvedTool);

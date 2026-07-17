@@ -126,6 +126,7 @@ async function runChatReply(body: any, user: any, jobId?: string): Promise<{ rep
 
         let enrichedContext = context || '';
         let permissionProfile: import('../services/userPermissionsService').UserPermissionProfile | null = null;
+        let profileLoadFailed = false; // #1514: perfil DEVERIA existir mas não carregou (fail-closed p/ escrita)
         const isAdmin = user?.admin === '1' || user?.admin === 1 || user?.admin === true;
 
         enrichedContext += `\n[SISTEMA] Data e hora atual: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
@@ -165,7 +166,15 @@ async function runChatReply(body: any, user: any, jobId?: string): Promise<{ rep
                     enrichedContext += '\n\n' + permContext;
                 } catch (e: any) {
                     log.warn('Failed to load user permissions context', e.message);
+                    // #1514: perfil DEVERIA existir (usuário logado) mas falhou a carregar → sinaliza p/
+                    // o executeTool negar escrita real fail-closed (senão, sem perfil e readOnly falsy,
+                    // um logado escreveria sem checagem de permissão).
+                    profileLoadFailed = true;
                 }
+            } else {
+                // Usuário logado mas SEM id Dolibarr resolvível → o perfil não pode ser carregado.
+                // Mesmo tratamento fail-closed (não-admin não escreve até o perfil existir). #1514.
+                if (!isAdmin) profileLoadFailed = true;
             }
         }
 
@@ -198,6 +207,7 @@ async function runChatReply(body: any, user: any, jobId?: string): Promise<{ rep
                 userLogin: user?.login || 'unknown',
                 isAdmin,
                 permissionProfile,
+                profileLoadFailed,
             }, async () => {
                 // #1499: passa o `isAdmin` do req.user explicitamente para aiService
                 // (além de já propagar via runWithToolContext acima). Garante que o
