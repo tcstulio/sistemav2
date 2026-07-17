@@ -94,14 +94,21 @@ describe('shouldEscalateToOpus — gatilho e travas', () => {
         expect(svc.shouldEscalateToOpus(taskOk())).toBe(false);
     });
 
-    it('teto de CUSTO $ diário atingido → false (trava dura de orçamento)', () => {
-        svc.store.opusDay = { date: today(), escalations: 0, costUsd: 5 };
+    it('custo $ alto NÃO bloqueia (assinatura renova; custo é só observabilidade)', () => {
+        svc.store.opusDay = { date: today(), escalations: 0, costUsd: 999 };
+        expect(svc.shouldEscalateToOpus(taskOk())).toBe(true); // volume ok → escala mesmo com custo alto
+    });
+
+    it('em COOLDOWN de cota (cooldownUntil futuro) → false', () => {
+        const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        svc.store.opusDay = { date: today(), escalations: 0, costUsd: 0, cooldownUntil: future };
         expect(svc.shouldEscalateToOpus(taskOk())).toBe(false);
     });
 
-    it('circuit-breaker aberto → false', () => {
-        svc.store.opusDay = { date: today(), escalations: 0, costUsd: 0, circuitOpen: true };
-        expect(svc.shouldEscalateToOpus(taskOk())).toBe(false);
+    it('cooldown JÁ EXPIRADO (cooldownUntil passado) → true (a assinatura renovou; retenta)', () => {
+        const past = new Date(Date.now() - 60 * 1000).toISOString();
+        svc.store.opusDay = { date: today(), escalations: 0, costUsd: 0, cooldownUntil: past };
+        expect(svc.shouldEscalateToOpus(taskOk())).toBe(true);
     });
 
     it('sem judgeScore numérico → false', () => {
@@ -140,7 +147,7 @@ describe('contadores PERSISTIDOS (sobrevivem a restart) — opusDay no TaskStore
     });
 });
 
-describe('tryOpusCoderRound — marca ANTES de gastar + circuit-breaker', () => {
+describe('tryOpusCoderRound — modelo de ASSINATURA (marca só se rodou; sem-token não consome)', () => {
     beforeEach(() => {
         svc.buildSynthesisPrompt = vi.fn(() => 'PROMPT_BASE');
         svc.recordEvent = vi.fn();
@@ -148,48 +155,69 @@ describe('tryOpusCoderRound — marca ANTES de gastar + circuit-breaker', () => 
         svc.worktreeChanges = vi.fn(async () => ['a.ts']);
     });
 
-    it('marca opusEscalated + conta a escalada ANTES de rodar (sobrevive a runCode que LANÇA)', async () => {
-        claudeMock.available.mockResolvedValue(true);
-        claudeMock.runCode.mockRejectedValue(new Error('boom'));
-        const t = taskOk();
-        const changed = await svc.tryOpusCoderRound(t, {});
-        expect(changed).toBe(false);            // erro → sem mudanças
-        expect(t.opusEscalated).toBe(true);     // MARCADO mesmo com falha (não re-tenta)
-        expect(svc.opusEscalationsToday()).toBe(1); // CONTADO antes de gastar
-    });
-
-    it('produz diff → retorna true e acumula o custo $', async () => {
+    it('produz diff → "changed", consome a tentativa e acumula o custo $ (observabilidade)', async () => {
         claudeMock.available.mockResolvedValue(true);
         claudeMock.runCode.mockResolvedValue({ isError: false, text: 'ok', costUsd: 1.5, numTurns: 4 });
         svc.worktreeChanges = vi.fn(async () => ['a.ts', 'b.ts']);
-        const changed = await svc.tryOpusCoderRound(taskOk(), {});
-        expect(changed).toBe(true);
-        expect(svc.opusCostToday()).toBe(1.5);
-    });
-
-    it('CLI indisponível → false, mas já marcou (1 tentativa consumida)', async () => {
-        claudeMock.available.mockResolvedValue(false);
         const t = taskOk();
-        expect(await svc.tryOpusCoderRound(t, {})).toBe(false);
+        expect(await svc.tryOpusCoderRound(t, {})).toBe('changed');
         expect(t.opusEscalated).toBe(true);
+        expect(svc.opusEscalationsToday()).toBe(1);
+        expect(svc.opusCostToday()).toBe(1.5);
+        expect(t.opusInFlightAt).toBeUndefined(); // limpo ao concluir
     });
 
-    it('circuit-breaker: runCode isError com texto de COTA → abre o circuito (persistido)', async () => {
+    it('SEM TOKEN (isError de cota) → "quota-blocked": NÃO marca, NÃO conta, aplica cooldown', async () => {
         claudeMock.available.mockResolvedValue(true);
         claudeMock.runCode.mockResolvedValue({ isError: true, text: 'You have hit your monthly spend limit', costUsd: 0 });
         svc.worktreeChanges = vi.fn(async () => []);
-        await svc.tryOpusCoderRound(taskOk(), {});
-        expect(svc.opusCircuitOpen()).toBe(true);
-        // com o circuito aberto, a próxima task não escala
-        expect(svc.shouldEscalateToOpus(taskOk({ issueNumber: 2 }))).toBe(false);
+        const t = taskOk();
+        expect(await svc.tryOpusCoderRound(t, {})).toBe('quota-blocked');
+        expect(t.opusEscalated).toBeFalsy();        // tentativa NÃO consumida (retenta depois)
+        expect(svc.opusEscalationsToday()).toBe(0); // NÃO contou
+        expect(svc.opusInCooldown()).toBe(true);    // cooldown aplicado
+        expect(t.opusInFlightAt).toBeUndefined();
     });
 
-    it('isError por QUALIDADE (não cota) NÃO abre o circuito', async () => {
+    it('após o cooldown a mesma task volta a ser elegível (a assinatura renovou)', async () => {
+        // aplica cooldown por quota
+        claudeMock.available.mockResolvedValue(true);
+        claudeMock.runCode.mockResolvedValue({ isError: true, text: 'rate limit exceeded', costUsd: 0 });
+        svc.worktreeChanges = vi.fn(async () => []);
+        const t = taskOk();
+        await svc.tryOpusCoderRound(t, {});
+        expect(svc.shouldEscalateToOpus(t)).toBe(false); // em cooldown
+        // simula renovação: cooldown expirou
+        svc.store.opusDay.cooldownUntil = new Date(Date.now() - 1000).toISOString();
+        expect(svc.shouldEscalateToOpus(t)).toBe(true);  // volta a ser elegível
+    });
+
+    it('exceção no runCode (ex.: timeout) → "no-changes": CONSOME a tentativa (falha genuína, não cota)', async () => {
+        claudeMock.available.mockResolvedValue(true);
+        claudeMock.runCode.mockRejectedValue(new Error('opencode timeout'));
+        const t = taskOk();
+        expect(await svc.tryOpusCoderRound(t, {})).toBe('no-changes');
+        expect(t.opusEscalated).toBe(true);         // consumida (não re-escala)
+        expect(svc.opusEscalationsToday()).toBe(1);
+        expect(t.opusInFlightAt).toBeUndefined();
+    });
+
+    it('CLI indisponível → "unavailable": NÃO marca (nada rodou)', async () => {
+        claudeMock.available.mockResolvedValue(false);
+        const t = taskOk();
+        expect(await svc.tryOpusCoderRound(t, {})).toBe('unavailable');
+        expect(t.opusEscalated).toBeFalsy();
+        expect(svc.opusEscalationsToday()).toBe(0);
+    });
+
+    it('isError por QUALIDADE (não cota) → "no-changes", consome a tentativa, SEM cooldown', async () => {
         claudeMock.available.mockResolvedValue(true);
         claudeMock.runCode.mockResolvedValue({ isError: true, text: 'compilation failed in foo.ts', costUsd: 0.5 });
         svc.worktreeChanges = vi.fn(async () => []);
-        await svc.tryOpusCoderRound(taskOk(), {});
-        expect(svc.opusCircuitOpen()).toBe(false);
+        const t = taskOk();
+        expect(await svc.tryOpusCoderRound(t, {})).toBe('no-changes');
+        expect(t.opusEscalated).toBe(true);     // rodou de fato → consome
+        expect(svc.opusInCooldown()).toBe(false); // não é cota → sem cooldown
     });
 });
 

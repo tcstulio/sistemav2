@@ -102,6 +102,9 @@ const DISK_GUARD = process.env.TASKRUNNER_DISK_GUARD !== '0';
 // default OFF (fail-closed pelo risco de orçamento). Precisa ALÉM disto do toggle de admin
 // taskAutomation.opusEscalationEnabled — os DOIS ligados p/ escalar. TASKRUNNER_OPUS_ESCALATION=1 liga.
 const OPUS_ESCALATION_ENABLED = process.env.TASKRUNNER_OPUS_ESCALATION === '1';
+// Cooldown quando o Opus recusa por COTA (sem token). Modelo de ASSINATURA (dono 2026-07-17): a cota
+// RENOVA (diária/semanal), então NÃO desliga o dia — pausa curto e as escaladas voltam sozinhas.
+const OPUS_QUOTA_COOLDOWN_MS = (Number(process.env.TASKRUNNER_OPUS_COOLDOWN_MIN) || 45) * 60 * 1000;
 const DISK_MIN_FREE_BYTES = (Number(process.env.TASKRUNNER_DISK_MIN_GB) || 3) * 1024 * 1024 * 1024;
 
 // Auto-recuperação da fila (#644 criterion opcional): se um ghost/hung promise deixar a
@@ -368,6 +371,9 @@ export interface Task {
     // #escalada-opus: esta task JÁ teve 1 escalada Opus (marcado ANTES de gastar — sobrevive a crash/isError).
     // Garante no máx. 1 tentativa Opus por task e a guarda TERMINAL (Opus reprovou → humano, nunca re-loop barato).
     opusEscalated?: boolean;
+    // #escalada-opus: âncora anti-crash. Setado ANTES de rodar o Opus; num restart, se está setado e
+    // opusEscalated não, a escalada "em voo" é tratada como consumida (não re-dispara em loop).
+    opusInFlightAt?: string;
     deadlockKicks?: number; // #1455: quantas vezes o planner re-despachou esta task por estar PARADA bloqueando dependentes (teto p/ não loopar)
     // #1154 P1 item 3: crítica do Judge + feedback humano são AÇÕES a atender que DEVEM sobreviver ao wipe
     // de feedbackHistory entre fases (senão o auto-fix roda CEGO). PERSISTENTE como gateFixInstruction:
@@ -433,7 +439,7 @@ interface TaskStore {
     // (em tasks.json via save()) — NÃO em campo de instância. O robô reinicia com frequência (nodemon/
     // restart pós-zumbi); se o contador fosse in-memory, cada boot reabriria o teto e N restarts =
     // N×teto no mesmo dia real, cada um queimando $ irreversível. Reset LAZY por virada de ISO date.
-    opusDay?: { date: string; escalations: number; costUsd: number; circuitOpen?: boolean };
+    opusDay?: { date: string; escalations: number; costUsd: number; cooldownUntil?: string };
 }
 
 const REPO = 'tcstulio/sistemav2';
@@ -1533,20 +1539,21 @@ class TaskRunnerService {
 
     // === #escalada-opus: tetos PERSISTIDOS (sobrevivem a restart) — ver interface TaskStore.opusDay ===
     /** Estado do dia p/ a escalada Opus, com reset LAZY por virada de ISO date (nunca por boot). */
-    private opusDayState(): { date: string; escalations: number; costUsd: number; circuitOpen?: boolean } {
+    private opusDayState(): { date: string; escalations: number; costUsd: number; cooldownUntil?: string } {
         const today = new Date().toISOString().slice(0, 10);
         if (!this.store.opusDay || this.store.opusDay.date !== today) {
-            this.store.opusDay = { date: today, escalations: 0, costUsd: 0, circuitOpen: false };
+            this.store.opusDay = { date: today, escalations: 0, costUsd: 0 };
         }
         return this.store.opusDay;
     }
-    /** Conta uma escalada Opus no teto diário PERSISTIDO. Chamado ANTES de gastar (trava prévia). */
+    /** Conta uma escalada Opus no teto diário PERSISTIDO. Chamado só QUANDO O OPUS RODOU DE FATO. */
     private accountOpusEscalation(): void {
         const d = this.opusDayState();
         d.escalations++;
         this.save();
     }
-    /** Acumula o custo $ (coder Opus + juiz Opus) no teto diário PERSISTIDO. */
+    /** Acumula o custo $ (coder Opus + juiz Opus) no contador diário PERSISTIDO — OBSERVABILIDADE (a
+     *  assinatura renova; o custo não é trava dura, é métrica p/ a UI). */
     private accountOpusCost(costUsd: number): void {
         if (!costUsd || costUsd <= 0) return;
         const d = this.opusDayState();
@@ -1555,14 +1562,18 @@ class TaskRunnerService {
     }
     private opusEscalationsToday(): number { return this.opusDayState().escalations; }
     private opusCostToday(): number { return this.opusDayState().costUsd; }
-    private opusCircuitOpen(): boolean { return !!this.opusDayState().circuitOpen; }
-    /** Abre o circuit-breaker do dia (Opus recusou por cota/billing, não por qualidade) — desliga escaladas. */
+    /** Em COOLDOWN de cota? (Opus recusou por cota há pouco — espera a assinatura renovar e retenta.) */
+    private opusInCooldown(): boolean {
+        const until = this.opusDayState().cooldownUntil;
+        return !!until && new Date(until) > new Date();
+    }
+    /** Aplica um COOLDOWN curto (Opus recusou por cota/billing, não por qualidade). NÃO desliga o dia —
+     *  a assinatura renova (diária/semanal); após o cooldown as escaladas voltam a ser elegíveis sozinhas. */
     private tripOpusCircuit(reason: string): void {
         const d = this.opusDayState();
-        if (d.circuitOpen) return;
-        d.circuitOpen = true;
+        d.cooldownUntil = new Date(Date.now() + OPUS_QUOTA_COOLDOWN_MS).toISOString();
         this.save();
-        log.warn(`Opus escalation circuit-breaker OPEN: ${reason} — escaladas desligadas até a virada do dia.`);
+        log.warn(`Opus escalation em COOLDOWN até ${d.cooldownUntil}: ${reason} — retenta após a renovação da assinatura.`);
     }
     /** Erro do Claude CLI que indica ESGOTAMENTO DE COTA/BILLING (não incapacidade do modelo). */
     private looksLikeClaudeQuota(text?: string): boolean {
@@ -1570,14 +1581,14 @@ class TaskRunnerService {
         return /spend limit|usage limit|rate limit|\bquota\b|billing|insufficient|\bcredit\b|out of |exceeded|overloaded|too many requests|\b429\b/.test(t);
     }
     /** Status da escalada Opus p/ a UI (barra de orçamento). */
-    getOpusEscalationStatus(): { enabled: boolean; used: number; max: number; costUsd: number; maxCostUsd: number; circuitOpen: boolean } {
+    getOpusEscalationStatus(): { enabled: boolean; used: number; max: number; costUsd: number; maxCostUsd: number; inCooldown: boolean; cooldownUntil?: string } {
         const cfg = this.getAutomationConfig();
         const d = this.opusDayState();
         return {
             enabled: OPUS_ESCALATION_ENABLED && cfg.opusEscalationEnabled === true,
             used: d.escalations, max: cfg.maxOpusEscalationsPerDay ?? 2,
             costUsd: d.costUsd, maxCostUsd: cfg.maxOpusCostUsdPerDay ?? 5,
-            circuitOpen: !!d.circuitOpen,
+            inCooldown: this.opusInCooldown(), cooldownUntil: d.cooldownUntil,
         };
     }
     /** Gatilho da escalada Opus: TODAS as condições verdadeiras (ver docs/PLANO_ESCALADA_OPUS.md §1). */
@@ -1594,25 +1605,25 @@ class TaskRunnerService {
         const maxJudgeRounds = cfg.maxJudgeRounds ?? 3;
         if ((task.judgeAttempts || 0) < maxJudgeRounds) return false;       // auto-fix barato ainda tem folga
         if (isQuotaExhausted()) return false;                              // infra (hang/cota GLM), não incapacidade
-        if (this.opusCircuitOpen()) return false;                           // Opus já recusou por cota hoje
-        if (this.opusEscalationsToday() >= (cfg.maxOpusEscalationsPerDay ?? 2)) return false; // teto diário
-        if (this.opusCostToday() >= (cfg.maxOpusCostUsdPerDay ?? 5)) return false;            // teto $ diário (trava dura)
+        if (this.opusInCooldown()) return false;                            // Opus recusou por cota há pouco — espera renovar
+        if (this.opusEscalationsToday() >= (cfg.maxOpusEscalationsPerDay ?? 2)) return false; // teto de VOLUME (anti-churn)
+        // NÃO há teto DURO de custo $: a assinatura RENOVA (diária/semanal). opusCostToday() é só
+        // observabilidade (getOpusEscalationStatus). A trava real de orçamento é a própria assinatura.
         return true;
     }
     /**
      * Roda o Claude Code (Opus) como CODER no worktree parcial — irmão de tryClaudeRescue, mas para
-     * REPROVAÇÃO POR QUALIDADE (não diff-vazio). Marca opusEscalated + conta a escalada ANTES de gastar
-     * (sobrevive a crash/isError; nunca re-tenta). Retorna true se produziu diff (o caller pula a fase
-     * opencode e cai direto no commit tail do MESMO executeTask — o diff persiste, igual ao resgate-vazio).
+     * REPROVAÇÃO POR QUALIDADE (não diff-vazio). MODELO DE ASSINATURA (dono 2026-07-17): a tentativa
+     * única/task só é CONSUMIDA quando o Opus RODA DE FATO. Se faltou token (quota-blocked), NÃO consome
+     * e NÃO conta — aplica cooldown curto e o caller re-enfileira p/ retentar quando a assinatura renovar.
+     * Retornos: 'changed' (produziu diff → caller cai no commit tail), 'no-changes' (rodou, sem diff →
+     * fallback opencode), 'quota-blocked' (sem token → re-enfileira), 'unavailable' (CLI ausente → fallback).
      */
-    private async tryOpusCoderRound(task: Task, issueData: any): Promise<boolean> {
-        task.opusEscalated = true;
-        this.accountOpusEscalation();
-        this.save();
+    private async tryOpusCoderRound(task: Task, issueData: any): Promise<'changed' | 'no-changes' | 'quota-blocked' | 'unavailable'> {
         try {
             if (!(await claudeCliService.available())) {
                 this.recordEvent(task, 'attempt_started', 'Escalada Opus abortada: Claude CLI indisponível.', { opusEscalation: true, available: false });
-                return false;
+                return 'unavailable'; // nada rodou → não marca, não conta
             }
             const cfg = this.getAutomationConfig();
             const model = ((cfg.coderEscalationModel || 'opus').trim()) || 'opus';
@@ -1622,20 +1633,41 @@ class TaskRunnerService {
             const prompt = `[ESCALADA-OPUS] O coder barato (opencode) reprovou no Juiz ${task.judgeAttempts}x (último score ${task.judgeScore}/10, alvo >= ${minApprove}). Você é o Claude Code (${model}) no worktree isolado, com o trabalho PARCIAL já presente. NÃO recomece do zero: LEIA o diff atual (git diff), entenda a crítica do Juiz e ELEVE a qualidade real. Edite os arquivos AGORA; garanta typecheck (tsc --noEmit) + testes passando. PRESERVE os testes existentes (nunca delete/esvazie/skip).\n\nCRÍTICA ACUMULADA DO JUIZ:\n${critique}\n\n${base}`;
             this.recordEvent(task, 'synthesis_started', `⬆️ Escalada: Claude ${model} assumindo o worktree como coder (score prévio ${task.judgeScore}, ${task.judgeAttempts} rodadas do coder barato).`, { opusEscalation: true, model });
             this.emitLog(task.issueNumber, 'info', `⬆️ Escalada Opus: Claude ${model} assumindo o coder (score ${task.judgeScore} após ${task.judgeAttempts} rodadas).`);
+            // Âncora anti-crash: marca "em voo" ANTES de rodar. Num restart, o reconcile em executeTask
+            // trata isto como consumido (não re-dispara). NÃO é a marca de consumo — essa vem só se rodar.
+            task.opusInFlightAt = new Date().toISOString();
+            this.save();
             const r = await claudeCliService.runCode(prompt, WT_ROOT, { model, timeoutMs: OPENCODE_TIMEOUT_MS });
+            // SEM TOKEN (cota/billing): NÃO consome a tentativa, NÃO conta — cooldown + re-enfileira (o caller).
+            // A assinatura renova (diária/semanal) → a task retenta a escalada depois.
+            if (r?.isError && this.looksLikeClaudeQuota(r?.text)) {
+                task.opusInFlightAt = undefined;
+                this.tripOpusCircuit(`coder isError quota (#${task.issueNumber})`);
+                this.save();
+                this.recordEvent(task, 'quota_hold', 'Escalada Opus sem token (cota Claude) — cooldown, re-enfileira p/ retentar após renovação.', { opusEscalation: true, quotaBlocked: true });
+                return 'quota-blocked';
+            }
+            // RODOU DE FATO → agora sim consome a tentativa única + conta escalada + custo (observabilidade).
+            task.opusEscalated = true;
+            this.accountOpusEscalation();
             this.accountOpusCost(r?.costUsd || 0);
-            // Distingue "Opus reprovou por qualidade" (ok, consumiu slot) de "Opus não rodou por cota/billing"
-            // (abre o circuit-breaker → não desperdiça mais slots do dia num pool esgotado).
-            if (r?.isError && this.looksLikeClaudeQuota(r?.text)) this.tripOpusCircuit(`coder isError quota (#${task.issueNumber})`);
+            task.opusInFlightAt = undefined;
+            this.save();
             const changed = (await this.worktreeChanges()).length > 0;
             this.recordEvent(task, changed ? 'synthesis_completed' : 'attempt_no_changes',
                 changed ? `Opus coder produziu diff (custo $${(r?.costUsd || 0).toFixed(3)}, ${r?.numTurns ?? '?'} turns).`
                         : `Opus coder NÃO produziu mudanças (isError=${!!r?.isError}).`,
                 { opusEscalation: true, changed, cost: r?.costUsd, isError: !!r?.isError, numTurns: r?.numTurns });
-            return changed;
+            return changed ? 'changed' : 'no-changes';
         } catch (e: any) {
+            // Exceção durante o runCode (ex.: timeout de 30min) = tentativa GENUÍNA que falhou (não é
+            // falta-de-token detectável) → CONSOME a tentativa e cai no fluxo opencode; não re-escala.
+            task.opusEscalated = true;
+            this.accountOpusEscalation();
+            task.opusInFlightAt = undefined;
+            this.save();
             this.emitLog(task.issueNumber, 'warn', `Escalada Opus falhou: ${String(e?.message || e).slice(0, 200)}`);
-            return false; // opusEscalated JÁ true → não re-tenta
+            return 'no-changes';
         }
     }
 
@@ -2422,10 +2454,34 @@ class TaskRunnerService {
         // acima com preserveBranch) e cai direto no commit tail abaixo — NUNCA via scheduleExec, que
         // apagaria o diff no próximo ensureWorktree. Se o Opus não produzir (indisponível/cota), cai no
         // fluxo opencode normal — mas opusEscalated já está true, então não re-escala.
+        // Reconcile anti-crash: um restart pegou uma escalada Opus EM VOO (opusInFlightAt setado, mas
+        // opusEscalated ainda não) → trata como consumida p/ não re-disparar em loop.
+        if (task.opusInFlightAt && !task.opusEscalated) {
+            task.opusEscalated = true;
+            task.opusInFlightAt = undefined;
+            this.save();
+            this.recordEvent(task, 'attempt_started', 'Escalada Opus em voo interrompida por restart — marcada como consumida (não re-dispara).', { opusEscalation: true, recovered: true });
+        }
+
         let escalatedInline = false;
-        if (this.shouldEscalateToOpus(task) && await this.tryOpusCoderRound(task, issueData)) {
-            escalatedInline = true;
-            verify = await this.verify(task);
+        if (this.shouldEscalateToOpus(task)) {
+            const outcome = await this.tryOpusCoderRound(task, issueData);
+            if (outcome === 'quota-blocked') {
+                // Sem token: NÃO consumiu a tentativa. Re-enfileira (igual ao judge quota-hold) — a task
+                // retenta a escalada quando a assinatura renovar. NÃO cai no opencode, NÃO vai pra humano.
+                task.status = 'pending';
+                task.startedAt = undefined;
+                task.updatedAt = new Date().toISOString();
+                this.recordEvent(task, 'quota_hold', '⏸️ Escalada Opus adiada: cota Claude esgotada — re-enfileirado, retenta quando a assinatura renovar.', { opusQuotaHold: true });
+                this.save();
+                this.emitStatus(task);
+                return;
+            }
+            if (outcome === 'changed') {
+                escalatedInline = true;
+                verify = await this.verify(task);
+            }
+            // 'no-changes' | 'unavailable' → cai no fluxo opencode normal (opusEscalated já resolvido dentro).
         }
 
         if (escalatedInline) {
