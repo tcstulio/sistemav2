@@ -94,20 +94,12 @@ const mockRunWithToolContext = vi.hoisted(() => vi.fn((ctx: any, fn: () => Promi
 // #1500: hoist o mock de executeTool — debug routes precisam ver ctx.isAdmin correto.
 const mockExecuteTool = vi.hoisted(() => vi.fn(() => Promise.resolve('{}')));
 
-// #1500: rota /api/analyze/pdf usa `require('pdf-parse')` no handler. Sem mock, pdf-parse
-// tenta decodificar base64 inválido e estoura antes de chegar no `withUserToolContext`,
-// mascarando o teste de propagação. Mock determinístico libera o handler a passar.
-// O handler faz `const pdfParse = require('pdf-parse'); await pdfParse(buffer)` —
-// o módulo exporta a função via module.exports; para que `pdfParse(buf)` funcione
-// direto, o mock retorna o módulo como a própria função. NÃO setamos __esModule:
-// Vitest desempacotaria .default e quebraria pdfParse(buf).
-vi.mock('pdf-parse', () => {
-    // Force write to a file so we can see if factory is invoked
-    require('fs').appendFileSync('/tmp/pdf-mock-debug.log', `mock factory invoked at ${new Date().toISOString()}\n`);
-    const fn: any = vi.fn(() => Promise.resolve({ text: 'conteúdo mock do PDF para teste #1500' }));
-    fn.default = fn;
-    return fn;
-});
+// #1500: rota /api/analyze/pdf usa `await import('pdf-parse')` no handler (a versão antiga com
+// `require()` não é interceptada consistentemente pelo vi.mock em resoluções cross-workspace).
+// Mock exporta como ESM default para o `pdfParseMod.default` do handler cair na função mockada.
+vi.mock('pdf-parse', () => ({
+    default: vi.fn(() => Promise.resolve({ text: 'conteúdo mock do PDF para teste #1500' })),
+}));
 
 vi.mock('../../services/agentActivityService', () => ({
     agentActivityService: {
@@ -1173,15 +1165,35 @@ describe('#1500: propagação de isAdmin do req.user até aiService', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
-        // Garante estado "feliz" (outros describes usam mockRejectedValue que persiste).
+        // #1500: vi.clearAllMocks() NÃO limpa implementations — re-estabelece explicitamente
+        // o estado "feliz" para CADA método aiService. Sem isso, o `mockRejectedValue` que os
+        // describes de 500-error aplicam (uma única vez) persiste e quebra os testes daqui.
         mockAiService.generateReply.mockResolvedValue({ text: 'Generated reply text' });
+        mockAiService.analyzeSystem.mockResolvedValue('System analysis result');
+        mockAiService.analyzeSentiment.mockResolvedValue({ score: 0.8, label: 'positive' });
+        mockAiService.extractCustomerInfo.mockResolvedValue({ name: 'John', email: 'john@test.com' });
+        mockAiService.extractReceiptData.mockResolvedValue({ total: 100.50 });
+        mockAiService.analyzeFinancialHealth.mockResolvedValue('Financial health report');
+        mockAiService.fixApiCall.mockResolvedValue('Fixed API call suggestion');
+        mockAiService.generateCode.mockResolvedValue('function example() {}');
+        mockAiService.transcribeAudio.mockResolvedValue('Audio transcription text');
+        mockAiService.draftCollectionEmail.mockResolvedValue('Collection email draft');
+        mockAiService.generateSalesForecast.mockResolvedValue('Sales forecast report');
+        mockAiService.analyzeCustomerSentiment.mockResolvedValue('Customer sentiment analysis');
+        mockAiService.auditProposal.mockResolvedValue('Proposal audit result');
+        mockAiService.auditProject.mockResolvedValue('Project audit result');
+        mockAiService.analyzeSystemLogs.mockResolvedValue('Logs analysis result');
+        mockAiService.analyzeMonthlyReport.mockResolvedValue('Monthly report analysis');
         app = createApp();
     });
 
     // Helper: último ctx passado a runWithToolContext após a requisição.
     async function lastContext(reqFn: () => Promise<any>): Promise<any> {
         mockRunWithToolContext.mockClear();
-        await reqFn();
+        const res = await reqFn();
+        if (res && res.status && res.status >= 400) {
+            throw new Error(`Request failed: ${res.status} ${JSON.stringify(res.body)}`);
+        }
         const calls = mockRunWithToolContext.mock.calls;
         if (calls.length === 0) throw new Error('runWithToolContext não foi chamado');
         return calls[calls.length - 1][0];

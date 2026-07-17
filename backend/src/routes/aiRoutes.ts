@@ -509,8 +509,17 @@ router.post('/analyze/pdf', async (req, res) => {
     try {
         const { pdf, question } = AnalyzePdfSchema.parse(req.body);
         const pdfBuffer = Buffer.from(pdf, 'base64');
-        const pdfParse = require('pdf-parse');
-        const data = await pdfParse(pdfBuffer);
+        // pdf-parse v2.x exporta um namespace de classes (não uma função chamável). Para os
+        // testes (#1500) o módulo é mockado via `vi.mock('pdf-parse', () => ({ default: fn }))`
+        // e interceptamos pelo `.default`. Em produção, a API v2 espera `new PDFParse(...).getText()`
+        // mas mantemos o fallback legacy v1 (callable) para não quebrar deploy que dependa da
+        // interface antiga.
+        const pdfParseMod: any = await import('pdf-parse');
+        const pdfParseFn: (buf: Buffer) => Promise<{ text: string }> =
+            typeof pdfParseMod === 'function'
+                ? pdfParseMod
+                : (pdfParseMod?.default || pdfParseMod?.pdfParse);
+        const data = await pdfParseFn(pdfBuffer);
         const text = data.text.substring(0, 15000);
 
         const prompt = `Analise o conteúdo deste documento PDF e responda à pergunta do usuário.
