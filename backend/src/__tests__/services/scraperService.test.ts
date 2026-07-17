@@ -14,14 +14,26 @@ describe('ScraperService', () => {
     });
 
     describe('searchGoogle', () => {
-        it('returns empty array when no API key', async () => {
+        it('rejects with explicit error when SERPER_API_KEY is missing (undefined)', async () => {
             const originalEnv = process.env.SERPER_API_KEY;
             delete process.env.SERPER_API_KEY;
+            try {
+                await expect(ScraperService.searchGoogle('test query'))
+                    .rejects.toThrow(/SERPER_API_KEY ausente/);
+            } finally {
+                if (originalEnv !== undefined) process.env.SERPER_API_KEY = originalEnv;
+            }
+        });
 
-            const result = await ScraperService.searchGoogle('test query');
-            expect(result).toEqual([]);
-
-            if (originalEnv) process.env.SERPER_API_KEY = originalEnv;
+        it('rejects with explicit error when SERPER_API_KEY is empty string', async () => {
+            const originalEnv = process.env.SERPER_API_KEY;
+            process.env.SERPER_API_KEY = '';
+            try {
+                await expect(ScraperService.searchGoogle('test query'))
+                    .rejects.toThrow(/SERPER_API_KEY ausente/);
+            } finally {
+                if (originalEnv !== undefined) process.env.SERPER_API_KEY = originalEnv;
+            }
         });
 
         it('returns shopping and organic results', async () => {
