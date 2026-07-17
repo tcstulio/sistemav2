@@ -235,3 +235,49 @@ describe('kill-switch de OPS (env) — desligado bloqueia tudo', () => {
         process.env.TASKRUNNER_OPUS_ESCALATION = '1'; // restaura p/ os demais
     });
 });
+
+describe('escalada MANUAL (botão do admin) — forceEscalation + escalateTask', () => {
+    beforeEach(() => {
+        svc.scheduleExec = vi.fn();     // não dispara execução real
+        svc.recordEvent = vi.fn();
+        svc.emitStatus = vi.fn();
+    });
+
+    it('forceEscalation=true BYPASSA todos os gates automáticos (toggle off, score alto, já escalada)', () => {
+        svc.getAutomationConfig = vi.fn(() => ({ ...CFG_OK, opusEscalationEnabled: false }));
+        // task que FALHARIA em tudo: toggle off, score>=merge, já escalada, poucos rounds do juiz
+        const t = taskOk({ forceEscalation: true, opusEscalated: true, judgeScore: 10, judgeAttempts: 0, judgeModelUsed: 'claude:sonnet' });
+        expect(svc.shouldEscalateToOpus(t)).toBe(true);
+    });
+
+    it('sem forceEscalation, o caminho automático segue igual (não afeta a lógica existente)', () => {
+        expect(svc.shouldEscalateToOpus(taskOk({ forceEscalation: false }))).toBe(true); // condições ok
+        expect(svc.shouldEscalateToOpus(taskOk({ forceEscalation: false, opusEscalated: true }))).toBe(false);
+    });
+
+    it('escalateTask(opus): seta forceEscalation + override e re-enfileira', async () => {
+        svc.store.tasks[7] = { issueNumber: 7, status: 'reviewing', branch: 'fix-7' };
+        const t = await svc.escalateTask(7, 'opus');
+        expect(t.forceEscalation).toBe(true);
+        expect(t.coderEscalationModelOverride).toBe('opus');
+        expect(svc.scheduleExec).toHaveBeenCalledWith(t, 'fix-7', 'running');
+    });
+
+    it('escalateTask(FABLE): aceita e normaliza (case-insensitive)', async () => {
+        svc.store.tasks[8] = { issueNumber: 8, status: 'failed', branch: 'fix-8' };
+        const t = await svc.escalateTask(8, 'FABLE');
+        expect(t.coderEscalationModelOverride).toBe('fable');
+    });
+
+    it('escalateTask rejeita modelo inválido', async () => {
+        svc.store.tasks[9] = { issueNumber: 9, status: 'reviewing', branch: 'fix-9' };
+        await expect(svc.escalateTask(9, 'gpt4')).rejects.toThrow(/inválido/i);
+        expect(svc.scheduleExec).not.toHaveBeenCalled();
+    });
+
+    it('escalateTask rejeita task inexistente ou já em execução', async () => {
+        await expect(svc.escalateTask(999, 'opus')).rejects.toThrow(/not found/i);
+        svc.store.tasks[10] = { issueNumber: 10, status: 'running', branch: 'fix-10' };
+        await expect(svc.escalateTask(10, 'opus')).rejects.toThrow(/já está/i);
+    });
+});

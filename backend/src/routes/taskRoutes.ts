@@ -169,6 +169,18 @@ router.post('/:issueNumber/start', requireDolibarrAdmin, async (req, res) => {
     }
 });
 
+// #escalada-manual: força uma rodada do coder forte (Claude CLI) no modelo escolhido pelo admin
+// numa task que aguarda decisão humana. Body: { model: 'opus' | 'fable' }.
+router.post('/:issueNumber/escalate', requireDolibarrAdmin, async (req, res) => {
+    try {
+        const task = await taskRunnerService.escalateTask(Number(req.params.issueNumber), req.body?.model);
+        res.json(task);
+    } catch (error: any) {
+        log.error('Escalate task error', { error: error.message });
+        res.status(400).json({ error: error.message });
+    }
+});
+
 router.post('/:issueNumber/fix', requireDolibarrAdmin, async (req, res) => {
     try {
         const { feedback } = req.body;

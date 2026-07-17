@@ -210,6 +210,12 @@ export const TaskService = {
         return response.data;
     },
 
+    // #escalada-manual: força uma rodada do coder forte (Claude CLI) no modelo escolhido (opus|fable).
+    escalate: async (issueNumber: number, model: 'opus' | 'fable'): Promise<Task> => {
+        const response = await axios.post(`${API_URL}/${issueNumber}/escalate`, { model }, getAuthHeaders());
+        return response.data;
+    },
+
     reject: async (issueNumber: number): Promise<Task> => {
         const response = await axios.post(`${API_URL}/${issueNumber}/reject`, {}, getAuthHeaders());
         return response.data;
