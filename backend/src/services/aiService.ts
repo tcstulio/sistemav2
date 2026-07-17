@@ -7,7 +7,7 @@ import path from 'path';
 import { ScraperService } from './scraperService';
 import { logger } from '../utils/logger';
 import { isValidExternalUrl } from '../utils/urlValidation';
-import { TOOLS_PROMPT, executeTool, getToolContext } from './agentTools';
+import { getToolsPrompt, executeTool, getToolContext } from './agentTools';
 import { agentConfigService } from './agentConfigService';
 import { classifyTool } from '../config/actionCatalog';
 import { claimsWriteSuccess, WRITE_CLAIM_RETRY_INSTRUCTION, WRITE_CLAIM_DISCLAIMER } from '../utils/writeClaimGuard';
@@ -355,7 +355,8 @@ class GoogleProvider implements AIProvider {
         }
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
-        const toolsPrompt = TOOLS_PROMPT;
+        // #1498: filtra as 13 DEV_TOOLS do prompt para não-admin.
+        const toolsPrompt = getToolsPrompt({ isAdmin: getToolContext().isAdmin === true });
 
         let currentHistory = [...conversationHistory];
         let currentContext = context;
@@ -1166,7 +1167,9 @@ export class LocalProvider implements AIProvider {
     }
 
     async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult> {
-        const toolsPrompt = TOOLS_PROMPT;
+        // #1498: filtra as 13 DEV_TOOLS do prompt para não-admin (defesa em profundidade:
+        // executeTool TAMBÉM recusa, mesmo com prompt injetado).
+        const toolsPrompt = getToolsPrompt({ isAdmin: getToolContext().isAdmin === true });
         const ctxWindow = getContextWindow(options?.model || this.modelName);
 
         let currentHistory = [...conversationHistory];
