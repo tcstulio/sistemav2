@@ -9,22 +9,6 @@
 //       não-admin (evita o modelo tentar chamá-las);
 //   (2) `executeTool` recusa a execução se a tool estiver em DEV_TOOLS e o ctx não for
 //       admin — fecha o bypass via injeção direta da chamada.
-export const DEV_TOOLS: ReadonlySet<string> = new Set<string>([
-    'create_github_issue',
-    'list_github_issues',
-    'create_bug_report',
-    'create_opencode_task',
-    'list_opencode_tasks',
-    'start_opencode_task',
-    'opencode_task_feedback',
-    'merge_opencode_task',
-    'read_project_file',
-    'search_code',
-    'project_structure',
-    'read_logs',
-    'git_recent',
-]);
-
 import { AsyncLocalStorage } from 'async_hooks';
 import { dolibarrService } from './dolibarrService';
 import { ScraperService } from './scraperService';
@@ -52,6 +36,26 @@ const execFileAsync = promisify(execFile);
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 
 const log = logger.child('AgentTools');
+
+// #1498: conjunto das 13 ferramentas de dev/robô restritas ao papel de administrador.
+// Renderizadas no prompt só quando `getToolsPrompt({ isAdmin: true })`, e defendidas em
+// `executeTool` como defesa em profundidade (um não-admin que injetar a tool direto não
+// consegue executar — recusa educada sem side effects).
+export const DEV_TOOLS: ReadonlySet<string> = new Set<string>([
+    'create_github_issue',
+    'list_github_issues',
+    'create_bug_report',
+    'create_opencode_task',
+    'list_opencode_tasks',
+    'start_opencode_task',
+    'opencode_task_feedback',
+    'merge_opencode_task',
+    'read_project_file',
+    'search_code',
+    'project_structure',
+    'read_logs',
+    'git_recent',
+]);
 
 export class AskUserInterrupt extends Error {
     constructor(public readonly question: string) {
@@ -324,11 +328,23 @@ const TOOLS_PROMPT_FULL = `
 //       — remover o nome com word-boundaries.
 // Os helpers abaixo tratam cada caso. A ordem importa: passa (a) antes de (b) antes de (c).
 
-/** Regex de uma entrada numerada do tipo "<num>. <toolName>(...)" — captura até a próxima entrada numerada. */
+/**
+ * Regex de uma entrada numerada do tipo "<num>. <toolName>(...)" — captura até a próxima entrada
+ * numerada, OU fim de seção (duas quebras de linha), OU fim do bloco ($) (#1498).
+ *
+ * O lookahead original exigia "próxima entrada numerada", o que deixava resíduo quando uma DEV
+ * tool era a ÚLTIMA entrada numerada da seção (ex.: "99. (path) - ...\n\nFIM"); o catch-all
+ * `\b(name)\b` apagava só o nome, sobrando "99. (path) - desc...". Agora a entrada é removida
+ * integralmente em ambos os casos.
+ */
 function stripNumberedToolEntry(prompt: string, toolName: string): string {
-    // Casa "\n\s+\d+\.\s+<name>(...)" e tudo até o próximo "\n\s+\d+\." (início de outra entrada
-    // numerada) ou fim do bloco. Non-greedy com lookahead para parar na PRIMEIRA outra.
-    const re = new RegExp(`\\n\\s+\\d+\\.\\s+${toolName}\\([^)]*\\)[\\s\\S]*?(?=\\n\\s+\\d+\\.)`, 'g');
+    // (?=\n\s+\d+\.|\n[ \t]*\n|$) — lookahead da PRÓXIMA entrada numerada OU de uma linha em
+    // branco extra (fim de seção/bloco) OU do fim do texto. Non-greedy [\s\S]*? para parar na
+    // primeira ocorrência.
+    const re = new RegExp(
+        `\\n\\s+\\d+\\.\\s+${toolName}\\([^)]*\\)[\\s\\S]*?(?=\\n\\s+\\d+\\.|\\n[ \\t]*\\n|$)`,
+        'g',
+    );
     return prompt.replace(re, '');
 }
 
@@ -376,10 +392,14 @@ function buildNonAdminPrompt(): string {
     }
 
     // (c) Menções textuais soltas (regras 6 e 8 citam search_code/read_project_file/read_logs;
-    //     exemplos de formato citam create_github_issue e list_github_issues). Word-boundaries
-    //     pra não comer parte de outro token.
+    //     exemplos de formato citam create_github_issue e list_github_issues). Usamos
+    //     `\\s+${name}\\s+` com lookbehind/lookahead "alphanumeric|whitespace" para colapsar os
+    //     espaços órfãos que o word-boundary simples deixaria (ex.: "use search_code para" →
+    //     "use  para" → "use para"). Quebra de par (rota: "rules.md") fica intacta (#1498).
     const toolAlt = Array.from(DEV_TOOLS).join('|');
-    p = p.replace(new RegExp(`\\b(${toolAlt})\\b`, 'g'), '');
+    p = p.replace(new RegExp(`(\\s+)(${toolAlt})(\\s+)`, 'g'), '$1$3');
+    // Fallback: nome DEV no INÍCIO da linha (sem espaço antes) ou colado em pontuação.
+    p = p.replace(new RegExp(`(^|[\\s\\(\\["])(${toolAlt})(?=[\\s\\)\\]".,;:!?]|$)`, 'gm'), '$1');
 
     // (c) Exemplos do template: par User/Assistant demonstrando a tool call (create_github_issue
     //     e list_github_issues).
@@ -387,8 +407,10 @@ function buildNonAdminPrompt(): string {
         p = stripExampleToolCall(p, name);
     }
 
-    // Restaura a estética: colapsa linhas vazias triplas+ em dupla e remove espaços soltos.
-    p = p.replace(/\n{3,}/g, '\n\n');
+    // Restaura a estética: colapsa linhas vazias triplas+ em dupla e remove espaços duplos
+    // deixados pelo filtro (ex.: "use  para" → "use para"). Defensiva contra regressões do
+    // filtro e estética aceitável para o modelo consumir.
+    p = p.replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ');
     return p;
 }
 
