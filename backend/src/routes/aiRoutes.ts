@@ -199,7 +199,11 @@ async function runChatReply(body: any, user: any, jobId?: string): Promise<{ rep
                 isAdmin,
                 permissionProfile,
             }, async () => {
-                return aiService.generateReply(llmHistory as any, enrichedContext, allImages.length ? allImages : undefined, module);
+                // #1499: passa o `isAdmin` do req.user explicitamente para aiService
+                // (além de já propagar via runWithToolContext acima). Garante que o
+                // filtro de DEV_TOOLS (#1498) usa o papel real do chamador, mesmo se
+                // futuramente algum caller esquecer o runWithToolContext.
+                return aiService.generateReply(llmHistory as any, enrichedContext, allImages.length ? allImages : undefined, module, isAdmin);
             });
         } catch (agentErr: any) {
             // issue #1151: erro no job → persiste uma msg de erro na sessão para não
