@@ -997,16 +997,19 @@ export async function executeTool(tool: string, args: any = {}): Promise<string>
         log.warn(`Negado: remetente não-identificado tentou ler dado interno — tool=${resolvedTool} actor=${ctx.userLogin || 'não-identificado'}`);
         return `A ferramenta "${resolvedTool}" não está disponível neste contexto.`;
     }
-    // #1514 — usuário LOGADO cujo perfil FALHOU a carregar (Dolibarr instável/ id não resolvido):
+    // #1514/#1528 — usuário LOGADO cujo perfil FALHOU a carregar (Dolibarr instável/ id não resolvido):
     // sem perfil não dá p/ checar permissão, e como readOnly é falsy no webapp a trava acima não pega.
-    // Fail-closed: nega ESCRITA REAL a não-admin (admin é conhecido por req.user.admin, independe do
-    // perfil). Usa o MESMO conjunto autoritativo de escrita do gate readOnly (isMutatingTool) — assim
-    // bloqueia exatamente validate_*/delete/notify_*/send_whatsapp e NÃO pega leituras mal-catalogadas
-    // (search/extract_from_url/web_search seguem). prepare_* é isento — só gera deeplink; a escrita real
-    // ocorre no /confirm-action com a chave RBAC do usuário (2º fator). O usuário re-tenta quando volta.
-    if (ctx.profileLoadFailed && !ctx.isAdmin
-        && isMutatingTool(resolvedTool) && !resolvedTool.startsWith('prepare_')) {
-        log.warn(`#1514: perfil não carregou — escrita "${resolvedTool}" negada fail-closed p/ ${ctx.userLogin || 'usuário'} (sem perfil, não-admin).`);
+    // Fail-closed: nega a não-admin (admin é conhecido por req.user.admin, independe do perfil):
+    //   (a) ESCRITA REAL (isMutatingTool — validate_*/delete/notify_*/send_whatsapp); e
+    //   (b) LEITURA GATED por permissão (#1528 — tools com chave em WRITE_TOOLS, ex.: get_financial_*/
+    //       get_bank_balance → canAccessFinancial), que sem perfil executariam sem checagem (o gate
+    //       normal vive dentro de `if (permissionProfile && !isAdmin)`, pulado com perfil null).
+    // NÃO pega leituras SEM chave de permissão (search/list_*/get_customer → getWritePermissionKey null).
+    // prepare_* é isento — só gera deeplink; a escrita real ocorre no /confirm-action com a chave RBAC
+    // do usuário (2º fator). O usuário re-tenta quando o Dolibarr volta.
+    if (ctx.profileLoadFailed && !ctx.isAdmin && !resolvedTool.startsWith('prepare_')
+        && (isMutatingTool(resolvedTool) || getWritePermissionKey(resolvedTool))) {
+        log.warn(`#1514/#1528: perfil não carregou — "${resolvedTool}" negada fail-closed p/ ${ctx.userLogin || 'usuário'} (sem perfil, não-admin).`);
         return `Não foi possível verificar suas permissões agora (o perfil não carregou). Tente novamente em instantes; se persistir, contate um administrador.`;
     }
     if (ctx.permissionProfile && !ctx.isAdmin) {

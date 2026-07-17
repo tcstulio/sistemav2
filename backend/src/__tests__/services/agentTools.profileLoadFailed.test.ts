@@ -66,3 +66,32 @@ describe('agentTools — #1514 perfil falhou a carregar (fail-closed p/ escrita)
         expect(mockDolibarr.validateInvoice).toHaveBeenCalledWith('50');
     });
 });
+
+describe('agentTools — #1528 leitura GATED por permissão com perfil-falhou', () => {
+    beforeEach(() => { vi.clearAllMocks(); });
+
+    it('perfil falhou + não-admin: LEITURA financeira (get_financial_summary) é NEGADA (tem chave canAccessFinancial)', async () => {
+        // O gate #1528 barra ANTES do dispatch — a leitura financeira não vaza sem checagem de perfil.
+        const out = await runWithToolContext({ profileLoadFailed: true, isAdmin: false },
+            () => executeTool('get_financial_summary', {}).catch(e => String(e)));
+        expect(out).toMatch(/não foi possível verificar suas permissões|perfil não carregou/i);
+    });
+
+    it('perfil falhou + não-admin: get_bank_balance também é NEGADA', async () => {
+        const out = await runWithToolContext({ profileLoadFailed: true, isAdmin: false },
+            () => executeTool('get_bank_balance', {}).catch(e => String(e)));
+        expect(out).toMatch(/não foi possível verificar suas permissões|perfil não carregou/i);
+    });
+
+    it('perfil falhou + não-admin: leitura SEM chave de permissão (list_invoices) segue permitida', async () => {
+        const out = await runWithToolContext({ profileLoadFailed: true, isAdmin: false },
+            () => executeTool('list_invoices', {}).catch(e => String(e)));
+        expect(out).not.toMatch(/não foi possível verificar suas permissões|perfil não carregou/i);
+    });
+
+    it('perfil falhou + ADMIN: leitura financeira executa (admin independe do perfil)', async () => {
+        const out = await runWithToolContext({ profileLoadFailed: true, isAdmin: true },
+            () => executeTool('get_financial_summary', {}).catch(e => String(e)));
+        expect(out).not.toMatch(/não foi possível verificar suas permissões|perfil não carregou/i);
+    });
+});
