@@ -15,7 +15,7 @@ export interface TaskAutomationEditorProps {
 export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAdmin, themeColor = 'indigo' }) => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
-    const [config, setConfig] = useState<TaskAutomationConfig>({ autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '' });
+    const [config, setConfig] = useState<TaskAutomationConfig>({ autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '', coderModel: '', coderFallbackModel: '' });
 
     useEffect(() => {
         if (!isAdmin) { setLoading(false); return; }
@@ -165,6 +165,42 @@ export const TaskAutomationEditor: React.FC<TaskAutomationEditorProps> = ({ isAd
                                     </button>
                                 ))}
                             </div>
+                        </div>
+
+                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700">
+                            <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
+                                <ShieldCheck size={16} /> Modelo do Coder (quem resolve as issues)
+                            </div>
+                            <p className="text-xs text-slate-500 mb-3">
+                                Vazio = usa o default do servidor (env/opencode — hoje MiniMax). Setado = o opencode roda nesse modelo. Troca vale no PROXIMO run, sem reiniciar. So letras/digitos/. _ : / - (nome tipo provider/modelo).
+                            </p>
+                            <input
+                                type="text"
+                                placeholder="vazio = default do servidor — ou: zai-coding-plan/glm-5.2 / minimax/MiniMax-M3"
+                                value={config.coderModel ?? ''}
+                                onChange={(e) => setConfig({ ...config, coderModel: e.target.value })}
+                                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-medium text-slate-800 dark:text-slate-100"
+                            />
+                            <div className="flex flex-wrap gap-2 mt-2">
+                                {['', 'zai-coding-plan/glm-5.2', 'minimax/MiniMax-M3'].map((m) => (
+                                    <button
+                                        key={m || 'default'}
+                                        type="button"
+                                        onClick={() => setConfig({ ...config, coderModel: m })}
+                                        className={`text-xs px-2 py-1 rounded border ${(config.coderModel ?? '') === m ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300'}`}
+                                    >
+                                        {m || 'default (servidor)'}
+                                    </button>
+                                ))}
+                            </div>
+                            <label className="block text-xs text-slate-500 mt-3 mb-1">Fallback (quando o primario da 429/timeout)</label>
+                            <input
+                                type="text"
+                                placeholder="vazio = default do servidor (MiniMax-M3)"
+                                value={config.coderFallbackModel ?? ''}
+                                onChange={(e) => setConfig({ ...config, coderFallbackModel: e.target.value })}
+                                className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm font-medium text-slate-800 dark:text-slate-100"
+                            />
                         </div>
 
                         {config.autoMerge && (

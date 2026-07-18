@@ -1563,6 +1563,25 @@ class TaskRunnerService {
         }
     }
 
+    /**
+     * Resolve o modelo EFETIVO do coder (primário/fallback): PRECEDÊNCIA ui_config (tela, AO VIVO) >
+     * env (default) > '' (default do opencode). #RCE (red-team Fable): revalida o charset — o valor vai
+     * LITERAL p/ `--model <X>` num bash -lc; inválido/vazio → '' (sem --model / herda). Fonte ÚNICA usada
+     * pelo run (runOpencodeIsolated) e pelo status (getRunnerHealth) — o dono vê o que está de fato valendo.
+     */
+    private resolveCoderModels(): { primary: string; fallback: string } {
+        const cfg = this.getAutomationConfig();
+        const pick = (ui: unknown, env: string) => {
+            const u = typeof ui === 'string' ? ui.trim() : '';
+            const v = u || env;
+            return v && /^[A-Za-z0-9._:\/-]+$/.test(v) ? v : '';
+        };
+        return {
+            primary: pick(cfg.coderModel, OPENCODE_PRIMARY_MODEL),
+            fallback: pick(cfg.coderFallbackModel, OPENCODE_FALLBACK_MODEL),
+        };
+    }
+
     /** Estado de cota de LLM (esgotada? desde quando? motivo?) + hold de pico — p/ UI. */
     getQuotaStatus() {
         return { ...quotaStatus(), peakHold: this.isPeakHold() };
@@ -1600,6 +1619,7 @@ class TaskRunnerService {
         running: Array<{ issueNumber: number; status: string; runningForMin: number; sinceHeartbeatMin: number }>;
         stalled: number[]; quotaExhausted: boolean; peakHold: boolean; budgetHit: boolean;
         stuckForMin: number | null; seemsStuck: boolean;
+        effectiveCoderModel: string; effectiveCoderFallbackModel: string;
     } {
         const cfg = this.getAutomationConfig();
         const now = Date.now();
@@ -1638,7 +1658,10 @@ class TaskRunnerService {
         const noHeartbeatRunning = running.some(r => r.sinceHeartbeatMin === -1 || r.sinceHeartbeatMin >= staleMin);
         const idleWithWork = running.length === 0 && (this.pendingExecs || 0) === 0 && queued > 0;
         const seemsStuck = autoPlay && !paused && (idleWithWork || noHeartbeatRunning || stalled.length > 0);
-        return { autoPlay, queued, waiting, running, stalled, quotaExhausted, peakHold, budgetHit, stuckForMin, seemsStuck };
+        // #coder-model-ui: modelo EFETIVO resolvido (ui>env>default) — o dono vê o que está de fato valendo
+        // ('' = default do opencode). Torna visível a semântica "ui-vazio herda env".
+        const { primary: effectiveCoderModel, fallback: effectiveCoderFallbackModel } = this.resolveCoderModels();
+        return { autoPlay, queued, waiting, running, stalled, quotaExhausted, peakHold, budgetHit, stuckForMin, seemsStuck, effectiveCoderModel, effectiveCoderFallbackModel };
     }
 
     /**
@@ -1969,12 +1992,13 @@ class TaskRunnerService {
             const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`, [], task, { excludeIssue: task.issueNumber });
             this.cleanStaleLocks(gone);
             const basePrompt = `Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo. ${runNeedle}`;
-            // Comando do run PRIMÁRIO: usa --model só se TASKRUNNER_OPENCODE_PRIMARY_MODEL estiver setado
-            // (senão, o default do opencode). Durante a janela GLM-morto, aponte-o p/ o MiniMax direto.
-            const primaryCmd = OPENCODE_PRIMARY_MODEL
-                ? `opencode run --model ${OPENCODE_PRIMARY_MODEL} "${basePrompt}"`
+            // Modelo do coder: PRECEDÊNCIA ui_config (tela, AO VIVO) > env (default) > default do opencode.
+            // Resolvido+revalidado (charset) em resolveCoderModels — defesa em profundidade antes do shell.
+            const { primary: primaryModel, fallback: fallbackModel } = this.resolveCoderModels();
+            const primaryCmd = primaryModel
+                ? `opencode run --model ${primaryModel} "${basePrompt}"`
                 : `opencode run "${basePrompt}"`;
-            const primaryIsFallback = !!OPENCODE_PRIMARY_MODEL && OPENCODE_PRIMARY_MODEL === OPENCODE_FALLBACK_MODEL;
+            const primaryIsFallback = !!primaryModel && primaryModel === fallbackModel; // sobre os valores RESOLVIDOS
             try {
                 try {
                     return await runOpencode(
@@ -1987,16 +2011,16 @@ class TaskRunnerService {
                     // semanal o primário PENDURA até o timeout em vez de 429 — tratar o hang como infra
                     // temporária (era a causa das 153 falhas). Kill/erro de código NÃO caem aqui.
                     const msg = e?.message || String(e);
-                    if (!shouldFallbackOpencode(msg, { hasFallbackModel: !!OPENCODE_FALLBACK_MODEL, killRequested: !!task.killRequested, primaryIsFallback })) throw e;
+                    if (!shouldFallbackOpencode(msg, { hasFallbackModel: !!fallbackModel, killRequested: !!task.killRequested, primaryIsFallback })) throw e;
                     const isTimeout = /opencode timeout/i.test(msg);
                     const cause = isTimeout ? 'Timeout/hang do modelo primário' : 'Cota do modelo primário esgotada';
-                    this.recordEvent(task, 'attempt_started', `${cause} — re-rodando o opencode com fallback ${OPENCODE_FALLBACK_MODEL}.`, { fallbackModel: OPENCODE_FALLBACK_MODEL });
-                    this.emitLog(task.issueNumber, 'warn', `Opencode: ${isTimeout ? 'timeout/hang' : 'cota/429'} no modelo primário — fallback para ${OPENCODE_FALLBACK_MODEL}.`);
+                    this.recordEvent(task, 'attempt_started', `${cause} — re-rodando o opencode com fallback ${fallbackModel}.`, { fallbackModel });
+                    this.emitLog(task.issueNumber, 'warn', `Opencode: ${isTimeout ? 'timeout/hang' : 'cota/429'} no modelo primário — fallback para ${fallbackModel}.`);
                     // excludeIssue=self: mata o órfão do PRIMÁRIO desta run (mesmo needle), poupa vizinhos.
                     const goneMid = await this.sweepOrphanedOpencode(`fallback-run #${task.issueNumber}`, [], task, { excludeIssue: task.issueNumber });
                     this.cleanStaleLocks(goneMid);
                     return await runOpencode(
-                        `opencode run --model ${OPENCODE_FALLBACK_MODEL} "${basePrompt}"`,
+                        fallbackModel ? `opencode run --model ${fallbackModel} "${basePrompt}"` : `opencode run "${basePrompt}"`,
                         WT_ROOT, task, OPENCODE_TIMEOUT_MS,
                         (sample) => { task.cpuMemSamples?.push(sample); },
                     );

