@@ -374,6 +374,13 @@ export interface Task {
     // #escalada-opus: âncora anti-crash. Setado ANTES de rodar o Opus; num restart, se está setado e
     // opusEscalated não, a escalada "em voo" é tratada como consumida (não re-dispara em loop).
     opusInFlightAt?: string;
+    // #escalada-manual: o ADMIN clicou "Escalar" numa task que aguarda decisão humana → FORÇA uma rodada
+    // do coder forte NA PRÓXIMA execução, ignorando os gates automáticos (juiz/teto/toggle). Consumido
+    // após rodar (limpo) — exceto em quota-hold, que re-enfileira p/ retentar na renovação da assinatura.
+    forceEscalation?: boolean;
+    // #escalada-manual: modelo escolhido pelo humano p/ ESTA escalada (opus|fable). Override do
+    // coderEscalationModel global só nesta task; tem precedência no tryOpusCoderRound.
+    coderEscalationModelOverride?: string;
     deadlockKicks?: number; // #1455: quantas vezes o planner re-despachou esta task por estar PARADA bloqueando dependentes (teto p/ não loopar)
     // #1154 P1 item 3: crítica do Judge + feedback humano são AÇÕES a atender que DEVEM sobreviver ao wipe
     // de feedbackHistory entre fases (senão o auto-fix roda CEGO). PERSISTENTE como gateFixInstruction:
@@ -1017,6 +1024,35 @@ class TaskRunnerService {
         return task;
     }
 
+    /**
+     * #escalada-manual: o admin clica "Escalar → Opus/Fable" numa task que AGUARDA decisão humana
+     * (juiz reprovou, teto de rodadas, falhou). FORÇA uma rodada do coder forte (Claude CLI) no
+     * modelo escolhido NA PRÓXIMA execução, reusando o trabalho parcial do worktree preservado — o
+     * mesmo caminho inline da escalada automática (executeTask → shouldEscalateToOpus → tryOpusCoderRound),
+     * só que disparado por gente e com o modelo dela. Re-enfileira via scheduleExec (fila serial).
+     */
+    async escalateTask(issueNumber: number, model: string): Promise<Task> {
+        const task = this.store.tasks[issueNumber];
+        if (!task) throw new Error(`Task #${issueNumber} not found`);
+        if (task.status === 'running' || task.status === 'fixing') throw new Error(`Task #${issueNumber} já está ${task.status} — aguarde terminar para escalar.`);
+        // #escalada-manual (red-team): a UI só oferece o botão em reviewing/approved/failed, mas a API
+        // não pode aceitar escalar uma task TERMINAL (já mergeada/rejeitada/cancelada) — reabriria trabalho
+        // fechado. Escalável = estados que aguardam decisão humana (+ pending/holds, que ainda vão rodar).
+        const NON_ESCALATABLE = ['merged', 'rejected', 'rejected_precheck', 'cancelled'];
+        if (NON_ESCALATABLE.includes(task.status)) throw new Error(`Task #${issueNumber} está ${task.status} (encerrada) — não é escalável.`);
+        const m = String(model || '').trim().toLowerCase();
+        if (m !== 'opus' && m !== 'fable') throw new Error(`Modelo inválido: "${model}". Use 'opus' ou 'fable'.`);
+        task.coderEscalationModelOverride = m;
+        task.forceEscalation = true;
+        task.error = undefined;
+        const branch = task.branch || `fix-${issueNumber}`;
+        task.branch = branch;
+        this.recordEvent(task, 'synthesis_started', `⬆️ Escalada MANUAL para Claude ${m} (pedida por um admin) — próxima rodada assume o worktree.`, { manualEscalation: true, model: m });
+        this.scheduleExec(task, branch, 'running');
+        this.save();
+        return task;
+    }
+
     // Fila serial de execução (1 task por vez). O worktree (sistemav2-taskrunner-wt) é COMPARTILHADO,
     // então rodar duas execuções ao mesmo tempo corromperia o git. Tasks extras ficam 'pending' até a vez.
     private pendingExecs = 0;
@@ -1593,6 +1629,10 @@ class TaskRunnerService {
     }
     /** Gatilho da escalada Opus: TODAS as condições verdadeiras (ver docs/PLANO_ESCALADA_OPUS.md §1). */
     private shouldEscalateToOpus(task: Task): boolean {
+        // #escalada-manual: o admin FORÇOU (botão "Escalar" numa task que aguarda humano) → passa por
+        // cima de TODOS os gates automáticos (toggle/juiz/teto de volume). A autorização é o clique do
+        // admin. Cota/indisponibilidade seguem tratadas dentro do tryOpusCoderRound (quota-blocked).
+        if (task.forceEscalation) return true;
         if (!OPUS_ESCALATION_ENABLED) return false;                         // kill-switch de ops (env)
         const cfg = this.getAutomationConfig();
         if (cfg.opusEscalationEnabled !== true) return false;               // toggle de admin
@@ -1626,7 +1666,8 @@ class TaskRunnerService {
                 return 'unavailable'; // nada rodou → não marca, não conta
             }
             const cfg = this.getAutomationConfig();
-            const model = ((cfg.coderEscalationModel || 'opus').trim()) || 'opus';
+            // #escalada-manual: override por-task (o modelo escolhido no botão) tem precedência sobre o global.
+            const model = ((task.coderEscalationModelOverride || cfg.coderEscalationModel || 'opus').trim()) || 'opus';
             const minApprove = cfg.minApproveScore ?? 9;
             const critique = (task.durableFeedback || []).slice(-5).join('\n---\n');
             const base = this.buildSynthesisPrompt(task, issueData);
@@ -2459,6 +2500,10 @@ class TaskRunnerService {
         if (task.opusInFlightAt && !task.opusEscalated) {
             task.opusEscalated = true;
             task.opusInFlightAt = undefined;
+            // #escalada-manual (red-team): consome TAMBÉM a força manual — senão um restart durante a
+            // escalada re-dispararia o coder forte a cada boot (e se o run forte causou o crash, loopa nos boots).
+            task.forceEscalation = false;
+            task.coderEscalationModelOverride = undefined;
             this.save();
             this.recordEvent(task, 'attempt_started', 'Escalada Opus em voo interrompida por restart — marcada como consumida (não re-dispara).', { opusEscalation: true, recovered: true });
         }
@@ -2469,14 +2514,29 @@ class TaskRunnerService {
             if (outcome === 'quota-blocked') {
                 // Sem token: NÃO consumiu a tentativa. Re-enfileira (igual ao judge quota-hold) — a task
                 // retenta a escalada quando a assinatura renovar. NÃO cai no opencode, NÃO vai pra humano.
+                // MANTÉM forceEscalation (se manual) p/ retentar o modelo escolhido na renovação.
                 task.status = 'pending';
                 task.startedAt = undefined;
                 task.updatedAt = new Date().toISOString();
+                // #escalada-manual (red-team): a força manual BYPASSA o opusInCooldown, então sem freio o
+                // autoPlayNext re-despacharia a task 'pending' IMEDIATAMENTE → spin de re-despacho contra o
+                // cooldown por horas (queimando Planner-LLM/GitHub e renovando o cooldown, o que trava as
+                // escaladas AUTO das outras tasks). Segura a task FORA da fila (planWaitUntil) até o cooldown
+                // expirar; aí retenta o modelo escolhido 1×. O caminho AUTO não precisa disto (respeita o
+                // cooldown e degrada pro opencode), então só aplicamos quando forceEscalation está ativo.
+                if (task.forceEscalation) {
+                    const cd = this.opusDayState().cooldownUntil;
+                    task.planWaitUntil = cd ? new Date(cd).getTime() : Date.now() + OPUS_QUOTA_COOLDOWN_MS;
+                }
                 this.recordEvent(task, 'quota_hold', '⏸️ Escalada Opus adiada: cota Claude esgotada — re-enfileirado, retenta quando a assinatura renovar.', { opusQuotaHold: true });
                 this.save();
                 this.emitStatus(task);
                 return;
             }
+            // #escalada-manual: a força manual foi CONSUMIDA (rodou) — limpa p/ não re-disparar em loop.
+            // Nova escalada só com novo clique. (Auto-escalada não usa esses campos.)
+            task.forceEscalation = false;
+            task.coderEscalationModelOverride = undefined;
             if (outcome === 'changed') {
                 escalatedInline = true;
                 verify = await this.verify(task);

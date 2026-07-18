@@ -387,6 +387,28 @@ const FeedbackModal: React.FC<{
     );
 };
 
+// #escalada-manual: menu compacto p/ o admin escalar uma task que AGUARDA decisão humana
+// (reviewing/approved/failed) ao coder FORTE (Opus/Fable) — roda o Claude CLI AGORA no modelo
+// escolhido, reusando o trabalho parcial. Usa <details> nativo (sem estado/click-outside).
+const EscalateMenu: React.FC<{ task: Task; onAction: (action: string, task: Task, extra?: string) => void }> = ({ task, onAction }) => (
+    <details className="relative inline-block">
+        <summary
+            className="list-none cursor-pointer inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-violet-500 text-white hover:bg-violet-600 transition-colors select-none"
+            title="Rodar o coder forte (Claude) AGORA nesta task, no modelo escolhido"
+        >
+            <Sparkles size={11} /> Escalar <ChevronDown size={10} />
+        </summary>
+        <div className="absolute right-0 z-20 mt-1 w-44 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-lg py-1 text-xs">
+            <button type="button" onClick={(e) => { e.stopPropagation(); onAction('escalate', task, 'opus'); }} className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200">
+                <span className="font-medium">Opus</span> <span className="text-slate-400">— mais forte</span>
+            </button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); onAction('escalate', task, 'fable'); }} className="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200">
+                <span className="font-medium">Fable</span>
+            </button>
+        </div>
+    </details>
+);
+
 const SortableMiniCard: React.FC<{
     task: Task;
     onAction: (action: string, task: Task, extra?: string) => void;
@@ -517,6 +539,7 @@ const SortableMiniCard: React.FC<{
                                     <button onClick={(e) => { e.stopPropagation(); onFeedback(task); }} aria-label={`Feedback da task #${task.issueNumber}`} className="text-[10px] px-1.5 py-0.5 rounded text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
                                         <MessageSquare size={10} />
                                     </button>
+                                    <EscalateMenu task={task} onAction={onAction} />
                                     <button onClick={(e) => { e.stopPropagation(); onAction('reject', task); }} className="text-[10px] px-1.5 py-0.5 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
                                         <XCircle size={10} />
                                     </button>
@@ -525,9 +548,12 @@ const SortableMiniCard: React.FC<{
                         </>
                     )}
                     {isAdmin && task.status === 'failed' && (
-                        <button onClick={(e) => { e.stopPropagation(); onAction('redo', task); }} className="text-[10px] px-2 py-0.5 rounded bg-amber-500 text-white hover:bg-amber-600 transition-colors">
-                            <RotateCcw size={10} className="inline mr-0.5" /> Retry
-                        </button>
+                        <>
+                            <button onClick={(e) => { e.stopPropagation(); onAction('redo', task); }} className="text-[10px] px-2 py-0.5 rounded bg-amber-500 text-white hover:bg-amber-600 transition-colors">
+                                <RotateCcw size={10} className="inline mr-0.5" /> Retry
+                            </button>
+                            <EscalateMenu task={task} onAction={onAction} />
+                        </>
                     )}
                     {isActive && (
                         <button onClick={(e) => { e.stopPropagation(); onConsole(task); }} aria-label={`Ver console da task #${task.issueNumber}`} className="text-[10px] px-1.5 py-0.5 rounded text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
@@ -678,13 +704,17 @@ const TaskListCard: React.FC<{
                                 <Button variant="primary" size="sm" icon={<CheckCircle size={12} />} onClick={() => onAction('merge', task)}>Merge</Button>
                                 <Button variant="ghost" size="sm" icon={<MessageSquare size={12} />} onClick={() => onFeedback(task)}>Corrigir</Button>
                                 <Button variant="ghost" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Refazer</Button>
+                                <EscalateMenu task={task} onAction={onAction} />
                                 <Button variant="ghost" size="sm" icon={<XCircle size={12} />} onClick={() => onAction('reject', task)}>Rejeitar</Button>
                             </>
                         )}
                     </>
                 )}
                 {isAdmin && task.status === 'failed' && (
-                    <Button variant="primary" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Tentar Novamente</Button>
+                    <>
+                        <Button variant="primary" size="sm" icon={<RotateCcw size={12} />} onClick={() => onAction('redo', task)}>Tentar Novamente</Button>
+                        <EscalateMenu task={task} onAction={onAction} />
+                    </>
                 )}
                 {task.status === 'merged' && (
                     <span className="text-xs text-emerald-600 flex items-center gap-1"><CheckCircle size={12} /> Concluído</span>
@@ -1119,6 +1149,13 @@ const IssuesPage: React.FC = () => {
                 case 'merge': await mergeWithForcePrompt(task.issueNumber); break;
                 case 'reject': await TaskService.reject(task.issueNumber); toast.info('Rejeitada'); break;
                 case 'redo': await TaskService.redo(task.issueNumber); toast.info('Refazendo...'); break;
+                case 'escalate': {
+                    const model = (extra === 'fable' ? 'fable' : 'opus') as 'opus' | 'fable';
+                    toast.info(`Escalando #${task.issueNumber} para ${model === 'opus' ? 'Opus' : 'Fable'}…`);
+                    await TaskService.escalate(task.issueNumber, model);
+                    toast.success(`Escalada: o coder ${model === 'opus' ? 'Opus' : 'Fable'} vai reassumir a task na próxima rodada.`);
+                    break;
+                }
                 case 'fix':
                     if (!extra) { toast.error('Informe a correção.'); return; }
                     toast.info('Enviando correção...');
