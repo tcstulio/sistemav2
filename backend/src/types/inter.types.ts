@@ -215,7 +215,7 @@ export interface BoletoResponse {
     dataCriacao?: string;
     dataVencimento: string;
     valorNominal: number;
-    situacao?: 'EMABERTO' | 'PAGO' | 'CANCELADO' | 'EXPIRADO' | 'BAIXADO';
+    situacao?: 'EMABERTO' | 'PAGO' | 'CANCELADO' | 'EXPIRADO' | 'VENCIDO' | 'BAIXADO';
 }
 
 export interface BoletoConsultaResponse extends BoletoResponse {

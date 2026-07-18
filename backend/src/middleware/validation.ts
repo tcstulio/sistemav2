@@ -163,7 +163,16 @@ export const PagamentoBoletoSchema = z.object({
 });
 
 /**
- * Pix charge creation schema
+ * Pix charge creation schema.
+ *
+ * O campo `devedor` é OBRIGATÓRIO (com refine exigindo cpf ou cnpj). A
+ * issue #1542 corrige uma regressão em que virou `.optional()` —
+ * NÃO reintroduzir essa fragilidade, pois payloads inválidos que seriam
+ * rejeitados aqui passariam e explodiriam no service/Inter.
+ *
+ * Sem `.passthrough()`: o Zod faz strict-by-default nos campos conhecidos
+ * e rejeita chaves extras. Se precisarmos permitir campos adicionais no
+ * futuro, abrimos exceção pontual, não no schema raiz.
  */
 export const PixCobrancaSchema = z.object({
     valor: z.object({
@@ -184,13 +193,13 @@ export const PixCobrancaSchema = z.object({
         nome: z.string().min(1).max(200)
     }).refine(data => data.cpf || data.cnpj, {
         message: 'CPF ou CNPJ é obrigatório'
-    }).optional(),
+    }),
     solicitacaoPagador: z.string().max(140).optional(),
     infoAdicionais: z.array(z.object({
         nome: z.string().max(50),
         valor: z.string().max(200)
     })).optional()
-}).passthrough();
+});
 
 /**
  * Pix payment schema
@@ -486,10 +495,19 @@ export const PixCobrancaVencimentoSchema = z.object({
 
 /**
  * Body do /boleto/:nossoNumero/cancelar — motivo do cancelamento.
+ *
+ * O `motivo` é opcional, com default explícito ("Cancelado pelo usuário")
+ * caso o cliente envie body vazio. Antes era
+ * `z.object({...}).optional().default({...})` — o `.optional()` era
+ * redundante e resultava em tipagem `{}` fraca (#1542). Agora o default
+ * fica no campo, mantendo o tipo `{ motivo: string }` no resultado.
  */
 export const BoletoCancelSchema = z.object({
-    motivo: z.string().min(1, 'motivo é obrigatório').max(500)
-}).optional().default({ motivo: 'Cancelado pelo usuário' });
+    motivo: z.string()
+        .min(1, 'motivo é obrigatório')
+        .max(500)
+        .default('Cancelado pelo usuário')
+});
 
 /**
  * Body do PUT /webhook/pix/config — chave Pix + URL do webhook.
@@ -511,6 +529,112 @@ export const SyncSchema = z.object({
     pagina: z.number().int().min(0).optional(),
     tamanhoPagina: z.number().int().min(1).max(1000).optional(),
     forcar: z.boolean().optional()
+});
+
+// =============================================
+// Schemas nomeados pela issue #1542
+// =============================================
+
+/**
+ * `BoletoSchema` — schema genérico para operações de boleto (issue #1542).
+ *
+ * Cobre o body de endpoints como emissão, listagem com filtros e demais
+ * operações de boleto. Mantém os mesmos campos estritos de
+ * `BoletoEmissaoSchema` (sem `.passthrough()`), preservando o contrato
+ * tipado `{ seuNumero, valorNominal, dataVencimento, pagador, ... }`.
+ */
+export const BoletoSchema = z.object({
+    seuNumero: z.string().max(15),
+    valorNominal: z.number()
+        .positive('Valor deve ser positivo')
+        .max(10000000, 'Valor máximo: R$ 10.000.000,00'),
+    dataVencimento: z.string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD'),
+    numDiasAgenda: z.number().int().min(0).max(60).optional(),
+    pagador: z.object({
+        cpfCnpj: z.string()
+            .min(11, 'CPF/CNPJ inválido')
+            .max(14, 'CPF/CNPJ inválido'),
+        tipoPessoa: z.enum(['FISICA', 'JURIDICA']),
+        nome: z.string().min(1).max(100),
+        endereco: z.string().max(90).optional(),
+        cidade: z.string().max(60).optional(),
+        uf: z.string().length(2).optional(),
+        cep: z.string().length(8).regex(/^\d+$/).optional(),
+        email: z.string().email().optional(),
+        telefone: z.string().max(15).optional()
+    }),
+    mensagem: z.object({
+        linha1: z.string().max(78).optional(),
+        linha2: z.string().max(78).optional(),
+        linha3: z.string().max(78).optional(),
+        linha4: z.string().max(78).optional(),
+        linha5: z.string().max(78).optional()
+    }).optional(),
+    desconto: z.object({
+        codigoDesconto: z.enum(['NAOTEMDESCONTO', 'VALORFIXODATAINFORMADA', 'PERCENTUALDATAINFORMADA']),
+        data: z.string().optional(),
+        taxa: z.number().optional(),
+        valor: z.number().optional()
+    }).optional(),
+    multa: z.object({
+        codigoMulta: z.enum(['NAOTEMMULTA', 'VALORFIXO', 'PERCENTUAL']),
+        data: z.string().optional(),
+        taxa: z.number().optional(),
+        valor: z.number().optional()
+    }).optional(),
+    mora: z.object({
+        codigoMora: z.enum(['VALORDIA', 'TAXAMENSAL', 'ISENTO']),
+        data: z.string().optional(),
+        taxa: z.number().optional(),
+        valor: z.number().optional()
+    }).optional()
+});
+
+/**
+ * `PixSchema` — schema genérico para operações Pix (issue #1542).
+ *
+ * Aceita tanto envios (`valor` numérico, `destinatario`) quanto cobranças
+ * (`valor.original` como string "0.00"). Campos do destinatário/devedor
+ * continuam obrigatórios quando fornecidos (sem `.optional()`/`passthrough()`
+ * no schema raiz, alinhado com a correção do `PixCobrancaSchema`).
+ */
+export const PixSchema = z.object({
+    valor: z.union([
+        z.number().positive().max(10000000),
+        z.object({
+            original: z.string().regex(/^\d+\.\d{2}$/, 'Valor deve estar no formato 0.00')
+        })
+    ]),
+    chave: z.string().min(1, 'Chave Pix é obrigatória').max(200).optional(),
+    txid: z.string()
+        .min(26, 'TxId deve ter no mínimo 26 caracteres')
+        .max(35, 'TxId deve ter no máximo 35 caracteres')
+        .regex(/^[a-zA-Z0-9]+$/, 'TxId deve conter apenas caracteres alfanuméricos')
+        .optional(),
+    destinatario: z.object({
+        tipo: z.enum(['CHAVE', 'DADOS_BANCARIOS']).optional(),
+        chave: z.string().optional(),
+        banco: z.string().optional(),
+        agencia: z.string().optional(),
+        conta: z.string().optional(),
+        tipoConta: z.enum(['CORRENTE', 'POUPANCA']).optional(),
+        cpfCnpj: z.string().optional(),
+        nome: z.string().optional()
+    }).optional(),
+    descricao: z.string().max(140).optional(),
+    solicitacaoPagador: z.string().max(140).optional(),
+    devedor: z.object({
+        cpf: z.string()
+            .length(11, 'CPF deve ter 11 dígitos')
+            .regex(/^\d+$/, 'CPF deve conter apenas números')
+            .optional(),
+        cnpj: z.string()
+            .length(14, 'CNPJ deve ter 14 dígitos')
+            .regex(/^\d+$/, 'CNPJ deve conter apenas números')
+            .optional(),
+        nome: z.string().min(1).max(200)
+    }).optional()
 });
 
 export default {
@@ -545,4 +669,6 @@ export default {
     BoletoCancelSchema,
     WebhookConfigSchema,
     SyncSchema,
+    BoletoSchema,
+    PixSchema,
 };

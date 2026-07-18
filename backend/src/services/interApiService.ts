@@ -274,7 +274,7 @@ class InterApiService extends BankingApiBase {
     async listarBoletos(params: {
         dataInicial?: string;
         dataFinal?: string;
-        situacao?: 'EMABERTO' | 'PAGO' | 'CANCELADO' | 'EXPIRADO' | 'BAIXADO';
+        situacao?: 'EMABERTO' | 'PAGO' | 'CANCELADO' | 'EXPIRADO' | 'VENCIDO' | 'BAIXADO';
         pagina?: number;
         tamanhoPagina?: number;
     }): Promise<BoletoListaResponse> {

@@ -15,6 +15,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { z } from 'zod';
 import multer from 'multer';
 import crypto from 'crypto';
 import path from 'path';
@@ -37,6 +38,7 @@ import {
 import { config } from '../config/env';
 import {
     validateBody,
+    validateQuery,
     PagamentoBoletoSchema,
     PixCobrancaSchema,
     PixPagamentoSchema,
@@ -44,6 +46,12 @@ import {
     PixCobrancaVencimentoSchema,
     BoletoCancelSchema,
     WebhookConfigSchema,
+    SyncSchema,
+    // BoletoSchema e PixSchema são exportados pela issue #1542 para uso
+    // genérico em endpoints de boleto/Pix. Os endpoints atuais usam schemas
+    // mais específicos (BoletoEmissaoSchema, PixCobrancaSchema, etc.) que
+    // carregam validações mais estritas — os genéricos ficam disponíveis
+    // via validation.ts para novos endpoints ou consumidores externos.
 } from '../middleware/validation';
 import { asyncHandler } from '../middleware/errorHandler';
 import { ok as apiOk, fail as apiFail } from '../utils/apiResponse';
@@ -298,21 +306,16 @@ router.get(
  */
 router.get(
     '/extrato',
+    validateQuery(SyncSchema.pick({ dataInicio: true, dataFim: true }).refine(
+        (q) => !!q.dataInicio && !!q.dataFim,
+        { message: 'dataInicio e dataFim são obrigatórios (YYYY-MM-DD)' }
+    )),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
-        const { dataInicio, dataFim } = req.query;
-
-        if (!dataInicio || !dataFim) {
-            return apiFail(
-                res,
-                'MISSING_PARAMS',
-                'Missing parameters: dataInicio and dataFim are required (YYYY-MM-DD)',
-                400
-            );
-        }
+        const { dataInicio, dataFim } = req.query as { dataInicio: string; dataFim: string };
 
         const transacoes = await interApiService.getExtratoCompleto(
-            dataInicio as string,
-            dataFim as string
+            dataInicio,
+            dataFim
         );
 
         let payables: Awaited<ReturnType<typeof dolibarrService.getAccountsPayable>> = [];
@@ -450,19 +453,14 @@ router.post(
  */
 router.get(
     '/pix/recebidos',
+    validateQuery(SyncSchema.pick({ inicio: true, fim: true }).refine(
+        (q) => !!q.inicio && !!q.fim,
+        { message: 'inicio e fim são obrigatórios (ISO 8601 datetime)' }
+    )),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
-        const { inicio, fim } = req.query;
+        const { inicio, fim } = req.query as { inicio: string; fim: string };
 
-        if (!inicio || !fim) {
-            return apiFail(
-                res,
-                'MISSING_PARAMS',
-                'Missing parameters: inicio and fim are required (ISO 8601 datetime)',
-                400
-            );
-        }
-
-        const pix = await interApiService.listarPixRecebidos(inicio as string, fim as string);
+        const pix = await interApiService.listarPixRecebidos(inicio, fim);
         return apiOk(res, { pix });
     })
 );
@@ -504,15 +502,34 @@ router.post(
  */
 router.get(
     '/boleto',
+    validateQuery(SyncSchema.pick({
+        dataInicio: true,
+        dataFim: true,
+        pagina: true,
+        tamanhoPagina: true,
+        forcar: true,
+    }).extend({
+        dataInicial: SyncSchema.shape.dataInicio,
+        dataFinal: SyncSchema.shape.dataFim,
+        situacao: z.enum(['EMABERTO', 'PAGO', 'CANCELADO', 'EXPIRADO', 'VENCIDO', 'BAIXADO']).optional(),
+    }).partial()),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
-        const { dataInicial, dataFinal, situacao, pagina, tamanhoPagina } = req.query;
+        const { dataInicial, dataFinal, dataInicio, dataFim, situacao, pagina, tamanhoPagina } = req.query as {
+            dataInicial?: string;
+            dataFinal?: string;
+            dataInicio?: string;
+            dataFim?: string;
+            situacao?: 'EMABERTO' | 'PAGO' | 'CANCELADO' | 'EXPIRADO' | 'VENCIDO' | 'BAIXADO';
+            pagina?: number;
+            tamanhoPagina?: number;
+        };
 
         const resultado = await interApiService.listarBoletos({
-            dataInicial: dataInicial as string,
-            dataFinal: dataFinal as string,
-            situacao: situacao as any,
-            pagina: pagina ? parseInt(pagina as string) : undefined,
-            tamanhoPagina: tamanhoPagina ? parseInt(tamanhoPagina as string) : undefined,
+            dataInicial: (dataInicial || dataInicio) as string,
+            dataFinal: (dataFinal || dataFim) as string,
+            situacao,
+            pagina,
+            tamanhoPagina,
         });
 
         return apiOk(res, resultado);
@@ -557,9 +574,9 @@ router.post(
     validateBody(BoletoCancelSchema),
     asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
         const { nossoNumero } = req.params;
-        const { motivo } = req.body;
+        const { motivo } = req.body as { motivo: string };
 
-        await interApiService.cancelarBoleto(nossoNumero, motivo || 'Cancelado pelo usuário');
+        await interApiService.cancelarBoleto(nossoNumero, motivo);
         return apiOk(res, { message: 'Boleto cancelado com sucesso' });
     })
 );

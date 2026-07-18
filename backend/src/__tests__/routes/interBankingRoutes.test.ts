@@ -160,9 +160,15 @@ describe('interBankingRoutes', () => {
         });
 
         it('returns 200 with valid data', async () => {
+            // #1542: PixCobrancaSchema exige `devedor` (cpf OU cnpj) — obrigatório,
+            // regressão `.optional()` revertida. Payload válido inclui o devedor.
             const res = await request(app)
                 .post('/api/inter/pix/cobranca')
-                .send({ valor: { original: '100.00' }, chave: 'teste@email.com' });
+                .send({
+                    valor: { original: '100.00' },
+                    chave: 'teste@email.com',
+                    devedor: { cpf: '12345678901', nome: 'Joao da Silva' },
+                });
 
             expect(res.status).toBe(200);
         });
@@ -363,6 +369,120 @@ describe('interBankingRoutes', () => {
             expect(mockInterApiService.pagarBoleto).not.toHaveBeenCalled();
         });
 
+        // ===== Cobertura completa: 19 endpoints da issue #1542 =====
+        // Cada POST/PUT que aceita JSON body deve passar por validateBody e
+        // rejeitar payload inválido com 400 VALIDATION_ERROR. Webhooks
+        // (/webhook/pix, /webhook/boleto) usam HMAC e são testados acima.
+
+        it('POST /pix/cobranca-vencimento rejeita txid inválido com 400', async () => {
+            const res = await request(app)
+                .post('/api/inter/pix/cobranca-vencimento')
+                .send({ txid: 'curto' }); // 5 chars < 26 mínimo
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockInterApiService.criarPixCobrancaVencimento).not.toHaveBeenCalled();
+        });
+
+        it('POST /pix/cobranca-vencimento aceita txid válido (26-35 alfanumérico) com 200', async () => {
+            mockInterApiService.criarPixCobrancaVencimento.mockResolvedValue({ txid: 'x' });
+            const validTxid = 'a'.repeat(26);
+            const res = await request(app)
+                .post('/api/inter/pix/cobranca-vencimento')
+                .send({ txid: validTxid });
+
+            expect(res.status).toBe(200);
+            expect(mockInterApiService.criarPixCobrancaVencimento).toHaveBeenCalled();
+        });
+
+        it('POST /pix/enviar rejeita valor ausente com 400', async () => {
+            const res = await request(app)
+                .post('/api/inter/pix/enviar')
+                .send({ destinatario: { tipo: 'CHAVE', chave: 'x' } });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockInterApiService.enviarPix).not.toHaveBeenCalled();
+        });
+
+        it('POST /pix/enviar aceita payload válido com 200', async () => {
+            mockInterApiService.enviarPix.mockResolvedValue({ endToEndId: 'e2e' });
+            const res = await request(app)
+                .post('/api/inter/pix/enviar')
+                .send({
+                    valor: 100.5,
+                    destinatario: { tipo: 'CHAVE', chave: 'teste@email.com' },
+                });
+
+            expect(res.status).toBe(200);
+            expect(mockInterApiService.enviarPix).toHaveBeenCalled();
+        });
+
+        it('POST /boleto rejeita payload sem pagador com 400', async () => {
+            const res = await request(app)
+                .post('/api/inter/boleto')
+                .send({
+                    seuNumero: '123',
+                    valorNominal: 100,
+                    dataVencimento: '2024-06-01',
+                    // sem pagador → 400
+                });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockInterApiService.emitirBoleto).not.toHaveBeenCalled();
+        });
+
+        it('POST /boleto aceita payload válido com 200', async () => {
+            mockInterApiService.emitirBoleto.mockResolvedValue({ nossoNumero: 'xyz' });
+            const res = await request(app)
+                .post('/api/inter/boleto')
+                .send({
+                    seuNumero: '123',
+                    valorNominal: 100,
+                    dataVencimento: '2024-06-01',
+                    pagador: {
+                        cpfCnpj: '12345678901',
+                        tipoPessoa: 'FISICA',
+                        nome: 'Joao',
+                    },
+                });
+
+            expect(res.status).toBe(200);
+            expect(mockInterApiService.emitirBoleto).toHaveBeenCalled();
+        });
+
+        it('POST /boleto/:nossoNumero/cancelar aceita body vazio (motivo tem default) com 200', async () => {
+            mockInterApiService.cancelarBoleto.mockResolvedValue(undefined);
+            const res = await request(app)
+                .post('/api/inter/boleto/xyz/cancelar')
+                .send({});
+
+            expect(res.status).toBe(200);
+            // motivo default 'Cancelado pelo usuário' aplicado pelo Zod
+            expect(mockInterApiService.cancelarBoleto).toHaveBeenCalledWith('xyz', 'Cancelado pelo usuário');
+        });
+
+        it('POST /boleto/:nossoNumero/cancelar aceita motivo customizado com 200', async () => {
+            mockInterApiService.cancelarBoleto.mockResolvedValue(undefined);
+            const res = await request(app)
+                .post('/api/inter/boleto/xyz/cancelar')
+                .send({ motivo: 'Pedido do cliente' });
+
+            expect(res.status).toBe(200);
+            expect(mockInterApiService.cancelarBoleto).toHaveBeenCalledWith('xyz', 'Pedido do cliente');
+        });
+
+        it('POST /boleto/:nossoNumero/cancelar rejeita motivo > 500 chars com 400', async () => {
+            const res = await request(app)
+                .post('/api/inter/boleto/xyz/cancelar')
+                .send({ motivo: 'a'.repeat(501) });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockInterApiService.cancelarBoleto).not.toHaveBeenCalled();
+        });
+
         it('PUT /webhook/pix/config rejeita payload sem chave com 400', async () => {
             const res = await request(app)
                 .put('/api/inter/webhook/pix/config')
@@ -390,6 +510,36 @@ describe('interBankingRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(mockInterApiService.configurarWebhookPix).toHaveBeenCalled();
+        });
+
+        it('DELETE /webhook/pix/config/:chave chama service e retorna 200', async () => {
+            mockInterApiService.deletarWebhookPix.mockResolvedValue(undefined);
+            const res = await request(app).delete('/api/inter/webhook/pix/config/minha-chave');
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockInterApiService.deletarWebhookPix).toHaveBeenCalledWith('minha-chave');
+        });
+
+        it('POST /test com sucesso retorna 200 + saldo', async () => {
+            mockInterApiService.initialize.mockResolvedValue(true);
+            mockInterApiService.getSaldo.mockResolvedValue({ saldo: 500 });
+
+            const res = await request(app).post('/api/inter/test').send({});
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data).toHaveProperty('saldo');
+            expect(mockInterApiService.initialize).toHaveBeenCalled();
+        });
+
+        it('POST /test propaga erro 500 do service via next(error)', async () => {
+            mockInterApiService.initialize.mockRejectedValue(new Error('boom-init'));
+
+            const res = await request(app).post('/api/inter/test').send({});
+
+            // asyncHandler → next(error) → errorHandler → 500
+            expect(res.status).toBe(500);
         });
     });
 
@@ -424,9 +574,10 @@ describe('interBankingRoutes', () => {
             const res = await request(app).get('/api/inter/pix/recebidos');
 
             expect(res.status).toBe(400);
+            // #1542: validateQuery propaga via next(ValidationError) → errorHandler
+            // emite envelope `{ error: { code: 'VALIDATION_ERROR', ... } }`.
             expect(res.body).toMatchObject({
-                success: false,
-                error: expect.objectContaining({ code: 'MISSING_PARAMS' }),
+                error: expect.objectContaining({ code: 'VALIDATION_ERROR' }),
             });
         });
 
