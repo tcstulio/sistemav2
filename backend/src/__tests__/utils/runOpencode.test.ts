@@ -26,7 +26,8 @@ vi.mock('../../utils/logger', () => ({
 
 import { spawn } from 'child_process';
 import { runOpencode, KILL_GRACE_MS } from '../../utils/runOpencode';
-import { killTree, killByImageName, listPidsByName } from '../../utils/processTree';
+import { killTree, killByImageName, listPidsByName, killOpencodeOrphans } from '../../utils/processTree';
+import { OPENCODE_ORPHAN_NEEDLES } from '../../utils/gcWorktrees';
 
 /** Filho fake: EventEmitter com pid + streams stdout/stderr. Controlamos quando 'exit' dispara. */
 class FakeChild extends EventEmitter {
@@ -45,6 +46,7 @@ describe('runOpencode — robustez do kill (#644)', () => {
         // kill "falha": resolve ok=false (nunca mata de fato) — reproduz o "Command failed" do taskkill.
         vi.mocked(killTree).mockResolvedValue({ ok: false, signal: 'taskkill failed: Command failed', durationMs: 10, alreadyDead: false });
         vi.mocked(killByImageName).mockResolvedValue(undefined);
+        vi.mocked(killOpencodeOrphans).mockResolvedValue({ killed: [], errors: [], confirmedGone: true, discriminated: true });
         vi.mocked(listPidsByName).mockResolvedValue([]);
     });
     afterEach(() => {
@@ -66,7 +68,9 @@ describe('runOpencode — robustez do kill (#644)', () => {
         // watcher (500ms) detecta o kill -> tenta matar + agenda o forceKillTimer.
         await vi.advanceTimersByTimeAsync(600);
         expect(killTree).toHaveBeenCalledWith(12345);
-        expect(killByImageName).toHaveBeenCalledWith('opencode.exe');
+        // #kill-per-slot: backstop agora é por-needle (killOpencodeOrphans), NÃO o /IM cego (killByImageName).
+        expect(killOpencodeOrphans).toHaveBeenCalledWith('opencode', OPENCODE_ORPHAN_NEEDLES);
+        expect(killByImageName).not.toHaveBeenCalled();
 
         // kill falhou (mock) e NUNCA emitimos 'exit' (órfão vivo). A promise ainda NÃO settlou.
         let settled = false;
@@ -125,6 +129,10 @@ describe('runOpencode — robustez do kill (#644)', () => {
         await vi.advanceTimersByTimeAsync(5_100);
 
         await expect(p).rejects.toThrow(/timeout/i);
+        // #kill-per-slot: o backstop do timeout também é por-needle, não o /IM cego.
+        expect(killTree).toHaveBeenCalledWith(12345);
+        expect(killOpencodeOrphans).toHaveBeenCalledWith('opencode', OPENCODE_ORPHAN_NEEDLES);
+        expect(killByImageName).not.toHaveBeenCalled();
     });
 
     it('não settle duas vezes (exit + forceKillTimer competindo)', async () => {

@@ -14,6 +14,19 @@ import path from 'path';
 
 export const PROMPT_FILE = '.taskrunner-prompt.md';
 export const VISUAL_JUDGE_MARKER = 'taskrunner-visual-judge';
+/**
+ * #kill-per-slot (red-team Fable): prefixo do marcador ÚNICO por-execução injetado no comando do
+ * opencode (`[tr-run:<issue>-<ts>]`). Serve p/ (a) discriminar cada run no CommandLine e (b) — como
+ * prefixo genérico — permitir que o sweep de órfãos reconheça um coder de QUALQUER slot mesmo que o
+ * texto do prompt mude no futuro (hoje o needle do run principal é efeito colateral de citar PROMPT_FILE).
+ */
+export const RUN_MARKER_PREFIX = '[tr-run:';
+/**
+ * Needles GENÉRICOS que identificam um opencode do TaskRunner (run principal, Judge Visual, e o
+ * marcador por-run). Usados p/ matar ÓRFÃOS por CommandLine sem atingir um opencode manual de outro
+ * projeto. Fonte ÚNICA (importada por taskRunnerService, runOpencode e o GC) p/ evitar drift.
+ */
+export const OPENCODE_ORPHAN_NEEDLES = [PROMPT_FILE, VISUAL_JUDGE_MARKER, RUN_MARKER_PREFIX];
 /** Limiar padrão de alerta de disco livre: 5 GiB. */
 export const DEFAULT_DISK_THRESHOLD_BYTES = 5 * 1024 ** 3;
 

@@ -1,7 +1,8 @@
 import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import pidusage from 'pidusage';
-import { killTree, killByImageName, listPidsByName } from './processTree';
+import { killTree, killOpencodeOrphans, listPidsByName } from './processTree';
+import { OPENCODE_ORPHAN_NEEDLES } from './gcWorktrees';
 import { logger } from './logger';
 
 const log = logger.child('TaskRunner');
@@ -103,9 +104,11 @@ export function runOpencode(
                 if (pid) {
                     killTree(pid).catch(() => { /* logged inside */ });
                 }
-                // Backstop sem-enumeração: garante a morte do opencode mesmo se a árvore do bash já
-                // se quebrou (órfão) ou se o Get-Process/WMI falha sob carga. Run é serializado.
-                killByImageName('opencode.exe').catch(() => { /* ignore */ });
+                // Backstop de órfão (árvore do bash quebrada): mata o opencode DESTA run por needle,
+                // sem atingir um opencode manual/vizinho. killTree(child.pid) já cobre o caminho normal
+                // (taskkill /T é recursivo); aqui pegamos o órfão. Enum-fail sem proteção ativa cai no
+                // /IM via fallback do killOpencodeOrphans (excludePids/protect vazios) — cobertura #335 mantida.
+                killOpencodeOrphans('opencode', OPENCODE_ORPHAN_NEEDLES).catch(() => { /* ignore */ });
                 // ⚠️ SETTLE FORÇADO (#644): se o kill falhar e o filho NUNCA emitir 'exit', a
                 // promise ficaria pendurada para sempre → execChain congela → pendingExecs preso.
                 // Após a grace, força o settle para a cadeia avançar (pendingExecs-- e autoPlayNext).
@@ -163,8 +166,9 @@ export function runOpencode(
             finish(new Error(`opencode timeout (${Math.round(timeoutMs / 1000)}s)${tail ? ` — últimas linhas do output:\n${tail}` : ''}`));
             if (child.pid) killTree(child.pid).catch(() => { /* ignore */ });
             // Backstop: mata o opencode na FONTE do timeout p/ não virar órfão (causa do ciclo
-            // vicioso no #335). taskkill /IM não enumera, então funciona mesmo sob carga.
-            killByImageName('opencode.exe').catch(() => { /* ignore */ });
+            // vicioso no #335) — por needle, poupando opencode manual/vizinho. Enum-fail sem proteção
+            // ativa cai no /IM via fallback do killOpencodeOrphans (cobertura #335 mantida).
+            killOpencodeOrphans('opencode', OPENCODE_ORPHAN_NEEDLES).catch(() => { /* ignore */ });
         }, timeoutMs);
 
         child.on('exit', (code, signal) => {
