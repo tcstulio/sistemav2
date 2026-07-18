@@ -133,6 +133,11 @@ vi.mock('../../services/userPermissionsService', () => ({
 
 import aiRoutes from '../../routes/aiRoutes';
 import { errorHandler } from '../../middleware/errorHandler';
+// #1566: importa o preset REAL de middleware/rateLimit.ts (mesma instância usada em
+// server.ts via `rateLimiters.ai`). Antes o teste recriava a config inline, acoplando ao
+// que se esperava de server.ts — agora qualquer mudança no preset é automaticamente
+// coberta aqui (single source of truth).
+import { rateLimiters } from '../../middleware/rateLimit';
 
 function createApp() {
     const app = express();
@@ -325,7 +330,7 @@ describe('aiRoutes', () => {
             expect(res.body.data.result).toBeDefined();
         });
 
-        it('returns 200 even when log is missing (z.any() allows any)', async () => {
+        it('returns 200 even when log is missing (z.unknown() allows undefined)', async () => {
             const res = await request(app)
                 .post('/api/fix/api-call')
                 .send({});
@@ -448,7 +453,7 @@ describe('aiRoutes', () => {
             expect(res.body.data.result).toBeDefined();
         });
 
-        it('returns 200 even when customer is missing (z.any() allows any)', async () => {
+        it('returns 200 even when customer is missing (z.unknown() allows undefined)', async () => {
             const res = await request(app)
                 .post('/api/analyze/customer-sentiment')
                 .send({ invoices: [] });
@@ -592,7 +597,7 @@ describe('aiRoutes', () => {
             expect(res.body.data.result).toBeDefined();
         });
 
-        it('returns 200 even when proposal is missing (z.any() allows any)', async () => {
+        it('returns 200 even when proposal is missing (z.unknown() allows undefined)', async () => {
             const res = await request(app)
                 .post('/api/audit/proposal')
                 .send({});
@@ -611,7 +616,7 @@ describe('aiRoutes', () => {
             expect(res.body.data.result).toBeDefined();
         });
 
-        it('returns 200 even when project is missing (z.any() allows any)', async () => {
+        it('returns 200 even when project is missing (z.unknown() allows undefined)', async () => {
             const res = await request(app)
                 .post('/api/audit/project')
                 .send({});
@@ -649,7 +654,7 @@ describe('aiRoutes', () => {
             expect(res.body.data.result).toBeDefined();
         });
 
-        it('returns 200 even when data is missing (z.any() allows any)', async () => {
+        it('returns 200 even when data is missing (z.unknown() allows undefined)', async () => {
             const res = await request(app)
                 .post('/api/analyze/monthly-report')
                 .send({});
@@ -1293,25 +1298,16 @@ describe('#1566: handlers sem try/catch — erros via AppError/ZodError no error
 
 // =====================================================
 // #320/#1566: aiLimiter — 21ª chamada POST de AI em 1min retorna 429.
-// O limiter é aplicado globalmente em server.ts (app.use('/api/ai', aiLimiter, aiRoutes));
-// aqui recriamos a MESMA config para validar o contrato do critério.
+// O limiter é aplicado globalmente em server.ts (app.use('/api/ai', rateLimiters.ai, aiRoutes)).
+// Aqui usamos a MESMA instância `rateLimiters.ai` importada de middleware/rateLimit.ts —
+// sem recriar config, sem `require()`, sem code smell. Valida o contrato do critério #1566.
 // =====================================================
 describe('#320/#1566: aiLimiter — 21ª chamada POST de AI em 1min → 429', () => {
     function createAppWithLimiter() {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const rateLimit = require('express-rate-limit');
-        // Mesma config do aiLimiter em server.ts (max=20/min, skip GET).
-        const limiter = rateLimit({
-            windowMs: 60 * 1000,
-            max: 20,
-            message: { error: 'AI rate limit exceeded. Please wait before trying again.' },
-            standardHeaders: true,
-            legacyHeaders: false,
-            skip: (req: any) => req.method === 'GET',
-        });
         const app = express();
         app.use(express.json());
-        app.use('/api', limiter, aiRoutes);
+        // Mesmo preset usado em server.ts (single source of truth).
+        app.use('/api', rateLimiters.ai, aiRoutes);
         app.use(errorHandler);
         return app;
     }
@@ -1331,6 +1327,12 @@ describe('#320/#1566: aiLimiter — 21ª chamada POST de AI em 1min → 429', ()
 
         const blocked = await request(app).post('/api/analyze-system').send({ query: 'q' });
         expect(blocked.status).toBe(429);
+        // #1566: 429 agora vem no envelope padronizado pelo errorHandler (handler do
+        // rateLimiters.ai delega via next(error)). Confere code + message legível.
+        expect(blocked.body.success).toBe(false);
+        expect(blocked.body.error.code).toBe('RATE_LIMIT');
+        expect(typeof blocked.body.error.message).toBe('string');
+        expect(blocked.body.error.message.length).toBeGreaterThan(0);
     });
 
     it('GETs NÃO contam para o limiter (skip: GET) — muitos GETs seguem 200', async () => {

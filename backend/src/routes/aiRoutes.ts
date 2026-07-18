@@ -16,6 +16,11 @@ import { minimaxService } from '../services/minimaxService';
 import { createLogger } from '../utils/logger';
 import { verifyDeeplink } from '../utils/deeplinkToken';
 import { asyncHandler } from '../utils/asyncHandler';
+// AppError (#1566): a issue sugere `new AppError('Mensagem', 400, 'CODE')` (msg primeiro),
+// mas a classe real do projeto (middleware/errorHandler.ts) usa `new AppError(statusCode,
+// code, message)` — status e code primeiro. Mantemos a assinatura REAL da classe para
+// consistência com o resto do codebase; o errorHandler global renderiza o envelope
+// { success:false, error:{ code, message, details? } } independentemente da ordem.
 import { AppError } from '../middleware/errorHandler';
 import { ok } from '../utils/apiResponse';
 
@@ -445,8 +450,12 @@ ${question ? `Pergunta: ${question}` : 'Faça um resumo dos pontos principais do
 }));
 
 // Draft Collection Email
+// issue #1566: refino de `z.any()` — `customer` é um objeto opaco vindo do Dolibarr
+// (contrato variável por entidade). `z.unknown()` preserva a semântica (aceita qualquer
+// valor, inclusive ausente) sem recorrer a `any`. TODO: tipar conforme contrato Dolibarr
+// quando estabilizar (ex.: z.object({ id: z.number(), name: z.string() }).passthrough()).
 const DraftEmailSchema = z.object({
-    customer: z.any(),
+    customer: z.unknown(),
     amount: z.number()
 });
 
@@ -457,9 +466,13 @@ router.post('/draft/collection-email', asyncHandler(async (req, res) => {
 }));
 
 // Sales Forecast
+// issue #1566: refino de `z.any()` — `invoices` é um array de objetos opacos (faturas
+// Dolibarr); `context` é um hint opaco. `z.array(z.unknown())` e `z.unknown()` preservam
+// a semântica do `z.any()` sem usar `any`. TODO: tipar `invoices` conforme contrato
+// Dolibarr (FacInvoice) quando estabilizar.
 const SalesForecastSchema = z.object({
-    invoices: z.array(z.any()),
-    context: z.any().optional()
+    invoices: z.array(z.unknown()),
+    context: z.unknown().optional()
 });
 
 router.post('/analyze/sales-forecast', asyncHandler(async (req, res) => {
@@ -528,9 +541,11 @@ router.put('/analyze/financial-analysis/automation-config', asyncHandler(async (
 }));
 
 // Customer Sentiment Analysis
+// issue #1566: refino de `z.any()` — `customer` é opaco (Dolibarr); `invoices` é array
+// opaco. Mesma justificativa dos schemas acima. TODO: tipar conforme contrato Dolibarr.
 const CustomerSentimentSchema = z.object({
-    customer: z.any(),
-    invoices: z.array(z.any())
+    customer: z.unknown(),
+    invoices: z.array(z.unknown())
 });
 
 router.post('/analyze/customer-sentiment', asyncHandler(async (req, res) => {
@@ -540,8 +555,10 @@ router.post('/analyze/customer-sentiment', asyncHandler(async (req, res) => {
 }));
 
 // Audit Proposal
+// issue #1566: refino de `z.any()` — `proposal` é um objeto opaco passado ao LLM.
+// TODO: tipar conforme contrato Dolibarr (Propal) quando estabilizar.
 const AuditProposalSchema = z.object({
-    proposal: z.any()
+    proposal: z.unknown()
 });
 
 router.post('/audit/proposal', asyncHandler(async (req, res) => {
@@ -551,10 +568,12 @@ router.post('/audit/proposal', asyncHandler(async (req, res) => {
 }));
 
 // Audit Project
+// issue #1566: refino de `z.any()` — `project`, `tasks`, `invoices` são objetos/arrays
+// opacos vindos do Dolibarr. TODO: tipar conforme contrato Dolibarr (Project + Tasks).
 const AuditProjectSchema = z.object({
-    project: z.any(),
-    tasks: z.array(z.any()).optional(),
-    invoices: z.array(z.any()).optional()
+    project: z.unknown(),
+    tasks: z.array(z.unknown()).optional(),
+    invoices: z.array(z.unknown()).optional()
 });
 
 router.post('/audit/project', asyncHandler(async (req, res) => {
@@ -564,8 +583,10 @@ router.post('/audit/project', asyncHandler(async (req, res) => {
 }));
 
 // Analyze System Logs
+// issue #1566: refino de `z.any()` — `logs` é um array de entradas de log opacas
+// (contrato variável por fonte). TODO: tipar conforme contrato do caller quando estabilizar.
 const AnalyzeLogsSchema = z.object({
-    logs: z.array(z.any())
+    logs: z.array(z.unknown())
 });
 
 router.post('/analyze/logs', asyncHandler(async (req, res) => {
