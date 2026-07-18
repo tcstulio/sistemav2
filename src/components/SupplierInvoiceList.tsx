@@ -977,7 +977,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                                             placeholder="Qtd"
                                                             value={item.qty}
                                                             onChange={e => handleUpdateEditItem(idx, 'qty', e.target.value === '' ? 0 : parseInt(e.target.value) || 0)}
-                                                            min="1"
+                                                            min="0"
                                                         />
                                                     </div>
                                                     <div className="w-24">

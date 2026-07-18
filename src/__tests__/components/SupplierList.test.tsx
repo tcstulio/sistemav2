@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SupplierList } from '../../components/SupplierList';
 import { DolibarrService } from '../../services/dolibarrService';
@@ -416,15 +416,18 @@ describe('SupplierList — Recepção de fornecedor (#1582)', () => {
     });
 
     it('digitar texto não-numérico no campo qty cai no fallback 0 (sem NaN)', async () => {
+        // <input type="number"> rejeita letras via teclado (user.type não injeta 'abc'),
+        // mas o handler também precisa tolerar entradas programáticas. Disparamos
+        // um evento change com value='abc' para exercitar de fato o caminho
+        // `parseInt('abc') || 0` do handler — a UI não cobre esse caminho via teclado.
         const user = await openReceptionModal();
 
         const qtyInput = screen.getByLabelText('Quantidade') as HTMLInputElement;
-        await user.clear(qtyInput);
-        // type aceita apenas caracteres que o input aceita; um número inválido via fireEvent:
-        await user.type(qtyInput, 'abc');
+        fireEvent.change(qtyInput, { target: { value: 'abc' } });
 
-        // O input type=number não aceita letras; o state interno ainda deve ser número
-        // (sem NaN). Confirmamos apenas que clicar em "Confirmar" não dispara erro.
+        // O input controlado re-renderiza para '0' (fallback do handler)
+        expect(qtyInput.value).toBe('0');
+
         await user.click(screen.getByText('Confirmar Recibo'));
 
         await waitFor(() => {
@@ -432,6 +435,10 @@ describe('SupplierList — Recepção de fornecedor (#1582)', () => {
         });
         const call = vi.mocked(DolibarrService.createStockCorrection).mock.calls.at(-1);
         expect(call).toBeDefined();
-        expect(Number.isNaN((call![1] as any).qty)).toBe(false);
+        const sentQty = (call![1] as any).qty;
+        // Cobertura real do fallback: parseInt('abc') === NaN, e o handler deve
+        // retornar 0 via `NaN || 0`. Verificamos AMBOS: não-NaN E valor === 0.
+        expect(Number.isNaN(sentQty)).toBe(false);
+        expect(sentQty).toBe(0);
     });
 });

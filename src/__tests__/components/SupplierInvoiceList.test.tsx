@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import SupplierInvoiceList from '../../components/SupplierInvoiceList';
 import { ConfirmProvider } from '../../hooks/useConfirm';
@@ -11,6 +11,15 @@ import type { WriteAction, WriteIdentity } from '../../utils/writePermissions';
 import type { SupplierInvoice } from '../../types';
 import { formatCurrency } from '../../utils/formatUtils';
 import { toast } from 'sonner';
+
+vi.mock('sonner', () => ({
+    toast: {
+        success: vi.fn(),
+        error: vi.fn(),
+        info: vi.fn(),
+        warning: vi.fn(),
+    },
+}));
 
 vi.mock('../../services/dolibarrService', () => ({
     DolibarrService: {
@@ -832,11 +841,17 @@ describe('SupplierInvoiceList — Sanitização de inputs numéricos (#1582)', (
     });
 
     it('digitar texto não-numérico no campo qty cai no fallback 0 (sem NaN)', async () => {
+        // <input type="number"> rejeita letras via teclado (user.type não injeta 'abc'),
+        // mas o handler também precisa tolerar entradas programáticas. Disparamos
+        // um evento change com value='abc' para exercitar de fato o caminho
+        // `parseInt('abc') || 0` do handler — a UI não cobre esse caminho via teclado.
         const user = await openEditModal();
 
         const qtyInput = screen.getByPlaceholderText('Qtd') as HTMLInputElement;
-        await user.clear(qtyInput);
-        await user.type(qtyInput, 'abc');
+        fireEvent.change(qtyInput, { target: { value: 'abc' } });
+
+        // O input controlado re-renderiza para '0' (fallback do handler)
+        expect(qtyInput.value).toBe('0');
 
         await user.click(screen.getByRole('button', { name: 'Salvar Alterações' }));
 
@@ -845,6 +860,10 @@ describe('SupplierInvoiceList — Sanitização de inputs numéricos (#1582)', (
         });
         const call = vi.mocked(DolibarrService.updateSupplierInvoiceLine).mock.calls.at(-1);
         expect(call).toBeDefined();
-        expect(Number.isNaN((call![3] as any).qty)).toBe(false);
+        const sentQty = (call![3] as any).qty;
+        // Cobertura real do fallback: parseInt('abc') === NaN, e o handler deve
+        // retornar 0 via `NaN || 0`. Verificamos AMBOS: não-NaN E valor === 0.
+        expect(Number.isNaN(sentQty)).toBe(false);
+        expect(sentQty).toBe(0);
     });
 });
