@@ -61,6 +61,7 @@ beforeEach(() => {
     svc.pendingExecs = 0;
     svc.epicSweepInFlight = false;
     svc.epicOpsInFlight = new Set();
+    svc.execInFlight = new Map();
     svc.getAutomationConfig = vi.fn(() => ({ autoPlay: true, autoDecompose: true, dailyRoundBudget: 200 }));
     svc.isPeakHold = vi.fn(() => false);
     svc.dailyRoundsToday = vi.fn(() => 0);
@@ -138,9 +139,17 @@ describe('decomposeStuckEpics — guardas de pausa', () => {
         svc.getAutomationConfig = vi.fn(() => ({ autoPlay: false, autoDecompose: true, dailyRoundBudget: 200 }));
         expect(await swept()).toBe(false);
     });
-    it('pendingExecs > 0 (dispatch em voo) → no-op (fecha a race)', async () => {
-        svc.pendingExecs = 1;
-        expect(await swept()).toBe(false);
+    it('#accelerate-sweep: pendingExecs>0 mas a issue NÃO está em dispatch → sweep RODA (nova capacidade)', async () => {
+        svc.pendingExecs = 1;                 // outra task rodando
+        svc.execInFlight = new Map([[999, 1]]); // uma OUTRA issue em voo, não a #10
+        expect(await swept()).toBe(true);      // antes era no-op; agora destrava mesmo com a fila ocupada
+    });
+    it('#accelerate-sweep: a épica que está em dispatch (execInFlight) é PULADA (O2)', async () => {
+        svc.store.tasks[11] = epic(11);       // outra elegível
+        svc.execInFlight = new Map([[10, 1]]); // #10 em dispatch → pula ela, elege a #11
+        await svc.decomposeStuckEpics();
+        expect(svc.decomposeEpic).toHaveBeenCalledTimes(1);
+        expect(svc.decomposeEpic).toHaveBeenCalledWith(11);
     });
     it('cota esgotada → no-op', async () => {
         quotaState.exhausted = true;
@@ -264,5 +273,30 @@ describe('notifyStalledDecomposedEpics — 2º modo (subs todas terminais c/ fal
         svc.store.tasks[100] = epic(100);
         svc.notifyStalledDecomposedEpics();
         expect(svc.store.tasks[100].epicStalledNotified).toBeUndefined();
+    });
+});
+
+describe('#accelerate-sweep (red-team Fable O2) — scheduleExec marca/limpa execInFlight', () => {
+    it('seta execInFlight SÍNCRONO no dispatch e limpa após o settle da cadeia', async () => {
+        svc.execInFlight = new Map();
+        svc.pendingExecs = 0;
+        svc.execChain = Promise.resolve();
+        svc.autoPlayNext = vi.fn();
+        // killRequested → a cadeia retorna cedo (cancel-signal) sem tocar planner/opencode → settle rápido.
+        const task = { ...epic(10), kind: 'task', killRequested: true };
+        svc.store.tasks[10] = task;
+        svc.scheduleExec(task, 'branch-x', 'running');
+        expect(svc.execInFlight.has(10)).toBe(true);   // marcado ANTES de qualquer await
+        expect(svc.pendingExecs).toBe(1);
+        await svc.execChain;                            // deixa o finally rodar
+        expect(svc.execInFlight.has(10)).toBe(false);   // limpo no finally
+        expect(svc.pendingExecs).toBe(0);
+    });
+
+    it('uma issue em execInFlight bloqueia SÓ ela no sweep; épica em voo não é decomposta', async () => {
+        svc.execInFlight = new Map([[10, 1]]);
+        svc.store.tasks[10] = epic(10); // shape de presa, mas está em dispatch
+        await svc.decomposeStuckEpics();
+        expect(svc.decomposeEpic).not.toHaveBeenCalled();
     });
 });
