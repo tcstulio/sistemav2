@@ -132,11 +132,14 @@ vi.mock('../../services/userPermissionsService', () => ({
 }));
 
 import aiRoutes from '../../routes/aiRoutes';
+import { errorHandler } from '../../middleware/errorHandler';
 
 function createApp() {
     const app = express();
     app.use(express.json());
     app.use('/api', aiRoutes);
+    // #1566: handlers agora delegam erros ao errorHandler global via next(AppError/ZodError).
+    app.use(errorHandler);
     return app;
 }
 
@@ -145,7 +148,10 @@ async function waitForJob(app: express.Application, jobId: string, timeoutMs = 2
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
         const res = await request(app).get(`/api/jobs/${jobId}`);
-        if (res.body.status === 'done' || res.body.status === 'error') return res.body;
+        // #1566: sucesso agora vem no envelope { success, data }. jobs/:id devolve
+        // { status, alive, ... } dentro de data.
+        const status = res.body?.data?.status ?? res.body?.status;
+        if (status === 'done' || status === 'error') return res.body?.data ?? res.body;
         await new Promise((r) => setTimeout(r, 5));
     }
     throw new Error(`Job ${jobId} não terminou em ${timeoutMs}ms`);
@@ -165,8 +171,8 @@ describe('aiRoutes', () => {
             const token = signDeeplink('create_customer', { name: 'Fulano' }, 600);
             const res = await request(app).get('/api/prefill').query({ token });
             expect(res.status).toBe(200);
-            expect(res.body.kind).toBe('create_customer');
-            expect(res.body.data.name).toBe('Fulano');
+            expect(res.body.data.kind).toBe('create_customer');
+            expect(res.body.data.data.name).toBe('Fulano');
         });
 
         it('rejeita token inválido/expirado com 400', async () => {
@@ -182,7 +188,7 @@ describe('aiRoutes', () => {
                 .send({ context: 'Hello, I need help' });
 
             expect(res.status).toBe(200);
-            expect(res.body.reply).toBeDefined();
+            expect(res.body.data.reply).toBeDefined();
         });
 
         it('returns 200 even when body is empty (all fields optional)', async () => {
@@ -211,7 +217,7 @@ describe('aiRoutes', () => {
                 .send({ query: 'Analyze system performance' });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 400 when query is missing', async () => {
@@ -240,7 +246,7 @@ describe('aiRoutes', () => {
                 .send({ text: 'I love this product!' });
 
             expect(res.status).toBe(200);
-            expect(res.body.score).toBeDefined();
+            expect(res.body.data.score).toBeDefined();
         });
 
         it('returns 400 when text is missing', async () => {
@@ -259,7 +265,7 @@ describe('aiRoutes', () => {
                 .send({ text: 'Customer John from Company ABC' });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 400 when text is missing', async () => {
@@ -278,7 +284,7 @@ describe('aiRoutes', () => {
                 .send({ image: 'base64imageencoded' });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 400 when image is missing', async () => {
@@ -297,7 +303,7 @@ describe('aiRoutes', () => {
                 .send({ data: { invoices: [] } });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 200 even when data is missing (data can be any type)', async () => {
@@ -316,7 +322,7 @@ describe('aiRoutes', () => {
                 .send({ log: { method: 'GET', url: '/api/test' } });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 200 even when log is missing (z.any() allows any)', async () => {
@@ -335,7 +341,7 @@ describe('aiRoutes', () => {
                 .send({ endpoint: '/api/users', method: 'GET' });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 400 when endpoint is missing', async () => {
@@ -362,7 +368,7 @@ describe('aiRoutes', () => {
                 .send({ audio: 'base64audioencoded' });
 
             expect(res.status).toBe(200);
-            expect(res.body.transcription).toBeDefined();
+            expect(res.body.data.transcription).toBeDefined();
         });
 
         it('returns 400 when audio is missing', async () => {
@@ -381,7 +387,7 @@ describe('aiRoutes', () => {
                 .send({ customer: { name: 'John' }, amount: 100 });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 400 when amount is missing', async () => {
@@ -400,7 +406,7 @@ describe('aiRoutes', () => {
                 .send({ invoices: [] });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 400 when invoices is missing', async () => {
@@ -419,8 +425,8 @@ describe('aiRoutes', () => {
                 .send({ invoices: [] });
 
             expect(res.status).toBe(202);
-            expect(res.body.jobId).toBeDefined();
-            expect(res.body.status).toBe('queued');
+            expect(res.body.data.jobId).toBeDefined();
+            expect(res.body.data.status).toBe('queued');
         });
 
         it('retorna 400 quando invoices está ausente', async () => {
@@ -439,7 +445,7 @@ describe('aiRoutes', () => {
                 .send({ customer: {}, invoices: [] });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 200 even when customer is missing (z.any() allows any)', async () => {
@@ -456,7 +462,7 @@ describe('aiRoutes', () => {
             mockFinancialAnalysisStore.getAnalysis.mockReturnValue(null);
             const res = await request(app).get('/api/analyze/financial-analysis/latest');
             expect(res.status).toBe(200);
-            expect(res.body).toBeNull();
+            expect(res.body.data).toBeNull();
         });
 
         it('returns 200 with the last persisted snapshot', async () => {
@@ -464,7 +470,7 @@ describe('aiRoutes', () => {
             mockFinancialAnalysisStore.getAnalysis.mockReturnValue(snapshot);
             const res = await request(app).get('/api/analyze/financial-analysis/latest');
             expect(res.status).toBe(200);
-            expect(res.body).toEqual(snapshot);
+            expect(res.body.data).toEqual(snapshot);
             expect(mockFinancialAnalysisStore.getAnalysis).toHaveBeenCalled();
         });
 
@@ -472,7 +478,8 @@ describe('aiRoutes', () => {
             mockFinancialAnalysisStore.getAnalysis.mockImplementation(() => { throw new Error('disk error'); });
             const res = await request(app).get('/api/analyze/financial-analysis/latest');
             expect(res.status).toBe(500);
-            expect(res.body.error).toBe('disk error');
+            // #1566: errorHandler global renderiza o envelope { success:false, error:{ code, message } }.
+            expect(res.body.error.message).toBe('disk error');
         });
     });
 
@@ -482,7 +489,7 @@ describe('aiRoutes', () => {
             mockFinancialAnalysisStore.getAutomationConfig.mockReturnValue(cfg);
             const res = await request(app).get('/api/analyze/financial-analysis/automation-config');
             expect(res.status).toBe(200);
-            expect(res.body).toEqual(cfg);
+            expect(res.body.data).toEqual(cfg);
             expect(mockFinancialAnalysisStore.getAutomationConfig).toHaveBeenCalled();
         });
 
@@ -508,7 +515,7 @@ describe('aiRoutes', () => {
                 .send({ enabled: true, schedule: { dayOfWeek: 3, hour: 14, minute: 30 } });
 
             expect(res.status).toBe(200);
-            expect(res.body).toEqual(persisted);
+            expect(res.body.data).toEqual(persisted);
             expect(mockFinancialAnalysisStore.saveAutomationConfig).toHaveBeenCalledTimes(1);
             expect(mockFinancialAnalysisStore.saveAutomationConfig).toHaveBeenCalledWith({
                 enabled: true,
@@ -523,7 +530,7 @@ describe('aiRoutes', () => {
                 .put('/api/analyze/financial-analysis/automation-config')
                 .send({ enabled: true });
             expect(res.status).toBe(200);
-            expect(res.body).toEqual(merged);
+            expect(res.body.data).toEqual(merged);
             expect(mockFinancialAnalysisStore.saveAutomationConfig).toHaveBeenCalledWith({ enabled: true });
         });
 
@@ -534,7 +541,7 @@ describe('aiRoutes', () => {
                 .put('/api/analyze/financial-analysis/automation-config')
                 .send({ schedule: { dayOfWeek: 5, hour: 9, minute: 15 } });
             expect(res.status).toBe(200);
-            expect(res.body.schedule).toEqual({ dayOfWeek: 5, hour: 9, minute: 15 });
+            expect(res.body.data.schedule).toEqual({ dayOfWeek: 5, hour: 9, minute: 15 });
         });
 
         it('returns 400 when schedule values are out of range', async () => {
@@ -542,7 +549,8 @@ describe('aiRoutes', () => {
                 .put('/api/analyze/financial-analysis/automation-config')
                 .send({ schedule: { dayOfWeek: 9, hour: 0, minute: 0 } });
             expect(res.status).toBe(400);
-            expect(res.body.error).toBe('Validation Error');
+            // #1566: ZodError agora vira envelope VALIDATION_ERROR pelo errorHandler.
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
             expect(mockFinancialAnalysisStore.saveAutomationConfig).not.toHaveBeenCalled();
         });
 
@@ -566,8 +574,11 @@ describe('aiRoutes', () => {
                 .put('/api/analyze/financial-analysis/automation-config')
                 .send({ enabled: true });
             expect(res.status).toBe(500);
-            expect(res.body.error).toBe('Falha ao salvar configuração de automação');
-            expect(res.body.details).toBe('save fail');
+            // #1566: erro de store vira AppError FINANCIAL_AUTOMATION_SAVE (500). O detail
+            // interno ('save fail') fica só no log — o errorHandler sanitiza e não vaza
+            // details para códigos não-VALIDATION (segurança).
+            expect(res.body.error.code).toBe('FINANCIAL_AUTOMATION_SAVE');
+            expect(res.body.error.message).toBe('Falha ao salvar configuração de automação');
         });
     });
 
@@ -578,7 +589,7 @@ describe('aiRoutes', () => {
                 .send({ proposal: { id: 1, amount: 500 } });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 200 even when proposal is missing (z.any() allows any)', async () => {
@@ -597,7 +608,7 @@ describe('aiRoutes', () => {
                 .send({ project: { id: 1, name: 'Test Project' } });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 200 even when project is missing (z.any() allows any)', async () => {
@@ -616,7 +627,7 @@ describe('aiRoutes', () => {
                 .send({ logs: [{ level: 'error', message: 'Failed' }] });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 400 when logs is missing', async () => {
@@ -635,7 +646,7 @@ describe('aiRoutes', () => {
                 .send({ data: { month: 'January' } });
 
             expect(res.status).toBe(200);
-            expect(res.body.result).toBeDefined();
+            expect(res.body.data.result).toBeDefined();
         });
 
         it('returns 200 even when data is missing (z.any() allows any)', async () => {
@@ -686,7 +697,7 @@ describe('aiRoutes', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            expect(res.body.deletedCount).toBe(5);
+            expect(res.body.data.deletedCount).toBe(5);
         });
 
         it('returns 500 when service throws', async () => {
@@ -976,7 +987,7 @@ describe('aiRoutes', () => {
         it('GET /api/agent/bootstrap-config returns the config', async () => {
             const res = await request(app).get('/api/agent/bootstrap-config');
             expect(res.status).toBe(200);
-            expect(res.body).toMatchObject({ enabled: true, includeTasks: true });
+            expect(res.body.data).toMatchObject({ enabled: true, includeTasks: true });
         });
 
         it('PUT /api/agent/bootstrap-config updates the config', async () => {
@@ -985,7 +996,7 @@ describe('aiRoutes', () => {
                 .send({ enabled: false, includeFinancial: false });
             expect(res.status).toBe(200);
             expect(mockBootstrapStore.updateConfig).toHaveBeenCalledWith({ enabled: false, includeFinancial: false });
-            expect(res.body.enabled).toBe(false);
+            expect(res.body.data.enabled).toBe(false);
         });
 
         it('PUT rejects invalid payload with 400', async () => {
@@ -1027,7 +1038,7 @@ describe('aiRoutes', () => {
             const start = await request(app)
                 .post('/api/generate-reply-async')
                 .send({ sessionId: 'sess_ord', message: 'msg1', module: 'chat' });
-            await waitForJob(app, start.body.jobId);
+            await waitForJob(app, start.body.data.jobId);
 
             const calls = (chatSessionService.addMessage as ReturnType<typeof vi.fn>).mock.calls;
             const userCallIdx = calls.findIndex((c: any[]) => c[1]?.role === 'user');
@@ -1114,7 +1125,7 @@ describe('aiRoutes', () => {
                 .send({ sessionId: 'sess_min', message: 'olá', module: 'chat' });
 
             expect(res.status).toBe(200);
-            expect(res.body.reply).toBeDefined();
+            expect(res.body.data.reply).toBeDefined();
         });
 
         it('sem sessionId mantém comportamento legado (usa history do cliente, não persiste)', async () => {
@@ -1171,10 +1182,10 @@ describe('#1011: heartbeat do job via reportProgress (tool-call = progresso)', (
             .send({ sessionId: 'sess_hb', message: 'olá', module: 'chat' });
 
         expect(res.status).toBe(202);
-        await waitForJob(app, res.body.jobId);
+        await waitForJob(app, res.body.data.jobId);
 
         // o listener de tool-calls (mockado p/ disparar 1x) chamou reportProgress(jobId).
-        expect(spy).toHaveBeenCalledWith(res.body.jobId);
+        expect(spy).toHaveBeenCalledWith(res.body.data.jobId);
         spy.mockRestore();
     });
 
@@ -1190,5 +1201,145 @@ describe('#1011: heartbeat do job via reportProgress (tool-call = progresso)', (
         // -> o guard `if (jobId)` bloqueia reportProgress.
         expect(spy).not.toHaveBeenCalled();
         spy.mockRestore();
+    });
+});
+
+// =====================================================
+// #1566: envelope + asyncHandler + AppError — validação de contrato
+// =====================================================
+describe('#1566: handlers sem try/catch — erros via AppError/ZodError no errorHandler', () => {
+    let app: express.Application;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockAiService.generateReply.mockResolvedValue({ text: 'Generated reply text' });
+        app = createApp();
+    });
+
+    describe('payload inválido → 400 com error.message legível', () => {
+        it('POST /api/analyze-system sem query → 400 VALIDATION_ERROR com mensagem legível', async () => {
+            const res = await request(app).post('/api/analyze-system').send({});
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            // mensagem legível (não vazia, não genérica opaca)
+            expect(typeof res.body.error.message).toBe('string');
+            expect(res.body.error.message.length).toBeGreaterThan(0);
+            // details traz o campo inválido (query ausente)
+            expect(Array.isArray(res.body.error.details)).toBe(true);
+        });
+
+        it('POST /api/generate-reply com payload inválido (7 imagens > max 6) → 400 legível', async () => {
+            const res = await request(app)
+                .post('/api/generate-reply')
+                .send({ images: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] });
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(typeof res.body.error.message).toBe('string');
+            expect(res.body.error.message.length).toBeGreaterThan(0);
+            // não chegou a chamar o agente (validação falhou antes)
+            expect(mockAiService.generateReply).not.toHaveBeenCalled();
+        });
+
+        it('POST /api/extract/customer sem text → 400 VALIDATION_ERROR', async () => {
+            const res = await request(app).post('/api/extract/customer').send({});
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(res.body.error.message.length).toBeGreaterThan(0);
+        });
+    });
+
+    describe('sucessos vêm no envelope { success: true, data }', () => {
+        it('POST /api/generate-reply → 200 com reply em data', async () => {
+            const res = await request(app)
+                .post('/api/generate-reply')
+                .send({ context: 'olá' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.reply).toBeDefined();
+        });
+
+        it('POST /api/generate-reply-async → 202 com { jobId, status } em data', async () => {
+            const res = await request(app)
+                .post('/api/generate-reply-async')
+                .send({ message: 'olá', module: 'chat' });
+
+            expect(res.status).toBe(202);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.jobId).toBeDefined();
+            expect(res.body.data.status).toBe('queued');
+        });
+    });
+
+    describe('erros de serviço viram 500 no envelope (não quebram a conexão)', () => {
+        it('POST /api/analyze-system com service falhando → 500 com error.message', async () => {
+            mockAiService.analyzeSystem.mockRejectedValueOnce(new Error('LLM indisponível'));
+
+            const res = await request(app)
+                .post('/api/analyze-system')
+                .send({ query: 'q' });
+
+            expect(res.status).toBe(500);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.message).toBe('LLM indisponível');
+        });
+    });
+});
+
+// =====================================================
+// #320/#1566: aiLimiter — 21ª chamada POST de AI em 1min retorna 429.
+// O limiter é aplicado globalmente em server.ts (app.use('/api/ai', aiLimiter, aiRoutes));
+// aqui recriamos a MESMA config para validar o contrato do critério.
+// =====================================================
+describe('#320/#1566: aiLimiter — 21ª chamada POST de AI em 1min → 429', () => {
+    function createAppWithLimiter() {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const rateLimit = require('express-rate-limit');
+        // Mesma config do aiLimiter em server.ts (max=20/min, skip GET).
+        const limiter = rateLimit({
+            windowMs: 60 * 1000,
+            max: 20,
+            message: { error: 'AI rate limit exceeded. Please wait before trying again.' },
+            standardHeaders: true,
+            legacyHeaders: false,
+            skip: (req: any) => req.method === 'GET',
+        });
+        const app = express();
+        app.use(express.json());
+        app.use('/api', limiter, aiRoutes);
+        app.use(errorHandler);
+        return app;
+    }
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockAiService.analyzeSystem.mockResolvedValue('System analysis result');
+    });
+
+    it('20 POSTs OK; a 21ª retorna 429', async () => {
+        const app = createAppWithLimiter();
+
+        for (let i = 0; i < 20; i++) {
+            const res = await request(app).post('/api/analyze-system').send({ query: 'q' });
+            expect(res.status).toBe(200);
+        }
+
+        const blocked = await request(app).post('/api/analyze-system').send({ query: 'q' });
+        expect(blocked.status).toBe(429);
+    });
+
+    it('GETs NÃO contam para o limiter (skip: GET) — muitos GETs seguem 200', async () => {
+        const app = createAppWithLimiter();
+
+        // 30 GETs (> max 20): se o limiter contasse GETs, algum seria 429.
+        for (let i = 0; i < 30; i++) {
+            const res = await request(app).get('/api/sessions-stats');
+            expect(res.status).toBe(200);
+        }
     });
 });
