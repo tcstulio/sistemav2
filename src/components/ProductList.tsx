@@ -45,6 +45,21 @@ import { notifyError } from '../utils/notifyError';
 import { formatCurrency } from '../utils/formatUtils';
 
 // ============================================
+// Helpers
+// ============================================
+
+// #1581 — sanitize numeric inputs from <input type="number">. Quando o usuário
+// apaga o campo, `e.target.value === ''` e parseFloat retorna NaN. Coagimos
+// para 0 nesse caso (e também quando o valor é inválido) para evitar
+// `R$ NaN` no total e NaN no payload enviado ao backend.
+const safeParseFloat = (raw: string): number => {
+    const trimmed = raw.trim();
+    if (trimmed === '') return 0;
+    const n = parseFloat(trimmed);
+    return Number.isFinite(n) ? n : 0;
+};
+
+// ============================================
 // Types
 // ============================================
 
@@ -426,6 +441,12 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
     // Handlers
     const handleCreate = async () => {
         if (!productForm.ref || !productForm.label) return;
+        // #1581 — valida que o preço é finito antes de submeter. Impede NaN no payload
+        // caso algum valor inválido entre no estado (programático ou externo).
+        if (productForm.price !== undefined && productForm.price !== null && !Number.isFinite(productForm.price)) {
+            toast.error('Preço inválido.');
+            return;
+        }
         setIsSubmitting(true);
         try {
             await DolibarrService.createProduct(config!, productForm);
@@ -442,6 +463,12 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
 
     const handleUpdate = async () => {
         if (!selectedProduct || !productForm.id) return;
+        // #1581 — valida que o preço é finito antes de submeter. Impede NaN no payload
+        // caso algum valor inválido entre no estado (programático ou externo).
+        if (productForm.price !== undefined && productForm.price !== null && !Number.isFinite(productForm.price)) {
+            toast.error('Preço inválido.');
+            return;
+        }
         setIsSubmitting(true);
         try {
             await DolibarrService.updateProduct(config!, productForm.id, productForm);
@@ -646,7 +673,7 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                                 <option value="1">Serviço</option>
                             </select>
                         </div>
-                        <Input label="Preço" type="number" value={productForm.price || 0} onChange={e => setProductForm({ ...productForm, price: parseFloat(e.target.value) })} />
+                        <Input label="Preço" type="number" value={productForm.price || 0} onChange={e => setProductForm({ ...productForm, price: safeParseFloat(e.target.value) })} />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         <Input
@@ -707,7 +734,7 @@ const ProductListV2: React.FC<ProductListV2Props> = ({
                                 <option value="1">Serviço</option>
                             </select>
                         </div>
-                        <Input label="Preço" type="number" value={productForm.price || 0} onChange={e => setProductForm({ ...productForm, price: parseFloat(e.target.value) })} />
+                        <Input label="Preço" type="number" value={productForm.price || 0} onChange={e => setProductForm({ ...productForm, price: safeParseFloat(e.target.value) })} />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         <div>
