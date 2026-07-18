@@ -134,3 +134,41 @@ describe('shouldFallbackOpencode (decisão pura)', () => {
         expect(shouldFallbackOpencode('opencode timeout (1800s)', { ...ok, primaryIsFallback: true })).toBe(false);
     });
 });
+
+describe('#coder-model-ui: precedência ui>env>default + anti-injeção no ponto de uso (red-team Fable)', () => {
+    it('coderModel do ui_config MANDA no comando (--model <ui>) — troca sem restart', async () => {
+        const task = makeTask(810);
+        svc.getAutomationConfig = vi.fn(() => ({ coderModel: 'zai-coding-plan/glm-5.2', coderFallbackModel: 'minimax/MiniMax-M3', dailyRoundBudget: 200 }));
+        vi.mocked(runOpencode).mockResolvedValueOnce('ok');
+        await svc.runOpencodeIsolated(task);
+        expect(vi.mocked(runOpencode).mock.calls[0][0] as string).toContain('--model zai-coding-plan/glm-5.2');
+    });
+
+    it('coderModel VAZIO no ui → sem --model (herda env/default do opencode)', async () => {
+        const task = makeTask(811);
+        svc.getAutomationConfig = vi.fn(() => ({ coderModel: '', coderFallbackModel: '', dailyRoundBudget: 200 }));
+        vi.mocked(runOpencode).mockResolvedValueOnce('ok');
+        await svc.runOpencodeIsolated(task);
+        expect(vi.mocked(runOpencode).mock.calls[0][0] as string).not.toContain('--model'); // env vazio no teste
+    });
+
+    it('#RCE: coderModel malicioso NÃO injeta comando (sanitizado → sem --model)', async () => {
+        const task = makeTask(812);
+        svc.getAutomationConfig = vi.fn(() => ({ coderModel: 'x; touch PWNED', coderFallbackModel: '', dailyRoundBudget: 200 }));
+        vi.mocked(runOpencode).mockResolvedValueOnce('ok');
+        await svc.runOpencodeIsolated(task);
+        const cmd = vi.mocked(runOpencode).mock.calls[0][0] as string;
+        expect(cmd).not.toContain('touch');
+        expect(cmd).not.toContain(';');
+        expect(cmd).not.toContain('--model');
+    });
+
+    it('getRunnerHealth expõe o modelo EFETIVO resolvido', () => {
+        svc.getAutomationConfig = vi.fn(() => ({ autoPlay: true, autoMerge: false, dailyRoundBudget: 200, coderModel: 'minimax/MiniMax-M3', coderFallbackModel: '' }));
+        svc.getQueuedTasks = vi.fn(() => []);
+        svc.isPeakHold = vi.fn(() => false);
+        svc.dailyRoundsToday = vi.fn(() => 0);
+        const h = svc.getRunnerHealth();
+        expect(h.effectiveCoderModel).toBe('minimax/MiniMax-M3');
+    });
+});
