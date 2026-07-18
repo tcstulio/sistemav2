@@ -100,3 +100,40 @@ describe('notificationService — notifyPerson + flush (#1004)', () => {
         expect((fsMock.promises.rename as any).mock.calls.length).toBeGreaterThan(0);
     });
 });
+
+describe('notificationService — #1205 falha de canal NÃO marca entregue (deliveredTo vs failedChannels)', () => {
+    beforeEach(() => seed([]));
+
+    it('WhatsApp com success=false → failedChannels, NÃO deliveredTo', async () => {
+        const { channelRouter } = await import('../../services/channelRouter');
+        (channelRouter.sendWhatsApp as any).mockResolvedValueOnce({ success: false, error: 'sessão caída' });
+        const n = await notificationService.notifyPerson({
+            event: 'custom', title: 'T', message: 'M', channels: ['whatsapp'],
+            recipient: 'u1', recipientPhone: '5511999990000',
+        } as any);
+        expect(n.failedChannels).toContain('whatsapp');
+        expect(n.deliveredTo).not.toContain('whatsapp');
+    });
+
+    it('WhatsApp com success=true → deliveredTo (caminho feliz preservado)', async () => {
+        const { channelRouter } = await import('../../services/channelRouter');
+        (channelRouter.sendWhatsApp as any).mockResolvedValueOnce({ success: true, messageId: 'x' });
+        const n = await notificationService.notifyPerson({
+            event: 'custom', title: 'T', message: 'M', channels: ['whatsapp'],
+            recipient: 'u1', recipientPhone: '5511999990000',
+        } as any);
+        expect(n.deliveredTo).toContain('whatsapp');
+        expect(n.failedChannels).not.toContain('whatsapp');
+    });
+
+    it('E-mail com success=false → failedChannels, NÃO deliveredTo', async () => {
+        const { channelRouter } = await import('../../services/channelRouter');
+        (channelRouter.sendEmail as any).mockResolvedValueOnce({ success: false, error: 'SMTP recusou' });
+        const n = await notificationService.notifyPerson({
+            event: 'custom', title: 'T', message: 'M', channels: ['email'],
+            recipient: 'u1', recipientEmail: 'a@b.com',
+        } as any);
+        expect(n.failedChannels).toContain('email');
+        expect(n.deliveredTo).not.toContain('email');
+    });
+});
