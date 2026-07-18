@@ -1408,6 +1408,66 @@ class TaskRunnerService {
     }
 
     /**
+     * LIVENESS observável do robô (p/ monitoramento externo saber se ele está TRABALHANDO, não só vivo).
+     * Reescrito após red-team (todos os cenários provados por oráculo). `seemsStuck` = DEVERIA trabalhar
+     * mas não está, cobrindo os furos que a v1 tinha:
+     *  - HEARTBEAT = max(último evento, último cpuMemSample [a cada ~2s no run], startedAt). Sem os samples,
+     *    todo opencode >20min (silencioso em events) virava falso-travado (FP-2a). Limiar = timeout+5min.
+     *  - `seemsStuck` NÃO gateado por `queued` no ramo de heartbeat: robô morto na ÚNICA task com fila vazia
+     *    era invisível (FN-2). `some` (não `every`): 1 task pendurada basta, e um zumbi não mascara (FN-3).
+     *  - PAUSAS LEGÍTIMAS incluem o TETO DIÁRIO (não só cota/pico) — senão alarme falso o dia todo (FP-teto).
+     *  - `idleWithWork` exige `pendingExecs===0`: mid-dispatch a task fica pending c/ execução em voo (FP-2b).
+     *  - `stalled`: task `approved` com autoMerge LIGADO que não mergeia há >30min = o auto-merge morreu com
+     *    ela na mão (FN-1b). `reviewing` é espera humana → NÃO conta. `mergeHoldReason` = espera humana → idem.
+     *  - `waiting`: pending fora da fila por `planWaitUntil` (cooldown) — distingue "backlog preso" de "vazio".
+     */
+    getRunnerHealth(): {
+        autoPlay: boolean; queued: number; waiting: number;
+        running: Array<{ issueNumber: number; status: string; runningForMin: number; sinceHeartbeatMin: number }>;
+        stalled: number[]; quotaExhausted: boolean; peakHold: boolean; budgetHit: boolean;
+        stuckForMin: number | null; seemsStuck: boolean;
+    } {
+        const cfg = this.getAutomationConfig();
+        const now = Date.now();
+        const ACTIVE: TaskStatus[] = ['running', 'fixing', 'cancelling'];
+        const lastHeartbeatMs = (t: Task): number => {
+            const ev = t.events?.length ? new Date(t.events[t.events.length - 1].ts).getTime() : 0;
+            const sm = t.cpuMemSamples?.length ? new Date(t.cpuMemSamples[t.cpuMemSamples.length - 1].ts).getTime() : 0;
+            const st = t.startedAt ? new Date(t.startedAt).getTime() : 0;
+            return Math.max(ev || 0, sm || 0, st || 0);
+        };
+        const running = Object.values(this.store.tasks)
+            .filter(t => ACTIVE.includes(t.status))
+            .map(t => {
+                const hb = lastHeartbeatMs(t);
+                return {
+                    issueNumber: t.issueNumber, status: t.status,
+                    runningForMin: t.startedAt ? Math.round((now - new Date(t.startedAt).getTime()) / 60000) : 0,
+                    sinceHeartbeatMin: hb ? Math.round((now - hb) / 60000) : -1,
+                };
+            });
+        const queued = this.getQueuedTasks().length;
+        const waiting = Object.values(this.store.tasks).filter(t => t.status === 'pending' && !!t.planWaitUntil && t.planWaitUntil > now).length;
+        const autoMerge = cfg.autoMerge === true;
+        const stalled = Object.values(this.store.tasks)
+            .filter(t => t.status === 'approved' && autoMerge && !t.mergeHoldReason)
+            .filter(t => { const hb = lastHeartbeatMs(t); return hb > 0 && now - hb > 30 * 60_000; })
+            .map(t => t.issueNumber);
+        const autoPlay = cfg.autoPlay === true;
+        const quotaExhausted = isQuotaExhausted();
+        const peakHold = this.isPeakHold();
+        const dailyBudget = typeof cfg.dailyRoundBudget === 'number' && cfg.dailyRoundBudget > 0 ? cfg.dailyRoundBudget : 200;
+        const budgetHit = this.dailyRoundsToday() >= dailyBudget;
+        const paused = quotaExhausted || peakHold || budgetHit;
+        const stuckForMin = this.stuckSince ? Math.round((now - this.stuckSince) / 60000) : null;
+        const staleMin = Math.round(OPENCODE_TIMEOUT_MS / 60000) + 5;
+        const noHeartbeatRunning = running.some(r => r.sinceHeartbeatMin === -1 || r.sinceHeartbeatMin >= staleMin);
+        const idleWithWork = running.length === 0 && (this.pendingExecs || 0) === 0 && queued > 0;
+        const seemsStuck = autoPlay && !paused && (idleWithWork || noHeartbeatRunning || stalled.length > 0);
+        return { autoPlay, queued, waiting, running, stalled, quotaExhausted, peakHold, budgetHit, stuckForMin, seemsStuck };
+    }
+
+    /**
      * Horário de PICO do Z.AI (GLM consome 3x a cota): 14:00–18:00 UTC+8 = 06:00–10:00 UTC
      * = 03:00–07:00 BRT. Off-peak é 1x (promoção até set/2026). Como o teto é SEMANAL, rodar
      * no pico queima a cota 3x mais rápido -> MENOS tasks por semana. Por isso o robô NÃO
