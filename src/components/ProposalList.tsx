@@ -483,6 +483,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                             filteredOptions.map(opt => (
                                 <div
                                     key={opt.value}
+                                    data-value={String(opt.value)}
                                     className={`px-3 py-2 text-sm cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 ${String(opt.value) === String(value) ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600' : ''}`}
                                     onClick={() => { onChange(opt.value); setIsOpen(false); }}
                                 >
@@ -512,7 +513,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
         };
 
         return (
-            <div style={itemStyle}>
+            <div style={itemStyle} data-testid="proposal-row" data-ref={prop.ref}>
                 <Card
                     selected={selectedProposal?.id === prop.id}
                     onClick={() => setSelectedProposal(prop)}
@@ -587,7 +588,7 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                         <ListToolbar controls={controls} searchPlaceholder="Buscar ref ou cliente..." />
                         <div className="flex items-center gap-2">
                             {canDo('create', 'proposals') && (
-                            <Button variant="primary" icon={<Plus size={18} />} onClick={handleOpenCreate}>
+                            <Button variant="primary" icon={<Plus size={18} />} onClick={handleOpenCreate} data-testid="new-proposal">
                                 Nova
                             </Button>
                             )}
@@ -779,6 +780,8 @@ const ProposalList: React.FC<ProposalListProps> = ({ onNavigate, onRefresh, init
                             onClick={handleCreateOrder}
                             loading={processingId === selectedProposal.id}
                             disabled={!!processingId}
+                            data-testid="convert-to-order"
+                            data-ref={selectedProposal.ref}
                         >
                             Criar Pedido
                         </Button>
