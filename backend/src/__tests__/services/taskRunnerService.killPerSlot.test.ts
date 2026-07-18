@@ -72,4 +72,13 @@ describe('sweepOrphanedOpencode — protectNeedles por-slot', () => {
         await svc.sweepOrphanedOpencode('boot');
         expect(protectArg()?.sort()).toEqual(['[tr-run:5-111]', '[tr-run:7-222]']);
     });
+
+    it('cancel mid-run (#5): NÃO protege o próprio órfão (mata o alvo), MAS protege o vizinho vivo (#7)', async () => {
+        // Reproduz o bug do killTask: o needle da cancelada ainda no registry (finally só roda no settle).
+        svc.liveRunNeedles.set(5, '[tr-run:5-111]'); // task sendo cancelada
+        svc.liveRunNeedles.set(7, '[tr-run:7-222]'); // coder vizinho VIVO
+        await svc.sweepOrphanedOpencode('cancel #5', [], undefined, { excludeIssue: 5 });
+        // #5 fora do protect (é o alvo do cancel) → matável; #7 protegido.
+        expect(protectArg()).toEqual(['[tr-run:7-222]']);
+    });
 });

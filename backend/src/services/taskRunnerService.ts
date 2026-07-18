@@ -4691,8 +4691,13 @@ Return ONLY a JSON:
         // libera os locks do worktree/snapshot para a próxima execução (#644 criterion 4).
         // O runOpencodeIsolated também faz isto no seu finally, mas reforçamos aqui para cobrir
         // fases fora do run (setup/verify) e o caso do kill falho deixar o órfão vivo.
+        // #kill-per-slot (red-team Fable): excludeIssue=self — o needle da task CANCELADA ainda está no
+        // registry (o finally do runOpencodeIsolated só roda após o settle forçado, ~10,5s depois). Sem
+        // excluir, este sweep POUPARIA o próprio órfão (protect=needle da cancelada) e ainda marcaria
+        // confirmedGone=true (violando a barreira antes de apagar o index.lock). Excluindo-a, mata o
+        // alvo e, de brinde, protege os coders VIZINHOS vivos (cancelar #7 não mata o coder de #5).
         try {
-            const gone = await this.sweepOrphanedOpencode(`cancel #${issueNumber}`, [], task);
+            const gone = await this.sweepOrphanedOpencode(`cancel #${issueNumber}`, [], task, { excludeIssue: issueNumber });
             this.cleanStaleLocks(gone);
         } catch (e: any) {
             log.warn(`killTask #${issueNumber}: sweep/limpeza de locks falhou (não-fatal): ${e?.message || e}`);
