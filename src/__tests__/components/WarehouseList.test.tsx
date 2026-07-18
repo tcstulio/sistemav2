@@ -402,3 +402,183 @@ describe('WarehouseList (#852) — gating canDo e validação de qty', () => {
         });
     });
 });
+
+// ---------------------------------------------------------------------------
+// #1583: Sanitizar inputs numéricos — evitar NaN quando o campo é esvaziado
+// ---------------------------------------------------------------------------
+describe('WarehouseList (#1583) — sanitização de inputs numéricos', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockSvc.getProductWithStock.mockResolvedValue({ stock_warehouse: {} });
+        vi.mocked(useDolibarr).mockReturnValue({
+            config: mockConfig,
+            refreshData: mockRefreshData,
+            canAccess: () => true,
+            canDo: () => true,
+        } as any);
+    });
+
+    it('esvaziar o qty de transferência trata como 0 (nunca NaN) e bloqueia submit', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        const form = document.getElementById('transfer-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } }); // produto
+        fireEvent.change(selects[1], { target: { value: '1' } });  // origem
+        fireEvent.change(selects[2], { target: { value: '2' } });  // destino
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+
+        // Esvaziar o campo: antes geraria NaN; agora deve normalizar para 0
+        fireEvent.change(qtyInput, { target: { value: '' } });
+        expect(qtyInput.value).not.toBe('NaN');
+        // Valor numérico no estado nunca pode ser NaN
+        expect(Number.isNaN(Number(qtyInput.value))).toBe(false);
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        // Garante que a API nunca é chamada com NaN
+        expect(mockSvc.createStockTransfer).not.toHaveBeenCalled();
+    });
+
+    it('esvaziar o qty de correção trata como 0 (nunca NaN) e bloqueia submit', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+
+        const form = document.getElementById('correction-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } }); // produto
+        fireEvent.change(selects[1], { target: { value: '1' } });  // armazém
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+
+        fireEvent.change(qtyInput, { target: { value: '' } });
+        expect(qtyInput.value).not.toBe('NaN');
+        expect(Number.isNaN(Number(qtyInput.value))).toBe(false);
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalled();
+    });
+
+    it('digitando texto não-numérico no qty de transferência resulta em 0 (sem NaN)', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        const form = document.getElementById('transfer-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        fireEvent.change(selects[2], { target: { value: '2' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+
+        // parseInt('abc') => NaN → fallback 0
+        fireEvent.change(qtyInput, { target: { value: 'abc' } });
+        expect(qtyInput.value).not.toBe('NaN');
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        expect(mockSvc.createStockTransfer).not.toHaveBeenCalled();
+    });
+
+    it('fluxo feliz de transferência continua funcionando após sanitização', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-transfer'));
+
+        const form = document.getElementById('transfer-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        fireEvent.change(selects[2], { target: { value: '2' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        // Quantidade válida deve passar intacta (não ser afetada pelo || 0)
+        fireEvent.change(qtyInput, { target: { value: '7' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(mockSvc.createStockTransfer).toHaveBeenCalledWith(
+                mockConfig, 'p1', '1', '2', 7
+            );
+        });
+    });
+
+    it('fluxo feliz de correção continua funcionando após sanitização', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+
+        const form = document.getElementById('correction-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } });
+        fireEvent.change(selects[1], { target: { value: '1' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '3' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(mockSvc.createStockCorrection).toHaveBeenCalledWith(
+                mockConfig,
+                expect.objectContaining({ product_id: 'p1', warehouse_id: '1', qty: 3 })
+            );
+        });
+    });
+
+    it('digitando texto não-numérico no qty de correção resulta em 0 (sem NaN)', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+
+        const form = document.getElementById('correction-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } }); // produto
+        fireEvent.change(selects[1], { target: { value: '1' } });  // armazém
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+
+        // parseInt('xyz') => NaN → fallback 0
+        fireEvent.change(qtyInput, { target: { value: 'xyz' } });
+        expect(qtyInput.value).not.toBe('NaN');
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        // A API nunca pode ser chamada — muito menos com NaN
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalled();
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ qty: NaN })
+        );
+    });
+
+    it('correção do tipo "remove" envia qty negativa após sanitização', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+
+        const form = document.getElementById('correction-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } }); // produto
+        fireEvent.change(selects[1], { target: { value: '1' } });  // armazém
+        // selects[2] é o select de Tipo (add/remove)
+        fireEvent.change(selects[2], { target: { value: 'remove' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '4' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(mockSvc.createStockCorrection).toHaveBeenCalledWith(
+                mockConfig,
+                expect.objectContaining({ product_id: 'p1', warehouse_id: '1', qty: -4 })
+            );
+        });
+    });
+});
