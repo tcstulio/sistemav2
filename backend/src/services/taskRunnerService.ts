@@ -608,6 +608,9 @@ class TaskRunnerService {
             // preservada. Resetar o lock poderia deixar 2 executeTask concorrentes (corrupção git).
             this.pendingExecs = 0;
             this.execChain = Promise.resolve();
+            // #accelerate-sweep: workers fantasmas abandonados não podem excluir issues do sweep p/ sempre.
+            // Um finally tardio decrementa um mapa já limpo sem efeito negativo (clamp em >0).
+            this.execInFlight.clear();
             this.stuckSince = null;
             this.autoPlayNext();
         } catch (e: any) {
@@ -621,16 +624,21 @@ class TaskRunnerService {
      * nunca entram na fila (getQueuedTasks exclui epic) NEM re-decompõem (o auto-decompose exige
      * kind!=='epic'). Sweep periódico (chamado no pollSync): pega 1 épica elegível por tick e roda
      * decomposeEpic (se não houver plano) + approveDecomposition (strictDedup, evita duplicar sub-issues).
-     * Serial, com as MESMAS guardas de pausa do dispatch (não queima LLM sob cota/pico/teto), anti-spin
+     * Serial, com as guardas de pausa de custo-LLM do dispatch (não queima LLM sob cota/pico/teto), anti-spin
      * (cap 3 + backoff crescente incrementado ANTES do LLM p/ ser crash-safe) e SEM consumir tentativa
      * em falha de COTA. Idempotente: sucesso seta subTasks → some do conjunto elegível.
+     *
+     * #accelerate-sweep (red-team Fable C): a antiga guarda grossa `pendingExecs>0` fazia o sweep só rodar
+     * com a fila TOTALMENTE vazia — que quase nunca ocorre com backlog → destravamento lentíssimo. Trocada
+     * por um predicado PRECISO por-issue (`execInFlight`): o sweep roda a qualquer hora e só pula as épicas
+     * que estão de fato em dispatch. Fecha O2 (épica kind:epic despachada por startTask, que fica 'pending'
+     * minutos sem entrar em epicOpsInFlight) sem depender de sutileza de event-loop.
      */
     private async decomposeStuckEpics(): Promise<void> {
         const cfg = this.getAutomationConfig();
-        // Guardas de pausa (mesma ordem/critério do autoPlayNext) — decompor é chamada LLM.
+        // Guardas de pausa de custo-LLM (mesmo critério do autoPlayNext) — decompor pode chamar o Planner.
         if (!cfg.autoDecompose || !cfg.autoPlay) return;
         if (this.epicSweepInFlight) return;                    // não sobrepõe ticks
-        if (this.pendingExecs > 0) return;                     // fecha a race com o chain (markAsEpic mid-dispatch)
         if (isQuotaExhausted() || this.isPeakHold()) return;
         const dailyBudget = typeof cfg.dailyRoundBudget === 'number' && cfg.dailyRoundBudget > 0 ? cfg.dailyRoundBudget : 200;
         if (this.dailyRoundsToday() >= dailyBudget) return;
@@ -644,7 +652,8 @@ class TaskRunnerService {
                 !t.parentEpic &&
                 (t.epicDecomposeAttempts ?? 0) < 3 &&
                 !(t.epicDecomposeNextAttemptAt && t.epicDecomposeNextAttemptAt > now) &&
-                !this.epicOpsInFlight.has(t.issueNumber))
+                !this.epicOpsInFlight.has(t.issueNumber) &&
+                !this.execInFlight.has(t.issueNumber)) // #accelerate-sweep: nunca a que está em dispatch (O2)
             .sort((a, b) => a.issueNumber - b.issueNumber);
         const task = eligible[0];
         if (!task) return;
@@ -1196,6 +1205,11 @@ class TaskRunnerService {
     private epicOpsInFlight = new Set<number>();
     // #stuck-epics: trava de reentrância do sweep periódico (um tick pode durar >1 intervalo de poll).
     private epicSweepInFlight = false;
+    // #accelerate-sweep (red-team Fable C): rastreia dispatches EM VOO por issue (contador, não Set — dois
+    // agendamentos da mesma issue não podem des-marcar no 1º settle). Predicado PRECISO de "esta issue está
+    // no pipeline de execução" — substitui a guarda grossa `pendingExecs>0` do sweep. Fecha O2 (épica kind:epic
+    // despachada por startTask fica 'pending' minutos, sem epicOpsInFlight, e o sweep a decomporia mid-exec).
+    private execInFlight = new Map<number, number>();
 
     // Fila serial de execução (1 task por vez). O worktree (sistemav2-taskrunner-wt) é COMPARTILHADO,
     // então rodar duas execuções ao mesmo tempo corromperia o git. Tasks extras ficam 'pending' até a vez.
@@ -1338,6 +1352,9 @@ class TaskRunnerService {
         task.mergeHoldKind = undefined;   // #1168: limpa também a classificação do hold
         const willQueue = this.pendingExecs > 0;
         this.pendingExecs++;
+        // #accelerate-sweep: marca esta issue como EM VOO (dispatch agendado) — o sweep de épicas usa
+        // isto para nunca decompor uma issue que está no pipeline de execução (fecha O2).
+        this.execInFlight.set(task.issueNumber, (this.execInFlight.get(task.issueNumber) ?? 0) + 1);
         if (willQueue) {
             task.status = 'pending';
             task.updatedAt = new Date().toISOString();
@@ -1519,6 +1536,10 @@ class TaskRunnerService {
             // Decrementa SEMPRE (mesmo após kill/exec falho/throw) — é o que libera a fila.
             // Guarda contra negativo (defesa em profundidade caso o contador des sincronize).
             if (this.pendingExecs > 0) this.pendingExecs--;
+            // #accelerate-sweep: baixa o contador de dispatch em voo desta issue (delete ao zerar).
+            const inFlight = (this.execInFlight.get(task.issueNumber) ?? 0) - 1;
+            if (inFlight > 0) this.execInFlight.set(task.issueNumber, inFlight);
+            else this.execInFlight.delete(task.issueNumber);
             // Após um cancel (kill bem-sucedido OU falho) o cascade retoma aqui (#644).
             this.autoPlayNext();
         });
@@ -1628,6 +1649,11 @@ class TaskRunnerService {
     private autoPlayNext() {
         const config = this.getAutomationConfig();
         if (!config.autoPlay) return;
+        // #accelerate-sweep (red-team Fable O3): NÃO despacha se já há execução/dispatch em voo. Quem avança
+        // a cadeia ocupada é o `.finally` do exec (que só chama isto após decrementar pendingExecs). Sem esta
+        // guarda, chamadas concorrentes (sonda de cota, reevaluateAfterMerge, sweep de épicas) re-elegem a
+        // MESMA task 'pending' — que segue em getQueuedTasks mesmo já agendada na execChain — e a despacham 2×.
+        if (this.pendingExecs > 0) return;
         // Cota esgotada: NÃO despacha (evita queimar tasks em 429). A sonda em pollSync retoma quando volta.
         if (isQuotaExhausted()) { log.warn('Auto-play em espera: cota de LLM esgotada — aguardando sonda confirmar retorno da API.'); return; }
         // Horário de pico (3x): segura o dispatch p/ não queimar a cota semanal 3x mais rápido.
