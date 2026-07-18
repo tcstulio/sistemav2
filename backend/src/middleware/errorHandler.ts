@@ -3,6 +3,16 @@
  *
  * Sanitizes error responses to prevent leaking internal information.
  * In production, detailed errors are logged but not sent to clients.
+ *
+ * All error responses follow the standard envelope:
+ *   {
+ *     "success": false,
+ *     "error": {
+ *       "message": "Mensagem legível",
+ *       "code":    "CODIGO_DO_ERRO",
+ *       "details": { ... }        // opcional
+ *     }
+ *   }
  */
 
 import { Request, Response, NextFunction } from 'express';
@@ -50,9 +60,61 @@ const SENSITIVE_PATTERNS = [
 
 interface ApiError extends Error {
     status?: number;
+    statusCode?: number;
     code?: string;
     details?: unknown;
     isOperational?: boolean;
+}
+
+/**
+ * Generic operational application error.
+ *
+ * Constructor accepts either:
+ *   - `new AppError(statusCode, code)`
+ *   - `new AppError(statusCode, code, message)`
+ *   - `new AppError(statusCode, code, { message, details })`
+ *
+ * Example: `throw new AppError(400, 'INVALID_INPUT', 'Campo X é obrigatório');`
+ */
+export class AppError extends Error {
+    public readonly statusCode: number;
+    public readonly code: string;
+    public readonly details?: unknown;
+    public readonly isOperational: boolean = true;
+
+    constructor(
+        statusCode: number,
+        code: string,
+        messageOrOptions?: string | { message?: string; details?: unknown }
+    ) {
+        let message: string;
+        let details: unknown;
+
+        if (typeof messageOrOptions === 'string') {
+            message = messageOrOptions;
+        } else if (messageOrOptions && typeof messageOrOptions === 'object') {
+            message = messageOrOptions.message ?? code;
+            details = messageOrOptions.details;
+        } else {
+            message = code;
+        }
+
+        super(message);
+        this.name = 'AppError';
+        this.statusCode = statusCode;
+        this.code = code;
+        if (details !== undefined) {
+            this.details = details;
+        }
+    }
+}
+
+/**
+ * Resolve the effective HTTP status for an error.
+ * Accepts both the new `statusCode` (AppError) and the legacy `status` field.
+ */
+function resolveStatus(error: ApiError): number {
+    return error.statusCode ?? error.status ?? 500;
 }
 
 /**
@@ -114,40 +176,71 @@ function getDefaultMessage(status: number): string {
 }
 
 /**
- * Create a standardized error response
+ * Create a standardized error response.
+ *
+ * Returned body always follows the envelope:
+ *   {
+ *     "success": false,
+ *     "error": { "code": string, "message": string, "details"?: unknown, "stack"?: string }
+ *   }
+ *
+ * `stack` is only included when NOT in production.
  */
 export function createErrorResponse(
     error: ApiError,
     isProduction: boolean
 ): { status: number; body: Record<string, unknown> } {
-    const status = error.status || 500;
+    const status = resolveStatus(error);
     const code = error.code || 'INTERNAL_ERROR';
-    const isOperational = error.isOperational || status < 500;
+    const isOperational = error.isOperational ?? status < 500;
 
     // In production, only show safe error codes and messages
     const showDetails = !isProduction || (isOperational && SAFE_ERROR_CODES.includes(code));
 
-    const body: Record<string, unknown> = {
-        error: {
-            code: showDetails ? code : 'INTERNAL_ERROR',
-            message: showDetails
-                ? sanitizeErrorMessage(error.message, isProduction)
-                : getDefaultMessage(status)
-        }
+    const errorBody: Record<string, unknown> = {
+        code: showDetails ? code : 'INTERNAL_ERROR',
+        message: showDetails
+            ? sanitizeErrorMessage(error.message, isProduction)
+            : getDefaultMessage(status)
     };
 
     // Add validation details if safe
-    if (showDetails && error.details && code === 'VALIDATION_ERROR') {
-        body.error = {
-            ...(body.error as object),
-            details: error.details
-        };
+    if (showDetails && error.details !== undefined && code === 'VALIDATION_ERROR') {
+        errorBody.details = error.details;
     }
 
-    // Add request ID for tracking (if available)
-    // body.requestId = req.id; // Would need request ID middleware
+    // Include stack trace only outside production to aid local debugging
+    if (!isProduction && typeof error.stack === 'string') {
+        errorBody.stack = error.stack;
+    }
+
+    const body: Record<string, unknown> = {
+        success: false,
+        error: errorBody
+    };
 
     return { status, body };
+}
+
+/**
+ * Emit a structured log entry for an error. Always includes
+ * `statusCode`, `method`, `url` and `stack` so downstream
+ * log pipelines can group/filter consistently.
+ */
+function logError(
+    err: ApiError,
+    req: Request,
+    statusCode: number,
+    extras?: Record<string, unknown>
+): void {
+    const url = req.originalUrl || req.url;
+    log.error(`${req.method} ${url} - ${err.message}`, {
+        statusCode,
+        method: req.method,
+        url,
+        stack: err.stack,
+        ...(extras || {})
+    });
 }
 
 /**
@@ -160,9 +253,12 @@ export function errorHandler(
     next: NextFunction
 ): void {
     const isProduction = process.env.NODE_ENV === 'production';
+    const statusCode = resolveStatus(err);
 
     if (err instanceof ZodError) {
+        logError(err, req, 400);
         res.status(400).json({
+            success: false,
             error: {
                 code: 'VALIDATION_ERROR',
                 message: 'Validation failed',
@@ -175,10 +271,7 @@ export function errorHandler(
         return;
     }
 
-    log.error(`${req.method} ${req.path} - ${err.message}`, {
-        stack: err.stack,
-        code: err.code,
-        status: err.status,
+    logError(err, req, statusCode, {
         ip: req.ip,
         userAgent: req.headers['user-agent']
     });

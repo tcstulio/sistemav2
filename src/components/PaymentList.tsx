@@ -128,7 +128,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ onNavigate, initialItemId }) 
         }
     }, [initialItemId, rawPayments]);
 
-    const totalReceived = useMemo(() => payments.reduce((acc, p) => acc + p.amount, 0), [payments]);
+    const totalReceived = useMemo(() => payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0), [payments]);
 
     // Find linked invoices for a payment
     const getLinkedInvoices = (paymentId: number | string) => {

@@ -42,6 +42,24 @@ const invoiceStatuses = {
     '2': { label: 'Pago', variant: 'emerald' as const, icon: <CheckCircle2 size={12} /> },
 };
 
+// #1581 — sanitize numeric inputs from <input type="number">. Quando o usuário
+// apaga o campo, `e.target.value === ''` e parseInt/parseFloat retornam NaN.
+// Coagimos para 0 nesse caso (e também quando o valor é inválido) para evitar
+// `R$ NaN` no total e NaN no payload enviado ao backend.
+const safeParseInt = (raw: string): number => {
+    const trimmed = raw.trim();
+    if (trimmed === '') return 0;
+    const n = parseInt(trimmed, 10);
+    return Number.isFinite(n) ? n : 0;
+};
+
+const safeParseFloat = (raw: string): number => {
+    const trimmed = raw.trim();
+    if (trimmed === '') return 0;
+    const n = parseFloat(trimmed);
+    return Number.isFinite(n) ? n : 0;
+};
+
 const getInvoiceStatusKey = (inv: Invoice) => inv.type === '2' ? 'credit_note' : inv.statut;
 
 interface InvoiceListProps {
@@ -309,6 +327,14 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newInvoice.socid) return toast.error("Selecione um cliente");
+        // #1581 — valida que cada campo numérico é finito antes de submeter.
+        // Impede que um valor inválido (programático ou externo) gere NaN no payload.
+        const invalidItem = newInvoice.items.find(it =>
+            !Number.isFinite(it.qty) || !Number.isFinite(it.price) || !Number.isFinite(it.remise_percent)
+        );
+        if (invalidItem) {
+            return toast.error("Valores numéricos inválidos nos itens (qtd/preço/desconto).");
+        }
         setIsSubmitting(true);
         try {
             await createInvoice.mutateAsync({
@@ -399,6 +425,14 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
     const handleSaveEdit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingInvoiceData || !config) return;
+        // #1581 — valida que cada campo numérico é finito antes de submeter.
+        // Impede que um valor inválido (programático ou externo) gere NaN no payload.
+        const invalidItem = editingInvoiceData.items.find(it =>
+            !Number.isFinite(it.qty) || !Number.isFinite(it.price) || !Number.isFinite(it.remise_percent)
+        );
+        if (invalidItem) {
+            return toast.error("Valores numéricos inválidos nos itens (qtd/preço/desconto).");
+        }
         setIsSubmitting(true);
         try {
             await DolibarrService.updateInvoice(config, editingInvoiceData.id, {
@@ -1085,15 +1119,15 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                     </div>
                                     <div className="w-20">
                                         <input type="number" className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Qtd"
-                                            value={item.qty} onChange={e => handleUpdateItem(idx, 'qty', parseInt(e.target.value))} min="1" />
+                                            value={item.qty} onChange={e => handleUpdateItem(idx, 'qty', safeParseInt(e.target.value))} min="1" />
                                     </div>
                                     <div className="w-24">
                                         <input type="number" className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Preço"
-                                            value={item.price} onChange={e => handleUpdateItem(idx, 'price', parseFloat(e.target.value))} />
+                                            value={item.price} onChange={e => handleUpdateItem(idx, 'price', safeParseFloat(e.target.value))} />
                                     </div>
                                     <div className="w-20">
                                         <input type="number" className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Desc%"
-                                            value={item.remise_percent || ''} onChange={e => handleUpdateItem(idx, 'remise_percent', parseFloat(e.target.value))} />
+                                            value={item.remise_percent || ''} onChange={e => handleUpdateItem(idx, 'remise_percent', safeParseFloat(e.target.value))} />
                                     </div>
                                     <button type="button" onClick={() => handleRemoveItem(idx)} className="p-1 text-red-400 hover:text-red-600">
                                         <Trash2 size={16} />
@@ -1199,15 +1233,15 @@ const InvoiceList: React.FC<InvoiceListProps> = ({ onNavigate }) => {
                                         </div>
                                         <div className="w-20">
                                             <input type="number" className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Qtd"
-                                                value={item.qty} onChange={e => handleUpdateEditItem(idx, 'qty', parseInt(e.target.value))} min="1" />
+                                                value={item.qty} onChange={e => handleUpdateEditItem(idx, 'qty', safeParseInt(e.target.value))} min="1" />
                                         </div>
                                         <div className="w-24">
                                             <input type="number" className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Preço"
-                                                value={item.price} onChange={e => handleUpdateEditItem(idx, 'price', parseFloat(e.target.value))} />
+                                                value={item.price} onChange={e => handleUpdateEditItem(idx, 'price', safeParseFloat(e.target.value))} />
                                         </div>
                                         <div className="w-20">
                                             <input type="number" className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white" placeholder="Desc%"
-                                                value={item.remise_percent || ''} onChange={e => handleUpdateEditItem(idx, 'remise_percent', parseFloat(e.target.value))} />
+                                                value={item.remise_percent || ''} onChange={e => handleUpdateEditItem(idx, 'remise_percent', safeParseFloat(e.target.value))} />
                                         </div>
                                         <button type="button" onClick={() => handleRemoveEditItem(idx)} className="p-1 text-red-400 hover:text-red-600">
                                             <Trash2 size={16} />
