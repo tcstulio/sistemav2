@@ -531,4 +531,54 @@ describe('WarehouseList (#1583) — sanitização de inputs numéricos', () => {
             );
         });
     });
+
+    it('digitando texto não-numérico no qty de correção resulta em 0 (sem NaN)', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+
+        const form = document.getElementById('correction-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } }); // produto
+        fireEvent.change(selects[1], { target: { value: '1' } });  // armazém
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+
+        // parseInt('xyz') => NaN → fallback 0
+        fireEvent.change(qtyInput, { target: { value: 'xyz' } });
+        expect(qtyInput.value).not.toBe('NaN');
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(toast.warning).toHaveBeenCalledWith('A quantidade deve ser maior que zero');
+        });
+        // A API nunca pode ser chamada — muito menos com NaN
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalled();
+        expect(mockSvc.createStockCorrection).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ qty: NaN })
+        );
+    });
+
+    it('correção do tipo "remove" envia qty negativa após sanitização', async () => {
+        render(<WarehouseList />);
+        fireEvent.click(screen.getByTestId('btn-adjust'));
+
+        const form = document.getElementById('correction-form') as HTMLFormElement;
+        const selects = form.querySelectorAll('select');
+        fireEvent.change(selects[0], { target: { value: 'p1' } }); // produto
+        fireEvent.change(selects[1], { target: { value: '1' } });  // armazém
+        // selects[2] é o select de Tipo (add/remove)
+        fireEvent.change(selects[2], { target: { value: 'remove' } });
+        const qtyInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+        fireEvent.change(qtyInput, { target: { value: '4' } });
+
+        fireEvent.submit(form);
+
+        await waitFor(() => {
+            expect(mockSvc.createStockCorrection).toHaveBeenCalledWith(
+                mockConfig,
+                expect.objectContaining({ product_id: 'p1', warehouse_id: '1', qty: -4 })
+            );
+        });
+    });
 });
