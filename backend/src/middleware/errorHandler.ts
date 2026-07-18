@@ -9,6 +9,8 @@ import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { createLogger } from '../utils/logger';
 
+export { asyncHandler } from '../utils/asyncHandler';
+
 const log = createLogger('ErrorHandler');
 
 // Error codes that are safe to show to users
@@ -259,12 +261,6 @@ export class RateLimitError extends Error {
         super(message);
         this.name = 'RateLimitError';
     }
-}
-
-export function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => Promise<any>) {
-    return (req: Request, res: Response, next: NextFunction) => {
-        Promise.resolve(fn(req, res, next)).catch(next);
-    };
 }
 
 export default errorHandler;
