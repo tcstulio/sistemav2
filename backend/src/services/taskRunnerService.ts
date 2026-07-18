@@ -427,6 +427,15 @@ export interface Task {
     subTasks?: number[];
     decompositionPlan?: DecompositionPlan;
     parentEpic?: number;
+    // #stuck-epics (red-team Fable): anti-spin do sweep que destrava épicas presas (kind:'epic' sem
+    // subTasks — decomposição/aprovação falharam no passado). Campos DEDICADOS (não reusar planWaitUntil,
+    // que é cooldown do Planner e alimenta a métrica `waiting` de getRunnerHealth). Incrementado ANTES do
+    // LLM (crash-safe); cap 3 + backoff crescente. Falha por COTA NÃO consome tentativa.
+    epicDecomposeAttempts?: number;
+    epicDecomposeNextAttemptAt?: number; // epoch ms de backoff até a próxima tentativa de decomposição
+    // #stuck-epics item 7: 2º modo de travamento — épica já decomposta cujas sub-tasks estão TODAS
+    // terminais com ≥1 falha (surto histórico). Notificada UMA vez p/ decisão humana (não re-executa).
+    epicStalledNotified?: boolean;
     // Pré-análise (#1017): verdict/evidence do pre-check que roda antes da execução.
     precheckReport?: PrecheckReport;
     // Métricas (#305): preencho em background após task finalizar.
@@ -606,6 +615,126 @@ class TaskRunnerService {
         }
     }
 
+    /**
+     * #stuck-epics (red-team Fable): destrava épicas presas no BECO SEM SAÍDA — marcadas kind:'epic'
+     * mas SEM subTasks (a decomposição/aprovação falhou no passado e caiu no catch "manual"). Elas
+     * nunca entram na fila (getQueuedTasks exclui epic) NEM re-decompõem (o auto-decompose exige
+     * kind!=='epic'). Sweep periódico (chamado no pollSync): pega 1 épica elegível por tick e roda
+     * decomposeEpic (se não houver plano) + approveDecomposition (strictDedup, evita duplicar sub-issues).
+     * Serial, com as MESMAS guardas de pausa do dispatch (não queima LLM sob cota/pico/teto), anti-spin
+     * (cap 3 + backoff crescente incrementado ANTES do LLM p/ ser crash-safe) e SEM consumir tentativa
+     * em falha de COTA. Idempotente: sucesso seta subTasks → some do conjunto elegível.
+     */
+    private async decomposeStuckEpics(): Promise<void> {
+        const cfg = this.getAutomationConfig();
+        // Guardas de pausa (mesma ordem/critério do autoPlayNext) — decompor é chamada LLM.
+        if (!cfg.autoDecompose || !cfg.autoPlay) return;
+        if (this.epicSweepInFlight) return;                    // não sobrepõe ticks
+        if (this.pendingExecs > 0) return;                     // fecha a race com o chain (markAsEpic mid-dispatch)
+        if (isQuotaExhausted() || this.isPeakHold()) return;
+        const dailyBudget = typeof cfg.dailyRoundBudget === 'number' && cfg.dailyRoundBudget > 0 ? cfg.dailyRoundBudget : 200;
+        if (this.dailyRoundsToday() >= dailyBudget) return;
+
+        const now = Date.now();
+        const eligible = Object.values(this.store.tasks)
+            .filter(t =>
+                t.kind === 'epic' &&
+                t.status === 'pending' &&
+                !t.subTasks?.length &&
+                !t.parentEpic &&
+                (t.epicDecomposeAttempts ?? 0) < 3 &&
+                !(t.epicDecomposeNextAttemptAt && t.epicDecomposeNextAttemptAt > now) &&
+                !this.epicOpsInFlight.has(t.issueNumber))
+            .sort((a, b) => a.issueNumber - b.issueNumber);
+        const task = eligible[0];
+        if (!task) return;
+
+        this.epicSweepInFlight = true;
+        try {
+            // Increment-FIRST (crash-safe): crash no meio do LLM sem incremento = crash-loop sem backoff.
+            const attempt = (task.epicDecomposeAttempts ?? 0) + 1;
+            const backoffMs = [15 * 60_000, 60 * 60_000, 6 * 60 * 60_000][attempt - 1] ?? 6 * 60 * 60_000;
+            task.epicDecomposeAttempts = attempt;
+            task.epicDecomposeNextAttemptAt = now + backoffMs;
+            this.save();
+
+            try {
+                log.info(`decomposeStuckEpics: destravando épica #${task.issueNumber} (tentativa ${attempt}/3)...`);
+                if (!task.decompositionPlan) await this.decomposeEpic(task.issueNumber);
+                await this.approveDecomposition(task.issueNumber, { strictDedup: true });
+                // Sucesso: zera anti-spin e retoma o dispatch (sub-tasks já na fila).
+                task.epicDecomposeAttempts = 0;
+                task.epicDecomposeNextAttemptAt = undefined;
+                this.recordEvent(task, 'task_created', `Épica destravada: decomposição concluída (${task.subTasks?.length ?? 0} sub-tasks).`, { stuckEpicSwept: true });
+                this.save();
+                this.autoPlayNext();
+            } catch (e: any) {
+                const msg = e?.message || String(e);
+                if (isQuotaExhausted() || isQuotaError(msg)) {
+                    // Falha por COTA não é culpa da épica — devolve a tentativa e re-tenta em ~10min.
+                    task.epicDecomposeAttempts = attempt - 1;
+                    task.epicDecomposeNextAttemptAt = now + 10 * 60_000;
+                    this.save();
+                    log.warn(`decomposeStuckEpics: cota esgotada ao decompor #${task.issueNumber} — tentativa devolvida, retoma em ~10min.`);
+                    return;
+                }
+                this.recordEvent(task, 'task_failed', `Falha ao decompor épica presa (tentativa ${attempt}/3): ${msg}`, { stuckEpicSweep: true, error: msg });
+                // Ao ATINGIR o teto (transição 2→3): notifica UMA vez e para (o filtro de elegibilidade já barra >=3).
+                if (attempt >= 3) {
+                    try {
+                        const { notificationService } = require('./notificationService');
+                        await notificationService.create({
+                            event: 'agent.action',
+                            title: `Épica #${task.issueNumber} não decompõe`,
+                            message: `A decomposição automática falhou 3× (${msg}). Requer decomposição manual em /tasks.`,
+                            channels: ['in-app'],
+                            priority: 'high',
+                            entityType: 'opencode-task',
+                            entityId: String(task.issueNumber),
+                            senderName: 'TaskRunner',
+                        });
+                    } catch { /* best-effort */ }
+                }
+                this.save();
+            }
+        } finally {
+            this.epicSweepInFlight = false;
+        }
+    }
+
+    /**
+     * #stuck-epics item 7 (red-team): 2º modo de travamento — épicas JÁ decompostas cujas sub-tasks
+     * estão TODAS em estado terminal com ≥1 falha/rejeição (surto histórico 10-12/jul). checkEpicCompletion
+     * só fecha a épica quando TODAS merged; estas ficam 'pending' para sempre. NÃO re-executa sozinha
+     * (seria dezenas de rodadas de opencode sem opt-in do dono) — notifica 1× (flag durável) p/ decisão humana.
+     */
+    private notifyStalledDecomposedEpics(): void {
+        for (const epic of Object.values(this.store.tasks)) {
+            if (epic.kind !== 'epic' || epic.status !== 'pending' || epic.epicStalledNotified) continue;
+            const subs = (epic.subTasks ?? []).map(n => this.store.tasks[n]).filter(Boolean) as Task[];
+            if (subs.length === 0) continue; // sem subs = caso do sweep decomposeStuckEpics, não deste
+            const allTerminal = subs.every(s => this.isTerminalStatus(s.status));
+            const failedCount = subs.filter(s => s.status === 'failed' || s.status === 'rejected').length;
+            if (!allTerminal || failedCount === 0) continue; // só o caso "acabou mal"
+            epic.epicStalledNotified = true;
+            this.recordEvent(epic, 'task_failed', `Épica travada: ${subs.length} sub-tasks terminais, ${failedCount} sem sucesso. Requer decisão humana (não re-executa sozinha).`, { stalledEpic: true });
+            this.save();
+            try {
+                const { notificationService } = require('./notificationService');
+                notificationService.create({
+                    event: 'agent.action',
+                    title: `Épica #${epic.issueNumber} travada`,
+                    message: `Todas as ${subs.length} sub-tasks terminaram, mas ${failedCount} sem sucesso. Revise em /tasks — o robô não re-executa épicas automaticamente.`,
+                    channels: ['in-app'],
+                    priority: 'high',
+                    entityType: 'opencode-task',
+                    entityId: String(epic.issueNumber),
+                    senderName: 'TaskRunner',
+                }).catch(() => {});
+            } catch { /* best-effort */ }
+        }
+    }
+
     private async pollSync() {
         // Sonda de cota: se a cota/saldo de LLM esgotou, testa com uma chamada barata se já voltou.
         // Sucesso limpa o sinal (dentro de postChatCompletion) -> retoma o cascade automaticamente.
@@ -686,6 +815,12 @@ class TaskRunnerService {
                 }
             }
         }
+
+        // #stuck-epics: destrava épicas presas (decompostas-mas-não-aprovadas / sem plano). Best-effort;
+        // guardas internas (pausa/cota/reentrância). O early-return de cota lá em cima já pula este sweep.
+        this.decomposeStuckEpics().catch((e) => log.warn(`decomposeStuckEpics falhou: ${e?.message || e}`));
+        // #stuck-epics item 7: notifica (1×) épicas já decompostas cujas sub-tasks acabaram todas mal.
+        try { this.notifyStalledDecomposedEpics(); } catch (e: any) { log.warn(`notifyStalledDecomposedEpics falhou: ${e?.message || e}`); }
     }
 
     private emitLog(issueNumber: number, type: string, message: string) {
@@ -808,7 +943,7 @@ class TaskRunnerService {
         }
     }
 
-    async listIssues(state: 'open' | 'closed' | 'all' = 'open'): Promise<any[]> {
+    async listIssues(state: 'open' | 'closed' | 'all' = 'open', opts?: { strict?: boolean }): Promise<any[]> {
         try {
             const { stdout } = await gh([
                 'issue', 'list',
@@ -821,6 +956,10 @@ class TaskRunnerService {
             return JSON.parse(stdout);
         } catch (e: any) {
             log.error('List issues error', e.message);
+            // #stuck-epics: por padrão engole o erro e devolve [] (best-effort, #1347). MAS o dedup
+            // ESTRITO da re-decomposição PRECISA saber que a listagem falhou — senão o dedup #1279
+            // desliga silenciosamente e re-aprovar DUPLICA as sub-issues. Com strict, propaga.
+            if (opts?.strict) throw e;
             return [];
         }
     }
@@ -1052,6 +1191,11 @@ class TaskRunnerService {
         this.save();
         return task;
     }
+
+    // #stuck-epics: guarda per-issue de decomposição/aprovação (fecha race entre rota manual, chain e sweep).
+    private epicOpsInFlight = new Set<number>();
+    // #stuck-epics: trava de reentrância do sweep periódico (um tick pode durar >1 intervalo de poll).
+    private epicSweepInFlight = false;
 
     // Fila serial de execução (1 task por vez). O worktree (sistemav2-taskrunner-wt) é COMPARTILHADO,
     // então rodar duas execuções ao mesmo tempo corromperia o git. Tasks extras ficam 'pending' até a vez.
@@ -4162,24 +4306,34 @@ Return ONLY a JSON:
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
         if (task.kind !== 'epic') throw new Error('Task não é uma épica');
+        // #stuck-epics: guarda per-issue central — fecha a race p/ TODOS os callers (rota manual, chain,
+        // sweep periódico). Decompor leva minutos de LLM; sem isto, dois gatilhos decomporiam a MESMA épica.
+        if (this.epicOpsInFlight.has(issueNumber)) throw new Error('Decomposição já em andamento para esta épica');
+        this.epicOpsInFlight.add(issueNumber);
+        try {
+            const { taskPlannerService } = require('./taskPlannerService');
+            const plan = await taskPlannerService.decomposeEpic(task);
 
-        const { taskPlannerService } = require('./taskPlannerService');
-        const plan = await taskPlannerService.decomposeEpic(task);
-
-        task.decompositionPlan = plan;
-        task.updatedAt = new Date().toISOString();
-        this.recordEvent(task, 'task_created', `Épica decomposta em ${plan.subTasks.length} sub-tasks`);
-        this.save();
-        this.emitStatus(task);
-        return task;
+            task.decompositionPlan = plan;
+            task.updatedAt = new Date().toISOString();
+            this.recordEvent(task, 'task_created', `Épica decomposta em ${plan.subTasks.length} sub-tasks`);
+            this.save();
+            this.emitStatus(task);
+            return task;
+        } finally {
+            this.epicOpsInFlight.delete(issueNumber);
+        }
     }
 
-    async approveDecomposition(issueNumber: number): Promise<Task> {
+    async approveDecomposition(issueNumber: number, opts?: { strictDedup?: boolean }): Promise<Task> {
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
         if (task.kind !== 'epic') throw new Error('Task não é uma épica');
         if (!task.decompositionPlan) throw new Error('Épica não tem plano de decomposição');
-
+        // #stuck-epics: mesma guarda per-issue do decomposeEpic (rota manual concorrente ao sweep).
+        if (this.epicOpsInFlight.has(issueNumber)) throw new Error('Aprovação de decomposição já em andamento para esta épica');
+        this.epicOpsInFlight.add(issueNumber);
+        try {
         const plan = task.decompositionPlan;
         plan.approvedAt = new Date().toISOString();
         const subTaskNumbers: number[] = [];
@@ -4187,10 +4341,15 @@ Return ONLY a JSON:
         // Dedup determinístico (#1279): decompor a MESMA épica 2x (retry, re-plano, leva nova do
         // mesmo plano) criava issues duplicadas que o robô re-executava — a régua de similaridade
         // barra a sub-issue cujo título já existe aberto (adota a existente no lugar de criar).
+        // #stuck-epics: com strictDedup, a falha da listagem PROPAGA antes de criar qualquer issue
+        // (senão a re-tentativa parcial de uma épica travada duplicaria sub-issues).
         let openIssues: Array<{ number: number; title: string }> = [];
         try {
-            openIssues = await this.listIssues('open');
-        } catch { /* sem lista → segue sem dedup (best effort) */ }
+            openIssues = await this.listIssues('open', { strict: !!opts?.strictDedup });
+        } catch (e) {
+            if (opts?.strictDedup) throw e; // aborta ANTES de criar sub-issues — dedup indispensável
+            /* best-effort: sem lista → segue sem dedup */
+        }
 
         for (let i = 0; i < plan.subTasks.length; i++) {
             const st = plan.subTasks[i];
@@ -4241,6 +4400,9 @@ Return ONLY a JSON:
         this.save();
         this.emitStatus(task);
         return task;
+        } finally {
+            this.epicOpsInFlight.delete(issueNumber);
+        }
     }
 
     private checkEpicCompletion(task: Task): void {
