@@ -32,6 +32,7 @@ import { SupplierPaymentModal } from './Modals/SupplierPaymentModal';
 import { toast } from 'sonner';
 import { useConfirm } from '../hooks/useConfirm';
 import { notifyError } from '../utils/notifyError';
+import { sanitizeQtyInput } from '../utils/sanitizeQtyInput';
 
 interface SupplierInvoiceListProps {
     onNavigate?: (view: AppView, id: string) => void;
@@ -976,7 +977,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                                             className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                                                             placeholder="Qtd"
                                                             value={item.qty}
-                                                            onChange={e => handleUpdateEditItem(idx, 'qty', e.target.value === '' ? 0 : parseInt(e.target.value) || 0)}
+                                                            onChange={e => handleUpdateEditItem(idx, 'qty', sanitizeQtyInput(e.target.value))}
                                                             min="0"
                                                         />
                                                     </div>

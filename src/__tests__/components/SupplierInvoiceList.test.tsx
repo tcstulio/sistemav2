@@ -841,16 +841,19 @@ describe('SupplierInvoiceList — Sanitização de inputs numéricos (#1582)', (
     });
 
     it('digitar texto não-numérico no campo qty cai no fallback 0 (sem NaN)', async () => {
-        // <input type="number"> rejeita letras via teclado (user.type não injeta 'abc'),
-        // mas o handler também precisa tolerar entradas programáticas. Disparamos
-        // um evento change com value='abc' para exercitar de fato o caminho
-        // `parseInt('abc') || 0` do handler — a UI não cobre esse caminho via teclado.
+        // O caminho `parseInt('abc') || 0` (NaN fallback) é coberto em unidade
+        // por `src/__tests__/utils/sanitizeQtyInput.test.ts` — não dá para
+        // exercitá-lo via DOM porque o jsdom sanitiza 'abc' → '' em
+        // <input type="number">, fazendo o handler entrar no ramo
+        // `value === '' ? 0 : ...` antes de chegar em parseInt. Aqui só
+        // verificamos que o efeito final (qty persistido = 0, sem NaN no
+        // body) se mantém após uma tentativa de injeção programática.
         const user = await openEditModal();
 
         const qtyInput = screen.getByPlaceholderText('Qtd') as HTMLInputElement;
         fireEvent.change(qtyInput, { target: { value: 'abc' } });
 
-        // O input controlado re-renderiza para '0' (fallback do handler)
+        // O input controlado re-renderiza para '0' (sanitização → empty string → 0)
         expect(qtyInput.value).toBe('0');
 
         await user.click(screen.getByRole('button', { name: 'Salvar Alterações' }));
@@ -861,9 +864,8 @@ describe('SupplierInvoiceList — Sanitização de inputs numéricos (#1582)', (
         const call = vi.mocked(DolibarrService.updateSupplierInvoiceLine).mock.calls.at(-1);
         expect(call).toBeDefined();
         const sentQty = (call![3] as any).qty;
-        // Cobertura real do fallback: parseInt('abc') === NaN, e o handler deve
-        // retornar 0 via `NaN || 0`. Verificamos AMBOS: não-NaN E valor === 0.
         expect(Number.isNaN(sentQty)).toBe(false);
+        expect(Number.isFinite(sentQty)).toBe(true);
         expect(sentQty).toBe(0);
     });
 });

@@ -15,6 +15,7 @@ import { formatCurrency } from '../utils/formatUtils';
 import { toast } from 'sonner';
 import { logger } from '../utils/logger';
 import { notifyError } from '../utils/notifyError';
+import { sanitizeQtyInput } from '../utils/sanitizeQtyInput';
 
 const log = logger.child('SupplierList');
 
@@ -499,10 +500,11 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                     <Input
                         label="Quantidade"
                         type="number"
+                        min="0"
                         value={receptionForm.qty}
                         onChange={e => setReceptionForm({
                             ...receptionForm,
-                            qty: e.target.value === '' ? 0 : parseInt(e.target.value) || 0
+                            qty: sanitizeQtyInput(e.target.value)
                         })}
                         required
                     />
