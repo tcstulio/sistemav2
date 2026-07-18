@@ -191,6 +191,115 @@ describe('PendingPayments', () => {
 });
 
 // ------------------------------------------------------------------
+// #1579 — totalizadores não exibem NaN quando item vem sem total_ttc
+// ------------------------------------------------------------------
+describe('PendingPayments — totalizadores sem NaN (#1579)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        // Reseta implementações dos mocks — sem isso, mockReturnValue aplicado em
+        // testes anteriores vaza entre suites (vi.clearAllMocks só limpa histórico).
+        vi.mocked(useInvoices).mockReturnValue({ data: [], isLoading: false, error: null } as any);
+        vi.mocked(useSupplierInvoices).mockReturnValue({ data: [], isLoading: false, error: null } as any);
+    });
+
+    // Helper: lê o valor numérico formatado exibido no card "Total a Receber" / "Total a Pagar".
+    const getTotalCardValue = (label: 'Total a Receber' | 'Total a Pagar') => {
+        const labelEl = screen.getByText(label);
+        // O <h3> com o valor total é o próximo sibling do <p> de label
+        const h3 = labelEl.nextElementSibling as HTMLElement | null;
+        expect(h3).toBeTruthy();
+        return h3?.textContent ?? '';
+    };
+
+    it('exibe R$ 0,00 no total a receber quando item não tem total_ttc', () => {
+        const invoicesWithMissingTotal = [
+            {
+                id: '50',
+                ref: 'FA-SEM-TOTAL',
+                socid: '5',
+                project_id: undefined,
+                // total_ttc ausente (simula API incompleta)
+                statut: '1',
+                date: 1700000000,
+                date_lim_reglement: 1700086400,
+                paye: '0',
+                date_modification: 1700000000,
+            },
+        ];
+        vi.mocked(useInvoices).mockReturnValue({ data: invoicesWithMissingTotal, isLoading: false, error: null } as any);
+
+        render(<PendingPayments />);
+
+        // O card "Total a Receber" mostra R$ 0,00 — nunca R$ NaN
+        expect(getTotalCardValue('Total a Receber')).toBe('R$\u00a00,00');
+        // Garante explicitamente que o card não exibe NaN
+        expect(getTotalCardValue('Total a Receber')).not.toContain('NaN');
+    });
+
+    it('soma apenas itens válidos quando mistura total_ttc numérico com inválido', () => {
+        const invoicesMixed = [
+            {
+                id: '51',
+                ref: 'FA-VALIDA',
+                socid: '5',
+                project_id: undefined,
+                total_ttc: 1234.56,
+                statut: '1',
+                date: 1700000000,
+                date_lim_reglement: 1700086400,
+                paye: '0',
+                date_modification: 1700000000,
+            },
+            {
+                id: '52',
+                ref: 'FA-INVALIDO',
+                socid: '5',
+                project_id: undefined,
+                total_ttc: 'abc', // valor não numérico — vira 0 no reduce via Number() || 0
+                statut: '1',
+                date: 1700000000,
+                date_lim_reglement: 1700086400,
+                paye: '0',
+                date_modification: 1700000000,
+            },
+        ];
+        vi.mocked(useInvoices).mockReturnValue({ data: invoicesMixed, isLoading: false, error: null } as any);
+
+        render(<PendingPayments />);
+
+        // 1234.56 + 0 (fallback) = 1234.56 — soma dos itens válidos permanece íntegra
+        expect(getTotalCardValue('Total a Receber')).toBe('R$\u00a01.234,56');
+    });
+
+    it('exibe R$ 0,00 no total a pagar quando supplier_invoice não tem total_ttc', () => {
+        const supplierInvoicesMissing = [
+            {
+                id: '60',
+                ref: 'FF-SEM-TOTAL',
+                socid: '7',
+                project_id: undefined,
+                // total_ttc ausente
+                statut: '1',
+                date: 1700000000,
+                date_lim_reglement: 1700086400,
+                paye: '0',
+                date_modification: 1700000000,
+            },
+        ];
+        vi.mocked(useSupplierInvoices).mockReturnValue({
+            data: supplierInvoicesMissing,
+            isLoading: false,
+            error: null,
+        } as any);
+
+        render(<PendingPayments />);
+
+        expect(getTotalCardValue('Total a Pagar')).toBe('R$\u00a00,00');
+        expect(getTotalCardValue('Total a Pagar')).not.toContain('NaN');
+    });
+});
+
+// ------------------------------------------------------------------
 // #1083 — pendências sem vencimento explícito NÃO ficam atrasadas no dia
 // ------------------------------------------------------------------
 describe('PendingPayments — unidade de data do prazo padrão (#1083)', () => {
