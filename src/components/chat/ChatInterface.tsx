@@ -8,12 +8,13 @@ import * as Operations from '../../services/api/operations';
 import { RichTextEditor } from '../common/RichTextEditor';
 import { TaskWizard } from '../Projects/TaskWizard';
 import { useEvents, useProjects, useUsers } from '../../hooks/dolibarr';
-import { Project, DolibarrUser } from '../../types';
+import { Project, DolibarrUser, AgendaEvent } from '../../types';
 import { DolibarrService } from '../../services/dolibarrService';
 import { toast } from 'sonner';
 import { notifyError } from '../../utils/notifyError';
-import { SafeHtml, stripHtml, sanitizeHtml } from '../../utils/sanitizeHtml';
+import { SafeHtml, stripHtml } from '../../utils/sanitizeHtml';
 import { useConfirm } from '../../hooks/useConfirm';
+import { ChatMessage, ChatReply, agendaEventToChatMessage } from './types';
 
 interface ChatInterfaceProps {
     elementId: string;
@@ -44,12 +45,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
     const [isSending, setIsSending] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [showSearch, setShowSearch] = useState(false);
-    const [replyingTo, setReplyingTo] = useState<any>(null);
+    const [replyingTo, setReplyingTo] = useState<ChatReply | null>(null);
     const [showTaskWizard, setShowTaskWizard] = useState(false);
     const [wizardInitialData, setWizardInitialData] = useState<{ label: string; description: string }[] | undefined>(undefined);
     const [isUploading, setIsUploading] = useState(false);
     // Otimista: mensagens adicionadas localmente antes do POST confirmar pelo servidor
-    const [optimisticMessages, setOptimisticMessages] = useState<any[]>([]);
+    const [optimisticMessages, setOptimisticMessages] = useState<ChatMessage[]>([]);
     // Erro de envio visível inline (além do toast) para que o usuário saiba que pode tentar de novo
     const [sendError, setSendError] = useState<string | null>(null);
     // Edição inline: id da mensagem sendo editada + texto em edição
@@ -74,28 +75,29 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
     const users = (usersData || []) as DolibarrUser[];
 
     // Filter events
-    const chatMessages = useMemo(() => {
-        const baseEvents = events || [];
+    const chatMessages = useMemo<ChatMessage[]>(() => {
+        const baseEvents: AgendaEvent[] = events || [];
+        const realMessages = baseEvents.map(agendaEventToChatMessage);
         // Remove mensagens otimistas que já possuem contraparte real vinda do Dolibarr
         const realDescriptions = new Set(
             baseEvents
-                .filter((e: any) => e.elementtype === elementType && String(e.fk_element) === String(elementId))
-                .map((e: any) => e.description || e.label || '')
+                .filter(e => e.elementtype === elementType && String(e.fk_element) === String(elementId))
+                .map(e => e.description || e.label || '')
         );
         const activeOptimistic = optimisticMessages.filter(
-            (m: any) => !realDescriptions.has(m.description || m.label || '')
+            m => !realDescriptions.has(m.description || m.label || m.content || '')
         );
-        return [...activeOptimistic, ...baseEvents]
-            .filter((e: any) => {
+        return [...activeOptimistic, ...realMessages]
+            .filter(m => {
                 // Determine if this is a DM or standard entity chat
                 if (elementType === 'user') {
-                    const isDM = e.elementtype === 'user';
+                    const isDM = m.elementtype === 'user';
                     if (!isDM) return false;
 
                     const myId = String(currentUser?.id);
                     const otherId = String(elementId);
-                    const authorId = String(e.fk_user_author);
-                    const targetId = String(e.fk_element);
+                    const authorId = String(m.senderId);
+                    const targetId = String(m.fk_element ?? '');
 
                     return (
                         (authorId === myId && targetId === otherId) ||
@@ -103,15 +105,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                     );
                 } else {
                     // Standard Project/Task chat
-                    return e.elementtype === elementType && String(e.fk_element) === String(elementId);
+                    return m.elementtype === elementType && String(m.fk_element) === String(elementId);
                 }
             })
-            .filter((e: any) => {
+            .filter(m => {
                 if (!searchTerm) return true;
-                const content = (e.description || e.label || '').toLowerCase();
+                const content = (m.content || '').toLowerCase();
                 return content.includes(searchTerm.toLowerCase());
             })
-            .sort((a: any, b: any) => a.date_start - b.date_start); // Oldest first
+            .sort((a, b) => Number(a.date_start ?? 0) - Number(b.date_start ?? 0)); // Oldest first
     }, [events, optimisticMessages, elementId, elementType, currentUser, searchTerm]);
 
     // Reconcilia o estado otimista: descarta mensagens locais assim que a real aparece no cache
@@ -119,16 +121,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
         if (!events || events.length === 0 || optimisticMessages.length === 0) return;
         const realDescriptions = new Set(
             events
-                .filter((e: any) => e.elementtype === elementType && String(e.fk_element) === String(elementId))
-                .map((e: any) => e.description || e.label || '')
+                .filter(e => e.elementtype === elementType && String(e.fk_element) === String(elementId))
+                .map(e => e.description || e.label || '')
         );
-        const remaining = optimisticMessages.filter((m: any) => !realDescriptions.has(m.description || m.label || ''));
+        const remaining = optimisticMessages.filter(m => !realDescriptions.has(m.description || m.label || m.content || ''));
         if (remaining.length !== optimisticMessages.length) {
             setOptimisticMessages(remaining);
         }
     }, [events, elementType, elementId, optimisticMessages]);
 
-    const handleDeleteMessage = useCallback(async (msg: any) => {
+    const handleDeleteMessage = useCallback(async (msg: ChatMessage) => {
         if (!config) return;
         const ok = await confirm({
             title: 'Excluir mensagem',
@@ -153,12 +155,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
         }
     }, [config, confirm, refetch]);
 
-    const handleStartEdit = useCallback((msg: any) => {
+    const handleStartEdit = useCallback((msg: ChatMessage) => {
         setEditingMsgId(String(msg.id));
-        setEditingText(msg.description || msg.label || '');
+        setEditingText(msg.description || msg.label || msg.content || '');
     }, []);
 
-    const handleSaveEdit = useCallback(async (msg: any) => {
+    const handleSaveEdit = useCallback(async (msg: ChatMessage) => {
         if (!config || !editingText.trim()) return;
         setIsSavingEdit(true);
         try {
@@ -235,8 +237,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
         // Handle Reply
         if (replyingTo) {
             const quote = `<blockquote style="border-left: 3px solid #ccc; padding-left: 10px; margin-bottom: 5px; color: #666; font-size: 0.9em;">
-                <strong>${replyingTo.user_author_name || 'Usuário'}:</strong><br/>
-                ${replyingTo.description || replyingTo.label || '(Sem conteúdo)'}
+                <strong>${replyingTo.senderName || 'Usuário'}:</strong><br/>
+                ${replyingTo.content || '(Sem conteúdo)'}
             </blockquote><br/>`;
             finalMessage = quote + finalMessage;
         }
@@ -244,16 +246,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
         const nowSec = Math.floor(Date.now() / 1000);
 
         // Otimista: exibe a mensagem localmente antes do POST resolver
-        const optimisticMsg = {
+        const optimisticMsg: ChatMessage = {
             id: `optimistic-${nowSec}-${Math.random().toString(36).slice(2, 8)}`,
+            content: finalMessage,
+            senderId: String(currentUser?.id),
+            senderName: 'Eu',
+            createdAt: new Date(nowSec * 1000),
+            replyTo: null,
+            // Campos Dolibarr preservados para filtros, dedup e ordenação
             label: `Comentário em ${elementType}`,
             description: finalMessage,
             date_start: nowSec,
             type_code: 'AC_CHAT',
             elementtype: elementType,
             fk_element: elementId,
-            fk_user_author: String(currentUser?.id),
-            user_author_name: 'Eu',
             percentage: 100,
             _optimistic: true,
         };
@@ -286,7 +292,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
         } catch (error) {
             console.error('[ChatInterface] Falha ao enviar mensagem:', error);
             // Preserva o texto digitado para o usuário tentar novamente; remove o bubble otimista
-            setOptimisticMessages(prev => prev.filter((m: any) => m.id !== optimisticMsg.id));
+            setOptimisticMessages(prev => prev.filter(m => m.id !== optimisticMsg.id));
             const errMsg = error instanceof Error ? error.message : String(error || 'Erro desconhecido');
             setSendError(errMsg);
             notifyError('Enviar mensagem', error);
@@ -360,9 +366,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                 {chatMessages.length === 0 ? (
                     <div className="text-center text-gray-400 py-10 text-sm">Nenhum comentário ainda. Inicie a conversa!</div>
                 ) : (
-                    chatMessages.map((msg: any) => {
-                        const isMe = String(msg.fk_user_author) === String(currentUser?.id);
-                        const authorName = msg.user_author_name || (isMe ? 'Eu' : `Usuário ${msg.fk_user_author}`);
+                    chatMessages.map(msg => {
+                        const isMe = String(msg.senderId) === String(currentUser?.id);
+                        const authorName = msg.senderName || (isMe ? 'Eu' : `Usuário ${msg.senderId}`);
                         const isEditing = editingMsgId === String(msg.id);
                         const isDeleting = deletingIds.has(String(msg.id));
 
@@ -408,7 +414,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                                         </div>
                                     ) : (
                                         <SafeHtml
-                                            html={msg.description || msg.label || '(Sem conteúdo)'}
+                                            html={msg.content || '(Sem conteúdo)'}
                                             className="text-sm message-content"
                                         />
                                     )}
@@ -416,8 +422,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                                     {/* Action Bar */}
                                     <div className={`absolute top-0 right-[-8px] lg:opacity-0 lg:group-hover:opacity-100 opacity-100 transition-opacity translate-x-full pr-2 flex flex-col gap-2`}>
                                         <button
-                                            onClick={() => setReplyingTo(msg)}
-                                            className="p-2 bg-white dark:bg-gray-700 shadow-sm border border-gray-100 dark:border-gray-600 rounded-full text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:shadow-md transition-all sm:p-1.5"
+                                            onClick={() => setReplyingTo({
+                                                messageId: msg.id,
+                                                content: msg.content,
+                                                senderId: msg.senderId,
+                                                senderName: msg.senderName,
+                                                createdAt: msg.createdAt,
+                                            })}
+                                            className="p-2 bg-white dark:bg-gray-700 shadow-sm border border-gray-100 dark:bg-gray-600 rounded-full text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:shadow-md transition-all sm:p-1.5"
                                             title="Responder"
                                         >
                                             <div className="transform scale-x-[-1]">
@@ -453,7 +465,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                                             <button
                                                 onClick={() => {
                                                     // Strip HTML for task label/description
-                                                    const rawText = msg.description || msg.label || '';
+                                                    const rawText = msg.content || '';
                                                     const cleanText = rawText.replace(/<[^>]*>?/gm, '');
                                                     const label = cleanText.substring(0, 50) + (cleanText.length > 50 ? '...' : '');
 
@@ -473,7 +485,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
 
                                     <div className={`text-[10px] mt-1 flex items-center gap-1 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>
                                         <Calendar size={10} />
-                                        {format(new Date(msg.date_start * 1000), 'dd/MM/yy HH:mm', { locale: ptBR })}
+                                        {format(new Date((msg.date_start ?? Math.floor(Date.parse(String(msg.createdAt)) / 1000)) * 1000), 'dd/MM/yy HH:mm', { locale: ptBR })}
                                     </div>
                                 </div>
                             </div>
@@ -488,8 +500,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ elementId, element
                 {replyingTo && (
                     <div className="flex items-center justify-between text-xs bg-gray-100 dark:bg-gray-700 p-2 rounded border-l-4 border-blue-500 mb-1">
                         <div className="truncate max-w-[90%]">
-                            <span className="font-bold">Respondendo a {replyingTo.user_author_name}: </span>
-                            <span className="text-gray-500 dark:text-gray-400">{stripHtml(replyingTo.description || '').substring(0, 50) + '...'}</span>
+                            <span className="font-bold">Respondendo a {replyingTo.senderName || 'Usuário'}: </span>
+                            <span className="text-gray-500 dark:text-gray-400">{stripHtml(replyingTo.content || '').substring(0, 50) + '...'}</span>
                         </div>
                         <button onClick={() => setReplyingTo(null)} className="text-gray-500 hover:text-red-500">
                             &times;
