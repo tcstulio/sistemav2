@@ -1035,6 +1035,11 @@ class TaskRunnerService {
         const task = this.store.tasks[issueNumber];
         if (!task) throw new Error(`Task #${issueNumber} not found`);
         if (task.status === 'running' || task.status === 'fixing') throw new Error(`Task #${issueNumber} já está ${task.status} — aguarde terminar para escalar.`);
+        // #escalada-manual (red-team): a UI só oferece o botão em reviewing/approved/failed, mas a API
+        // não pode aceitar escalar uma task TERMINAL (já mergeada/rejeitada/cancelada) — reabriria trabalho
+        // fechado. Escalável = estados que aguardam decisão humana (+ pending/holds, que ainda vão rodar).
+        const NON_ESCALATABLE = ['merged', 'rejected', 'rejected_precheck', 'cancelled'];
+        if (NON_ESCALATABLE.includes(task.status)) throw new Error(`Task #${issueNumber} está ${task.status} (encerrada) — não é escalável.`);
         const m = String(model || '').trim().toLowerCase();
         if (m !== 'opus' && m !== 'fable') throw new Error(`Modelo inválido: "${model}". Use 'opus' ou 'fable'.`);
         task.coderEscalationModelOverride = m;
@@ -2495,6 +2500,10 @@ class TaskRunnerService {
         if (task.opusInFlightAt && !task.opusEscalated) {
             task.opusEscalated = true;
             task.opusInFlightAt = undefined;
+            // #escalada-manual (red-team): consome TAMBÉM a força manual — senão um restart durante a
+            // escalada re-dispararia o coder forte a cada boot (e se o run forte causou o crash, loopa nos boots).
+            task.forceEscalation = false;
+            task.coderEscalationModelOverride = undefined;
             this.save();
             this.recordEvent(task, 'attempt_started', 'Escalada Opus em voo interrompida por restart — marcada como consumida (não re-dispara).', { opusEscalation: true, recovered: true });
         }
@@ -2509,6 +2518,16 @@ class TaskRunnerService {
                 task.status = 'pending';
                 task.startedAt = undefined;
                 task.updatedAt = new Date().toISOString();
+                // #escalada-manual (red-team): a força manual BYPASSA o opusInCooldown, então sem freio o
+                // autoPlayNext re-despacharia a task 'pending' IMEDIATAMENTE → spin de re-despacho contra o
+                // cooldown por horas (queimando Planner-LLM/GitHub e renovando o cooldown, o que trava as
+                // escaladas AUTO das outras tasks). Segura a task FORA da fila (planWaitUntil) até o cooldown
+                // expirar; aí retenta o modelo escolhido 1×. O caminho AUTO não precisa disto (respeita o
+                // cooldown e degrada pro opencode), então só aplicamos quando forceEscalation está ativo.
+                if (task.forceEscalation) {
+                    const cd = this.opusDayState().cooldownUntil;
+                    task.planWaitUntil = cd ? new Date(cd).getTime() : Date.now() + OPUS_QUOTA_COOLDOWN_MS;
+                }
                 this.recordEvent(task, 'quota_hold', '⏸️ Escalada Opus adiada: cota Claude esgotada — re-enfileirado, retenta quando a assinatura renovar.', { opusQuotaHold: true });
                 this.save();
                 this.emitStatus(task);

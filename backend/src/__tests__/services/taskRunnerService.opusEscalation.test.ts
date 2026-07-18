@@ -280,4 +280,12 @@ describe('escalada MANUAL (botão do admin) — forceEscalation + escalateTask',
         svc.store.tasks[10] = { issueNumber: 10, status: 'running', branch: 'fix-10' };
         await expect(svc.escalateTask(10, 'opus')).rejects.toThrow(/já está/i);
     });
+
+    it('escalateTask rejeita task TERMINAL (merged/rejected/cancelled) — não reabre trabalho fechado', async () => {
+        for (const st of ['merged', 'rejected', 'rejected_precheck', 'cancelled']) {
+            svc.store.tasks[20] = { issueNumber: 20, status: st, branch: 'fix-20' };
+            await expect(svc.escalateTask(20, 'opus')).rejects.toThrow(/encerrada|escalável/i);
+        }
+        expect(svc.scheduleExec).not.toHaveBeenCalled();
+    });
 });
