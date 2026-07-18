@@ -221,7 +221,13 @@ class NotificationService {
             throw new Error('No phone number for WhatsApp delivery');
         }
         const chatId = phone.includes('@c.us') ? phone : `${phone}@c.us`;
-        await channelRouter.sendWhatsApp(chatId, notification.message);
+        // #1205: o channelRouter NÃO lança — devolve { success, error }. Ignorar o retorno marcava o
+        // canal como ENTREGUE mesmo numa falha silenciosa (sessão caída, destino recusado). Checa e
+        // lança, para o loop de entrega jogar em failedChannels (não em deliveredTo).
+        const result = await channelRouter.sendWhatsApp(chatId, notification.message);
+        if (!result?.success) {
+            throw new Error(result?.error || 'Envio de WhatsApp falhou (canal retornou success=false).');
+        }
     }
 
     private async deliverEmail(notification: Notification): Promise<void> {
@@ -229,11 +235,15 @@ class NotificationService {
         if (!email) {
             throw new Error('No email for email delivery');
         }
-        await channelRouter.sendEmail(
+        // #1205: idem WhatsApp — checa o { success } do canal em vez de assumir entrega.
+        const result = await channelRouter.sendEmail(
             email,
             notification.title,
             notification.message
         );
+        if (!result?.success) {
+            throw new Error(result?.error || 'Envio de e-mail falhou (canal retornou success=false).');
+        }
     }
 
     async notifyTeam(params: {
