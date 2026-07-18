@@ -8,6 +8,15 @@ import { formatCurrency } from '../utils/formatUtils';
 import { getThemeClass } from '../utils/theme';
 import PageLayout from './ui/PageLayout';
 
+// #1086: a Receita/gráficos contam só faturas REAIS. Exclui rascunho (statut '0') e abandonada
+// (statut '3') — que não são receita — e nota de crédito (type '2', que é ESTORNO). Antes somava
+// total_ttc de TODAS as faturas, inflando a receita com rascunhos e distorcendo com estornos.
+export const isRevenueInvoice = (inv: { statut?: string | number; type?: string | number }): boolean => {
+    const st = String(inv?.statut ?? '');
+    const ty = String(inv?.type ?? '');
+    return st !== '0' && st !== '3' && ty !== '2';
+};
+
 const ReportsView: React.FC = () => {
     const { config } = useDolibarr();
     const navigate = useNavigate();
@@ -38,7 +47,7 @@ const ReportsView: React.FC = () => {
         invoices.forEach(inv => {
             const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
             const date = new Date(dateVal);
-            if (date.getFullYear() === selectedYear) {
+            if (date.getFullYear() === selectedYear && isRevenueInvoice(inv)) {
                 months[date.getMonth()].sales += inv.total_ttc;
             }
         });
@@ -46,7 +55,7 @@ const ReportsView: React.FC = () => {
         supplierInvoices.forEach(inv => {
             const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
             const date = new Date(dateVal);
-            if (date.getFullYear() === selectedYear) {
+            if (date.getFullYear() === selectedYear && isRevenueInvoice(inv)) {
                 months[date.getMonth()].expenses += inv.total_ttc;
             }
         });
@@ -61,7 +70,7 @@ const ReportsView: React.FC = () => {
             if (inv.socid) {
                 const dateVal = inv.date < 100000000000 ? inv.date * 1000 : inv.date;
                 const date = new Date(dateVal);
-                if (date.getFullYear() === selectedYear) {
+                if (date.getFullYear() === selectedYear && isRevenueInvoice(inv)) {
                     map[inv.socid] = (map[inv.socid] || 0) + inv.total_ttc;
                 }
             }
