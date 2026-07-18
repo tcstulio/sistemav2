@@ -189,6 +189,10 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
             toast.warning("Por favor, selecione armazém e produto");
             return;
         }
+        if (!Number.isFinite(receptionForm.qty)) {
+            toast.error("Quantidade inválida. Informe um número válido.");
+            return;
+        }
         setIsSubmittingReception(true);
         try {
             // Create stock movement (In)
@@ -496,7 +500,10 @@ export const SupplierList: React.FC<SupplierListProps> = ({ onNavigate, onRefres
                         label="Quantidade"
                         type="number"
                         value={receptionForm.qty}
-                        onChange={e => setReceptionForm({ ...receptionForm, qty: parseInt(e.target.value) })}
+                        onChange={e => setReceptionForm({
+                            ...receptionForm,
+                            qty: e.target.value === '' ? 0 : parseInt(e.target.value) || 0
+                        })}
                         required
                     />
                 </div>

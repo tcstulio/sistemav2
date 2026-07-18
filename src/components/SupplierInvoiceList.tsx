@@ -279,6 +279,12 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
         e.preventDefault();
         if (!editingInvoiceData || !config) return;
 
+        const hasInvalidQty = editingInvoiceData.items.some(item => !Number.isFinite(item.qty));
+        if (hasInvalidQty) {
+            toast.error("Quantidade inválida. Informe um número válido para todos os itens.");
+            return;
+        }
+
         setIsSubmittingInvoice(true);
         try {
             if (!editingInvoiceData.id) {
@@ -970,7 +976,7 @@ const SupplierInvoiceList: React.FC<SupplierInvoiceListProps> = ({ onNavigate })
                                                             className="w-full p-1 text-sm border rounded mb-1 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                                                             placeholder="Qtd"
                                                             value={item.qty}
-                                                            onChange={e => handleUpdateEditItem(idx, 'qty', parseInt(e.target.value))}
+                                                            onChange={e => handleUpdateEditItem(idx, 'qty', e.target.value === '' ? 0 : parseInt(e.target.value) || 0)}
                                                             min="1"
                                                         />
                                                     </div>
