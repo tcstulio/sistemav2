@@ -356,6 +356,44 @@ describe('interBankingRoutes', () => {
             expect(mockInterApiService.criarPixCobranca).not.toHaveBeenCalled();
         });
 
+        it('POST /pix/cobranca sem devedor retorna 400 (#1542 — devedor é obrigatório)', async () => {
+            // Garantia explícita contra a regressão de #1542: o campo `devedor` é
+            // OBRIGATÓRIO no PixCobrancaSchema (com refine exigindo cpf OU cnpj).
+            // Sem `devedor` o payload NÃO pode passar pela validação.
+            const res = await request(app)
+                .post('/api/inter/pix/cobranca')
+                .send({
+                    valor: { original: '100.00' },
+                    chave: 'teste@email.com',
+                    // devedor ausente de propósito
+                });
+
+            expect(res.status).toBe(400);
+            expect(res.body).toMatchObject({
+                error: expect.objectContaining({ code: 'VALIDATION_ERROR' }),
+            });
+            // O detalhe deve apontar para `devedor` no path Zod.
+            const details = (res.body.error?.details ?? []) as Array<{ field: string }>;
+            expect(details.some((d) => d.field.startsWith('devedor'))).toBe(true);
+            expect(mockInterApiService.criarPixCobranca).not.toHaveBeenCalled();
+        });
+
+        it('POST /pix/cobranca com devedor sem cpf/cnpj retorna 400 (refine)', async () => {
+            // Mesmo que o objeto `devedor` esteja presente, é obrigatório ter
+            // cpf OU cnpj (.refine). Payload sem ambos deve falhar a validação.
+            const res = await request(app)
+                .post('/api/inter/pix/cobranca')
+                .send({
+                    valor: { original: '100.00' },
+                    chave: 'teste@email.com',
+                    devedor: { nome: 'Maria' }, // sem cpf nem cnpj
+                });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockInterApiService.criarPixCobranca).not.toHaveBeenCalled();
+        });
+
         it('POST /pagamento/boleto rejeita codBarraLinhaDigitavel inválido com 400', async () => {
             const res = await request(app)
                 .post('/api/inter/pagamento/boleto')
@@ -591,6 +629,96 @@ describe('interBankingRoutes', () => {
                 success: false,
                 error: expect.objectContaining({ code: 'INIT_FAILED' }),
             });
+        });
+    });
+
+    // ============================================================
+    // Cobertura completa dos endpoints restantes (#1542)
+    // GETs que não passam por validateBody mas usam o service —
+    // garantem que a rota existe, retorna 200, e usa o envelope
+    // apiResponse padronizado.
+    // ============================================================
+
+    describe('Cobertura GET endpoints restantes (#1542)', () => {
+        it('GET /pix/cobranca/:txid retorna 200 com envelope padronizado', async () => {
+            mockInterApiService.consultarPixCobranca.mockResolvedValue({ txid: 'abc', status: 'ATIVA' });
+            const txid = 'a'.repeat(26);
+            const res = await request(app).get(`/api/inter/pix/cobranca/${txid}`);
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data).toHaveProperty('txid');
+            expect(mockInterApiService.consultarPixCobranca).toHaveBeenCalledWith(txid);
+        });
+
+        it('GET /pix/:e2eid retorna 200 com envelope padronizado', async () => {
+            mockInterApiService.consultarPix.mockResolvedValue({ endToEndId: 'e2eid-1' });
+            const res = await request(app).get('/api/inter/pix/e2eid-1');
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data).toHaveProperty('endToEndId');
+            expect(mockInterApiService.consultarPix).toHaveBeenCalledWith('e2eid-1');
+        });
+
+        it('GET /boleto/:nossoNumero retorna 200 com envelope padronizado', async () => {
+            mockInterApiService.consultarBoleto.mockResolvedValue({ nossoNumero: 'xyz' });
+            const res = await request(app).get('/api/inter/boleto/xyz');
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data).toHaveProperty('nossoNumero');
+            expect(mockInterApiService.consultarBoleto).toHaveBeenCalledWith('xyz');
+        });
+
+        it('GET /boleto/:nossoNumero/pdf retorna application/pdf', async () => {
+            const pdfBuffer = Buffer.from('%PDF-1.4 mock-pdf-content');
+            mockInterApiService.downloadBoletoPDF.mockResolvedValue(pdfBuffer);
+            const res = await request(app).get('/api/inter/boleto/xyz/pdf');
+
+            expect(res.status).toBe(200);
+            expect(res.headers['content-type']).toMatch(/application\/pdf/);
+            expect(res.headers['content-disposition']).toMatch(/attachment.*xyz\.pdf/);
+        });
+
+        it('GET /pagamento/:id/comprovante retorna application/pdf', async () => {
+            const pdfBuffer = Buffer.from('%PDF-1.4 mock-receipt-content');
+            mockInterApiService.getComprovantePagamento.mockResolvedValue(pdfBuffer);
+            const res = await request(app).get('/api/inter/pagamento/123/comprovante');
+
+            expect(res.status).toBe(200);
+            expect(res.headers['content-type']).toMatch(/application\/pdf/);
+            expect(res.headers['content-disposition']).toMatch(/attachment.*123\.pdf/);
+        });
+
+        it('GET /webhook/pix/config/:chave retorna 200 com envelope padronizado', async () => {
+            mockInterApiService.consultarWebhookPix.mockResolvedValue({ chave: 'minha-chave' });
+            const res = await request(app).get('/api/inter/webhook/pix/config/minha-chave');
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockInterApiService.consultarWebhookPix).toHaveBeenCalledWith('minha-chave');
+        });
+
+        it('GET /boleto (listagem com filtros) aceita filtros válidos com 200', async () => {
+            mockInterApiService.listarBoletos.mockResolvedValue({ items: [] });
+            const res = await request(app)
+                .get('/api/inter/boleto')
+                .query({ dataInicial: '2024-01-01', dataFinal: '2024-01-31', situacao: 'PAGO' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(mockInterApiService.listarBoletos).toHaveBeenCalled();
+        });
+
+        it('GET /boleto rejeita situacao inválida com 400 (validateQuery)', async () => {
+            const res = await request(app)
+                .get('/api/inter/boleto')
+                .query({ dataInicial: '2024-01-01', dataFinal: '2024-01-31', situacao: 'INVALID_STATUS' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+            expect(mockInterApiService.listarBoletos).not.toHaveBeenCalled();
         });
     });
 });
