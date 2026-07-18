@@ -32,11 +32,10 @@ import {
     isWorktreeInUse,
     junctionPreUnlinkSteps,
     normalizePath,
+    OPENCODE_ORPHAN_NEEDLES,
     parseWorktreePorcelain,
-    PROMPT_FILE,
     shouldAlertLowDisk,
     summarizeReport,
-    VISUAL_JUDGE_MARKER,
     type DiskInfo,
     type GcReport,
 } from '../backend/src/utils/gcWorktrees';
@@ -75,7 +74,9 @@ const CLAUDE_WORKTREES_DIRS = [
 ].filter((d) => fs.existsSync(d));
 
 const DISK_THRESHOLD = Number(process.env.GC_DISK_THRESHOLD_BYTES) || DEFAULT_DISK_THRESHOLD_BYTES;
-const OPENCODE_NEEDLES = [PROMPT_FILE, VISUAL_JUDGE_MARKER];
+// #kill-per-slot: usa a fonte ÚNICA de needles (inclui RUN_MARKER_PREFIX). No GC é seguro matar por
+// [tr-run: porque o reap de opencode só roda com o robô OCIOSO (taskRunnerHasLiveRun()==false).
+const OPENCODE_NEEDLES = OPENCODE_ORPHAN_NEEDLES;
 
 function log(msg: string): void {
     const ts = new Date().toISOString();
@@ -165,30 +166,41 @@ function applyJunctionSafeRemoval(plan: ReturnType<typeof buildJunctionSafeRemov
 async function reapProcesses(): Promise<GcReport['processesReaped']> {
     const reaped: GcReport['processesReaped'] = [];
     // opencode órfão (mesma discriminação do TaskRunner — needles do projectID compartilhado).
-    try {
-        const pids = (await listPidsByName('opencode')).filter((p) => p !== process.pid);
-        const cls = await tryGetCommandLines(pids);
-        const targets = pids.filter((p) => {
-            const cl = cls.get(p) ?? '';
-            return isOrphanOpencode(cl, OPENCODE_NEEDLES);
-        });
-        const killed: number[] = [];
-        for (const pid of targets) {
-            const r = await killTree(pid);
-            if (r.ok && !r.alreadyDead) killed.push(pid);
-        }
-        reaped.push({ name: 'opencode', pids: killed });
-    } catch {
+    // #kill-per-slot: NÃO reapeia opencode se o TaskRunner tem execução VIVA — o GC das 03:00 mataria
+    // o coder em pleno trabalho (robô roda 24/7). As varreduras do próprio TaskRunner cuidam dos órfãos
+    // durante a execução; o GC só limpa quando o robô está ocioso.
+    if (taskRunnerHasLiveRun()) {
+        log('reap de opencode PULADO — TaskRunner tem execução viva (running/fixing/cancelling)');
         reaped.push({ name: 'opencode', pids: [] });
+    } else {
+        try {
+            const pids = (await listPidsByName('opencode')).filter((p) => p !== process.pid);
+            const cls = await tryGetCommandLines(pids);
+            if (cls === null) {
+                // #kill-per-slot: CommandLine indisponível (WMI falhou) → NÃO over-mata (mataria opencode
+                // manual/outro projeto). Estrito: pula o reap; o próximo tick tenta de novo.
+                log('reap de opencode PULADO — CommandLine indisponível (estrito, não over-mata)');
+                reaped.push({ name: 'opencode', pids: [] });
+            } else {
+                const targets = pids.filter((p) => isOrphanOpencode(cls.get(p) ?? '', OPENCODE_NEEDLES));
+                const killed: number[] = [];
+                for (const pid of targets) {
+                    const r = await killTree(pid);
+                    if (r.ok && !r.alreadyDead) killed.push(pid);
+                }
+                reaped.push({ name: 'opencode', pids: killed });
+            }
+        } catch {
+            reaped.push({ name: 'opencode', pids: [] });
+        }
     }
     // vite preview vazado (só na faixa de portas do TaskRunner — não toca dev server principal).
     try {
         const pids = await listPidsByName('node');
         const cls = await tryGetCommandLines(pids);
-        const targets = pids.filter((p) => {
-            const cl = cls.get(p) ?? '';
-            return isTaskrunnerVitePreview(cl);
-        });
+        // cls===null (WMI falhou): isTaskrunnerVitePreview exige cmdline não-vazia, então sem cmdline
+        // nada casa → nenhum kill (estrito, seguro). Trata null como "sem alvo".
+        const targets = cls === null ? [] : pids.filter((p) => isTaskrunnerVitePreview(cls.get(p) ?? ''));
         const killed: number[] = [];
         for (const pid of targets) {
             const r = await killTree(pid);
@@ -201,8 +213,13 @@ async function reapProcesses(): Promise<GcReport['processesReaped']> {
     return reaped;
 }
 
-/** Lê CommandLines de PIDs (Windows via WMI; fallback vazio em falha). */
-async function tryGetCommandLines(pids: number[]): Promise<Map<number, string>> {
+/**
+ * Lê CommandLines de PIDs (Windows via WMI; ps no Unix). Retorna `null` em FALHA de query
+ * (paridade com processTree.ts:tryGetCommandLines). #kill-per-slot (red-team Fable): antes devolvia
+ * Map VAZIA em falha de WMI → o reap lia `cl=''` → isOrphanOpencode('')=true → matava TODO opencode
+ * da máquina (manual e vivo). `null` sinaliza "não sei" → o reap NÃO over-mata (estrito).
+ */
+async function tryGetCommandLines(pids: number[]): Promise<Map<number, string> | null> {
     const m = new Map<number, string>();
     if (pids.length === 0) return m;
     if (process.platform === 'win32') {
@@ -218,8 +235,8 @@ async function tryGetCommandLines(pids: number[]): Promise<Map<number, string>> 
                 const pid = parseInt(line.slice(0, i), 10);
                 if (Number.isFinite(pid)) m.set(pid, line.slice(i + 1));
             }
-        } catch { /* ignore */ }
-        return m;
+            return m;
+        } catch { return null; } // WMI falhou → null (não Map vazia): não over-mata
     }
     try {
         const { stdout } = await execFileAsync('ps', ['-eo', 'pid,args'], { timeout: 15000 });
@@ -229,8 +246,27 @@ async function tryGetCommandLines(pids: number[]): Promise<Map<number, string>> 
             const pid = parseInt(sp > 0 ? t.slice(0, sp) : t, 10);
             if (pids.includes(pid)) m.set(pid, sp > 0 ? t.slice(sp + 1) : '');
         }
-    } catch { /* ignore */ }
-    return m;
+        return m;
+    } catch { return null; }
+}
+
+/**
+ * #kill-per-slot (red-team Fable): o GC roda 24/7 (cron 03:00) e o robô também — se um coder está
+ * EXECUTANDO, o reap de opencode do GC mataria o coder vivo. Lê o store do TaskRunner (best-effort)
+ * e retorna true se há task em running/fixing/cancelling. Em qualquer erro de leitura, retorna TRUE
+ * (conservador: na dúvida NÃO reapeia opencode — a limpeza é feita pelas varreduras do próprio
+ * TaskRunner durante a execução; o GC é só backup p/ quando o robô está ocioso).
+ */
+function taskRunnerHasLiveRun(): boolean {
+    try {
+        const storePath = path.join(REPO_ROOT, 'backend', 'data', 'tasks.json');
+        if (!fs.existsSync(storePath)) return false;
+        const store = JSON.parse(fs.readFileSync(storePath, 'utf-8'));
+        const tasks = Object.values(store.tasks || {}) as Array<{ status?: string }>;
+        return tasks.some((t) => t.status === 'running' || t.status === 'fixing' || t.status === 'cancelling');
+    } catch {
+        return true; // ilegível → assume vivo (não mata coder por engano)
+    }
 }
 
 /**
@@ -251,7 +287,7 @@ async function collectLiveCwds(): Promise<string[]> {
             ...(await listPidsByName('node')),
         ].filter((p) => p !== process.pid);
         const cls = await tryGetCommandLines(pids);
-        for (const [, cl] of cls) {
+        for (const [, cl] of cls ?? []) {
             if (!cl) continue;
             for (const m of cl.matchAll(/([A-Za-z]:[\\/][^\s"'|<>]*|\/[^\s"'|<>]+)/g)) {
                 const p = m[1];

@@ -274,6 +274,13 @@ describe('isOrphanOpencode', () => {
         expect(isOrphanOpencode('opencode run "fix my bug in /other/project"', needles)).toBe(false);
         expect(isOrphanOpencode('opencode run --project /home/user/app', needles)).toBe(false);
     });
+    it('#kill-per-slot: reconhece o marcador por-run [tr-run: como needle genérico', () => {
+        const withRunMarker = [...needles, '[tr-run:'];
+        // desamarra a detecção de órfão do texto do prompt: mesmo sem citar PROMPT_FILE, o marcador pega.
+        expect(isOrphanOpencode('opencode run "faz X [tr-run:5-123]"', withRunMarker)).toBe(true);
+        expect(isOrphanOpencode('opencode run "faz X [tr-run:judge-5-123]"', withRunMarker)).toBe(true);
+        expect(isOrphanOpencode('opencode run "manual sem marcador"', withRunMarker)).toBe(false);
+    });
 });
 
 describe('shouldAlertLowDisk', () => {

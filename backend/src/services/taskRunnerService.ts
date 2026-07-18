@@ -13,6 +13,7 @@ import { isQuotaError, isQuotaExhausted, markQuotaExhausted, clearQuotaExhausted
 import { isPeakUtcHour } from '../utils/peakWindow';
 import { socketService } from './socketService';
 import { killTree, isAlive, killOpencodeOrphans } from '../utils/processTree';
+import { PROMPT_FILE, VISUAL_JUDGE_MARKER, OPENCODE_ORPHAN_NEEDLES, RUN_MARKER_PREFIX } from '../utils/gcWorktrees';
 import { runOpencode, resolveBash } from '../utils/runOpencode';
 import { getFreeDiskBytes, formatGB } from '../utils/diskSpace';
 import { claudeCliService } from './claudeCliService';
@@ -33,11 +34,11 @@ const STORE_PATH = path.join(__dirname, '../../data/tasks.json');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
 // Worktree ISOLADO do TaskRunner — o agente nunca toca o diretório do dev/main.
 const WT_ROOT = path.resolve(REPO_ROOT, '..', 'sistemav2-taskrunner-wt');
-const PROMPT_FILE = '.taskrunner-prompt.md';
-// Marcador único injetado no prompt do Judge Visual (que roda opencode em REPO_ROOT, sem o
-// PROMPT_FILE). Permite que a varredura de órfãos reconheça e mate TAMBÉM um Judge Visual
-// órfão — senão ele sobreviveria a um restart segurando o lock do projectID compartilhado.
-const VISUAL_JUDGE_MARKER = 'taskrunner-visual-judge';
+// #kill-per-slot: PROMPT_FILE / VISUAL_JUDGE_MARKER / OPENCODE_ORPHAN_NEEDLES / RUN_MARKER_PREFIX
+// vêm de ../utils/gcWorktrees (fonte ÚNICA, compartilhada com o GC e o runOpencode — evita drift).
+// - PROMPT_FILE: arquivo de spec lido pelo coder (needle do run principal).
+// - VISUAL_JUDGE_MARKER: marcador do Judge Visual (roda opencode em REPO_ROOT, sem PROMPT_FILE).
+// - RUN_MARKER_PREFIX: prefixo do marcador ÚNICO por-execução ([tr-run:<issue>-<ts>]).
 // Timeout por tentativa do opencode. Num repo grande o 1º run (cold start) já passa de 15min;
 // e sob THROTTLING do provedor (steps de 4-22min) um round precisa de MUITO mais tempo p/
 // explorar + escrever + testar. Configurável via env (default 30min) — suba quando o provedor
@@ -1210,6 +1211,12 @@ class TaskRunnerService {
     // no pipeline de execução" — substitui a guarda grossa `pendingExecs>0` do sweep. Fecha O2 (épica kind:epic
     // despachada por startTask fica 'pending' minutos, sem epicOpsInFlight, e o sweep a decomporia mid-exec).
     private execInFlight = new Map<number, number>();
+    // #kill-per-slot (red-team Fable): needle ÚNICO ([tr-run:<issue>-<ts>]) de cada opencode VIVO,
+    // por issue. O sweep de órfãos usa estes como protectNeedles — um opencode cujo CommandLine casa
+    // um needle de run viva é POUPADO (proteção válida desde o instante 0 do processo, sem race). Em
+    // serial o registry tem no máx. 1 entrada e os sweeps a excluem (excludeIssue) → protect vazio →
+    // comportamento byte-idêntico ao de hoje. Habilita o paralelo (Fase 2) sem matar o coder vizinho.
+    private liveRunNeedles = new Map<number, string>();
 
     // Fila serial de execução (1 task por vez). O worktree (sistemav2-taskrunner-wt) é COMPARTILHADO,
     // então rodar duas execuções ao mesmo tempo corromperia o git. Tasks extras ficam 'pending' até a vez.
@@ -1245,9 +1252,11 @@ class TaskRunnerService {
                 prev,
                 new Promise<void>((_, reject) => {
                     lockTimer = setTimeout(() => {
-                        this.sweepOrphanedOpencode(`lock-timeout-in-${label}`).catch(() => {});
-                        this.cleanStaleLocks(true);
+                        // #kill-per-slot: o holder travado é o ALVO do sweep (não liberou o lock) → excludeIssue
+                        // o deixa FORA do protect (pode ser morto); as demais runs vivas (Fase 2) seguem protegidas.
                         const stuckTask = Object.values(this.store.tasks).find(t => t.status === 'running' || t.status === 'fixing');
+                        this.sweepOrphanedOpencode(`lock-timeout-in-${label}`, [], undefined, { excludeIssue: stuckTask?.issueNumber }).catch(() => {});
+                        this.cleanStaleLocks(true);
                         if (stuckTask) {
                             stuckTask.status = 'failed';
                             stuckTask.error = 'Timeout no worktree lock (holder anterior não liberou dentro do watchdog total)';
@@ -1688,14 +1697,20 @@ class TaskRunnerService {
      * limpa para os dois needles). Esse retorno autoriza apagar o index.lock do snapshot à força
      * (sem holder vivo, é stale com certeza — mesmo com mtime < 30s, ex.: restart rápido).
      */
-    private async sweepOrphanedOpencode(reason: string, excludePids: number[] = [], task?: Task): Promise<boolean> {
+    private async sweepOrphanedOpencode(reason: string, excludePids: number[] = [], task?: Task, opts?: { excludeIssue?: number }): Promise<boolean> {
         // Mata opencode ÓRFÃO dos DOIS entrypoints do TaskRunner — run principal (PROMPT_FILE,
         // em WT_ROOT) e Judge Visual (VISUAL_JUDGE_MARKER, em REPO_ROOT) — que compartilham o
         // mesmo projectID; um órfão de qualquer um trava o outro. Enumera opencode.exe por nome
         // (rápido) e discrimina pelos needles (não mata opencode manual de outro projeto).
+        // #kill-per-slot: POUPA os opencode de runs VIVAS (protectNeedles) — exceto o `excludeIssue`
+        // (ex.: o holder travado do lock-timeout, que é justamente o alvo). Em serial o registry tem
+        // ≤1 entrada e ela é o excludeIssue → protect vazio → comportamento idêntico ao de hoje.
+        const protectNeedles = [...this.liveRunNeedles.entries()]
+            .filter(([iss]) => iss !== opts?.excludeIssue)
+            .map(([, needle]) => needle);
         try {
             const { killed, errors, confirmedGone, discriminated } = await killOpencodeOrphans(
-                'opencode', [PROMPT_FILE, VISUAL_JUDGE_MARKER], excludePids,
+                'opencode', OPENCODE_ORPHAN_NEEDLES, excludePids, protectNeedles,
             );
             if (killed.length) log.warn(`Varredura de órfãos (${reason}): matou ${killed.length} opencode [${killed.join(', ')}]${discriminated ? '' : ' (fallback sem discriminação)'}`);
             if (errors.length) log.warn(`Varredura de órfãos (${reason}): ${errors.join('; ')}`);
@@ -1944,47 +1959,59 @@ class TaskRunnerService {
 
     private async runOpencodeIsolated(task: Task): Promise<string> {
         this.accountRound(task); // #1154 item 23: conta a rodada (por task + por dia) p/ os tetos de custo
-        const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`, [], task);
-        this.cleanStaleLocks(gone);
-        const basePrompt = `Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo.`;
-        // Comando do run PRIMÁRIO: usa --model só se TASKRUNNER_OPENCODE_PRIMARY_MODEL estiver setado
-        // (senão, o default do opencode). Durante a janela GLM-morto, aponte-o p/ o MiniMax direto.
-        const primaryCmd = OPENCODE_PRIMARY_MODEL
-            ? `opencode run --model ${OPENCODE_PRIMARY_MODEL} "${basePrompt}"`
-            : `opencode run "${basePrompt}"`;
-        const primaryIsFallback = !!OPENCODE_PRIMARY_MODEL && OPENCODE_PRIMARY_MODEL === OPENCODE_FALLBACK_MODEL;
+        // #kill-per-slot: marcador ÚNICO desta run, injetado no comando → aparece no CommandLine do
+        // opencode. Registrado para que sweeps de OUTRAS runs (Fase 2) poupem este coder. Os sweeps
+        // DESTA run passam { excludeIssue } → não se auto-protegem (matam os próprios órfãos), mas
+        // protegem os vizinhos. Em serial o registry tem só esta run e ela é excluída → protect vazio.
+        const runNeedle = `${RUN_MARKER_PREFIX}${task.issueNumber}-${Date.now()}]`;
+        this.liveRunNeedles.set(task.issueNumber, runNeedle);
         try {
+            const gone = await this.sweepOrphanedOpencode(`pre-run #${task.issueNumber}`, [], task, { excludeIssue: task.issueNumber });
+            this.cleanStaleLocks(gone);
+            const basePrompt = `Leia o arquivo ${PROMPT_FILE} na raiz do projeto e implemente exatamente o que ele descreve. Nao altere esse arquivo. ${runNeedle}`;
+            // Comando do run PRIMÁRIO: usa --model só se TASKRUNNER_OPENCODE_PRIMARY_MODEL estiver setado
+            // (senão, o default do opencode). Durante a janela GLM-morto, aponte-o p/ o MiniMax direto.
+            const primaryCmd = OPENCODE_PRIMARY_MODEL
+                ? `opencode run --model ${OPENCODE_PRIMARY_MODEL} "${basePrompt}"`
+                : `opencode run "${basePrompt}"`;
+            const primaryIsFallback = !!OPENCODE_PRIMARY_MODEL && OPENCODE_PRIMARY_MODEL === OPENCODE_FALLBACK_MODEL;
             try {
-                return await runOpencode(
-                    primaryCmd,
-                    WT_ROOT, task, OPENCODE_TIMEOUT_MS,
-                    (sample) => { task.cpuMemSamples?.push(sample); },
-                );
-            } catch (e: any) {
-                // Fallback GLM→MiniMax do CODER: para COTA/429 OU timeout/hang do opencode. Sob limite
-                // semanal o primário PENDURA até o timeout em vez de 429 — tratar o hang como infra
-                // temporária (era a causa das 153 falhas). Kill/erro de código NÃO caem aqui.
-                const msg = e?.message || String(e);
-                if (!shouldFallbackOpencode(msg, { hasFallbackModel: !!OPENCODE_FALLBACK_MODEL, killRequested: !!task.killRequested, primaryIsFallback })) throw e;
-                const isTimeout = /opencode timeout/i.test(msg);
-                const cause = isTimeout ? 'Timeout/hang do modelo primário' : 'Cota do modelo primário esgotada';
-                this.recordEvent(task, 'attempt_started', `${cause} — re-rodando o opencode com fallback ${OPENCODE_FALLBACK_MODEL}.`, { fallbackModel: OPENCODE_FALLBACK_MODEL });
-                this.emitLog(task.issueNumber, 'warn', `Opencode: ${isTimeout ? 'timeout/hang' : 'cota/429'} no modelo primário — fallback para ${OPENCODE_FALLBACK_MODEL}.`);
-                const goneMid = await this.sweepOrphanedOpencode(`fallback-run #${task.issueNumber}`, [], task);
-                this.cleanStaleLocks(goneMid);
-                return await runOpencode(
-                    `opencode run --model ${OPENCODE_FALLBACK_MODEL} "${basePrompt}"`,
-                    WT_ROOT, task, OPENCODE_TIMEOUT_MS,
-                    (sample) => { task.cpuMemSamples?.push(sample); },
-                );
+                try {
+                    return await runOpencode(
+                        primaryCmd,
+                        WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+                        (sample) => { task.cpuMemSamples?.push(sample); },
+                    );
+                } catch (e: any) {
+                    // Fallback GLM→MiniMax do CODER: para COTA/429 OU timeout/hang do opencode. Sob limite
+                    // semanal o primário PENDURA até o timeout em vez de 429 — tratar o hang como infra
+                    // temporária (era a causa das 153 falhas). Kill/erro de código NÃO caem aqui.
+                    const msg = e?.message || String(e);
+                    if (!shouldFallbackOpencode(msg, { hasFallbackModel: !!OPENCODE_FALLBACK_MODEL, killRequested: !!task.killRequested, primaryIsFallback })) throw e;
+                    const isTimeout = /opencode timeout/i.test(msg);
+                    const cause = isTimeout ? 'Timeout/hang do modelo primário' : 'Cota do modelo primário esgotada';
+                    this.recordEvent(task, 'attempt_started', `${cause} — re-rodando o opencode com fallback ${OPENCODE_FALLBACK_MODEL}.`, { fallbackModel: OPENCODE_FALLBACK_MODEL });
+                    this.emitLog(task.issueNumber, 'warn', `Opencode: ${isTimeout ? 'timeout/hang' : 'cota/429'} no modelo primário — fallback para ${OPENCODE_FALLBACK_MODEL}.`);
+                    // excludeIssue=self: mata o órfão do PRIMÁRIO desta run (mesmo needle), poupa vizinhos.
+                    const goneMid = await this.sweepOrphanedOpencode(`fallback-run #${task.issueNumber}`, [], task, { excludeIssue: task.issueNumber });
+                    this.cleanStaleLocks(goneMid);
+                    return await runOpencode(
+                        `opencode run --model ${OPENCODE_FALLBACK_MODEL} "${basePrompt}"`,
+                        WT_ROOT, task, OPENCODE_TIMEOUT_MS,
+                        (sample) => { task.cpuMemSamples?.push(sample); },
+                    );
+                }
+            } finally {
+                // O timeout-kill (killTree do bash) pode falhar e deixar o opencode ÓRFÃO VIVO — ele
+                // segura CPU/disco e faz o `git status` seguinte estourar o timeout de 15s (foi a
+                // falha exata do canário: "Command failed: git status --porcelain"). Reapeia AQUI,
+                // antes de a fase de verificação (worktreeChanges/typecheck) tocar o git do worktree.
+                // excludeIssue=self: mata os próprios órfãos, poupa vizinhos vivos (Fase 2).
+                const goneAfter = await this.sweepOrphanedOpencode(`post-run #${task.issueNumber}`, [], task, { excludeIssue: task.issueNumber });
+                this.cleanStaleLocks(goneAfter);
             }
         } finally {
-            // O timeout-kill (killTree do bash) pode falhar e deixar o opencode ÓRFÃO VIVO — ele
-            // segura CPU/disco e faz o `git status` seguinte estourar o timeout de 15s (foi a
-            // falha exata do canário: "Command failed: git status --porcelain"). Reapeia AQUI,
-            // antes de a fase de verificação (worktreeChanges/typecheck) tocar o git do worktree.
-            const goneAfter = await this.sweepOrphanedOpencode(`post-run #${task.issueNumber}`, [], task);
-            this.cleanStaleLocks(goneAfter);
+            this.liveRunNeedles.delete(task.issueNumber);
         }
     }
 
@@ -3574,8 +3601,11 @@ Return ONLY a JSON:
                 }
             }
 
+            // #kill-per-slot: marcador ÚNICO desta run do Judge (além do VISUAL_JUDGE_MARKER genérico) —
+            // registrado como protectNeedle p/ que um coder concorrente (Fase 2) não mate este opencode.
+            const judgeNeedle = `${RUN_MARKER_PREFIX}judge-${issueNumber}-${Date.now()}]`;
             const prompt = [
-                `[${VISUAL_JUDGE_MARKER}]`, // discriminador p/ a varredura de órfãos reconhecer este run
+                `[${VISUAL_JUDGE_MARKER}] ${judgeNeedle}`, // discriminador genérico + needle único p/ o sweep reconhecer/poupar este run
                 'Voce e um Judge Visual de interfaces de usuario. Analise os screenshots antes/depois de uma mudanca no frontend.',
                 '',
                 'INSTRUCOES:',
@@ -3605,12 +3635,18 @@ Return ONLY a JSON:
             // varre/limpa órfãos antes. cleanSnapshotLockFor(REPO_ROOT) só toca o snapshot
             // deste checkout (nunca o .git real do dev nem outros projetos).
             const stdout = await this.withWorktreeLock(`visual-judge #${issueNumber}`, async () => {
-                const gone = await this.sweepOrphanedOpencode(`visual-judge #${issueNumber}`);
-                this.cleanSnapshotLockFor(REPO_ROOT, gone);
-                return runOpencode(
-                    `opencode run "${prompt.replace(/"/g, '\\"')}"`,
-                    REPO_ROOT, task, 120_000,
-                );
+                this.liveRunNeedles.set(issueNumber, judgeNeedle);
+                try {
+                    // excludeIssue=self: mata órfão do PRÓPRIO judge, poupa coders vizinhos (Fase 2).
+                    const gone = await this.sweepOrphanedOpencode(`visual-judge #${issueNumber}`, [], undefined, { excludeIssue: issueNumber });
+                    this.cleanSnapshotLockFor(REPO_ROOT, gone);
+                    return await runOpencode(
+                        `opencode run "${prompt.replace(/"/g, '\\"')}"`,
+                        REPO_ROOT, task, 120_000,
+                    );
+                } finally {
+                    this.liveRunNeedles.delete(issueNumber);
+                }
             });
 
             this.emitLog(issueNumber, 'ai', String(stdout).substring(0, 1500));

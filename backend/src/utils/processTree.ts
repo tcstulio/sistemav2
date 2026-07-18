@@ -109,12 +109,46 @@ async function tryGetCommandLines(pids: number[]): Promise<Map<number, string> |
 }
 
 /**
+ * Seleciona quais PIDs de opencode matar — PURO/testável. Regras (red-team Fable, #kill-per-slot):
+ * - `protectNeedles` (marcadores de runs VIVAS): CommandLine que casa um deles é POUPADA — proteção
+ *   por-needle é válida desde o instante 0 do processo (sem a janela-morta do excludePids).
+ * - `excludePids`: proteção SECUNDÁRIA (p/ o caso de CommandLine vazia de um vizinho vivo).
+ * - `cls == null` (WMI indisponível): se há `protectNeedles`, ABORTA estrito (`strictAbort`) — não
+ *   over-mata, poderia atingir o vizinho vivo. Sem proteção a preservar → over-kill seguro pré-spawn
+ *   (comportamento do #335: melhor over-matar que deixar órfão segurando o index.lock do snapshot).
+ * - `cls` presente: CommandLine vazia/desconhecida → mata (salvo protect/exclude); conhecida → mata
+ *   sse casa um `needle`.
+ */
+export function pickOpencodeOrphanTargets(
+    pids: number[],
+    cls: Map<number, string> | null,
+    needles: string[],
+    protectNeedles: string[] = [],
+    excludePids: number[] = [],
+): { targets: number[]; strictAbort: boolean } {
+    const exclude = new Set(excludePids);
+    if (!cls) {
+        if (protectNeedles.length > 0) return { targets: [], strictAbort: true };
+        return { targets: pids.filter((p) => !exclude.has(p)), strictAbort: false };
+    }
+    const targets: number[] = [];
+    for (const p of pids) {
+        if (exclude.has(p)) continue;
+        const cl = cls.get(p);
+        if (cl && protectNeedles.some((n) => n && cl.includes(n))) continue; // run viva → poupa
+        if (!cl || needles.some((n) => n && cl.includes(n))) targets.push(p);
+    }
+    return { targets, strictAbort: false };
+}
+
+/**
  * Mata (árvore) os processos `imageName` ÓRFÃOS do TaskRunner. Estratégia:
  * 1) enumera por NOME (rápido, sem WMI);
- * 2) discrimina pela CommandLine conter QUALQUER `needle` — p/ não matar um opencode manual do
- *    usuário em OUTRO projeto. Se a leitura da CommandLine falhar (WMI lento/indisponível), faz
- *    FALLBACK matando todos os candidatos do nome: pré-spawn é mais seguro over-matar opencode
- *    do que deixar um órfão segurando o lock do projectID (a 2ª fase do bug #335).
+ * 2) discrimina via pickOpencodeOrphanTargets: mata quem casa um `needle` (ou CommandLine vazia),
+ *    POUPA quem casa um `protectNeedle` (run viva) ou está em `excludePids`. Se a leitura da
+ *    CommandLine falhar (WMI lento/indisponível) E não há proteção ativa, FALLBACK matando todos
+ *    os candidatos do nome (pré-spawn é mais seguro over-matar do que deixar um órfão segurando o
+ *    lock do snapshot — 2ª fase do #335); COM proteção ativa, aborta estrito (não mata o vizinho).
  * 3) barreira pós-kill via isAlive (instantânea) — `taskkill /F` retorna antes de o SO finalizar
  *    a árvore e soltar os handles (ex.: index.lock do snapshot).
  * Nunca lança internamente; em falha total de enumeração reporta confirmedGone=false.
@@ -123,6 +157,7 @@ export async function killOpencodeOrphans(
     imageName: string,
     needles: string[],
     excludePids: number[] = [],
+    protectNeedles: string[] = [],
 ): Promise<{ killed: number[]; errors: string[]; confirmedGone: boolean; discriminated: boolean }> {
     const skip = new Set([process.pid, ...excludePids]);
     const errors: string[] = [];
@@ -132,8 +167,8 @@ export async function killOpencodeOrphans(
     } catch (e: any) {
         // Enumeração falhou (Get-Process trava sob carga). BACKSTOP sem-enumeração: mata todo o
         // image name via taskkill /IM. Quebra o ciclo vicioso (órfão → carga → enum falha → órfão).
-        // Só seguro se não houver excludePids a preservar (no kill do próprio run, não há).
-        if (skip.size <= 1) {
+        // Só seguro se NÃO houver excludePids NEM protectNeedles (runs vivas) a preservar.
+        if (skip.size <= 1 && protectNeedles.length === 0) {
             await killByImageName(imageName.endsWith('.exe') ? imageName : `${imageName}.exe`);
             return { killed: [], errors: [`enum falhou (${String(e?.message || e).slice(0, 100)}) → backstop taskkill /IM`], confirmedGone: true, discriminated: false };
         }
@@ -142,21 +177,13 @@ export async function killOpencodeOrphans(
     if (pids.length === 0) return { killed: [], errors, confirmedGone: true, discriminated: true };
 
     const cls = await tryGetCommandLines(pids);
-    let targets: number[];
-    let discriminated: boolean;
-    if (cls) {
-        // Mata se a CommandLine casa um needle OU se está vazia/desconhecida. O WMI às vezes
-        // devolve CommandLine vazia p/ um processo sob carga; sem isto, o órfão escaparia da
-        // discriminação e sobreviveria (foi o que aconteceu no teste cumulativo throttled). Como
-        // é um opencode.exe vivo no momento do sweep (pré/pós run do TaskRunner), errar p/ matar é
-        // seguro — só pouparíamos um opencode com CommandLine CONHECIDA e que não casa nenhum needle.
-        targets = pids.filter((p) => { const cl = cls.get(p); return !cl || needles.some((n) => cl.includes(n)); });
-        discriminated = true;
-    } else {
-        targets = pids; // WMI indisponível → over-kill seguro pré-spawn
-        discriminated = false;
-        errors.push('CommandLine indisponível — fallback: matando todos os candidatos do nome');
+    const { targets, strictAbort } = pickOpencodeOrphanTargets(pids, cls, needles, protectNeedles, excludePids);
+    if (strictAbort) {
+        // WMI indisponível E há runs vivas a proteger → não over-mata (mataria o vizinho). Reporta não-limpo.
+        return { killed: [], errors: ['CommandLine indisponível com runs vivas a proteger — abortado (estrito)'], confirmedGone: false, discriminated: false };
     }
+    const discriminated = cls != null;
+    if (!discriminated) errors.push('CommandLine indisponível — fallback: matando candidatos do nome (sem proteção ativa)');
 
     const killed: number[] = [];
     for (const pid of targets) {
