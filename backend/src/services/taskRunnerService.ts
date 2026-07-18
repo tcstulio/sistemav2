@@ -1408,6 +1408,43 @@ class TaskRunnerService {
     }
 
     /**
+     * LIVENESS observável do robô (p/ monitoramento externo saber se ele está TRABALHANDO, não só vivo).
+     * Expõe o que o watchdog interno (checkQueueHealth) já sabe: autoPlay, fila PRONTA (getQueuedTasks —
+     * o mesmo conjunto que o dispatch usa), tarefas rodando + heartbeat (min desde o último evento) e as
+     * PAUSAS LEGÍTIMAS (cota esgotada, pico) que explicam ociosidade sem ser travamento. `seemsStuck` =
+     * DEVERIA estar trabalhando mas não está: autoPlay on + fila pronta + sem pausa legítima + (nada
+     * rodando OU a task rodando está sem heartbeat há ≥20min). Idle legítimo (fila vazia) → seemsStuck=false.
+     */
+    getRunnerHealth(): {
+        autoPlay: boolean; queued: number;
+        running: Array<{ issueNumber: number; status: string; runningForMin: number; sinceLastEventMin: number }>;
+        quotaExhausted: boolean; peakHold: boolean; stuckForMin: number | null; seemsStuck: boolean;
+    } {
+        const cfg = this.getAutomationConfig();
+        const now = Date.now();
+        const ACTIVE: TaskStatus[] = ['running', 'fixing', 'cancelling'];
+        const running = Object.values(this.store.tasks)
+            .filter(t => ACTIVE.includes(t.status))
+            .map(t => {
+                const lastTs = t.events?.length ? t.events[t.events.length - 1].ts : t.startedAt;
+                return {
+                    issueNumber: t.issueNumber, status: t.status,
+                    runningForMin: t.startedAt ? Math.round((now - new Date(t.startedAt).getTime()) / 60000) : 0,
+                    sinceLastEventMin: lastTs ? Math.round((now - new Date(lastTs).getTime()) / 60000) : -1,
+                };
+            });
+        const queued = this.getQueuedTasks().length;
+        const autoPlay = cfg.autoPlay === true;
+        const quotaExhausted = isQuotaExhausted();
+        const peakHold = this.isPeakHold();
+        const stuckForMin = this.stuckSince ? Math.round((now - this.stuckSince) / 60000) : null;
+        const noHeartbeat = running.length > 0 && running.every(r => r.sinceLastEventMin >= 20);
+        const idleWithWork = running.length === 0;
+        const seemsStuck = autoPlay && queued > 0 && !quotaExhausted && !peakHold && (idleWithWork || noHeartbeat);
+        return { autoPlay, queued, running, quotaExhausted, peakHold, stuckForMin, seemsStuck };
+    }
+
+    /**
      * Horário de PICO do Z.AI (GLM consome 3x a cota): 14:00–18:00 UTC+8 = 06:00–10:00 UTC
      * = 03:00–07:00 BRT. Off-peak é 1x (promoção até set/2026). Como o teto é SEMANAL, rodar
      * no pico queima a cota 3x mais rápido -> MENOS tasks por semana. Por isso o robô NÃO

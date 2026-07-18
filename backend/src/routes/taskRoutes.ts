@@ -32,9 +32,10 @@ router.get('/quota-status', requireDolibarrLogin, (_req, res) => {
     res.json(taskRunnerService.getQuotaStatus());
 });
 
-// Orçamento diário de rodadas do Runner (#1189). Antes de /:issueNumber p/ não casar como número.
+// Orçamento diário de rodadas do Runner (#1189) + LIVENESS (autoPlay/fila/rodando/heartbeat/seemsStuck)
+// p/ o monitoramento externo saber se o robô está TRABALHANDO. Antes de /:issueNumber p/ não casar como nº.
 router.get('/status', requireDolibarrLogin, (_req, res) => {
-    res.json(taskRunnerService.getDailyRoundsStatus());
+    res.json({ ...taskRunnerService.getDailyRoundsStatus(), ...taskRunnerService.getRunnerHealth() });
 });
 
 router.get('/:issueNumber', requireDolibarrLogin, async (req, res) => {
