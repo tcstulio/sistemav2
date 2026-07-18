@@ -19,6 +19,7 @@ const SAFE_ERROR_CODES = [
     'FORBIDDEN',
     'BAD_REQUEST',
     'RATE_LIMITED',
+    'RATE_LIMIT',
     'CONFLICT'
 ];
 

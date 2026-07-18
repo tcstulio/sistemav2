@@ -1,41 +1,57 @@
 /**
  * Request Validation Middleware
  *
- * Uses Zod for schema validation with proper error handling
+ * Uses Zod for schema validation with proper error handling.
+ *
+ * Erros de validação são SEMPRE propagados via `next(validationError)`
+ * para o errorHandler global — NUNCA escreve direto na resposta. Isso
+ * garante: (1) envelope padronizado via `fail(...)`, (2) sanitização
+ * consistente das mensagens em produção, (3) log centralizado no
+ * errorHandler.
  */
 
 import { Request, Response, NextFunction } from 'express';
 import { z, ZodError, ZodSchema } from 'zod';
+import { ValidationError } from './errorHandler';
 
 /**
- * Validation error response format
+ * Formato canônico de cada item em `details` de uma ValidationError —
+ * `{ field, message }` onde `field` é o path Zod (dot-notation).
  */
-interface ValidationErrorResponse {
-    error: string;
-    details: {
-        field: string;
-        message: string;
-    }[];
+export interface ValidationIssue {
+    field: string;
+    message: string;
+}
+
+/**
+ * Constrói uma ValidationError tipada a partir de um ZodError. O `source`
+ * é incorporado na mensagem ("body", "query", "params") para que o cliente
+ * saiba qual parte do request falhou.
+ */
+function buildValidationError(zodError: ZodError, source: 'body' | 'query' | 'params'): ValidationError {
+    const messages: Record<typeof source, string> = {
+        body: 'Validation failed',
+        query: 'Invalid query parameters',
+        params: 'Invalid route parameters',
+    };
+    const details: ValidationIssue[] = zodError.issues.map((issue: z.ZodIssue) => ({
+        field: issue.path.join('.'),
+        message: issue.message,
+    }));
+    return new ValidationError(messages[source], details);
 }
 
 /**
  * Creates a validation middleware for request body
  */
 export function validateBody<T extends ZodSchema>(schema: T) {
-    return (req: Request, res: Response, next: NextFunction) => {
+    return (req: Request, _res: Response, next: NextFunction) => {
         try {
             req.body = schema.parse(req.body);
             next();
         } catch (error) {
             if (error instanceof ZodError) {
-                const response: ValidationErrorResponse = {
-                    error: 'Validation failed',
-                    details: error.issues.map((issue: z.ZodIssue) => ({
-                        field: issue.path.join('.'),
-                        message: issue.message
-                    }))
-                };
-                return res.status(400).json(response);
+                return next(buildValidationError(error, 'body'));
             }
             next(error);
         }
@@ -46,20 +62,13 @@ export function validateBody<T extends ZodSchema>(schema: T) {
  * Creates a validation middleware for query parameters
  */
 export function validateQuery<T extends ZodSchema>(schema: T) {
-    return (req: Request, res: Response, next: NextFunction) => {
+    return (req: Request, _res: Response, next: NextFunction) => {
         try {
             req.query = schema.parse(req.query) as any;
             next();
         } catch (error) {
             if (error instanceof ZodError) {
-                const response: ValidationErrorResponse = {
-                    error: 'Invalid query parameters',
-                    details: error.issues.map((issue: z.ZodIssue) => ({
-                        field: issue.path.join('.'),
-                        message: issue.message
-                    }))
-                };
-                return res.status(400).json(response);
+                return next(buildValidationError(error, 'query'));
             }
             next(error);
         }
@@ -70,20 +79,13 @@ export function validateQuery<T extends ZodSchema>(schema: T) {
  * Creates a validation middleware for route parameters
  */
 export function validateParams<T extends ZodSchema>(schema: T) {
-    return (req: Request, res: Response, next: NextFunction) => {
+    return (req: Request, _res: Response, next: NextFunction) => {
         try {
             req.params = schema.parse(req.params) as any;
             next();
         } catch (error) {
             if (error instanceof ZodError) {
-                const response: ValidationErrorResponse = {
-                    error: 'Invalid route parameters',
-                    details: error.issues.map((issue: z.ZodIssue) => ({
-                        field: issue.path.join('.'),
-                        message: issue.message
-                    }))
-                };
-                return res.status(400).json(response);
+                return next(buildValidationError(error, 'params'));
             }
             next(error);
         }
