@@ -78,6 +78,10 @@ centrovibe-manager.zip
 # Backend data (contains encrypted email credentials, scheduler data)
 backend/data/
 
+# Issue report uploads (#1561) — runtime user-generated snapshots (HTML + PNG),
+# may contain sensitive data (screenshots, console logs, user context).
+backend/uploads/
+
 # Generated API docs
 openapi_3.json
 

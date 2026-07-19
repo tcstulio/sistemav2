@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
+import path from 'path';
 import { createLogger } from './utils/logger';
 import { initSentry } from './utils/sentry';
 
@@ -258,6 +259,25 @@ import simulatorRoutes from './routes/simulatorRoutes';
 app.use('/api/simulator', simulatorRoutes);
 
 app.use('/api/github', githubRoutes);
+
+// #1561: POST /api/issues/report — fluxo completo de "reportar problema" com
+// screenshot + htmlSnapshot + console logs. Reutiliza createGitHubIssue (helper
+// extraído em services/githubIssueService.ts).
+import issueReportRoutes from './routes/issueReportRoutes';
+app.use('/api/issues', issueReportRoutes);
+
+// #1561: serve estático os artefatos de report (screenshots/html) salvos em
+// ./uploads/reports/{reportId}.{png,html}. URL servível retornada ao frontend
+// e embutida como link na issue do GitHub.
+app.use('/uploads', express.static(path.resolve('./uploads'), {
+    immutable: false,
+    maxAge: '7d',
+    setHeaders: (res) => {
+        // screenshots/html de report não são sensíveis a CSRF mas impedimos hotlink
+        // de referers estranhos via no-referrer para reduzir leakage.
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+    },
+}));
 
 // Health Check (#1042, #1415) — verifica dependências externas via healthCheckService.
 // Rate-limit dedicado (healthLimiter) impede fan-out abusivo de chamadas externas a cada hit.
