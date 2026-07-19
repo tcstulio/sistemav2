@@ -47,6 +47,17 @@ const mockSyncService = vi.hoisted(() => ({
     isEnabled: vi.fn(() => true),
 }));
 
+// #1569 (critério #5): Logger mock acessível para inspeção — a rota /sync/run
+// deve logar cada chamada com entity/autoCreate/autoLink/dryRun/userId. Sem
+// expor este mock, o teste só consegue validar o envelope, não a auditoria.
+const mockLogger = vi.hoisted(() => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+}));
+
 const mockFeATURES = vi.hoisted(() => ({
     TULIPA_ENABLED: true,
     TULIPA_TASKS_ENABLED: true,
@@ -75,13 +86,7 @@ vi.mock('../../services/syncService', () => ({
 }));
 
 vi.mock('../../utils/logger', () => ({
-    createLogger: () => ({
-        debug: vi.fn(),
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn(),
-        fatal: vi.fn(),
-    }),
+    createLogger: () => mockLogger,
 }));
 
 vi.mock('../../config/features', () => ({
@@ -378,9 +383,12 @@ describe('integrationRoutes', () => {
             expect(res.body.data.preview.note).toMatch(/product/i);
         });
 
-        it('logs the call with entity/autoCreate/autoLink/dryRun/userId (#1569)', async () => {
-            // O mock de logger descarta a chamada, mas garantimos que a rota não lança
-            // ao acessar req.user — coberto pelo 200 acima. Aqui validamos o envelope.
+        it('logs the call with entity/autoCreate/autoLink/dryRun/userId (#1569 critério #5)', async () => {
+            // #1569: a rota deve logar cada chamada com entity, autoCreate, autoLink,
+            // dryRun e userId. Aqui validamos de verdade (não só o envelope) inspecionando
+            // o mock do logger — cobrindo o critério de aceite #5 que era stub antes.
+            mockLogger.info.mockClear();
+
             const res = await request(app)
                 .post('/api/integration/sync/run')
                 .send({ entity: 'invoice', autoCreate: true, autoLink: false });
@@ -389,6 +397,21 @@ describe('integrationRoutes', () => {
             expect(res.body.data.entity).toBe('invoice');
             expect(res.body.data.autoCreate).toBe(true);
             expect(res.body.data.autoLink).toBe(false);
+
+            // Auditoria: primeira chamada de log.info carrega TODOS os campos exigidos
+            // pela issue (#1569): entity, autoCreate, autoLink, dryRun, userId.
+            const auditCall = mockLogger.info.mock.calls.find(
+                (args: any[]) => typeof args[0] === 'string' && /sync\/run invoked/i.test(args[0])
+            );
+            expect(auditCall).toBeDefined();
+            const auditPayload = auditCall![1];
+            expect(auditPayload).toMatchObject({
+                entity: 'invoice',
+                autoCreate: true,
+                autoLink: false,
+                dryRun: false,
+                userId: 'tester'
+            });
         });
 
         it('returns 400 (envelope) when sync is not enabled', async () => {
