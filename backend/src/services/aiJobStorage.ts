@@ -30,6 +30,12 @@ export interface PersistedJob {
     currentProvider?: string | null;
     /** #1011: progresso 0..100 reportado pelo agente. */
     progressPct?: number;
+    /** #1577: resumo parcial acumulado quando o job foi cancelado pelo usuário. */
+    partialSummary?: string;
+    /** #1577: epoch ms do último sinal de visibilidade da aba do cliente. */
+    lastVisibilityAt?: number;
+    /** #1577: indica se a aba do cliente está oculta no momento (Page Visibility API). */
+    pageHidden?: boolean;
 }
 
 /**

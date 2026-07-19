@@ -18,7 +18,9 @@ const log = createLogger('AiJob');
 // voltam como vivos (GET devolve 404 { reason: 'expired' }). Compatível com a coordenação
 // serial do issue #29 (runAndWait continua usando a mesma fila MAX=3).
 
-export type AiJobStatus = 'queued' | 'running' | 'done' | 'error';
+// #1577: 'cancelled' foi adicionado como status terminal — o POST /chat/jobs/:id/cancel
+// marca um job ativo (queued/running) como cancelled, interrompendo o polling do cliente.
+export type AiJobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled';
 
 export interface AiJob {
     id: string;
@@ -38,6 +40,12 @@ export interface AiJob {
     currentProvider?: string | null;
     /** #1011: progresso 0..100 reportado pelo agente. */
     progressPct?: number;
+    /** #1577: resumo parcial acumulado quando o job foi cancelado pelo usuário. */
+    partialSummary?: string;
+    /** #1577: epoch ms do último sinal de visibilidade da aba do cliente (hidden=true|false). */
+    lastVisibilityAt?: number;
+    /** #1577: indica se a aba do cliente está oculta no momento (Page Visibility API). */
+    pageHidden?: boolean;
 }
 
 /** Resultado do lookup de um job: distingue 'expirado' de 'inexistente' (GET 404). */
@@ -91,6 +99,7 @@ function mapStatusExternal(s: AiJobStatus): Exclude<AiJobStatusExternal, 'expire
         case 'running': return 'running';
         case 'done': return 'done';
         case 'error': return 'failed';
+        case 'cancelled': return 'failed'; // #1577: cancelled é tratado como terminal falho p/ o heartbeat
     }
 }
 
@@ -170,6 +179,10 @@ function restore(): void {
                 lastHeartbeat: raw.lastHeartbeat,
                 currentProvider: raw.currentProvider,
                 progressPct: raw.progressPct,
+                // #1577: reidrata campos novos (opcionais — undefined em jobs antigos).
+                partialSummary: raw.partialSummary,
+                lastVisibilityAt: raw.lastVisibilityAt,
+                pageHidden: raw.pageHidden,
             };
             if (job.status === 'queued' || job.status === 'running') {
                 job.status = 'error';
@@ -294,6 +307,45 @@ export const aiJobService = {
     /** Reidrata jobs do disco (read-on-startup). Exposto p/ testes/restart manual. */
     restore() {
         restore();
+    },
+
+    /**
+     * #1577: marca um job ativo (queued/running) como cancelled. Idempotente — chamar
+     * num job já terminal (done/error/cancelled) é NO-OP e devolve o estado atual.
+     * Retorna o lookup do job p/ o caller (rota) montar o payload do evento 'cancelled'
+     * com o partialSummary (se houver). Não aborta a fn em execução (o contrato do
+     * enqueue não permite); o cliente apenas para de polling ao receber o evento.
+     */
+    cancelJob(id: string): AiJobLookup {
+        const job = jobs.get(id);
+        if (!job) return { ok: false, reason: 'missing' };
+        if (isExpired(job)) return { ok: false, reason: 'expired' };
+        // Só cancela jobs vivos. Jobs já terminais preservam o estado original.
+        if (job.status === 'queued' || job.status === 'running') {
+            const finishedAt = Date.now();
+            patchJob(id, {
+                status: 'cancelled',
+                finishedAt,
+                expiresAt: finishedAt + TTL_MS,
+            });
+        }
+        const refreshed = jobs.get(id);
+        if (!refreshed) return { ok: false, reason: 'missing' };
+        return { ok: true, job: refreshed, queueAhead: 0 };
+    },
+
+    /**
+     * #1577: registra o sinal de visibilidade da aba do cliente (Page Visibility API).
+     * O POST /chat/jobs/:id/visibility repassa { hidden: true|false } quando o usuário
+     * troca de aba durante um job ativo — usado para dashboards/SLA e para o backend
+     * saber que pode desacelerar notificações. Retorna false se o job não existe/expirou
+     * (cliente pode parar de sinalizar); true se registrou.
+     */
+    recordVisibility(id: string, hidden: boolean): boolean {
+        const job = jobs.get(id);
+        if (!job || isExpired(job)) return false;
+        patchJob(id, { pageHidden: !!hidden, lastVisibilityAt: Date.now() });
+        return true;
     },
 };
 

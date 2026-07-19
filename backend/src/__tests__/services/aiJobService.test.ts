@@ -448,3 +448,136 @@ describe('aiJobService #1011 — reportProgress (lastHeartbeat = max(lastWrite, 
         }
     });
 });
+
+// =====================================================
+// #1577: cancelJob + recordVisibility (controle de jobs do chat)
+// =====================================================
+describe('aiJobService #1577 — cancelJob + recordVisibility', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('cancelJob marca job running como cancelled (status, finishedAt, expiresAt)', async () => {
+        const svc = await fresh();
+        // Job que nunca termina (running) — simulando o assistente em pleno processamento.
+        const id = svc.enqueue(() => new Promise(() => {}), 'chat');
+        await flush();
+
+        const before = svc.get(id);
+        expect(before.ok).toBe(true);
+        if (before.ok) expect(before.job.status).toBe('running');
+
+        const lookup = svc.cancelJob(id);
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) {
+            expect(lookup.job.status).toBe('cancelled');
+            expect(lookup.job.finishedAt).toBeTypeOf('number');
+            expect(lookup.job.expiresAt).toBeGreaterThan(lookup.job.finishedAt!);
+        }
+
+        // Persistiu em disco (write-through).
+        const persisted = storage.disk.get(id);
+        expect(persisted?.status).toBe('cancelled');
+    });
+
+    it('cancelJob também transiciona queued -> cancelled (ainda na fila)', async () => {
+        const svc = await fresh();
+        // Ocupa as 3 vagas para o 4º job ficar queued.
+        svc.enqueue(() => new Promise(() => {}));
+        svc.enqueue(() => new Promise(() => {}));
+        svc.enqueue(() => new Promise(() => {}));
+        const queuedId = svc.enqueue(() => new Promise(() => {}));
+
+        const lookup = svc.cancelJob(queuedId);
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) expect(lookup.job.status).toBe('cancelled');
+    });
+
+    it('cancelJob é idempotente: chamar num job já cancelled é NO-OP', async () => {
+        const svc = await fresh();
+        const id = svc.enqueue(() => new Promise(() => {}));
+        await flush();
+
+        const first = svc.cancelJob(id);
+        const firstFinishedAt = first.ok ? first.job.finishedAt : undefined;
+        const second = svc.cancelJob(id);
+
+        expect(second.ok).toBe(true);
+        if (second.ok) {
+            expect(second.job.status).toBe('cancelled');
+            // finishedAt não foi re-escrito (idempotência real — não "atualizou" nada).
+            expect(second.job.finishedAt).toBe(firstFinishedAt);
+        }
+    });
+
+    it('cancelJob em job done NÃO altera o status (preserva terminal original)', async () => {
+        const svc = await fresh();
+        const id = svc.enqueue(async () => ({ reply: 'ok' }));
+        await flush();
+        expect(svc.get(id)).toEqual(expect.objectContaining({ ok: true }));
+
+        const lookup = svc.cancelJob(id);
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) expect(lookup.job.status).toBe('done');
+    });
+
+    it('cancelJob devolve { ok:false, reason:"missing" } para id desconhecido', async () => {
+        const svc = await fresh();
+        const lookup = svc.cancelJob('id-que-nao-existe');
+        expect(lookup.ok).toBe(false);
+        if (!lookup.ok) expect(lookup.reason).toBe('missing');
+    });
+
+    it('cancelJob devolve { ok:false, reason:"expired" } para job expirado', async () => {
+        const past = Date.now() - 1000;
+        const svc = await fresh([
+            { id: 'ghost', status: 'running', createdAt: past - 1000, expiresAt: past },
+        ]);
+
+        const lookup = svc.cancelJob('ghost');
+        expect(lookup.ok).toBe(false);
+        if (!lookup.ok) expect(lookup.reason).toBe('expired');
+    });
+
+    it('recordVisibility registra hidden=true e devolve true (job existe)', async () => {
+        const svc = await fresh();
+        const id = svc.enqueue(() => new Promise(() => {}));
+        await flush();
+
+        const ok = svc.recordVisibility(id, true);
+        expect(ok).toBe(true);
+
+        const lookup = svc.get(id);
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) {
+            expect(lookup.job.pageHidden).toBe(true);
+            expect(lookup.job.lastVisibilityAt).toBeTypeOf('number');
+        }
+    });
+
+    it('recordVisibility alterna hidden false -> true -> false (sempre atualiza)', async () => {
+        const svc = await fresh();
+        const id = svc.enqueue(() => new Promise(() => {}));
+        await flush();
+
+        expect(svc.recordVisibility(id, true)).toBe(true);
+        expect(svc.recordVisibility(id, false)).toBe(true);
+
+        const lookup = svc.get(id);
+        expect(lookup.ok).toBe(true);
+        if (lookup.ok) expect(lookup.job.pageHidden).toBe(false);
+    });
+
+    it('recordVisibility devolve false para job inexistente (cliente para de sinalizar)', async () => {
+        const svc = await fresh();
+        expect(svc.recordVisibility('nao-tem', true)).toBe(false);
+    });
+
+    it('recordVisibility devolve false para job expirado', async () => {
+        const past = Date.now() - 1000;
+        const svc = await fresh([
+            { id: 'old', status: 'running', createdAt: 1, expiresAt: past },
+        ]);
+        expect(svc.recordVisibility('old', true)).toBe(false);
+    });
+});
