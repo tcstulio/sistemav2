@@ -21,7 +21,6 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { createGitHubIssue } from './githubIssueService';
 import { sanitizeReportHtml, assertScreenshotWithinLimit, MAX_SCREENSHOT_BYTES } from '../middleware/uploadSanitizer';
-import { AppError } from '../middleware/errorHandler';
 import { adminAuditService } from './adminAuditService';
 import { createLogger } from '../utils/logger';
 
