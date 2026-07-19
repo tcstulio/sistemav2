@@ -2,7 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 
-const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, res: any, next: any) => next()));
+// authState permite que cada teste defina req.user (admin/não-admin) sem acoplar
+// ao requireDolibarrLogin real. Default = null (sem user), preservando os testes
+// existentes do /send (que não enviam skipApproval e portanto não dependem de user).
+const authState = vi.hoisted(() => ({ user: null as any }));
+const mockRequireDolibarrLogin = vi.hoisted(() => vi.fn((req: any, _res: any, next: any) => {
+    if (authState.user) req.user = authState.user;
+    next();
+}));
 
 const mockDocumentService = vi.hoisted(() => ({
     sendDocument: vi.fn(() => ({ success: true, messageId: 'msg-1' })),
@@ -13,6 +20,12 @@ const mockDocumentService = vi.hoisted(() => ({
 
 vi.mock('../../middleware/authMiddleware', () => ({
     requireDolibarrLogin: mockRequireDolibarrLogin,
+    isAdmin: (u: any) => {
+        if (!u) return false;
+        if (u.role === 'admin') return true;
+        const a = u.admin;
+        return a === '1' || a === 1 || a === true || a === 'admin';
+    },
 }));
 
 vi.mock('../../services/documentService', () => ({
@@ -44,6 +57,15 @@ vi.mock('../../services/approvalService', () => ({
     approvalService: {},
 }));
 
+// Audit service mockado — evita escrita em disco e permite assertar chamadas.
+const mockAdminAudit = vi.hoisted(() => ({
+    record: vi.fn(() => ({ id: 'audit-1', ts: Date.now() })),
+}));
+
+vi.mock('../../services/adminAuditService', () => ({
+    adminAuditService: mockAdminAudit,
+}));
+
 vi.mock('../../utils/logger', () => ({
     createLogger: () => ({
         debug: vi.fn(),
@@ -68,7 +90,136 @@ describe('documentRoutes', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        authState.user = null;
         app = createApp();
+    });
+
+    describe('POST /api/documents (#1570 — create/generate document)', () => {
+        const validBody = {
+            documentType: 'invoice',
+            entityType: 'thirdparty',
+            entityId: 42,
+        };
+
+        it('returns 201 with valid data (no skipApproval)', async () => {
+            const res = await request(app).post('/api/documents').send(validBody);
+
+            expect(res.status).toBe(201);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data).toMatchObject({
+                documentType: 'invoice',
+                entityType: 'thirdparty',
+                entityId: 42,
+                approved: false,
+            });
+            expect(mockAdminAudit.record).not.toHaveBeenCalled();
+        });
+
+        it('defaults skipApproval to false when omitted', async () => {
+            const res = await request(app).post('/api/documents').send(validBody);
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.approved).toBe(false);
+        });
+
+        it('returns 403 when non-admin sends skipApproval:true', async () => {
+            authState.user = { id: '7', login: 'operador', admin: '0' };
+
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBody, skipApproval: true });
+
+            expect(res.status).toBe(403);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.message).toBe('Apenas administradores podem pular aprovação');
+            // Nada deve seguir para o service nem para o audit.
+            expect(mockAdminAudit.record).not.toHaveBeenCalled();
+        });
+
+        it('returns 201 and writes audit entry when admin sends skipApproval:true', async () => {
+            authState.user = { id: '1', login: 'boss', admin: '1' };
+
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBody, skipApproval: true });
+
+            expect(res.status).toBe(201);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.approved).toBe(true);
+            expect(mockAdminAudit.record).toHaveBeenCalledTimes(1);
+            const entry = mockAdminAudit.record.mock.calls[0][0];
+            expect(entry.action).toBe('document.create.skipApproval');
+            expect(entry.adminLogin).toBe('boss');
+            expect(entry.target).toBe('thirdparty/42');
+            // Campos exigidos pelo issue (#1570): userId, userRole, documentType, entityType, entityId, ip.
+            expect(entry.changes.userId.after).toBe('1');
+            expect(entry.changes.userRole.after).toBe('admin');
+            expect(entry.changes.documentType.after).toBe('invoice');
+            expect(entry.changes.entityType.after).toBe('thirdparty');
+            expect(entry.changes.entityId.after).toBe(42);
+            expect(entry.changes.ip).toBeDefined();
+        });
+
+        it('returns 400 when documentType is outside the enum', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBody, documentType: 'unknown' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when entityType is outside the enum', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBody, entityType: 'customer' });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 400 when entityId is zero', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBody, entityId: 0 });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 400 when entityId is negative', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBody, entityId: -5 });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 400 when entityId is a float', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({ ...validBody, entityId: 3.14 });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 400 when missing required fields', async () => {
+            const res = await request(app).post('/api/documents').send({ documentType: 'invoice' });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('accepts template and data optional fields', async () => {
+            const res = await request(app)
+                .post('/api/documents')
+                .send({
+                    ...validBody,
+                    template: 'tpl-001',
+                    data: { foo: 'bar', nested: { a: 1 } },
+                });
+
+            expect(res.status).toBe(201);
+            expect(res.body.data.template).toBe('tpl-001');
+        });
     });
 
     describe('POST /api/documents/send', () => {
@@ -132,6 +283,63 @@ describe('documentRoutes', () => {
                 });
 
             expect(res.status).toBe(202);
+        });
+
+        it('#1570: returns 403 when non-admin sends skipApproval:true', async () => {
+            authState.user = { id: '7', login: 'operador', admin: '0' };
+
+            const res = await request(app)
+                .post('/api/documents/send')
+                .send({
+                    documentType: 'boleto',
+                    documentId: '1',
+                    phone: '5511999999999',
+                    sessionId: 'default',
+                    skipApproval: true,
+                });
+
+            expect(res.status).toBe(403);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.message).toBe('Apenas administradores podem pular aprovação');
+            expect(mockDocumentService.sendDocument).not.toHaveBeenCalled();
+            expect(mockAdminAudit.record).not.toHaveBeenCalled();
+        });
+
+        it('#1570: admin with skipApproval:true writes audit entry and proceeds', async () => {
+            authState.user = { id: '1', login: 'boss', admin: '1' };
+            mockDocumentService.sendDocument.mockResolvedValue({ success: true, messageId: 'msg-1' });
+
+            const res = await request(app)
+                .post('/api/documents/send')
+                .send({
+                    documentType: 'boleto',
+                    documentId: '1',
+                    phone: '5511999999999',
+                    sessionId: 'default',
+                    skipApproval: true,
+                });
+
+            expect(res.status).toBe(200);
+            expect(mockAdminAudit.record).toHaveBeenCalledTimes(1);
+            const entry = mockAdminAudit.record.mock.calls[0][0];
+            expect(entry.action).toBe('document.send.skipApproval');
+            expect(entry.adminLogin).toBe('boss');
+        });
+
+        it('#1570: non-admin WITHOUT skipApproval still succeeds (admin gate only applies to skipApproval)', async () => {
+            authState.user = { id: '7', login: 'operador', admin: '0' };
+            mockDocumentService.sendDocument.mockResolvedValue({ success: true, messageId: 'msg-1' });
+
+            const res = await request(app)
+                .post('/api/documents/send')
+                .send({
+                    documentType: 'boleto',
+                    documentId: '1',
+                    phone: '5511999999999',
+                    sessionId: 'default',
+                });
+
+            expect(res.status).toBe(200);
         });
     });
 

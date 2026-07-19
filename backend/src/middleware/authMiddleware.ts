@@ -167,6 +167,34 @@ export const requireDolibarrLogin = async (req: Request, res: Response, next: Ne
     }
 };
 
+/**
+ * Verifica se o usuário autenticado (populado por requireDolibarrLogin) é admin.
+ * Checagem LOCAL e síncrona baseada em req.user — sem chamada ao Dolibarr.
+ * Aceita os vários formatos que o Dolibarr/sessões produzem para o flag de admin
+ * ('1', 1, true, 'admin') e também o campo `role === 'admin'`.
+ */
+export function isAdmin(user: any): boolean {
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    const a = user.admin;
+    return a === '1' || a === 1 || a === true || a === 'admin';
+}
+
+/**
+ * Middleware que bloqueia requisições de não-admins. Assume que requireDolibarrLogin
+ * (ou outro autenticador) já populou req.user. Para checagem CONDICIONAL (ex.: apenas
+ * quando skipApproval=true), use o helper isAdmin() inline no handler.
+ */
+export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+    if (!isAdmin((req as any).user)) {
+        return res.status(403).json({
+            status: 'error',
+            message: 'Access Denied: You must be an Administrator to perform this action.'
+        });
+    }
+    next();
+}
+
 export const requireDolibarrAdmin = async (req: Request, res: Response, next: NextFunction) => {
     // 1. Extract Key (Support Bearer, Header, Query)
     let userKey = (req.headers['dolapikey'] || req.headers['DOLAPIKEY'] || req.query.DOLAPIKEY || req.query.dolapikey || req.headers['x-admin-key']) as string;

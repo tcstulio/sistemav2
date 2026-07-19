@@ -8,7 +8,9 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { documentService } from '../services/documentService';
 import { dolibarrService } from '../services/dolibarrService';
-import { requireDolibarrLogin } from '../middleware/authMiddleware';
+import { requireDolibarrLogin, isAdmin } from '../middleware/authMiddleware';
+import { adminAuditService } from '../services/adminAuditService';
+import { created, fail } from '../utils/apiResponse';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('Document');
@@ -30,7 +32,84 @@ const SendDocumentSchema = z.object({
     skipApproval: z.boolean().optional(),
 });
 
+// Criação/geração de documentos (issue #1570). Apenas admins podem pular aprovação.
+const documentCreateSchema = z.object({
+    documentType: z.enum(['proposal', 'invoice', 'order', 'contract', 'intervention', 'receipt']),
+    entityType: z.enum(['thirdparty', 'project', 'invoice', 'order', 'proposal', 'intervention']),
+    entityId: z.number().int().positive(),
+    template: z.string().optional(),
+    data: z.record(z.string(), z.any()).optional(),
+    skipApproval: z.boolean().default(false),
+});
+
+/**
+ * Registra no audit log (adminAuditService) uma requisição com skipApproval=true.
+ * Nunca lança — auditoria não deve quebrar a operação. (issue #1570)
+ */
+function auditSkipApproval(req: Request, data: z.infer<typeof documentCreateSchema>) {
+    try {
+        const user = (req as any).user || {};
+        const role = isAdmin(user) ? 'admin' : (user.role || 'user');
+        adminAuditService.record({
+            adminId: String(user.id || user.login || 'unknown'),
+            adminLogin: String(user.login || 'unknown'),
+            action: 'document.create.skipApproval',
+            target: `${data.entityType}/${data.entityId}`,
+            summary: `skipApproval por ${role} para ${data.documentType} (${data.entityType}/${data.entityId})`,
+            changes: {
+                userId: { before: null, after: String(user.id || user.login || 'unknown') },
+                userRole: { before: null, after: role },
+                documentType: { before: null, after: data.documentType },
+                entityType: { before: null, after: data.entityType },
+                entityId: { before: null, after: data.entityId },
+                ip: { before: null, after: req.ip || req.connection?.remoteAddress || 'unknown' },
+            },
+        });
+    } catch (e: any) {
+        log.error(`Falha ao registrar audit skipApproval: ${e?.message || e}`);
+    }
+}
+
 // ===== Endpoints =====
+
+/**
+ * POST /api/documents
+ * Cria/gera um documento (proposal, invoice, order, contract, intervention, receipt)
+ * vinculado a uma entidade. Apenas admins podem usar skipApproval=true. (issue #1570)
+ */
+router.post('/', async (req: Request, res: Response) => {
+    try {
+        const data = documentCreateSchema.parse(req.body);
+        const user = (req as any).user || {};
+
+        // Gate: skipApproval é privilégio de admin.
+        if (data.skipApproval && !isAdmin(user)) {
+            return fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
+        }
+
+        // Auditoria: TODA requisição com skipApproval=true é registrada.
+        if (data.skipApproval) {
+            auditSkipApproval(req, data);
+        }
+
+        return created(res, {
+            documentType: data.documentType,
+            entityType: data.entityType,
+            entityId: data.entityId,
+            template: data.template,
+            approved: data.skipApproval === true,
+            message: data.skipApproval
+                ? 'Documento gerado (aprovação dispensada por admin)'
+                : 'Documento adicionado à fila de aprovação',
+        });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return fail(res, 'VALIDATION_ERROR', 'Dados inválidos', 400, error.issues);
+        }
+        log.error(`Erro em POST /api/documents: ${error.message}`);
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
+    }
+});
 
 /**
  * POST /api/documents/send
@@ -40,6 +119,26 @@ router.post('/send', async (req: Request, res: Response) => {
     try {
         const data = SendDocumentSchema.parse(req.body);
         const user = (req as any).user;
+
+        // Gate: skipApproval é privilégio de admin (issue #1570).
+        if (data.skipApproval && !isAdmin(user)) {
+            return fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
+        }
+
+        // Auditoria: toda requisição com skipApproval=true é registrada.
+        if (data.skipApproval) {
+            try {
+                adminAuditService.record({
+                    adminId: String(user?.id || user?.login || 'unknown'),
+                    adminLogin: String(user?.login || 'unknown'),
+                    action: 'document.send.skipApproval',
+                    target: `${data.documentType}/${data.documentId}`,
+                    summary: `skipApproval (envio WhatsApp) para ${data.documentType}/${data.documentId}`,
+                });
+            } catch (e: any) {
+                log.error(`Falha ao registrar audit skipApproval (send): ${e?.message || e}`);
+            }
+        }
 
         // Se thirdPartyId foi fornecido, buscar telefone
         let phone = data.phone;
