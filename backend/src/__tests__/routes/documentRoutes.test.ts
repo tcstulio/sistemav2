@@ -132,8 +132,14 @@ describe('documentRoutes', () => {
             expect(res.status).toBe(403);
             expect(res.body.success).toBe(false);
             expect(res.body.error.message).toBe('Apenas administradores podem pular aprovação');
-            // Nada deve seguir para o service nem para o audit.
-            expect(mockAdminAudit.record).not.toHaveBeenCalled();
+            // #1570 ("TODA requisição"): tentativa bloqueada TAMBÉM é auditada com
+            // allowed=false — essencial para detectar probing de não-admins.
+            expect(mockAdminAudit.record).toHaveBeenCalledTimes(1);
+            const entry = mockAdminAudit.record.mock.calls[0][0];
+            expect(entry.action).toBe('document.create.skipApproval');
+            expect(entry.changes.allowed.after).toBe(false);
+            expect(entry.changes.userRole.after).toBe('user');
+            expect(entry.changes.timestamp).toBeDefined();
         });
 
         it('returns 201 and writes audit entry when admin sends skipApproval:true', async () => {
@@ -158,6 +164,9 @@ describe('documentRoutes', () => {
             expect(entry.changes.entityType.after).toBe('thirdparty');
             expect(entry.changes.entityId.after).toBe(42);
             expect(entry.changes.ip).toBeDefined();
+            // allowed=true (admin) e timestamp explícito (síntese da tentativa 1).
+            expect(entry.changes.allowed.after).toBe(true);
+            expect(entry.changes.timestamp).toBeDefined();
         });
 
         it('returns 400 when documentType is outside the enum', async () => {
@@ -219,6 +228,84 @@ describe('documentRoutes', () => {
 
             expect(res.status).toBe(201);
             expect(res.body.data.template).toBe('tpl-001');
+        });
+    });
+
+    // ===== #1570: PUT /api/documents/:id (atualização) — issue pede "POST/PUT" =====
+    describe('PUT /api/documents/:id (update)', () => {
+        const validBody = {
+            documentType: 'contract',
+            entityType: 'project',
+            entityId: 7,
+        };
+
+        it('returns 200 with valid body and no skipApproval', async () => {
+            const res = await request(app).put('/api/documents/123').send(validBody);
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.id).toBe('123');
+            expect(res.body.data.documentType).toBe('contract');
+            expect(res.body.data.approved).toBe(false);
+            expect(mockAdminAudit.record).not.toHaveBeenCalled();
+        });
+
+        it('returns 400 when documentType is out of enum', async () => {
+            const res = await request(app)
+                .put('/api/documents/123')
+                .send({ ...validBody, documentType: 'unknown' });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 400 when entityType is out of enum', async () => {
+            const res = await request(app)
+                .put('/api/documents/123')
+                .send({ ...validBody, entityType: 'banking' });
+
+            expect(res.status).toBe(400);
+        });
+
+        it('returns 400 when entityId is zero or negative', async () => {
+            const zero = await request(app).put('/api/documents/123').send({ ...validBody, entityId: 0 });
+            const neg = await request(app).put('/api/documents/123').send({ ...validBody, entityId: -5 });
+
+            expect(zero.status).toBe(400);
+            expect(neg.status).toBe(400);
+        });
+
+        it('returns 403 when non-admin sends skipApproval=true', async () => {
+            authState.user = { id: '7', login: 'operador', admin: '0' };
+
+            const res = await request(app)
+                .put('/api/documents/123')
+                .send({ ...validBody, skipApproval: true });
+
+            expect(res.status).toBe(403);
+            // Tentativa bloqueada também é auditada (#1570, "TODA requisição").
+            expect(mockAdminAudit.record).toHaveBeenCalledTimes(1);
+            const entry = mockAdminAudit.record.mock.calls[0][0];
+            expect(entry.action).toBe('document.update.skipApproval');
+            expect(entry.changes.allowed.after).toBe(false);
+        });
+
+        it('returns 200 and writes audit log when admin sends skipApproval=true', async () => {
+            authState.user = { id: '1', login: 'boss', admin: '1' };
+
+            const res = await request(app)
+                .put('/api/documents/123')
+                .send({ ...validBody, skipApproval: true });
+
+            expect(res.status).toBe(200);
+            expect(res.body.data.approved).toBe(true);
+            expect(mockAdminAudit.record).toHaveBeenCalledTimes(1);
+            const entry = mockAdminAudit.record.mock.calls[0][0];
+            expect(entry.action).toBe('document.update.skipApproval');
+            expect(entry.target).toBe('project/7');
+            expect(entry.changes.entityId.after).toBe(7);
+            expect(entry.changes.documentType.after).toBe('contract');
+            expect(entry.changes.allowed.after).toBe(true);
+            expect(entry.changes.userRole.after).toBe('admin');
         });
     });
 
@@ -302,7 +389,11 @@ describe('documentRoutes', () => {
             expect(res.body.success).toBe(false);
             expect(res.body.error.message).toBe('Apenas administradores podem pular aprovação');
             expect(mockDocumentService.sendDocument).not.toHaveBeenCalled();
-            expect(mockAdminAudit.record).not.toHaveBeenCalled();
+            // #1570 ("TODA requisição"): tentativa bloqueada também é auditada.
+            expect(mockAdminAudit.record).toHaveBeenCalledTimes(1);
+            const entry = mockAdminAudit.record.mock.calls[0][0];
+            expect(entry.action).toBe('document.send.skipApproval');
+            expect(entry.changes.allowed.after).toBe(false);
         });
 
         it('#1570: admin with skipApproval:true writes audit entry and proceeds', async () => {

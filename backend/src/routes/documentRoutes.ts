@@ -10,7 +10,7 @@ import { documentService } from '../services/documentService';
 import { dolibarrService } from '../services/dolibarrService';
 import { requireDolibarrLogin, isAdmin } from '../middleware/authMiddleware';
 import { adminAuditService } from '../services/adminAuditService';
-import { created, fail } from '../utils/apiResponse';
+import { created, ok, fail } from '../utils/apiResponse';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('Document');
@@ -44,25 +44,35 @@ const documentCreateSchema = z.object({
 
 /**
  * Registra no audit log (adminAuditService) uma requisição com skipApproval=true.
- * Nunca lança — auditoria não deve quebrar a operação. (issue #1570)
+ * Cobertura TOTAL (issue #1570, "TODA requisição"): registra também tentativas
+ * bloqueadas (allowed=false) — fundamental para detectar probing de não-admins.
+ * Nunca lança — auditoria não deve quebrar a operação.
  */
-function auditSkipApproval(req: Request, data: z.infer<typeof documentCreateSchema>) {
+function auditSkipApproval(
+    req: Request,
+    data: z.infer<typeof documentCreateSchema>,
+    allowed: boolean,
+    action: string = 'document.create.skipApproval'
+) {
     try {
         const user = (req as any).user || {};
-        const role = isAdmin(user) ? 'admin' : (user.role || 'user');
+        const role = allowed ? 'admin' : (user.role || 'user');
+        const ip = req.ip || (req.connection as any)?.remoteAddress || 'unknown';
         adminAuditService.record({
             adminId: String(user.id || user.login || 'unknown'),
             adminLogin: String(user.login || 'unknown'),
-            action: 'document.create.skipApproval',
+            action,
             target: `${data.entityType}/${data.entityId}`,
-            summary: `skipApproval por ${role} para ${data.documentType} (${data.entityType}/${data.entityId})`,
+            summary: `skipApproval por ${role} (${allowed ? 'permitido' : 'bloqueado'}) para ${data.documentType} (${data.entityType}/${data.entityId})`,
             changes: {
                 userId: { before: null, after: String(user.id || user.login || 'unknown') },
                 userRole: { before: null, after: role },
                 documentType: { before: null, after: data.documentType },
                 entityType: { before: null, after: data.entityType },
                 entityId: { before: null, after: data.entityId },
-                ip: { before: null, after: req.ip || req.connection?.remoteAddress || 'unknown' },
+                allowed: { before: null, after: allowed },
+                timestamp: { before: null, after: new Date().toISOString() },
+                ip: { before: null, after: ip },
             },
         });
     } catch (e: any) {
@@ -81,15 +91,17 @@ router.post('/', async (req: Request, res: Response) => {
     try {
         const data = documentCreateSchema.parse(req.body);
         const user = (req as any).user || {};
+        const allowed = isAdmin(user);
 
-        // Gate: skipApproval é privilégio de admin.
-        if (data.skipApproval && !isAdmin(user)) {
-            return fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
+        // Auditoria (issue #1570, "TODA requisição"): registra mesmo tentativas
+        // bloqueadas (allowed=false) — detecta não-admins tentando pular aprovação.
+        if (data.skipApproval) {
+            auditSkipApproval(req, data, allowed);
         }
 
-        // Auditoria: TODA requisição com skipApproval=true é registrada.
-        if (data.skipApproval) {
-            auditSkipApproval(req, data);
+        // Gate: skipApproval é privilégio de admin.
+        if (data.skipApproval && !allowed) {
+            return fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
         }
 
         return created(res, {
@@ -112,32 +124,83 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 /**
+ * PUT /api/documents/:id
+ * Atualiza um documento existente. Mesmo esquema/validação do POST; apenas admins
+ * podem usar skipApproval=true. (issue #1570 — "handler de POST/PUT")
+ */
+router.put('/:id', async (req: Request, res: Response) => {
+    try {
+        const data = documentCreateSchema.parse(req.body);
+        const user = (req as any).user || {};
+        const allowed = isAdmin(user);
+        const docId = req.params.id;
+
+        if (data.skipApproval) {
+            auditSkipApproval(req, data, allowed, 'document.update.skipApproval');
+        }
+
+        if (data.skipApproval && !allowed) {
+            return fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
+        }
+
+        return ok(res, {
+            id: docId,
+            documentType: data.documentType,
+            entityType: data.entityType,
+            entityId: data.entityId,
+            template: data.template,
+            approved: data.skipApproval === true,
+            message: data.skipApproval
+                ? 'Documento atualizado (aprovação dispensada por admin)'
+                : 'Documento atualizado e adicionado à fila de aprovação',
+        });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return fail(res, 'VALIDATION_ERROR', 'Dados inválidos', 400, error.issues);
+        }
+        log.error(`Erro em PUT /api/documents/${req.params.id}: ${error.message}`);
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
+    }
+});
+
+/**
  * POST /api/documents/send
  * Envia documento via WhatsApp (passa pelo sistema de aprovação)
  */
 router.post('/send', async (req: Request, res: Response) => {
     try {
         const data = SendDocumentSchema.parse(req.body);
-        const user = (req as any).user;
+        const user = (req as any).user || {};
+        const allowed = isAdmin(user);
 
-        // Gate: skipApproval é privilégio de admin (issue #1570).
-        if (data.skipApproval && !isAdmin(user)) {
-            return fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
-        }
-
-        // Auditoria: toda requisição com skipApproval=true é registrada.
+        // Auditoria (issue #1570, "TODA requisição"): registra qualquer chamada com
+        // skipApproval=true, inclusive bloqueadas (allowed=false).
         if (data.skipApproval) {
             try {
                 adminAuditService.record({
-                    adminId: String(user?.id || user?.login || 'unknown'),
-                    adminLogin: String(user?.login || 'unknown'),
+                    adminId: String(user.id || user.login || 'unknown'),
+                    adminLogin: String(user.login || 'unknown'),
                     action: 'document.send.skipApproval',
                     target: `${data.documentType}/${data.documentId}`,
-                    summary: `skipApproval (envio WhatsApp) para ${data.documentType}/${data.documentId}`,
+                    summary: `skipApproval (envio WhatsApp) por ${allowed ? 'admin' : (user.role || 'user')} (${allowed ? 'permitido' : 'bloqueado'}) para ${data.documentType}/${data.documentId}`,
+                    changes: {
+                        userId: { before: null, after: String(user.id || user.login || 'unknown') },
+                        userRole: { before: null, after: allowed ? 'admin' : (user.role || 'user') },
+                        documentType: { before: null, after: data.documentType },
+                        documentId: { before: null, after: data.documentId },
+                        allowed: { before: null, after: allowed },
+                        timestamp: { before: null, after: new Date().toISOString() },
+                        ip: { before: null, after: req.ip || (req.connection as any)?.remoteAddress || 'unknown' },
+                    },
                 });
             } catch (e: any) {
                 log.error(`Falha ao registrar audit skipApproval (send): ${e?.message || e}`);
             }
+        }
+
+        // Gate: skipApproval é privilégio de admin (issue #1570).
+        if (data.skipApproval && !allowed) {
+            return fail(res, 'FORBIDDEN', 'Apenas administradores podem pular aprovação', 403);
         }
 
         // Se thirdPartyId foi fornecido, buscar telefone
