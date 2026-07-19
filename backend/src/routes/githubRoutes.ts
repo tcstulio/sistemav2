@@ -7,6 +7,8 @@ import os from 'os';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { createLogger } from '../utils/logger';
 import { normalizePeriod, filterIssuesByPeriod, ISSUE_PERIOD_FETCH_LIMIT } from '../utils/issuePeriodFilter';
+// #1563: buildIssueBody extraído para serviço dedicado (reuso entre POST e PUT/edit).
+import { buildIssueBody } from '../services/issueReportService';
 
 const log = createLogger('GitHub');
 const router = Router();
@@ -18,29 +20,6 @@ router.use(requireDolibarrLogin);
 async function runGh(args: string[]): Promise<string> {
     const { stdout } = await execFileAsync('gh', args, { timeout: 30000 });
     return stdout;
-}
-
-// Monta o corpo (markdown) do report a partir do contexto capturado in-app.
-function buildIssueBody(description: string, context: any, reporter?: string): string {
-    const c = context || {};
-    const lines: string[] = [];
-    lines.push(description?.trim() || '_(sem descrição)_', '');
-    lines.push('---', '', '### Contexto capturado automaticamente', '');
-    if (reporter) lines.push(`- **Reportado por:** ${reporter}`);
-    if (c.url) lines.push(`- **Tela (URL):** \`${c.url}\``);
-    if (c.breadcrumb) lines.push(`- **Onde:** ${c.breadcrumb}`);
-    if (c.element) lines.push(`- **Elemento:** \`${c.element}\``);
-    if (c.source) lines.push(`- **Fonte (dev):** \`${c.source}\``);
-    if (c.viewport) lines.push(`- **Viewport:** ${c.viewport}`);
-    if (c.userAgent) lines.push(`- **Navegador:** ${c.userAgent}`);
-    if (Array.isArray(c.consoleErrors) && c.consoleErrors.length) {
-        lines.push('', '#### Erros de console', '```', ...c.consoleErrors.slice(0, 20), '```');
-    }
-    if (Array.isArray(c.failedRequests) && c.failedRequests.length) {
-        lines.push('', '#### Chamadas de API que falharam', '```', ...c.failedRequests.slice(0, 20), '```');
-    }
-    lines.push('', '_Reportado pelo botão in-app (Reportar problema)._');
-    return lines.join('\n');
 }
 
 // Garante que um label existe (best-effort; ignora se já existe).
@@ -62,7 +41,7 @@ router.post('/issues', async (req: Request, res: Response) => {
         const labelList: string[] = Array.isArray(labels) && labels.length ? labels.slice(0, 5) : ['from-app'];
         for (const l of labelList) await ensureLabel(l);
 
-        const body = buildIssueBody(String(description || ''), context, reporter);
+        const body = buildIssueBody(String(description || ''), context, { reporter });
         const tmp = path.join(os.tmpdir(), `app-report-${Date.now()}.md`);
         fs.writeFileSync(tmp, body.slice(0, 60000));
 
