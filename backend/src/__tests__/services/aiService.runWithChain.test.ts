@@ -565,6 +565,42 @@ describe('aiService.runWithChain — preserva contexto em erros transientes (#15
         const resumeCall = mockLogInfo.mock.calls.find((c: any[]) => String(c[0]).startsWith('chain resumed'));
         expect(resumeCall).toBeUndefined();
     });
+
+    it('(a) timeout (ETIMEDOUT, sem .response) NÃO reseta estado — preserva histórico como 429/5xx', async () => {
+        // Critério (a) cita explicitamente "429/5xx/timeout" — este caso cobre o formato
+        // de timeout de infra (err.code='ETIMEDOUT', sem err.response), que extrai detail
+        // de err.code em vez de err.response.status. Garante que timeout é transiente
+        // (não cai em isChainUnrecoverableError) e preserva messages/seenToolCalls.
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+
+        const timeoutErr: any = new Error('timeout of 5000ms exceeded');
+        timeoutErr.code = 'ETIMEDOUT';
+
+        const stateSeenByFallback: any = {};
+        const exec = vi.fn(async (provider: string, state: any) => {
+            if (provider === 'glm') {
+                state.seenToolCalls.add('slow|tool');
+                state.messages.push({ role: 'assistant', content: 'parcial antes do timeout' });
+                throw timeoutErr;
+            }
+            // Fallback recebe estado preservado (timeout NÃO é irrecuperável).
+            stateSeenByFallback.messagesLen = state.messages.length;
+            stateSeenByFallback.hasSig = state.seenToolCalls.has('slow|tool');
+            return 'ok-apos-timeout';
+        });
+
+        const result = await aiService.runWithChain('chat', exec);
+
+        expect(result).toBe('ok-apos-timeout');
+        expect(stateSeenByFallback.messagesLen).toBe(1);
+        expect(stateSeenByFallback.hasSig).toBe(true);
+        // Nenhum reset neste caminho — apenas "chain resumed".
+        const resetCall = mockLogInfo.mock.calls.find((c: any[]) => String(c[0]).startsWith('chain reset:'));
+        expect(resetCall).toBeUndefined();
+        const resumeCall = mockLogInfo.mock.calls.find((c: any[]) => String(c[0]).startsWith('chain resumed'));
+        expect(resumeCall).toBeTruthy();
+        expect(resumeCall![0]).toBe('chain resumed with 1 messages, 1 tool calls seen');
+    });
 });
 
 describe('aiService — flag OFF mantém caminho legado (não usa runWithChain)', () => {
