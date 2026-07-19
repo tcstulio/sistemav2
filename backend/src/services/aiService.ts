@@ -13,6 +13,14 @@ import { classifyTool } from '../config/actionCatalog';
 import { claimsWriteSuccess, WRITE_CLAIM_RETRY_INSTRUCTION, WRITE_CLAIM_DISCLAIMER } from '../utils/writeClaimGuard';
 // #1316: system prompt do Marciano centralizado em config/agentSystemPrompt.ts.
 import { MARCIANO_IDENTITY_PROMPT } from '../config/agentSystemPrompt';
+// #1574: helpers de emissão do stream de progresso SSE. Cada helper é no-op quando
+// `options.jobId` está ausente — callers legacy seguem funcionando sem alteração.
+import {
+    emitToolCall,
+    emitToolResult,
+    summarizeToolResult,
+    withTurnProgress,
+} from '../agent/agentLoop';
 export { MARCIANO_IDENTITY_PROMPT };
 
 const log = logger.child('AiService');
@@ -295,6 +303,10 @@ export interface GenerateReplyOptions {
     origin?: string;
     approvedTools?: string[];
     isAdmin?: boolean;
+    // #1574: identificador do job para o stream de progresso SSE. Quando ausente,
+    // nenhum evento é emitido (compat com callers legacy). Quando presente, o loop
+    // emite thinking/tool_call/tool_result/done/error via `agentLoop` → `progressStream`.
+    jobId?: string;
 }
 
 // #1408: mensagem EXPLÍCITA de teto de tool-calls atingido. Antes o loop caía em síntese
@@ -382,6 +394,13 @@ class GoogleProvider implements AIProvider {
     }
 
     async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult> {
+        // #1574: wrap com thinking/done/error. No-op quando `options.jobId` está ausente,
+        // preservando 100% do comportamento anterior para callers legacy.
+        const jobId = options?.jobId;
+        return withTurnProgress(jobId, () => this.runGoogleReplyLoop(conversationHistory, context, imageBase64, options));
+    }
+
+    private async runGoogleReplyLoop(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult> {
         if (!this.ai) {
             log.error('Google AI not configured.');
             throw new Error("Google AI not configured.");
@@ -487,7 +506,13 @@ class GoogleProvider implements AIProvider {
                         continue;
                     }
 
+                    // #1574: emite tool_call ANTES de executar (UX de progresso no cliente SSE).
+                    emitToolCall(options?.jobId, toolCall.tool, toolCall.args || {});
+
                     const toolResult = await executeTool(toolCall.tool, toolCall.args || {});
+
+                    // #1574: emite tool_result com sumário curto (cru segue no currentContext).
+                    emitToolResult(options?.jobId, toolCall.tool, summarizeToolResult(toolResult));
 
                     // #1355: encerra o turno SÓ com deeplink real (?prefill=) — ver LocalProvider.
                     if (String(toolCall.tool).startsWith('prepare_') && /\?prefill=/.test(String(toolResult))) {
@@ -1209,6 +1234,13 @@ export class LocalProvider implements AIProvider {
     }
 
     async generateReply(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult> {
+        // #1574: wrap com thinking/done/error. No-op quando `options.jobId` está ausente,
+        // preservando 100% do comportamento anterior para callers legacy.
+        const jobId = options?.jobId;
+        return withTurnProgress(jobId, () => this.runLocalReplyLoop(conversationHistory, context, imageBase64, options));
+    }
+
+    private async runLocalReplyLoop(conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], options?: GenerateReplyOptions): Promise<GenerateReplyResult> {
         // #1498: filtra as 13 DEV_TOOLS do prompt para não-admin (defesa em profundidade:
         // executeTool TAMBÉM recusa, mesmo com prompt injetado).
         // #1499: `options.isAdmin` é a FONTE DA VERDADE — quando ausente, cai pro ctx
@@ -1389,8 +1421,12 @@ export class LocalProvider implements AIProvider {
                         }
                         toolCallsUsed++; // #1408: só conta o que de fato vai executar
                         log.info(`Local LLM Tool Call: ${tc.tool}`, tc.args);
+                        // #1574: emite tool_call ANTES de executar (UX de progresso no cliente SSE).
+                        emitToolCall(options?.jobId, tc.tool, tc.args || {});
                         try {
                             const toolResult = await executeTool(tc.tool, tc.args || {});
+                            // #1574: emite tool_result com sumário curto (cru segue no currentContext).
+                            emitToolResult(options?.jobId, tc.tool, summarizeToolResult(toolResult));
                             // prepare_* (HITL) devolve deeplink e encerra o turno p/ o usuário confirmar.
                             // #1355: encerrar SÓ quando o resultado é DE FATO um deeplink (?prefill=).
                             // Antes, qualquer string de uma tool prepare_* saía direto p/ o usuário — então
@@ -1416,6 +1452,8 @@ export class LocalProvider implements AIProvider {
                             // erro de tool não aborta o turno — injeta e segue.
                             const detail = e?.message || String(e);
                             log.warn(`Local LLM Tool Error (injeta e continua): ${detail}`);
+                            // #1574: sinaliza erro da tool no stream (ok=false) — turno continua.
+                            emitToolResult(options?.jobId, tc.tool, 'erro: ' + summarizeToolResult(detail, 220), false);
                             currentContext += `\n\n[ERRO NA FERRAMENTA ${tc.tool}]: ${detail}. Corrija os parâmetros ou responda ao usuário com o que já tem.`;
                             currentContext = pruneContext(currentContext, contextCharBudget, 2);
                             ranAny = true;
@@ -2150,7 +2188,10 @@ export const aiService = {
     // runWithToolContext). A normalização final (`=== true`) é responsabilidade do
     // provider — UNIFORME nos dois caminhos (options explícito e ctx), fail-closed
     // contra qualquer valor não-boolean (`'1'`, `1`, `{}`, etc.).
-    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], moduleName: string = 'chat', isAdmin?: boolean) => {
+    // #1574: `jobId` (opcional) liga o stream de progresso SSE — quando ausente, nenhum
+    // evento é emitido (compat total com callers legacy). Repassado em `options.jobId`
+    // para cada provider, que só emite se estiver presente.
+    generateReply: async (conversationHistory: ChatMessage[], context: string, imageBase64?: string | string[], moduleName: string = 'chat', isAdmin?: boolean, jobId?: string) => {
         // Injeta o endereço público (cloudflared) no contexto -> o agente sabe responder "qual o endereço de acesso?".
         try {
             const tunnelUrl = require('./tunnelService').tunnelService.getUrl();
@@ -2166,9 +2207,9 @@ export const aiService = {
                 let specificProvider = getProvider(providerName);
                 if (imageBase64 && !providerSupportsVision(specificProvider)) {
                     const mm = getMultimodalProvider();
-                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin }).then(sanitizeResult);
+                    if (mm) return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin, jobId }).then(sanitizeResult);
                 }
-                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin }).then(sanitizeResult);
+                return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin, jobId }).then(sanitizeResult);
             });
         }
 
@@ -2182,12 +2223,12 @@ export const aiService = {
             const mm = getMultimodalProvider();
             if (mm) {
                 log.info(`generateReply: imagem presente e provider '${providerName}' sem visão -> roteando para Google.`);
-                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin }).then(sanitizeResult);
+                return mm.generateReply(conversationHistory, context, imageBase64, { provider: 'google', model: config.geminiModel, origin: moduleName, isAdmin, jobId }).then(sanitizeResult);
             }
             log.warn(`generateReply: imagem presente mas nenhum provider com visão disponível (sem googleApiKey) -> seguindo com '${providerName}'.`);
         }
 
-        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin }).then(sanitizeResult);
+        return specificProvider.generateReply(conversationHistory, context, imageBase64, { provider: providerName, model: modelName, origin: moduleName, isAdmin, jobId }).then(sanitizeResult);
     },
 
     analyzeSystem: async (query: string, rootPath: string = '../src', module: string = 'system_analysis') => {
