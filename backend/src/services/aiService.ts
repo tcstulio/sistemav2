@@ -1993,6 +1993,30 @@ export interface RunWithChainOptions {
 }
 
 /**
+ * Marcadores de erro irrecuperável (#1551): indicam que o histórico acumulado
+ * está corrompido/incompatível com o próximo provider e deve ser descartado
+ * (reset total) em vez de preservado. Apenas erros de schema/mensagem inválida
+ * entram aqui; 429/5xx/timeout são transientes e NÃO resetam a cadeia.
+ */
+const CHAIN_UNRECOVERABLE_MARKERS = [
+    'schema',
+    'malformed',
+    'corrupt',
+    'unprocessable',
+    'invalid_request_error',
+    'invalid format',
+    'bad schema',
+    'invalid message',
+];
+
+/** true se o detalhe do erro indica problema irrecuperável (reset total). #1551 */
+function isChainUnrecoverableError(detail?: string | null): boolean {
+    if (!detail) return false;
+    const m = String(detail).toLowerCase();
+    return CHAIN_UNRECOVERABLE_MARKERS.some((k) => m.includes(k));
+}
+
+/**
  * Executa `exec(provider, state)` percorrendo a cadeia de fallback do módulo.
  * Pula providers indisponíveis (em cooldown no LlmHealthService).
  * Em erro de cota/infra registra no LlmHealthService e tenta o próximo.
@@ -2061,9 +2085,21 @@ async function runWithChain<T>(
                 llmHealthService.recordTransientError(provider, err);
             }
             lastErr = err;
-            // #1010: preserva o estado acumulado (messages/seenToolCalls/contexto)
-            // para o próximo provider — NÃO reinicia a cadeia do zero.
-            log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${detail.slice(0, 120)}] — tentando próximo (preservando ${state.messages.length} mensagens, ${state.seenToolCalls.size} tool_call(s) já vista(s)).`);
+            // #1551: em erro irrecuperável (schema/mensagem corrompida), o estado
+            // acumulado NÃO serve para o próximo provider → reset total. Caso
+            // contrário (#1010), preserva messages/seenToolCalls/contexto.
+            if (isChainUnrecoverableError(detail)) {
+                const motivo = detail.slice(0, 120);
+                log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${motivo}] — erro irrecuperável, resetando cadeia.`);
+                state.messages = [];
+                state.seenToolCalls = new Set<string>();
+                state.context = '';
+                log.info(`chain reset: ${motivo}`);
+            } else {
+                log.warn(`runWithChain[${moduleName}]: provider '${provider}' falhou [${detail.slice(0, 120)}] — tentando próximo (preservando ${state.messages.length} mensagens, ${state.seenToolCalls.size} tool_call(s) já vista(s)).`);
+                // #1551 (c): log info explícito ao alternar de provider.
+                log.info(`chain resumed with ${state.messages.length} messages, ${state.seenToolCalls.size} tool calls seen`);
+            }
         }
     }
 

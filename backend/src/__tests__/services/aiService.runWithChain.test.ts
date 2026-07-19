@@ -13,6 +13,10 @@ const {
     mockRecordQuotaError,
     mockRecordTransientError,
     mockIsQuotaError,
+    mockLogInfo,
+    mockLogWarn,
+    mockLogDebug,
+    mockLogError,
 } = vi.hoisted(() => ({
     mockGetFallbackChain: vi.fn(),
     mockIsRunWithChainEnabled: vi.fn(() => false),
@@ -21,6 +25,10 @@ const {
     mockRecordQuotaError: vi.fn(),
     mockRecordTransientError: vi.fn(),
     mockIsQuotaError: vi.fn((msg: string) => !!(msg?.includes('429') || msg?.includes('rate limit'))),
+    mockLogInfo: vi.fn(),
+    mockLogWarn: vi.fn(),
+    mockLogDebug: vi.fn(),
+    mockLogError: vi.fn(),
 }));
 
 vi.mock('../../services/configService', () => ({
@@ -65,10 +73,13 @@ vi.mock('../../services/agentConfigService', () => ({
     agentConfigService: { getSystemPrompt: vi.fn(() => '') },
 }));
 
-vi.mock('../../utils/logger', () => ({
-    logger: { child: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) },
-    createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
-}));
+vi.mock('../../utils/logger', () => {
+    const stub = { info: mockLogInfo, warn: mockLogWarn, error: mockLogError, debug: mockLogDebug };
+    return {
+        logger: { child: () => stub },
+        createLogger: () => stub,
+    };
+});
 
 vi.mock('../../config/env', () => ({
     config: {
@@ -332,6 +343,167 @@ describe('aiService.runWithChain — preserva contexto ao trocar de provider (#1
         expect(refs).toHaveLength(2);
         expect(refs[0]).toBe(refs[1]); // mesma referência
         expect(refs[1].seenToolCalls.has('keep|me')).toBe(true);
+    });
+});
+
+describe('aiService.runWithChain — preserva contexto em erros transientes (#1551)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockIsAvailable.mockReturnValue(true);
+        mockIsQuotaError.mockImplementation((msg: string) => !!(msg?.includes('429') || msg?.includes('rate limit')));
+    });
+
+    it('(a) 429 no primário NÃO reexecuta tool calls; secundário recebe histórico completo', async () => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+
+        const executedTools: string[] = [];
+        const exec = vi.fn(async (provider: string, state: any) => {
+            const sig = 'search_customer|{"q":"Acme"}';
+            if (provider === 'glm') {
+                // Primário acumula 3 mensagens + 1 tool_call vista, então falha 429.
+                state.seenToolCalls.add(sig);
+                state.messages.push({ role: 'user', content: 'oi' });
+                state.messages.push({ role: 'assistant', content: '<tool_call: search_customer>' });
+                state.messages.push({ role: 'tool', tool_call_id: 'x', name: 'search_customer', content: 'Acme encontrado' });
+                executedTools.push('search_customer@glm');
+                throw makeQuotaError();
+            }
+            // Secundário recebe o histórico completo (mesmas 3 mensagens) e o MESMO seenToolCalls.
+            expect(state.messages.length).toBe(3);
+            expect(state.seenToolCalls.has(sig)).toBe(true);
+            // Tool já executada → NÃO repete.
+            if (!state.seenToolCalls.has(sig)) executedTools.push('search_customer@minimax');
+            return 'resposta final';
+        });
+
+        const result = await aiService.runWithChain('chat', exec);
+
+        expect(result).toBe('resposta final');
+        expect(executedTools).toEqual(['search_customer@glm']); // só no primário
+        expect(exec).toHaveBeenCalledTimes(2);
+    });
+
+    it('(b) seenToolCalls compartilhado por referência entre providers (não resetado em troca)', async () => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+        const refs: any[] = [];
+        const setRefs: any[] = [];
+
+        const exec = vi.fn(async (provider: string, state: any) => {
+            refs.push(state);
+            setRefs.push(state.seenToolCalls);
+            if (provider === 'glm') {
+                state.seenToolCalls.add('keep|me');
+                state.messages.push({ role: 'assistant', content: 'partial' });
+                throw makeQuotaError('429 transient');
+            }
+            return 'ok';
+        });
+
+        await aiService.runWithChain('chat', exec);
+
+        // Mesma referência de state E de seenToolCalls entre providers.
+        expect(refs[0]).toBe(refs[1]);
+        expect(setRefs[0]).toBe(setRefs[1]);
+        // Mutação do primário persistiu para o secundário.
+        expect(setRefs[1].has('keep|me')).toBe(true);
+    });
+
+    it('(c) log info "chain resumed with N messages, M tool calls seen" ao alternar de provider', async () => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+
+        const exec = vi.fn(async (provider: string, state: any) => {
+            if (provider === 'glm') {
+                state.seenToolCalls.add('t1|x');
+                state.seenToolCalls.add('t2|y');
+                state.messages.push({ role: 'user', content: 'a' });
+                state.messages.push({ role: 'assistant', content: 'b' });
+                state.messages.push({ role: 'tool', content: 'c' });
+                throw makeQuotaError();
+            }
+            return 'ok';
+        });
+
+        await aiService.runWithChain('chat', exec);
+
+        // Procura pela chamada de info com o formato prescrito (#1551 c).
+        const resumeCall = mockLogInfo.mock.calls.find((c: any[]) => /^chain resumed with \d+ messages, \d+ tool calls seen$/.test(String(c[0])));
+        expect(resumeCall).toBeTruthy();
+        // Conteúdo numérico reflete o estado carregado pelo primário (3 mensagens, 2 tool calls).
+        expect(resumeCall![0]).toBe('chain resumed with 3 messages, 2 tool calls seen');
+    });
+
+    it('(d) primário entrega resposta final válida → secundário nunca é chamado', async () => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+
+        const exec = vi.fn(async (_provider: string, _state: any) => 'final-do-primario');
+
+        const result = await aiService.runWithChain('chat', exec);
+
+        expect(result).toBe('final-do-primario');
+        expect(exec).toHaveBeenCalledTimes(1);
+        expect(exec).toHaveBeenCalledWith('glm', expect.any(Object));
+        // Sem troca de provider → sem log "chain resumed".
+        const resumeCall = mockLogInfo.mock.calls.find((c: any[]) => String(c[0]).startsWith('chain resumed'));
+        expect(resumeCall).toBeUndefined();
+    });
+
+    it('(e) erro irrecuperável (schema inválido) → reset total + log "chain reset: <motivo>"', async () => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+
+        const schemaErr: any = new Error('HTTP 400 invalid_request_error: schema invalid for tool_call');
+        schemaErr.response = { status: 400, data: { error: 'invalid_request_error schema invalid' } };
+
+        const exec = vi.fn(async (provider: string, state: any) => {
+            if (provider === 'glm') {
+                // Primário acumula estado antes do erro irrecuperável.
+                state.seenToolCalls.add('should|be-lost');
+                state.messages.push({ role: 'assistant', content: 'lixo corrompido' });
+                state.context = 'ctx-sujo';
+                throw schemaErr;
+            }
+            // Secundário: estado DEVE ter sido resetado.
+            expect(state.messages).toHaveLength(0);
+            expect(state.seenToolCalls.size).toBe(0);
+            expect(state.context).toBe('');
+            return 'ok-apos-reset';
+        });
+
+        const result = await aiService.runWithChain('chat', exec);
+
+        expect(result).toBe('ok-apos-reset');
+        // Reset registrado com o motivo.
+        const resetCall = mockLogInfo.mock.calls.find((c: any[]) => String(c[0]).startsWith('chain reset:'));
+        expect(resetCall).toBeTruthy();
+        expect(String(resetCall![0])).toContain('schema');
+        // Sem log "chain resumed" nesse caminho.
+        const resumeCall = mockLogInfo.mock.calls.find((c: any[]) => String(c[0]).startsWith('chain resumed'));
+        expect(resumeCall).toBeUndefined();
+    });
+
+    it('(e) erro transiente (5xx) NÃO dispara reset — preserva histórico', async () => {
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+
+        const err5xx: any = new Error('HTTP 500 internal server error');
+        err5xx.response = { status: 500, data: { error: 'internal' } };
+
+        const exec = vi.fn(async (provider: string, state: any) => {
+            if (provider === 'glm') {
+                state.seenToolCalls.add('keep|me');
+                state.messages.push({ role: 'assistant', content: 'raciocínio parcial' });
+                throw err5xx;
+            }
+            // Estado preservado (sem reset).
+            expect(state.seenToolCalls.has('keep|me')).toBe(true);
+            expect(state.messages.length).toBe(1);
+            return 'ok';
+        });
+
+        await aiService.runWithChain('chat', exec);
+
+        const resetCall = mockLogInfo.mock.calls.find((c: any[]) => String(c[0]).startsWith('chain reset:'));
+        expect(resetCall).toBeUndefined();
+        const resumeCall = mockLogInfo.mock.calls.find((c: any[]) => String(c[0]).startsWith('chain resumed'));
+        expect(resumeCall).toBeTruthy();
     });
 });
 
