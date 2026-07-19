@@ -505,6 +505,66 @@ describe('aiService.runWithChain — preserva contexto em erros transientes (#15
         const resumeCall = mockLogInfo.mock.calls.find((c: any[]) => String(c[0]).startsWith('chain resumed'));
         expect(resumeCall).toBeTruthy();
     });
+
+    it('(c) "chain resumed" dispara quando providers anteriores foram pulados via cooldown', async () => {
+        // Primário em cooldown, segundo falha com 5xx, terceiro sucede — o log
+        // "chain resumed" deve disparar ao tentar o terceiro (mesmo com 0 estado).
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax', 'google']);
+        mockIsAvailable.mockImplementation((p: string) => p !== 'glm');
+
+        const err502: any = new Error('HTTP 502 bad gateway');
+        err502.response = { status: 502, data: { error: 'bad gateway' } };
+
+        const exec = vi.fn(async (provider: string) => {
+            if (provider === 'minimax') throw err502;
+            return 'ok-google';
+        });
+
+        const result = await aiService.runWithChain('chat', exec);
+
+        expect(result).toBe('ok-google');
+        expect(exec).toHaveBeenNthCalledWith(1, 'minimax', expect.any(Object));
+        expect(exec).toHaveBeenNthCalledWith(2, 'google', expect.any(Object));
+        // Log resumed emitido ao cair do minimax para o google (estado vazio: 0/0).
+        expect(mockLogInfo).toHaveBeenCalledWith('chain resumed with 0 messages, 0 tool calls seen');
+    });
+
+    it('(e) JSON corrompido (sem status HTTP) também é irrecuperável — reseta estado', async () => {
+        // Erro de parse (mensagem corrompida vinda do provider) coberto pelo
+        // marcador 'unexpected token' — sem .response, o detail cai p/ err.message.
+        mockGetFallbackChain.mockReturnValue(['glm', 'minimax']);
+
+        const jsonErr = new Error('Unexpected token < in JSON at position 0');
+
+        const stateSeenByFallback: any = {};
+        const exec = vi.fn(async (provider: string, state: any) => {
+            if (provider === 'glm') {
+                state.seenToolCalls.add('tool|x');
+                state.messages.push({ role: 'assistant', content: 'partial' });
+                state.context = 'ctx-sujo';
+                throw jsonErr;
+            }
+            // Fallback recebe estado resetado (não o lixo acumulado).
+            stateSeenByFallback.messagesLen = state.messages.length;
+            stateSeenByFallback.seenSize = state.seenToolCalls.size;
+            stateSeenByFallback.context = state.context;
+            return 'ok-apos-reset';
+        });
+
+        const result = await aiService.runWithChain('chat', exec);
+
+        expect(result).toBe('ok-apos-reset');
+        expect(stateSeenByFallback.messagesLen).toBe(0);
+        expect(stateSeenByFallback.seenSize).toBe(0);
+        expect(stateSeenByFallback.context).toBe('');
+        // Reset logado no nível info com o motivo do erro de parse.
+        const resetCall = mockLogInfo.mock.calls.find((c: any[]) => String(c[0]).startsWith('chain reset:'));
+        expect(resetCall).toBeTruthy();
+        expect(String(resetCall![0])).toMatch(/JSON|unexpected token/i);
+        // Sem "chain resumed" nesse caminho (foi reset, não resume).
+        const resumeCall = mockLogInfo.mock.calls.find((c: any[]) => String(c[0]).startsWith('chain resumed'));
+        expect(resumeCall).toBeUndefined();
+    });
 });
 
 describe('aiService — flag OFF mantém caminho legado (não usa runWithChain)', () => {

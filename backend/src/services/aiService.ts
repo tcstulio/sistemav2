@@ -1997,6 +1997,8 @@ export interface RunWithChainOptions {
  * está corrompido/incompatível com o próximo provider e deve ser descartado
  * (reset total) em vez de preservado. Apenas erros de schema/mensagem inválida
  * entram aqui; 429/5xx/timeout são transientes e NÃO resetam a cadeia.
+ * 'unexpected token' cobre JSON.parse de resposta corrompida (mensagem
+ * ilegível vinda do provider — também é "mensagem corrompida" per spec (e)).
  */
 const CHAIN_UNRECOVERABLE_MARKERS = [
     'schema',
@@ -2007,6 +2009,7 @@ const CHAIN_UNRECOVERABLE_MARKERS = [
     'invalid format',
     'bad schema',
     'invalid message',
+    'unexpected token',
 ];
 
 /** true se o detalhe do erro indica problema irrecuperável (reset total). #1551 */
