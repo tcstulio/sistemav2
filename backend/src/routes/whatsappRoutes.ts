@@ -8,29 +8,30 @@ import { storeService } from '../services/storeService';
 import { socketService } from '../services/socketService';
 import { requireDolibarrLogin } from '../middleware/authMiddleware';
 import { z } from 'zod';
-import rateLimit from 'express-rate-limit';
 import { createLogger } from '../utils/logger';
 import { FEATURES } from '../config/features';
+import { ok, fail } from '../utils/apiResponse';
+import { whatsappCheckLimiter, webhookLimiter } from '../middleware/whatsappRateLimiters';
+import {
+    phoneSchema,
+    sendSchema,
+    sendBulkSchema,
+    templateSchema,
+    normalizePhone
+} from './whatsappSchemas';
 
 const log = createLogger('WhatsApp');
 const router = Router();
 const DEFAULT_SESSION = 'default';
 
-const checkNumberLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 30,
-    message: { error: 'Too many number checks. Please wait.' },
-    standardHeaders: true,
-    legacyHeaders: false
-});
-
 // 1. PUBLIC ROUTES (Webhooks)
-// Webhook Receiver (Legacy / External) - Must be before Auth Middleware
-router.post('/webhook', (req, res) => {
+// Webhook Receiver (Legacy / External) - Must be before Auth Middleware.
+// `webhookLimiter` (300/min) impede abuso sem impactar rajadas legítimas (#1568).
+router.post('/webhook', webhookLimiter, (req, res) => {
     const event = req.body;
     log.info('Webhook received', event);
     socketService.emit('whatsapp_message', event);
-    res.json({ status: 'received' });
+    return ok(res, { status: 'received' });
 });
 
 // 2. PROTECTED ROUTES (Client API)
@@ -97,20 +98,36 @@ router.delete('/sessions/:sessionId', async (req, res) => {
     }
 });
 
-// Check if number is registered on WhatsApp
-router.get('/check-number/:number', checkNumberLimiter, async (req, res) => {
+// Check if number is registered on WhatsApp.
+// `whatsappCheckLimiter` (10/min) — mais restritivo que o geral, pois este
+// endpoint é oráculo de enumeração (alvo de scraping de listas de números).
+// Validação Zod do `:number` (formato + DDI) retorna 400 antes de bater no
+// provider (#1568).
+router.get('/check-number/:number', whatsappCheckLimiter, async (req, res) => {
     const sessionId = getSessionId(req);
-    const { number } = req.params;
+    const rawNumber = req.params.number;
     try {
+        const number = phoneSchema.parse(rawNumber);
         const client = sessionService.getClient(sessionId);
         if (!client) {
-            return res.status(400).json({ error: 'Session not found or not connected' });
+            return fail(res, 'SESSION_NOT_FOUND', 'Session not found or not connected', 400);
         }
-        const formattedId = number.includes('@') ? number : `${number}@c.us`;
+        // Normalização defensiva — remove qualquer caractere não-numérico que
+        // tenha passado pelo schema (item 5 da issue #1568).
+        const normalized = normalizePhone(number);
+        const formattedId = normalized.includes('@') ? normalized : `${normalized}@c.us`;
         const isRegistered = await client.isRegisteredUser(formattedId);
-        res.json({ number, isRegistered, chatId: formattedId });
+        return ok(res, {
+            number: normalized,
+            isRegistered,
+            chatId: formattedId
+        });
     } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        if (error instanceof z.ZodError) {
+            return fail(res, 'VALIDATION_ERROR', 'Número de telefone inválido', 400, error.issues);
+        }
+        log.error('check-number failed', { error: error.message, rawNumber });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
 
@@ -130,14 +147,17 @@ router.get('/qrcode', async (req, res) => {
     }
 });
 
-// Send Message
+// Send Message (#1568 — validação Zod via sendSchema).
+// Aceita `to` (número de telefone válido), `message` (1-4096 chars) e
+// `mediaUrl` opcional. O número é normalizado e formatado como chatId antes
+// de chegar ao provider.
 router.post('/send', async (req, res) => {
     try {
-        const { chatId, text, sessionId } = z.object({
-            chatId: z.string().min(1),
-            text: z.string().min(1),
-            sessionId: z.string().optional()
-        }).parse(req.body);
+        const { to, message, mediaUrl, sessionId } = sendSchema.parse(req.body);
+
+        // Normaliza número e monta o chatId no formato do WhatsApp.
+        const normalized = normalizePhone(to);
+        const chatId = `${normalized}@c.us`;
 
         log.info('Sending WhatsApp message', { chatId, sessionId });
 
@@ -145,9 +165,9 @@ router.post('/send', async (req, res) => {
         const currentUser = (req as any).user;
 
         // [ANTIGRAVITY] Business Logic: Append Signature
-        let finalText = text;
+        let finalText = message;
         if (currentUser) {
-            finalText = storeService.formatMessageWithSignature(text, currentUser);
+            finalText = storeService.formatMessageWithSignature(message, currentUser);
         }
 
         // Use channelRouter for unified message sending (supports Moltbot or legacy)
@@ -158,19 +178,114 @@ router.post('/send', async (req, res) => {
             storeService.updateLastResponder(chatId, currentUser.id);
         }
 
-        res.json({
-            success: result.success,
+        if (!result.success) {
+            return fail(res, 'SEND_FAILED', result.error || 'Falha ao enviar mensagem', 502, {
+                provider: result.provider
+            });
+        }
+        return ok(res, {
             id: result.messageId,
             timestamp: result.timestamp,
             provider: result.provider,
-            error: result.error
+            mediaUrl
         });
     } catch (error: any) {
         log.error('Failed to send WhatsApp message', { error: error.message, stack: error.stack });
         if (error instanceof z.ZodError) {
-            return res.status(400).json({ error: 'Validation Error', details: (error as z.ZodError).issues });
+            return fail(res, 'VALIDATION_ERROR', 'Erro de validação', 400, error.issues);
         }
-        res.status(500).json({ error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
+    }
+});
+
+// Send Bulk (#1568) — envia a mesma mensagem para múltiplos destinatários.
+// Limite de 100 destinatários por request (sendBulkSchema). Resposta contém
+// o detalhe por destinatário para o cliente reportingar falhas individuais.
+router.post('/send-bulk', async (req, res) => {
+    try {
+        const { recipients, message, sessionId } = sendBulkSchema.parse(req.body);
+
+        const targetSession = sessionId || getSessionId(req);
+        const currentUser = (req as any).user;
+
+        let finalText = message;
+        if (currentUser) {
+            finalText = storeService.formatMessageWithSignature(message, currentUser);
+        }
+
+        const results = [];
+        let succeeded = 0;
+        let failed = 0;
+        for (const recipient of recipients) {
+            const normalized = normalizePhone(recipient);
+            const chatId = `${normalized}@c.us`;
+            try {
+                const r = await channelRouter.sendWhatsApp(chatId, finalText, targetSession);
+                if (currentUser && r.success) {
+                    storeService.updateLastResponder(chatId, currentUser.id);
+                }
+                results.push({ to: normalized, success: r.success, id: r.messageId, error: r.error });
+                if (r.success) { succeeded++; } else { failed++; }
+            } catch (err: any) {
+                results.push({ to: normalized, success: false, error: err.message });
+                failed++;
+            }
+        }
+
+        return ok(res, {
+            total: recipients.length,
+            succeeded,
+            failed,
+            results
+        });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return fail(res, 'VALIDATION_ERROR', 'Erro de validação', 400, error.issues);
+        }
+        log.error('Failed to send WhatsApp bulk', { error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
+    }
+});
+
+// Send Template (#1568) — valida payload do template (templateSchema).
+// Se `to` estiver presente, dispara a mensagem para o destinatário; caso
+// contrário, apenas valida o payload (pré-validação de template).
+router.post('/template', async (req, res) => {
+    try {
+        const { name, language, components, to, sessionId } = templateSchema.parse(req.body);
+
+        const targetSession = sessionId || getSessionId(req);
+
+        // Sem destinatário: apenas confirma que o payload do template é válido.
+        if (!to) {
+            return ok(res, { validated: true, name, language, componentsCount: components.length });
+        }
+
+        const normalized = normalizePhone(to);
+        const chatId = `${normalized}@c.us`;
+
+        // Serialização simples do template — provider legado não tem API de
+        // template nativa, então renderizamos como texto estruturado.
+        const rendered = `[template:${name}|lang:${language}] ${JSON.stringify(components)}`;
+        const result = await channelRouter.sendWhatsApp(chatId, rendered, targetSession);
+
+        if (!result.success) {
+            return fail(res, 'SEND_FAILED', result.error || 'Falha ao enviar template', 502, {
+                provider: result.provider
+            });
+        }
+        return ok(res, {
+            id: result.messageId,
+            timestamp: result.timestamp,
+            provider: result.provider,
+            template: { name, language }
+        });
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return fail(res, 'VALIDATION_ERROR', 'Erro de validação', 400, error.issues);
+        }
+        log.error('Failed to send WhatsApp template', { error: error.message });
+        return fail(res, 'INTERNAL_ERROR', error.message, 500);
     }
 });
 

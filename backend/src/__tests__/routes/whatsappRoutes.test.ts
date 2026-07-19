@@ -106,13 +106,15 @@ describe('whatsappRoutes', () => {
     });
 
     describe('POST /api/whatsapp/webhook', () => {
-        it('returns 200 with event', async () => {
+        it('returns 200 with event in standard envelope', async () => {
             const res = await request(app)
                 .post('/api/whatsapp/webhook')
                 .send({ message: 'test' });
 
             expect(res.status).toBe(200);
-            expect(res.body.status).toBe('received');
+            // Envelope padrão (#1568): { success, data }
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.status).toBe('received');
         });
     });
 
@@ -132,22 +134,184 @@ describe('whatsappRoutes', () => {
         });
     });
 
-    describe('POST /api/whatsapp/send', () => {
-        it('returns 200 with valid data', async () => {
-            const res = await request(app)
-                .post('/api/whatsapp/send')
-                .send({ chatId: '123', text: 'Hello' });
+    describe('GET /api/whatsapp/check-number/:number (#1568)', () => {
+        it('returns 200 with valid BR number', async () => {
+            const res = await request(app).get('/api/whatsapp/check-number/5511999999999');
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
+            expect(res.body.data.isRegistered).toBe(true);
+            expect(res.body.data.chatId).toBe('5511999999999@c.us');
+            // Número é normalizado na resposta.
+            expect(res.body.data.number).toBe('5511999999999');
         });
 
-        it('returns 400 when missing fields', async () => {
-            const res = await request(app)
-                .post('/api/whatsapp/send')
-                .send({ chatId: '123' });
+        it('returns 400 when number has invalid format (abc)', async () => {
+            const res = await request(app).get('/api/whatsapp/check-number/abc');
 
             expect(res.status).toBe(400);
+            expect(res.body.success).toBe(false);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when DDI is not allowed', async () => {
+            // 99 não é DDI permitido.
+            const res = await request(app).get('/api/whatsapp/check-number/9912345678');
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when session is not connected', async () => {
+            mockSessionService.getClient.mockReturnValueOnce(null);
+            const res = await request(app).get('/api/whatsapp/check-number/5511999999999');
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('SESSION_NOT_FOUND');
+        });
+    });
+
+    describe('POST /api/whatsapp/send (#1568 — sendSchema)', () => {
+        it('returns 200 with valid data', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ to: '5511999999999', message: 'Hello' });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.id).toBe('msg-1');
+            // O destinatário chega ao provider normalizado e formatado como chatId.
+            expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledWith(
+                '5511999999999@c.us',
+                expect.any(String),
+                expect.any(String)
+            );
+        });
+
+        it('returns 400 when missing `to`', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ message: 'Hello' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when `to` has invalid phone format', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ to: 'abc', message: 'Hello' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when missing `message`', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/send')
+                .send({ to: '5511999999999' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+    });
+
+    describe('POST /api/whatsapp/send-bulk (#1568)', () => {
+        it('returns 200 sending to multiple valid recipients', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/send-bulk')
+                .send({
+                    recipients: ['5511999999999', '5511988888888'],
+                    message: 'Hello'
+                });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.total).toBe(2);
+            expect(res.body.data.succeeded).toBe(2);
+            expect(res.body.data.failed).toBe(0);
+            expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledTimes(2);
+        });
+
+        it('returns 400 when recipients is empty', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/send-bulk')
+                .send({ recipients: [], message: 'Hello' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when any recipient is invalid', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/send-bulk')
+                .send({ recipients: ['abc'], message: 'Hello' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when message is missing', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/send-bulk')
+                .send({ recipients: ['5511999999999'] });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+    });
+
+    describe('POST /api/whatsapp/template (#1568)', () => {
+        it('returns 200 validating payload without recipient', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/template')
+                .send({
+                    name: 'welcome',
+                    language: 'pt_BR',
+                    components: [{ type: 'body', parameters: [] }]
+                });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.validated).toBe(true);
+        });
+
+        it('returns 200 sending template to valid recipient', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/template')
+                .send({
+                    name: 'welcome',
+                    language: 'pt_BR',
+                    components: [],
+                    to: '5511999999999'
+                });
+
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.data.template.name).toBe('welcome');
+            expect(mockChannelRouter.sendWhatsApp).toHaveBeenCalledWith(
+                '5511999999999@c.us',
+                expect.any(String),
+                expect.any(String)
+            );
+        });
+
+        it('returns 400 when name is missing', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/template')
+                .send({ language: 'pt_BR', components: [] });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
+        });
+
+        it('returns 400 when components is missing', async () => {
+            const res = await request(app)
+                .post('/api/whatsapp/template')
+                .send({ name: 'welcome', language: 'pt_BR' });
+
+            expect(res.status).toBe(400);
+            expect(res.body.error.code).toBe('VALIDATION_ERROR');
         });
     });
 
